@@ -27,6 +27,18 @@ _TREE_MODES = {b"40000"}
 _OBJECT_HASHES = {b"sha1": "sha1", b"sha256": "sha256"}
 _GIT_EXECUTABLE = "/usr/bin/git"
 _POLICY_PATHS = {b".gitleaks.toml", b".gitleaksignore"}
+_MAX_SCAN_BLOB_BYTES = 512 * 1024 * 1024
+_MAX_SCAN_SOURCE_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_COMMIT_METADATA_BYTES = 64 * 1024 * 1024
+_MAX_COMMIT_METADATA_TOTAL_BYTES = 256 * 1024 * 1024
+_MAX_TREE_OBJECT_BYTES = 512 * 1024 * 1024
+_MAX_TREE_METADATA_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_TREE_PATHS = 100_000
+_MAX_TREE_PATH_BYTES = 512 * 1024 * 1024
+_MAX_SCAN_VIEW_BYTES = 16 * 1024 * 1024 * 1024
+_MAX_EXACT_PATH_SHARDS = 1024
+_MAX_HISTORY_COMMITS = 100_000
+_MAX_HISTORY_COMMIT_BYTES = 2 * 1024 * 1024 * 1024
 _UNICODE_RUNS = (
     (re.compile(rb"(?:[\x09\x0a\x0d\x20-\x7e]\x00){4,}"), "utf-16-le"),
     (re.compile(rb"(?:\x00[\x09\x0a\x0d\x20-\x7e]){4,}"), "utf-16-be"),
@@ -48,9 +60,11 @@ class _WriteReceipt:
 
     def __init__(self) -> None:
         self.total_bytes = 0
+        self.materialized_bytes = 0
         self.scan_bytes = 0
         self.raw_scan_files = 0
         self.wrapper_scan_files = 0
+        self.exact_path_wrapper_files = 0
         self.path_bytes = 0
         self.transcoded_files = 0
         self.transcoded_bytes = 0
@@ -62,9 +76,69 @@ class _HistoryIndex:
     def __init__(self) -> None:
         self.commits: list[str] = []
         self.trees: list[str] = []
-        self.entries: dict[tuple[bytes, bool, bytes], _Entry] = {}
+        self.entries: dict[tuple[bytes, bytes], _Entry] = {}
         self.paths: set[bytes] = set()
         self.source_entries = 0
+
+
+class _TreeBudget:
+    """Bound authenticated tree metadata and expanded logical paths."""
+
+    def __init__(self) -> None:
+        self.metadata_bytes = 0
+        self.paths = 0
+        self.path_bytes = 0
+
+    def remaining_metadata_bytes(self) -> int:
+        """Return the bytes still available for one authenticated tree object."""
+        remaining = _MAX_TREE_METADATA_BYTES - self.metadata_bytes
+        if remaining <= 0:
+            raise SnapshotError("Git tree metadata exceeds the aggregate byte limit")
+        return min(remaining, _MAX_TREE_OBJECT_BYTES)
+
+    def add_metadata(self, size: int) -> None:
+        """Record one verified tree object after its bounded read."""
+        self.metadata_bytes += size
+
+    def add_path(self, path: bytes) -> None:
+        """Bound expanded path cardinality and bytes before materialization."""
+        self.paths += 1
+        self.path_bytes += len(path)
+        if self.paths > _MAX_TREE_PATHS:
+            raise SnapshotError("Git tree exceeds the bounded path count")
+        if self.path_bytes > _MAX_TREE_PATH_BYTES:
+            raise SnapshotError("Git tree exceeds the aggregate path byte limit")
+
+
+class _HistoryBudget:
+    """Bound authenticated commit cardinality and aggregate metadata reads."""
+
+    def __init__(self) -> None:
+        self.commits: set[str] = set()
+        self.metadata_bytes = 0
+
+    def remaining_bytes(self, commit: str) -> int:
+        """Reserve one distinct commit and return its remaining read allowance."""
+        if commit not in self.commits:
+            if len(self.commits) >= _MAX_HISTORY_COMMITS:
+                raise SnapshotError(
+                    "Reachable Git history exceeds the bounded commit count"
+                )
+            self.commits.add(commit)
+        remaining = _MAX_HISTORY_COMMIT_BYTES - self.metadata_bytes
+        if remaining <= 0:
+            raise SnapshotError(
+                "Reachable Git history exceeds the aggregate metadata byte limit"
+            )
+        return remaining
+
+    def add_metadata(self, size: int) -> None:
+        """Account one authenticated commit body after its bounded read."""
+        self.metadata_bytes += size
+        if self.metadata_bytes > _MAX_HISTORY_COMMIT_BYTES:
+            raise SnapshotError(
+                "Reachable Git history exceeds the aggregate metadata byte limit"
+            )
 
 
 class _Digest(Protocol):
@@ -155,49 +229,88 @@ def _verified_digest(
     return digest.hexdigest().encode("ascii")
 
 
+def _read_exact_object_body(stream: BinaryIO, size: int) -> bytes:
+    """Read one already bounded Git object body without accepting truncation."""
+    content = bytearray()
+    remaining = size
+    while remaining:
+        chunk = stream.read(min(remaining, _COPY_CHUNK_BYTES))
+        if not chunk:
+            raise SnapshotError("Git returned an incomplete source object")
+        content.extend(chunk)
+        remaining -= len(chunk)
+    return bytes(content)
+
+
 def _read_verified_object(
     repo: Path,
     object_id: bytes,
     expected_kind: bytes,
     object_format: bytes,
+    *,
+    max_bytes: int | None = None,
+    bounded_error: str = "Git object exceeds the bounded byte limit",
 ) -> bytes:
     """Read one metadata object and recompute its content-addressed identity."""
     _validate_object_id(object_id, object_format)
-    result = subprocess.run(
+    process = subprocess.Popen(
         _git_command(repo, "cat-file", "--batch"),
-        input=object_id + b"\n",
-        check=True,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         env=_git_environment(),
     )
-    header_end = result.stdout.find(b"\n")
-    if header_end < 0:
-        raise SnapshotError("Git returned an invalid object header")
-    header = result.stdout[:header_end].split()
-    if len(header) != 3:
-        raise SnapshotError("Git returned an invalid object header")
-    returned_id, kind, raw_size = header
-    if returned_id != object_id or kind != expected_kind:
-        raise SnapshotError("Git returned an unexpected source object")
     try:
-        size = int(raw_size)
-    except ValueError as exc:
-        raise SnapshotError("Git returned an invalid source object size") from exc
-    body_start = header_end + 1
-    body_end = body_start + size
-    if (
-        size < 0
-        or len(result.stdout) != body_end + 1
-        or result.stdout[body_end:] != b"\n"
-    ):
-        raise SnapshotError("Git returned an incomplete source object")
-    content = result.stdout[body_start:body_end]
-    if _verified_digest(object_format, kind, content) != object_id:
-        raise SnapshotError("Git object bytes do not match their object ID")
-    return content
+        if process.stdin is None or process.stdout is None or process.stderr is None:
+            raise SnapshotError("Could not open the Git object stream")
+        process.stdin.write(object_id + b"\n")
+        process.stdin.close()
+        header_line = process.stdout.readline(1024)
+        if not header_line.endswith(b"\n"):
+            raise SnapshotError("Git returned an invalid object header")
+        header = header_line.removesuffix(b"\n").split()
+        if len(header) != 3:
+            raise SnapshotError("Git returned an invalid object header")
+        returned_id, kind, raw_size = header
+        if returned_id != object_id or kind != expected_kind:
+            raise SnapshotError("Git returned an unexpected source object")
+        try:
+            size = int(raw_size)
+        except ValueError as exc:
+            raise SnapshotError("Git returned an invalid source object size") from exc
+        if size < 0:
+            raise SnapshotError("Git returned an invalid source object size")
+        if max_bytes is not None and size > max_bytes:
+            raise SnapshotError(bounded_error)
+        content = _read_exact_object_body(process.stdout, size)
+        if process.stdout.read(1) != b"\n" or process.stdout.read(1):
+            raise SnapshotError("Git returned an incomplete source object")
+        stderr = process.stderr.read()
+        status = process.wait()
+        if status:
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            suffix = f": {detail}" if detail else ""
+            raise SnapshotError(
+                f"Git object stream failed with status {status}{suffix}"
+            )
+        if _verified_digest(object_format, kind, content) != object_id:
+            raise SnapshotError("Git object bytes do not match their object ID")
+        return content
+    finally:
+        active_error = sys.exc_info()[1]
+        cleanup_errors = _cleanup_blob_process(process, ())
+        if cleanup_errors and active_error is None:
+            raise SnapshotError("Could not clean up the Git object stream") from (
+                cleanup_errors[0]
+            )
 
 
-def resolve_commit(repo: Path, revision: str) -> dict[str, object]:
+def resolve_commit(
+    repo: Path,
+    revision: str,
+    *,
+    history_budget: _HistoryBudget | None = None,
+) -> dict[str, object]:
     """Resolve and cryptographically verify one commit identity."""
     object_format = _object_format(repo)
     commit = (
@@ -213,7 +326,25 @@ def resolve_commit(repo: Path, revision: str) -> dict[str, object]:
     )
     commit_id = commit.encode("ascii")
     _validate_object_id(commit_id, object_format)
-    content = _read_verified_object(repo, commit_id, b"commit", object_format)
+    max_bytes = _MAX_COMMIT_METADATA_BYTES
+    bounded_error = "Commit metadata exceeds the bounded byte limit"
+    if history_budget is not None:
+        remaining = history_budget.remaining_bytes(commit)
+        if remaining <= max_bytes:
+            bounded_error = (
+                "Reachable Git history exceeds the aggregate metadata byte limit"
+            )
+        max_bytes = min(max_bytes, remaining)
+    content = _read_verified_object(
+        repo,
+        commit_id,
+        b"commit",
+        object_format,
+        max_bytes=max_bytes,
+        bounded_error=bounded_error,
+    )
+    if history_budget is not None:
+        history_budget.add_metadata(len(content))
     headers = content.split(b"\n\n", 1)[0].splitlines()
     tree_ids = [
         header.removeprefix(b"tree ")
@@ -238,6 +369,21 @@ def resolve_commit(repo: Path, revision: str) -> dict[str, object]:
     }
 
 
+def read_verified_commit(repo: Path, commit: str) -> bytes:
+    """Read one exact commit body after recomputing its content-addressed ID."""
+    object_format = _object_format(repo)
+    commit_id = commit.encode("ascii")
+    _validate_object_id(commit_id, object_format)
+    return _read_verified_object(
+        repo,
+        commit_id,
+        b"commit",
+        object_format,
+        max_bytes=_MAX_COMMIT_METADATA_BYTES,
+        bounded_error="Commit metadata exceeds the bounded byte limit",
+    )
+
+
 def _validate_history_metadata(repo: Path) -> bytes:
     """Reject local metadata that can truncate or rewrite traversal."""
     object_format = _object_format(repo)
@@ -252,8 +398,13 @@ def _validate_history_metadata(repo: Path) -> bytes:
     return object_format
 
 
-def _verified_reachable_history(repo: Path, candidate: str) -> list[str]:
+def _verified_reachable_history(
+    repo: Path,
+    candidate: str,
+    history_budget: _HistoryBudget | None = None,
+) -> list[str]:
     """Walk raw authenticated parent headers without commit-graph traversal."""
+    budget = _HistoryBudget() if history_budget is None else history_budget
     object_format = _validate_history_metadata(repo)
     candidate_id = candidate.encode("ascii")
     _validate_object_id(candidate_id, object_format)
@@ -273,7 +424,7 @@ def _verified_reachable_history(repo: Path, candidate: str) -> list[str]:
             continue
         if current == 1:
             raise SnapshotError("Git returned a cyclic commit graph")
-        identity = resolve_commit(repo, commit)
+        identity = resolve_commit(repo, commit, history_budget=budget)
         if identity["commit"] != commit:
             raise SnapshotError("Git history did not return canonical commit IDs")
         parents = identity["parents"]
@@ -292,18 +443,25 @@ def _verified_reachable_history(repo: Path, candidate: str) -> list[str]:
     return order
 
 
-def history_commits(repo: Path, base: str, candidate: str) -> list[str]:
+def history_commits(
+    repo: Path,
+    base: str,
+    candidate: str,
+    *,
+    history_budget: _HistoryBudget | None = None,
+) -> list[str]:
     """Return a verified, complete topological commit range."""
+    budget = _HistoryBudget() if history_budget is None else history_budget
     object_format = _validate_history_metadata(repo)
     base_id = base.encode("ascii")
     candidate_id = candidate.encode("ascii")
     _validate_object_id(base_id, object_format)
     _validate_object_id(candidate_id, object_format)
-    candidate_history = _verified_reachable_history(repo, candidate)
+    candidate_history = _verified_reachable_history(repo, candidate, budget)
     candidate_set = set(candidate_history)
     if base not in candidate_set:
         raise SnapshotError("History base must be an ancestor of the candidate")
-    base_set = set(_verified_reachable_history(repo, base))
+    base_set = set(_verified_reachable_history(repo, base, budget))
     if candidate == base:
         return []
     commits = [commit for commit in candidate_history if commit not in base_set]
@@ -330,18 +488,28 @@ def _tree_entries(
     tree: bytes,
     object_format: bytes,
     member_cache: dict[bytes, list[_Entry]] | None = None,
+    budget: _TreeBudget | None = None,
 ) -> list[_Entry]:
     """Parse and cryptographically verify every reachable tree object."""
     entries: list[_Entry] = []
     seen: set[bytes] = set()
     cached_members = {} if member_cache is None else member_cache
+    tree_budget = _TreeBudget() if budget is None else budget
     digest_size = hashlib.new(_OBJECT_HASHES[object_format]).digest_size
 
     def members(tree_id: bytes) -> list[_Entry]:
         cached = cached_members.get(tree_id)
         if cached is not None:
             return cached
-        content = _read_verified_object(repo, tree_id, b"tree", object_format)
+        content = _read_verified_object(
+            repo,
+            tree_id,
+            b"tree",
+            object_format,
+            max_bytes=tree_budget.remaining_metadata_bytes(),
+            bounded_error="Git tree metadata exceeds the bounded byte limit",
+        )
+        tree_budget.add_metadata(len(content))
         parsed: list[_Entry] = []
         position = 0
         names: set[bytes] = set()
@@ -384,6 +552,7 @@ def _tree_entries(
         for mode, object_id, name in members(tree_id):
             path = name if not prefix else prefix + b"/" + name
             _validate_path(path)
+            tree_budget.add_path(path)
             if path in seen:
                 raise SnapshotError("Git returned a duplicate source path")
             seen.add(path)
@@ -405,6 +574,9 @@ def read_optional_verified_blob(
     repo: Path,
     tree: str,
     raw_path: bytes,
+    *,
+    max_bytes: int | None = None,
+    bounded_error: str = "Git blob exceeds the bounded byte limit",
 ) -> bytes | None:
     """Read an optional regular blob from a fully verified committed tree."""
     _validate_path(raw_path)
@@ -420,12 +592,32 @@ def read_optional_verified_blob(
         return None
     if len(matches) != 1 or matches[0][0] not in REGULAR_MODES:
         raise SnapshotError("Committed config must identify one regular blob")
-    return _read_verified_object(repo, matches[0][1], b"blob", object_format)
+    return _read_verified_object(
+        repo,
+        matches[0][1],
+        b"blob",
+        object_format,
+        max_bytes=max_bytes,
+        bounded_error=bounded_error,
+    )
 
 
-def read_verified_blob(repo: Path, tree: str, raw_path: bytes) -> bytes:
+def read_verified_blob(
+    repo: Path,
+    tree: str,
+    raw_path: bytes,
+    *,
+    max_bytes: int | None = None,
+    bounded_error: str = "Git blob exceeds the bounded byte limit",
+) -> bytes:
     """Read one required regular blob from a fully verified committed tree."""
-    content = read_optional_verified_blob(repo, tree, raw_path)
+    content = read_optional_verified_blob(
+        repo,
+        tree,
+        raw_path,
+        max_bytes=max_bytes,
+        bounded_error=bounded_error,
+    )
     if content is None:
         raise SnapshotError("Committed config must identify one regular blob")
     return content
@@ -605,6 +797,12 @@ def _wrapper_scan_path(object_id: bytes, raw_path: bytes) -> bytes:
     return root + b"/" + object_id + b"-" + path_digest + b".txt"
 
 
+def _context_wrapper_scan_path(object_id: bytes, raw_path: bytes) -> bytes:
+    """Retain a logical path suffix while keeping one blob in an isolated root."""
+    root = SCAN_TEST_ROOT if raw_path.startswith(b"npa/tests/") else SCAN_NON_TEST_ROOT
+    return root + b"/path-context/" + object_id + b"/" + raw_path
+
+
 def _path_scan_path(raw_path: bytes) -> bytes:
     """Isolate one historical path that was deduplicated from blob wrappers."""
     root = SCAN_TEST_ROOT if raw_path.startswith(b"npa/tests/") else SCAN_NON_TEST_ROOT
@@ -612,15 +810,75 @@ def _path_scan_path(raw_path: bytes) -> bytes:
     return root + b"/path-" + path_digest + b".txt"
 
 
+def _context_path_scan_path(raw_path: bytes) -> bytes:
+    """Retain a historical path suffix for path-constrained scanner rules."""
+    root = SCAN_TEST_ROOT if raw_path.startswith(b"npa/tests/") else SCAN_NON_TEST_ROOT
+    path_digest = hashlib.sha256(raw_path).hexdigest().encode("ascii")
+    return root + b"/path-context/path-" + path_digest + b"/" + raw_path
+
+
 def _historical_target_path(object_id: bytes, raw_path: bytes) -> bytes:
     """Give one historical blob a collision-free path with its exact basename."""
     name = raw_path.rsplit(b"/", 1)[-1]
+    path_digest = hashlib.sha256(raw_path).hexdigest().encode("ascii")
     root = (
         b"npa/tests/.npa-gitleaks-history/"
         if raw_path.startswith(b"npa/tests/")
         else b".npa-gitleaks-history/"
     )
-    return root + object_id + b"/" + name
+    return root + object_id + b"-" + path_digest + b"/" + name
+
+
+def _candidate_exact_path_targets(
+    entries: list[_Entry],
+    root: Path | None,
+) -> dict[tuple[bytes, bytes], Path] | None:
+    """Map each candidate wrapper to its exact logical path in a separate view."""
+    if root is None:
+        return None
+    root.mkdir(mode=0o700)
+    return {
+        (object_id, raw_path): _target_path(root, raw_path)
+        for _mode, object_id, raw_path in entries
+    }
+
+
+def _history_exact_path_targets(
+    entries: list[_Entry],
+    root: Path | None,
+) -> tuple[dict[tuple[bytes, bytes], Path] | None, int]:
+    """Shard historical wrappers so each source exposes exact logical paths."""
+    if root is None:
+        return None, 0
+    root.mkdir(mode=0o700)
+    targets: dict[tuple[bytes, bytes], Path] = {}
+    full_paths: list[set[tuple[bytes, ...]]] = []
+    strict_prefixes: list[set[tuple[bytes, ...]]] = []
+    for _mode, object_id, raw_path in entries:
+        parts = tuple(raw_path.split(b"/"))
+        ancestors = {parts[:index] for index in range(1, len(parts))}
+        shard = 0
+        while shard < len(full_paths):
+            if (
+                parts not in full_paths[shard]
+                and parts not in strict_prefixes[shard]
+                and not ancestors & full_paths[shard]
+            ):
+                break
+            shard += 1
+        if shard >= _MAX_EXACT_PATH_SHARDS:
+            raise SnapshotError("Historical exact-path views exceed the shard limit")
+        if shard == len(full_paths):
+            full_paths.append(set())
+            strict_prefixes.append(set())
+            shard_root = root / str(shard)
+            shard_root.mkdir(mode=0o700)
+        else:
+            shard_root = root / str(shard)
+        full_paths[shard].add(parts)
+        strict_prefixes[shard].update(ancestors)
+        targets[(object_id, raw_path)] = _target_path(shard_root, raw_path)
+    return targets, len(full_paths)
 
 
 def _start_blob_process(repo: Path) -> subprocess.Popen[bytes]:
@@ -651,13 +909,23 @@ def _write_path_wrappers(
     """Write isolated historical path-only wrappers."""
     for raw_path in scan_paths:
         payload = b"\n" + raw_path + b"\n"
+        file_bytes = len(SCAN_PREFIX) + len(payload)
+        if receipt.materialized_bytes + file_bytes > _MAX_SCAN_VIEW_BYTES:
+            raise SnapshotError("Generated scan view exceeds the bounded byte limit")
         target = _target_path(destination, _path_scan_path(raw_path))
         with _open_target(target) as stream:
             stream.write(SCAN_PREFIX)
             stream.write(payload)
-        receipt.wrapper_scan_files += 1
+        context_target = _target_path(
+            destination,
+            _context_path_scan_path(raw_path),
+        )
+        context_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.link(target, context_target)
+        receipt.wrapper_scan_files += 2
         receipt.path_bytes += len(payload)
-        receipt.scan_bytes += len(SCAN_PREFIX) + len(payload)
+        receipt.scan_bytes += 2 * (len(SCAN_PREFIX) + len(payload))
+        receipt.materialized_bytes += file_bytes
 
 
 def _request_blob_size(
@@ -689,8 +957,9 @@ def _write_scan_blob(
     preserve_paths: bool,
     size: int,
     digest: _Digest,
-) -> tuple[int, int]:
-    """Write exact raw bytes plus one isolated text wrapper."""
+    exact_path_target: Path | None,
+) -> tuple[int, int, int]:
+    """Write exact raw bytes plus neutral and logical-path text wrappers."""
     target_path = _raw_scan_path(expected_id, raw_path, preserve_paths)
     raw_target = _target_path(destination, target_path)
     wrapper_path = _wrapper_scan_path(expected_id, raw_path)
@@ -704,14 +973,25 @@ def _write_scan_blob(
             _copy_exact(source, (raw_stream, wrapper), size, digest)
         wrapper.write(_SCAN_BOUNDARY)
         transcoded = _append_unicode(raw_target, wrapper)
-    scan_bytes = (
+    context_target = _target_path(
+        destination,
+        _context_wrapper_scan_path(expected_id, raw_path),
+    )
+    context_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.link(wrapper_target, context_target)
+    if exact_path_target is not None:
+        exact_path_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.link(wrapper_target, exact_path_target)
+    wrapper_bytes = (
         len(SCAN_PREFIX)
         + len(path_payload)
         + (2 * len(_SCAN_BOUNDARY))
-        + (2 * size)
+        + size
         + transcoded
     )
-    return scan_bytes, transcoded
+    wrapper_copies = 2 + int(exact_path_target is not None)
+    scan_bytes = size + (wrapper_copies * wrapper_bytes)
+    return scan_bytes, transcoded, size + wrapper_bytes
 
 
 def _record_scan_blob(
@@ -719,12 +999,16 @@ def _record_scan_blob(
     raw_path: bytes,
     scan_bytes: int,
     transcoded: int,
+    materialized_bytes: int,
+    has_exact_path_wrapper: bool,
 ) -> None:
-    """Record one raw blob and its text wrapper."""
+    """Record one raw blob and its neutral/logical text wrappers."""
     receipt.raw_scan_files += 1
-    receipt.wrapper_scan_files += 1
+    receipt.wrapper_scan_files += 2 + int(has_exact_path_wrapper)
+    receipt.exact_path_wrapper_files += int(has_exact_path_wrapper)
     receipt.path_bytes += len(raw_path) + 2
     receipt.scan_bytes += scan_bytes
+    receipt.materialized_bytes += materialized_bytes
     if transcoded:
         receipt.transcoded_files += 1
         receipt.transcoded_bytes += transcoded
@@ -738,16 +1022,35 @@ def _write_blob_entry(
     preserve_paths: bool,
     object_format: bytes,
     receipt: _WriteReceipt,
+    exact_path_target: Path | None,
 ) -> None:
     """Write and cryptographically verify one requested blob."""
     _, expected_id, raw_path = entry
     size = _request_blob_size(process, expected_id)
+    if scan_view and size > _MAX_SCAN_BLOB_BYTES:
+        raise SnapshotError("Git blob exceeds the bounded scan-source byte limit")
+    if scan_view and receipt.total_bytes + size > _MAX_SCAN_SOURCE_BYTES:
+        raise SnapshotError("Git blobs exceed the aggregate scan-source byte limit")
+    path_payload_bytes = len(raw_path) + 2
+    wrapper_upper_bound = (
+        len(SCAN_PREFIX)
+        + path_payload_bytes
+        + (2 * len(_SCAN_BOUNDARY))
+        + (5 * size)
+        + (2 * ((size // 8) + 1))
+    )
+    if (
+        scan_view
+        and receipt.materialized_bytes + size + wrapper_upper_bound
+        > _MAX_SCAN_VIEW_BYTES
+    ):
+        raise SnapshotError("Generated scan view exceeds the bounded byte limit")
     digest = hashlib.new(_OBJECT_HASHES[object_format])
     digest.update(b"blob " + str(size).encode("ascii") + b"\0")
     if process.stdout is None:
         raise SnapshotError("Git object stream is unavailable")
     if scan_view:
-        scan_bytes, transcoded = _write_scan_blob(
+        scan_bytes, transcoded, materialized_bytes = _write_scan_blob(
             process.stdout,
             destination,
             expected_id,
@@ -755,13 +1058,22 @@ def _write_blob_entry(
             preserve_paths,
             size,
             digest,
+            exact_path_target,
         )
-        _record_scan_blob(receipt, raw_path, scan_bytes, transcoded)
+        _record_scan_blob(
+            receipt,
+            raw_path,
+            scan_bytes,
+            transcoded,
+            materialized_bytes,
+            exact_path_target is not None,
+        )
     else:
         target = _target_path(destination, raw_path)
         with _open_target(target) as stream:
             _copy_exact(process.stdout, (stream,), size, digest)
         receipt.scan_bytes += size
+        receipt.materialized_bytes += size
     if digest.hexdigest().encode("ascii") != expected_id:
         raise SnapshotError("Git object bytes do not match their object ID")
     if process.stdout.read(1) != b"\n":
@@ -793,6 +1105,7 @@ def _write_blobs(
     *,
     preserve_paths: bool = True,
     scan_paths: list[bytes] | None = None,
+    exact_path_targets: dict[tuple[bytes, bytes], Path] | None = None,
 ) -> _WriteReceipt:
     """Stream, validate, and write every requested Git object."""
     process = _start_blob_process(repo)
@@ -809,6 +1122,11 @@ def _write_blobs(
                 preserve_paths,
                 object_format,
                 receipt,
+                (
+                    None
+                    if exact_path_targets is None
+                    else exact_path_targets.get((entry[1], entry[2]))
+                ),
             )
         _finish_blob_process(process)
     finally:
@@ -836,7 +1154,9 @@ def _scan_receipt(
         "scan_files": scan_files,
         "raw_scan_files": receipt.raw_scan_files,
         "wrapper_scan_files": receipt.wrapper_scan_files,
+        "exact_path_wrapper_files": receipt.exact_path_wrapper_files,
         "scan_bytes": receipt.scan_bytes,
+        "materialized_bytes": receipt.materialized_bytes,
         "scan_path_bytes": receipt.path_bytes,
         "transcoded_files": receipt.transcoded_files,
         "transcoded_bytes": receipt.transcoded_bytes,
@@ -870,6 +1190,7 @@ def materialize(
     revision: str,
     *,
     scan_view: bool = False,
+    exact_path_view: Path | None = None,
 ) -> dict[str, object]:
     """Materialize one exact commit tree.
 
@@ -883,28 +1204,107 @@ def materialize(
     Raises:
         SnapshotError: If exact materialization cannot be proven.
     """
+    if exact_path_view is not None and not scan_view:
+        raise SnapshotError("Exact-path wrappers require the scanner view")
     identity = resolve_commit(repo, revision)
     object_format = str(identity["object_format"]).encode("ascii")
     tree = str(identity["tree"])
-    entries = _tree_entries(repo, tree.encode("ascii"), object_format)
+    tree_budget = _TreeBudget()
+    entries = _tree_entries(
+        repo,
+        tree.encode("ascii"),
+        object_format,
+        budget=tree_budget,
+    )
+    exact_path_targets = _candidate_exact_path_targets(entries, exact_path_view)
     receipt = _write_blobs(
         repo,
         entries,
         destination,
         scan_view,
         object_format,
+        exact_path_targets=exact_path_targets,
     )
-    return _candidate_receipt(identity, tree, entries, receipt, scan_view)
+    rendered = _candidate_receipt(identity, tree, entries, receipt, scan_view)
+    rendered["tree_metadata_bytes"] = tree_budget.metadata_bytes
+    rendered["tree_paths"] = tree_budget.paths
+    rendered["tree_path_bytes"] = tree_budget.path_bytes
+    rendered["exact_path_shards"] = int(bool(exact_path_targets))
+    rendered["root_ignore_exact_path_exclusions"] = int(
+        exact_path_view is not None
+        and any(raw_path == b".gitleaksignore" for _, _, raw_path in entries)
+    )
+    return rendered
+
+
+def materialize_commit_metadata(
+    repo: Path,
+    destination: Path,
+    revisions: list[str],
+) -> dict[str, object]:
+    """Materialize authenticated raw metadata for exact selected-range commits."""
+    if not revisions:
+        raise SnapshotError("Commit metadata scan requires at least one revision")
+    object_format = _object_format(repo)
+    seen: set[str] = set()
+    total_bytes = 0
+    scan_bytes = 0
+    transcoded_bytes = 0
+    transcoded_files = 0
+    for revision in revisions:
+        if revision in seen:
+            raise SnapshotError("Commit metadata scan contains a duplicate revision")
+        seen.add(revision)
+        content = read_verified_commit(repo, revision)
+        if len(content) > _MAX_COMMIT_METADATA_BYTES:
+            raise SnapshotError("Commit metadata exceeds the bounded byte limit")
+        if total_bytes + len(content) > _MAX_COMMIT_METADATA_TOTAL_BYTES:
+            raise SnapshotError(
+                "Commit metadata exceeds the aggregate bounded byte limit"
+            )
+        target = destination / f"{revision}.txt"
+        wrapper_target = _target_path(
+            destination,
+            SCAN_NON_TEST_ROOT + b"/commit-" + revision.encode("ascii") + b".txt",
+        )
+        with _open_target(target) as stream:
+            stream.write(content)
+        with _open_target(wrapper_target) as wrapper:
+            wrapper.write(SCAN_PREFIX)
+            wrapper.write(_SCAN_BOUNDARY)
+            wrapper.write(content)
+            wrapper.write(_SCAN_BOUNDARY)
+            transcoded = _append_unicode(target, wrapper)
+        total_bytes += len(content)
+        transcoded_bytes += transcoded
+        transcoded_files += int(bool(transcoded))
+        scan_bytes += (
+            len(SCAN_PREFIX)
+            + (2 * len(_SCAN_BOUNDARY))
+            + (2 * len(content))
+            + transcoded
+        )
+    return {
+        "commits": list(revisions),
+        "object_format": object_format.decode("ascii"),
+        "files": len(revisions),
+        "bytes": total_bytes,
+        "wrapper_files": len(revisions),
+        "scan_bytes": scan_bytes,
+        "transcoded_files": transcoded_files,
+        "transcoded_bytes": transcoded_bytes,
+    }
 
 
 def _index_history(
     repo: Path,
     revisions: list[str],
-) -> tuple[bytes, _HistoryIndex]:
+) -> tuple[bytes, _HistoryIndex, _TreeBudget]:
     """Verify and deduplicate source objects across historical trees."""
     object_format = _object_format(repo)
     member_cache: dict[bytes, list[_Entry]] = {}
     index = _HistoryIndex()
+    tree_budget = _TreeBudget()
     for revision in revisions:
         identity = resolve_commit(repo, revision)
         if identity["commit"] != revision:
@@ -920,23 +1320,24 @@ def _index_history(
             tree.encode("ascii"),
             object_format,
             member_cache,
+            tree_budget,
         )
         index.source_entries += len(entries)
         for mode, object_id, raw_path in entries:
-            is_test = raw_path.startswith(b"npa/tests/")
-            historical_path = _historical_target_path(object_id, raw_path)
             index.entries.setdefault(
-                (object_id, is_test, historical_path),
+                (object_id, raw_path),
                 (mode, object_id, raw_path),
             )
             index.paths.add(raw_path)
-    return object_format, index
+    return object_format, index, tree_budget
 
 
 def materialize_history_scan(
     repo: Path,
     destination: Path,
     revisions: list[str],
+    *,
+    exact_path_root: Path | None = None,
 ) -> dict[str, object]:
     """Materialize a deduplicated historical scan view.
 
@@ -951,15 +1352,21 @@ def materialize_history_scan(
     """
     if not revisions:
         raise SnapshotError("Historical scan requires at least one revision")
-    object_format, index = _index_history(repo, revisions)
+    object_format, index, tree_budget = _index_history(repo, revisions)
+    entries = list(index.entries.values())
+    exact_path_targets, exact_path_shards = _history_exact_path_targets(
+        entries,
+        exact_path_root,
+    )
     receipt = _write_blobs(
         repo,
-        list(index.entries.values()),
+        entries,
         destination,
         True,
         object_format,
         preserve_paths=False,
         scan_paths=sorted(index.paths),
+        exact_path_targets=exact_path_targets,
     )
     return {
         "commits": index.commits,
@@ -969,6 +1376,15 @@ def materialize_history_scan(
         "unique_blob_contexts": len(index.entries),
         "unique_paths": len(index.paths),
         "bytes": receipt.total_bytes,
+        "tree_metadata_bytes": tree_budget.metadata_bytes,
+        "tree_paths": tree_budget.paths,
+        "tree_path_bytes": tree_budget.path_bytes,
+        "exact_path_shards": exact_path_shards,
+        "root_ignore_exact_path_exclusions": (
+            sum(raw_path == b".gitleaksignore" for _, _, raw_path in entries)
+            if exact_path_root is not None
+            else 0
+        ),
         **_scan_receipt(receipt, True, len(index.entries)),
     }
 
