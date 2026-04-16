@@ -1,0 +1,17 @@
+# Example: ACT policy on PushT dataset.
+# These are top-level TrainPipelineConfig fields, not nested.
+#
+# Usage:
+#   lerobot-train --config training/configs/act_pusht.yaml
+#   # or override inline:
+#   lerobot-train --policy.type=act --dataset.repo_id=lerobot/pusht --batch_size=64
+
+policy:
+  type: act
+
+dataset:
+  repo_id: lerobot/pusht
+
+batch_size: 64
+num_workers: 4
+save_freq: 5000
