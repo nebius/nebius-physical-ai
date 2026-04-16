@@ -1,0 +1,21 @@
+# Credentials
+.env
+*.tfvars
+!terraform.tfvars.example
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate*
+terraform.tfstate*
+terraform/terraform_backend_override.tf
+terraform/.terraform.lock.hcl
+training.zip
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+.DS_Store

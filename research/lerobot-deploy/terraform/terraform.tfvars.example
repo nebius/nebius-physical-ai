@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in, OR let environment.sh handle
+# everything via TF_VAR_* exports (recommended).
+
+# nebius_project_id  = "project-..."
+# iam_token          = ""            # set by environment.sh
+# service_account_id = ""            # set by environment.sh
+
+# Optional — restrict SSH access by IP (defaults to 0.0.0.0/0):
+# ssh_cidr_block = "YOUR_IP/32"
+
+# Optional overrides:
+# lerobot_version    = "0.5.1"
+# gpu_platform       = "gpu-h100-sxm"
+# gpu_preset         = "1gpu-16vcpu-200gb"
+# image_family       = "ubuntu24.04-cuda12"
+# boot_disk_size_gb  = 100
+# enable_preemptible = true

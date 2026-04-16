@@ -1,0 +1,5 @@
+.terraform/
+*.tfstate*
+terraform.tfvars
+terraform_backend_override.tf
+.terraform.lock.hcl
