@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "npa"
+version = "0.1.0"
+description = "Nebius Physical AI workbench CLI"
+requires-python = ">=3.10"
+dependencies = [
+    "typer~=0.24.1",
+    "httpx~=0.28.1",
+    "paramiko~=4.0.0",
+    "pyyaml~=6.0.3",
+    "rich~=15.0.0",
+    "boto3~=1.42.91",
+    "jinja2~=3.1.6",
+]
+
+[project.optional-dependencies]
+server = ["fastapi~=0.136.1"]
+genesis = [
+    "genesis-world",
+    "rsl-rl-lib==2.2.4",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "tensorboard>=2.14",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+]
+adapter = [
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+]
+
+[project.scripts]
+npa = "npa.cli.main:app_entry"
+
+[tool.npa.supported-tools]
+lerobot = "0.5.1"
+genesis = "0.4.6"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/npa"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
