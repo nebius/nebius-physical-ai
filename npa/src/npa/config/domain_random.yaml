@@ -1,0 +1,53 @@
+# Domain randomization parameter defaults for Genesis simulation.
+#
+# These ranges are applied per-episode during demo generation and student
+# evaluation. Training the teacher does NOT use domain randomization
+# (privileged state is deterministic).
+
+cube:
+  # Position noise (meters) applied to initial cube placement
+  position_noise_xy: 0.1
+  # Rotation noise (degrees) applied to initial cube orientation
+  rotation_noise_deg: 15.0
+
+friction:
+  # Uniform range for friction ratio multiplier
+  min: 0.3
+  max: 1.2
+
+mass:
+  # Uniform range for mass shift (kg) on manipulated objects
+  min: -0.02
+  max: 0.05
+
+pd_gains:
+  # Multiplicative noise range for PD gains
+  kp_ratio_min: 0.8
+  kp_ratio_max: 1.2
+  kv_ratio_min: 0.8
+  kv_ratio_max: 1.2
+
+camera:
+  # Camera position noise (meters)
+  position_noise: 0.02
+  # Field of view noise (degrees)
+  fov_noise: 3.0
+  # White balance / color jitter (applied in image space)
+  brightness_range: [0.8, 1.2]
+  contrast_range: [0.8, 1.2]
+  saturation_range: [0.8, 1.2]
+
+lighting:
+  # Ambient light intensity range
+  ambient_min: 0.05
+  ambient_max: 0.3
+  # Directional light intensity range
+  directional_min: 0.5
+  directional_max: 1.5
+  # Random directional light position perturbation (meters)
+  position_noise: 0.5
+
+table:
+  # Table surface texture randomization
+  color_hue_range: [0.0, 1.0]
+  roughness_range: [0.2, 0.8]

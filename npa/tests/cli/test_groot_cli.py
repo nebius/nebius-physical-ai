@@ -1,0 +1,873 @@
+from __future__ import annotations
+
+import json
+import shlex
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from npa.cli.groot import (
+    DEFAULT_MODEL,
+    GROOT_DATA_MOUNT,
+    GROOT_RELEASE,
+    GROOT_VENV,
+    _build_download_command,
+    _build_finetune_command,
+    _build_infer_command,
+    _build_install_command,
+    _build_offline_eval_command,
+    _storage_env_tokens,
+)
+from npa.cli.main import app
+from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.clients.credentials import CredentialsConfig
+from npa.clients.http import ServerError
+from npa.clients.ssh import SSHError
+
+
+runner = CliRunner()
+
+
+def _cfg(app_status: str = "") -> WorkbenchConfig:
+    return WorkbenchConfig(
+        endpoint="http://groot:8080",
+        ssh=SSHConfig(host="groot", user="ubuntu", key_path="~/.ssh/id"),
+        storage=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        ),
+        app_status=app_status,
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "deploy",
+        "download",
+        "finetune",
+        "eval",
+        "serve",
+        "infer",
+        "convert",
+        "status",
+        "system-info",
+        "list",
+    ],
+)
+def test_groot_command_help(command: str) -> None:
+    result = runner.invoke(app, ["workbench", "groot", command, "--help"])
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+
+
+def test_groot_registered_under_workbench() -> None:
+    result = runner.invoke(app, ["workbench", "--help"])
+
+    assert result.exit_code == 0
+    assert "groot" in result.output
+
+
+def test_groot_list_filters_to_groot_workbenches(mocker) -> None:
+    mocker.patch("npa.cli.groot.default_project_name", return_value="proj")
+    mocker.patch("npa.cli.groot.default_workbench_name", return_value="groot")
+    mocker.patch(
+        "npa.cli.groot.list_projects",
+        return_value={
+            "proj": {
+                "region": "eu-north1",
+                "workbenches": {
+                    "groot": {
+                        "workbench_type": "groot",
+                        "gpu_platform": "gpu-h100-sxm",
+                        "endpoint": "http://groot:8080",
+                        "app_status": "healthy",
+                    },
+                    "sim": {
+                        "workbench_type": "isaac-lab",
+                        "ssh": {"host": "sim"},
+                    },
+                    "train": {
+                        "workbench_type": "lerobot",
+                        "endpoint": "http://train:8080",
+                    },
+                },
+            }
+        },
+    )
+
+    result = runner.invoke(app, ["workbench", "groot", "list"])
+
+    assert result.exit_code == 0
+    assert "groot" in result.output
+    assert "app_status=healthy" in result.output
+    assert "sim" not in result.output
+    assert "train" not in result.output
+
+
+def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Deploy complete" in result.output
+    assert "gpu-l40s-a" in result.output
+    assert "http://<pending>:8080" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_groot_deploy_passes_workbench_type_to_provisioner(tmp_path: Path, mocker) -> None:
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.groot.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.9",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    write_config = mocker.patch("npa.cli.groot.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    init.assert_called_once_with(tf_dir=str(tmp_path), backend_config=None)
+    apply.assert_called_once()
+    tf_vars = apply.call_args.kwargs["tf_vars"]
+    assert tf_vars["gpu_platform"] == "gpu-l40s-a"
+    assert tf_vars["gpu_preset"] == "1gpu-40vcpu-160gb"
+    assert tf_vars["data_disk_size_gb"] == "200"
+    assert tf_vars["instance_name"] == "groot-proj-groot"
+    assert tf_vars["workbench_type"] == "groot"
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["groot"]
+    assert wb_cfg["workbench_type"] == "groot"
+    assert wb_cfg["data_disk_size_gb"] == 200
+    assert wb_cfg["data_mount"] == GROOT_DATA_MOUNT
+    assert wb_cfg["model"] == DEFAULT_MODEL
+    assert wb_cfg["app_status"] == "provisioned"
+
+
+def test_groot_deploy_passes_custom_data_disk_size(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.groot.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.9",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+            "--data-disk-size",
+            "384",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert apply.call_args.kwargs["tf_vars"]["data_disk_size_gb"] == "384"
+
+
+def test_groot_byovm_deploy_skips_terraform_and_records_detected_gpus(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.side_effect = [
+        (0, "connected\n", ""),
+        (0, "NVIDIA L40S\nNVIDIA L40S\n", ""),
+    ]
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.resolve_credentials", return_value=CredentialsConfig())
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    write_config = mocker.patch("npa.cli.groot.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.10",
+            "--ssh-key",
+            "~/.ssh/byovm",
+            "--gpu-count",
+            "1",
+            "--skip-app",
+            "--tf-var",
+            "s3_bucket=bucket",
+        ],
+    )
+
+    assert result.exit_code == 0
+    init.assert_not_called()
+    apply.assert_not_called()
+    ssh_cls.assert_called_once()
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["groot"]
+    assert wb_cfg["runtime"] == "byovm"
+    assert wb_cfg["ssh"] == {
+        "host": "203.0.113.10",
+        "user": "ubuntu",
+        "key_path": "~/.ssh/byovm",
+    }
+    assert wb_cfg["gpu_platform"] == "NVIDIA L40S"
+    assert wb_cfg["gpu_count"] == 1
+    assert wb_cfg["detected_gpu_count"] == 2
+    assert wb_cfg["cuda_visible_devices"] == "0"
+
+
+def test_groot_deploy_rejects_invalid_data_disk_size() -> None:
+    result = runner.invoke(app, ["workbench", "groot", "deploy", "--data-disk-size", "0"])
+
+    assert result.exit_code == 1
+    assert "--data-disk-size must be positive" in result.output
+
+
+def test_groot_install_command_installs_gr00t_and_isaac_lab() -> None:
+    cmd = _build_install_command(8080)
+
+    assert "git clone --recurse-submodules https://github.com/NVIDIA/Isaac-GR00T.git" in cmd
+    assert "git -C /opt/groot/Isaac-GR00T checkout 3df8b3825d67f755e69141446f4315f281b9b7e6" in cmd
+    assert "expected Isaac-GR00T ref 3df8b3825d67f755e69141446f4315f281b9b7e6" in cmd
+    assert "expected gr00t 0.1.0" in cmd
+    assert "GROOT_RUNTIME_PIN_PATCH_OK " in cmd
+    assert "config.model.model_revision" in cmd
+    assert "uv sync --python 3.10" in cmd
+    assert "ngccli_linux.zip" in cmd
+    assert 'export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"' in cmd
+    assert "GR00T_ENV_SMOKE_OK" in cmd
+    assert "isaaclab[isaacsim,all]==2.3.2.post1" in cmd
+    assert "ISAAC_LAB_ENV_SMOKE_OK" in cmd
+    assert "OMNI_KIT_ACCEPT_EULA=YES" in cmd
+    assert "HF_HOME=/opt/groot/hf_cache" in cmd
+    assert 'sudo chown -R "$USER:$USER" /opt/groot/' in cmd
+    assert "npa-groot-server" in cmd
+    assert "gr00t.policy.gr00t_policy import Gr00tPolicy" in cmd
+
+
+def test_groot_install_command_accepts_byovm_gpu_env() -> None:
+    cmd = _build_install_command(
+        8080,
+        env_fields={
+            "CUDA_VISIBLE_DEVICES": "0,1",
+            "NPA_GPU_COUNT": "2",
+        },
+    )
+
+    assert "CUDA_VISIBLE_DEVICES=0,1" in cmd
+    assert "NPA_GPU_COUNT=2" in cmd
+
+
+def test_groot_download_command_uses_huggingface_for_current_public_model() -> None:
+    cmd = _build_download_command(DEFAULT_MODEL, "/models/groot")
+
+    assert "uv run huggingface-cli download nvidia/GR00T-N1.7-3B" in cmd
+    assert "--revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
+    assert 'if [ hf = "ngc" ]' in cmd
+    assert "NPA_GROOT_DOWNLOAD_COMPLETE" in cmd
+
+
+def test_groot_download_command_supports_ngc_refs() -> None:
+    cmd = _build_download_command("ngc://nvidia/gr00t-n1:1", "s3://bucket/models/groot/")
+
+    assert "ngc registry model download-version nvidia/gr00t-n1:1" in cmd
+    assert "apikey = $NGC_API_KEY" in cmd
+    assert "upload_file" in cmd
+    assert f"{GROOT_VENV}/bin/python -c" in cmd
+
+
+def test_groot_download_passes_cli_ngc_token_to_ssh(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "done", "")
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.groot.resolve_credentials", return_value=CredentialsConfig())
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "download",
+            "--model",
+            "ngc://nvidia/gr00t-n1:1",
+            "--ngc-api-key",
+            "nvapi-test",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "source: ngc" in result.output
+    ssh_cfg = ssh_cls.call_args.args[0]
+    assert ssh_cfg.tokens["NGC_API_KEY"] == "nvapi-test"
+    assert ssh_cfg.tokens["AWS_ACCESS_KEY_ID"] == "key"
+    assert ssh_cfg.tokens["AWS_SECRET_ACCESS_KEY"] == "secret"
+    assert ssh_cfg.tokens["NEBIUS_S3_ENDPOINT"] == "https://storage.example"
+
+
+def test_groot_storage_env_tokens_include_s3_credentials() -> None:
+    tokens = _storage_env_tokens(_cfg())
+
+    assert tokens == {
+        "AWS_ENDPOINT_URL": "https://storage.example",
+        "NEBIUS_S3_ENDPOINT": "https://storage.example",
+        "AWS_ACCESS_KEY_ID": "key",
+        "AWS_SECRET_ACCESS_KEY": "secret",
+    }
+
+
+def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
+    mocker.patch("npa.cli.groot.time.time", return_value=1234.0)
+    cmd = _build_finetune_command(
+        input_path="s3://bucket/datasets/train/",
+        output_path="s3://bucket/checkpoints/groot/",
+        base_model=DEFAULT_MODEL,
+        robot_embodiment="g1",
+        num_gpus=2,
+        config="s3://bucket/configs/groot.yaml",
+        endpoint_url="https://storage.example",
+        max_steps=2,
+        global_batch_size=1,
+        dataloader_num_workers=0,
+        save_steps=1,
+        save_total_limit=1,
+        save_only_model=True,
+    )
+
+    assert "uv run torchrun --nproc_per_node=2" in cmd
+    assert "gr00t/experiment/launch_finetune.py" in cmd
+    assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
+    assert "--base-model-path /opt/groot/models/nvidia--GR00T-N1.7-3B" in cmd
+    assert "--dataset-path /opt/groot/data_cache/bucket_datasets_train" in cmd
+    assert "--embodiment-tag UNITREE_G1" in cmd
+    assert "modality_config_path=/opt/groot/config_cache/groot.yaml" in cmd
+    assert '"${modality_config_arg[@]}"' in cmd
+    assert "meta/npa_groot_modality_config.py" in cmd
+    assert "--max-steps 2" in cmd
+    assert "--global-batch-size 1" in cmd
+    assert "--dataloader-num-workers 0" in cmd
+    assert "--save-steps 1" in cmd
+    assert "--save-total-limit 1" in cmd
+    assert "--save-only-model" in cmd
+    assert "upload_file" in cmd
+
+
+def test_groot_finetune_runs_ssh_command(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_GROOT_FINETUNE_COMPLETE", "")
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "finetune",
+            "--input-path",
+            "s3://bucket/datasets/train/",
+            "--output-path",
+            "s3://bucket/checkpoints/groot/",
+            "--robot-embodiment",
+            "g1",
+            "--num-gpus",
+            "1",
+            "--max-steps",
+            "1",
+            "--global-batch-size",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "status: success" in result.output
+    assert "robot_embodiment: UNITREE_G1" in result.output
+    assert "launch_finetune.py" in ssh.run.call_args.args[0]
+    assert ssh_cls.call_args.args[0].tokens["AWS_ACCESS_KEY_ID"] == "key"
+
+
+def test_groot_eval_offline_requires_dataset_path(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "eval",
+            "--input-path",
+            "s3://bucket/checkpoints/groot/",
+            "--output-path",
+            "s3://bucket/evals/groot/",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Offline eval requires --dataset-path" in result.output
+
+
+def test_groot_eval_offline_builds_open_loop_eval_command(mocker) -> None:
+    mocker.patch("npa.cli.groot.time.time", return_value=1234.0)
+    cmd = _build_offline_eval_command(
+        checkpoint_path="s3://bucket/checkpoints/groot/",
+        dataset_path="s3://bucket/datasets/heldout/",
+        output_path="s3://bucket/evals/groot/",
+        robot_embodiment="LIBERO_PANDA",
+        endpoint_url="https://storage.example",
+    )
+
+    remote_script = shlex.split(cmd)[2]
+    assert "mkdir -p /opt/groot/outputs/offline-eval-1234" in remote_script
+    assert "eval_plot_path=/opt/groot/outputs/offline-eval-1234/traj_0.jpeg" in remote_script
+    assert "eval_log_path=/opt/groot/outputs/offline-eval-1234/open_loop_eval.log" in remote_script
+    assert f"{GROOT_VENV}/bin/python gr00t/eval/open_loop_eval.py" in remote_script
+    assert f"{GROOT_VENV}/bin/python - <<'PY'" in remote_script
+    assert "\npython - <<'PY'" not in remote_script
+    assert "--dataset-path /opt/groot/eval_data_cache/bucket_datasets_heldout" in remote_script
+    assert "--model-path /opt/groot/checkpoint_cache/bucket_checkpoints_groot" in remote_script
+    assert "--embodiment-tag LIBERO_PANDA" in remote_script
+    assert '--save-plot-path "$eval_plot_path"' in remote_script
+    assert "npa_groot_eval_results.json" in remote_script
+    assert "Average MSE across all trajs" in remote_script
+    assert "upload_file" in remote_script
+
+
+def test_groot_eval_sim_writes_request_without_ssh(tmp_path: Path, mocker) -> None:
+    resolve_ssh = mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
+    out_dir = tmp_path / "sim-eval"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "eval",
+            "--sim",
+            "--isaac-lab-workbench",
+            "isaac",
+            "--input-path",
+            "s3://bucket/checkpoints/groot/",
+            "--output-path",
+            str(out_dir),
+            "--num-episodes",
+            "3",
+            "--robot-embodiment",
+            "g1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    request_path = out_dir / "groot_sim_eval_request.json"
+    data = json.loads(request_path.read_text())
+    assert data["type"] == "npa_groot_sim_eval_request_v1"
+    assert data["checkpoint_path"] == "s3://bucket/checkpoints/groot/"
+    assert data["isaac_lab_workbench"] == "isaac"
+    assert data["robot_embodiment"] == "UNITREE_G1"
+    assert "does not install or bundle Isaac Lab" in data["note"]
+    resolve_ssh.assert_called_once()
+    ssh_cls.assert_not_called()
+
+
+def test_groot_serve_restarts_server_with_model(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "GROOT_SERVE_READY", "")
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "serve",
+            "--model",
+            DEFAULT_MODEL,
+            "--robot-embodiment",
+            "g1",
+            "--port",
+            "9090",
+        ],
+    )
+
+    assert result.exit_code == 0
+    cmd = ssh.run_or_raise.call_args.args[0]
+    assert "GROOT_MODEL_PATH=nvidia/GR00T-N1.7-3B" in cmd
+    assert "GROOT_EMBODIMENT_TAG=UNITREE_G1" in cmd
+    assert "GROOT_SERVER_PORT=9090" in cmd
+    assert "curl -fsS -X POST" in cmd
+    assert "GR00TPolicy" not in cmd
+    assert "isaaclab" not in cmd.lower()
+
+
+def test_groot_serve_s3_checkpoint_downloads_first(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "ok", "")
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "serve",
+            "--input-path",
+            "s3://bucket/checkpoints/groot/",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert ssh.run_or_raise.call_count == 2
+    assert "download_file" in ssh.run_or_raise.call_args_list[0].args[0]
+    assert "GROOT_SERVE_READY" in ssh.run_or_raise.call_args_list[1].args[0]
+
+
+def test_groot_serve_requires_one_model_source(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
+
+    result = runner.invoke(app, ["workbench", "groot", "serve"])
+
+    assert result.exit_code == 1
+    assert "Provide exactly one of --input-path or --model" in result.output
+
+
+def test_groot_serve_dry_run_prints_pending_without_ssh(mocker) -> None:
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "serve",
+            "--model",
+            DEFAULT_MODEL,
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "status: pending" in result.output
+    assert "no server action attempted" in result.output
+    ssh_cls.assert_not_called()
+
+
+def test_build_groot_infer_command_runs_standalone_and_uploads_results() -> None:
+    cmd = _build_infer_command(
+        checkpoint_path="s3://bucket/checkpoints/groot/",
+        dataset_path="s3://bucket/data/groot/",
+        output_path="s3://bucket/results/infer/",
+        embodiment_tag="new",
+        inference_mode="pytorch",
+        endpoint_url="https://storage.example",
+        steps=8,
+        action_horizon=4,
+        trt_engine_path="./engines",
+    )
+
+    assert f"{GROOT_VENV}/bin/python - <<" in cmd
+    assert "standalone_inference_script.py" in cmd
+    assert "npa_groot_infer_results.json" in cmd
+    assert "predicted_actions.npz" in cmd
+    assert "npa_s3_download_done" in cmd
+    assert "npa_s3_upload_done" in cmd
+    assert "inference_mode" in cmd
+    assert "pytorch" in cmd
+    assert "EmbodimentTag.resolve" in cmd
+    assert "NEW_EMBODIMENT" in cmd
+
+
+def test_groot_infer_runs_remote_batch_inference(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_GROOT_INFER_COMPLETE\n", "")
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "infer",
+            "--input-path",
+            "s3://bucket/checkpoint/",
+            "--dataset-path",
+            "s3://bucket/dataset/",
+            "--output-path",
+            "s3://bucket/infer/",
+            "--embodiment-tag",
+            "new",
+            "--inference-mode",
+            "pytorch",
+            "--steps",
+            "8",
+            "--action-horizon",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0
+    ssh_cls.assert_called_once()
+    cmd = ssh.run.call_args.args[0]
+    assert "standalone_inference_script.py" in cmd
+    assert "s3://bucket/checkpoint/" in cmd
+    assert "s3://bucket/dataset/" in cmd
+    assert "status: success" in result.output
+    assert "inference_mode: pytorch" in result.output
+
+
+def test_groot_infer_rejects_invalid_steps() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "infer",
+            "--input-path",
+            "s3://bucket/checkpoint/",
+            "--dataset-path",
+            "s3://bucket/dataset/",
+            "--output-path",
+            "s3://bucket/infer/",
+            "--steps",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--steps must be positive" in result.output
+
+
+def test_groot_convert_dispatches_lerobot_to_groot(tmp_path: Path, mocker) -> None:
+    input_dir = tmp_path / "lerobot"
+    output_dir = tmp_path / "groot"
+    input_dir.mkdir()
+    convert_mock = mocker.patch(
+        "npa.adapter.groot.lerobot_to_groot",
+        return_value=output_dir,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "convert",
+            "--input-path",
+            str(input_dir),
+            "--output-path",
+            str(output_dir),
+            "--direction",
+            "lerobot-to-groot",
+            "--robot-embodiment",
+            "new",
+        ],
+    )
+
+    assert result.exit_code == 0
+    convert_mock.assert_called_once_with(
+        input_dir,
+        output_dir,
+        robot_embodiment="NEW_EMBODIMENT",
+    )
+    assert "status: converted" in result.output
+
+
+def test_groot_convert_dispatches_groot_to_lerobot(tmp_path: Path, mocker) -> None:
+    input_dir = tmp_path / "groot"
+    output_dir = tmp_path / "lerobot"
+    input_dir.mkdir()
+    convert_mock = mocker.patch(
+        "npa.adapter.groot.groot_to_lerobot",
+        return_value=output_dir,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "convert",
+            "--input-path",
+            str(input_dir),
+            "--output-path",
+            str(output_dir),
+            "--direction",
+            "groot-to-lerobot",
+        ],
+    )
+
+    assert result.exit_code == 0
+    convert_mock.assert_called_once_with(input_dir, output_dir)
+
+
+def test_groot_convert_s3_does_not_require_deployed_workbench(tmp_path: Path, mocker) -> None:
+    input_dir = tmp_path / "downloaded"
+    input_dir.mkdir()
+    converted_dir = tmp_path / "converted"
+    converted_dir.mkdir()
+    storage = mocker.MagicMock()
+    storage.download_directory.return_value = str(input_dir)
+    storage.upload_directory.return_value = "s3://bucket/out/"
+    mocker.patch("npa.cli.groot._storage_client_for_project_or_environment", return_value=storage)
+    resolve_config = mocker.patch("npa.cli.groot.resolve_config")
+    convert_mock = mocker.patch(
+        "npa.adapter.groot.lerobot_to_groot",
+        return_value=converted_dir,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "not-deployed-yet",
+            "convert",
+            "--input-path",
+            "s3://bucket/in/",
+            "--output-path",
+            "s3://bucket/out/",
+        ],
+    )
+
+    assert result.exit_code == 0
+    resolve_config.assert_not_called()
+    storage.download_directory.assert_called_once()
+    storage.upload_directory.assert_called_once_with(str(converted_dir), "s3://bucket/out/")
+    convert_mock.assert_called_once()
+
+
+def test_groot_status_checks_health_endpoint(mocker) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {"status": "ok", "groot_version": "0.1.0"}
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg("healthy"))
+    http_cls = mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status"])
+
+    assert result.exit_code == 0
+    assert "server: up" in result.output
+    assert "groot_version: 0.1.0" in result.output
+    http_cls.assert_called_once_with("http://groot:8080", timeout=10.0, retries=1)
+
+
+def test_groot_status_maps_server_error(mocker) -> None:
+    http = mocker.MagicMock()
+    http.health.side_effect = ServerError("down")
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg("install_failed"))
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status"])
+
+    assert result.exit_code == 1
+    assert "app_status: install_failed" in result.output
+    assert "Cannot reach GR00T endpoint" in result.output
+
+
+def test_groot_system_info_prints_ssh_output(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "gr00t_version: 0.1.0\nngc_credentials_configured: True", "")
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "groot", "system-info"])
+
+    assert result.exit_code == 0
+    assert "gr00t_version: 0.1.0" in result.output
+    cmd = ssh.run_or_raise.call_args.args[0]
+    assert "nvidia-smi" in cmd
+    assert "lscpu" in cmd
+    assert "metadata.version('gr00t')" in cmd
+    assert "ngc_credentials_configured" in cmd
+    assert "metadata.version('isaaclab')" in cmd
+
+
+def test_groot_release_constant_documented() -> None:
+    assert GROOT_RELEASE == "n1.7"

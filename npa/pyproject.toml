@@ -15,6 +15,7 @@ dependencies = [
     "rich~=15.0.0",
     "boto3~=1.42.91",
     "jinja2~=3.1.6",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,9 @@ adapter = [
     "numpy>=1.24",
     "pyarrow>=14.0",
 ]
+groot = [
+    "nvidia-gr00t-sdk==0.1.0",
+]
 
 [project.scripts]
 npa = "npa.cli.main:app_entry"
@@ -39,6 +43,13 @@ npa = "npa.cli.main:app_entry"
 [tool.npa.supported-tools]
 lerobot = "0.5.1"
 genesis = "0.4.6"
+isaac-lab = "2.3.2.post1"
+cosmos = "1.0.9"
+groot = "n1.7"
+fiftyone = "1.15.0"
+nebius-cli = "0.12.192"
+terraform = "~> 0.5.201"
+terraform-cli = "1.13.3"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/npa"]
@@ -49,3 +60,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "multi_gpu: BYOVM multi-GPU tests that require NPA_TEST_BYOVM_* env vars and a live multi-GPU VM.",
+]

@@ -1,0 +1,19 @@
+[Unit]
+Description=NPA LeRobot Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/etc/npa-lerobot-server/env
+ExecStart=/opt/lerobot/venv/bin/python -m npa.server.app
+WorkingDirectory=/opt/lerobot
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/npa-lerobot/server.log
+StandardError=append:/var/log/npa-lerobot/server.log
+
+[Install]
+WantedBy=multi-user.target

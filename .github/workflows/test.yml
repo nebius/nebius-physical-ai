@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e ".[server]" && pip install pytest pytest-cov pytest-mock
+
+      - name: Install adapter test dependencies
+        run: cd npa && pip install -e ".[adapter]"
+
+      - name: Run pytest with coverage
+        run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing
+
+      - name: Run CLI install test
+        run: cd npa && bash tests/integration/test_cli_install.sh
+
+      - name: Check e2e shell scripts
+        run: |
+          cd npa
+          bash -n tests/e2e/test_lerobot_e2e.sh
+          bash -n tests/e2e/test_genesis_e2e.sh
+          bash -n tests/e2e/test_groot_e2e.sh
+          bash -n tests/e2e/test_groot_composition_e2e.sh
