@@ -3,6 +3,9 @@ import pytest
 import tempfile
 from pathlib import Path
 
+os.environ.setdefault("NPA_PROJECT_ID", "project-test-00000000")
+os.environ.setdefault("NPA_S3_BUCKET", "test-bucket-00000000")
+
 
 @pytest.fixture
 def tmp_workspace(tmp_path):

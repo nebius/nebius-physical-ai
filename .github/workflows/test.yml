@@ -7,6 +7,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      NPA_PROJECT_ID: project-test-00000000
+      NPA_S3_BUCKET: test-bucket-00000000
+      NPA_E2E_PROJECT_ID: project-test-00000000
+      NPA_E2E_GROOT_BUCKET: test-bucket-00000000
 
     steps:
       - name: Check out repository

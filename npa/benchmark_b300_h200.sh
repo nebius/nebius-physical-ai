@@ -17,10 +17,12 @@ set -euo pipefail
 #   bash npa/benchmark_b300_h200.sh destroy  # tear down both VMs
 
 MODE="${1:-full}"
+: "${NPA_PROJECT_ID:?NPA_PROJECT_ID must be set}"
+: "${NPA_S3_BUCKET:?NPA_S3_BUCKET must be set}"
 
 # ── Node definitions ──────────────────────────────────────────────────────
 
-B300_PROJECT="${NPA_B300_PROJECT_ID:-project-e03a10j5pr006d1n7f9bbf}"
+B300_PROJECT="${NPA_B300_PROJECT_ID:-$NPA_PROJECT_ID}"
 B300_TENANT="${NPA_B300_TENANT_ID:-${NPA_TENANT_ID:-${NEBIUS_ACCOUNT_ID:-}}}"
 B300_REGION="uk-south1"
 B300_GPU_TYPE="gpu-b300-sxm"
@@ -28,7 +30,7 @@ B300_GPU_PRESET="1gpu-24vcpu-346gb"
 B300_PROJ_ALIAS="uk-south1"
 B300_WB_NAME="b300"
 
-H200_PROJECT="${NPA_H200_PROJECT_ID:-YOUR_PROJECT_ID}"
+H200_PROJECT="${NPA_H200_PROJECT_ID:-$NPA_PROJECT_ID}"
 H200_TENANT="${NPA_H200_TENANT_ID:-${NPA_TENANT_ID:-${NEBIUS_ACCOUNT_ID:-}}}"
 H200_REGION="eu-north1"
 H200_GPU_TYPE="gpu-h200-sxm"
@@ -125,7 +127,7 @@ if ! npa workbench lerobot -p "$H200_PROJ_ALIAS" -n "$H200_WB_NAME" benchmark \
 fi
 
 banner "All benchmarks finished"
-echo "Check S3 for results under benchmarks/b300/ and benchmarks/h200/"
+echo "Check S3 bucket ${NPA_S3_BUCKET} for results under benchmarks/b300/ and benchmarks/h200/"
 echo ""
 echo "To tear down both VMs:"
 echo "  bash npa/benchmark_b300_h200.sh destroy"

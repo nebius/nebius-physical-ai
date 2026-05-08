@@ -4,8 +4,8 @@
 
 | Alias | GPU | IP | SSH | Status |
 |-------|-----|----|-----|--------|
-| `l40s-distill-genesis` | L40S 46GB | 89.169.120.81 | `ssh -i ~/.ssh/id_ed25519 ubuntu@89.169.120.81` | **Up** — genesis-world 0.4.6, rsl-rl 2.2.4, npa 0.1.0 installed |
-| `h100-distill-lerobot` | H100 80GB | 89.169.120.69 | `ssh -i ~/.ssh/id_ed25519 ubuntu@89.169.120.69` | **Up** — lerobot 0.5.1, torch 2.10. No genesis/npa. |
+| `l40s-distill-genesis` | L40S 46GB | `<GENESIS_VM_IP>` | `ssh -i ~/.ssh/id_ed25519 ubuntu@<GENESIS_VM_IP>` | **Up** — genesis-world 0.4.6, rsl-rl 2.2.4, npa 0.1.0 installed |
+| `h100-distill-lerobot` | H100 80GB | `<LEROBOT_VM_IP>` | `ssh -i ~/.ssh/id_ed25519 ubuntu@<LEROBOT_VM_IP>` | **Up** — lerobot 0.5.1, torch 2.10. No genesis/npa. |
 
 Both in `eu-north1` project. Config: `~/.npa/config.yaml` under `eu-north1` → `l40s-distill-genesis` / `h100-distill-lerobot`.
 

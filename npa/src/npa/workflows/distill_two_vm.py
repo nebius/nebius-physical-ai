@@ -44,8 +44,17 @@ logger = logging.getLogger(__name__)
 
 # ── Environment constants ──────────────────────────────────────────────────
 
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        raise RuntimeError(f"{name} must be set")
+    return value
+
+
 TENANT_ID = os.environ.get("NPA_TENANT_ID") or os.environ.get("NEBIUS_ACCOUNT_ID", "")
-PROJECT_ID = os.environ.get("NPA_PROJECT_ID", "YOUR_PROJECT_ID")
+PROJECT_ID = _required_env("NPA_PROJECT_ID")
+DEFAULT_S3_BUCKET = _required_env("NPA_S3_BUCKET")
 REGION = os.environ.get("NPA_REGION", "eu-north1")
 PROJECT_ALIAS = os.environ.get("NPA_PROJECT_ALIAS", REGION)
 
@@ -142,7 +151,7 @@ def _provision_vm(
     """Provision a single VM via Terraform. Returns Terraform outputs dict."""
     from npa.deploy import provisioner
 
-    s3_bucket = nebius_creds["s3_bucket"]
+    s3_bucket = nebius_creds.get("s3_bucket") or DEFAULT_S3_BUCKET
     s3_endpoint = nebius_creds["s3_endpoint"]
 
     logger.info("Preparing Terraform working dir for %s ...", spec.name)
@@ -206,6 +215,7 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
     """
     from npa.deploy import provisioner
 
+    s3_bucket = nebius_creds.get("s3_bucket") or DEFAULT_S3_BUCKET
     tf_dir = str(provisioner.working_dir_path(PROJECT_ALIAS, spec.name))
     if not Path(tf_dir).exists():
         # Re-create the working dir and pull state from S3 backend.
@@ -216,7 +226,7 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
         tf_dir = str(provisioner.prepare_working_dir(
             PROJECT_ALIAS,
             spec.name,
-            bucket=nebius_creds["s3_bucket"],
+            bucket=s3_bucket,
             region=REGION,
             endpoint=nebius_creds["s3_endpoint"],
         ))
@@ -243,7 +253,7 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
         "enable_preemptible": "false",
         "nebius_api_key": nebius_creds["nebius_api_key"],
         "nebius_secret_key": nebius_creds["nebius_secret_key"],
-        "s3_bucket": nebius_creds["s3_bucket"],
+        "s3_bucket": s3_bucket,
         "s3_endpoint": nebius_creds["s3_endpoint"],
     }
 
@@ -1021,7 +1031,7 @@ def distill(
         except NebiusError as exc:
             raise TwoVMDistillError(f"Nebius bootstrap failed: {exc}") from exc
 
-    s3_bucket = nebius_creds["s3_bucket"]
+    s3_bucket = nebius_creds.get("s3_bucket") or DEFAULT_S3_BUCKET
     s3_prefix = f"distill/{run_id}/"
 
     # Track which VMs exist and should be torn down.  Populated during
