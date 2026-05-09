@@ -212,7 +212,7 @@ FiftyOne should load S3 video files or video prefixes directly.
 - If a prefix mixes images and videos, warn and default to image mode with a suggestion to use `--format video`.
 
 ### Tests
-- Unit test format detection for local paths and S3 URIs.
+- Unit test format detection for S3 URIs and Hugging Face Hub dataset refs.
 - Unit test video loader command construction.
 - Unit test mixed-prefix warning behavior.
 - E2E test loading a short `.mp4` from the test S3 bucket and asserting sample count > 0.
@@ -414,4 +414,3 @@ Add a warning guardrail that makes source drift visible after agent-assisted ses
 - Unit or script test that a modified file under `npa/src/` is reported.
 - Unit or script test that no source modifications produce a clean result.
 - Documentation note explaining when the guardrail should be run.
-

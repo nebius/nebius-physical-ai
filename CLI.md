@@ -220,7 +220,7 @@ npa workbench lerobot -p <project> -n <name> eval [OPTIONS]
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--checkpoint` | str | **required** | Checkpoint path, HF repo, or s3:// URI |
+| `--input-path` | str | **required** | S3 URI or Hugging Face Hub checkpoint ID |
 | `--env` | str | **required** | Environment type |
 | `--env-task` | str | `""` | Environment task |
 | `--episodes` | int | 10 | Number of eval episodes |
@@ -230,7 +230,7 @@ npa workbench lerobot -p <project> -n <name> eval [OPTIONS]
 
 ```bash
 npa workbench lerobot -p uk-south1 -n b300 eval \
-  --checkpoint /opt/lerobot/checkpoints/my-run/checkpoints/last/pretrained_model \
+  --input-path s3://my-bucket/checkpoints/my-run/ \
   --env pusht --episodes 50
 ```
 
@@ -246,7 +246,7 @@ npa workbench lerobot -p <project> -n <name> serve [OPTIONS]
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--checkpoint` | str | **required** | Checkpoint path, HF repo, or s3:// URI |
+| `--input-path` | str | **required** | S3 URI or Hugging Face Hub checkpoint ID |
 | `--env-type` | str | `""` | Environment type |
 | `--env-task` | str | `""` | Environment task |
 | `--port` | int | 8080 | Server port |
@@ -700,11 +700,12 @@ npa workbench lerobot -p uk-south1 -n b300 deploy \
 npa workbench lerobot -p uk-south1 -n b300 benchmark -r act:lerobot/pusht:200 -w 8 -w 0
 npa workbench lerobot -p uk-south1 -n b300 profile-train -r act:lerobot/pusht:100 --mode wallclock
 npa workbench lerobot -p uk-south1 -n b300 train \
-  --policy-type act --dataset lerobot/pusht --steps 5000 --job-name act-pusht
+  --policy-type act --dataset lerobot/pusht --steps 5000 --job-name act-pusht \
+  --output-path s3://my-bucket/checkpoints/act-pusht/
 npa workbench lerobot -p uk-south1 -n b300 eval \
-  --checkpoint /opt/lerobot/checkpoints/act-pusht/checkpoints/last/pretrained_model --env pusht
+  --input-path s3://my-bucket/checkpoints/act-pusht/ --env pusht
 npa workbench lerobot -p uk-south1 -n b300 serve \
-  --checkpoint /opt/lerobot/checkpoints/act-pusht/checkpoints/last/pretrained_model
+  --input-path s3://my-bucket/checkpoints/act-pusht/
 
 # Manual distillation with tuned teacher (local GPU, supports --env-override)
 npa workbench genesis train-teacher --n-envs 4096 --max-iterations 500 \

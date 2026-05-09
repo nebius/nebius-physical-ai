@@ -24,7 +24,10 @@ Create ~/.npa/credentials.yaml for user-level tokens and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
-  NGC_API_KEY: nvapi_REPLACE_ME
+ngc:
+  api_key: nvapi_REPLACE_ME
+  # org: optional-ngc-org
+  # team: optional-ngc-team
 ssh:
   host: 203.0.113.10
   user: ubuntu

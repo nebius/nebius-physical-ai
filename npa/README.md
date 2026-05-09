@@ -45,9 +45,9 @@ npa workbench lerobot -p eu-north1 -n h200 deploy \
   --region eu-north1
 
 # Train/eval/serve a LeRobot policy on the remote workbench
-npa workbench lerobot train --policy-type act --dataset lerobot/aloha_sim_transfer_cube_human --job-name act-demo
-npa workbench lerobot eval --checkpoint /opt/lerobot/checkpoints/act-demo/checkpoints/last/pretrained_model --env aloha
-npa workbench lerobot serve --checkpoint /opt/lerobot/checkpoints/act-demo/checkpoints/last/pretrained_model
+npa workbench lerobot train --policy-type act --dataset lerobot/aloha_sim_transfer_cube_human --job-name act-demo --output-path s3://my-bucket/checkpoints/act-demo/
+npa workbench lerobot eval --input-path s3://my-bucket/checkpoints/act-demo/ --env aloha
+npa workbench lerobot serve --input-path s3://my-bucket/checkpoints/act-demo/
 npa workbench lerobot infer --observation /tmp/obs.json --output json
 
 # Genesis-side local stages
@@ -135,16 +135,23 @@ out of it and store those credentials in `~/.npa/credentials.yaml`:
 ```yaml
 tokens:
   HF_TOKEN: hf_REPLACE_ME
-  NGC_API_KEY: nvapi_REPLACE_ME
+ngc:
+  api_key: nvapi_REPLACE_ME
+  # org: optional-ngc-org
+  # team: optional-ngc-team
 ```
 
-Environment variables with the same names override values in
-`credentials.yaml`, so this also works for one-off runs:
+Standard environment variables override values in `credentials.yaml`, so this
+also works for one-off runs:
 
 ```bash
 export HF_TOKEN=hf_REPLACE_ME
+export NGC_API_KEY=nvapi_REPLACE_ME
 npa workbench cosmos deploy ...
 ```
+
+For compatibility, `NGC_API_KEY`, `NGC_ORG`, and `NGC_TEAM` are also accepted
+inside the legacy `tokens:` map.
 
 Recommended permissions:
 
@@ -159,6 +166,7 @@ variables.
 Token requirements by workbench:
 
 - Cosmos: requires `HF_TOKEN` during deploy to download gated Hugging Face Cosmos models.
+- GR00T: requires `HF_TOKEN` for gated Hugging Face GR00T models; optional `ngc.api_key` or `NGC_API_KEY` is written to the server env for NGC-backed model paths and readiness displays.
 - LeRobot: may need `HF_TOKEN` for gated Hugging Face datasets or models.
 - FiftyOne: may need `HF_TOKEN` for gated Hugging Face datasets.
 - Isaac Lab and Genesis: no token is required by default.

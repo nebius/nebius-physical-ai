@@ -48,4 +48,6 @@ def test_setup_guidance_commands_show_credentials_path(command: str) -> None:
     assert result.exit_code == 0
     assert "~/.npa/credentials.yaml" in result.output
     assert "HF_TOKEN" in result.output
+    assert "ngc:" in result.output
+    assert "api_key" in result.output
     assert "chmod 600" in result.output
