@@ -62,4 +62,6 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 markers = [
     "multi_gpu: BYOVM multi-GPU tests that require NPA_TEST_BYOVM_* env vars and a live multi-GPU VM.",
+    "ngc_e2e: GR00T NGC credential e2e tests that require NPA_TEST_GROOT_NGC_E2E=1 and a live GR00T workbench.",
+    "byovm_live: BYOVM tests that require opt-in live target environment variables.",
 ]

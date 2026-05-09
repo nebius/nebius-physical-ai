@@ -78,3 +78,7 @@ jobs:
           bash -n tests/e2e/test_genesis_e2e.sh
           bash -n tests/e2e/test_groot_e2e.sh
           bash -n tests/e2e/test_groot_composition_e2e.sh
+
+      - name: Warn on source drift
+        if: always()
+        run: ./scripts/check-source-drift.sh
