@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.clients.config import SSHConfig, StorageConfig, TerraformStateConfig, WorkbenchConfig
 from npa.clients.ssh import SSHError
 
 
@@ -237,6 +238,149 @@ def test_generate_demos_uses_multiprocess_when_gpu_count_env_is_set(
     assert multi.call_args.kwargs["gpu_count"] == 2
     assert multi.call_args.kwargs["n_envs"] == 8
     assert genesis_cli._configured_generate_gpu_count(0) == 2
+
+
+def test_generate_demos_shard_can_disable_egl_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    seen_env: dict[str, str | None] = {}
+
+    def fake_generate_demos(**_kwargs):
+        seen_env["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+        seen_env["QD_VISIBLE_DEVICE"] = os.environ.get("QD_VISIBLE_DEVICE")
+        seen_env["EGL_DEVICE_ID"] = os.environ.get("EGL_DEVICE_ID")
+        return {"status": "success", "total_episodes": 1}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "npa.genesis.generate_demos",
+        SimpleNamespace(
+            DemoGenerationError=FakeDemoGenerationError,
+            generate_demos=fake_generate_demos,
+        ),
+    )
+    monkeypatch.setenv("EGL_DEVICE_ID", "stale")
+
+    from npa.cli import genesis as genesis_cli
+
+    messages: list[dict[str, object]] = []
+    genesis_cli._generate_demos_shard(
+        SimpleNamespace(put=messages.append),
+        genesis_cli._GenesisGenerateShard(
+            rank=0,
+            gpu_id="1",
+            n_envs=1,
+            n_episodes=1,
+            output_dir=str(tmp_path),
+            checkpoint_path=str(tmp_path / "model.pt"),
+            domain_randomize=False,
+            fps=30,
+            seed=7,
+            allow_failure_demos=False,
+            action_space="joint",
+            set_egl_device=False,
+        ),
+    )
+
+    assert seen_env == {
+        "CUDA_VISIBLE_DEVICES": "1",
+        "QD_VISIBLE_DEVICE": "1",
+        "EGL_DEVICE_ID": None,
+    }
+    assert messages[0]["ok"] is True
+
+
+def test_run_multi_gpu_generate_demos_retries_without_egl_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "npa.genesis.generate_demos",
+        SimpleNamespace(
+            DemoGenerationError=FakeDemoGenerationError,
+            generate_demos=mocker.MagicMock(),
+        ),
+    )
+
+    from npa.cli import genesis as genesis_cli
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self._messages: list[dict[str, object]] = []
+
+        def put(self, message: dict[str, object]) -> None:
+            self._messages.append(message)
+
+        def get_nowait(self) -> dict[str, object]:
+            if not self._messages:
+                raise queue.Empty
+            return self._messages.pop(0)
+
+    class FakeProcess:
+        def __init__(self, target, args) -> None:
+            self._queue = args[0]
+            self._shard = args[1]
+            self.exitcode: int | None = None
+
+        def start(self) -> None:
+            if self._shard.set_egl_device:
+                self._queue.put({
+                    "rank": self._shard.rank,
+                    "gpu_id": self._shard.gpu_id,
+                    "ok": False,
+                    "error": "RuntimeError: EGL device unavailable",
+                })
+                self.exitcode = 1
+                return
+
+            shard_output = Path(self._shard.output_dir)
+            episode_dir = shard_output / f"episode_{self._shard.rank:04d}"
+            episode_dir.mkdir(parents=True)
+            (episode_dir / "data.json").write_text("{}")
+            self._queue.put({
+                "rank": self._shard.rank,
+                "gpu_id": self._shard.gpu_id,
+                "ok": True,
+                "output_dir": self._shard.output_dir,
+                "result": {
+                    "total_attempted": 1,
+                    "total_successes": 1,
+                    "total_episodes": 1,
+                    "fps": 30,
+                },
+            })
+            self.exitcode = 0
+
+        def join(self) -> None:
+            return None
+
+    class FakeContext:
+        def Queue(self) -> FakeQueue:
+            return FakeQueue()
+
+        Process = FakeProcess
+
+    mocker.patch("npa.cli.genesis._visible_gpu_ids", return_value=["0", "1"])
+    mocker.patch("npa.cli.genesis.mp.get_context", return_value=FakeContext())
+
+    result = genesis_cli._run_multi_gpu_generate_demos(
+        checkpoint_path=tmp_path / "model.pt",
+        n_envs=2,
+        n_episodes=2,
+        output_dir=tmp_path / "episodes",
+        domain_randomize=False,
+        fps=30,
+        seed=1,
+        allow_failure_demos=False,
+        action_space="joint",
+        gpu_count=2,
+    )
+
+    assert result["egl_device_fallback"] is True
+    assert result["egl_device_id_enabled"] is False
+    assert result["total_episodes"] == 2
+    assert (tmp_path / "episodes" / "episode_0000" / "data.json").exists()
+    assert (tmp_path / "episodes" / "episode_0001" / "data.json").exists()
 
 
 def test_generate_demos_reports_partial_multiprocess_failures(
@@ -800,7 +944,7 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     update_status = mocker.patch("npa.clients.config.update_workbench_app_status")
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
-    mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_env_file")
     mocker.patch("npa.deploy.configurator.write_manifest")
 
     result = runner.invoke(
@@ -833,10 +977,80 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-genesis"
     assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-genesis:0.4.6")
+    env_vars = write_env.call_args.args[2]
+    assert env_vars["NVIDIA_DRIVER_CAPABILITIES"] == "all"
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["sim-container"]
     assert wb_cfg["runtime"] == "container"
+    assert deploy_container.call_args.kwargs["group_add"] == ["0", "video", "render"]
+    assert deploy_container.call_args.kwargs["devices"] == ["/dev/dri"]
     assert update_status.call_args_list[0].args == ("proj", "sim-container", "installing")
     assert update_status.call_args_list[-1].args == ("proj", "sim-container", "healthy")
+
+
+def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.return_value = (0, "connected", "")
+    mocker.patch(
+        "npa.clients.config.resolve_terraform_state",
+        return_value=TerraformStateConfig(
+            bucket="state-bucket",
+            endpoint="https://storage.example",
+            access_key="AKIA_TEST",
+            secret_key="secret-value",
+        ),
+    )
+    mocker.patch("npa.clients.config.resolve_environment", return_value=None)
+    mocker.patch("npa.clients.config.resolve_credentials", return_value=SimpleNamespace(tokens={}))
+    mocker.patch("npa.clients.config.list_projects", return_value={})
+    mocker.patch("npa.clients.config.resolve_container_registry", return_value="registry.example")
+    write_config = mocker.patch("npa.clients.config.write_config")
+    update_status = mocker.patch("npa.clients.config.update_workbench_app_status")
+    mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
+    mocker.patch(
+        "npa.cli.genesis.detect_gpu_info",
+        return_value=SimpleNamespace(
+            count=1,
+            names=["NVIDIA H200"],
+            primary_name="NVIDIA H200",
+        ),
+    )
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    mocker.patch("npa.deploy.configurator.write_manifest")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "-p",
+            "proj",
+            "-n",
+            "sim-byovm",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "10.0.0.30",
+            "--ssh-key",
+            "~/.ssh/id",
+            "--region",
+            "eu-north1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["sim-byovm"]
+    assert wb_cfg["storage"] == {
+        "checkpoint_bucket": "s3://state-bucket/checkpoints/",
+        "endpoint_url": "https://storage.example",
+    }
+    env_vars = write_env.call_args.args[2]
+    assert env_vars["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
+    assert env_vars["AWS_SECRET_ACCESS_KEY"] == "secret-value"
+    assert env_vars["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert update_status.call_args_list[-1].args == ("proj", "sim-byovm", "healthy")
 
 
 def test_genesis_deploy_vm_keeps_terraform_boot_disk_default(tmp_path: Path, mocker) -> None:

@@ -141,13 +141,17 @@ class _GenesisGenerateShard:
     seed: int
     allow_failure_demos: bool
     action_space: str
+    set_egl_device: bool = True
 
 
 def _generate_demos_shard(queue: Any, shard: _GenesisGenerateShard) -> None:
     """Run one Genesis demo process pinned to exactly one GPU."""
     os.environ["CUDA_VISIBLE_DEVICES"] = shard.gpu_id
     os.environ["QD_VISIBLE_DEVICE"] = shard.gpu_id
-    os.environ["EGL_DEVICE_ID"] = shard.gpu_id
+    if shard.set_egl_device:
+        os.environ["EGL_DEVICE_ID"] = shard.gpu_id
+    else:
+        os.environ.pop("EGL_DEVICE_ID", None)
 
     try:
         from npa.genesis.generate_demos import generate_demos
@@ -215,6 +219,7 @@ def _run_multi_gpu_generate_demos(
     allow_failure_demos: bool,
     action_space: str,
     gpu_count: int,
+    set_egl_device: bool = True,
 ) -> dict[str, Any]:
     from npa.genesis.generate_demos import DemoGenerationError
 
@@ -243,7 +248,7 @@ def _run_multi_gpu_generate_demos(
     episode_splits = _split_total(n_episodes, effective_gpu_count)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    ctx = mp.get_context("spawn")
+    ctx = mp.get_context("fork" if hasattr(os, "fork") else "spawn")
     queue = ctx.Queue()
     processes: list[tuple[mp.Process, _GenesisGenerateShard]] = []
     with tempfile.TemporaryDirectory(prefix="npa-genesis-shards-") as shard_root:
@@ -260,6 +265,7 @@ def _run_multi_gpu_generate_demos(
                 seed=seed + rank,
                 allow_failure_demos=allow_failure_demos,
                 action_space=action_space,
+                set_egl_device=set_egl_device,
             )
             process = ctx.Process(target=_generate_demos_shard, args=(queue, shard))
             process.start()
@@ -287,6 +293,24 @@ def _run_multi_gpu_generate_demos(
             })
 
         if not successful:
+            if set_egl_device and failed and all(
+                "EGL" in str(item.get("error", "")) for item in failed
+            ):
+                result = _run_multi_gpu_generate_demos(
+                    checkpoint_path=checkpoint_path,
+                    n_envs=n_envs,
+                    n_episodes=n_episodes,
+                    output_dir=output_dir,
+                    domain_randomize=domain_randomize,
+                    fps=fps,
+                    seed=seed,
+                    allow_failure_demos=allow_failure_demos,
+                    action_space=action_space,
+                    gpu_count=gpu_count,
+                    set_egl_device=False,
+                )
+                result["egl_device_fallback"] = True
+                return result
             failed_gpus = ", ".join(str(item["gpu_id"]) for item in failed)
             raise DemoGenerationError(
                 f"Genesis multi-GPU generation failed on all shards. Failed GPUs: {failed_gpus}"
@@ -327,6 +351,7 @@ def _run_multi_gpu_generate_demos(
             ),
             "domain_randomize": domain_randomize,
             "fps": sum(fps_values) if fps_values else None,
+            "egl_device_id_enabled": set_egl_device,
             "shards": [
                 {
                     "rank": int(message["rank"]),
@@ -1334,6 +1359,22 @@ def deploy_cmd(
                 merged_vars[key] = value
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if byovm:
+        try:
+            from npa.clients.config import ConfigError, resolve_terraform_state
+
+            state = resolve_terraform_state(proj_alias)
+        except ConfigError:
+            state = None
+        if state is not None:
+            saved = {
+                "s3_bucket": state.bucket,
+                "s3_endpoint": state.endpoint,
+                "nebius_api_key": state.access_key,
+                "nebius_secret_key": state.secret_key,
+            }
+            for key, value in saved.items():
+                if value and key not in extra_vars and not merged_vars.get(key):
+                    merged_vars[key] = value
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
@@ -1595,6 +1636,7 @@ def deploy_cmd(
                         "NEBIUS_S3_ENDPOINT": storage_ep,
                         "NEBIUS_S3_BUCKET": bucket,
                         "NEBIUS_REGION": env_region,
+                        "NVIDIA_DRIVER_CAPABILITIES": "all",
                         "MUJOCO_GL": "egl",
                         "PYOPENGL_PLATFORM": "egl",
                         "PYTHONUNBUFFERED": "1",
@@ -1615,6 +1657,8 @@ def deploy_cmd(
                     image_ref=image_ref,
                     container_name="npa-genesis",
                     env_file="/opt/lerobot/.env",
+                    group_add=["0", "video", "render"],
+                    devices=["/dev/dri"],
                     volumes=[
                         "/opt/lerobot/.env:/opt/lerobot/.env:ro",
                         "/opt/genesis/outputs:/opt/genesis/outputs",

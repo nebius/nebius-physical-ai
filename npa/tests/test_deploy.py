@@ -283,6 +283,31 @@ def test_write_manifest_writes_json_command(mocker) -> None:
     assert '"version": "1"' in command
 
 
+def test_deploy_workbench_container_adds_groups_and_devices(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.side_effect = [
+        (0, "44\n", ""),
+        (0, "109\n", ""),
+    ]
+    mocker.patch("npa.deploy.configurator.install_container_runtime")
+
+    configurator.deploy_workbench_container(
+        ssh,
+        image_ref="registry.example/npa-genesis:1",
+        container_name="npa-genesis",
+        group_add=["0", "video", "render"],
+        devices=["/dev/dri"],
+    )
+
+    assert ssh.run.call_args_list[0].args[0] == "getent group video | cut -d: -f3"
+    assert ssh.run.call_args_list[1].args[0] == "getent group render | cut -d: -f3"
+    run_cmd = ssh.run_or_raise.call_args_list[-1].args[0]
+    assert "--group-add 0" in run_cmd
+    assert "--group-add 44" in run_cmd
+    assert "--group-add 109" in run_cmd
+    assert "--device /dev/dri" in run_cmd
+
+
 def test_deploy_server_runs_expected_remote_steps(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh._config = SSHConfig(host="vm", user="ubuntu", key_path="key")

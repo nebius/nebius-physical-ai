@@ -161,6 +161,8 @@ def deploy_workbench_container(
     env_file: str | None = None,
     volumes: Sequence[str] = (),
     work_dirs: Sequence[str] = (),
+    group_add: Sequence[str] = (),
+    devices: Sequence[str] = (),
     command: str = "-lc 'tail -f /dev/null'",
     ssh_user: str = "ubuntu",
     gpu: bool = True,
@@ -188,12 +190,28 @@ def deploy_workbench_container(
 
     gpu_flag = "--gpus all " if gpu else ""
     env_flag = f"--env-file {shlex.quote(env_file)} " if env_file else ""
+    resolved_group_add: list[str] = []
+    for group in group_add:
+        if str(group).isdigit():
+            resolved_group_add.append(str(group))
+            continue
+        code, out, _ = ssh.run(
+            f"getent group {shlex.quote(str(group))} | cut -d: -f3"
+        )
+        resolved_group_add.append(out.strip() if code == 0 and out.strip() else str(group))
+    group_flags = " ".join(
+        f"--group-add {shlex.quote(group)}" for group in resolved_group_add
+    )
+    group_flags = f"{group_flags} " if group_flags else ""
+    device_flags = " ".join(f"--device {shlex.quote(device)}" for device in devices)
+    device_flags = f"{device_flags} " if device_flags else ""
     volume_flags = " ".join(f"-v {shlex.quote(volume)}" for volume in volumes)
     run_cmd = (
         f"sudo docker rm -f {shlex.quote(container_name)} >/dev/null 2>&1 || true\n"
         f"sudo docker run -d {gpu_flag}--ipc=host --network host "
         f"--name {shlex.quote(container_name)} --restart unless-stopped "
-        f"{env_flag}{volume_flags} {shlex.quote(image_ref)} {command}"
+        f"{group_flags}{device_flags}{env_flag}{volume_flags} "
+        f"{shlex.quote(image_ref)} {command}"
     )
     ssh.run_or_raise(run_cmd)
 
