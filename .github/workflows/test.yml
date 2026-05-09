@@ -35,6 +35,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          from click.utils import strip_ansi
           import npa
           from npa.cli.main import app
           from typer.testing import CliRunner
@@ -53,13 +54,14 @@ jobs:
           ]
           for args, flag in checks:
               result = runner.invoke(app, args)
+              output = strip_ansi(result.output)
               if result.exit_code != 0:
                   raise SystemExit(
-                      f"{' '.join(args)} failed with exit code {result.exit_code}\n{result.output}"
+                      f"{' '.join(args)} failed with exit code {result.exit_code}\n{output}"
                   )
-              if flag not in result.output:
+              if flag not in output:
                   raise SystemExit(
-                      f"{flag} missing from {' '.join(args)} help output\n{result.output}"
+                      f"{flag} missing from {' '.join(args)} help output\n{output}"
                   )
           PY
 

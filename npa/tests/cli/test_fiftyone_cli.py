@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from click.utils import strip_ansi
 import httpx
 import pytest
 from typer.testing import CliRunner
@@ -63,10 +64,11 @@ def test_fiftyone_registered_under_workbench() -> None:
 
 def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     result = runner.invoke(app, ["workbench", "fiftyone", "load-dataset", "--help"])
+    output = strip_ansi(result.output)
 
     assert result.exit_code == 0
-    assert "--format" in result.output
-    assert "lerobot" in result.output
+    assert "--format" in output
+    assert "lerobot" in output
 
 
 def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(tmp_path: Path, mocker) -> None:
