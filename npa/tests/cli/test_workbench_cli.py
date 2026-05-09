@@ -151,11 +151,9 @@ def test_lerobot_train_runs_ssh_command(mocker) -> None:
     assert "lerobot-train" in ssh.run.call_args.args[0]
 
 
-def test_lerobot_train_uses_input_and_output_path(mocker) -> None:
-    ssh = mocker.MagicMock()
-    ssh.run.return_value = (0, "", "")
-    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=_cfg())
-    mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
+def test_lerobot_train_rejects_local_input_output_paths(mocker) -> None:
+    resolve_config = mocker.patch("npa.cli.workbench.lerobot.resolve_config")
+    ssh_cls = mocker.patch("npa.clients.ssh.SSHClient")
 
     result = runner.invoke(
         app,
@@ -176,12 +174,11 @@ def test_lerobot_train_uses_input_and_output_path(mocker) -> None:
         ],
     )
 
-    assert result.exit_code == 0
-    cmd = ssh.run.call_args.args[0]
-    assert "--dataset.repo_id=pick-place" in cmd
-    assert "--dataset.root=/datasets/pick-place" in cmd
-    assert "--output_dir=/runs/student" in cmd
-    assert "checkpoint_path: /runs/student/checkpoints/last/pretrained_model" in result.output
+    assert result.exit_code == 1
+    assert "LeRobot train --input-path expects an S3 URI" in result.output
+    assert "S3 handoff contract" in result.output
+    resolve_config.assert_not_called()
+    ssh_cls.assert_not_called()
 
 
 def test_lerobot_train_s3_input_and_output_syncs(mocker) -> None:
@@ -259,7 +256,7 @@ def test_lerobot_eval_parses_eval_json(mocker) -> None:
             "lerobot",
             "eval",
             "--input-path",
-            "/ckpt",
+            "repo/model",
             "--env",
             "aloha",
         ],
@@ -286,19 +283,20 @@ def test_lerobot_eval_uses_input_and_output_path(mocker) -> None:
             "lerobot",
             "eval",
             "--input-path",
-            "/ckpt",
+            "repo/model",
             "--env",
             "aloha",
             "--output-path",
-            "/eval-results",
+            "s3://bucket/eval-results/",
         ],
     )
 
     assert result.exit_code == 0
-    cmd = ssh.run.call_args.args[0]
-    assert "--policy.path=/ckpt" in cmd
-    assert "--output_dir=/eval-results" in cmd
-    assert "output_path: /eval-results" in result.output
+    cmd = ssh.run.call_args_list[0].args[0]
+    assert "--policy.path=repo/model" in cmd
+    assert "--output_dir=/tmp/npa-eval-" in cmd
+    assert "upload_file" in ssh.run.call_args_list[1].args[0]
+    assert "output_path: s3://bucket/eval-results/" in result.output
 
 
 def test_lerobot_eval_s3_input_and_output_syncs(mocker) -> None:
@@ -341,7 +339,7 @@ def test_lerobot_eval_nonzero_exits(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "lerobot", "eval", "--input-path", "/ckpt", "--env", "aloha"],
+        ["workbench", "lerobot", "eval", "--input-path", "repo/model", "--env", "aloha"],
     )
 
     assert result.exit_code == 1
@@ -420,11 +418,14 @@ def test_lerobot_infer_posts_observation(
 def test_lerobot_infer_writes_output_path(tmp_path: Path, mocker) -> None:
     obs = tmp_path / "obs.json"
     obs.write_text(json.dumps({"observation.state": [1.0]}))
-    output_path = tmp_path / "infer.json"
+    output_path = "s3://bucket/infer/infer-response.json"
     http = mocker.MagicMock()
     http.infer.return_value = {"actions": [0.1, 0.2]}
+    store = mocker.MagicMock()
+    store.upload_file.return_value = output_path
     mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=_cfg())
     mocker.patch("npa.clients.http.HTTPClient", return_value=http)
+    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=store)
 
     result = runner.invoke(
         app,
@@ -435,13 +436,13 @@ def test_lerobot_infer_writes_output_path(tmp_path: Path, mocker) -> None:
             "--observation",
             str(obs),
             "--output-path",
-            str(output_path),
+            output_path,
         ],
     )
 
     assert result.exit_code == 0
-    assert "output_path:" in result.output
-    assert json.loads(output_path.read_text()) == {"actions": [0.1, 0.2]}
+    assert f"output_path: {output_path}" in result.output
+    store.upload_file.assert_called_once()
 
 
 def test_lerobot_infer_missing_observation_errors(tmp_path: Path, mocker) -> None:
@@ -924,13 +925,17 @@ def test_lerobot_train_student_uses_input_and_output_path(
     dataset = tmp_path / "dataset"
     (dataset / "meta").mkdir(parents=True)
     (dataset / "meta" / "info.json").write_text("{}")
-    output_dir = tmp_path / "student"
+    output_uri = "s3://bucket/student/"
+    storage = mocker.MagicMock()
+    storage.download_directory.return_value = str(dataset)
+    storage.upload_directory.return_value = output_uri
+    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=storage)
     train_mock = mocker.patch(
         "npa.lerobot.train_student.train_student",
         return_value={
             "status": "success",
-            "checkpoint_path": str(output_dir / "checkpoints" / "last" / "pretrained_model"),
-            "output_dir": str(output_dir),
+            "checkpoint_path": str(tmp_path / "student" / "checkpoints" / "last" / "pretrained_model"),
+            "output_dir": str(tmp_path / "student"),
         },
     )
 
@@ -941,18 +946,18 @@ def test_lerobot_train_student_uses_input_and_output_path(
             "lerobot",
             "train-student",
             "--input-path",
-            str(dataset),
+            "s3://bucket/dataset/",
             "--epochs",
             "1",
             "--output-path",
-            str(output_dir),
+            output_uri,
         ],
     )
 
     assert result.exit_code == 0
     train_mock.assert_called_once()
     assert train_mock.call_args.kwargs["dataset_path"] == dataset
-    assert train_mock.call_args.kwargs["output_dir"] == output_dir
+    storage.upload_directory.assert_called_once()
 
 
 def test_lerobot_train_student_missing_dataset_errors(tmp_path: Path) -> None:

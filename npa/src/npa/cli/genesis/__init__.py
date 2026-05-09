@@ -22,8 +22,10 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from npa.clients.credentials import apply_shared_credential_env
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_project_storage_vars,
     apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
@@ -1239,6 +1241,7 @@ def deploy_cmd(
     skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only verify connectivity."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
@@ -1359,6 +1362,12 @@ def deploy_cmd(
                 merged_vars[key] = value
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
+        )
         try:
             from npa.clients.config import ConfigError, resolve_terraform_state
 
@@ -1613,11 +1622,12 @@ def deploy_cmd(
             from npa.deploy.configurator import (
                 deploy_workbench_container,
                 write_manifest,
-                write_remote_env_file,
+                write_remote_docker_env_file,
             )
             from npa.deploy.images import container_image_for_tool
 
-            ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=resolve_credentials().tokens)
+            credentials = resolve_credentials()
+            ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
             ssh = SSHClient(ssh_cfg)
             try:
                 code, _, _ = ssh.run("echo connected")
@@ -1626,26 +1636,28 @@ def deploy_cmd(
                     _fail(f"SSH connection test failed (exit {code})")
                     return
                 update_workbench_app_status(proj_alias, wb_name, "installing")
-                write_remote_env_file(
+                service_env = {
+                    "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                    "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                    "AWS_ENDPOINT_URL": storage_ep,
+                    "NEBIUS_S3_ENDPOINT": storage_ep,
+                    "NEBIUS_S3_BUCKET": bucket,
+                    "NEBIUS_REGION": env_region,
+                    "NVIDIA_DRIVER_CAPABILITIES": "all",
+                    "MUJOCO_GL": "egl",
+                    "PYOPENGL_PLATFORM": "egl",
+                    "PYTHONUNBUFFERED": "1",
+                    **gpu_env_fields(
+                        byovm_gpu_info,
+                        effective_count=byovm_effective_gpu_count or None,
+                        visible_devices=byovm_visible_devices,
+                    ),
+                }
+                apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                write_remote_docker_env_file(
                     ssh,
                     "/opt/lerobot/.env",
-                    {
-                        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
-                        "AWS_ENDPOINT_URL": storage_ep,
-                        "NEBIUS_S3_ENDPOINT": storage_ep,
-                        "NEBIUS_S3_BUCKET": bucket,
-                        "NEBIUS_REGION": env_region,
-                        "NVIDIA_DRIVER_CAPABILITIES": "all",
-                        "MUJOCO_GL": "egl",
-                        "PYOPENGL_PLATFORM": "egl",
-                        "PYTHONUNBUFFERED": "1",
-                        **gpu_env_fields(
-                            byovm_gpu_info,
-                            effective_count=byovm_effective_gpu_count or None,
-                            visible_devices=byovm_visible_devices,
-                        ),
-                    },
+                    service_env,
                     owner=ssh_user,
                 )
                 image_ref = container_image_for_tool(

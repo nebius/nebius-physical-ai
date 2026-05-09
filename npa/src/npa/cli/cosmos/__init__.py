@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import PathContractError, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -38,12 +39,29 @@ from npa.clients.config import (
     update_workbench_app_status,
     write_config,
 )
+from npa.clients.credentials import (
+    apply_shared_credential_env,
+    shared_credential_env,
+    warn_if_hf_token_missing,
+)
+from npa.clients.env import render_redacted_env_file
+from npa.clients.endpoint import EndpointError, service_endpoint
+from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
-from npa.deploy.configurator import docker_exec_cmd, health_check, write_manifest
+from npa.deploy.configurator import (
+    HealthCheckMode,
+    audit_remote_env,
+    docker_exec_cmd,
+    health_check,
+    health_check_auto,
+    health_check_ssh,
+    write_manifest,
+)
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_project_storage_vars,
     apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
@@ -94,6 +112,96 @@ COSMOS_PEFT_MIN_VERSION = "0.17.0"
 DEFAULT_MODEL = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
 COSMOS_INFER_HTTP_TIMEOUT = 30.0
 COSMOS_INFER_POLL_INTERVAL = 10.0
+
+
+def _cosmos_gated_models(model: str) -> list[str]:
+    return [model or DEFAULT_MODEL]
+
+
+def _model_check_or_fail(
+    *,
+    credentials: Any,
+    model: str,
+    skip_model_check: bool,
+    dry_run: bool,
+    no_shared_creds: bool,
+) -> None:
+    if skip_model_check:
+        for repo in _cosmos_gated_models(model):
+            console.print(f"  HF access check skipped for {repo}")
+        if dry_run:
+            console.print("  [dry-run] HF gated-model validation skipped")
+        return
+    token = "" if no_shared_creds else credentials.hf_token
+    if not token:
+        warn_if_hf_token_missing(credentials, warn=console.print)
+        for repo in _cosmos_gated_models(model):
+            console.print(f"  HF access check skipped for {repo}")
+        if dry_run:
+            raise typer.Exit(1)
+        return
+    for repo in _cosmos_gated_models(model):
+        result = validate_hf_access(token, repo)
+        if not result.ok:
+            _fail(result.error or f"Unable to validate Hugging Face access to {repo}")
+        prefix = "[dry-run] " if dry_run else ""
+        console.print(f"  {prefix}HF access ok: {repo}")
+
+
+def _cosmos_service_env(
+    *,
+    model: str,
+    server_port: int,
+    credentials: Any,
+    merged_vars: dict[str, str],
+    storage_ep: str,
+    bucket: str,
+    env_region: str,
+    byovm_gpu_info: Any,
+    byovm_effective_gpu_count: int,
+    byovm_visible_devices: str,
+    include_shared_creds: bool,
+) -> dict[str, str]:
+    env = {
+        "COSMOS_MODEL_ID": model,
+        "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
+        "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
+        "COSMOS_SERVER_PORT": str(server_port),
+        "COSMOS_DISABLE_SAFETY": "1",
+        "HF_HOME": COSMOS_HF_CACHE,
+        "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
+        "HF_TOKEN": credentials.hf_token,
+        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+        "AWS_ENDPOINT_URL": storage_ep,
+        "NEBIUS_S3_ENDPOINT": storage_ep,
+        "NEBIUS_S3_BUCKET": bucket,
+        "NEBIUS_REGION": env_region,
+        "COSMOS_TENSOR_PARALLEL_SIZE": str(byovm_effective_gpu_count or 1),
+        "PYTHONUNBUFFERED": "1",
+        **gpu_env_fields(
+            byovm_gpu_info,
+            effective_count=byovm_effective_gpu_count or None,
+            visible_devices=byovm_visible_devices,
+        ),
+    }
+    return apply_shared_credential_env(env, credentials, include=include_shared_creds)
+
+
+def _print_ngc_env_audit(
+    *,
+    credentials: Any,
+    service_env: dict[str, str],
+    remote_path: str,
+) -> None:
+    tokens = getattr(credentials, "tokens", {}) or {}
+    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get("NGC_API_KEY", "")
+    if ngc_api_key and service_env.get("NGC_API_KEY"):
+        console.print("    Credential audit: NGC credentials merged and written.")
+    elif ngc_api_key:
+        console.print(f"    Warning: NGC credentials configured but not written to {remote_path}")
+    else:
+        console.print("    Warning: NGC credentials not configured; continuing without NGC service env.")
 
 
 def _apply_saved_terraform_state(
@@ -709,6 +817,14 @@ def deploy_cmd(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
+    skip_model_check: bool = typer.Option(False, "--skip-model-check", help="Skip Hugging Face gated-model access validation."),
+    health_check_mode: HealthCheckMode = typer.Option(
+        HealthCheckMode.auto,
+        "--health-check-mode",
+        help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
+    ),
+    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
     model: str = typer.Option(DEFAULT_MODEL, "--model", help="Hugging Face Cosmos model ID to download and serve."),
     backend: Backend = typer.Option(
         Backend.basic,
@@ -763,12 +879,14 @@ def deploy_cmd(
         proj_alias = env_region or ("byovm" if byovm else "default")
 
     credentials = resolve_credentials()
-    if not destroy and not skip_app and not credentials.hf_token:
-        _fail(
-            "HF_TOKEN required for Cosmos deployment. Add it to ~/.npa/credentials.yaml "
-            "under tokens: or set HF_TOKEN as an environment variable."
+    if not destroy and not skip_app:
+        _model_check_or_fail(
+            credentials=credentials,
+            model=model,
+            skip_model_check=skip_model_check,
+            dry_run=dry_run,
+            no_shared_creds=no_shared_creds,
         )
-        return
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:
@@ -832,6 +950,12 @@ def deploy_cmd(
         )
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
+        )
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
@@ -1048,6 +1172,8 @@ def deploy_cmd(
                         "workbench_type": "cosmos",
                         "runtime": runtime.value,
                         "app_status": APP_STATUS_PROVISIONED,
+                        "endpoint_strategy": "public",
+                        "service_port": server_port,
                         "model": model,
                         "backend": backend.value,
                         **byovm_fields,
@@ -1095,38 +1221,31 @@ def deploy_cmd(
         if runtime_uses_container(runtime):
             step += 1
             console.print(f"  [{step}/{total_steps}] Starting Cosmos container and preparing {model}...")
+            service_env = _cosmos_service_env(
+                model=model,
+                server_port=server_port,
+                credentials=credentials,
+                merged_vars=merged_vars,
+                storage_ep=storage_ep,
+                bucket=bucket,
+                env_region=env_region,
+                byovm_gpu_info=byovm_gpu_info,
+                byovm_effective_gpu_count=byovm_effective_gpu_count,
+                byovm_visible_devices=byovm_visible_devices,
+                include_shared_creds=not no_shared_creds,
+            )
             if dry_run:
                 console.print("    [dry-run] Would pull and run the Cosmos container image")
+                console.print("    [dry-run] Service env:")
+                console.print(render_redacted_env_file(service_env).rstrip())
             else:
-                from npa.deploy.configurator import deploy_workbench_container, write_remote_env_file
+                from npa.deploy.configurator import deploy_workbench_container, write_remote_docker_env_file
 
                 try:
-                    write_remote_env_file(
+                    write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-cosmos-server/env",
-                        {
-                            "COSMOS_MODEL_ID": model,
-                            "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
-                            "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
-                            "COSMOS_SERVER_PORT": str(server_port),
-                            "COSMOS_DISABLE_SAFETY": "1",
-                            "HF_HOME": COSMOS_HF_CACHE,
-                            "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
-                            "HF_TOKEN": credentials.hf_token,
-                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
-                            "AWS_ENDPOINT_URL": storage_ep,
-                            "NEBIUS_S3_ENDPOINT": storage_ep,
-                            "NEBIUS_S3_BUCKET": bucket,
-                            "NEBIUS_REGION": env_region,
-                            "COSMOS_TENSOR_PARALLEL_SIZE": str(byovm_effective_gpu_count or 1),
-                            "PYTHONUNBUFFERED": "1",
-                            **gpu_env_fields(
-                                byovm_gpu_info,
-                                effective_count=byovm_effective_gpu_count or None,
-                                visible_devices=byovm_visible_devices,
-                            ),
-                        },
+                        service_env,
                         owner=ssh_user,
                     )
                     image_ref = container_image_for_tool(
@@ -1155,13 +1274,30 @@ def deploy_cmd(
                     )
                     model_slug = _model_slug(model)
                     download_cmd = (
-                        "set -a; . /etc/npa-cosmos-server/env; set +a; "
                         f"if [ -n \"${{HF_TOKEN:-}}\" ]; then "
                         f"huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug} --token \"$HF_TOKEN\"; "
                         f"else huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug}; fi"
                     )
                     ssh.run_or_raise(docker_exec_cmd(COSMOS_CONTAINER_NAME, download_cmd), stream=True)
                     ssh.run_or_raise(f"sudo docker restart {COSMOS_CONTAINER_NAME}")
+                    if verify_env and not no_shared_creds:
+                        failed_keys = audit_remote_env(
+                            ssh,
+                            "/etc/npa-cosmos-server/env",
+                            shared_credential_env(credentials),
+                        )
+                        if failed_keys:
+                            key = failed_keys[0]
+                            fail_app(
+                                f"Credential audit failed: {key} missing or mismatched in cosmos service env. "
+                                "Deploy may have skipped shared credential injection."
+                            )
+                            return
+                        _print_ngc_env_audit(
+                            credentials=credentials,
+                            service_env=service_env,
+                            remote_path="/etc/npa-cosmos-server/env",
+                        )
                 except SSHError as exc:
                     fail_app(f"Cosmos container deployment failed: {exc}")
                     return
@@ -1180,8 +1316,34 @@ def deploy_cmd(
         step += 1
         console.print(f"  [{step}/{total_steps}] Health check on {endpoint}...")
         if not dry_run:
-            if health_check(endpoint):
+            healthy, health_note = health_check_auto(
+                endpoint,
+                mode=health_check_mode,
+                ssh=ssh if byovm else None,
+                port=server_port,
+                host=vm_ip,
+            )
+            if healthy:
                 console.print("    Server is healthy")
+                if health_note:
+                    console.print(f"    {health_note}")
+                endpoint_strategy = (
+                    "ssh"
+                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
+                    else "public"
+                )
+                write_config({
+                    "projects": {
+                        proj_alias: {
+                            "workbenches": {
+                                wb_name: {
+                                    "endpoint_strategy": endpoint_strategy,
+                                    "service_port": server_port,
+                                },
+                            },
+                        },
+                    },
+                })
             else:
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
@@ -1249,8 +1411,12 @@ def serve_cmd(
     err = ""
     if runtime_uses_container(getattr(cfg, "runtime", "vm")):
         try:
-            served = HTTPClient(cfg.endpoint, timeout=120.0, retries=1).serve_model(model, timeout=120.0)
+            with service_endpoint(cfg, default_port=port, service_port=port) as active:
+                served = HTTPClient(active.url, timeout=120.0, retries=1).serve_model(model, timeout=120.0)
             out = json.dumps(served)
+        except EndpointError as exc:
+            _fail(f"Cosmos serve endpoint setup failed: {exc}")
+            return
         except ServerError as exc:
             _fail(f"Cosmos serve request failed: {exc}")
             return
@@ -1412,9 +1578,11 @@ def _poll_inference_job(
     deadline: float,
     poll_interval: float,
     output_format: OutputFormat,
+    quiet: bool = False,
     initial_status: str = "",
 ) -> dict[str, Any]:
     last_status = initial_status.lower()
+    started_at = time.monotonic()
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -1426,13 +1594,24 @@ def _poll_inference_job(
             _fail(f"Inference status check failed: {exc}")
 
         status = str(data.get("status", "")).lower()
-        if output_format != OutputFormat.json and status != last_status:
-            typer.echo(f"  job_status: {status}")
+        if data.get("error") and status not in {"completed"}:
+            _fail(f"Inference job failed: {data.get('error')}")
+        if output_format != OutputFormat.json and not quiet:
+            elapsed = int(time.monotonic() - started_at)
+            progress = ""
+            if data.get("progress") is not None:
+                progress = f" {data.get('progress')}%"
+            elif data.get("percent") is not None:
+                progress = f" {data.get('percent')}%"
+            step = ""
+            if data.get("step") is not None and data.get("total_steps") is not None:
+                step = f" (step {data.get('step')}/{data.get('total_steps')})"
+            typer.echo(f"[{elapsed}s] Generating...{progress} (status: {status or 'unknown'}){step}")
             last_status = status
 
         if status == "completed":
             return data
-        if status == "failed":
+        if status in {"failed", "error"}:
             _fail(f"Inference job failed: {data.get('error', 'unknown error')}")
         if status not in {"running", "queued", "pending"}:
             _fail(f"Inference job {job_id} returned unknown status: {status or '<missing>'}")
@@ -1455,7 +1634,7 @@ def infer_cmd(
         "",
         "--output-path",
         "--output",
-        help="S3 URI or local path where the generated output file is saved.",
+        help="S3 URI where the generated output file is saved.",
     ),
     timeout: float = typer.Option(
         1200.0,
@@ -1468,36 +1647,50 @@ def infer_cmd(
         help="Seconds between Cosmos job status checks.",
     ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="CLI output format."),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress progress output while polling."),
 ) -> None:
     """Submit a Cosmos inference job, poll until completion, then download the output."""
+    try:
+        output_path = validate_write_path(output_path, tool="Cosmos infer")
+    except PathContractError as exc:
+        _fail(str(exc))
+
     cfg = _get_config()
     temp_dirs: list[tempfile.TemporaryDirectory[str]] = []
     try:
         payload = _build_infer_payload(prompt, _resolve_infer_input(input_path, cfg, temp_dirs))
-        client = HTTPClient(cfg.endpoint, timeout=COSMOS_INFER_HTTP_TIMEOUT, retries=1)
         deadline = time.monotonic() + timeout
 
         try:
-            submitted = client.infer(payload, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, timeout)))
+            with service_endpoint(cfg, default_port=8080) as active:
+                client = HTTPClient(active.url, timeout=COSMOS_INFER_HTTP_TIMEOUT, retries=1)
+                generation_started = time.monotonic()
+                submitted = client.infer(payload, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, timeout)))
+
+                job_id = str(submitted.get("job_id") or "")
+                if not job_id:
+                    _fail(f"Inference submit response did not include job_id: {submitted}")
+                if output_format != OutputFormat.json:
+                    typer.echo(f"  job_id: {job_id}")
+                    typer.echo(f"  job_status: {submitted.get('status', 'unknown')}")
+
+                data = _poll_inference_job(
+                    client,
+                    job_id,
+                    deadline=deadline,
+                    poll_interval=poll_interval,
+                    output_format=output_format,
+                    quiet=quiet,
+                    initial_status=str(submitted.get("status", "")),
+                )
         except ServerError as exc:
             _fail(f"Inference submit failed: {exc}")
             return
-
-        job_id = str(submitted.get("job_id") or "")
-        if not job_id:
-            _fail(f"Inference submit response did not include job_id: {submitted}")
-        if output_format != OutputFormat.json:
-            typer.echo(f"  job_id: {job_id}")
-            typer.echo(f"  job_status: {submitted.get('status', 'unknown')}")
-
-        data = _poll_inference_job(
-            client,
-            job_id,
-            deadline=deadline,
-            poll_interval=poll_interval,
-            output_format=output_format,
-            initial_status=str(submitted.get("status", "")),
-        )
+        except EndpointError as exc:
+            _fail(f"Inference endpoint setup failed: {exc}")
+            return
+        if output_format != OutputFormat.json and not quiet:
+            typer.echo(f"Generation complete in {time.monotonic() - generation_started:.1f}s")
 
         result = {**data, "job_id": job_id}
         remote_output_path = str(data.get("output_path") or "")
@@ -1522,31 +1715,62 @@ def status_cmd(
 ) -> None:
     """Check the Cosmos endpoint health."""
     cfg = _get_config()
-    client = HTTPClient(cfg.endpoint, timeout=10.0, retries=1)
 
     try:
-        data = client.health()
-    except ServerError as exc:
+        with service_endpoint(cfg, default_port=8080) as active:
+            client = HTTPClient(active.url, timeout=10.0, retries=1)
+            data = client.health()
+            endpoint_url = active.url
+    except EndpointError as exc:
         if output == OutputFormat.json:
             typer.echo(json.dumps({
                 "endpoint": cfg.endpoint,
-                "app_status": cfg.app_status or "unknown",
+                "app_status": "unreachable",
                 "server": "down",
                 "error": str(exc),
             }, indent=2))
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
-            typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
+            typer.echo("  app_status: unreachable")
+        _fail(f"Cannot prepare Cosmos endpoint for {cfg.endpoint}: {exc}")
+        return
+    except ServerError as exc:
+        if output == OutputFormat.json:
+            typer.echo(json.dumps({
+                "endpoint": cfg.endpoint,
+                "app_status": "unreachable",
+                "server": "down",
+                "error": str(exc),
+            }, indent=2))
+        else:
+            typer.echo(f"  endpoint: {cfg.endpoint}")
+            typer.echo("  app_status: unreachable")
         _fail(f"Cannot reach Cosmos endpoint at {cfg.endpoint}/health: {exc}")
         return
 
+    loaded = bool(data.get("loaded", True))
+    readiness = {
+        "hf_token_present": bool(getattr(cfg, "hf_token", "")),
+        "model_loaded": loaded,
+        "ready": bool(getattr(cfg, "hf_token", "")) and loaded,
+        "blockers": [],
+    }
+    if not readiness["hf_token_present"]:
+        readiness["blockers"].append("HF_TOKEN not configured - gated model downloads will fail")
+    if not loaded:
+        readiness["blockers"].append(f"Model {data.get('model') or DEFAULT_MODEL} not loaded")
+    app_status = "healthy" if loaded else "degraded"
+
     result = {
-        "endpoint": cfg.endpoint,
-        "app_status": cfg.app_status or "unknown",
+        "endpoint": endpoint_url,
+        "app_status": app_status,
         "runtime": getattr(cfg, "runtime", "vm"),
         "server": "up",
         **data,
+        "readiness": readiness,
     }
+    if not loaded:
+        result["reason"] = "model not loaded"
     if runtime_uses_container(getattr(cfg, "runtime", "vm")):
         ssh = SSHClient(cfg.ssh)
         code, out, _ = ssh.run(

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -26,9 +27,12 @@ from npa.clients.config import (
     resolve_terraform_state,
     update_workbench_app_status,
 )
+from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
+from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_project_storage_vars,
     apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
@@ -322,9 +326,24 @@ def status(
 
     from npa.clients.http import HTTPClient, ServerError
 
-    client = HTTPClient(cfg.endpoint)
     try:
-        data = client.status()
+        with service_endpoint(cfg, default_port=8080) as active:
+            client = HTTPClient(active.url)
+            data = client.status()
+            endpoint_url = active.url
+    except EndpointError as exc:
+        if output == OutputFormat.json:
+            typer.echo(json.dumps({
+                "endpoint": cfg.endpoint,
+                "app_status": cfg.app_status or "unknown",
+                "server": "down",
+                "error": str(exc),
+            }, indent=2))
+        else:
+            typer.echo(f"  endpoint: {cfg.endpoint}")
+            typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
+        _fail(f"Cannot prepare server endpoint for {cfg.endpoint}: {exc}")
+        return
     except ServerError as exc:
         if output == OutputFormat.json:
             typer.echo(json.dumps({
@@ -338,7 +357,6 @@ def status(
             typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
         _fail(f"Cannot reach server at {cfg.endpoint}: {exc}")
         return  # unreachable, keeps type checker happy
-
     container_info: dict[str, str] = {}
     if runtime_uses_container(getattr(cfg, "runtime", "vm")):
         from npa.clients.ssh import SSHClient
@@ -361,7 +379,7 @@ def status(
             **data,
         }, indent=2))
     else:
-        typer.echo(f"  endpoint: {cfg.endpoint}")
+        typer.echo(f"  endpoint: {endpoint_url}")
         typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
         typer.echo(f"  runtime: {getattr(cfg, 'runtime', 'vm')}")
         if container_info:
@@ -388,7 +406,7 @@ def train(
     input_path: str = typer.Option(
         "",
         "--input-path",
-        help="S3 URI or VM-local LeRobotDataset path. Overrides --dataset.",
+        help="S3 URI for a LeRobotDataset. Overrides --dataset.",
     ),
     job_name: str = typer.Option(..., "--job-name", help="Unique name for this training run."),
     steps: int = typer.Option(5000, "--steps", help="Training steps."),
@@ -401,22 +419,35 @@ def train(
     output_path: str = typer.Option(
         "",
         "--output-path",
-        help="S3 URI or VM-local path where the checkpoint output is written.",
+        help="S3 URI where the checkpoint output is written.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Run lerobot-train on the VM via SSH, stream logs."""
+    try:
+        if input_path:
+            input_path = validate_read_path(
+                input_path,
+                tool="LeRobot train",
+                option="--input-path",
+                allow_hf=False,
+            )
+        output_path = validate_write_path(output_path, tool="LeRobot train")
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
+
+    dataset_ref = input_path or dataset
+    if not dataset_ref:
+        _fail("Provide --dataset or --input-path.")
+        return
+
     cfg = _get_config()
 
     from npa.clients.ssh import SSHClient, SSHError
 
     ssh = SSHClient(cfg.ssh)
     stream_logs = output != OutputFormat.json
-
-    dataset_ref = input_path or dataset
-    if not dataset_ref:
-        _fail("Provide --dataset or --input-path.")
-        return
 
     output_is_s3 = _is_s3_uri(output_path)
     checkpoint_dir = (
@@ -581,7 +612,7 @@ def eval_cmd(
     input_path: str = typer.Option(
         "",
         "--input-path",
-        help="S3 URI, HF repo, or VM-local checkpoint path. Overrides --checkpoint.",
+        help="S3 URI or Hugging Face Hub checkpoint ID. Overrides --checkpoint.",
     ),
     env: str = typer.Option(..., "--env", help="Environment type."),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
@@ -589,22 +620,35 @@ def eval_cmd(
     output_path: str = typer.Option(
         "",
         "--output-path",
-        help="S3 URI or VM-local directory where eval results are written.",
+        help="S3 URI where eval results are written.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Run lerobot-eval on the VM, return metrics."""
+    try:
+        if input_path:
+            input_path = validate_read_path(
+                input_path,
+                tool="LeRobot eval",
+                option="--input-path",
+                allow_hf=True,
+            )
+        output_path = validate_write_path(output_path, tool="LeRobot eval")
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
+
+    checkpoint_ref = input_path or checkpoint
+    if not checkpoint_ref:
+        _fail("Provide --checkpoint or --input-path.")
+        return
+
     cfg = _get_config()
 
     from npa.clients.ssh import SSHClient, SSHError
 
     ssh = SSHClient(cfg.ssh)
     stream_logs = output != OutputFormat.json
-
-    checkpoint_ref = input_path or checkpoint
-    if not checkpoint_ref:
-        _fail("Provide --checkpoint or --input-path.")
-        return
 
     # Resolve checkpoint: if s3://, download on the VM first
     resolved_checkpoint = checkpoint_ref
@@ -719,7 +763,7 @@ def serve(
         "",
         "--input-path",
         "-i",
-        help="Checkpoint path, HF repo, or s3:// URI to serve.",
+        help="S3 URI or Hugging Face Hub checkpoint ID to serve.",
     ),
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
@@ -729,30 +773,46 @@ def serve(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Start or restart the PolicyServer with a given checkpoint."""
-    cfg = _get_config()
-
-    from npa.clients.http import HTTPClient, ServerError
-
-    client = HTTPClient(cfg.endpoint)
     checkpoint_ref = input_path or checkpoint
     if not checkpoint_ref:
         _fail("Provide --input-path.")
         return
+    if input_path:
+        try:
+            input_path = validate_read_path(
+                input_path,
+                tool="LeRobot serve",
+                option="--input-path",
+                allow_hf=True,
+            )
+            checkpoint_ref = input_path
+        except PathContractError as exc:
+            _fail(str(exc))
+            return
+
+    cfg = _get_config()
+
+    from npa.clients.http import HTTPClient, ServerError
 
     if output != OutputFormat.json:
         console.print(f"[bold]Loading checkpoint:[/bold] {checkpoint_ref}")
 
     try:
-        data = client.serve(checkpoint_ref, env_type=env_type or None, env_task=env_task or None)
+        with service_endpoint(cfg, default_port=port) as active:
+            client = HTTPClient(active.url)
+            data = client.serve(checkpoint_ref, env_type=env_type or None, env_task=env_task or None)
+
+            # Wait for healthy
+            if output != OutputFormat.json:
+                console.print("Waiting for PolicyServer to be ready...")
+            if not client.wait_healthy(timeout=120.0):
+                _fail("PolicyServer did not become healthy within 120s")
+                return
+    except EndpointError as exc:
+        _fail(f"PolicyServer endpoint setup failed: {exc}")
+        return
     except ServerError as exc:
         _fail(f"Failed to start PolicyServer: {exc}")
-        return
-
-    # Wait for healthy
-    if output != OutputFormat.json:
-        console.print("Waiting for PolicyServer to be ready...")
-    if not client.wait_healthy(timeout=120.0):
-        _fail("PolicyServer did not become healthy within 120s")
         return
 
     result = {
@@ -773,25 +833,33 @@ def infer(
         "",
         "--output-path",
         "-o",
-        help="Local path or S3 URI where the inference response JSON is written.",
+        help="S3 URI where the inference response JSON is written.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """POST an observation to the running PolicyServer, return predicted actions."""
-    cfg = _get_config()
-
     if not observation.exists():
         _fail(f"Observation file not found: {observation}")
+        return
+    try:
+        output_path = validate_write_path(output_path, tool="LeRobot infer")
+    except PathContractError as exc:
+        _fail(str(exc))
         return
 
     obs_data = json.loads(observation.read_text())
 
+    cfg = _get_config()
+
     from npa.clients.http import HTTPClient, ServerError
 
-    client = HTTPClient(cfg.endpoint)
-
     try:
-        data = client.infer(obs_data)
+        with service_endpoint(cfg, default_port=8080) as active:
+            client = HTTPClient(active.url)
+            data = client.infer(obs_data)
+    except EndpointError as exc:
+        _fail(f"Inference endpoint setup failed: {exc}")
+        return
     except ServerError as exc:
         _fail(f"Inference failed: {exc}")
         return
@@ -904,6 +972,7 @@ def deploy(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app deployment, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     checkpoint: str = typer.Option("", "--checkpoint", help="Pre-load a checkpoint after deploy."),
     server_port: int = typer.Option(8080, "--server-port", help="Server port on the VM."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
@@ -1036,6 +1105,12 @@ def deploy(
         )
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
+        )
         apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
@@ -1329,14 +1404,15 @@ def deploy(
         from npa.clients.ssh import SSHClient, SSHError
         from npa.deploy.configurator import (
             ConfiguratorError, deploy_lerobot_container, deploy_server, health_check,
-            install_lerobot, write_manifest, write_remote_env_file,
+            install_lerobot, write_manifest, write_remote_docker_env_file,
         )
 
+        credentials = resolve_credentials()
         ssh_cfg = SSHConfig(
             host=vm_ip,
             user=ssh_user,
             key_path=ssh_key,
-            tokens=resolve_credentials().tokens,
+            tokens=credentials.tokens,
         )
 
         step += 1
@@ -1363,6 +1439,7 @@ def deploy(
             "training_output_dir": "/opt/lerobot/checkpoints",
             "cuda_visible_devices": byovm_visible_devices,
             "gpu_count": byovm_effective_gpu_count,
+            "shared_env": shared_credential_env(credentials) if not no_shared_creds else {},
         }
         if runtime == WorkbenchRuntime.vm:
             step += 1
@@ -1388,25 +1465,27 @@ def deploy(
             if not dry_run:
                 try:
                     if byovm:
-                        write_remote_env_file(
+                        byovm_env = {
+                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", "") or os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", "") or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+                            "AWS_ENDPOINT_URL": storage_ep,
+                            "NEBIUS_S3_ENDPOINT": storage_ep,
+                            "NEBIUS_S3_BUCKET": bucket,
+                            "NEBIUS_REGION": env_region,
+                            "MUJOCO_GL": "egl",
+                            "PYOPENGL_PLATFORM": "egl",
+                            "PYTHONUNBUFFERED": "1",
+                            **gpu_env_fields(
+                                byovm_gpu_info,
+                                effective_count=byovm_effective_gpu_count or None,
+                                visible_devices=byovm_visible_devices,
+                            ),
+                        }
+                        apply_shared_credential_env(byovm_env, credentials, include=not no_shared_creds)
+                        write_remote_docker_env_file(
                             ssh,
                             "/opt/lerobot/.env",
-                            {
-                                "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", "") or os.environ.get("AWS_ACCESS_KEY_ID", ""),
-                                "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", "") or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-                                "AWS_ENDPOINT_URL": storage_ep,
-                                "NEBIUS_S3_ENDPOINT": storage_ep,
-                                "NEBIUS_S3_BUCKET": bucket,
-                                "NEBIUS_REGION": env_region,
-                                "MUJOCO_GL": "egl",
-                                "PYOPENGL_PLATFORM": "egl",
-                                "PYTHONUNBUFFERED": "1",
-                                **gpu_env_fields(
-                                    byovm_gpu_info,
-                                    effective_count=byovm_effective_gpu_count or None,
-                                    visible_devices=byovm_visible_devices,
-                                ),
-                            },
+                            byovm_env,
                             owner=ssh_user,
                         )
                     deploy_lerobot_container(
@@ -2056,7 +2135,7 @@ def train_student_cmd(
     input_path: str = typer.Option(
         "",
         "--input-path",
-        help="S3 URI or local LeRobotDataset v3 directory. Overrides --dataset.",
+        help="S3 URI for a LeRobotDataset v3 directory. Overrides --dataset.",
     ),
     policy: str = typer.Option("act", "--policy", help="Policy type (act, diffusion)."),
     epochs: int = typer.Option(100, "--epochs", help="Number of training epochs."),
@@ -2069,7 +2148,7 @@ def train_student_cmd(
     output_path: str = typer.Option(
         "",
         "--output-path",
-        help="S3 URI or local path where the student checkpoint is written.",
+        help="S3 URI where the student checkpoint is written.",
     ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -2082,6 +2161,19 @@ def train_student_cmd(
     dataset_ref = input_path or dataset
     if not dataset_ref:
         _fail("Provide --dataset or --input-path.")
+        return
+    try:
+        if input_path:
+            input_path = validate_read_path(
+                input_path,
+                tool="LeRobot train-student",
+                option="--input-path",
+                allow_hf=False,
+            )
+            dataset_ref = input_path
+        output_path = validate_write_path(output_path, tool="LeRobot train-student")
+    except PathContractError as exc:
+        _fail(str(exc))
         return
 
     temp_dirs: list[tempfile.TemporaryDirectory[str]] = []

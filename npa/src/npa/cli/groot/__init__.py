@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -36,17 +37,30 @@ from npa.clients.config import (
     update_workbench_app_status,
     write_config,
 )
+from npa.clients.credentials import (
+    apply_shared_credential_env,
+    shared_credential_env,
+    warn_if_hf_token_missing,
+)
+from npa.clients.env import render_redacted_env_file
+from npa.clients.endpoint import EndpointError, service_endpoint
+from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
+    HealthCheckMode,
+    audit_remote_env,
     docker_exec_cmd,
     health_check,
+    health_check_auto,
+    health_check_ssh,
     write_manifest,
-    write_remote_env_file,
+    write_remote_docker_env_file,
 )
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_project_storage_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -99,6 +113,20 @@ GROOT_REMOTE_ENV_NAMES = (
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+)
+GROOT_CREDENTIAL_ENV_NAMES = (
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NEBIUS_S3_BUCKET",
 )
 DEFAULT_MODEL = "nvidia/GR00T-N1.7-3B"
 HF_MODEL_REVISIONS = {
@@ -128,6 +156,98 @@ SUPPORTED_EMBODIMENT_TAGS = (
     "LIBERO_PANDA",
     "NEW_EMBODIMENT",
 )
+
+
+def _groot_gated_models(model: str = DEFAULT_MODEL) -> list[str]:
+    repos = [model or DEFAULT_MODEL]
+    if COSMOS_REASON_MODEL not in repos:
+        repos.append(COSMOS_REASON_MODEL)
+    return repos
+
+
+def _model_check_or_fail(
+    *,
+    credentials: Any,
+    model: str,
+    skip_model_check: bool,
+    dry_run: bool,
+    no_shared_creds: bool,
+) -> None:
+    if skip_model_check:
+        for repo in _groot_gated_models(model):
+            console.print(f"  HF access check skipped for {repo}")
+        if dry_run:
+            console.print("  [dry-run] HF gated-model validation skipped")
+        return
+    token = "" if no_shared_creds else credentials.hf_token
+    if not token:
+        warn_if_hf_token_missing(credentials, warn=console.print)
+        for repo in _groot_gated_models(model):
+            console.print(f"  HF access check skipped for {repo}")
+        if dry_run:
+            raise typer.Exit(1)
+        return
+    for repo in _groot_gated_models(model):
+        result = validate_hf_access(token, repo)
+        if not result.ok:
+            _fail(result.error or f"Unable to validate Hugging Face access to {repo}")
+        prefix = "[dry-run] " if dry_run else ""
+        console.print(f"  {prefix}HF access ok: {repo}")
+
+
+def _groot_service_env(
+    *,
+    credentials: Any,
+    merged_vars: dict[str, str],
+    storage_ep: str,
+    bucket: str,
+    env_region: str,
+    server_port: int,
+    service_env: dict[str, str],
+    include_shared_creds: bool,
+) -> dict[str, str]:
+    env = {
+        "GROOT_MODEL_PATH": DEFAULT_MODEL,
+        "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
+        "GROOT_MODEL_DIR": GROOT_MODEL_DIR,
+        "GROOT_OUTPUT_DIR": GROOT_OUTPUT_DIR,
+        "GROOT_SERVER_PORT": str(server_port),
+        "HF_HOME": f"{GROOT_DATA_MOUNT}/hf_cache",
+        "HUGGINGFACE_HUB_CACHE": f"{GROOT_DATA_MOUNT}/hf_cache",
+        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+        "AWS_ENDPOINT_URL": storage_ep,
+        "NEBIUS_S3_ENDPOINT": storage_ep,
+        "NEBIUS_S3_BUCKET": bucket,
+        "NEBIUS_REGION": env_region,
+        "OMNI_KIT_ACCEPT_EULA": "YES",
+        "ACCEPT_EULA": "Y",
+        "ISAACSIM_ACCEPT_EULA": "YES",
+        "PYTHONUNBUFFERED": "1",
+        **service_env,
+    }
+    return apply_shared_credential_env(env, credentials, include=include_shared_creds)
+
+
+def _groot_audit_env(env: dict[str, str]) -> dict[str, str]:
+    return {key: env[key] for key in GROOT_CREDENTIAL_ENV_NAMES if env.get(key)}
+
+
+def _print_ngc_env_audit(
+    *,
+    credentials: Any,
+    service_env: dict[str, str],
+    remote_path: str,
+) -> None:
+    tokens = getattr(credentials, "tokens", {}) or {}
+    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get("NGC_API_KEY", "")
+    if ngc_api_key and service_env.get("NGC_API_KEY"):
+        console.print("    Credential audit: NGC credentials merged and written.")
+    elif ngc_api_key:
+        console.print(f"    Warning: NGC credentials configured but not written to {remote_path}")
+    else:
+        console.print("    Warning: NGC credentials not configured; continuing without NGC service env.")
+
 
 EMBODIMENT_ALIASES = {
     "g1": "UNITREE_G1",
@@ -975,6 +1095,12 @@ if [ {shlex.quote(source_kind)} = "ngc" ]; then
 apikey = $NGC_API_KEY
 format_type = ascii
 NGC
+    if [ -n "${{NGC_ORG:-}}" ]; then
+      printf 'org = %s\\n' "$NGC_ORG" >> "$HOME/.ngc/config"
+    fi
+    if [ -n "${{NGC_TEAM:-}}" ]; then
+      printf 'team = %s\\n' "$NGC_TEAM" >> "$HOME/.ngc/config"
+    fi
     chmod 600 "$HOME/.ngc/config"
   fi
   ngc registry model download-version {shlex.quote(model_ref)} -d {shlex.quote(local_dir)}
@@ -1548,6 +1674,15 @@ def deploy_cmd(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
+    skip_model_check: bool = typer.Option(False, "--skip-model-check", help="Skip Hugging Face gated-model access validation."),
+    health_check_mode: HealthCheckMode = typer.Option(
+        HealthCheckMode.auto,
+        "--health-check-mode",
+        help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
+    ),
+    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
+    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Hugging Face GR00T model ID to validate and record."),
     server_port: int = typer.Option(DEFAULT_SERVER_PORT, "--server-port", help="GR00T HTTP server port on the VM."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
     default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
@@ -1586,6 +1721,16 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
+
+    credentials = resolve_credentials()
+    if not destroy and not skip_app:
+        _model_check_or_fail(
+            credentials=credentials,
+            model=model,
+            skip_model_check=skip_model_check,
+            dry_run=dry_run,
+            no_shared_creds=no_shared_creds,
+        )
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:
@@ -1645,6 +1790,13 @@ def deploy_cmd(
             merged_vars,
             project=proj_alias,
             explicit_vars=extra_vars,
+        )
+    if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
         )
 
     if use_remote_state and nebius_creds and not dry_run:
@@ -1879,7 +2031,9 @@ def deploy_cmd(
                         "workbench_type": "groot",
                         "runtime": runtime.value,
                         "app_status": APP_STATUS_PROVISIONED,
-                        "model": DEFAULT_MODEL,
+                        "endpoint_strategy": "public",
+                        "service_port": server_port,
+                        "model": model,
                         "embodiment_tag": DEFAULT_EMBODIMENT_TAG,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
                         "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
@@ -1908,13 +2062,25 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
-        credentials = resolve_credentials()
         ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
-        service_env = gpu_env_fields(
-            byovm_gpu_info,
-            effective_count=byovm_effective_gpu_count or None,
-            visible_devices=byovm_visible_devices,
-        )
+        service_env = {
+            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+            "AWS_ENDPOINT_URL": storage_ep,
+            "NEBIUS_S3_ENDPOINT": storage_ep,
+            "NEBIUS_S3_BUCKET": bucket,
+            "NEBIUS_REGION": env_region,
+            "OMNI_KIT_ACCEPT_EULA": "YES",
+            "ACCEPT_EULA": "Y",
+            "ISAACSIM_ACCEPT_EULA": "YES",
+            "PYTHONUNBUFFERED": "1",
+            **gpu_env_fields(
+                byovm_gpu_info,
+                effective_count=byovm_effective_gpu_count or None,
+                visible_devices=byovm_visible_devices,
+            ),
+        }
+        apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
 
         step += 1
         console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
@@ -1932,36 +2098,26 @@ def deploy_cmd(
         step += 1
         if container_runtime:
             console.print(f"  [{step}/{total_steps}] Starting GR00T container...")
+            full_service_env = _groot_service_env(
+                credentials=credentials,
+                merged_vars=merged_vars,
+                storage_ep=storage_ep,
+                bucket=bucket,
+                env_region=env_region,
+                server_port=server_port,
+                service_env=service_env,
+                include_shared_creds=False,
+            )
             if dry_run:
                 console.print("    [dry-run] Would pull and run the GR00T container image")
+                console.print("    [dry-run] Service env:")
+                console.print(render_redacted_env_file(full_service_env).rstrip())
             else:
                 try:
-                    write_remote_env_file(
+                    write_remote_docker_env_file(
                         ssh,
                         GROOT_CONTAINER_ENV_FILE,
-                        {
-                            "GROOT_MODEL_PATH": DEFAULT_MODEL,
-                            "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
-                            "GROOT_MODEL_DIR": GROOT_MODEL_DIR,
-                            "GROOT_OUTPUT_DIR": GROOT_OUTPUT_DIR,
-                            "GROOT_SERVER_PORT": str(server_port),
-                            "HF_HOME": f"{GROOT_DATA_MOUNT}/hf_cache",
-                            "HUGGINGFACE_HUB_CACHE": f"{GROOT_DATA_MOUNT}/hf_cache",
-                            "HF_TOKEN": credentials.hf_token,
-                            "HUGGING_FACE_HUB_TOKEN": credentials.hf_token,
-                            "NGC_API_KEY": credentials.tokens.get("NGC_API_KEY", ""),
-                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
-                            "AWS_ENDPOINT_URL": storage_ep,
-                            "NEBIUS_S3_ENDPOINT": storage_ep,
-                            "NEBIUS_S3_BUCKET": bucket,
-                            "NEBIUS_REGION": env_region,
-                            "OMNI_KIT_ACCEPT_EULA": "YES",
-                            "ACCEPT_EULA": "Y",
-                            "ISAACSIM_ACCEPT_EULA": "YES",
-                            "PYTHONUNBUFFERED": "1",
-                            **service_env,
-                        },
+                        full_service_env,
                         owner=ssh_user,
                     )
                     image_ref = container_image_for_tool(
@@ -2002,6 +2158,24 @@ def deploy_cmd(
                         ),
                         registry_token=merged_vars.get("iam_token", ""),
                     )
+                    if verify_env and not no_shared_creds:
+                        failed_keys = audit_remote_env(
+                            ssh,
+                            GROOT_CONTAINER_ENV_FILE,
+                            _groot_audit_env(full_service_env),
+                        )
+                        if failed_keys:
+                            key = failed_keys[0]
+                            fail_app(
+                                f"Credential audit failed: {key} missing or mismatched in groot service env. "
+                                "Deploy may have skipped shared credential injection."
+                            )
+                            return
+                        _print_ngc_env_audit(
+                            credentials=credentials,
+                            service_env=full_service_env,
+                            remote_path=GROOT_CONTAINER_ENV_FILE,
+                        )
                 except SSHError as exc:
                     fail_app(f"GR00T container deployment failed: {exc}")
                     return
@@ -2012,6 +2186,24 @@ def deploy_cmd(
             else:
                 try:
                     ssh.run_or_raise(_build_install_command(server_port, env_fields=service_env), stream=True)
+                    if verify_env and not no_shared_creds:
+                        failed_keys = audit_remote_env(
+                            ssh,
+                            "/etc/npa-groot-server/env",
+                            _groot_audit_env(service_env),
+                        )
+                        if failed_keys:
+                            key = failed_keys[0]
+                            fail_app(
+                                f"Credential audit failed: {key} missing or mismatched in groot service env. "
+                                "Deploy may have skipped shared credential injection."
+                            )
+                            return
+                        _print_ngc_env_audit(
+                            credentials=credentials,
+                            service_env=service_env,
+                            remote_path="/etc/npa-groot-server/env",
+                        )
                 except SSHError as exc:
                     fail_app(f"GR00T installation failed: {exc}")
                     return
@@ -2019,8 +2211,34 @@ def deploy_cmd(
         step += 1
         console.print(f"  [{step}/{total_steps}] Health check on {endpoint}...")
         if not dry_run:
-            if health_check(endpoint):
+            healthy, health_note = health_check_auto(
+                endpoint,
+                mode=health_check_mode,
+                ssh=ssh if byovm else None,
+                port=server_port,
+                host=vm_ip,
+            )
+            if healthy:
                 console.print("    Server is healthy")
+                if health_note:
+                    console.print(f"    {health_note}")
+                endpoint_strategy = (
+                    "ssh"
+                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
+                    else "public"
+                )
+                write_config({
+                    "projects": {
+                        proj_alias: {
+                            "workbenches": {
+                                wb_name: {
+                                    "endpoint_strategy": endpoint_strategy,
+                                    "service_port": server_port,
+                                },
+                            },
+                        },
+                    },
+                })
             else:
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
@@ -2043,7 +2261,7 @@ def deploy_cmd(
     console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
     console.print(f"  Endpoint: {endpoint}")
     console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
-    console.print(f"  Model:    {DEFAULT_MODEL}")
+    console.print(f"  Model:    {model}")
     console.print("")
     console.print(f"  Try: npa workbench groot -p {proj_alias} -n {wb_name} status")
 
@@ -2058,7 +2276,7 @@ def deploy_cmd(
             "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
             "gpu_count": byovm_fields.get("gpu_count"),
             "data_disk_size_gb": data_disk_size,
-            "model": DEFAULT_MODEL,
+            "model": model,
             "tf_outputs": tf_outputs,
         }, indent=2))
 
@@ -2069,7 +2287,7 @@ def download_cmd(
     output_path: str = typer.Option(
         "",
         "--output-path",
-        help="VM-local directory or S3 URI for downloaded weights.",
+        help="S3 URI for downloaded weights.",
     ),
     ngc_api_key: str = typer.Option(
         "",
@@ -2079,9 +2297,17 @@ def download_cmd(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Download GR00T model weights to the workbench VM or shared S3 storage."""
+    try:
+        output_path = validate_write_path(output_path, tool="GR00T download")
+    except PathContractError as exc:
+        _fail(str(exc))
     cfg = _get_ssh_config()
     credentials = resolve_credentials()
-    token = ngc_api_key or credentials.tokens.get("NGC_API_KEY", "")
+    token = (
+        ngc_api_key
+        or getattr(credentials, "ngc_api_key", "")
+        or (getattr(credentials, "tokens", {}) or {}).get("NGC_API_KEY", "")
+    )
     ssh = _ssh_client(cfg, extra_tokens={"NGC_API_KEY": token})
     target = output_path or f"{GROOT_MODEL_DIR}/{_model_slug(model)}"
 
@@ -2115,9 +2341,9 @@ def download_cmd(
 
 @app.command("finetune")
 def finetune_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI or VM-local GR00T LeRobot training dataset."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI or VM-local fine-tuned checkpoint directory."),
-    base_model: str = typer.Option(DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID, local path, or S3 URI."),
+    input_path: str = typer.Option(..., "--input-path", help="S3 URI for a GR00T LeRobot training dataset."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 URI for a fine-tuned checkpoint directory."),
+    base_model: str = typer.Option(DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID or S3 URI."),
     robot_embodiment: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--robot-embodiment",
@@ -2136,6 +2362,21 @@ def finetune_cmd(
     """Fine-tune a GR00T action head on demonstration data with PyTorch."""
     if num_gpus <= 0:
         _fail(f"--num-gpus must be positive, got {num_gpus}")
+    try:
+        input_path = validate_read_path(
+            input_path,
+            tool="GR00T finetune",
+            option="--input-path",
+            allow_hf=False,
+        )
+        output_path = validate_write_path(
+            output_path,
+            tool="GR00T finetune",
+            option="--output-path",
+            required=True,
+        )
+    except PathContractError as exc:
+        _fail(str(exc))
     cfg = _get_ssh_config()
     ssh = _ssh_client(cfg)
     tag = _normalize_embodiment_tag(robot_embodiment)
@@ -2187,8 +2428,8 @@ def finetune_cmd(
 
 @app.command("eval")
 def eval_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI or VM-local fine-tuned checkpoint."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI or VM-local eval results directory."),
+    input_path: str = typer.Option(..., "--input-path", help="S3 URI for a fine-tuned checkpoint."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 URI for eval results."),
     robot_embodiment: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--robot-embodiment",
@@ -2210,6 +2451,28 @@ def eval_cmd(
 ) -> None:
     """Evaluate a fine-tuned GR00T policy offline or through the S3 Isaac Lab data bus."""
     tag = _normalize_embodiment_tag(robot_embodiment)
+    try:
+        input_path = validate_read_path(
+            input_path,
+            tool="GR00T eval",
+            option="--input-path",
+            allow_hf=False,
+        )
+        output_path = validate_write_path(
+            output_path,
+            tool="GR00T eval",
+            option="--output-path",
+            required=True,
+        )
+        if dataset_path:
+            dataset_path = validate_read_path(
+                dataset_path,
+                tool="GR00T eval",
+                option="--dataset-path",
+                allow_hf=False,
+            )
+    except PathContractError as exc:
+        _fail(str(exc))
 
     if sim:
         if not isaac_lab_workbench:
@@ -2302,20 +2565,31 @@ def _write_eval_request(request: dict[str, Any], output_path: str) -> str:
 
 @app.command("serve")
 def serve_cmd(
-    input_path: str = typer.Option("", "--input-path", help="S3 URI or VM-local fine-tuned checkpoint directory."),
+    input_path: str = typer.Option("", "--input-path", help="S3 URI for a fine-tuned checkpoint directory."),
     model: str = typer.Option("", "--model", help="Downloaded/base model ID to serve instead of --input-path."),
     robot_embodiment: str = typer.Option(DEFAULT_EMBODIMENT_TAG, "--robot-embodiment", help="GR00T embodiment tag."),
     port: int = typer.Option(DEFAULT_SERVER_PORT, "--port", help="GR00T HTTP server port."),
+    timeout: float = typer.Option(600.0, "--timeout", help="Seconds to wait for model load before failing."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the pending live serve placeholder without touching the VM."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Load a GR00T checkpoint and serve synchronous policy inference."""
     if bool(input_path) == bool(model):
         _fail("Provide exactly one of --input-path or --model.")
+    if input_path:
+        try:
+            input_path = validate_read_path(
+                input_path,
+                tool="GR00T serve",
+                option="--input-path",
+                allow_hf=False,
+            )
+        except PathContractError as exc:
+            _fail(str(exc))
     if dry_run:
         _output({
             "status": "pending",
-            "message": "GR00T live serve validation is pending; no server action attempted.",
+            "message": "Would ask the running GR00T server to load the selected model.",
             "input_path": input_path or None,
             "model": model or None,
             "port": port,
@@ -2343,17 +2617,32 @@ def serve_cmd(
                 ),
                 stream=output != OutputFormat.json,
             )
-        _, stdout, stderr = ssh.run_or_raise(
-            _runtime_command(
-                cfg,
-                _build_container_serve_command(model_path, tag, port)
-                if _is_container_config(cfg)
-                else _build_serve_command(model_path, tag, port, env_fields=_gpu_env_from_config(cfg)),
-            ),
-            stream=output != OutputFormat.json,
-        )
     except SSHError as exc:
         _fail(f"GR00T serve failed: {exc}")
+        return
+
+    try:
+        with service_endpoint(cfg, default_port=port, service_port=port) as active:
+            served = HTTPClient(active.url, timeout=timeout, retries=1)._request(
+                "POST",
+                "/serve",
+                json={"model_path": model_path, "embodiment_tag": tag, "device": "cuda"},
+                timeout=timeout,
+            )
+            endpoint_url = active.url
+    except EndpointError as exc:
+        _fail(f"GR00T serve endpoint setup failed: {exc}")
+        return
+    except ServerError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if any(term in lowered for term in ("gated", "authentication", "401", "403", "access to model")):
+            repo = model or model_path
+            message += (
+                f"\nRequest access at https://huggingface.co/{repo} and ensure "
+                "HF_TOKEN has the required permissions."
+            )
+        _fail(f"Model load failed: {message}")
         return
 
     result = {
@@ -2363,20 +2652,17 @@ def serve_cmd(
         "model_path": model_path,
         "robot_embodiment": tag,
         "port": port,
-        "endpoint": cfg.endpoint,
+        "endpoint": endpoint_url,
+        "response": served,
     }
-    if output == OutputFormat.json and stdout.strip():
-        result["stdout_tail"] = stdout.strip()[-1000:]
-    if stderr.strip():
-        result["stderr_tail"] = stderr.strip()[-1000:]
     _output(result, output)
 
 
 @app.command("infer")
 def infer_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI, VM-local path, or base model ID for a GR00T checkpoint."),
-    dataset_path: str = typer.Option(..., "--dataset-path", help="S3 URI or VM-local GR00T LeRobot dataset."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI or VM-local directory for predicted actions."),
+    input_path: str = typer.Option(..., "--input-path", help="S3 URI or Hugging Face model ID for a GR00T checkpoint."),
+    dataset_path: str = typer.Option(..., "--dataset-path", help="S3 URI for a GR00T LeRobot dataset."),
+    output_path: str = typer.Option(..., "--output-path", help="S3 URI for predicted actions."),
     embodiment_tag: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--embodiment-tag",
@@ -2402,6 +2688,27 @@ def infer_cmd(
         _fail("--steps must be positive.")
     if action_horizon <= 0:
         _fail("--action-horizon must be positive.")
+    try:
+        input_path = validate_read_path(
+            input_path,
+            tool="GR00T infer",
+            option="--input-path",
+            allow_hf=True,
+        )
+        dataset_path = validate_read_path(
+            dataset_path,
+            tool="GR00T infer",
+            option="--dataset-path",
+            allow_hf=False,
+        )
+        output_path = validate_write_path(
+            output_path,
+            tool="GR00T infer",
+            option="--output-path",
+            required=True,
+        )
+    except PathContractError as exc:
+        _fail(str(exc))
     cfg = _get_ssh_config()
     ssh = _ssh_client(cfg)
     tag = _normalize_embodiment_tag(embodiment_tag)
@@ -2500,8 +2807,8 @@ def _save_json_result(
 
 @app.command("convert")
 def convert_cmd(
-    input_path: str = typer.Option(..., "--input-path", "--input", "-i", help="Input dataset path or S3 URI."),
-    output_path: str = typer.Option(..., "--output-path", "--output", "-o", help="Output dataset path or S3 URI."),
+    input_path: str = typer.Option(..., "--input-path", "--input", "-i", help="S3 URI for the input dataset."),
+    output_path: str = typer.Option(..., "--output-path", "--output", "-o", help="S3 URI for the output dataset."),
     direction: ConvertDirection = typer.Option(
         ConvertDirection.lerobot_to_groot,
         "--direction",
@@ -2520,24 +2827,27 @@ def convert_cmd(
 
     temp_dirs: list[tempfile.TemporaryDirectory[str]] = []
     try:
-        if _is_s3_uri(input_path) or _is_s3_uri(output_path):
-            storage = _storage_client_for_project_or_environment()
-        else:
-            storage = None
+        input_path = validate_read_path(
+            input_path,
+            tool="GR00T convert",
+            option="--input-path",
+            allow_hf=False,
+        )
+        output_path = validate_write_path(
+            output_path,
+            tool="GR00T convert",
+            option="--output-path",
+            required=True,
+        )
+        storage = _storage_client_for_project_or_environment()
 
-        if _is_s3_uri(input_path):
-            tmp = tempfile.TemporaryDirectory(prefix="npa-groot-convert-input-")
-            temp_dirs.append(tmp)
-            inp = Path(storage.download_directory(input_path, tmp.name))  # type: ignore[union-attr]
-        else:
-            inp = Path(input_path)
+        tmp = tempfile.TemporaryDirectory(prefix="npa-groot-convert-input-")
+        temp_dirs.append(tmp)
+        inp = Path(storage.download_directory(input_path, tmp.name))
 
-        if _is_s3_uri(output_path):
-            tmp = tempfile.TemporaryDirectory(prefix="npa-groot-convert-output-")
-            temp_dirs.append(tmp)
-            out = Path(tmp.name) / "dataset"
-        else:
-            out = Path(output_path)
+        tmp = tempfile.TemporaryDirectory(prefix="npa-groot-convert-output-")
+        temp_dirs.append(tmp)
+        out = Path(tmp.name) / "dataset"
 
         if not inp.exists():
             _fail(f"Input dataset does not exist: {inp}")
@@ -2555,10 +2865,7 @@ def convert_cmd(
             _fail(str(exc))
             return
 
-        if _is_s3_uri(output_path):
-            saved_to = storage.upload_directory(str(converted), output_path)  # type: ignore[union-attr]
-        else:
-            saved_to = str(converted)
+        saved_to = storage.upload_directory(str(converted), output_path)
         _output(
             {
                 "status": "converted",
@@ -2569,6 +2876,8 @@ def convert_cmd(
             },
             output,
         )
+    except PathContractError as exc:
+        _fail(str(exc))
     finally:
         for tmp in temp_dirs:
             tmp.cleanup()
@@ -2580,30 +2889,66 @@ def status_cmd(
 ) -> None:
     """Check the GR00T endpoint health."""
     cfg = _get_config()
-    client = HTTPClient(cfg.endpoint, timeout=10.0, retries=1)
 
     try:
-        data = client.health()
-    except ServerError as exc:
+        with service_endpoint(cfg, default_port=DEFAULT_SERVER_PORT) as active:
+            client = HTTPClient(active.url, timeout=10.0, retries=1)
+            data = client.health()
+            endpoint_url = active.url
+    except EndpointError as exc:
         if output == OutputFormat.json:
             typer.echo(json.dumps({
                 "endpoint": cfg.endpoint,
-                "app_status": cfg.app_status or "unknown",
+                "app_status": "unreachable",
                 "server": "down",
                 "error": str(exc),
             }, indent=2))
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
-            typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
+            typer.echo("  app_status: unreachable")
+        _fail(f"Cannot prepare GR00T endpoint for {cfg.endpoint}: {exc}")
+        return
+    except ServerError as exc:
+        if output == OutputFormat.json:
+            typer.echo(json.dumps({
+                "endpoint": cfg.endpoint,
+                "app_status": "unreachable",
+                "server": "down",
+                "error": str(exc),
+            }, indent=2))
+        else:
+            typer.echo(f"  endpoint: {cfg.endpoint}")
+            typer.echo("  app_status: unreachable")
         _fail(f"Cannot reach GR00T endpoint at {cfg.endpoint}/health: {exc}")
         return
 
+    loaded = bool(data.get("loaded"))
+    hf_present = bool(getattr(cfg, "hf_token", ""))
+    ngc_ok = bool(data.get("ngc_credentials_configured"))
+    readiness = {
+        "hf_token_present": hf_present,
+        "ngc_credentials_configured": ngc_ok,
+        "model_loaded": loaded,
+        "ready": hf_present and ngc_ok and loaded,
+        "blockers": [],
+    }
+    if not hf_present:
+        readiness["blockers"].append("HF_TOKEN not configured - gated model downloads will fail")
+    if not ngc_ok:
+        readiness["blockers"].append("NGC credentials not configured")
+    if not loaded:
+        readiness["blockers"].append(f"Model {data.get('model') or DEFAULT_MODEL} not loaded")
+    app_status = "healthy" if loaded else "degraded"
+
     result = {
-        "endpoint": cfg.endpoint,
-        "app_status": cfg.app_status or "unknown",
+        "endpoint": endpoint_url,
+        "app_status": app_status,
         "server": "up",
         **data,
+        "readiness": readiness,
     }
+    if not loaded:
+        result["reason"] = "model not loaded"
     _output(result, output)
 
 

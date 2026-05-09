@@ -167,7 +167,7 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
-    mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
 
     result = runner.invoke(
         app,
@@ -227,7 +227,7 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
             "64",
             "--steps",
             "25",
-            "--output-path",
+            "--output-dir",
             "/tmp/isaac-out",
         ],
     )
@@ -269,7 +269,7 @@ def test_isaac_lab_train_container_uses_docker_exec(mocker) -> None:
             "Isaac-Reach-Franka-v0",
             "--steps",
             "1",
-            "--output-path",
+            "--output-dir",
             "/opt/isaac-lab/runs/container-test",
         ],
     )
@@ -296,11 +296,11 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
             "eval",
             "--task",
             "Isaac-Reach-Franka-v0",
-            "--input-path",
+            "--checkpoint",
             "/opt/isaac-lab/runs/model.pt",
             "--num-episodes",
             "3",
-            "--output-path",
+            "--output-dir",
             "/tmp/isaac-eval",
         ],
     )
@@ -318,6 +318,44 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
     assert "/tmp/isaac-eval" in cmd
     assert "ISAAC_LAB_EVAL_EPISODE" in cmd
     assert "ISAAC_LAB_EVAL_COMPLETE" in cmd
+
+
+def test_isaac_lab_public_path_options_reject_local_paths(mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    ssh_cls = mocker.patch("npa.cli.isaac_lab.SSHClient")
+
+    train = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--output-path",
+            "/tmp/isaac-out",
+        ],
+    )
+    eval_result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "eval",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--input-path",
+            "/tmp/model.pt",
+            "--output-path",
+            "s3://bucket/eval/",
+        ],
+    )
+
+    assert train.exit_code == 1
+    assert "Isaac Lab train --output-path expects an S3 URI" in train.output
+    assert eval_result.exit_code == 1
+    assert "Isaac Lab eval --input-path expects an S3 URI" in eval_result.output
+    ssh_cls.assert_not_called()
 
 
 def test_isaac_lab_train_accepts_deprecated_output_dir_alias(mocker) -> None:

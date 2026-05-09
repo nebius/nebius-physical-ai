@@ -944,7 +944,7 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     update_status = mocker.patch("npa.clients.config.update_workbench_app_status")
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
-    write_env = mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     mocker.patch("npa.deploy.configurator.write_manifest")
 
     result = runner.invoke(
@@ -1015,7 +1015,7 @@ def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None
             primary_name="NVIDIA H200",
         ),
     )
-    write_env = mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     mocker.patch("npa.deploy.configurator.deploy_workbench_container")
     mocker.patch("npa.deploy.configurator.write_manifest")
 

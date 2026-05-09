@@ -15,6 +15,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -33,10 +34,12 @@ from npa.clients.config import (
     update_workbench_app_status,
     write_config,
 )
+from npa.clients.credentials import apply_shared_credential_env
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_project_storage_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -561,6 +564,7 @@ def deploy_cmd(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
@@ -658,6 +662,13 @@ def deploy_cmd(
     ):
         if key in nebius_creds and key not in merged_vars:
             merged_vars[key] = nebius_creds[key]
+    if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
+        )
     if not byovm:
         try:
             provisioner.apply_boot_disk_tf_vars(merged_vars, runtime, disk_size)
@@ -915,11 +926,12 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
+        credentials = resolve_credentials()
         ssh_cfg = SSHConfig(
             host=vm_ip,
             user=ssh_user,
             key_path=ssh_key,
-            tokens=resolve_credentials().tokens,
+            tokens=credentials.tokens,
         )
 
         step += 1
@@ -941,30 +953,32 @@ def deploy_cmd(
             if dry_run:
                 console.print("    [dry-run] Would pull and run the Isaac Lab container image")
             else:
-                from npa.deploy.configurator import deploy_workbench_container, write_remote_env_file
+                from npa.deploy.configurator import deploy_workbench_container, write_remote_docker_env_file
 
                 try:
-                    write_remote_env_file(
+                    service_env = {
+                        "ACCEPT_EULA": "Y",
+                        "ISAACSIM_ACCEPT_EULA": "YES",
+                        "OMNI_KIT_ACCEPT_EULA": "YES",
+                        "PRIVACY_CONSENT": "Y",
+                        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                        "AWS_ENDPOINT_URL": storage_ep,
+                        "NEBIUS_S3_ENDPOINT": storage_ep,
+                        "NEBIUS_S3_BUCKET": bucket,
+                        "NEBIUS_REGION": env_region,
+                        "PYTHONUNBUFFERED": "1",
+                        **gpu_env_fields(
+                            byovm_gpu_info,
+                            effective_count=byovm_effective_gpu_count or None,
+                            visible_devices=byovm_visible_devices,
+                        ),
+                    }
+                    apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                    write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-isaac-lab/env",
-                        {
-                            "ACCEPT_EULA": "Y",
-                            "ISAACSIM_ACCEPT_EULA": "YES",
-                            "OMNI_KIT_ACCEPT_EULA": "YES",
-                            "PRIVACY_CONSENT": "Y",
-                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
-                            "AWS_ENDPOINT_URL": storage_ep,
-                            "NEBIUS_S3_ENDPOINT": storage_ep,
-                            "NEBIUS_S3_BUCKET": bucket,
-                            "NEBIUS_REGION": env_region,
-                            "PYTHONUNBUFFERED": "1",
-                            **gpu_env_fields(
-                                byovm_gpu_info,
-                                effective_count=byovm_effective_gpu_count or None,
-                                visible_devices=byovm_visible_devices,
-                            ),
-                        },
+                        service_env,
                         owner=ssh_user,
                     )
                     image_ref = container_image_for_tool(
@@ -1153,7 +1167,7 @@ def train_cmd(
         "",
         "--output-path",
         "-o",
-        help="Remote output directory or S3 URI where training artifacts are written.",
+        help="S3 URI where training artifacts are written.",
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
@@ -1166,6 +1180,12 @@ def train_cmd(
         _fail(f"--steps must be positive, got {steps}")
 
     cfg = _get_ssh_config()
+    try:
+        if output_path:
+            output_path = validate_write_path(output_path, tool="Isaac Lab train")
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
     ssh = SSHClient(cfg.ssh)
     target_output = output_path or output_dir or f"{ISAAC_LAB_HOME}/runs"
     output_is_s3 = _is_s3_uri(target_output)
@@ -1233,7 +1253,7 @@ def eval_cmd(
         "",
         "--input-path",
         "-i",
-        help="Remote checkpoint path or S3 URI.",
+        help="S3 URI for a checkpoint.",
     ),
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
@@ -1242,7 +1262,7 @@ def eval_cmd(
         "",
         "--output-path",
         "-o",
-        help="Remote output directory or S3 URI where eval artifacts are written.",
+        help="S3 URI where eval artifacts are written.",
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
@@ -1253,6 +1273,19 @@ def eval_cmd(
         _fail(f"--num-episodes must be positive, got {num_episodes}")
 
     cfg = _get_ssh_config()
+    try:
+        if input_path:
+            input_path = validate_read_path(
+                input_path,
+                tool="Isaac Lab eval",
+                option="--input-path",
+                allow_hf=False,
+            )
+        if output_path:
+            output_path = validate_write_path(output_path, tool="Isaac Lab eval")
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
     ssh = SSHClient(cfg.ssh)
     checkpoint_ref = input_path or checkpoint
     if not checkpoint_ref:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,10 @@ from npa.cli.cosmos import (
     COSMOS_VERSION,
     _build_install_command,
 )
+from npa.clients import config as config_module
+from npa.clients import credentials as credentials_module
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
 from npa.clients.ssh import SSHError
 
@@ -29,13 +33,19 @@ from npa.clients.ssh import SSHError
 runner = CliRunner()
 
 
-def _cfg(app_status: str = "") -> WorkbenchConfig:
+def _cfg(app_status: str = "", *, hf_token: str = "") -> WorkbenchConfig:
     return WorkbenchConfig(
         endpoint="http://cosmos:8080",
         ssh=SSHConfig(host="cosmos", user="ubuntu", key_path="~/.ssh/id"),
         storage=StorageConfig(checkpoint_bucket="", endpoint_url=""),
+        hf_token=hf_token,
         app_status=app_status,
     )
+
+
+@contextmanager
+def _active_endpoint(url: str):
+    yield SimpleNamespace(url=url)
 
 
 @pytest.mark.parametrize(
@@ -259,8 +269,9 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     write_config = mocker.patch("npa.cli.cosmos.write_config")
     update_status = mocker.patch("npa.cli.cosmos.update_workbench_app_status")
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
-    mocker.patch("npa.deploy.configurator.write_remote_env_file")
-    mocker.patch("npa.cli.cosmos.health_check", return_value=True)
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    validate = mocker.patch("npa.cli.cosmos.validate_hf_access", return_value=SimpleNamespace(ok=True, error=""))
+    mocker.patch("npa.cli.cosmos.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.cosmos.write_manifest")
 
     result = runner.invoke(
@@ -291,13 +302,15 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     )
 
     assert result.exit_code == 0
+    assert "HF access ok: nvidia/Cosmos-1.0-Diffusion-7B-Text2World" in result.output
+    validate.assert_called_once()
     tf_vars = apply.call_args.kwargs["tf_vars"]
     assert tf_vars["workbench_type"] == "cosmos"
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-cosmos"
     assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-cosmos:1.0.9")
-    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["cosmos-container"]
+    wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["cosmos-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "cosmos-container", "installing")
     assert update_status.call_args_list[-1].args == ("proj", "cosmos-container", "healthy")
@@ -415,7 +428,10 @@ def test_cosmos_serve_maps_ssh_error(mocker) -> None:
 def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
     source = tmp_path / "input.jpg"
     source.write_bytes(b"image-bytes")
-    output = tmp_path / "result.mp4"
+    output_uri = "s3://bucket/results/result.mp4"
+    store = mocker.MagicMock()
+    store.upload_file.return_value = output_uri
+    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=store)
 
     http = mocker.MagicMock()
     http.infer.return_value = {"job_id": "job-1", "status": "running"}
@@ -429,7 +445,7 @@ def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
         },
     ]
     ssh = mocker.MagicMock()
-    ssh.download_file.return_value = str(output)
+    ssh.download_file.return_value = str(tmp_path / "result.mp4")
     mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
     http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
     ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
@@ -446,7 +462,7 @@ def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
             "--input-path",
             str(source),
             "--output-path",
-            str(output),
+            output_uri,
             "--poll-interval",
             "0",
         ],
@@ -461,11 +477,13 @@ def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
     assert payload["input"]["content_base64"] == base64.b64encode(b"image-bytes").decode("ascii")
     assert http.job_status.call_count == 2
     ssh_cls.assert_called_once()
-    ssh.download_file.assert_called_once_with("/opt/cosmos/outputs/out.mp4", str(output))
+    assert ssh.download_file.call_args.args[0] == "/opt/cosmos/outputs/out.mp4"
+    store.upload_file.assert_called_once()
     sleep.assert_not_called()
     assert "job_id: job-1" in result.output
-    assert "job_status: completed" in result.output
-    assert f"downloaded_to: {output}" in result.output
+    assert "Generating... (status: completed)" in result.output
+    assert "Generation complete in" in result.output
+    assert f"downloaded_to: {output_uri}" in result.output
 
 
 def test_cosmos_infer_s3_input_and_output(tmp_path: Path, mocker) -> None:
@@ -508,6 +526,28 @@ def test_cosmos_infer_s3_input_and_output(tmp_path: Path, mocker) -> None:
     store.upload_file.assert_called_once()
     ssh.download_file.assert_called_once()
     assert "saved_to: s3://bucket/results/out.mp4" in result.output
+
+
+def test_cosmos_infer_rejects_local_output_path_before_config(mocker) -> None:
+    resolve_config = mocker.patch("npa.cli.cosmos.resolve_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "robot arm moving a cube",
+            "--output-path",
+            "/tmp/out.mp4",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Cosmos infer --output-path expects an S3 URI" in result.output
+    assert "S3 handoff contract" in result.output
+    resolve_config.assert_not_called()
 
 
 def test_cosmos_infer_times_out_while_polling(mocker) -> None:
@@ -584,6 +624,133 @@ def test_cosmos_status_checks_health_endpoint(mocker) -> None:
     http.health.assert_called_once()
 
 
+def test_cosmos_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
+    cfg = _cfg()
+    cfg.endpoint_strategy = "ssh"
+    cfg.service_port = 8081
+    http = mocker.MagicMock()
+    http.health.return_value = {"status": "ok", "model": "nvidia/Cosmos-Test"}
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    endpoint = mocker.patch(
+        "npa.cli.cosmos.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:19081"),
+    )
+    http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status"])
+
+    assert result.exit_code == 0
+    endpoint.assert_called_once_with(cfg, default_port=8080)
+    http_cls.assert_called_once_with("http://127.0.0.1:19081", timeout=10.0, retries=1)
+
+
+def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
+    tmp_path: Path,
+    monkeypatch,
+    mocker,
+) -> None:
+    cfg_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    for env_var in config_module.ENV_MAP.values():
+        monkeypatch.delenv(env_var, raising=False)
+
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.side_effect = [
+        (0, "connected", ""),
+        (0, "NVIDIA H200\nNVIDIA H200\n", ""),
+        (0, "downloaded", ""),
+        (0, "restarted", ""),
+    ]
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    mocker.patch("npa.cli.cosmos.write_manifest")
+    mocker.patch(
+        "npa.cli.cosmos.health_check_auto",
+        return_value=(
+            True,
+            "Public port 8081 unreachable; service healthy via SSH on 203.0.113.10.",
+        ),
+    )
+
+    deploy = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.10",
+            "--ssh-key",
+            "~/.ssh/byovm",
+            "--region",
+            "eu-north1",
+            "--gpu-type",
+            "gpu-h200-sxm",
+            "--gpu-preset",
+            "8gpu-160vcpu-1792gb",
+            "--server-port",
+            "8081",
+            "--skip-model-check",
+        ],
+    )
+
+    assert deploy.exit_code == 0
+    resolved = config_module.resolve_config(project="proj", name="cosmos")
+    assert resolved.endpoint_strategy == "ssh"
+    assert resolved.service_port == 8081
+
+    http = mocker.MagicMock()
+    http.health.return_value = {"status": "ok", "model": "nvidia/Cosmos-Test"}
+    endpoint = mocker.patch(
+        "npa.cli.cosmos.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:19081"),
+    )
+    http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+
+    status = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "-n", "cosmos", "status"])
+
+    assert status.exit_code == 0
+    endpoint.assert_called_once()
+    assert endpoint.call_args.args[0].endpoint_strategy == "ssh"
+    http_cls.assert_called_once_with("http://127.0.0.1:19081", timeout=10.0, retries=1)
+
+
+def test_cosmos_status_reports_degraded_when_model_not_loaded(mocker) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "model": "nvidia/Cosmos-Test",
+        "loaded": False,
+    }
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg(hf_token="hf-token"))
+    mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["app_status"] == "degraded"
+    assert payload["reason"] == "model not loaded"
+    assert payload["readiness"]["hf_token_present"] is True
+    assert payload["readiness"]["model_loaded"] is False
+    assert payload["readiness"]["ready"] is False
+    assert "Model nvidia/Cosmos-Test not loaded" in payload["readiness"]["blockers"]
+
+
 def test_cosmos_status_maps_server_error(mocker) -> None:
     http = mocker.MagicMock()
     http.health.side_effect = ServerError("down")
@@ -593,7 +760,7 @@ def test_cosmos_status_maps_server_error(mocker) -> None:
     result = runner.invoke(app, ["workbench", "cosmos", "status"])
 
     assert result.exit_code == 1
-    assert "app_status: install_failed" in result.output
+    assert "app_status: unreachable" in result.output
     assert "Cannot reach Cosmos endpoint" in result.output
     assert "http://cosmos:8080/health" in result.output
 

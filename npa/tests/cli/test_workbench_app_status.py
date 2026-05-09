@@ -160,7 +160,11 @@ def test_cosmos_skip_infra_retries_install_failed_workbench(
         return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
     )
     mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
-    mocker.patch("npa.cli.cosmos.health_check", return_value=True)
+    mocker.patch(
+        "npa.cli.cosmos.validate_hf_access",
+        return_value=mocker.MagicMock(ok=True, error=""),
+    )
+    mocker.patch("npa.cli.cosmos.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.cosmos.write_manifest")
     mocker.patch("npa.cli.cosmos.provisioner.working_dir_path", return_value=tmp_path / "missing")
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
