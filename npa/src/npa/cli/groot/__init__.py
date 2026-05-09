@@ -28,6 +28,7 @@ from npa.clients.config import (
     list_projects,
     remove_workbench_config,
     resolve_config,
+    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_ssh_config,
@@ -38,7 +39,12 @@ from npa.clients.config import (
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
-from npa.deploy.configurator import health_check, write_manifest
+from npa.deploy.configurator import (
+    docker_exec_cmd,
+    health_check,
+    write_manifest,
+    write_remote_env_file,
+)
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     detect_gpu_info,
@@ -49,6 +55,7 @@ from npa.deploy.byovm import (
     select_visible_devices,
     workbench_storage_outputs,
 )
+from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 
 app = typer.Typer(
@@ -73,11 +80,26 @@ GROOT_HOME = "/opt/groot"
 GROOT_DATA_MOUNT = "/opt/groot-data"
 GROOT_REPO = f"{GROOT_HOME}/Isaac-GR00T"
 GROOT_VENV = f"{GROOT_REPO}/.venv"
-GROOT_MODEL_DIR = f"{GROOT_HOME}/models"
-GROOT_DATA_CACHE = f"{GROOT_HOME}/data_cache"
-GROOT_CHECKPOINT_CACHE = f"{GROOT_HOME}/checkpoint_cache"
-GROOT_OUTPUT_DIR = f"{GROOT_HOME}/outputs"
+GROOT_MODEL_DIR = f"{GROOT_DATA_MOUNT}/models"
+GROOT_DATA_CACHE = f"{GROOT_DATA_MOUNT}/data_cache"
+GROOT_CHECKPOINT_CACHE = f"{GROOT_DATA_MOUNT}/checkpoint_cache"
+GROOT_OUTPUT_DIR = f"{GROOT_DATA_MOUNT}/outputs"
+GROOT_BASE_MODEL_CACHE = f"{GROOT_DATA_MOUNT}/base_model_cache"
+GROOT_EVAL_DATA_CACHE = f"{GROOT_DATA_MOUNT}/eval_data_cache"
+GROOT_CONFIG_CACHE = f"{GROOT_DATA_MOUNT}/config_cache"
 GROOT_SERVICE = "npa-groot-server"
+GROOT_CONTAINER_NAME = "npa-groot"
+GROOT_CONTAINER_ENV_FILE = "/etc/npa-groot/env"
+GROOT_CONTAINER_WORKBENCH_TYPE = "groot-container"
+GROOT_REMOTE_ENV_NAMES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "NGC_API_KEY",
+)
 DEFAULT_MODEL = "nvidia/GR00T-N1.7-3B"
 HF_MODEL_REVISIONS = {
     DEFAULT_MODEL: "2fc962b973bccdd5d8ce4f67cc63b264d6886495",
@@ -128,6 +150,7 @@ class OutputFormat(str, Enum):
 
 class WorkbenchRuntime(str, Enum):
     vm = "vm"
+    container = "container"
     byovm = "byovm"
 
 
@@ -239,7 +262,7 @@ def _is_hf_groot_model_ref(ref: str) -> bool:
 def _cache_dir(kind: str, uri: str) -> str:
     parsed = urlparse(uri)
     cache_key = f"{parsed.netloc}_{parsed.path.strip('/').replace('/', '_')}"
-    return f"{GROOT_HOME}/{kind}_cache/{cache_key}"
+    return f"{GROOT_DATA_MOUNT}/{kind}_cache/{cache_key}"
 
 
 def _normalize_embodiment_tag(tag: str) -> str:
@@ -402,6 +425,35 @@ def _ssh_client(cfg: Any, *, extra_tokens: dict[str, str] | None = None) -> SSHC
         tokens=tokens,
     )
     return SSHClient(ssh_cfg)
+
+
+def _is_container_config(cfg: Any) -> bool:
+    return str(getattr(cfg, "runtime", "vm")) == WorkbenchRuntime.container.value
+
+
+def _container_exec_env(names: tuple[str, ...]) -> str:
+    if not names:
+        return ""
+    env_assignments = " ".join(f"{name}=\"${{{name}:-}}\"" for name in names)
+    env_flags = " ".join(f"-e {name}" for name in names)
+    return f"sudo env {env_assignments} docker exec {env_flags} {shlex.quote(GROOT_CONTAINER_NAME)} bash -lc "
+
+
+def _container_exec(command: str, *, pass_env: tuple[str, ...] = ()) -> str:
+    if not pass_env:
+        return docker_exec_cmd(GROOT_CONTAINER_NAME, command)
+    return _container_exec_env(pass_env) + shlex.quote(command)
+
+
+def _runtime_command(
+    cfg: Any,
+    command: str,
+    *,
+    pass_env: tuple[str, ...] = (),
+) -> str:
+    if _is_container_config(cfg):
+        return _container_exec(command, pass_env=pass_env)
+    return command
 
 
 def _service_env_lines(fields: dict[str, str] | None) -> str:
@@ -737,8 +789,8 @@ if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 export PATH="$HOME/.local/bin:$PATH"
-sudo mkdir -p {GROOT_HOME} {GROOT_MODEL_DIR} {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_OUTPUT_DIR} {GROOT_HOME}/checkpoints {GROOT_HOME}/hf_cache {ISAAC_LAB_HOME}
-sudo chown -R "$USER:$USER" {GROOT_HOME}/ {ISAAC_LAB_HOME}
+sudo mkdir -p {GROOT_HOME} {GROOT_DATA_MOUNT} {GROOT_MODEL_DIR} {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_OUTPUT_DIR} {GROOT_DATA_MOUNT}/checkpoints {GROOT_DATA_MOUNT}/hf_cache {ISAAC_LAB_HOME}
+sudo chown -R "$USER:$USER" {GROOT_HOME}/ {GROOT_DATA_MOUNT}/ {ISAAC_LAB_HOME}
 if ! command -v ngc >/dev/null 2>&1; then
   curl -L -o /tmp/ngccli_linux.zip https://ngc.nvidia.com/downloads/ngccli_linux.zip
   rm -rf /tmp/ngccli
@@ -774,8 +826,8 @@ GROOT_EMBODIMENT_TAG={DEFAULT_EMBODIMENT_TAG}
 GROOT_MODEL_DIR={GROOT_MODEL_DIR}
 GROOT_OUTPUT_DIR={GROOT_OUTPUT_DIR}
 GROOT_SERVER_PORT={port}
-HF_HOME={GROOT_HOME}/hf_cache
-HUGGINGFACE_HUB_CACHE={GROOT_HOME}/hf_cache
+HF_HOME={GROOT_DATA_MOUNT}/hf_cache
+HUGGINGFACE_HUB_CACHE={GROOT_DATA_MOUNT}/hf_cache
 OMNI_KIT_ACCEPT_EULA=YES
 {extra_env}
 ENV
@@ -852,8 +904,8 @@ GROOT_EMBODIMENT_TAG={embodiment_tag}
 GROOT_MODEL_DIR={GROOT_MODEL_DIR}
 GROOT_OUTPUT_DIR={GROOT_OUTPUT_DIR}
 GROOT_SERVER_PORT={port}
-HF_HOME={GROOT_HOME}/hf_cache
-HUGGINGFACE_HUB_CACHE={GROOT_HOME}/hf_cache
+HF_HOME={GROOT_DATA_MOUNT}/hf_cache
+HUGGINGFACE_HUB_CACHE={GROOT_DATA_MOUNT}/hf_cache
 {extra_env}
 ENV
 sudo systemctl daemon-reload
@@ -870,6 +922,30 @@ for i in $(seq 1 120); do
   sleep 2
 done
 sudo systemctl --no-pager status {GROOT_SERVICE} || true
+exit 1
+"""
+    return _remote_bash(script)
+
+
+def _build_container_serve_command(model_path: str, embodiment_tag: str, port: int) -> str:
+    payload = json.dumps({
+        "model_path": model_path,
+        "embodiment_tag": embodiment_tag,
+        "device": "cuda",
+    })
+    script = f"""\
+set -euo pipefail
+for i in $(seq 1 120); do
+  if curl -fsS -X POST "http://127.0.0.1:{port}/serve" \
+    -H "Content-Type: application/json" \
+    -d {shlex.quote(payload)}; then
+    echo
+    echo GROOT_SERVE_READY
+    exit 0
+  fi
+  sleep 2
+done
+echo "GR00T container server did not become ready on port {port}" >&2
 exit 1
 """
     return _remote_bash(script)
@@ -981,13 +1057,13 @@ def _build_finetune_command(
     if config:
         resolved_config, config_setup = _resolve_remote_file_setup(
             config,
-            f"{GROOT_HOME}/config_cache/{_path_name(config, 'config.yaml')}",
+            f"{GROOT_CONFIG_CACHE}/{_path_name(config, 'config.yaml')}",
             endpoint_url,
         )
 
     output_is_s3 = _is_s3_uri(output_path)
     output_dir = (
-        f"{GROOT_HOME}/checkpoints/finetune-{int(time.time())}"
+        f"{GROOT_DATA_MOUNT}/checkpoints/finetune-{int(time.time())}"
         if output_is_s3 else
         output_path
     )
@@ -1017,7 +1093,7 @@ def _build_finetune_command(
     script = f"""\
 set -euo pipefail
 cd {GROOT_REPO}
-mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_HOME}/checkpoints {GROOT_HOME}/config_cache
+mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_DATA_MOUNT}/checkpoints {GROOT_CONFIG_CACHE}
 {dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
   modality_config_path={shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py
@@ -1271,33 +1347,77 @@ echo {shlex.quote(output_dir)}
     return _remote_bash(script)
 
 
-def _build_system_info_command() -> str:
+def _build_system_info_command(*, container: bool = False) -> str:
+    gr00t_cmd = (
+        f"sudo docker exec {shlex.quote(GROOT_CONTAINER_NAME)} bash -lc "
+        + shlex.quote(
+            f"{GROOT_VENV}/bin/python - <<'PY'\n"
+            "import os\n"
+            "from importlib import metadata\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            "    version = metadata.version('gr00t')\n"
+            "except Exception as exc:\n"
+            "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
+            "ngc_cfg = Path.home() / '.ngc' / 'config'\n"
+            "ngc_ok = bool(os.environ.get('NGC_API_KEY')) or (ngc_cfg.exists() and 'apikey' in ngc_cfg.read_text(errors='ignore'))\n"
+            "print(f'gr00t_version: {version}')\n"
+            "print(f'ngc_credentials_configured: {ngc_ok}')\n"
+            "PY"
+        )
+        if container
+        else (
+            f"{GROOT_VENV}/bin/python - <<'PY'\n"
+            "import os\n"
+            "from importlib import metadata\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            "    version = metadata.version('gr00t')\n"
+            "except Exception as exc:\n"
+            "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
+            "ngc_cfg = Path.home() / '.ngc' / 'config'\n"
+            "ngc_ok = bool(os.environ.get('NGC_API_KEY')) or (ngc_cfg.exists() and 'apikey' in ngc_cfg.read_text(errors='ignore'))\n"
+            "print(f'gr00t_version: {version}')\n"
+            "print(f'ngc_credentials_configured: {ngc_ok}')\n"
+            "PY"
+        )
+    )
+    isaac_cmd = (
+        f"sudo docker exec {shlex.quote(GROOT_CONTAINER_NAME)} bash -lc "
+        + shlex.quote(
+            f"{ISAAC_LAB_VENV}/bin/python - <<'PY'\n"
+            "from importlib import metadata\n"
+            "try:\n"
+            "    version = metadata.version('isaaclab')\n"
+            "except Exception as exc:\n"
+            "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
+            "print(f'isaaclab_version: {version}')\n"
+            "PY"
+        )
+        if container
+        else (
+            f"{ISAAC_LAB_VENV}/bin/python - <<'PY'\n"
+            "from importlib import metadata\n"
+            "try:\n"
+            "    version = metadata.version('isaaclab')\n"
+            "except Exception as exc:\n"
+            "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
+            "print(f'isaaclab_version: {version}')\n"
+            "PY"
+        )
+    )
+    container_cmd = (
+        f"echo '' && echo '=== container ===' && "
+        f"sudo docker inspect -f 'state={{{{.State.Status}}}} image={{{{.Config.Image}}}}' {shlex.quote(GROOT_CONTAINER_NAME)} && "
+    ) if container else ""
     return (
         "echo '=== nvidia-smi ===' && nvidia-smi && "
         "echo '' && echo '=== lscpu ===' && lscpu && "
         "echo '' && echo '=== free -h ===' && free -h && "
-        "echo '' && echo '=== lsblk ===' && lsblk && "
-        f"echo '' && echo '=== gr00t ===' && {GROOT_VENV}/bin/python - <<'PY'\n"
-        "import os\n"
-        "from importlib import metadata\n"
-        "from pathlib import Path\n"
-        "try:\n"
-        "    version = metadata.version('gr00t')\n"
-        "except Exception as exc:\n"
-        "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
-        "ngc_cfg = Path.home() / '.ngc' / 'config'\n"
-        "ngc_ok = bool(os.environ.get('NGC_API_KEY')) or (ngc_cfg.exists() and 'apikey' in ngc_cfg.read_text(errors='ignore'))\n"
-        "print(f'gr00t_version: {version}')\n"
-        "print(f'ngc_credentials_configured: {ngc_ok}')\n"
-        "PY\n"
-        f"echo '' && echo '=== isaac lab ===' && {ISAAC_LAB_VENV}/bin/python - <<'PY'\n"
-        "from importlib import metadata\n"
-        "try:\n"
-        "    version = metadata.version('isaaclab')\n"
-        "except Exception as exc:\n"
-        "    version = f'not importable: {type(exc).__name__}: {exc}'\n"
-        "print(f'isaaclab_version: {version}')\n"
-        "PY"
+        "echo '' && echo '=== lsblk ===' && lsblk && " +
+        container_cmd +
+        f"echo '' && echo '=== gr00t ===' && {gr00t_cmd} && "
+        f"echo '' && echo '=== isaac lab ===' && {isaac_cmd}"
     )
 
 
@@ -1413,6 +1533,7 @@ def deploy_cmd(
     gpu_type: str = typer.Option("gpu-l40s-a", "--gpu-type", help="Nebius GPU platform; defaults to L40S."),
     gpu_preset: str = typer.Option("1gpu-40vcpu-160gb", "--gpu-preset", help="Nebius GPU preset."),
     data_disk_size: int = typer.Option(200, "--data-disk-size", help="Attached GR00T data disk size in GiB."),
+    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
     ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
@@ -1439,6 +1560,7 @@ def deploy_cmd(
         _fail(f"--gpu-count must be 0 (all detected) or positive, got {gpu_count}")
 
     byovm = is_byovm_runtime(runtime)
+    container_runtime = runtime == WorkbenchRuntime.container
     if byovm:
         skip_infra = True
     proj_alias = _project_alias or None
@@ -1535,6 +1657,7 @@ def deploy_cmd(
         })
 
     instance_name = f"groot-{proj_alias}-{wb_name}"
+    tf_workbench_type = GROOT_CONTAINER_WORKBENCH_TYPE if container_runtime else "groot"
 
     if destroy:
         if byovm:
@@ -1580,17 +1703,23 @@ def deploy_cmd(
             pass
 
         try:
+            destroy_vars = {
+                "gpu_platform": gpu_type,
+                "gpu_preset": gpu_preset,
+                "data_disk_size_gb": str(data_disk_size),
+                "instance_name": instance_name,
+                "workbench_type": tf_workbench_type,
+                "enable_preemptible": "true" if preemptible else "false",
+                **merged_vars,
+            }
+            try:
+                provisioner.apply_boot_disk_tf_vars(destroy_vars, runtime, disk_size)
+            except ValueError as exc:
+                _fail(str(exc))
+                return
             provisioner.destroy(
                 tf_dir=resolved_tf_dir or None,
-                tf_vars={
-                    "gpu_platform": gpu_type,
-                    "gpu_preset": gpu_preset,
-                    "data_disk_size_gb": str(data_disk_size),
-                    "instance_name": instance_name,
-                    "workbench_type": "groot",
-                    "enable_preemptible": "true" if preemptible else "false",
-                    **merged_vars,
-                },
+                tf_vars=destroy_vars,
             )
         except ProvisionerError as exc:
             _fail(f"Terraform destroy failed: {exc}")
@@ -1648,10 +1777,15 @@ def deploy_cmd(
             "gpu_preset": gpu_preset,
             "data_disk_size_gb": str(data_disk_size),
             "instance_name": instance_name,
-            "workbench_type": "groot",
+            "workbench_type": tf_workbench_type,
             "enable_preemptible": "true" if preemptible else "false",
             **merged_vars,
         }
+        try:
+            provisioner.apply_boot_disk_tf_vars(all_vars, runtime, disk_size)
+        except ValueError as exc:
+            _fail(str(exc))
+            return
         console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
         if dry_run:
             tf_outputs = {
@@ -1774,7 +1908,8 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
-        ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=resolve_credentials().tokens)
+        credentials = resolve_credentials()
+        ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
         service_env = gpu_env_fields(
             byovm_gpu_info,
             effective_count=byovm_effective_gpu_count or None,
@@ -1795,15 +1930,91 @@ def deploy_cmd(
                 return
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Installing GR00T {GROOT_RELEASE} runtime...")
-        if dry_run:
-            console.print("    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab")
+        if container_runtime:
+            console.print(f"  [{step}/{total_steps}] Starting GR00T container...")
+            if dry_run:
+                console.print("    [dry-run] Would pull and run the GR00T container image")
+            else:
+                try:
+                    write_remote_env_file(
+                        ssh,
+                        GROOT_CONTAINER_ENV_FILE,
+                        {
+                            "GROOT_MODEL_PATH": DEFAULT_MODEL,
+                            "GROOT_EMBODIMENT_TAG": DEFAULT_EMBODIMENT_TAG,
+                            "GROOT_MODEL_DIR": GROOT_MODEL_DIR,
+                            "GROOT_OUTPUT_DIR": GROOT_OUTPUT_DIR,
+                            "GROOT_SERVER_PORT": str(server_port),
+                            "HF_HOME": f"{GROOT_DATA_MOUNT}/hf_cache",
+                            "HUGGINGFACE_HUB_CACHE": f"{GROOT_DATA_MOUNT}/hf_cache",
+                            "HF_TOKEN": credentials.hf_token,
+                            "HUGGING_FACE_HUB_TOKEN": credentials.hf_token,
+                            "NGC_API_KEY": credentials.tokens.get("NGC_API_KEY", ""),
+                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                            "AWS_ENDPOINT_URL": storage_ep,
+                            "NEBIUS_S3_ENDPOINT": storage_ep,
+                            "NEBIUS_S3_BUCKET": bucket,
+                            "NEBIUS_REGION": env_region,
+                            "OMNI_KIT_ACCEPT_EULA": "YES",
+                            "ACCEPT_EULA": "Y",
+                            "ISAACSIM_ACCEPT_EULA": "YES",
+                            "PYTHONUNBUFFERED": "1",
+                            **service_env,
+                        },
+                        owner=ssh_user,
+                    )
+                    image_ref = container_image_for_tool(
+                        "groot",
+                        registry=resolve_container_registry(proj_alias),
+                        tag=GROOT_RUNTIME_VERSION,
+                    )
+                    from npa.deploy.configurator import deploy_workbench_container
+
+                    ssh.run(f"sudo systemctl stop {GROOT_SERVICE} >/dev/null 2>&1 || true")
+                    deploy_workbench_container(
+                        ssh,
+                        image_ref=image_ref,
+                        container_name=GROOT_CONTAINER_NAME,
+                        env_file=GROOT_CONTAINER_ENV_FILE,
+                        volumes=[
+                            f"{GROOT_DATA_MOUNT}:{GROOT_DATA_MOUNT}",
+                            f"{GROOT_CONTAINER_ENV_FILE}:{GROOT_CONTAINER_ENV_FILE}:ro",
+                        ],
+                        work_dirs=[
+                            GROOT_MODEL_DIR,
+                            f"{GROOT_DATA_MOUNT}/hf_cache",
+                            GROOT_OUTPUT_DIR,
+                            f"{GROOT_DATA_MOUNT}/checkpoints",
+                            GROOT_DATA_CACHE,
+                            GROOT_CHECKPOINT_CACHE,
+                            GROOT_BASE_MODEL_CACHE,
+                            GROOT_EVAL_DATA_CACHE,
+                            GROOT_CONFIG_CACHE,
+                        ],
+                        command=(
+                            "-lc "
+                            + shlex.quote(
+                                "cd /opt/groot && "
+                                f"exec {GROOT_VENV}/bin/python -m uvicorn server:app "
+                                f"--host 0.0.0.0 --port {server_port}"
+                            )
+                        ),
+                        registry_token=merged_vars.get("iam_token", ""),
+                    )
+                except SSHError as exc:
+                    fail_app(f"GR00T container deployment failed: {exc}")
+                    return
         else:
-            try:
-                ssh.run_or_raise(_build_install_command(server_port, env_fields=service_env), stream=True)
-            except SSHError as exc:
-                fail_app(f"GR00T installation failed: {exc}")
-                return
+            console.print(f"  [{step}/{total_steps}] Installing GR00T {GROOT_RELEASE} runtime...")
+            if dry_run:
+                console.print("    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab")
+            else:
+                try:
+                    ssh.run_or_raise(_build_install_command(server_port, env_fields=service_env), stream=True)
+                except SSHError as exc:
+                    fail_app(f"GR00T installation failed: {exc}")
+                    return
 
         step += 1
         console.print(f"  [{step}/{total_steps}] Health check on {endpoint}...")
@@ -1876,7 +2087,13 @@ def download_cmd(
 
     try:
         _, out, err = ssh.run_or_raise(
-            _build_download_command(model, target, cfg.storage.endpoint_url),
+            _runtime_command(
+                cfg,
+                _build_download_command(model, target, cfg.storage.endpoint_url),
+            pass_env=(
+                *GROOT_REMOTE_ENV_NAMES,
+            ),
+            ),
             stream=output != OutputFormat.json,
         )
     except SSHError as exc:
@@ -1922,20 +2139,24 @@ def finetune_cmd(
     cfg = _get_ssh_config()
     ssh = _ssh_client(cfg)
     tag = _normalize_embodiment_tag(robot_embodiment)
-    cmd = _build_finetune_command(
-        input_path=input_path,
-        output_path=output_path,
-        base_model=base_model,
-        robot_embodiment=tag,
-        num_gpus=num_gpus,
-        config=config,
-        endpoint_url=cfg.storage.endpoint_url,
-        max_steps=max_steps,
-        global_batch_size=global_batch_size,
-        dataloader_num_workers=dataloader_num_workers,
-        save_steps=save_steps,
-        save_total_limit=save_total_limit,
-        save_only_model=save_only_model,
+    cmd = _runtime_command(
+        cfg,
+        _build_finetune_command(
+            input_path=input_path,
+            output_path=output_path,
+            base_model=base_model,
+            robot_embodiment=tag,
+            num_gpus=num_gpus,
+            config=config,
+            endpoint_url=cfg.storage.endpoint_url,
+            max_steps=max_steps,
+            global_batch_size=global_batch_size,
+            dataloader_num_workers=dataloader_num_workers,
+            save_steps=save_steps,
+            save_total_limit=save_total_limit,
+            save_only_model=save_only_model,
+        ),
+        pass_env=GROOT_REMOTE_ENV_NAMES,
     )
 
     start = time.time()
@@ -2022,12 +2243,16 @@ def eval_cmd(
         _fail("Offline eval requires --dataset-path with held-out GR00T LeRobot data.")
     cfg = _get_ssh_config()
     ssh = _ssh_client(cfg)
-    cmd = _build_offline_eval_command(
-        checkpoint_path=input_path,
-        dataset_path=dataset_path,
-        output_path=output_path,
-        robot_embodiment=tag,
-        endpoint_url=cfg.storage.endpoint_url,
+    cmd = _runtime_command(
+        cfg,
+        _build_offline_eval_command(
+            checkpoint_path=input_path,
+            dataset_path=dataset_path,
+            output_path=output_path,
+            robot_embodiment=tag,
+            endpoint_url=cfg.storage.endpoint_url,
+        ),
+        pass_env=GROOT_REMOTE_ENV_NAMES,
     )
     start = time.time()
     try:
@@ -2110,9 +2335,21 @@ def serve_cmd(
     tag = _normalize_embodiment_tag(robot_embodiment)
     try:
         if setup_cmd:
-            ssh.run_or_raise(_remote_bash(setup_cmd[:-4]), stream=output != OutputFormat.json)
+            ssh.run_or_raise(
+                _runtime_command(
+                    cfg,
+                    _remote_bash(setup_cmd[:-4]),
+                    pass_env=GROOT_REMOTE_ENV_NAMES,
+                ),
+                stream=output != OutputFormat.json,
+            )
         _, stdout, stderr = ssh.run_or_raise(
-            _build_serve_command(model_path, tag, port, env_fields=_gpu_env_from_config(cfg)),
+            _runtime_command(
+                cfg,
+                _build_container_serve_command(model_path, tag, port)
+                if _is_container_config(cfg)
+                else _build_serve_command(model_path, tag, port, env_fields=_gpu_env_from_config(cfg)),
+            ),
             stream=output != OutputFormat.json,
         )
     except SSHError as exc:
@@ -2168,16 +2405,20 @@ def infer_cmd(
     cfg = _get_ssh_config()
     ssh = _ssh_client(cfg)
     tag = _normalize_embodiment_tag(embodiment_tag)
-    cmd = _build_infer_command(
-        checkpoint_path=input_path,
-        dataset_path=dataset_path,
-        output_path=output_path,
-        embodiment_tag=tag,
-        inference_mode=inference_mode.value,
-        endpoint_url=cfg.storage.endpoint_url,
-        steps=steps,
-        action_horizon=action_horizon,
-        trt_engine_path=trt_engine_path,
+    cmd = _runtime_command(
+        cfg,
+        _build_infer_command(
+            checkpoint_path=input_path,
+            dataset_path=dataset_path,
+            output_path=output_path,
+            embodiment_tag=tag,
+            inference_mode=inference_mode.value,
+            endpoint_url=cfg.storage.endpoint_url,
+            steps=steps,
+            action_horizon=action_horizon,
+            trt_engine_path=trt_engine_path,
+        ),
+        pass_env=GROOT_REMOTE_ENV_NAMES,
     )
     start = time.time()
     try:
@@ -2374,7 +2615,7 @@ def system_info_cmd(
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
     try:
-        _, out, err = ssh.run_or_raise(_build_system_info_command())
+        _, out, err = ssh.run_or_raise(_build_system_info_command(container=_is_container_config(cfg)))
     except SSHError as exc:
         _fail(f"SSH error: {exc}")
         return

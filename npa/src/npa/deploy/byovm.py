@@ -174,6 +174,24 @@ def workbench_storage_outputs(
     }
 
 
+def apply_storage_env_vars(
+    merged_vars: dict[str, str],
+    *,
+    explicit_vars: Mapping[str, str],
+) -> None:
+    """Apply storage-related environment variables unless CLI vars were explicit."""
+    env_mapping = {
+        "s3_bucket": "NPA_CHECKPOINT_BUCKET",
+        "s3_endpoint": "AWS_ENDPOINT_URL",
+        "nebius_api_key": "AWS_ACCESS_KEY_ID",
+        "nebius_secret_key": "AWS_SECRET_ACCESS_KEY",
+    }
+    for key, env_name in env_mapping.items():
+        value = os.environ.get(env_name, "")
+        if value and key not in explicit_vars:
+            merged_vars[key] = value
+
+
 def ssh_config_for_target(target: BYOVMTarget, *, tokens: dict[str, str] | None = None) -> SSHConfig:
     return SSHConfig(
         host=target.host,

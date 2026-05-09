@@ -8,17 +8,23 @@ workflow creates).
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
+import queue
 import shlex
+import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -82,6 +88,263 @@ def _fail(msg: str, code: int = 1) -> None:
 
 def _is_s3_uri(path: str) -> bool:
     return path.startswith("s3://")
+
+
+def _parse_positive_int(value: str | None) -> int:
+    if value is None or value.strip() == "":
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError:
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _configured_generate_gpu_count(cli_gpu_count: int) -> int:
+    if cli_gpu_count < 0:
+        _fail(f"--gpu-count must be non-negative, got {cli_gpu_count}")
+    if cli_gpu_count > 0:
+        return cli_gpu_count
+    return _parse_positive_int(os.environ.get("NPA_GPU_COUNT")) or 1
+
+
+def _visible_gpu_ids(gpu_count: int) -> list[str]:
+    visible = [
+        part.strip()
+        for part in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
+        if part.strip()
+    ]
+    if visible:
+        return visible[:gpu_count]
+    return [str(idx) for idx in range(gpu_count)]
+
+
+def _split_total(total: int, parts: int) -> list[int]:
+    if parts <= 0:
+        _fail("Internal error: parts must be positive")
+    if total <= 0:
+        return [0] * parts
+    base, remainder = divmod(total, parts)
+    return [base + (1 if idx < remainder else 0) for idx in range(parts)]
+
+
+@dataclass(frozen=True)
+class _GenesisGenerateShard:
+    rank: int
+    gpu_id: str
+    n_envs: int
+    n_episodes: int
+    output_dir: str
+    checkpoint_path: str
+    domain_randomize: bool
+    fps: int
+    seed: int
+    allow_failure_demos: bool
+    action_space: str
+
+
+def _generate_demos_shard(queue: Any, shard: _GenesisGenerateShard) -> None:
+    """Run one Genesis demo process pinned to exactly one GPU."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = shard.gpu_id
+    os.environ["QD_VISIBLE_DEVICE"] = shard.gpu_id
+    os.environ["EGL_DEVICE_ID"] = shard.gpu_id
+
+    try:
+        from npa.genesis.generate_demos import generate_demos
+
+        result = generate_demos(
+            checkpoint_path=Path(shard.checkpoint_path),
+            n_envs=shard.n_envs,
+            n_episodes=shard.n_episodes,
+            output_dir=Path(shard.output_dir),
+            domain_randomize=shard.domain_randomize,
+            fps=shard.fps,
+            seed=shard.seed,
+            allow_failure_demos=shard.allow_failure_demos,
+            action_space=shard.action_space,
+        )
+    except Exception as exc:
+        queue.put({
+            "rank": shard.rank,
+            "gpu_id": shard.gpu_id,
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        })
+        raise
+
+    queue.put({
+        "rank": shard.rank,
+        "gpu_id": shard.gpu_id,
+        "ok": True,
+        "output_dir": shard.output_dir,
+        "result": result,
+    })
+
+
+def _drain_shard_queue(result_queue: Any) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    while True:
+        try:
+            messages.append(result_queue.get_nowait())
+        except queue.Empty:
+            return messages
+
+
+def _copy_shard_episodes(shard_output: Path, final_output: Path, start_idx: int) -> int:
+    next_idx = start_idx
+    for episode_dir in sorted(shard_output.glob("episode_*")):
+        if not episode_dir.is_dir():
+            continue
+        dest = final_output / f"episode_{next_idx:04d}"
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(episode_dir, dest)
+        next_idx += 1
+    return next_idx
+
+
+def _run_multi_gpu_generate_demos(
+    *,
+    checkpoint_path: Path,
+    n_envs: int,
+    n_episodes: int,
+    output_dir: Path,
+    domain_randomize: bool,
+    fps: int,
+    seed: int,
+    allow_failure_demos: bool,
+    action_space: str,
+    gpu_count: int,
+) -> dict[str, Any]:
+    from npa.genesis.generate_demos import DemoGenerationError
+
+    effective_gpu_count = min(gpu_count, n_envs)
+    if n_episodes > 0:
+        effective_gpu_count = min(effective_gpu_count, n_episodes)
+    gpu_ids = _visible_gpu_ids(effective_gpu_count)
+    if len(gpu_ids) < effective_gpu_count:
+        effective_gpu_count = len(gpu_ids)
+    if effective_gpu_count <= 1:
+        from npa.genesis.generate_demos import generate_demos
+
+        return generate_demos(
+            checkpoint_path=checkpoint_path,
+            n_envs=n_envs,
+            n_episodes=n_episodes,
+            output_dir=output_dir,
+            domain_randomize=domain_randomize,
+            fps=fps,
+            seed=seed,
+            allow_failure_demos=allow_failure_demos,
+            action_space=action_space,
+        )
+
+    env_splits = _split_total(n_envs, effective_gpu_count)
+    episode_splits = _split_total(n_episodes, effective_gpu_count)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    processes: list[tuple[mp.Process, _GenesisGenerateShard]] = []
+    with tempfile.TemporaryDirectory(prefix="npa-genesis-shards-") as shard_root:
+        for rank, gpu_id in enumerate(gpu_ids[:effective_gpu_count]):
+            shard = _GenesisGenerateShard(
+                rank=rank,
+                gpu_id=gpu_id,
+                n_envs=env_splits[rank],
+                n_episodes=episode_splits[rank],
+                output_dir=str(Path(shard_root) / f"gpu_{rank}"),
+                checkpoint_path=str(checkpoint_path),
+                domain_randomize=domain_randomize,
+                fps=fps,
+                seed=seed + rank,
+                allow_failure_demos=allow_failure_demos,
+                action_space=action_space,
+            )
+            process = ctx.Process(target=_generate_demos_shard, args=(queue, shard))
+            process.start()
+            processes.append((process, shard))
+
+        for process, _shard in processes:
+            process.join()
+
+        messages = _drain_shard_queue(queue)
+        by_rank = {int(message["rank"]): message for message in messages}
+        successful: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for process, shard in processes:
+            message = by_rank.get(shard.rank)
+            if process.exitcode == 0 and message and message.get("ok"):
+                successful.append(message)
+                continue
+
+            failed.append({
+                "rank": shard.rank,
+                "gpu_id": shard.gpu_id,
+                "exit_code": process.exitcode,
+                "error": message.get("error") if message else "process exited before reporting status",
+            })
+
+        if not successful:
+            failed_gpus = ", ".join(str(item["gpu_id"]) for item in failed)
+            raise DemoGenerationError(
+                f"Genesis multi-GPU generation failed on all shards. Failed GPUs: {failed_gpus}"
+            )
+
+        next_episode_idx = 0
+        for message in sorted(successful, key=lambda item: int(item["rank"])):
+            next_episode_idx = _copy_shard_episodes(
+                Path(str(message["output_dir"])),
+                output_dir,
+                next_episode_idx,
+            )
+
+        shard_results = [message["result"] for message in successful]
+        total_attempted = sum(int(result.get("total_attempted", 0)) for result in shard_results)
+        total_successes = sum(int(result.get("total_successes", 0)) for result in shard_results)
+        total_episodes = sum(int(result.get("total_episodes", 0)) for result in shard_results)
+        fps_values = [
+            float(result["fps"])
+            for result in shard_results
+            if result.get("fps") is not None
+        ]
+        teacher_success_rate = (
+            total_successes / total_attempted if total_attempted > 0 else 0.0
+        )
+
+        return {
+            "status": "partial_failure" if failed else "success",
+            "output_dir": str(output_dir),
+            "gpu_count": effective_gpu_count,
+            "gpu_ids": gpu_ids[:effective_gpu_count],
+            "total_episodes": total_episodes or next_episode_idx,
+            "total_successes": total_successes,
+            "total_attempted": total_attempted,
+            "teacher_success_rate": round(teacher_success_rate, 4),
+            "includes_failures": any(
+                bool(result.get("includes_failures", False)) for result in shard_results
+            ),
+            "domain_randomize": domain_randomize,
+            "fps": sum(fps_values) if fps_values else None,
+            "shards": [
+                {
+                    "rank": int(message["rank"]),
+                    "gpu_id": str(message["gpu_id"]),
+                    "n_envs": env_splits[int(message["rank"])],
+                    "n_episodes": episode_splits[int(message["rank"])],
+                    "status": "success",
+                    "total_episodes": int(message["result"].get("total_episodes", 0)),
+                }
+                for message in sorted(successful, key=lambda item: int(item["rank"]))
+            ],
+            "failed_shards": failed,
+        }
+
+
+def _print_result(result: dict[str, Any]) -> None:
+    for k, v in result.items():
+        console.print(f"  {k}: {v}")
 
 
 def _forward_remote(project: str, name: str) -> None:
@@ -343,6 +606,11 @@ def generate_demos_cmd(
     ),
     n_envs: int = typer.Option(4096, "--n-envs", help="Number of parallel environments."),
     n_episodes: int = typer.Option(0, "--n-episodes", help="Episodes to collect (0 = one batch)."),
+    gpu_count: int = typer.Option(
+        0,
+        "--gpu-count",
+        help="Genesis process count for demo generation. 0 uses NPA_GPU_COUNT or single-GPU.",
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -371,15 +639,23 @@ def generate_demos_cmd(
     ),
 ) -> None:
     """Generate camera-only demonstrations using a trained teacher policy."""
+    if n_envs <= 0:
+        _fail(f"--n-envs must be positive, got {n_envs}")
+    if n_episodes < 0:
+        _fail(f"--n-episodes must be non-negative, got {n_episodes}")
+
     ckpt = Path(checkpoint)
     if not ckpt.exists():
         _fail(f"Checkpoint not found: {ckpt}")
 
     target_output = output_path or output or "./data/demos/"
+    configured_gpu_count = _configured_generate_gpu_count(gpu_count)
 
     console.print(f"[bold]Generating demonstrations[/bold]")
     console.print(f"  checkpoint: {ckpt}")
     console.print(f"  n_envs={n_envs}  domain_randomize={domain_randomize}")
+    if configured_gpu_count > 1:
+        console.print(f"  gpu_count={configured_gpu_count}  mode=multiprocess")
     console.print(f"  output: {target_output}")
 
     from npa.genesis.generate_demos import DemoGenerationError, generate_demos
@@ -392,17 +668,31 @@ def generate_demos_cmd(
 
     try:
         try:
-            result = generate_demos(
-                checkpoint_path=ckpt,
-                n_envs=n_envs,
-                n_episodes=n_episodes,
-                output_dir=local_output,
-                domain_randomize=domain_randomize,
-                fps=fps,
-                seed=seed,
-                allow_failure_demos=allow_failure_demos,
-                action_space=action_space.value,
-            )
+            if configured_gpu_count > 1:
+                result = _run_multi_gpu_generate_demos(
+                    checkpoint_path=ckpt,
+                    n_envs=n_envs,
+                    n_episodes=n_episodes,
+                    output_dir=local_output,
+                    domain_randomize=domain_randomize,
+                    fps=fps,
+                    seed=seed,
+                    allow_failure_demos=allow_failure_demos,
+                    action_space=action_space.value,
+                    gpu_count=configured_gpu_count,
+                )
+            else:
+                result = generate_demos(
+                    checkpoint_path=ckpt,
+                    n_envs=n_envs,
+                    n_episodes=n_episodes,
+                    output_dir=local_output,
+                    domain_randomize=domain_randomize,
+                    fps=fps,
+                    seed=seed,
+                    allow_failure_demos=allow_failure_demos,
+                    action_space=action_space.value,
+                )
         except DemoGenerationError as exc:
             _fail(str(exc))
             return
@@ -416,6 +706,20 @@ def generate_demos_cmd(
             result["output_path"] = uploaded
         else:
             result["output_path"] = str(local_output)
+
+        failed_shards = result.get("failed_shards") or []
+        if failed_shards:
+            failed_gpus = ", ".join(str(item.get("gpu_id")) for item in failed_shards)
+            if output_format == OutputFormat.json:
+                typer.echo(json.dumps(result, indent=2))
+            else:
+                console.print("[red]Demo generation partially failed.[/red]")
+                _print_result(result)
+                console.print(
+                    f"[red]Failed Genesis GPU shard(s):[/red] {failed_gpus}. "
+                    f"Partial output: {result.get('output_path')}"
+                )
+            raise typer.Exit(1)
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
@@ -424,8 +728,7 @@ def generate_demos_cmd(
         typer.echo(json.dumps(result, indent=2))
     else:
         console.print(f"[green]Demo generation complete.[/green]")
-        for k, v in result.items():
-            console.print(f"  {k}: {v}")
+        _print_result(result)
 
 
 # ── eval-teacher ───────────────────────────────────────────────────────
@@ -1029,6 +1332,9 @@ def deploy_cmd(
         for key, value in saved.items():
             if value and key not in extra_vars:
                 merged_vars[key] = value
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
+    if byovm:
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
             apply_boot_disk_tf_vars(merged_vars, runtime, disk_size)

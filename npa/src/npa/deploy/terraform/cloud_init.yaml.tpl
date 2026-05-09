@@ -144,7 +144,7 @@ runcmd:
       "$COSMOS_DATA_MOUNT/outputs"
     echo "=== Cosmos data disk setup complete - $(date) ==="
 %{ endif ~}
-%{ if workbench_type == "groot" ~}
+%{ if workbench_type == "groot" || workbench_type == "groot-container" ~}
     GROOT_DATA_DEVICE="/dev/disk/by-id/virtio-npa-groot-data"
     GROOT_DATA_MOUNT="/opt/groot-data"
 
@@ -179,6 +179,7 @@ runcmd:
       "$GROOT_DATA_MOUNT/base_model_cache" \
       "$GROOT_DATA_MOUNT/eval_data_cache" \
       "$GROOT_DATA_MOUNT/config_cache"
+%{ if workbench_type == "groot" ~}
     if [ -e /opt/groot ] && [ ! -L /opt/groot ]; then
       if [ -d /opt/groot ] && [ -z "$(ls -A /opt/groot)" ]; then
         rmdir /opt/groot
@@ -192,6 +193,7 @@ runcmd:
       ln -s "$GROOT_DATA_MOUNT" /opt/groot
     fi
     chown -h ${ssh_user}:${ssh_user} /opt/groot
+%{ endif ~}
     chown -R ${ssh_user}:${ssh_user} "$GROOT_DATA_MOUNT"
     echo "=== GR00T data disk setup complete - $(date) ==="
 %{ endif ~}
@@ -292,7 +294,26 @@ runcmd:
     echo "=== FiftyOne setup complete with app readiness warning - $(date) ==="
     exit 0
 %{ else ~}
-%{ if workbench_type == "groot" ~}
+%{ if workbench_type == "groot" || workbench_type == "groot-container" ~}
+%{ if workbench_type == "groot-container" ~}
+    exec > /var/log/groot-container-base-setup.log 2>&1
+    echo "=== GR00T container VM setup started - $(date) ==="
+
+    install -d -m 0755 -o ${ssh_user} -g ${ssh_user} \
+      /opt/groot-data \
+      /opt/groot-data/models \
+      /opt/groot-data/hf_cache \
+      /opt/groot-data/outputs \
+      /opt/groot-data/checkpoints \
+      /opt/groot-data/data_cache \
+      /opt/groot-data/checkpoint_cache \
+      /opt/groot-data/base_model_cache \
+      /opt/groot-data/eval_data_cache \
+      /opt/groot-data/config_cache
+    usermod -aG video,render ${ssh_user} || true
+
+    echo "=== GR00T container VM setup complete - $(date) ==="
+%{ else ~}
     exec > /var/log/groot-base-setup.log 2>&1
     echo "=== GR00T base VM setup started - $(date) ==="
 
@@ -328,6 +349,7 @@ runcmd:
     usermod -aG video,render ${ssh_user} || true
 
     echo "=== GR00T base VM setup complete - $(date) ==="
+%{ endif ~}
 %{ else ~}
 %{ if workbench_type == "lerobot-container" ~}
     install -d -m 0755 -o ${ssh_user} -g ${ssh_user} /opt/lerobot

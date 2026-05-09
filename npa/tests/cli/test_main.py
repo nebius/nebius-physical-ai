@@ -18,6 +18,8 @@ runner = CliRunner()
         (["workbench", "genesis", "--help"], "Genesis simulation"),
         (["adapter", "--help"], "Convert simulation data"),
         (["workflow", "--help"], "Multi-stage training workflow"),
+        (["configure", "--help"], "credential and config setup guidance"),
+        (["init", "--help"], "credential and config setup guidance"),
     ],
 )
 def test_help_smoke(args: list[str], expected: str) -> None:
@@ -35,3 +37,15 @@ def test_no_args_shows_top_level_help() -> None:
     assert "workbench" in result.output
     assert "adapter" in result.output
     assert "workflow" in result.output
+    assert "configure" in result.output
+    assert "init" in result.output
+
+
+@pytest.mark.parametrize("command", ["configure", "init"])
+def test_setup_guidance_commands_show_credentials_path(command: str) -> None:
+    result = runner.invoke(app, [command])
+
+    assert result.exit_code == 0
+    assert "~/.npa/credentials.yaml" in result.output
+    assert "HF_TOKEN" in result.output
+    assert "chmod 600" in result.output

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -184,6 +185,190 @@ def test_generate_demos_dispatches(
     assert result.exit_code == 0
     assert "Demo generation complete" in result.output
     generate_demos.assert_called_once()
+
+
+def test_generate_demos_uses_multiprocess_when_gpu_count_env_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_text("checkpoint")
+    generate_demos = mocker.MagicMock(
+        return_value={"status": "success", "total_episodes": 1}
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "npa.genesis.generate_demos",
+        SimpleNamespace(
+            DemoGenerationError=FakeDemoGenerationError,
+            generate_demos=generate_demos,
+        ),
+    )
+    monkeypatch.setenv("NPA_GPU_COUNT", "2")
+
+    from npa.cli import genesis as genesis_cli
+
+    multi = mocker.patch(
+        "npa.cli.genesis._run_multi_gpu_generate_demos",
+        return_value={
+            "status": "success",
+            "gpu_count": 2,
+            "total_episodes": 2,
+            "failed_shards": [],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "generate-demos",
+            "--checkpoint",
+            str(checkpoint),
+            "--n-envs",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "mode=multiprocess" in result.output
+    generate_demos.assert_not_called()
+    multi.assert_called_once()
+    assert multi.call_args.kwargs["gpu_count"] == 2
+    assert multi.call_args.kwargs["n_envs"] == 8
+    assert genesis_cli._configured_generate_gpu_count(0) == 2
+
+
+def test_generate_demos_reports_partial_multiprocess_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_text("checkpoint")
+    monkeypatch.setitem(
+        sys.modules,
+        "npa.genesis.generate_demos",
+        SimpleNamespace(
+            DemoGenerationError=FakeDemoGenerationError,
+            generate_demos=mocker.MagicMock(),
+        ),
+    )
+    monkeypatch.setenv("NPA_GPU_COUNT", "2")
+    mocker.patch(
+        "npa.cli.genesis._run_multi_gpu_generate_demos",
+        return_value={
+            "status": "partial_failure",
+            "gpu_count": 2,
+            "total_episodes": 1,
+            "failed_shards": [{"rank": 1, "gpu_id": "1", "exit_code": 134}],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "simulate",
+            "--checkpoint",
+            str(checkpoint),
+            "--n-envs",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "partially failed" in result.output
+    assert "Failed Genesis GPU shard(s): 1" in result.output
+
+
+def test_genesis_multi_gpu_split_total() -> None:
+    from npa.cli.genesis import _split_total
+
+    assert _split_total(10, 3) == [4, 3, 3]
+    assert _split_total(0, 3) == [0, 0, 0]
+
+
+def test_genesis_generate_shard_pins_single_gpu_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen_env: dict[str, str] = {}
+
+    def fake_generate_demos(**_kwargs):
+        seen_env.update({
+            "CUDA_VISIBLE_DEVICES": os.environ["CUDA_VISIBLE_DEVICES"],
+            "QD_VISIBLE_DEVICE": os.environ["QD_VISIBLE_DEVICE"],
+            "EGL_DEVICE_ID": os.environ["EGL_DEVICE_ID"],
+        })
+        return {"status": "success", "total_episodes": 1}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "npa.genesis.generate_demos",
+        SimpleNamespace(generate_demos=fake_generate_demos),
+    )
+
+    from npa.cli.genesis import _generate_demos_shard, _GenesisGenerateShard
+
+    messages: list[dict[str, object]] = []
+    queue = SimpleNamespace(put=messages.append)
+    shard = _GenesisGenerateShard(
+        rank=0,
+        gpu_id="3",
+        n_envs=4,
+        n_episodes=0,
+        output_dir=str(tmp_path / "shard"),
+        checkpoint_path=str(tmp_path / "model.pt"),
+        domain_randomize=True,
+        fps=20,
+        seed=42,
+        allow_failure_demos=True,
+        action_space="cartesian",
+    )
+
+    _generate_demos_shard(queue, shard)
+
+    assert seen_env == {
+        "CUDA_VISIBLE_DEVICES": "3",
+        "QD_VISIBLE_DEVICE": "3",
+        "EGL_DEVICE_ID": "3",
+    }
+    assert messages == [
+        {
+            "rank": 0,
+            "gpu_id": "3",
+            "ok": True,
+            "output_dir": str(tmp_path / "shard"),
+            "result": {"status": "success", "total_episodes": 1},
+        }
+    ]
+
+
+def test_genesis_multi_gpu_merge_renumbers_episode_dirs(tmp_path: Path) -> None:
+    from npa.cli.genesis import _copy_shard_episodes
+
+    shard_a = tmp_path / "shard-a"
+    shard_b = tmp_path / "shard-b"
+    final = tmp_path / "final"
+    for root, names in (
+        (shard_a, ("episode_0000", "episode_0001")),
+        (shard_b, ("episode_0000",)),
+    ):
+        for name in names:
+            episode = root / name
+            episode.mkdir(parents=True)
+            (episode / "actions.npy").write_text(name)
+    final.mkdir()
+
+    next_idx = _copy_shard_episodes(shard_a, final, 0)
+    next_idx = _copy_shard_episodes(shard_b, final, next_idx)
+
+    assert next_idx == 3
+    assert sorted(path.name for path in final.iterdir()) == [
+        "episode_0000",
+        "episode_0001",
+        "episode_0002",
+    ]
+    assert (final / "episode_0002" / "actions.npy").read_text() == "episode_0000"
 
 
 def test_generate_demos_uses_output_path(

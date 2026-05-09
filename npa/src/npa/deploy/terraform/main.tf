@@ -114,7 +114,7 @@ resource "nebius_compute_v1_instance" "workbench" {
         }
       }
     ] : [],
-    var.workbench_type == "groot" ? [
+    contains(["groot", "groot-container"], var.workbench_type) ? [
       {
         attach_mode = "READ_WRITE"
         device_id   = "npa-groot-data"

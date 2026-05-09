@@ -44,6 +44,7 @@ from npa.deploy import provisioner
 from npa.deploy.configurator import docker_exec_cmd, health_check, write_manifest
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -829,6 +830,9 @@ def deploy_cmd(
             project=proj_alias,
             explicit_vars=extra_vars,
         )
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
+    if byovm:
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
             provisioner.apply_boot_disk_tf_vars(merged_vars, runtime, disk_size)

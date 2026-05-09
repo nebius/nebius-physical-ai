@@ -54,7 +54,7 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     branches = template.split('%{ if workbench_type == "fiftyone" ~}')
     container_marker = '%{ if workbench_type == "lerobot-container" ~}'
     fiftyone_write_files = branches[1].split("%{ else ~}", 1)[0]
-    fiftyone_runcmd = branches[2].split('%{ if workbench_type == "groot" ~}', 1)[0]
+    fiftyone_runcmd = branches[2].split("%{ else ~}", 1)[0]
     fiftyone_branches = fiftyone_write_files + fiftyone_runcmd
     groot_base_marker = 'echo "=== GR00T base VM setup started - $(date) ==="'
     groot_branch = template.split(groot_base_marker, 1)[1].split("%{ else ~}", 1)[0]
@@ -73,6 +73,7 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     assert "/opt/groot /opt/isaac-lab" in groot_branch
     assert "Installing LeRobot ${lerobot_version}" not in groot_branch
     assert "lerobot[pusht" not in groot_branch
+    assert "GR00T container VM setup" in template
 
     assert "/opt/lerobot/.env" in lerobot_branch
     assert "Installing LeRobot ${lerobot_version}" in lerobot_branch
@@ -105,6 +106,8 @@ def test_cloud_init_mounts_groot_data_disk() -> None:
     assert "$GROOT_DATA_MOUNT/hf_cache" in template
     assert "$GROOT_DATA_MOUNT/checkpoints" in template
     assert "$GROOT_DATA_MOUNT/eval_data_cache" in template
+    assert 'workbench_type == "groot" || workbench_type == "groot-container"' in template
+    assert '%{ if workbench_type == "groot" ~}' in template
     assert "ln -s \"$GROOT_DATA_MOUNT\" /opt/groot" in template
 
 
@@ -118,6 +121,7 @@ def test_terraform_template_receives_workbench_type_and_versions() -> None:
     assert "secondary_disks = concat(" in main_tf
     assert 'device_id   = "npa-cosmos-data"' in main_tf
     assert 'device_id   = "npa-groot-data"' in main_tf
+    assert 'contains(["groot", "groot-container"], var.workbench_type)' in main_tf
     assert "var.cosmos_data_disk_size_gb" in main_tf
     assert "var.data_disk_size_gb" in main_tf
     assert 'variable "workbench_type"' in variables_tf

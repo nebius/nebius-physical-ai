@@ -11,6 +11,7 @@ CONTAINER_IMAGE_NAMES = {
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
     "cosmos": "npa-cosmos",
+    "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
 }
 

@@ -29,6 +29,7 @@ from npa.clients.config import (
 from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.deploy.byovm import (
     RUNTIME_HELP,
+    apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -1033,6 +1034,9 @@ def deploy(
             project=proj_alias,
             explicit_vars=extra_vars,
         )
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
+    if byovm:
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if not byovm:
         try:
             apply_boot_disk_tf_vars(merged_vars, runtime, disk_size)

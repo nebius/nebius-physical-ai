@@ -33,6 +33,14 @@ class CLIResult:
     gpu_snapshots: list[list[int]] | None = None
 
 
+TOOL_CONTAINERS = {
+    "cosmos": "npa-cosmos",
+    "genesis": "npa-genesis",
+    "isaac-lab": "npa-isaac-lab",
+    "lerobot": "npa-lerobot",
+}
+
+
 def _redact_secrets(text: str) -> str:
     patterns = (
         r"(--tf-var\s+nebius_api_key=)\S+",
@@ -145,10 +153,6 @@ def deploy_byovm_args(tool: str, target: BYOVMTarget, name: str, gpu_count: int)
         f"s3_bucket={_s3_bucket_name()}",
         "--tf-var",
         f"s3_endpoint={os.environ.get('AWS_ENDPOINT_URL', '')}",
-        "--tf-var",
-        f"nebius_api_key={os.environ.get('AWS_ACCESS_KEY_ID', '')}",
-        "--tf-var",
-        f"nebius_secret_key={os.environ.get('AWS_SECRET_ACCESS_KEY', '')}",
     ]
 
 
@@ -162,6 +166,31 @@ def cleanup_workbench(run_npa, tool: str, target: BYOVMTarget, name: str) -> Non
             "--destroy",
         ],
         timeout=120,
+        check=False,
+    )
+    cleanup_remote_container(target, tool)
+
+
+def cleanup_remote_container(target: BYOVMTarget, tool: str) -> None:
+    container = TOOL_CONTAINERS.get(tool)
+    ssh = shutil.which("ssh")
+    if not container or not ssh:
+        return
+    subprocess.run(
+        [
+            ssh,
+            "-i",
+            target.ssh_key,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            f"{target.ssh_user}@{target.host}",
+            f"sudo docker rm -f {container} >/dev/null 2>&1 || true",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=60,
         check=False,
     )
 
@@ -212,7 +241,7 @@ def poll_gpu_utilization(target: BYOVMTarget) -> list[int]:
             "-o",
             "UserKnownHostsFile=/dev/null",
             f"{target.ssh_user}@{target.host}",
-            "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits",
+            "nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits",
         ],
         text=True,
         stdout=subprocess.PIPE,
@@ -223,9 +252,11 @@ def poll_gpu_utilization(target: BYOVMTarget) -> list[int]:
         return []
     values: list[int] = []
     for line in proc.stdout.splitlines():
-        match = re.search(r"\d+", line)
-        if match:
-            values.append(int(match.group(0)))
+        numbers = [int(value) for value in re.findall(r"\d+", line)]
+        if numbers:
+            util = numbers[0]
+            memory_mib = numbers[1] if len(numbers) > 1 else 0
+            values.append(max(util, 1 if memory_mib > 100 else 0))
     return values
 
 
