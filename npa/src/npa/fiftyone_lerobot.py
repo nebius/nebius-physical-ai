@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,25 @@ SUCCESS_TERMS = (
     "done",
     "terminal",
 )
+
+
+def _refresh_fiftyone_collection_stats(dataset: Any) -> None:
+    # Workaround for FiftyOne/Mongo stale estimatedDocumentCount metadata.
+    # Remove this when FiftyOne no longer reports zero estimated counts after
+    # CLI-driven dataset loads.
+    try:
+        from fiftyone.core.odm.database import get_db_conn
+
+        conn = get_db_conn()
+        conn.command({"validate": "datasets"})
+        sample_collection_name = getattr(dataset, "_sample_collection_name", None)
+        if sample_collection_name:
+            conn.command({"validate": sample_collection_name})
+        frame_collection_name = getattr(dataset, "_frame_collection_name", None)
+        if frame_collection_name:
+            conn.command({"validate": frame_collection_name})
+    except Exception as exc:
+        print(f"Warning: could not refresh FiftyOne count metadata: {exc}", file=sys.stderr)
 
 
 @dataclass
@@ -185,6 +205,7 @@ def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[s
 
     dataset.add_samples(fo_samples)
     dataset.save()
+    _refresh_fiftyone_collection_stats(dataset)
 
     return {
         "status": "loaded",

@@ -9,12 +9,17 @@ import time
 from enum import Enum
 from importlib import resources
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import (
+    FIFTYONE_LOAD_DATASET_VM_LOCAL_ERROR,
+    PathContractError,
+    validate_read_path,
+)
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -22,6 +27,7 @@ from npa.clients.config import (
     APP_STATUS_PROVISIONED,
     ConfigError,
     SSHConfig,
+    WorkbenchConfig,
     default_project_name,
     default_workbench_name,
     list_projects,
@@ -34,10 +40,14 @@ from npa.clients.config import (
     update_workbench_app_status,
     write_config,
 )
+from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
+from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
+    BYOVMTarget,
     RUNTIME_HELP,
+    apply_project_storage_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -48,13 +58,24 @@ from npa.deploy.byovm import (
     ssh_config_for_target,
     workbench_storage_outputs,
 )
-from npa.deploy.configurator import docker_exec_cmd, write_manifest
+from npa.deploy.configurator import (
+    HealthCheckMode,
+    audit_remote_env,
+    docker_exec_cmd,
+    health_check_ssh,
+    write_manifest,
+)
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 
 app = typer.Typer(
     name="fiftyone",
     help="Voxel51 FiftyOne dataset curation and visualization workbench.",
+    no_args_is_help=True,
+)
+datasets_app = typer.Typer(
+    name="datasets",
+    help="Inspect datasets through the FiftyOne GraphQL API.",
     no_args_is_help=True,
 )
 
@@ -75,6 +96,7 @@ DEFAULT_CPU_IMAGE_FAMILY = "ubuntu24.04-driverless"
 FIFTYONE_READY_ATTEMPTS = 120
 FIFTYONE_HEALTH_RETRIES = 120
 FIFTYONE_HEALTH_BACKOFF_SEC = 2.0
+FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES = 3
 FIFTYONE_STOP_TIMEOUT_SEC = 15
 FIFTYONE_READY_MARKER = "NPA_FIFTYONE_APP_READY"
 
@@ -87,6 +109,7 @@ class OutputFormat(str, Enum):
 class DatasetFormat(str, Enum):
     auto = "auto"
     lerobot = "lerobot"
+    video = "video"
 
 
 class WorkbenchRuntime(str, Enum):
@@ -96,6 +119,22 @@ class WorkbenchRuntime(str, Enum):
 
 
 FIFTYONE_CONTAINER_NAME = "npa-fiftyone"
+VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv")
+FIFTYONE_DATASETS_QUERY = """
+query NpaDatasets($first: Int!, $search: String) {
+  datasets(first: $first, search: $search) {
+    total
+    edges {
+      node {
+        name
+        persistent
+        mediaType
+        estimatedSampleCount
+      }
+    }
+  }
+}
+"""
 
 
 @app.callback()
@@ -119,8 +158,11 @@ def main(
     _workbench_name = name
 
 
+app.add_typer(datasets_app, name="datasets")
+
+
 def _fail(msg: str, code: int = 1) -> None:
-    console.print(f"[red]Error:[/red] {msg}")
+    console.print(f"[red]Error:[/red] {msg}", soft_wrap=True)
     raise typer.Exit(code)
 
 
@@ -164,6 +206,18 @@ def _run_fiftyone_command(
     if code == 0 or FIFTYONE_READY_MARKER in out:
         return code, out, err
     raise SSHError(f"Command failed (exit {code}): {command}\nstderr: {err.strip()}")
+
+
+def _suppress_transient_curl_errors(stderr: str) -> str:
+    kept: list[str] = []
+    for line in stderr.splitlines():
+        lower = line.lower()
+        if "curl: (7)" in lower and "couldn't connect to server" in lower:
+            continue
+        if "failed to connect to 127.0.0.1" in lower and "couldn't connect to server" in lower:
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def _is_container_runtime(cfg: Any) -> bool:
@@ -249,6 +303,45 @@ def _endpoint_for_port(endpoint: str, host: str, port: int) -> str:
         hostname = "localhost"
     netloc_host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
     return f"{scheme}://{netloc_host}:{port}"
+
+
+def _url_with_query_param(url: str, key: str, value: str) -> str:
+    parsed = urlparse(url)
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    params[key] = value
+    return urlunparse(parsed._replace(query=urlencode(params)))
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    return (hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _localhost_browser_url(url: str) -> str:
+    parsed = urlparse(url)
+    if _is_loopback_host(parsed.hostname):
+        return url
+    port = parsed.port or DEFAULT_APP_PORT
+    return urlunparse(parsed._replace(netloc=f"127.0.0.1:{port}"))
+
+
+def _browser_url_for_strategy(url: str, endpoint_strategy: str) -> str:
+    """Return a browser URL that works with FiftyOne's tunnel fallback.
+
+    FiftyOne 1.15 uses the /events Server-Sent Events stream by default. Its
+    frontend switches to the built-in polling event listener when the browser
+    URL includes polling=true, which is more reliable through SSH forwards.
+    """
+    if str(endpoint_strategy or "").lower() == "ssh":
+        return _url_with_query_param(_localhost_browser_url(url), "polling", "true")
+    return url
+
+
+def _browser_url_for_config(cfg: WorkbenchConfig, url: str) -> str:
+    return _browser_url_for_strategy(url, getattr(cfg, "endpoint_strategy", "public"))
+
+
+def _graphql_url(base_url: str) -> str:
+    return base_url.rstrip("/") + "/graphql"
 
 
 def _is_fiftyone_workbench(name: str, wb_cfg: dict[str, Any]) -> bool:
@@ -585,22 +678,74 @@ def reset_dataset() -> None:
         fo.delete_dataset(NAME)
 
 
+def _refresh_fiftyone_collection_stats(dataset) -> None:
+    # Workaround for FiftyOne/Mongo stale estimatedDocumentCount metadata.
+    # Remove this when FiftyOne no longer reports zero estimated counts after
+    # CLI-driven dataset loads.
+    try:
+        from fiftyone.core.odm.database import get_db_conn
+
+        conn = get_db_conn()
+        conn.command({{"validate": "datasets"}})
+        sample_collection_name = getattr(dataset, "_sample_collection_name", None)
+        if sample_collection_name:
+            conn.command({{"validate": sample_collection_name}})
+        frame_collection_name = getattr(dataset, "_frame_collection_name", None)
+        if frame_collection_name:
+            conn.command({{"validate": frame_collection_name}})
+    except Exception as exc:
+        print(f"Warning: could not refresh FiftyOne count metadata: {{exc}}", file=sys.stderr)
+
+
 def persist(dataset) -> None:
     dataset.persistent = True
     dataset.save()
+    _refresh_fiftyone_collection_stats(dataset)
+
+
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+
+
+def _files_with_ext(path: Path, extensions: set[str]) -> list[Path]:
+    if path.is_file():
+        return [path] if path.suffix.lower() in extensions else []
+    return sorted(item for item in path.rglob("*") if item.is_file() and item.suffix.lower() in extensions)
+
+
+def load_media_source(path: Path, extensions: set[str]):
+    if not path.exists():
+        raise FileNotFoundError(path)
+    files = _files_with_ext(path, extensions)
+    if not files:
+        raise RuntimeError(f"No supported media files found in {{path}}")
+    reset_dataset()
+    dataset = fo.Dataset(NAME)
+    dataset.add_samples([fo.Sample(filepath=str(file)) for file in files])
+    persist(dataset)
+    return dataset
 
 
 def load_image_dir(path: Path):
-    if not path.exists():
-        raise FileNotFoundError(path)
-    reset_dataset()
-    dataset = fo.Dataset.from_dir(
-        dataset_dir=str(path),
-        dataset_type=fo.types.ImageDirectory,
-        name=NAME,
-    )
-    persist(dataset)
-    return dataset
+    return load_media_source(path, IMAGE_EXTENSIONS)
+
+
+def load_video_source(path: Path):
+    return load_media_source(path, VIDEO_EXTENSIONS)
+
+
+def load_auto_source(path: Path):
+    video_files = _files_with_ext(path, VIDEO_EXTENSIONS)
+    image_files = _files_with_ext(path, IMAGE_EXTENSIONS)
+    if FORMAT == "video" or (FORMAT == "auto" and video_files and not image_files):
+        return load_video_source(path)
+    if FORMAT == "auto" and video_files and image_files:
+        print(
+            "Warning: input contains both images and videos; defaulting to image mode. "
+            "Use --format video to load videos.",
+            file=sys.stderr,
+        )
+    return load_image_dir(path)
 
 
 def download_s3(uri: str) -> Path:
@@ -629,7 +774,7 @@ def download_s3(uri: str) -> Path:
                 continue
             rel = key[len(prefix):].lstrip("/") if prefix else key
             if not rel:
-                continue
+                rel = Path(key).name
             dest = target_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(dest))
@@ -655,11 +800,8 @@ if FORMAT == "lerobot":
     result = load_lerobot()
 elif SOURCE.startswith("s3://"):
     local_source = download_s3(SOURCE)
-    dataset = load_image_dir(local_source)
+    dataset = load_auto_source(local_source)
     source_type = "s3"
-elif Path(SOURCE).exists():
-    dataset = load_image_dir(Path(SOURCE))
-    source_type = "local"
 else:
     from fiftyone.utils.huggingface import load_from_hub
 
@@ -755,22 +897,74 @@ def reset_dataset() -> None:
         fo.delete_dataset(NAME)
 
 
+def _refresh_fiftyone_collection_stats(dataset) -> None:
+    # Workaround for FiftyOne/Mongo stale estimatedDocumentCount metadata.
+    # Remove this when FiftyOne no longer reports zero estimated counts after
+    # CLI-driven dataset loads.
+    try:
+        from fiftyone.core.odm.database import get_db_conn
+
+        conn = get_db_conn()
+        conn.command({{"validate": "datasets"}})
+        sample_collection_name = getattr(dataset, "_sample_collection_name", None)
+        if sample_collection_name:
+            conn.command({{"validate": sample_collection_name}})
+        frame_collection_name = getattr(dataset, "_frame_collection_name", None)
+        if frame_collection_name:
+            conn.command({{"validate": frame_collection_name}})
+    except Exception as exc:
+        print(f"Warning: could not refresh FiftyOne count metadata: {{exc}}", file=sys.stderr)
+
+
 def persist(dataset) -> None:
     dataset.persistent = True
     dataset.save()
+    _refresh_fiftyone_collection_stats(dataset)
+
+
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+
+
+def _files_with_ext(path: Path, extensions: set[str]) -> list[Path]:
+    if path.is_file():
+        return [path] if path.suffix.lower() in extensions else []
+    return sorted(item for item in path.rglob("*") if item.is_file() and item.suffix.lower() in extensions)
+
+
+def load_media_source(path: Path, extensions: set[str]):
+    if not path.exists():
+        raise FileNotFoundError(path)
+    files = _files_with_ext(path, extensions)
+    if not files:
+        raise RuntimeError(f"No supported media files found in {{path}}")
+    reset_dataset()
+    dataset = fo.Dataset(NAME)
+    dataset.add_samples([fo.Sample(filepath=str(file)) for file in files])
+    persist(dataset)
+    return dataset
 
 
 def load_image_dir(path: Path):
-    if not path.exists():
-        raise FileNotFoundError(path)
-    reset_dataset()
-    dataset = fo.Dataset.from_dir(
-        dataset_dir=str(path),
-        dataset_type=fo.types.ImageDirectory,
-        name=NAME,
-    )
-    persist(dataset)
-    return dataset
+    return load_media_source(path, IMAGE_EXTENSIONS)
+
+
+def load_video_source(path: Path):
+    return load_media_source(path, VIDEO_EXTENSIONS)
+
+
+def load_auto_source(path: Path):
+    video_files = _files_with_ext(path, VIDEO_EXTENSIONS)
+    image_files = _files_with_ext(path, IMAGE_EXTENSIONS)
+    if FORMAT == "video" or (FORMAT == "auto" and video_files and not image_files):
+        return load_video_source(path)
+    if FORMAT == "auto" and video_files and image_files:
+        print(
+            "Warning: input contains both images and videos; defaulting to image mode. "
+            "Use --format video to load videos.",
+            file=sys.stderr,
+        )
+    return load_image_dir(path)
 
 
 def download_s3(uri: str) -> Path:
@@ -799,7 +993,7 @@ def download_s3(uri: str) -> Path:
                 continue
             rel = key[len(prefix):].lstrip("/") if prefix else key
             if not rel:
-                continue
+                rel = Path(key).name
             dest = target_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(dest))
@@ -825,11 +1019,8 @@ if FORMAT == "lerobot":
     result = load_lerobot()
 elif SOURCE.startswith("s3://"):
     local_source = download_s3(SOURCE)
-    dataset = load_image_dir(local_source)
+    dataset = load_auto_source(local_source)
     source_type = "s3"
-elif Path(SOURCE).exists():
-    dataset = load_image_dir(Path(SOURCE))
-    source_type = "local"
 else:
     from fiftyone.utils.huggingface import load_from_hub
 
@@ -853,20 +1044,13 @@ PY
 """
     host_script = f"""\
 set -euo pipefail
-image_ref="$(sudo docker inspect -f '{{{{.Config.Image}}}}' {FIFTYONE_CONTAINER_NAME})"
-sudo docker stop {FIFTYONE_CONTAINER_NAME} >/dev/null
-trap 'sudo docker start {FIFTYONE_CONTAINER_NAME} >/dev/null 2>&1 || true' EXIT
-sudo docker run --rm --ipc=host --network host \
-  --env-file /etc/npa-fiftyone/env \
-  -v {FIFTYONE_HOME}/datasets:{FIFTYONE_HOME}/datasets \
-  -v {FIFTYONE_CONTAINER_DB_DIR}:{FIFTYONE_CONTAINER_DB_DIR} \
-  -v {FIFTYONE_HOME}/zoo:{FIFTYONE_HOME}/zoo \
-  -v /etc/npa-fiftyone/env:/etc/npa-fiftyone/env:ro \
-  "$image_ref" -lc {shlex.quote(container_script)}
+sudo docker inspect {FIFTYONE_CONTAINER_NAME} >/dev/null
+if ! sudo docker inspect -f '{{{{.State.Running}}}}' {FIFTYONE_CONTAINER_NAME} | grep -q true; then
+  sudo docker start {FIFTYONE_CONTAINER_NAME} >/dev/null
+fi
+sudo docker exec -i {FIFTYONE_CONTAINER_NAME} bash -lc {shlex.quote(container_script)}
 sudo sed -i '/^FIFTYONE_DATASET_NAME=/d' /etc/npa-fiftyone/env 2>/dev/null || true
 printf '%s\\n' {env_line} | sudo tee -a /etc/npa-fiftyone/env >/dev/null
-sudo docker start {FIFTYONE_CONTAINER_NAME} >/dev/null
-trap - EXIT
 app_port="$(grep -E '^FIFTYONE_DEFAULT_APP_PORT=' /etc/npa-fiftyone/env | tail -n 1 | cut -d= -f2- || true)"
 app_port="${{app_port:-{DEFAULT_APP_PORT}}}"
 for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
@@ -932,6 +1116,104 @@ def _read_existing_outputs(
         "storage_bucket": _deep_get(wb, "storage", "checkpoint_bucket", default=""),
         "storage_endpoint": _deep_get(wb, "storage", "endpoint_url", default=""),
     }
+
+
+def _saved_workbench_config(project: str | None, name: str) -> WorkbenchConfig | None:
+    try:
+        return resolve_ssh_config(project=project, name=name)
+    except ConfigError:
+        return None
+
+
+def _saved_byovm_target(
+    cfg: WorkbenchConfig | None,
+    *,
+    ssh_user: str = "",
+) -> BYOVMTarget | None:
+    if cfg is None or getattr(cfg, "runtime", "") != WorkbenchRuntime.byovm.value:
+        return None
+    if not cfg.ssh.host or not cfg.ssh.key_path:
+        return None
+    return BYOVMTarget(
+        host=cfg.ssh.host,
+        user=ssh_user or cfg.ssh.user or "ubuntu",
+        key_path=cfg.ssh.key_path,
+    )
+
+
+def _resolve_byovm_deploy_target(
+    *,
+    saved_cfg: WorkbenchConfig | None,
+    host: str,
+    ssh_key: str,
+    ssh_user: str,
+) -> BYOVMTarget:
+    if not host and not ssh_key:
+        saved_target = _saved_byovm_target(saved_cfg, ssh_user=ssh_user)
+        if saved_target is not None:
+            return saved_target
+    return resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
+
+
+def _build_restart_command(port: int) -> str:
+    script = f"""\
+set -euo pipefail
+{_service_stop_override_script()}
+if ! systemctl cat {FIFTYONE_SERVICE} >/dev/null 2>&1; then
+  echo "FiftyOne systemd service {FIFTYONE_SERVICE} is not installed" >&2
+  exit 1
+fi
+sudo systemctl reset-failed {FIFTYONE_SERVICE} || true
+sudo systemctl restart {FIFTYONE_SERVICE}
+for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
+  if curl -fsS http://127.0.0.1:{port}/ >/dev/null; then
+    echo {FIFTYONE_READY_MARKER}
+    exit 0
+  fi
+  sleep 1
+done
+sudo systemctl --no-pager status {FIFTYONE_SERVICE} || true
+echo "FiftyOne app did not respond on port {port} before restart readiness timeout" >&2
+exit 1
+"""
+    return _remote_bash(script)
+
+
+def _build_container_restart_command(port: int) -> str:
+    script = f"""\
+set -euo pipefail
+sudo docker inspect {FIFTYONE_CONTAINER_NAME} >/dev/null
+sudo docker restart {FIFTYONE_CONTAINER_NAME} >/dev/null
+for _ in $(seq 1 {FIFTYONE_READY_ATTEMPTS}); do
+  if curl -fsS http://127.0.0.1:{port}/ >/dev/null; then
+    echo {FIFTYONE_READY_MARKER}
+    exit 0
+  fi
+  sleep 1
+done
+sudo docker logs --tail 100 {FIFTYONE_CONTAINER_NAME} || true
+echo "FiftyOne container did not respond on port {port} before restart readiness timeout" >&2
+exit 1
+"""
+    return _remote_bash(script)
+
+
+def _parse_dataset_edges(payload: dict[str, Any]) -> tuple[int, list[dict[str, Any]]]:
+    datasets = payload.get("data", {}).get("datasets", {})
+    edges = datasets.get("edges", []) if isinstance(datasets, dict) else []
+    items: list[dict[str, Any]] = []
+    for edge in edges:
+        node = edge.get("node", {}) if isinstance(edge, dict) else {}
+        if not isinstance(node, dict):
+            continue
+        items.append({
+            "name": node.get("name", ""),
+            "samples": node.get("estimatedSampleCount", 0),
+            "media_type": node.get("mediaType", ""),
+            "persistent": node.get("persistent", False),
+        })
+    total = datasets.get("total", len(items)) if isinstance(datasets, dict) else len(items)
+    return int(total or 0), items
 
 
 def _app_health_check(
@@ -1021,6 +1303,13 @@ def deploy_cmd(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
+    health_check_mode: HealthCheckMode = typer.Option(
+        HealthCheckMode.auto,
+        "--health-check-mode",
+        help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
+    ),
+    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
@@ -1064,6 +1353,8 @@ def deploy_cmd(
 
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
+
+    saved_wb_cfg = _saved_workbench_config(proj_alias, wb_name) if skip_infra or byovm else None
 
     nebius_creds: dict[str, str] = {}
     saved_state = resolve_terraform_state(proj_alias) if use_remote_state else None
@@ -1152,6 +1443,13 @@ def deploy_cmd(
             merged_vars,
             project=proj_alias,
             explicit_vars=extra_vars,
+        )
+    if byovm:
+        apply_project_storage_vars(
+            merged_vars,
+            project=proj_alias,
+            explicit_vars=extra_vars,
+            warn=console.print,
         )
     if not byovm:
         try:
@@ -1322,9 +1620,22 @@ def deploy_cmd(
         resolved_tf_dir = tf_dir
         if byovm:
             try:
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
-                bucket = merged_vars.get("s3_bucket", "") or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get("AWS_ENDPOINT_URL", "")
+                target = _resolve_byovm_deploy_target(
+                    saved_cfg=saved_wb_cfg,
+                    host=host,
+                    ssh_key=ssh_key,
+                    ssh_user=ssh_user,
+                )
+                bucket = (
+                    merged_vars.get("s3_bucket", "")
+                    or (saved_wb_cfg.storage.checkpoint_bucket if saved_wb_cfg else "")
+                    or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
+                )
+                storage_ep = (
+                    merged_vars.get("s3_endpoint", "")
+                    or (saved_wb_cfg.storage.endpoint_url if saved_wb_cfg else "")
+                    or os.environ.get("AWS_ENDPOINT_URL", "")
+                )
                 tf_outputs = workbench_storage_outputs(target=target, bucket=bucket, endpoint=storage_ep)
                 if not dry_run:
                     ssh = SSHClient(ssh_config_for_target(target, tokens=resolve_credentials().tokens))
@@ -1366,6 +1677,30 @@ def deploy_cmd(
         effective_count=byovm_effective_gpu_count or None,
         visible_devices=byovm_visible_devices,
     )
+    initial_endpoint_strategy = (
+        saved_wb_cfg.endpoint_strategy
+        if skip_infra and saved_wb_cfg is not None
+        else "public"
+    )
+    workbench_config: dict[str, Any] = {
+        "endpoint": endpoint,
+        "gpu_platform": byovm_fields.get("gpu_platform", platform),
+        "gpu_preset": byovm_fields.get("gpu_preset", preset),
+        "tf_instance_name": instance_name,
+        "workbench_type": "fiftyone",
+        "runtime": runtime.value,
+        "endpoint_strategy": initial_endpoint_strategy,
+        "service_port": port,
+        "app_port": port,
+        **byovm_fields,
+        "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
+        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+    }
+    if skip_infra and not skip_app:
+        if saved_wb_cfg is not None and saved_wb_cfg.app_status:
+            workbench_config["app_status"] = saved_wb_cfg.app_status
+    else:
+        workbench_config["app_status"] = APP_STATUS_PROVISIONED
     config_data: dict[str, Any] = {
         "projects": {
             proj_alias: {
@@ -1374,19 +1709,7 @@ def deploy_cmd(
                 "region": env_region,
                 "terraform_state": _terraform_state_config(merged_vars),
                 "workbenches": {
-                    wb_name: {
-                        "endpoint": endpoint,
-                        "gpu_platform": byovm_fields.get("gpu_platform", platform),
-                        "gpu_preset": byovm_fields.get("gpu_preset", preset),
-                        "tf_instance_name": instance_name,
-                        "workbench_type": "fiftyone",
-                        "runtime": runtime.value,
-                        "app_status": APP_STATUS_PROVISIONED,
-                        "app_port": port,
-                        **byovm_fields,
-                        "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
-                    },
+                    wb_name: workbench_config,
                 },
             },
         },
@@ -1400,6 +1723,8 @@ def deploy_cmd(
         write_config(config_data)
         console.print("    Registered workbench in ~/.npa/config.yaml")
 
+    recorded_endpoint_strategy = initial_endpoint_strategy
+
     def mark_app_status(app_status: str) -> None:
         if not dry_run:
             update_workbench_app_status(proj_alias, wb_name, app_status)
@@ -1410,11 +1735,12 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
+        credentials = resolve_credentials()
         ssh_cfg = SSHConfig(
             host=vm_ip,
             user=ssh_user,
             key_path=ssh_key,
-            tokens=resolve_credentials().tokens,
+            tokens=credentials.tokens,
         )
 
         step += 1
@@ -1438,36 +1764,38 @@ def deploy_cmd(
             else:
                 from npa.deploy.configurator import (
                     deploy_workbench_container,
-                    write_remote_env_file,
+                    write_remote_docker_env_file,
                     write_remote_text_file,
                 )
 
                 try:
-                    write_remote_env_file(
+                    service_env = {
+                        "FIFTYONE_DEFAULT_APP_ADDRESS": "0.0.0.0",
+                        "FIFTYONE_DEFAULT_APP_PORT": str(port),
+                        "FIFTYONE_DATABASE_DIR": FIFTYONE_CONTAINER_DB_DIR,
+                        "FIFTYONE_DEFAULT_DATASET_DIR": f"{FIFTYONE_HOME}/datasets",
+                        "FIFTYONE_DATASET_ZOO_DIR": f"{FIFTYONE_HOME}/zoo/datasets",
+                        "FIFTYONE_MODEL_ZOO_DIR": f"{FIFTYONE_HOME}/zoo/models",
+                        "FIFTYONE_DO_NOT_TRACK": "true",
+                        "FIFTYONE_DATASET_NAME": "",
+                        "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
+                        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                        "AWS_ENDPOINT_URL": storage_ep,
+                        "NEBIUS_S3_ENDPOINT": storage_ep,
+                        "NEBIUS_S3_BUCKET": bucket,
+                        "NEBIUS_REGION": env_region,
+                        "PYTHONUNBUFFERED": "1",
+                        **gpu_env_fields(
+                            byovm_gpu_info,
+                            effective_count=byovm_effective_gpu_count or None,
+                            visible_devices=byovm_visible_devices,
+                        ),
+                    }
+                    apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                    write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-fiftyone/env",
-                        {
-                            "FIFTYONE_DEFAULT_APP_ADDRESS": "0.0.0.0",
-                            "FIFTYONE_DEFAULT_APP_PORT": str(port),
-                            "FIFTYONE_DATABASE_DIR": FIFTYONE_CONTAINER_DB_DIR,
-                            "FIFTYONE_DEFAULT_DATASET_DIR": f"{FIFTYONE_HOME}/datasets",
-                            "FIFTYONE_DATASET_ZOO_DIR": f"{FIFTYONE_HOME}/zoo/datasets",
-                            "FIFTYONE_MODEL_ZOO_DIR": f"{FIFTYONE_HOME}/zoo/models",
-                            "FIFTYONE_DO_NOT_TRACK": "true",
-                            "FIFTYONE_DATASET_NAME": "",
-                            "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                            "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
-                            "AWS_ENDPOINT_URL": storage_ep,
-                            "NEBIUS_S3_ENDPOINT": storage_ep,
-                            "NEBIUS_S3_BUCKET": bucket,
-                            "NEBIUS_REGION": env_region,
-                            "PYTHONUNBUFFERED": "1",
-                            **gpu_env_fields(
-                                byovm_gpu_info,
-                                effective_count=byovm_effective_gpu_count or None,
-                                visible_devices=byovm_visible_devices,
-                            ),
-                        },
+                        service_env,
                         owner=ssh_user,
                     )
                     write_remote_text_file(
@@ -1506,6 +1834,19 @@ def deploy_cmd(
                         gpu=uses_gpu,
                         registry_token=merged_vars.get("iam_token", ""),
                     )
+                    if verify_env and not no_shared_creds:
+                        failed_keys = audit_remote_env(
+                            ssh,
+                            "/etc/npa-fiftyone/env",
+                            shared_credential_env(credentials),
+                        )
+                        if failed_keys:
+                            key = failed_keys[0]
+                            fail_app(
+                                f"Credential audit failed: {key} missing or mismatched in fiftyone service env. "
+                                "Deploy may have skipped shared credential injection."
+                            )
+                            return
                 except SSHError as exc:
                     fail_app(f"FiftyOne container deployment failed: {exc}")
                     return
@@ -1527,9 +1868,61 @@ def deploy_cmd(
         console.print(f"  [{step}/{total_steps}] HTTP check on {endpoint}...")
         app_ready = False
         if not dry_run:
-            if _app_health_check(endpoint):
+            health_note = ""
+            if health_check_mode == HealthCheckMode.ssh:
+                app_ready = health_check_ssh(
+                    ssh,
+                    port,
+                    path="/",
+                    retries=FIFTYONE_HEALTH_RETRIES,
+                    backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+                )
+            else:
+                if health_check_mode == HealthCheckMode.auto and byovm:
+                    app_ready = _app_health_check(
+                        endpoint,
+                        retries=FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
+                        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+                    )
+                else:
+                    app_ready = _app_health_check(endpoint)
+                if (
+                    not app_ready
+                    and health_check_mode == HealthCheckMode.auto
+                    and byovm
+                    and health_check_ssh(
+                        ssh,
+                        port,
+                        path="/",
+                        retries=FIFTYONE_HEALTH_RETRIES,
+                        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+                    )
+                ):
+                    app_ready = True
+                    health_note = f"Public port {port} unreachable; service healthy via SSH on {vm_ip}."
+            if app_ready:
                 app_ready = True
                 console.print("    FiftyOne app is reachable")
+                if health_note:
+                    console.print(f"    {health_note}")
+                endpoint_strategy = (
+                    "ssh"
+                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
+                    else "public"
+                )
+                recorded_endpoint_strategy = endpoint_strategy
+                write_config({
+                    "projects": {
+                        proj_alias: {
+                            "workbenches": {
+                                wb_name: {
+                                    "endpoint_strategy": endpoint_strategy,
+                                    "service_port": port,
+                                },
+                            },
+                        },
+                    },
+                })
             else:
                 timeout_sec = FIFTYONE_HEALTH_RETRIES * FIFTYONE_HEALTH_BACKOFF_SEC
                 console.print(
@@ -1555,7 +1948,7 @@ def deploy_cmd(
 
     console.print("")
     console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
-    console.print(f"  FiftyOne: {endpoint}")
+    console.print(f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}")
     console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
     console.print("")
     console.print(f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} launch")
@@ -1565,6 +1958,7 @@ def deploy_cmd(
             "project": proj_alias,
             "name": wb_name,
             "endpoint": endpoint,
+            "browser_url": _browser_url_for_strategy(endpoint, recorded_endpoint_strategy),
             "vm_ip": vm_ip,
             "ssh_user": ssh_user,
             "gpu_platform": platform,
@@ -1585,6 +1979,7 @@ def launch_cmd(
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
+    browser_url = _browser_url_for_config(cfg, url)
     command = (
         _build_container_launch_command(port)
         if _is_container_runtime(cfg)
@@ -1600,6 +1995,7 @@ def launch_cmd(
     result: dict[str, Any] = {
         "status": "running",
         "url": url,
+        "browser_url": browser_url,
         "port": port,
     }
     if output == OutputFormat.json and out.strip():
@@ -1610,7 +2006,7 @@ def launch_cmd(
     if output == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        typer.echo(f"  FiftyOne URL: {url}")
+        typer.echo(f"  FiftyOne URL: {browser_url}")
 
 
 @app.command("load-dataset")
@@ -1620,7 +2016,7 @@ def load_dataset_cmd(
         "",
         "--input-path",
         "-i",
-        help="VM path, S3 URI, or Hugging Face dataset ID.",
+        help="S3 URI or Hugging Face Hub dataset ID/URL.",
     ),
     # Deprecated path alias: keep --source working for existing scripts.
     source: str = typer.Option("", "--source", hidden=True),
@@ -1637,6 +2033,16 @@ def load_dataset_cmd(
     dataset_source = input_path or source
     if not dataset_source.strip():
         _fail("--input-path must not be empty")
+    try:
+        dataset_source = validate_read_path(
+            dataset_source,
+            tool="FiftyOne load-dataset",
+            option="--input-path",
+            allow_hf=True,
+            vm_local_message=FIFTYONE_LOAD_DATASET_VM_LOCAL_ERROR,
+        )
+    except PathContractError as exc:
+        _fail(str(exc))
 
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
@@ -1657,19 +2063,126 @@ def load_dataset_cmd(
         return
 
     if output == OutputFormat.json:
+        filtered_err = _suppress_transient_curl_errors(err)
         parsed = _parse_first_json_object(out) if out.strip() else None
         typer.echo(json.dumps(parsed or {
             "status": "loaded",
             "name": name.strip(),
             "source": dataset_source.strip(),
             "stdout_tail": out.strip()[-1000:],
-            "stderr_tail": err.strip()[-1000:] if err.strip() else "",
+            "stderr_tail": filtered_err[-1000:] if filtered_err else "",
         }, indent=2))
     else:
         if out.strip():
             typer.echo(out.strip())
+        filtered_err = _suppress_transient_curl_errors(err)
+        if filtered_err:
+            console.print(f"[red]stderr:[/red]\n{filtered_err[-500:]}")
+
+
+@app.command("restart")
+def restart_cmd(
+    port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Restart the FiftyOne app or container without redeploying."""
+    cfg = _get_ssh_config()
+    ssh = SSHClient(cfg.ssh)
+    command = (
+        _build_container_restart_command(port)
+        if _is_container_runtime(cfg)
+        else _build_restart_command(port)
+    )
+    url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
+    browser_url = _browser_url_for_config(cfg, url)
+
+    try:
+        _, out, err = _run_fiftyone_command(ssh, command, stream=output != OutputFormat.json)
+    except SSHError as exc:
+        _fail(f"SSH error: {exc}")
+        return
+
+    if _project_alias and _workbench_name:
+        update_workbench_app_status(_project_alias, _workbench_name, APP_STATUS_HEALTHY)
+
+    result: dict[str, Any] = {
+        "status": "restarted",
+        "url": url,
+        "browser_url": browser_url,
+        "port": port,
+    }
+    if output == OutputFormat.json:
+        if out.strip():
+            result["stdout_tail"] = out.strip()[-1000:]
         if err.strip():
-            console.print(f"[red]stderr:[/red]\n{err.strip()[-500:]}")
+            result["stderr_tail"] = err.strip()[-1000:]
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(f"  status: restarted")
+        typer.echo(f"  FiftyOne URL: {browser_url}")
+
+
+@datasets_app.command("list")
+def datasets_list_cmd(
+    port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
+    first: int = typer.Option(100, "--first", min=1, help="Maximum datasets to return."),
+    search: str = typer.Option("", "--search", help="Filter dataset names."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """List FiftyOne datasets through the app GraphQL API."""
+    cfg = _get_ssh_config()
+    url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
+    try:
+        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port) as active:
+            resp = httpx.post(
+                _graphql_url(active.url),
+                json={
+                    "query": FIFTYONE_DATASETS_QUERY,
+                    "variables": {"first": first, "search": search},
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            active_url = active.url
+    except EndpointError as exc:
+        _fail(f"Cannot prepare FiftyOne endpoint for {url}: {exc}")
+        return
+    except httpx.HTTPError as exc:
+        _fail(f"Cannot query FiftyOne GraphQL API at {url}: {exc}")
+        return
+    except ValueError as exc:
+        _fail(f"FiftyOne GraphQL API returned invalid JSON: {exc}")
+        return
+
+    if payload.get("errors"):
+        _fail(f"FiftyOne GraphQL API returned errors: {payload['errors']}")
+        return
+
+    total, datasets = _parse_dataset_edges(payload)
+    result = {
+        "status": "ok",
+        "url": active_url,
+        "browser_url": _browser_url_for_config(cfg, url),
+        "total": total,
+        "datasets": datasets,
+    }
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(result, indent=2))
+        return
+
+    typer.echo(f"  url: {active_url}")
+    typer.echo(f"  total: {total}")
+    if not datasets:
+        typer.echo("  datasets: []")
+        return
+    for dataset in datasets:
+        typer.echo(
+            "  "
+            f"{dataset['name']}  samples={dataset['samples']}  "
+            f"media_type={dataset['media_type'] or '?'}  "
+            f"persistent={dataset['persistent']}"
+        )
 
 
 @app.command("status")
@@ -1682,18 +2195,33 @@ def status_cmd(
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
 
     try:
-        resp = httpx.get(url, timeout=5.0)
-    except httpx.HTTPError as exc:
+        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port) as active:
+            resp = httpx.get(active.url, timeout=5.0)
+            active_url = active.url
+    except EndpointError as exc:
         if output == OutputFormat.json:
             typer.echo(json.dumps({
                 "url": url,
-                "app_status": cfg.app_status or "unknown",
+                "app_status": "unreachable",
                 "server": "down",
                 "error": str(exc),
             }, indent=2))
         else:
             typer.echo(f"  url: {url}")
-            typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
+            typer.echo("  app_status: unreachable")
+        _fail(f"Cannot prepare FiftyOne endpoint for {url}: {exc}")
+        return
+    except httpx.HTTPError as exc:
+        if output == OutputFormat.json:
+            typer.echo(json.dumps({
+                "url": url,
+                "app_status": "unreachable",
+                "server": "down",
+                "error": str(exc),
+            }, indent=2))
+        else:
+            typer.echo(f"  url: {url}")
+            typer.echo("  app_status: unreachable")
         _fail(f"Cannot reach FiftyOne app at {url}: {exc}")
         return
 
@@ -1701,19 +2229,20 @@ def status_cmd(
         if output == OutputFormat.json:
             typer.echo(json.dumps({
                 "url": url,
-                "app_status": cfg.app_status or "unknown",
+                "app_status": "unreachable",
                 "server": "error",
                 "status_code": resp.status_code,
             }, indent=2))
         else:
             typer.echo(f"  url: {url}")
-            typer.echo(f"  app_status: {cfg.app_status or 'unknown'}")
+            typer.echo("  app_status: unreachable")
         _fail(f"FiftyOne app at {url} returned HTTP {resp.status_code}")
         return
 
     result: dict[str, Any] = {
-        "url": url,
-        "app_status": cfg.app_status or "unknown",
+        "url": active_url,
+        "browser_url": _browser_url_for_config(cfg, url),
+        "app_status": "healthy",
         "runtime": getattr(cfg, "runtime", "vm"),
         "server": "up",
         "status_code": resp.status_code,

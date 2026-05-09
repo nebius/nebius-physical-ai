@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.utils import strip_ansi
 import httpx
 import pytest
 from typer.testing import CliRunner
+import yaml
 
 from npa.cli.fiftyone import (
     DEFAULT_CPU_IMAGE_FAMILY,
     DEFAULT_CPU_PLATFORM,
     DEFAULT_CPU_PRESET,
+    FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
+    FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
 )
 from npa.cli.main import app
+from npa.clients import config as config_module
+from npa.clients import credentials as credentials_module
 from npa.clients.config import (
     EnvironmentConfig,
     SSHConfig,
@@ -37,14 +44,21 @@ def _cfg(app_status: str = "") -> WorkbenchConfig:
     )
 
 
+@contextmanager
+def _active_endpoint(url: str):
+    yield SimpleNamespace(url=url)
+
+
 @pytest.mark.parametrize(
     "command",
     [
         "deploy",
         "launch",
         "load-dataset",
+        "restart",
         "status",
         "system-info",
+        "datasets",
         "list",
     ],
 )
@@ -279,7 +293,7 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     mocker.patch("npa.cli.fiftyone.write_manifest")
     mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
-    mocker.patch("npa.deploy.configurator.write_remote_env_file")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     mocker.patch("npa.deploy.configurator.write_remote_text_file")
 
     result = runner.invoke(
@@ -314,10 +328,135 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
     assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-fiftyone:1.15.0")
     assert deploy_container.call_args.kwargs["gpu"] is False
-    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["curate-container"]
+    wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["curate-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "curate-container", "installing")
     assert update_status.call_args_list[-1].args == ("proj", "curate-container", "healthy")
+
+
+def test_fiftyone_byovm_auto_health_uses_short_public_retry_budget(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.side_effect = [
+        (0, "connected", ""),
+        (0, "NVIDIA H200\n", ""),
+    ]
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.resolve_credentials", return_value=SimpleNamespace(tokens={}))
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    mocker.patch("npa.deploy.configurator.write_remote_text_file")
+    mocker.patch("npa.cli.fiftyone.write_manifest")
+    public_health = mocker.patch("npa.cli.fiftyone._app_health_check", return_value=False)
+    ssh_health = mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate-byovm",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.20",
+            "--ssh-key",
+            "~/.ssh/byovm",
+            "--region",
+            "eu-north1",
+            "--tf-var",
+            "s3_bucket=lerobot-bucket",
+            "--tf-var",
+            "s3_endpoint=https://storage.example",
+        ],
+    )
+
+    assert result.exit_code == 0
+    public_health.assert_called_once_with(
+        "http://203.0.113.20:5151",
+        retries=FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
+        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+    )
+    ssh_health.assert_called_once()
+
+
+def test_fiftyone_byovm_skip_infra_reuses_saved_config_and_preserves_status(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.side_effect = [
+        (0, "connected", ""),
+        (0, "NVIDIA H200\n", ""),
+    ]
+    saved_cfg = _cfg(app_status="healthy")
+    saved_cfg.runtime = "byovm"
+    saved_cfg.endpoint_strategy = "ssh"
+    saved_cfg.service_port = 5151
+    saved_cfg.storage = StorageConfig(
+        checkpoint_bucket="s3://saved-bucket/checkpoints/",
+        endpoint_url="https://saved-storage.example",
+    )
+
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=saved_cfg)
+    resolve_byovm = mocker.patch("npa.cli.fiftyone.resolve_byovm_target")
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.resolve_credentials", return_value=SimpleNamespace(tokens={}))
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={"proj": {}})
+    mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
+        ),
+    )
+    write_config = mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    mocker.patch("npa.deploy.configurator.write_remote_text_file")
+    mocker.patch("npa.cli.fiftyone.write_manifest")
+    mocker.patch("npa.cli.fiftyone._app_health_check", return_value=False)
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate-byovm",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--skip-infra",
+            "--region",
+            "eu-north1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    resolve_byovm.assert_not_called()
+    wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["curate-byovm"]
+    assert wb_cfg["ssh"] == {
+        "host": "10.0.0.10",
+        "user": "ubuntu",
+        "key_path": "~/.ssh/id",
+    }
+    assert wb_cfg["storage"]["checkpoint_bucket"] == "s3://saved-bucket/checkpoints/"
+    assert wb_cfg["endpoint_strategy"] == "ssh"
+    assert wb_cfg["app_status"] == "healthy"
 
 
 def test_fiftyone_deploy_writes_config_before_readiness_and_warns_on_timeout(
@@ -558,12 +697,40 @@ def test_fiftyone_launch_accepts_ready_marker_when_ssh_exits_nonzero(mocker) -> 
     assert "http://fiftyone.example:5151" in result.output
 
 
+def test_fiftyone_launch_adds_polling_for_ssh_endpoint_strategy(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_FIFTYONE_APP_READY", "")
+    cfg = _cfg()
+    cfg.endpoint_strategy = "ssh"
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "fiftyone", "launch"])
+
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:5151?polling=true" in result.output
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("s3://bucket/images", ["download_s3(SOURCE)", "boto3.client", "download_file"]),
-        ("/data/images", ["elif Path(SOURCE).exists()", "fo.Dataset.from_dir", 'SOURCE = "/data/images"']),
+        (
+            "s3://bucket/images",
+            [
+                "download_s3(SOURCE)",
+                "boto3.client",
+                "download_file",
+                "dataset.add_samples",
+                "fo.Sample",
+                "_refresh_fiftyone_collection_stats(dataset)",
+                "stale estimatedDocumentCount",
+            ],
+        ),
         ("Voxel51/VisDrone2019-DET", ["load_from_hub(SOURCE, name=NAME)", "source_type = \"huggingface\""]),
+        (
+            "https://huggingface.co/datasets/Voxel51/VisDrone2019-DET",
+            ["load_from_hub(SOURCE, name=NAME)", "source_type = \"huggingface\""],
+        ),
     ],
 )
 def test_fiftyone_load_dataset_builds_source_specific_command(
@@ -602,10 +769,102 @@ def test_fiftyone_load_dataset_builds_source_specific_command(
         assert snippet in cmd
 
 
+def test_fiftyone_load_dataset_video_format_uses_video_loader(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, '{"status": "loaded", "samples": 1}', "")
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "load-dataset",
+            "--name",
+            "videos",
+            "--input-path",
+            "s3://bucket/cosmos/out.mp4",
+            "--format",
+            "video",
+        ],
+    )
+
+    assert result.exit_code == 0
+    cmd = ssh.run.call_args.args[0]
+    assert 'FORMAT = "video"' in cmd
+    assert "VIDEO_EXTENSIONS" in cmd
+    assert "dataset.add_samples" in cmd
+    assert "fo.Sample" in cmd
+    assert "fo.Dataset.from_videos" not in cmd
+    assert "fo.types.VideoDirectory" not in cmd
+
+
+def test_fiftyone_load_dataset_container_runtime_execs_app_container(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, '{"status": "loaded", "samples": 5}', "")
+    cfg = _cfg()
+    cfg.runtime = "container"
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "load-dataset",
+            "--name",
+            "curated",
+            "--input-path",
+            "s3://bucket/images",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    cmd = ssh.run.call_args.args[0]
+    assert "sudo docker exec -i npa-fiftyone bash -lc" in cmd
+    assert "dataset.add_samples" in cmd
+    assert "_refresh_fiftyone_collection_stats(dataset)" in cmd
+    assert "sudo docker stop npa-fiftyone" not in cmd
+    assert "sudo docker run --rm" not in cmd
+
+
+def test_fiftyone_load_dataset_rejects_vm_local_cosmos_output_at_cli_boundary(mocker) -> None:
+    resolve_ssh = mocker.patch("npa.cli.fiftyone.resolve_ssh_config")
+    ssh_cls = mocker.patch("npa.cli.fiftyone.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "load-dataset",
+            "--name",
+            "videos",
+            "--input-path",
+            "/opt/cosmos-data/outputs/cosmos.mp4",
+            "--format",
+            "video",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert (
+        "FiftyOne load-dataset expects an S3 URI or a Hugging Face Hub dataset. "
+        "VM-local paths are not supported. If you generated this with cosmos infer, "
+        "pass the same s3:// URI you used for --output-path."
+    ) in result.output
+    assert "HFValidationError" not in result.output
+    resolve_ssh.assert_not_called()
+    ssh_cls.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "source",
     [
-        "/data/lerobot",
         "s3://bucket/lerobot-dataset",
         "lerobot/pusht",
     ],
@@ -654,6 +913,7 @@ def test_fiftyone_load_dataset_lerobot_format_uses_remote_importer(
     assert 'FORMAT = "lerobot"' in cmd
     assert "npa_fiftyone_lerobot_importer.py" in cmd
     assert "def import_lerobot_dataset(" in cmd
+    assert "stale estimatedDocumentCount" in cmd
     assert "import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)" in cmd
 
 
@@ -676,7 +936,7 @@ def test_fiftyone_load_dataset_accepts_ready_marker_when_ssh_exits_nonzero(mocke
             "--name",
             "curated",
             "--input-path",
-            "/data/images",
+            "s3://bucket/images",
             "--output",
             "json",
         ],
@@ -686,6 +946,34 @@ def test_fiftyone_load_dataset_accepts_ready_marker_when_ssh_exits_nonzero(mocke
     payload = json.loads(result.output)
     assert payload["status"] == "loaded"
     assert payload["name"] == "curated"
+
+
+def test_fiftyone_load_dataset_suppresses_transient_curl_errors_on_success(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        0,
+        '{"status": "loaded", "samples": 5}\nNPA_FIFTYONE_APP_READY\n',
+        "curl: (7) Failed to connect to 127.0.0.1 port 5151: Couldn't connect to server\n",
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "load-dataset",
+            "--name",
+            "curated",
+            "--input-path",
+            "s3://bucket/fiftyone-ranked/",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "loaded"' in result.output
+    assert "curl: (7)" not in result.output
 
 
 def test_fiftyone_load_dataset_fails_nonzero_ssh_without_ready_marker(mocker) -> None:
@@ -703,7 +991,7 @@ def test_fiftyone_load_dataset_fails_nonzero_ssh_without_ready_marker(mocker) ->
             "--name",
             "curated",
             "--input-path",
-            "/data/images",
+            "s3://bucket/images",
         ],
     )
 
@@ -727,7 +1015,7 @@ def test_fiftyone_load_dataset_restart_timeout_is_warning_not_failure(mocker) ->
             "--name",
             "curated",
             "--input-path",
-            "/data/images",
+            "s3://bucket/images",
         ],
     )
 
@@ -735,6 +1023,79 @@ def test_fiftyone_load_dataset_restart_timeout_is_warning_not_failure(mocker) ->
     cmd = ssh.run.call_args.args[0]
     assert "restart readiness timeout" in cmd
     assert "exit 0" in cmd
+
+
+def test_fiftyone_restart_restarts_systemd_service(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_FIFTYONE_APP_READY", "")
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "restart"],
+    )
+
+    assert result.exit_code == 0
+    assert "status: restarted" in result.output
+    cmd = ssh.run.call_args.args[0]
+    assert "sudo systemctl restart npa-fiftyone-app" in cmd
+    assert "http://127.0.0.1:5151/" in cmd
+    update_status.assert_called_once_with("proj", "curate", "healthy")
+
+
+def test_fiftyone_restart_restarts_container_runtime(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_FIFTYONE_APP_READY", "")
+    cfg = _cfg()
+    cfg.runtime = "container"
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+
+    result = runner.invoke(app, ["workbench", "fiftyone", "restart"])
+
+    assert result.exit_code == 0
+    cmd = ssh.run.call_args.args[0]
+    assert "sudo docker restart npa-fiftyone" in cmd
+
+
+def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
+    response = mocker.MagicMock(status_code=200)
+    response.json.return_value = {
+        "data": {
+            "datasets": {
+                "total": 1,
+                "edges": [
+                    {
+                        "node": {
+                            "name": "demo_cosmos_ranked",
+                            "persistent": True,
+                            "mediaType": "image",
+                            "estimatedSampleCount": 5,
+                        }
+                    }
+                ],
+            }
+        }
+    }
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
+    post = mocker.patch("npa.cli.fiftyone.httpx.post", return_value=response)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "datasets", "list", "--output", "json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["total"] == 1
+    assert payload["datasets"][0]["name"] == "demo_cosmos_ranked"
+    assert payload["datasets"][0]["samples"] == 5
+    post.assert_called_once()
+    assert post.call_args.args[0] == "http://fiftyone.example:5151/graphql"
+    assert post.call_args.kwargs["json"]["variables"] == {"first": 100, "search": ""}
 
 
 def test_fiftyone_status_checks_app_port_url(mocker) -> None:
@@ -753,6 +1114,94 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     get.assert_called_once_with("http://fiftyone.example:6161", timeout=5.0)
 
 
+def test_fiftyone_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
+    cfg = _cfg()
+    cfg.endpoint_strategy = "ssh"
+    cfg.service_port = 5151
+    response = mocker.MagicMock(status_code=200)
+    mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
+    endpoint = mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+    get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
+
+    result = runner.invoke(app, ["workbench", "fiftyone", "status"])
+
+    assert result.exit_code == 0
+    endpoint.assert_called_once_with(
+        cfg,
+        default_port=5151,
+        endpoint="http://fiftyone.example:5151",
+        service_port=5151,
+    )
+    get.assert_called_once_with("http://127.0.0.1:15151", timeout=5.0)
+
+
+def test_fiftyone_status_self_heals_legacy_byovm_alias(
+    tmp_path: Path,
+    monkeypatch,
+    mocker,
+) -> None:
+    cfg_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    for env_var in config_module.ENV_MAP.values():
+        monkeypatch.delenv(env_var, raising=False)
+    cfg_path.parent.mkdir(parents=True)
+    cfg_path.write_text(yaml.safe_dump({
+        "projects": {
+            "proj": {
+                "workbenches": {
+                    "curate": {
+                        "endpoint": "http://66.201.4.1:5151",
+                        "runtime": "byovm",
+                        "app_port": 5151,
+                        "ssh": {
+                            "host": "66.201.4.1",
+                            "user": "ubuntu",
+                            "key_path": "~/.ssh/h200",
+                        },
+                    },
+                },
+            },
+        },
+    }))
+
+    response = mocker.MagicMock(status_code=200)
+    get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "", "")
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    process = SimpleNamespace(
+        poll=lambda: None,
+        terminate=mocker.MagicMock(),
+        wait=mocker.MagicMock(),
+        stderr=SimpleNamespace(read=lambda: ""),
+    )
+    mocker.patch("npa.clients.endpoint.subprocess.Popen", return_value=process)
+    mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
+    mocker.patch("npa.clients.endpoint._free_local_port", side_effect=[15151, 15152])
+    mocker.patch("npa.clients.endpoint._wait_for_local_port")
+
+    first = runner.invoke(app, ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "status"])
+
+    assert first.exit_code == 0
+    get.assert_called_with("http://127.0.0.1:15151", timeout=5.0)
+    saved = yaml.safe_load(cfg_path.read_text())
+    wb = saved["projects"]["proj"]["workbenches"]["curate"]
+    assert wb["endpoint_strategy"] == "ssh"
+    assert wb["service_port"] == 5151
+
+    public_probe = mocker.patch("npa.clients.endpoint._public_endpoint_open")
+    second = runner.invoke(app, ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "status"])
+
+    assert second.exit_code == 0
+    get.assert_called_with("http://127.0.0.1:15152", timeout=5.0)
+    public_probe.assert_not_called()
+
+
 def test_fiftyone_status_reports_http_error(mocker) -> None:
     response = mocker.MagicMock(status_code=503)
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg(app_status="provisioning"))
@@ -761,7 +1210,7 @@ def test_fiftyone_status_reports_http_error(mocker) -> None:
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
     assert result.exit_code == 1
-    assert "app_status: provisioning" in result.output
+    assert "app_status: unreachable" in result.output
     assert "returned HTTP 503" in result.output
 
 
@@ -772,7 +1221,7 @@ def test_fiftyone_status_reports_provisioning_when_unreachable(mocker) -> None:
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
     assert result.exit_code == 1
-    assert "app_status: provisioning" in result.output
+    assert "app_status: unreachable" in result.output
     assert "Cannot reach FiftyOne app" in result.output
 
 
@@ -803,12 +1252,12 @@ def test_fiftyone_load_dataset_accepts_deprecated_source_alias(mocker) -> None:
             "--name",
             "curated",
             "--source",
-            "/data/images",
+            "s3://bucket/images",
         ],
     )
 
     assert result.exit_code == 0
-    assert 'SOURCE = "/data/images"' in ssh.run.call_args.args[0]
+    assert 'SOURCE = "s3://bucket/images"' in ssh.run.call_args.args[0]
 
 
 def test_fiftyone_list_filters_to_fiftyone_workbenches(mocker) -> None:
