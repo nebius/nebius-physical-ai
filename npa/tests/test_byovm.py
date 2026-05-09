@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 
 from npa.clients.credentials import CredentialsConfig
+from npa.clients.config import StorageConfig
 from npa.deploy.byovm import (
     GPUInfo,
+    apply_project_storage_vars,
     apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
@@ -125,3 +127,27 @@ def test_apply_storage_env_vars_respects_explicit_vars(monkeypatch: pytest.Monke
     assert merged["nebius_secret_key"] == "env-secret"
     assert merged["s3_bucket"] == "s3://bucket/checkpoints/"
     assert "s3_endpoint" not in merged
+
+
+def test_apply_project_storage_vars_warns_when_missing(mocker) -> None:
+    mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="",
+            endpoint_url="",
+        ),
+    )
+    warnings: list[str] = []
+
+    found = apply_project_storage_vars(
+        {},
+        project="proj",
+        explicit_vars={},
+        warn=warnings.append,
+    )
+
+    assert found is False
+    assert warnings == [
+        "Warning: Project proj has no object-storage settings. "
+        "S3 operations on this workbench will fail unless configured manually."
+    ]

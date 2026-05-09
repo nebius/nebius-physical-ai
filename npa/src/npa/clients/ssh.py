@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import re
 import shlex
 import sys
 import threading
@@ -14,6 +13,7 @@ from typing import Callable
 import paramiko
 
 from npa.clients.config import SSHConfig
+from npa.clients.env import render_shell_env_file, validate_env_name
 
 
 class SSHError(Exception):
@@ -44,12 +44,14 @@ class SSHClient:
         return client
 
     def _token_env_content(self) -> str:
-        lines: list[str] = []
+        env: dict[str, str] = {}
         for key, value in sorted(self._config.tokens.items()):
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            try:
+                validate_env_name(key)
+            except ValueError as exc:
                 raise SSHError(f"Invalid token environment variable name: {key!r}")
-            lines.append(f"export {key}={shlex.quote(value)}")
-        return "\n".join(lines) + "\n"
+            env[key] = value
+        return render_shell_env_file(env, export=True)
 
     def _write_token_env_file(self, client: paramiko.SSHClient) -> str:
         remote_path = f"/tmp/.npa-env-{uuid.uuid4().hex}"

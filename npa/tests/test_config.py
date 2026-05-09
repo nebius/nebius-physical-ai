@@ -9,6 +9,9 @@ from npa.clients import config
 from npa.clients import credentials
 
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+
 @pytest.fixture()
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     cfg_path = tmp_path / ".npa" / "config.yaml"
@@ -42,6 +45,8 @@ def _write_full_config(path: Path) -> None:
                         "workbenches": {
                             "wb-a": {
                                 "endpoint": "http://vm-a:8080",
+                                "endpoint_strategy": "ssh",
+                                "service_port": 8080,
                                 "tf_instance_name": "tf-a",
                                 "runtime": "container",
                                 "gpu_platform": "NVIDIA H200",
@@ -107,7 +112,7 @@ def test_load_yaml_malformed_yaml_raises(isolated_config: Path) -> None:
 
 
 def test_parse_bundled_sample_config_has_required_project_keys() -> None:
-    sample = Path("src/npa/config/sample_config.yaml")
+    sample = PACKAGE_ROOT / "src/npa/config/sample_config.yaml"
     data = yaml.safe_load(sample.read_text())
 
     assert data["default_project"] in data["projects"]
@@ -159,6 +164,48 @@ def test_resolve_terraform_state_missing_returns_empty(isolated_config: Path) ->
     assert config.resolve_terraform_state("missing") == config.TerraformStateConfig()
 
 
+def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> None:
+    isolated_config.parent.mkdir(parents=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "object-storage": {
+                            "bucket": "s3://bucket/checkpoints/",
+                            "endpoint": "https://storage.example",
+                            "access_key": "access",
+                            "secret_key": "secret",
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    resolved = config.resolve_project_storage("proj")
+
+    assert resolved == config.StorageConfig(
+        checkpoint_bucket="s3://bucket/checkpoints/",
+        endpoint_url="https://storage.example",
+        aws_access_key_id="access",
+        aws_secret_access_key="secret",
+    )
+
+
+def test_resolve_project_storage_falls_back_to_terraform_state(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    resolved = config.resolve_project_storage("proj-a")
+
+    assert resolved == config.StorageConfig(
+        checkpoint_bucket="state-bucket",
+        endpoint_url="https://state-storage.example",
+        aws_access_key_id="state-key",
+        aws_secret_access_key="state-secret",
+    )
+
+
 def test_resolve_container_registry_uses_project_override(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 
@@ -174,6 +221,12 @@ def test_resolve_config_uses_default_project_and_workbench(
     resolved = config.resolve_config()
 
     assert resolved.endpoint == "http://vm-a:8080"
+    assert resolved.endpoint_strategy == "ssh"
+    assert resolved.service_port == 8080
+    assert resolved.endpoint_strategy_configured is True
+    assert resolved.service_port_configured is True
+    assert resolved.project == "proj-a"
+    assert resolved.name == "wb-a"
     assert resolved.ssh == config.SSHConfig(
         host="vm-a",
         user="ubuntu",
@@ -197,6 +250,8 @@ def test_resolve_config_env_overrides_yaml(
 ) -> None:
     _write_full_config(isolated_config)
     monkeypatch.setenv("NPA_WORKBENCH_ENDPOINT", "http://env:8080")
+    monkeypatch.setenv("NPA_ENDPOINT_STRATEGY", "public")
+    monkeypatch.setenv("NPA_SERVICE_PORT", "9090")
     monkeypatch.setenv("NPA_SSH_HOST", "env-host")
     monkeypatch.setenv("NPA_SSH_USER", "env-user")
     monkeypatch.setenv("NPA_SSH_KEY", "/tmp/env-key")
@@ -207,12 +262,31 @@ def test_resolve_config_env_overrides_yaml(
     resolved = config.resolve_config(project="proj-a", name="wb-a")
 
     assert resolved.endpoint == "http://env:8080"
+    assert resolved.endpoint_strategy == "public"
+    assert resolved.service_port == 9090
+    assert resolved.endpoint_strategy_configured is True
+    assert resolved.service_port_configured is True
     assert resolved.ssh.host == "env-host"
     assert resolved.ssh.user == "env-user"
     assert resolved.ssh.key_path == "/tmp/env-key"
     assert resolved.storage.checkpoint_bucket == "s3://env/checkpoints/"
     assert resolved.storage.endpoint_url == "https://env-storage"
     assert resolved.hf_token == "hf-env"
+
+
+def test_resolve_config_marks_missing_endpoint_strategy_metadata(
+    isolated_config: Path,
+) -> None:
+    _write_full_config(isolated_config)
+
+    resolved = config.resolve_config(project="proj-a", name="wb-b")
+
+    assert resolved.endpoint_strategy == "public"
+    assert resolved.service_port == 8080
+    assert resolved.endpoint_strategy_configured is False
+    assert resolved.service_port_configured is False
+    assert resolved.project == "proj-a"
+    assert resolved.name == "wb-b"
 
 
 def test_resolve_config_uses_credentials_yaml_for_hf_token(

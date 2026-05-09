@@ -8,12 +8,14 @@ import shlex
 import subprocess
 import tempfile
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Any, Sequence
 
 from jinja2 import Environment, FileSystemLoader
 
 from npa.clients.config import SSHConfig
+from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient, SSHError
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -23,6 +25,12 @@ _NPA_PACKAGE_ROOT = Path(__file__).parent.parent.parent.parent
 
 class ConfiguratorError(Exception):
     pass
+
+
+class HealthCheckMode(str, Enum):
+    public = "public"
+    ssh = "ssh"
+    auto = "auto"
 
 
 def _step(n: int, total: int, msg: str) -> None:
@@ -102,8 +110,34 @@ def write_remote_env_file(
     owner: str = "ubuntu",
 ) -> None:
     """Write an env file on the VM using SFTP, then secure it with sudo."""
-    lines = [f"{key}={value}" for key, value in env.items() if value is not None]
-    env_content = "\n".join(lines) + "\n"
+    env_content = render_shell_env_file(env)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
+        tmp.write(env_content)
+        local_path = tmp.name
+
+    tmp_remote = f"/tmp/{Path(remote_path).name}.{int(time.time() * 1000)}"
+    try:
+        _sftp_upload(ssh, local_path, tmp_remote)
+        ssh.run_or_raise(
+            f"sudo mkdir -p {shlex.quote(str(Path(remote_path).parent))} && "
+            f"sudo mv {shlex.quote(tmp_remote)} {shlex.quote(remote_path)} && "
+            f"sudo chown {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(remote_path)} && "
+            f"sudo chmod 600 {shlex.quote(remote_path)}"
+        )
+    finally:
+        os.unlink(local_path)
+
+
+def write_remote_docker_env_file(
+    ssh: SSHClient,
+    remote_path: str,
+    env: dict[str, Any],
+    *,
+    owner: str = "ubuntu",
+) -> None:
+    """Write a Docker --env-file on the VM without shell quoting."""
+    env_content = render_docker_env_file(env)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
         tmp.write(env_content)
@@ -261,16 +295,19 @@ def deploy_server(
         os.unlink(yaml_path)
 
     # 4. Write env file for systemd from the server config
-    env_lines = [
-        f"NPA_SERVER_HOST={server_config.get('server_host', '0.0.0.0')}",
-        f"NPA_SERVER_PORT={server_config.get('server_port', 8080)}",
-        f"NPA_CHECKPOINT_DIR={server_config.get('checkpoint_dir', '/opt/lerobot/checkpoints')}",
-        f"NPA_CHECKPOINT_BUCKET={server_config.get('checkpoint_bucket', '')}",
-        f"NPA_JOB_STATUS_DIR={server_config.get('job_status_dir', '/opt/lerobot/job_status')}",
-        f"NPA_LOG_DIR={server_config.get('log_dir', '/var/log/npa-lerobot')}",
-        f"AWS_ENDPOINT_URL={server_config.get('storage_endpoint', '')}",
-    ]
-    env_content = "\n".join(env_lines) + "\n"
+    env_vars: dict[str, Any] = {
+        "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
+        "NPA_SERVER_PORT": server_config.get("server_port", 8080),
+        "NPA_CHECKPOINT_DIR": server_config.get("checkpoint_dir", "/opt/lerobot/checkpoints"),
+        "NPA_CHECKPOINT_BUCKET": server_config.get("checkpoint_bucket", ""),
+        "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
+        "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
+        "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
+    }
+    shared_env = server_config.get("shared_env", {})
+    if isinstance(shared_env, dict):
+        env_vars.update(shared_env)
+    env_content = render_shell_env_file(env_vars)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
         tmp.write(env_content)
@@ -279,17 +316,9 @@ def deploy_server(
     try:
         ssh.run_or_raise("sudo mkdir -p /etc/npa-lerobot-server")
         _sftp_upload(ssh, env_path, "/tmp/npa-server.env")
-        # Merge S3 credentials from existing .env on VM
         ssh.run_or_raise(
             "sudo mv /tmp/npa-server.env /etc/npa-lerobot-server/env && "
-            "sudo chmod 600 /etc/npa-lerobot-server/env && "
-            "if [ -f /opt/lerobot/.env ]; then "
-            "  grep -E '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=' /opt/lerobot/.env "
-            "    | while IFS='=' read -r k v; do "
-            "        sudo sed -i \"s|^${k}=.*|${k}=${v}|\" /etc/npa-lerobot-server/env 2>/dev/null || "
-            "        echo \"${k}=${v}\" | sudo tee -a /etc/npa-lerobot-server/env >/dev/null; "
-            "      done; "
-            "fi"
+            "sudo chmod 600 /etc/npa-lerobot-server/env"
         )
     finally:
         os.unlink(env_path)
@@ -396,6 +425,9 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
         "PYOPENGL_PLATFORM": "egl",
         "PYTHONUNBUFFERED": "1",
     }
+    shared_env = server_config.get("shared_env", {})
+    if isinstance(shared_env, dict):
+        env_args.update(shared_env)
     if server_config.get("cuda_visible_devices"):
         env_args["CUDA_VISIBLE_DEVICES"] = server_config["cuda_visible_devices"]
     if server_config.get("gpu_count"):
@@ -440,6 +472,101 @@ def health_check(endpoint: str, *, retries: int = 10, backoff: float = 3.0) -> b
             pass
         time.sleep(backoff)
     return False
+
+
+def health_check_ssh(
+    ssh: SSHClient,
+    port: int,
+    *,
+    path: str = "/health",
+    retries: int = 10,
+    backoff: float = 3.0,
+) -> bool:
+    """Poll a VM-local HTTP health endpoint through SSH."""
+    url = f"http://127.0.0.1:{port}{path}"
+    for _attempt in range(retries):
+        code, _out, _err = ssh.run(f"curl -fsS {shlex.quote(url)} >/dev/null")
+        if code == 0:
+            return True
+        time.sleep(backoff)
+    return False
+
+
+def health_check_auto(
+    endpoint: str,
+    *,
+    mode: HealthCheckMode | str = HealthCheckMode.auto,
+    ssh: SSHClient | None = None,
+    port: int | None = None,
+    host: str = "",
+    retries: int = 10,
+    backoff: float = 3.0,
+    auto_public_retries: int = 3,
+) -> tuple[bool, str]:
+    """Run public/SSH/auto health checks and return (healthy, note)."""
+    selected = mode if isinstance(mode, HealthCheckMode) else HealthCheckMode(str(mode))
+    if selected == HealthCheckMode.public:
+        return health_check(endpoint, retries=retries, backoff=backoff), ""
+    if selected == HealthCheckMode.ssh:
+        if ssh is None or port is None:
+            return False, ""
+        return health_check_ssh(ssh, port, retries=retries, backoff=backoff), ""
+
+    public_retries = min(retries, max(1, auto_public_retries))
+    if health_check(endpoint, retries=public_retries, backoff=backoff):
+        return True, ""
+    if ssh is not None and port is not None and health_check_ssh(
+        ssh,
+        port,
+        retries=retries,
+        backoff=backoff,
+    ):
+        return True, f"Public port {port} unreachable; service healthy via SSH on {host}."
+    return False, ""
+
+
+def _decode_env_file_value(value: str) -> str:
+    if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
+        return value[1:-1].replace("'\\''", "'")
+    return value
+
+
+def parse_env_file_content(content: str, keys: Sequence[str]) -> dict[str, str]:
+    selected = set(keys)
+    values: dict[str, str] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):]
+        key, value = stripped.split("=", 1)
+        if key in selected:
+            values[key] = _decode_env_file_value(value)
+    return values
+
+
+def read_remote_env_keys(
+    ssh: SSHClient,
+    remote_path: str,
+    keys: Sequence[str],
+) -> dict[str, str]:
+    """Read selected env keys without shell expansion."""
+    _code, out, _err = ssh.run_or_raise(f"sudo cat {shlex.quote(remote_path)}")
+    return parse_env_file_content(out, keys)
+
+
+def audit_remote_env(
+    ssh: SSHClient,
+    remote_path: str,
+    expected: dict[str, str],
+) -> list[str]:
+    """Return shared credential keys missing or mismatched in a remote env file."""
+    keys = [key for key, value in expected.items() if value]
+    if not keys:
+        return []
+    actual = read_remote_env_keys(ssh, remote_path, keys)
+    return [key for key in keys if actual.get(key, "") != expected[key]]
 
 
 def write_manifest(

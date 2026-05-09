@@ -9,7 +9,12 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import SSHConfig
-from npa.clients.credentials import CredentialsConfig, load_credentials
+from npa.clients.credentials import (
+    CredentialsConfig,
+    load_credentials,
+    shared_credential_env,
+    warn_if_hf_token_missing,
+)
 from npa.clients.ssh import SSHClient
 
 
@@ -34,6 +39,57 @@ def test_load_credentials_from_yaml(tmp_path: Path) -> None:
     }
 
 
+def test_load_credentials_reads_top_level_shared_tokens(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "HF_TOKEN": "hf-top",
+                "NGC_API_KEY": "ngc-top",
+            }
+        )
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.tokens == {
+        "HF_TOKEN": "hf-top",
+        "NGC_API_KEY": "ngc-top",
+    }
+
+
+def test_load_credentials_reads_ngc_section_and_env_overrides(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf-file"},
+                "ngc": {
+                    "api_key": "ngc-file",
+                    "org": "org-file",
+                    "team": "team-file",
+                },
+            }
+        )
+    )
+
+    resolved = load_credentials(
+        path=credentials_path,
+        environ={
+            "NGC_API_KEY": "ngc-env",
+            "NGC_TEAM": "team-env",
+        },
+    )
+
+    assert resolved.hf_token == "hf-file"
+    assert resolved.ngc_api_key == "ngc-env"
+    assert resolved.ngc_org == "org-file"
+    assert resolved.ngc_team == "team-env"
+    assert shared_credential_env(resolved)["NGC_API_KEY"] == "ngc-env"
+    assert shared_credential_env(resolved)["NGC_ORG"] == "org-file"
+    assert shared_credential_env(resolved)["NGC_TEAM"] == "team-env"
+
+
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
@@ -53,6 +109,35 @@ def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:
     assert resolved.ssh_host == "203.0.113.10"
     assert resolved.ssh_user == "robot"
     assert resolved.ssh_key_path == "~/.ssh/byovm"
+
+
+def test_load_credentials_reads_shared_s3_storage(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf-file"},
+                "storage": {
+                    "aws_access_key_id": "access",
+                    "aws_secret_access_key": "secret",
+                    "endpoint_url": "https://storage.example",
+                    "bucket": "s3://bucket/checkpoints/",
+                },
+            }
+        )
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert shared_credential_env(resolved) == {
+        "HF_TOKEN": "hf-file",
+        "HUGGING_FACE_HUB_TOKEN": "hf-file",
+        "AWS_ACCESS_KEY_ID": "access",
+        "AWS_SECRET_ACCESS_KEY": "secret",
+        "AWS_ENDPOINT_URL": "https://storage.example",
+        "NEBIUS_S3_ENDPOINT": "https://storage.example",
+        "NEBIUS_S3_BUCKET": "s3://bucket/checkpoints/",
+    }
 
 
 def test_load_credentials_byovm_env_overrides_ssh_config(tmp_path: Path) -> None:
@@ -102,6 +187,18 @@ def test_load_credentials_missing_file_returns_empty(tmp_path: Path) -> None:
     assert resolved.warnings == []
 
 
+def test_warn_if_hf_token_missing_uses_standard_message() -> None:
+    warnings: list[str] = []
+
+    missing = warn_if_hf_token_missing(CredentialsConfig(), warn=warnings.append)
+
+    assert missing is True
+    assert warnings == [
+        "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
+        "Gated model downloads will fail."
+    ]
+
+
 def test_load_credentials_warns_when_readable_by_other_users(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(yaml.safe_dump({"tokens": {"HF_TOKEN": "hf-file"}}))
@@ -120,7 +217,7 @@ def test_load_credentials_warns_when_readable_by_other_users(tmp_path: Path) -> 
     ]
 
 
-def test_cosmos_deploy_requires_hf_token(tmp_path: Path, mocker) -> None:
+def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.workbench.load_credentials", return_value=CredentialsConfig())
     mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=CredentialsConfig())
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
@@ -143,14 +240,61 @@ def test_cosmos_deploy_requires_hf_token(tmp_path: Path, mocker) -> None:
             "gpu-h100-sxm",
             "--gpu-preset",
             "1gpu-16vcpu-200gb",
+            "--dry-run",
         ],
     )
 
     assert result.exit_code == 1
-    assert "HF_TOKEN required for Cosmos deployment" in result.output
+    assert "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml" in result.output
     assert "~/.npa/credentials.yaml" in result.output
-    assert "under tokens:" in result.output
-    assert "set HF_TOKEN as an environment" in result.output
+    apply.assert_not_called()
+
+
+def test_cosmos_deploy_dry_run_prints_redacted_shared_credentials(tmp_path: Path, mocker) -> None:
+    credentials = CredentialsConfig(
+        tokens={"HF_TOKEN": "hf_123456789"},
+        s3_access_key_id="AKIA123456",
+        s3_secret_access_key="secret$!`'\"\\value",
+        s3_endpoint="https://storage.example",
+        s3_bucket="s3://bucket/checkpoints/",
+    )
+    mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=credentials)
+    mocker.patch(
+        "npa.cli.cosmos.validate_hf_access",
+        return_value=SimpleNamespace(ok=True, error=""),
+    )
+    apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--runtime",
+            "container",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "HF access ok: nvidia/Cosmos-1.0-Diffusion-7B-Text2World" in result.output
+    assert "HF_TOKEN='hf_1****'" in result.output
+    assert "AWS_ACCESS_KEY_ID='AKIA****'" in result.output
+    assert "AWS_SECRET_ACCESS_KEY='secr****'" in result.output
+    assert "secret$!" not in result.output
     apply.assert_not_called()
 
 
@@ -191,5 +335,5 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     sftp.open.assert_called_once_with("/tmp/.npa-env-abc123", "w")
     sftp.chmod.assert_called_once_with("/tmp/.npa-env-abc123", 0o600)
     remote_env = remote_file.write.call_args.args[0]
-    assert "export HF_TOKEN=hf-file" in remote_env
-    assert "export NGC_API_KEY=ngc-file" in remote_env
+    assert "export HF_TOKEN='hf-file'" in remote_env
+    assert "export NGC_API_KEY='ngc-file'" in remote_env

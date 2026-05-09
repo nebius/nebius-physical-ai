@@ -13,6 +13,9 @@ from npa.deploy import configurator, provisioner
 from npa.deploy.provisioner import ProvisionerError
 
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_build_var_args_preserves_key_values() -> None:
     assert provisioner._build_var_args({"a": "1", "b": "two"}) == [
         "-var",
@@ -49,7 +52,7 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
 
 
 def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
-    template = Path("src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
     assert "\t" not in template
     branches = template.split('%{ if workbench_type == "fiftyone" ~}')
     container_marker = '%{ if workbench_type == "lerobot-container" ~}'
@@ -86,7 +89,7 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
 
 
 def test_cloud_init_mounts_cosmos_data_disk() -> None:
-    template = Path("src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
 
     assert '%{ if workbench_type == "cosmos" ~}' in template
     assert "/dev/disk/by-id/virtio-npa-cosmos-data" in template
@@ -97,7 +100,7 @@ def test_cloud_init_mounts_cosmos_data_disk() -> None:
 
 
 def test_cloud_init_mounts_groot_data_disk() -> None:
-    template = Path("src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
+    template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
 
     assert "/dev/disk/by-id/virtio-npa-groot-data" in template
     assert "/opt/groot-data" in template
@@ -112,8 +115,8 @@ def test_cloud_init_mounts_groot_data_disk() -> None:
 
 
 def test_terraform_template_receives_workbench_type_and_versions() -> None:
-    main_tf = Path("src/npa/deploy/terraform/main.tf").read_text()
-    variables_tf = Path("src/npa/deploy/terraform/variables.tf").read_text()
+    main_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/main.tf").read_text()
+    variables_tf = (PACKAGE_ROOT / "src/npa/deploy/terraform/variables.tf").read_text()
 
     assert "workbench_type   = var.workbench_type" in main_tf
     assert "lerobot_version  = var.lerobot_version" in main_tf
@@ -272,6 +275,66 @@ def test_health_check_returns_false_after_retries(mocker) -> None:
     assert configurator.health_check("http://vm:8080", retries=1, backoff=0) is False
 
 
+def test_health_check_auto_falls_back_to_ssh(mocker) -> None:
+    ssh = mocker.MagicMock()
+    public = mocker.patch("npa.deploy.configurator.health_check", return_value=False)
+    ssh_health = mocker.patch("npa.deploy.configurator.health_check_ssh", return_value=True)
+
+    healthy, note = configurator.health_check_auto(
+        "http://vm:8080",
+        mode=configurator.HealthCheckMode.auto,
+        ssh=ssh,
+        port=8080,
+        host="vm",
+        retries=1,
+        backoff=0,
+    )
+
+    assert healthy is True
+    assert note == "Public port 8080 unreachable; service healthy via SSH on vm."
+    public.assert_called_once_with("http://vm:8080", retries=1, backoff=0)
+    ssh_health.assert_called_once_with(ssh, 8080, retries=1, backoff=0)
+
+
+def test_health_check_auto_reports_failed_when_public_and_ssh_fail(mocker) -> None:
+    ssh = mocker.MagicMock()
+    mocker.patch("npa.deploy.configurator.health_check", return_value=False)
+    mocker.patch("npa.deploy.configurator.health_check_ssh", return_value=False)
+
+    healthy, note = configurator.health_check_auto(
+        "http://vm:8080",
+        mode="auto",
+        ssh=ssh,
+        port=8080,
+        host="vm",
+        retries=1,
+        backoff=0,
+    )
+
+    assert healthy is False
+    assert note == ""
+
+
+def test_health_check_auto_limits_public_retry_budget(mocker) -> None:
+    ssh = mocker.MagicMock()
+    public = mocker.patch("npa.deploy.configurator.health_check", return_value=False)
+    ssh_health = mocker.patch("npa.deploy.configurator.health_check_ssh", return_value=True)
+
+    healthy, _ = configurator.health_check_auto(
+        "http://vm:5151",
+        mode="auto",
+        ssh=ssh,
+        port=5151,
+        host="vm",
+        retries=120,
+        backoff=2,
+    )
+
+    assert healthy is True
+    public.assert_called_once_with("http://vm:5151", retries=3, backoff=2)
+    ssh_health.assert_called_once_with(ssh, 5151, retries=120, backoff=2)
+
+
 def test_write_manifest_writes_json_command(mocker) -> None:
     ssh = mocker.MagicMock()
 
@@ -281,6 +344,60 @@ def test_write_manifest_writes_json_command(mocker) -> None:
     assert "/etc/npa/manifest.json" in command
     assert '"tool": "lerobot"' in command
     assert '"version": "1"' in command
+
+
+def test_write_remote_env_file_renders_shell_safe_values(mocker) -> None:
+    ssh = mocker.MagicMock()
+    uploads: list[str] = []
+    mocker.patch(
+        "npa.deploy.configurator._sftp_upload",
+        side_effect=lambda _ssh, local, _remote: uploads.append(Path(local).read_text()),
+    )
+
+    configurator.write_remote_env_file(
+        ssh,
+        "/etc/npa/env",
+        {"S3_SECRET_KEY": "abc$def!`cmd`'\"\\tail"},
+    )
+
+    assert uploads == ["S3_SECRET_KEY='abc$def!`cmd`'\\''\"\\tail'\n"]
+
+
+def test_audit_remote_env_catches_missing_credential(mocker) -> None:
+    ssh = mocker.MagicMock()
+    mocker.patch(
+        "npa.deploy.configurator.read_remote_env_keys",
+        return_value={"HF_TOKEN": "hf-token"},
+    )
+
+    missing = configurator.audit_remote_env(
+        ssh,
+        "/etc/npa/env",
+        {"HF_TOKEN": "hf-token", "AWS_SECRET_ACCESS_KEY": "secret"},
+    )
+
+    assert missing == ["AWS_SECRET_ACCESS_KEY"]
+
+
+def test_read_remote_env_keys_parses_without_shell_expansion(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "HF_TOKEN='hf_abc'\\''123'\nAWS_SECRET_ACCESS_KEY=abc$def!`cmd`'\"\\tail\n",
+        "",
+    )
+
+    values = configurator.read_remote_env_keys(
+        ssh,
+        "/etc/npa/env",
+        ["HF_TOKEN", "AWS_SECRET_ACCESS_KEY"],
+    )
+
+    assert values == {
+        "HF_TOKEN": "hf_abc'123",
+        "AWS_SECRET_ACCESS_KEY": "abc$def!`cmd`'\"\\tail",
+    }
+    assert ssh.run_or_raise.call_args.args[0] == "sudo cat /etc/npa/env"
 
 
 def test_deploy_workbench_container_adds_groups_and_devices(mocker) -> None:

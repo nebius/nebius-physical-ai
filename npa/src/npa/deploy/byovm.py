@@ -192,6 +192,35 @@ def apply_storage_env_vars(
             merged_vars[key] = value
 
 
+def apply_project_storage_vars(
+    merged_vars: dict[str, str],
+    *,
+    project: str | None,
+    explicit_vars: Mapping[str, str],
+    warn: Any | None = None,
+) -> bool:
+    """Apply project-level storage settings to a BYOVM deploy var map."""
+    from npa.clients.config import resolve_project_storage
+
+    storage = resolve_project_storage(project)
+    mapping = {
+        "s3_bucket": storage.checkpoint_bucket,
+        "s3_endpoint": storage.endpoint_url,
+        "nebius_api_key": storage.aws_access_key_id,
+        "nebius_secret_key": storage.aws_secret_access_key,
+    }
+    found = any(mapping.values())
+    if not found and warn is not None:
+        warn(
+            f"Warning: Project {project} has no object-storage settings. "
+            "S3 operations on this workbench will fail unless configured manually."
+        )
+    for key, value in mapping.items():
+        if value and key not in explicit_vars and not merged_vars.get(key):
+            merged_vars[key] = value
+    return found
+
+
 def ssh_config_for_target(target: BYOVMTarget, *, tokens: dict[str, str] | None = None) -> SSHConfig:
     return SSHConfig(
         host=target.host,
