@@ -28,6 +28,41 @@ jobs:
       - name: Install adapter test dependencies
         run: cd npa && pip install -e ".[adapter]"
 
+      - name: Verify checked-out CLI flags
+        run: |
+          cd npa
+          git rev-parse HEAD
+          python - <<'PY'
+          from pathlib import Path
+
+          import npa
+          from npa.cli.main import app
+          from typer.testing import CliRunner
+
+          module_path = Path(npa.__file__).resolve()
+          print(f"npa module: {module_path}")
+
+          runner = CliRunner()
+          checks = [
+              (["workbench", "fiftyone", "load-dataset", "--help"], "--format"),
+              (["workbench", "lerobot", "deploy", "--help"], "--disk-size"),
+              (["workbench", "genesis", "deploy", "--help"], "--disk-size"),
+              (["workbench", "isaac-lab", "deploy", "--help"], "--disk-size"),
+              (["workbench", "cosmos", "deploy", "--help"], "--disk-size"),
+              (["workbench", "fiftyone", "deploy", "--help"], "--disk-size"),
+          ]
+          for args, flag in checks:
+              result = runner.invoke(app, args)
+              if result.exit_code != 0:
+                  raise SystemExit(
+                      f"{' '.join(args)} failed with exit code {result.exit_code}\n{result.output}"
+                  )
+              if flag not in result.output:
+                  raise SystemExit(
+                      f"{flag} missing from {' '.join(args)} help output\n{result.output}"
+                  )
+          PY
+
       - name: Run pytest with coverage
         run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing
 
