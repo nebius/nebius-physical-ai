@@ -22,6 +22,7 @@ from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
     ingress_summary,
+    register_byovm_alias,
     resolve_deploy_instance_id,
 )
 from npa.cli.path_contract import PathContractError, validate_write_path
@@ -377,6 +378,26 @@ def ensure_ingress_cmd(
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
     typer.echo(ingress_summary(result, 8081))
+
+
+@app.command("register-byovm")
+def register_byovm_cmd(
+    alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
+    instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
+    port: int = typer.Option(8081, "--port", help="Cosmos HTTP service port."),
+) -> None:
+    """Register an existing VM as a Cosmos BYOVM alias and ensure ingress."""
+    try:
+        register_byovm_alias(
+            tool="cosmos",
+            alias=alias,
+            instance_id=instance_id,
+            port=port,
+            project_alias=_project_alias or None,
+            warn=console.print,
+        )
+    except (ConfigError, NetworkIngressError) as exc:
+        _fail(str(exc))
 
 
 def _ensure_basic_backend(backend: Backend) -> None:

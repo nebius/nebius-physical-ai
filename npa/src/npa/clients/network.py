@@ -53,6 +53,18 @@ class EnsureIngressResult:
 
 
 @dataclass(frozen=True)
+class InstanceNetworkContext:
+    instance_id: str
+    project_id: str
+    public_ip: str
+    security_group_ids: tuple[str, ...]
+
+    @property
+    def security_group_id(self) -> str:
+        return self.security_group_ids[0] if self.security_group_ids else ""
+
+
+@dataclass(frozen=True)
 class _SecurityGroupContext:
     security_group: dict[str, Any]
     rules: tuple[dict[str, Any], ...]
@@ -149,6 +161,30 @@ def ensure_ingress(
         source=source,
         tool=tool,
         security_groups=tuple(group_results),
+    )
+
+
+def resolve_instance_network_context(instance_id: str) -> InstanceNetworkContext:
+    """Resolve project, public IP, and attached security groups for an instance."""
+    instance = _get_instance(instance_id)
+    metadata = _metadata(instance)
+    resolved_id = metadata.get("id", instance_id)
+    project_id = metadata.get("parent_id", "")
+    public_ip = _instance_public_ip(instance)
+    security_group_ids = _instance_security_group_ids(instance)
+
+    if not project_id:
+        raise NetworkIngressError(f"VM {resolved_id} has no project reference")
+    if not public_ip:
+        raise NetworkIngressError(f"VM {resolved_id} has no public IP address")
+    if not security_group_ids:
+        raise NetworkIngressError(f"VM {resolved_id} has no security group references")
+
+    return InstanceNetworkContext(
+        instance_id=resolved_id,
+        project_id=project_id,
+        public_ip=public_ip,
+        security_group_ids=security_group_ids,
     )
 
 

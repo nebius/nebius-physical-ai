@@ -19,6 +19,7 @@ from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
     ingress_summary,
+    register_byovm_alias,
     resolve_deploy_instance_id,
 )
 from npa.cli.path_contract import (
@@ -272,6 +273,26 @@ def ensure_ingress_cmd(
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
     typer.echo(ingress_summary(result, DEFAULT_APP_PORT))
+
+
+@app.command("register-byovm")
+def register_byovm_cmd(
+    alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
+    instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
+    port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne HTTP app port."),
+) -> None:
+    """Register an existing VM as a FiftyOne BYOVM alias and ensure ingress."""
+    try:
+        register_byovm_alias(
+            tool="fiftyone",
+            alias=alias,
+            instance_id=instance_id,
+            port=port,
+            project_alias=_project_alias or None,
+            warn=console.print,
+        )
+    except (ConfigError, NetworkIngressError) as exc:
+        _fail(str(exc))
 
 
 def _lerobot_importer_source() -> str:

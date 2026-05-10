@@ -10,8 +10,14 @@ from npa.clients.config import (
     default_project_name,
     default_workbench_name,
     list_projects,
+    write_config,
 )
-from npa.clients.network import EnsureIngressResult, ensure_ingress
+from npa.clients.network import (
+    EnsureIngressResult,
+    InstanceNetworkContext,
+    ensure_ingress,
+    resolve_instance_network_context,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,17 @@ class AliasRecord:
     @property
     def instance_id(self) -> str:
         return str(self.data.get("instance_id", "") or "")
+
+
+@dataclass(frozen=True)
+class RegisterByovmResult:
+    project_alias: str
+    alias: str
+    instance_id: str
+    project_id: str
+    security_group_id: str
+    port: int
+    ingress: EnsureIngressResult | None
 
 
 def resolve_alias_record(project_alias: str | None, name: str | None) -> AliasRecord:
@@ -54,6 +71,66 @@ def resolve_alias_record(project_alias: str | None, name: str | None) -> AliasRe
     if not isinstance(alias_data, dict):
         raise ConfigError(f"Workbench '{resolved_name}' is not a valid alias config")
     return AliasRecord(project_alias=resolved_project, name=resolved_name, data=alias_data)
+
+
+def register_byovm_alias(
+    *,
+    tool: str,
+    alias: str,
+    instance_id: str,
+    port: int,
+    project_alias: str | None,
+    source: str = "0.0.0.0/0",
+    warn,
+) -> RegisterByovmResult:
+    """Register a BYOVM workbench alias and best-effort ingress for its HTTP port."""
+    context = resolve_instance_network_context(instance_id)
+    resolved_project = _registration_project_alias(project_alias)
+    projects = list_projects()
+    project_config = projects.get(resolved_project, {})
+    workbenches = project_config.get("workbenches", {}) if isinstance(project_config, dict) else {}
+    existing = workbenches.get(alias, {}) if isinstance(workbenches, dict) else {}
+    existing_alias = existing if isinstance(existing, dict) else {}
+    if existing_alias:
+        warn(f"Warning: alias '{alias}' already exists; overwriting BYOVM registration fields.")
+
+    alias_config = _byovm_alias_config(
+        existing=existing_alias,
+        tool=tool,
+        alias=alias,
+        context=context,
+        port=port,
+    )
+    write_config({
+        "projects": {
+            resolved_project: {
+                "workbenches": {
+                    alias: alias_config,
+                },
+            },
+        },
+    })
+    warn(f"Registered {tool} BYOVM alias '{alias}' in project '{resolved_project}'.")
+    warn(f"  instance_id: {context.instance_id}")
+    warn(f"  project_id: {context.project_id}")
+    warn(f"  security_group_id: {context.security_group_id}")
+    ingress = ensure_deploy_ingress(
+        tool=tool,
+        port=port,
+        alias=alias,
+        instance_id=context.instance_id,
+        source=source,
+        warn=warn,
+    )
+    return RegisterByovmResult(
+        project_alias=resolved_project,
+        alias=alias,
+        instance_id=context.instance_id,
+        project_id=context.project_id,
+        security_group_id=context.security_group_id,
+        port=port,
+        ingress=ingress,
+    )
 
 
 def ensure_alias_ingress(
@@ -135,3 +212,53 @@ def ingress_summary(result: EnsureIngressResult, port: int) -> str:
     if result.changed:
         return f"ingress rule created for port {port}"
     return f"ingress already covered for port {port}"
+
+
+def _registration_project_alias(project_alias: str | None) -> str:
+    if project_alias:
+        return project_alias
+    return default_project_name()
+
+
+def _byovm_alias_config(
+    *,
+    existing: dict[str, Any],
+    tool: str,
+    alias: str,
+    context: InstanceNetworkContext,
+    port: int,
+) -> dict[str, Any]:
+    host = _strip_cidr(context.public_ip)
+    existing_ssh = existing.get("ssh", {}) if isinstance(existing.get("ssh"), dict) else {}
+    existing_storage = existing.get("storage", {}) if isinstance(existing.get("storage"), dict) else {}
+
+    # Existing aliases are overwritten for the fields resolved from the VM so
+    # re-registration repairs drift, while unrelated storage/custom fields remain.
+    alias_config = {
+        **existing,
+        "alias": alias,
+        "endpoint": f"http://{host}:{port}",
+        "workbench_type": tool,
+        "runtime": "byovm",
+        "endpoint_strategy": "public",
+        "service_port": int(port),
+        "instance_id": context.instance_id,
+        "project_id": context.project_id,
+        "security_group_id": context.security_group_id,
+        "ssh": {
+            "host": host,
+            "user": str(existing_ssh.get("user", "") or "ubuntu"),
+            "key_path": str(existing_ssh.get("key_path", "") or "~/.ssh/id_ed25519"),
+        },
+        "storage": {
+            "checkpoint_bucket": str(existing_storage.get("checkpoint_bucket", "") or ""),
+            "endpoint_url": str(existing_storage.get("endpoint_url", "") or ""),
+        },
+    }
+    if tool == "fiftyone":
+        alias_config["app_port"] = int(port)
+    return alias_config
+
+
+def _strip_cidr(value: str) -> str:
+    return value.split("/", 1)[0]

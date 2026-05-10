@@ -106,6 +106,9 @@ class WorkbenchConfig:
     app_status: str = ""
     runtime: str = "vm"
     container_registry: str = DEFAULT_CONTAINER_REGISTRY
+    instance_id: str = ""
+    project_id: str = ""
+    security_group_id: str = ""
     gpu_platform: str = ""
     gpu_count: int = 0
     detected_gpu_count: int = 0
@@ -490,6 +493,9 @@ def resolve_config(
         or _has_path(wb, "service_port")
     )
     container_registry = resolve_container_registry(project)
+    instance_id = pick(None, "", "instance_id")
+    alias_project_id = pick(None, "", "project_id")
+    security_group_id = pick(None, "", "security_group_id")
     gpu_platform = pick(None, "", "gpu_platform")
     gpu_count_raw = pick(None, "", "gpu_count")
     detected_gpu_count_raw = pick(None, "", "detected_gpu_count")
@@ -520,6 +526,9 @@ def resolve_config(
         app_status=app_status,
         runtime=runtime,
         container_registry=container_registry,
+        instance_id=instance_id,
+        project_id=alias_project_id,
+        security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
@@ -584,6 +593,9 @@ def resolve_ssh_config(
         or _has_path(wb, "service_port")
     )
     container_registry = resolve_container_registry(project)
+    instance_id = pick(None, "", "instance_id")
+    alias_project_id = pick(None, "", "project_id")
+    security_group_id = pick(None, "", "security_group_id")
     gpu_platform = pick(None, "", "gpu_platform")
     gpu_count_raw = pick(None, "", "gpu_count")
     detected_gpu_count_raw = pick(None, "", "detected_gpu_count")
@@ -613,6 +625,9 @@ def resolve_ssh_config(
         app_status=app_status,
         runtime=runtime,
         container_registry=container_registry,
+        instance_id=instance_id,
+        project_id=alias_project_id,
+        security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,

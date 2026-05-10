@@ -48,6 +48,9 @@ def _write_full_config(path: Path) -> None:
                                 "endpoint_strategy": "ssh",
                                 "service_port": 8080,
                                 "tf_instance_name": "tf-a",
+                                "instance_id": "computeinstance-a",
+                                "project_id": "project-alias-a",
+                                "security_group_id": "vpcsecuritygroup-a",
                                 "runtime": "container",
                                 "gpu_platform": "NVIDIA H200",
                                 "gpu_count": 2,
@@ -236,12 +239,25 @@ def test_resolve_config_uses_default_project_and_workbench(
     assert resolved.storage.aws_access_key_id == "key-a"
     assert resolved.hf_token == ""
     assert resolved.tf_instance_name == "tf-a"
+    assert resolved.instance_id == "computeinstance-a"
+    assert resolved.project_id == "project-alias-a"
+    assert resolved.security_group_id == "vpcsecuritygroup-a"
     assert resolved.runtime == "container"
     assert resolved.container_registry == "registry.example/npa"
     assert resolved.gpu_platform == "NVIDIA H200"
     assert resolved.gpu_count == 2
     assert resolved.detected_gpu_count == 4
     assert resolved.cuda_visible_devices == "0,1"
+
+
+def test_resolve_config_keeps_network_fields_optional(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    resolved = config.resolve_config(project="proj-a", name="wb-b")
+
+    assert resolved.instance_id == ""
+    assert resolved.project_id == ""
+    assert resolved.security_group_id == ""
 
 
 def test_resolve_config_env_overrides_yaml(
