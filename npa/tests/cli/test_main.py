@@ -17,6 +17,7 @@ runner = CliRunner()
         (["workbench", "lerobot", "--help"], "LeRobot policy training"),
         (["workbench", "genesis", "--help"], "Genesis simulation"),
         (["adapter", "--help"], "Convert simulation data"),
+        (["network", "--help"], "Network operations"),
         (["workflow", "--help"], "Multi-stage training workflow"),
         (["configure", "--help"], "credential and config setup guidance"),
         (["init", "--help"], "credential and config setup guidance"),
@@ -36,6 +37,7 @@ def test_no_args_shows_top_level_help() -> None:
     assert "Nebius Physical AI workbench CLI" in result.output
     assert "workbench" in result.output
     assert "adapter" in result.output
+    assert "network" in result.output
     assert "workflow" in result.output
     assert "configure" in result.output
     assert "init" in result.output
