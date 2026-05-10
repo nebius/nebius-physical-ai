@@ -24,6 +24,7 @@ from npa.cli.groot import (
     _build_infer_command,
     _build_install_command,
     _build_offline_eval_command,
+    _build_reload_env_command,
     _storage_env_tokens,
 )
 from npa.cli.main import app
@@ -66,6 +67,7 @@ def _active_endpoint(url: str):
         "finetune",
         "eval",
         "serve",
+        "reload-env",
         "infer",
         "convert",
         "status",
@@ -648,6 +650,89 @@ def test_groot_storage_env_tokens_include_s3_credentials() -> None:
         "AWS_ACCESS_KEY_ID": "key",
         "AWS_SECRET_ACCESS_KEY": "secret",
     }
+
+
+def test_groot_reload_env_command_updates_credentials_without_embedding_secret() -> None:
+    cmd = _build_reload_env_command(("NGC_API_KEY", "NGC_ORG"), port=8082)
+
+    assert "/etc/npa-groot-server/env" in cmd
+    assert "NGC_API_KEY=\"${NGC_API_KEY:-}\"" in cmd
+    assert "NGC_ORG=\"${NGC_ORG:-}\"" in cmd
+    assert "npa-groot-server" in cmd
+    assert "NPA_GROOT_RELOAD_ENV_COMPLETE" in cmd
+    assert "nvapi" not in cmd
+
+
+def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mocker) -> None:
+    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg.service_port = 8082
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "updated_keys=HF_TOKEN,HUGGING_FACE_HUB_TOKEN,NGC_API_KEY\n"
+        "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=/etc/npa-groot-server/env mode=systemd\n",
+        "",
+    )
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "loaded": True,
+        "loaded_model": DEFAULT_MODEL,
+        "embodiment_tag": "REAL_G1",
+    }
+    http._request.return_value = {"status": "serving"}
+    mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(
+            tokens={
+                "HF_TOKEN": "hf-token",
+                "NGC_API_KEY": "nvapi-file",
+            }
+        ),
+    )
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    mocker.patch(
+        "npa.cli.groot.service_endpoint",
+        side_effect=lambda *args, **kwargs: _active_endpoint("http://127.0.0.1:19082"),
+    )
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "reload-env", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "reloaded"
+    assert payload["env_path"] == "/etc/npa-groot-server/env"
+    assert payload["mode"] == "systemd"
+    assert payload["restarted"] is True
+    assert "NGC_API_KEY" in payload["updated_keys"]
+    assert payload["served"]["model"] == DEFAULT_MODEL
+    assert payload["served"]["embodiment_tag"] == "REAL_G1"
+    cmd = ssh.run_or_raise.call_args.args[0]
+    assert "NGC_API_KEY=\"${NGC_API_KEY:-}\"" in cmd
+    assert "nvapi-file" not in cmd
+    ssh_tokens = ssh_cls.call_args.args[0].tokens
+    assert ssh_tokens["NGC_API_KEY"] == "nvapi-file"
+    assert ssh_tokens["HUGGING_FACE_HUB_TOKEN"] == "hf-token"
+    http._request.assert_called_once_with(
+        "POST",
+        "/serve",
+        json={"model_path": DEFAULT_MODEL, "embodiment_tag": "REAL_G1", "device": "cuda"},
+        timeout=600.0,
+    )
+
+
+def test_groot_reload_env_requires_shared_credentials(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.groot.resolve_credentials", return_value=CredentialsConfig())
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
+
+    result = runner.invoke(app, ["workbench", "groot", "reload-env"])
+
+    assert result.exit_code == 1
+    assert "No shared credentials found" in result.output
+    ssh_cls.assert_not_called()
 
 
 def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:

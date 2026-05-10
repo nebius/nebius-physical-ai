@@ -1071,6 +1071,82 @@ exit 1
     return _remote_bash(script)
 
 
+def _build_reload_env_command(
+    env_names: tuple[str, ...],
+    *,
+    port: int,
+    restart: bool = True,
+) -> str:
+    names_json = json.dumps(list(env_names))
+    env_assignments = " ".join(f'{name}="${{{name}:-}}"' for name in env_names)
+    restart_block = ""
+    if restart:
+        restart_block = f"""
+if [ "$mode" = "systemd" ]; then
+  sudo systemctl restart {GROOT_SERVICE}
+elif [ "$mode" = "container" ]; then
+  sudo docker restart {GROOT_CONTAINER_NAME} >/dev/null
+fi
+for i in $(seq 1 120); do
+  if curl -fsS "http://127.0.0.1:{port}/health" >/dev/null 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS "http://127.0.0.1:{port}/health" >/dev/null
+"""
+    script = f"""\
+set -euo pipefail
+server_env=/etc/npa-groot-server/env
+container_env={GROOT_CONTAINER_ENV_FILE}
+env_path=""
+mode=""
+if sudo test -f "$server_env"; then
+  env_path="$server_env"
+  mode="systemd"
+elif sudo test -f "$container_env"; then
+  env_path="$container_env"
+  mode="container"
+else
+  echo "No GR00T service env file found" >&2
+  exit 2
+fi
+sudo env {env_assignments} python3 - "$env_path" {shlex.quote(names_json)} <<'PY'
+from pathlib import Path
+import json
+import os
+import sys
+
+path = Path(sys.argv[1])
+env_names = json.loads(sys.argv[2])
+updates = {{name: os.environ.get(name, "") for name in env_names if os.environ.get(name, "")}}
+if not updates:
+    raise SystemExit("No credential values were supplied")
+
+lines = path.read_text().splitlines() if path.exists() else []
+seen = set()
+out = []
+for line in lines:
+    key = line.split("=", 1)[0] if "=" in line else ""
+    if key in updates:
+        if key not in seen:
+            out.append(f"{{key}}={{updates[key]}}")
+            seen.add(key)
+        continue
+    out.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        out.append(f"{{key}}={{value}}")
+path.write_text("\\n".join(out).rstrip() + "\\n")
+path.chmod(0o600)
+print("updated_keys=" + ",".join(sorted(updates)))
+PY
+{restart_block}
+echo "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
+"""
+    return _remote_bash(script)
+
+
 def _build_download_command(model: str, output_path: str, endpoint_url: str = "") -> str:
     model_ref = model.removeprefix("ngc://")
     slug = _model_slug(model)
@@ -2336,6 +2412,115 @@ def download_cmd(
         result["stdout_tail"] = out.strip()[-1000:]
     if err.strip():
         result["stderr_tail"] = err.strip()[-1000:]
+    _output(result, output)
+
+
+@app.command("reload-env")
+def reload_env_cmd(
+    port: int = typer.Option(0, "--port", help="GR00T HTTP server port. Defaults to the saved service port."),
+    restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart GR00T after updating the env file."),
+    preserve_loaded: bool = typer.Option(
+        True,
+        "--preserve-loaded/--no-preserve-loaded",
+        help="After restart, re-serve the model that was loaded before the env update.",
+    ),
+    model: str = typer.Option("", "--model", help="Model ID/path to serve after reloading env."),
+    robot_embodiment: str = typer.Option("", "--robot-embodiment", help="Embodiment tag to serve after reloading env."),
+    timeout: float = typer.Option(600.0, "--timeout", help="Seconds to wait for optional model re-serve."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Propagate local shared credentials into the running GR00T service env without redeploying."""
+    cfg = _get_config()
+    credentials = resolve_credentials()
+    credential_env = {
+        key: value
+        for key, value in shared_credential_env(credentials).items()
+        if key in GROOT_CREDENTIAL_ENV_NAMES and value
+    }
+    if not credential_env:
+        _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
+
+    service_port = port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    pre_health: dict[str, Any] = {}
+    pre_health_error = ""
+    should_probe_loaded = preserve_loaded or bool(model) or bool(robot_embodiment)
+    if should_probe_loaded:
+        try:
+            with service_endpoint(cfg, default_port=service_port, service_port=service_port) as active:
+                pre_health = HTTPClient(active.url, timeout=10.0, retries=1).health()
+        except (EndpointError, ServerError) as exc:
+            pre_health_error = str(exc)
+
+    ssh = _ssh_client(cfg, extra_tokens=credential_env)
+    env_names = tuple(sorted(credential_env))
+    try:
+        _, stdout, stderr = ssh.run_or_raise(
+            _build_reload_env_command(env_names, port=service_port, restart=restart),
+            stream=output != OutputFormat.json,
+        )
+    except SSHError as exc:
+        _fail(f"GR00T env reload failed: {exc}")
+        return
+
+    env_path = ""
+    env_mode = ""
+    for line in stdout.splitlines():
+        if line.startswith("NPA_GROOT_RELOAD_ENV_COMPLETE "):
+            parts = dict(
+                item.split("=", 1)
+                for item in line.removeprefix("NPA_GROOT_RELOAD_ENV_COMPLETE ").split()
+                if "=" in item
+            )
+            env_path = parts.get("env_path", "")
+            env_mode = parts.get("mode", "")
+
+    serve_model = model
+    serve_tag = robot_embodiment
+    if preserve_loaded and not serve_model and pre_health.get("loaded"):
+        serve_model = str(pre_health.get("loaded_model") or pre_health.get("model") or "")
+        serve_tag = serve_tag or str(pre_health.get("embodiment_tag") or "")
+    if robot_embodiment and not serve_model:
+        serve_model = str(pre_health.get("loaded_model") or pre_health.get("model") or DEFAULT_MODEL)
+
+    served: dict[str, Any] | None = None
+    endpoint_url = ""
+    if serve_model:
+        tag = _normalize_embodiment_tag(serve_tag or DEFAULT_EMBODIMENT_TAG)
+        try:
+            with service_endpoint(cfg, default_port=service_port, service_port=service_port) as active:
+                served = HTTPClient(active.url, timeout=timeout, retries=1)._request(
+                    "POST",
+                    "/serve",
+                    json={"model_path": serve_model, "embodiment_tag": tag, "device": "cuda"},
+                    timeout=timeout,
+                )
+                endpoint_url = active.url
+        except EndpointError as exc:
+            _fail(f"GR00T reload-env endpoint setup failed after env update: {exc}")
+            return
+        except ServerError as exc:
+            _fail(f"GR00T reload-env model re-serve failed after env update: {exc}")
+            return
+
+    result: dict[str, Any] = {
+        "status": "reloaded",
+        "updated_keys": list(env_names),
+        "env_path": env_path,
+        "mode": env_mode,
+        "restarted": restart,
+        "port": service_port,
+    }
+    if pre_health_error:
+        result["pre_health_error"] = pre_health_error
+    if served is not None:
+        result["served"] = {
+            "model": serve_model,
+            "embodiment_tag": _normalize_embodiment_tag(serve_tag or DEFAULT_EMBODIMENT_TAG),
+            "endpoint": endpoint_url,
+            "response": served,
+        }
+    if stderr.strip():
+        result["stderr_tail"] = stderr.strip()[-1000:]
     _output(result, output)
 
 
