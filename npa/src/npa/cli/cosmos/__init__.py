@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli.ingress import ensure_alias_ingress, ingress_summary
 from npa.cli.path_contract import PathContractError, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
@@ -48,6 +49,7 @@ from npa.clients.env import render_redacted_env_file
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
+from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
@@ -342,6 +344,34 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
         _fail("Missing --gpu-type. Cosmos deploy does not provide a default GPU type.")
     if not gpu_preset:
         _fail("Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type.")
+
+
+@app.command("ensure-ingress")
+def ensure_ingress_cmd(
+    name: str = typer.Option(
+        "",
+        "--name",
+        "-n",
+        help="Workbench alias to repair. Defaults to the active workbench alias.",
+    ),
+    source: str = typer.Option(
+        "0.0.0.0/0",
+        "--source",
+        help="Source CIDR allowed to reach the Cosmos server.",
+    ),
+) -> None:
+    """Ensure public ingress for the saved Cosmos BYOVM alias."""
+    try:
+        result = ensure_alias_ingress(
+            tool="cosmos",
+            port=8081,
+            project_alias=_project_alias or None,
+            name=name or _workbench_name or None,
+            source=source,
+        )
+    except (ConfigError, NetworkIngressError) as exc:
+        _fail(str(exc))
+    typer.echo(ingress_summary(result, 8081))
 
 
 def _ensure_basic_backend(backend: Backend) -> None:

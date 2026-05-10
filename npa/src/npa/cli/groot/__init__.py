@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli.ingress import ensure_alias_ingress, ingress_summary
 from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
@@ -46,6 +47,7 @@ from npa.clients.env import render_redacted_env_file
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
+from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
@@ -377,6 +379,34 @@ def _hf_revision_flag(model: str) -> str:
 
 def _is_hf_groot_model_ref(ref: str) -> bool:
     return ref.startswith("nvidia/GR00T-") or ref == DEFAULT_MODEL
+
+
+@app.command("ensure-ingress")
+def ensure_ingress_cmd(
+    name: str = typer.Option(
+        "",
+        "--name",
+        "-n",
+        help="Workbench alias to repair. Defaults to the active workbench alias.",
+    ),
+    source: str = typer.Option(
+        "0.0.0.0/0",
+        "--source",
+        help="Source CIDR allowed to reach the GR00T server.",
+    ),
+) -> None:
+    """Ensure public ingress for the saved GR00T BYOVM alias."""
+    try:
+        result = ensure_alias_ingress(
+            tool="groot",
+            port=8082,
+            project_alias=_project_alias or None,
+            name=name or _workbench_name or None,
+            source=source,
+        )
+    except (ConfigError, NetworkIngressError) as exc:
+        _fail(str(exc))
+    typer.echo(ingress_summary(result, 8082))
 
 
 def _cache_dir(kind: str, uri: str) -> str:

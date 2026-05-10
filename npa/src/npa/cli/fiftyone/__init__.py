@@ -15,6 +15,7 @@ import httpx
 import typer
 from rich.console import Console
 
+from npa.cli.ingress import ensure_alias_ingress, ingress_summary
 from npa.cli.path_contract import (
     FIFTYONE_LOAD_DATASET_VM_LOCAL_ERROR,
     PathContractError,
@@ -42,6 +43,7 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
+from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
@@ -237,6 +239,34 @@ def _parse_first_json_object(text: str) -> dict[str, Any] | None:
     except Exception:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+@app.command("ensure-ingress")
+def ensure_ingress_cmd(
+    name: str = typer.Option(
+        "",
+        "--name",
+        "-n",
+        help="Workbench alias to repair. Defaults to the active workbench alias.",
+    ),
+    source: str = typer.Option(
+        "0.0.0.0/0",
+        "--source",
+        help="Source CIDR allowed to reach the FiftyOne app.",
+    ),
+) -> None:
+    """Ensure public ingress for the saved FiftyOne BYOVM alias."""
+    try:
+        result = ensure_alias_ingress(
+            tool="fiftyone",
+            port=DEFAULT_APP_PORT,
+            project_alias=_project_alias or None,
+            name=name or _workbench_name or None,
+            source=source,
+        )
+    except (ConfigError, NetworkIngressError) as exc:
+        _fail(str(exc))
+    typer.echo(ingress_summary(result, DEFAULT_APP_PORT))
 
 
 def _lerobot_importer_source() -> str:
