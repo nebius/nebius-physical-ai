@@ -29,6 +29,7 @@ def _ssh_cfg() -> WorkbenchConfig:
         "system-info",
         "train",
         "eval",
+        "export-lerobot",
         "list",
     ],
 )
@@ -406,6 +407,149 @@ def test_isaac_lab_eval_accepts_deprecated_checkpoint_and_output_dir_aliases(moc
     cmd = ssh.run.call_args.args[0]
     assert "/tmp/old-checkpoint.json" in cmd
     assert "/tmp/old-isaac-eval" in cmd
+
+
+def test_isaac_lab_export_lerobot_runs_remote_rollout_and_uploads(tmp_path: Path, mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "ISAAC_LAB_EXPORT_LEROBOT_COMPLETE", "")
+    cfg = _ssh_cfg()
+    cfg.runtime = "container"
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=cfg)
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw")
+    storage = mocker.MagicMock()
+    storage.upload_directory.return_value = "s3://bucket/isaac-lab/g1/"
+    mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    convert = mocker.patch("npa.adapter.isaac_lab_lerobot.convert", return_value=converted)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-lerobot",
+            "--task",
+            "Isaac-Velocity-Flat-G1-v0",
+            "--num-episodes",
+            "2",
+            "--steps-per-episode",
+            "4",
+            "--output-path",
+            "s3://bucket/isaac-lab/g1/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    cmd = ssh.run.call_args.args[0]
+    assert "sudo docker exec npa-isaac-lab" in cmd
+    assert "/isaac-sim/python.sh" in cmd
+    assert "ISAAC_LAB_EXPORT_LEROBOT_START" in cmd
+    assert "Isaac-Velocity-Flat-G1-v0" in cmd
+    assert "num_episodes = 2" in cmd
+    assert "steps_per_episode = 4" in cmd
+    convert.assert_called_once()
+    assert convert.call_args.kwargs["fps"] == 50
+    assert convert.call_args.kwargs["include_placeholder_video"] is True
+    storage.upload_directory.assert_called_once_with(str(converted), "s3://bucket/isaac-lab/g1/")
+    assert "s3://bucket/isaac-lab/g1/" in result.output
+
+
+def test_isaac_lab_export_lerobot_falls_back_to_remote_env_upload(
+    tmp_path: Path, mocker
+) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "ISAAC_LAB_EXPORT_LEROBOT_COMPLETE", "")
+    ssh.run_or_raise.return_value = (0, "npa_remote_s3_upload_done files=2", "")
+    cfg = _ssh_cfg()
+    cfg.runtime = "container"
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=cfg)
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw")
+    storage = mocker.MagicMock()
+    storage.upload_directory.side_effect = RuntimeError("AccessDenied")
+    mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    (converted / "meta.json").write_text("{}")
+    mocker.patch("npa.adapter.isaac_lab_lerobot.convert", return_value=converted)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-lerobot",
+            "--task",
+            "Isaac-Velocity-Flat-G1-v0",
+            "--output-path",
+            "s3://bucket/isaac-lab/g1/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"upload_mode": "remote-env"' in result.output
+    assert "AccessDenied" in result.output
+    ssh.upload_directory.assert_called_once()
+    assert ssh.upload_directory.call_args.args[0] == str(converted)
+    remote_upload_cmd = ssh.run_or_raise.call_args_list[-1].args[0]
+    assert "source /etc/npa-isaac-lab/env" not in remote_upload_cmd
+    assert ". /etc/npa-isaac-lab/env" in remote_upload_cmd
+    assert "AWS_ACCESS_KEY_ID" in remote_upload_cmd
+    assert "AccessDenied" not in remote_upload_cmd
+
+
+def test_isaac_lab_export_lerobot_rejects_non_s3_output(mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    ssh_cls = mocker.patch("npa.cli.isaac_lab.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-lerobot",
+            "--task",
+            "Isaac-Velocity-Flat-G1-v0",
+            "--output-path",
+            "/tmp/out",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Isaac Lab export-lerobot --output-path expects an S3 URI" in result.output
+    ssh_cls.assert_not_called()
+
+
+def test_isaac_lab_export_lerobot_maps_remote_failure(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (23, "", "task failed")
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-lerobot",
+            "--task",
+            "Isaac-Velocity-Flat-G1-v0",
+            "--output-path",
+            "s3://bucket/isaac-lab/g1/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"status": "failed"' in result.output
+    assert "task failed" in result.output
 
 
 def test_isaac_lab_status_prints_ssh_output(mocker) -> None:

@@ -11,6 +11,7 @@ import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
@@ -178,6 +179,87 @@ def _upload_remote_directory_to_s3(ssh: SSHClient, cfg, remote_dir: str, output_
         with tarfile.open(archive_local, "r:gz") as archive:
             archive.extractall(extract_dir, filter="data")
         return _storage_client(cfg).upload_directory(str(extract_dir), output_path)
+
+
+def _download_remote_directory(ssh: SSHClient, remote_dir: str, local_dir: Path) -> Path:
+    archive_remote = f"/tmp/npa-isaac-lab-download-{int(time.time() * 1000)}.tgz"
+    archive_local = local_dir.parent / "raw.tgz"
+    ssh.run_or_raise(
+        _remote_bash(
+            f"test -d {shlex.quote(remote_dir)} && "
+            f"tar -C {shlex.quote(remote_dir)} -czf {shlex.quote(archive_remote)} ."
+        )
+    )
+    try:
+        ssh.download_file(archive_remote, str(archive_local))
+    finally:
+        ssh.run(f"rm -f {shlex.quote(archive_remote)}")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_local, "r:gz") as archive:
+        archive.extractall(local_dir, filter="data")
+    return local_dir
+
+
+def _upload_local_directory_via_remote_env(
+    ssh: SSHClient,
+    local_dir: Path,
+    remote_dir: str,
+    output_path: str,
+    *,
+    env_file: str = "/etc/npa-isaac-lab/env",
+) -> str:
+    parsed = urlparse(output_path)
+    bucket = parsed.netloc
+    prefix = parsed.path.lstrip("/").rstrip("/") + "/"
+    if parsed.scheme != "s3" or not bucket or not prefix.strip("/"):
+        raise SSHError(f"Remote upload expects an s3:// output path: {output_path}")
+
+    ssh.run_or_raise(_remote_bash(f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}"))
+    try:
+        ssh.upload_directory(str(local_dir), remote_dir)
+        script = f"""\
+set -euo pipefail
+if [ ! -f {shlex.quote(env_file)} ]; then
+  echo "missing env file: {shlex.quote(env_file)}" >&2
+  exit 1
+fi
+set -a
+. {shlex.quote(env_file)}
+set +a
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+import boto3
+
+base = Path({remote_dir!r})
+bucket = {bucket!r}
+prefix = {prefix!r}
+endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
+access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+if not endpoint:
+    raise RuntimeError("AWS_ENDPOINT_URL/NEBIUS_S3_ENDPOINT is not configured")
+if not access_key or not secret_key:
+    raise RuntimeError("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not configured")
+s3 = boto3.client(
+    "s3",
+    endpoint_url=endpoint,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+)
+count = 0
+for path in base.rglob("*"):
+    if path.is_file():
+        s3.upload_file(str(path), bucket, prefix + str(path.relative_to(base)))
+        count += 1
+print(f"npa_remote_s3_upload_done files={{count}}")
+PY
+"""
+        ssh.run_or_raise(f"sudo bash -lc {shlex.quote(script)}")
+    finally:
+        ssh.run(f"rm -rf {shlex.quote(remote_dir)}")
+    return f"s3://{bucket}/{prefix}"
 
 
 def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
@@ -476,6 +558,184 @@ try:
     summary_path.write_text(json.dumps(summary, indent=2))
     print("ISAAC_LAB_EVAL_COMPLETE")
     print(json.dumps(summary, indent=2), flush=True)
+finally:
+    if env is not None:
+        env.close()
+    simulation_app.close()
+"""
+
+
+def _build_export_lerobot_script(
+    task: str,
+    num_episodes: int,
+    steps_per_episode: int,
+    output_dir: str,
+) -> str:
+    from npa.adapter.isaac_lab_lerobot import G1_STATE_NAMES_43
+
+    state_names_json = json.dumps(G1_STATE_NAMES_43)
+    return f"""\
+import json
+import time
+from pathlib import Path
+
+from isaaclab.app import AppLauncher
+
+app_launcher = AppLauncher(headless=True)
+simulation_app = app_launcher.app
+
+import gymnasium as gym
+import numpy as np
+import torch
+
+import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.utils import parse_env_cfg
+
+task = {task!r}
+num_episodes = {num_episodes}
+steps_per_episode = {steps_per_episode}
+output_dir = Path({output_dir!r})
+state_names = {state_names_json}
+output_dir.mkdir(parents=True, exist_ok=True)
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+started = time.time()
+env = None
+
+source_aliases = {{
+    "waist_yaw_joint": "torso_joint",
+    "left_hand_pinky_joint": "left_five_joint",
+    "left_hand_ring_joint": "left_three_joint",
+    "left_hand_middle_joint": "left_zero_joint",
+    "left_hand_index_joint": "left_six_joint",
+    "left_hand_thumb_bend_joint": "left_four_joint",
+    "left_hand_thumb_rotation_joint": "left_one_joint",
+    "left_hand_aux_joint": "left_two_joint",
+    "right_hand_pinky_joint": "right_five_joint",
+    "right_hand_ring_joint": "right_three_joint",
+    "right_hand_middle_joint": "right_zero_joint",
+    "right_hand_index_joint": "right_six_joint",
+    "right_hand_thumb_bend_joint": "right_four_joint",
+    "right_hand_thumb_rotation_joint": "right_one_joint",
+    "right_hand_aux_joint": "right_two_joint",
+}}
+
+
+def _robot_from_env(env):
+    scene = getattr(getattr(env, "unwrapped", env), "scene", None)
+    if scene is None:
+        raise RuntimeError("Isaac Lab scene is not available")
+    try:
+        return scene["robot"]
+    except Exception:
+        pass
+    keys = scene.keys() if hasattr(scene, "keys") else []
+    for key in keys:
+        try:
+            candidate = scene[key]
+        except Exception:
+            continue
+        if hasattr(getattr(candidate, "data", None), "joint_pos"):
+            return candidate
+    raise RuntimeError("Could not locate robot articulation with joint_pos data")
+
+
+def _to_numpy(value):
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    return np.asarray(value, dtype=np.float32)
+
+
+def _joint_map(joint_names, values):
+    values = _to_numpy(values).reshape(-1)
+    return {{
+        name: float(values[idx])
+        for idx, name in enumerate(joint_names[: len(values)])
+    }}
+
+
+def _canonicalize(values_by_joint):
+    out = np.zeros(len(state_names), dtype=np.float32)
+    for idx, target_name in enumerate(state_names):
+        source_name = source_aliases.get(target_name, target_name)
+        out[idx] = float(values_by_joint.get(source_name, 0.0))
+    return out
+
+
+try:
+    print(
+        f"ISAAC_LAB_EXPORT_LEROBOT_START task={{task}} "
+        f"episodes={{num_episodes}} steps_per_episode={{steps_per_episode}} device={{device}}",
+        flush=True,
+    )
+    env_cfg = parse_env_cfg(task, device=device, num_envs=1)
+    env = gym.make(task, cfg=env_cfg)
+    robot = _robot_from_env(env)
+    joint_names = list(getattr(getattr(robot, "data", None), "joint_names", []) or [])
+    if not joint_names:
+        raise RuntimeError("Robot joint_names are empty")
+    print(f"ISAAC_LAB_EXPORT_JOINTS count={{len(joint_names)}}", flush=True)
+
+    total_frames = 0
+    episode_lengths = []
+    for episode_index in range(num_episodes):
+        env.reset()
+        states = []
+        actions_out = []
+
+        for step in range(steps_per_episode):
+            robot = _robot_from_env(env)
+            state_values = _to_numpy(robot.data.joint_pos)[0]
+            sample = torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+            sample_np = _to_numpy(sample)
+            action_values = sample_np[0] if sample_np.ndim > 1 else sample_np
+
+            states.append(_canonicalize(_joint_map(joint_names, state_values)))
+            actions_out.append(_canonicalize(_joint_map(joint_names, action_values)))
+
+            _, _rewards, terminated, truncated, _info = env.step(sample)
+            done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
+            if done:
+                break
+
+        if not states:
+            raise RuntimeError(f"episode {{episode_index}} produced no frames")
+        episode_dir = output_dir / f"episode_{{episode_index:06d}}"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        np.save(episode_dir / "state.npy", np.stack(states).astype(np.float32))
+        np.save(episode_dir / "actions.npy", np.stack(actions_out).astype(np.float32))
+        (episode_dir / "episode_meta.json").write_text(json.dumps({{
+            "episode_index": episode_index,
+            "length": len(states),
+            "task": task,
+        }}, indent=2))
+        total_frames += len(states)
+        episode_lengths.append(len(states))
+        print(
+            f"ISAAC_LAB_EXPORT_EPISODE episode={{episode_index + 1}}/{{num_episodes}} "
+            f"frames={{len(states)}}",
+            flush=True,
+        )
+
+    meta = {{
+        "format": "npa_isaac_lab_g1_rollout_v1",
+        "task": task,
+        "robot_type": "unitree_g1",
+        "fps": 50,
+        "state_names": state_names,
+        "action_names": state_names,
+        "source_joint_names": joint_names,
+        "num_episodes": num_episodes,
+        "steps_per_episode": steps_per_episode,
+        "episode_lengths": episode_lengths,
+        "total_frames": total_frames,
+        "created_unix": round(time.time(), 3),
+        "duration_seconds": round(time.time() - started, 3),
+    }}
+    (output_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    print("ISAAC_LAB_EXPORT_LEROBOT_COMPLETE")
+    print(json.dumps(meta, indent=2), flush=True)
 finally:
     if env is not None:
         env.close()
@@ -1356,3 +1616,125 @@ def eval_cmd(
     _output(result, output_format)
     if exit_code != 0:
         raise typer.Exit(1)
+
+
+@app.command("export-lerobot")
+def export_lerobot_cmd(
+    task: str = typer.Option(..., "--task", help="Isaac Lab humanoid/G1 task to roll out."),
+    num_episodes: int = typer.Option(10, "--num-episodes", help="Number of episodes to export."),
+    steps_per_episode: int = typer.Option(50, "--steps-per-episode", help="Maximum steps recorded per episode."),
+    output_path: str = typer.Option(..., "--output-path", "-o", help="S3 URI for the LeRobotDataset output."),
+    fps: int = typer.Option(50, "--fps", help="Frame rate to record in LeRobot metadata."),
+    placeholder_video: bool = typer.Option(
+        True,
+        "--placeholder-video/--no-placeholder-video",
+        help="Include a small synthetic ego-view video so visual GR00T loaders have an image modality.",
+    ),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+) -> None:
+    """Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset."""
+    if num_episodes <= 0:
+        _fail(f"--num-episodes must be positive, got {num_episodes}")
+    if steps_per_episode <= 0:
+        _fail(f"--steps-per-episode must be positive, got {steps_per_episode}")
+    if fps <= 0:
+        _fail(f"--fps must be positive, got {fps}")
+
+    try:
+        output_path = validate_write_path(
+            output_path,
+            tool="Isaac Lab export-lerobot",
+            option="--output-path",
+            required=True,
+        )
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
+
+    cfg = _get_ssh_config()
+    ssh = SSHClient(cfg.ssh)
+    remote_raw_dir = f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/raw"
+    prefix = _container_prefix() if _is_container_runtime(cfg) else _activate_prefix()
+    python_bin = "/isaac-sim/python.sh" if _is_container_runtime(cfg) else "python"
+    cmd = _runtime_bash(
+        cfg,
+        prefix
+        + f"rm -rf {shlex.quote(remote_raw_dir)} && mkdir -p {shlex.quote(remote_raw_dir)}\n"
+        + f"{python_bin} - <<'PY'\n"
+        + _build_export_lerobot_script(task, num_episodes, steps_per_episode, remote_raw_dir)
+        + "PY\n",
+    )
+    stream_logs = output_format != OutputFormat.json
+    if stream_logs:
+        console.print(f"[bold]Exporting Isaac Lab task to LeRobot[/bold]: {task}")
+
+    start = time.time()
+    try:
+        exit_code, stdout, stderr = ssh.run(cmd, stream=stream_logs)
+    except SSHError as exc:
+        _fail(f"SSH error: {exc}")
+        return
+
+    result: dict[str, Any] = {
+        "status": "success" if exit_code == 0 else "failed",
+        "exit_code": exit_code,
+        "task": task,
+        "num_episodes": num_episodes,
+        "steps_per_episode": steps_per_episode,
+        "remote_raw_dir": remote_raw_dir,
+        "output_path": output_path,
+        "duration_seconds": round(time.time() - start, 1),
+    }
+    if exit_code != 0:
+        result["stderr"] = stderr.strip()[-500:] if stderr else ""
+        _output(result, output_format)
+        raise typer.Exit(1)
+
+    with tempfile.TemporaryDirectory(prefix="npa-isaac-lab-lerobot-") as tmp:
+        tmp_path = Path(tmp)
+        raw_dir = tmp_path / "raw"
+        lerobot_dir = tmp_path / "lerobot"
+        try:
+            _download_remote_directory(ssh, remote_raw_dir, raw_dir)
+            from npa.adapter.isaac_lab_lerobot import IsaacLabLeRobotError, convert
+
+            converted = convert(
+                raw_dir,
+                lerobot_dir,
+                fps=fps,
+                robot_type="unitree_g1",
+                task=task,
+                include_placeholder_video=placeholder_video,
+            )
+            try:
+                saved_to = _storage_client(cfg).upload_directory(str(converted), output_path)
+                result["upload_mode"] = "local"
+            except Exception as upload_exc:
+                result["local_upload_error"] = str(upload_exc)
+                remote_converted_dir = (
+                    f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/converted"
+                )
+                saved_to = _upload_local_directory_via_remote_env(
+                    ssh,
+                    converted,
+                    remote_converted_dir,
+                    output_path,
+                )
+                result["upload_mode"] = "remote-env"
+        except (IsaacLabLeRobotError, SSHError, OSError, tarfile.TarError) as exc:
+            result["status"] = "failed"
+            result["exit_code"] = 1
+            result["export_error"] = str(exc)
+            _output(result, output_format)
+            raise typer.Exit(1) from exc
+        except Exception as exc:
+            result["status"] = "failed"
+            result["exit_code"] = 1
+            result["upload_error"] = str(exc)
+            _output(result, output_format)
+            raise typer.Exit(1) from exc
+
+    result["output_path"] = saved_to
+    if output_format == OutputFormat.json and stdout.strip():
+        result["stdout_tail"] = stdout.strip()[-1000:]
+    _output(result, output_format)
