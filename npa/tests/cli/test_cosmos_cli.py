@@ -528,6 +528,53 @@ def test_cosmos_infer_s3_input_and_output(tmp_path: Path, mocker) -> None:
     assert "saved_to: s3://bucket/results/out.mp4" in result.output
 
 
+def test_cosmos_infer_falls_back_to_remote_env_upload_on_local_access_denied(
+    tmp_path: Path,
+    mocker,
+) -> None:
+    output_uri = "s3://bucket/results/out.mp4"
+    store = mocker.MagicMock()
+    store.upload_file.side_effect = RuntimeError("AccessDenied")
+    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=store)
+    http = mocker.MagicMock()
+    http.infer.return_value = {"job_id": "job-1", "status": "running"}
+    http.job_status.return_value = {
+        "job_id": "job-1",
+        "status": "completed",
+        "output_path": "/opt/cosmos-data/outputs/out.mp4",
+    }
+    ssh = mocker.MagicMock()
+    ssh.download_file.return_value = str(tmp_path / "out.mp4")
+    ssh.run_or_raise.return_value = (0, "npa_remote_s3_upload_done", "")
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "humanoid carrying a box",
+            "--output-path",
+            output_uri,
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert ssh.download_file.call_args.args[0] == "/opt/cosmos-data/outputs/out.mp4"
+    store.upload_file.assert_called_once()
+    remote_upload_cmd = ssh.run_or_raise.call_args.args[0]
+    assert ". /etc/npa-cosmos-server/env" in remote_upload_cmd
+    assert "AWS_ACCESS_KEY_ID" in remote_upload_cmd
+    assert "AccessDenied" not in remote_upload_cmd
+    assert f'"saved_to": "{output_uri}"' in result.output
+
+
 def test_cosmos_infer_rejects_local_output_path_before_config(mocker) -> None:
     resolve_config = mocker.patch("npa.cli.cosmos.resolve_config")
 

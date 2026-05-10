@@ -1540,7 +1540,80 @@ def _save_inference_output(
     temp_dirs.append(tmp)
     local_path = Path(tmp.name) / _s3_path_name(output_path)
     _write_inference_output(data, local_path)
-    return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+    try:
+        return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+    except Exception:
+        return _upload_local_file_via_remote_env(
+            SSHClient(cfg.ssh),
+            local_path,
+            output_path,
+            temp_dirs,
+        )
+
+
+def _upload_remote_file_via_env(
+    ssh: SSHClient,
+    remote_file: str,
+    output_path: str,
+    *,
+    env_file: str = "/etc/npa-cosmos-server/env",
+) -> str:
+    parsed = urlparse(output_path)
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/")
+    if parsed.scheme != "s3" or not bucket or not key:
+        raise SSHError(f"Remote upload expects an s3:// output path: {output_path}")
+
+    script = f"""\
+set -euo pipefail
+if [ ! -f {shlex.quote(env_file)} ]; then
+  echo "missing env file: {shlex.quote(env_file)}" >&2
+  exit 1
+fi
+set -a
+. {shlex.quote(env_file)}
+set +a
+python3 - <<'PY'
+import os
+
+import boto3
+
+local = {remote_file!r}
+bucket = {bucket!r}
+key = {key!r}
+endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
+access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+if not endpoint:
+    raise RuntimeError("AWS_ENDPOINT_URL/NEBIUS_S3_ENDPOINT is not configured")
+if not access_key or not secret_key:
+    raise RuntimeError("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not configured")
+s3 = boto3.client(
+    "s3",
+    endpoint_url=endpoint,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+)
+s3.upload_file(local, bucket, key)
+print("npa_remote_s3_upload_done")
+PY
+"""
+    ssh.run_or_raise(f"sudo bash -lc {shlex.quote(script)}")
+    return f"s3://{bucket}/{key}"
+
+
+def _upload_local_file_via_remote_env(
+    ssh: SSHClient,
+    local_path: Path,
+    output_path: str,
+    temp_dirs: list[tempfile.TemporaryDirectory[str]],
+) -> str:
+    remote_file = f"/tmp/npa-cosmos-output-{uuid.uuid4().hex}-{local_path.name}"
+    ssh.upload_file(str(local_path), remote_file)
+    try:
+        return _upload_remote_file_via_env(ssh, remote_file, output_path)
+    finally:
+        ssh.run(f"rm -f {shlex.quote(remote_file)}")
 
 
 def _local_output_path(remote_path: str, output_path: str) -> Path:
@@ -1564,8 +1637,12 @@ def _download_remote_output(
         tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-output-")
         temp_dirs.append(tmp)
         local_path = Path(tmp.name) / (Path(remote_path).name or f"cosmos-output-{uuid.uuid4().hex}")
-        SSHClient(cfg.ssh).download_file(remote_path, str(local_path))
-        return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+        ssh = SSHClient(cfg.ssh)
+        ssh.download_file(remote_path, str(local_path))
+        try:
+            return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+        except Exception:
+            return _upload_remote_file_via_env(ssh, remote_path, output_path)
 
     local_path = _local_output_path(remote_path, output_path)
     return SSHClient(cfg.ssh).download_file(remote_path, str(local_path))
