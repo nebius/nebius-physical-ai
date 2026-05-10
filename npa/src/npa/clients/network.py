@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import re
 from typing import Any
 
@@ -50,6 +50,14 @@ class EnsureIngressResult:
         for group in self.security_groups:
             values.extend(group.warnings)
         return tuple(values)
+
+
+@dataclass(frozen=True)
+class _SecurityGroupContext:
+    security_group: dict[str, Any]
+    rules: tuple[dict[str, Any], ...]
+    covered_ports: frozenset[int]
+    warnings: tuple[str, ...]
 
 
 def parse_ports(value: str) -> tuple[int, ...]:
@@ -102,19 +110,36 @@ def ensure_ingress(
     if not security_group_ids:
         raise NetworkIngressError(f"VM {instance_id or vm_id or ip} has no security group references")
 
-    group_results: list[SecurityGroupIngressResult] = []
+    group_contexts: list[_SecurityGroupContext] = []
+    covered_ports: set[int] = set()
     for security_group_id in security_group_ids:
         security_group = _get_security_group(security_group_id)
-        rules = _list_security_rules(security_group_id)
-        group_results.append(
-            _ensure_group_ingress(
+        rules = tuple(_list_security_rules(security_group_id))
+        group_covered = frozenset(_covered_ports(rules, requested_ports=ports, source=source))
+        covered_ports.update(group_covered)
+        group_contexts.append(
+            _SecurityGroupContext(
                 security_group=security_group,
                 rules=rules,
-                ports=ports,
-                source=source,
-                tool=tool,
+                covered_ports=group_covered,
+                warnings=tuple(
+                    _name_collision_warnings(
+                        rules,
+                        desired_name=rule_name(tool, ports),
+                        ports=ports,
+                        source=source,
+                    )
+                ),
             )
         )
+
+    missing_ports = tuple(port for port in ports if port not in covered_ports)
+    group_results = _build_group_results(
+        group_contexts=group_contexts,
+        missing_ports=missing_ports,
+        source=source,
+        tool=tool,
+    )
 
     return EnsureIngressResult(
         instance_id=instance_id,
@@ -184,33 +209,54 @@ def _list_security_rules(security_group_id: str) -> list[dict[str, Any]]:
     return list(data.get("items", []))
 
 
-def _ensure_group_ingress(
+def _build_group_results(
     *,
-    security_group: dict[str, Any],
-    rules: list[dict[str, Any]],
-    ports: tuple[int, ...],
+    group_contexts: list[_SecurityGroupContext],
+    missing_ports: tuple[int, ...],
     source: str,
     tool: str,
-) -> SecurityGroupIngressResult:
-    security_group_id = _metadata(security_group).get("id", "")
-    security_group_name = _metadata(security_group).get("name", "")
-    network_id = security_group.get("spec", {}).get("network_id", "")
-    desired_name = rule_name(tool, ports)
-    covered = _covered_ports(rules, requested_ports=ports, source=source)
-    missing = tuple(port for port in ports if port not in covered)
-    warnings = tuple(_name_collision_warnings(rules, desired_name=desired_name, ports=ports, source=source))
+) -> list[SecurityGroupIngressResult]:
+    if not group_contexts:
+        return []
 
-    if not missing:
-        return SecurityGroupIngressResult(
-            security_group_id=security_group_id,
-            security_group_name=security_group_name,
-            network_id=network_id,
-            covered_ports=tuple(sorted(covered)),
-            missing_ports=(),
-            warnings=warnings,
+    results: list[SecurityGroupIngressResult] = []
+    created_rule_id = ""
+    created_rule_name = ""
+    if missing_ports:
+        target = group_contexts[0]
+        created_rule_id, created_rule_name = _create_group_ingress(
+            security_group=target.security_group,
+            missing_ports=missing_ports,
+            source=source,
+            tool=tool,
         )
 
-    create_name = rule_name(tool, missing)
+    for index, context in enumerate(group_contexts):
+        security_group = context.security_group
+        results.append(
+            SecurityGroupIngressResult(
+                security_group_id=_metadata(security_group).get("id", ""),
+                security_group_name=_metadata(security_group).get("name", ""),
+                network_id=security_group.get("spec", {}).get("network_id", ""),
+                covered_ports=tuple(sorted(context.covered_ports)),
+                missing_ports=missing_ports if index == 0 else (),
+                created_rule_id=created_rule_id if index == 0 else "",
+                created_rule_name=created_rule_name if index == 0 else "",
+                warnings=context.warnings,
+            )
+        )
+    return results
+
+
+def _create_group_ingress(
+    *,
+    security_group: dict[str, Any],
+    missing_ports: tuple[int, ...],
+    source: str,
+    tool: str,
+) -> tuple[str, str]:
+    security_group_id = _metadata(security_group).get("id", "")
+    create_name = rule_name(tool, missing_ports)
     try:
         created = nebius._run_json([
             "vpc",
@@ -232,7 +278,7 @@ def _ensure_group_ingress(
             source,
             *[
                 item
-                for port in missing
+                for port in missing_ports
                 for item in ("--ingress-destination-ports", str(port))
             ],
         ])
@@ -241,15 +287,9 @@ def _ensure_group_ingress(
             f"Could not create ingress rule on {security_group_id}: {exc}"
         ) from exc
 
-    return SecurityGroupIngressResult(
-        security_group_id=security_group_id,
-        security_group_name=security_group_name,
-        network_id=network_id,
-        covered_ports=tuple(sorted(covered)),
-        missing_ports=missing,
-        created_rule_id=_metadata(created).get("id", ""),
-        created_rule_name=_metadata(created).get("name", create_name),
-        warnings=warnings,
+    return (
+        _metadata(created).get("id", ""),
+        _metadata(created).get("name", create_name),
     )
 
 

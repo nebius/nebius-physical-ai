@@ -81,6 +81,7 @@ def _mock_nebius(
     instance: dict[str, Any] | None = None,
     instances: list[dict[str, Any]] | None = None,
     rules: list[dict[str, Any]] | None = None,
+    rules_by_sg: dict[str, list[dict[str, Any]]] | None = None,
     get_instance_error: str | None = None,
     create_error: str | None = None,
 ):
@@ -100,12 +101,14 @@ def _mock_nebius(
         if args[:3] == ["vpc", "security-group", "get"]:
             return _security_group(args[3])
         if args[:3] == ["vpc", "security-rule", "list"]:
-            return {"items": rules}
+            group_id = args[args.index("--parent-id") + 1]
+            return {"items": (rules_by_sg or {}).get(group_id, rules)}
         if args[:3] == ["vpc", "security-rule", "create"]:
             if create_error:
                 raise NebiusError(create_error)
             name = args[args.index("--name") + 1]
-            return {"metadata": {"id": "rule-created", "name": name}}
+            group_id = args[args.index("--parent-id") + 1]
+            return {"metadata": {"id": f"rule-created-{group_id}", "name": name}}
         raise AssertionError(f"unexpected nebius args: {args}")
 
     mocker.patch("npa.clients.nebius._run_json", side_effect=fake_run_json)
@@ -125,7 +128,7 @@ def test_network_ensure_ingress_success_with_vm(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    assert "created_rule: rule-created" in result.output
+    assert "created_rule: rule-created-sg-test" in result.output
     assert "created_rule_name: allow-npa-cosmos-8081" in result.output
     assert len(_create_calls(calls)) == 1
 
@@ -302,6 +305,44 @@ def test_network_ensure_ingress_multiple_ports_collapsed_into_single_rule(mocker
         "--ingress-destination-ports",
         "8082",
     ]
+
+
+def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(mocker) -> None:
+    calls = _mock_nebius(
+        mocker,
+        instance=_instance(security_groups=["sg-one", "sg-two"]),
+        rules_by_sg={
+            "sg-one": [],
+            "sg-two": [_ingress_rule(name="allow-existing", ports=[8081])],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+    )
+
+    assert result.exit_code == 0
+    assert "matching spec already covered, no rule changes" in result.output
+    assert _create_calls(calls) == []
+
+
+def test_network_ensure_ingress_multi_sg_missing_ports_create_on_first_group_only(mocker) -> None:
+    calls = _mock_nebius(
+        mocker,
+        instance=_instance(security_groups=["sg-one", "sg-two"]),
+        rules_by_sg={"sg-one": [], "sg-two": []},
+    )
+
+    result = runner.invoke(
+        app,
+        ["network", "ensure-ingress", "--vm", "computeinstance-test", "--ports", "8081"],
+    )
+
+    assert result.exit_code == 0
+    create_calls = _create_calls(calls)
+    assert len(create_calls) == 1
+    assert create_calls[0][create_calls[0].index("--parent-id") + 1] == "sg-one"
 
 
 def test_network_ensure_ingress_rejects_vm_and_ip_combination() -> None:
