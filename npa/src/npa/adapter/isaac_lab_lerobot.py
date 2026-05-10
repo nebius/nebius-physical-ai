@@ -67,6 +67,57 @@ G1_STATE_NAMES_43 = [
     "right_hand_aux_joint",
 ]
 G1_STATE_DIM = len(G1_STATE_NAMES_43)
+_G1_STATE_INDEX = {name: index for index, name in enumerate(G1_STATE_NAMES_43)}
+
+
+def _g1_idx(name: str) -> int:
+    return _G1_STATE_INDEX[name]
+
+
+G1_BONE_PAIRS = [
+    (_g1_idx("waist_yaw_joint"), _g1_idx("waist_roll_joint")),
+    (_g1_idx("waist_roll_joint"), _g1_idx("waist_pitch_joint")),
+    (_g1_idx("waist_yaw_joint"), _g1_idx("left_hip_yaw_joint")),
+    (_g1_idx("left_hip_yaw_joint"), _g1_idx("left_hip_roll_joint")),
+    (_g1_idx("left_hip_roll_joint"), _g1_idx("left_hip_pitch_joint")),
+    (_g1_idx("left_hip_pitch_joint"), _g1_idx("left_knee_joint")),
+    (_g1_idx("left_knee_joint"), _g1_idx("left_ankle_pitch_joint")),
+    (_g1_idx("left_ankle_pitch_joint"), _g1_idx("left_ankle_roll_joint")),
+    (_g1_idx("waist_yaw_joint"), _g1_idx("right_hip_yaw_joint")),
+    (_g1_idx("right_hip_yaw_joint"), _g1_idx("right_hip_roll_joint")),
+    (_g1_idx("right_hip_roll_joint"), _g1_idx("right_hip_pitch_joint")),
+    (_g1_idx("right_hip_pitch_joint"), _g1_idx("right_knee_joint")),
+    (_g1_idx("right_knee_joint"), _g1_idx("right_ankle_pitch_joint")),
+    (_g1_idx("right_ankle_pitch_joint"), _g1_idx("right_ankle_roll_joint")),
+    (_g1_idx("waist_pitch_joint"), _g1_idx("left_shoulder_pitch_joint")),
+    (_g1_idx("left_shoulder_pitch_joint"), _g1_idx("left_shoulder_roll_joint")),
+    (_g1_idx("left_shoulder_roll_joint"), _g1_idx("left_shoulder_yaw_joint")),
+    (_g1_idx("left_shoulder_yaw_joint"), _g1_idx("left_elbow_pitch_joint")),
+    (_g1_idx("left_elbow_pitch_joint"), _g1_idx("left_elbow_roll_joint")),
+    (_g1_idx("left_elbow_roll_joint"), _g1_idx("left_wrist_pitch_joint")),
+    (_g1_idx("left_wrist_pitch_joint"), _g1_idx("left_wrist_yaw_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_pinky_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_ring_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_middle_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_index_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_thumb_bend_joint")),
+    (_g1_idx("left_hand_thumb_bend_joint"), _g1_idx("left_hand_thumb_rotation_joint")),
+    (_g1_idx("left_wrist_yaw_joint"), _g1_idx("left_hand_aux_joint")),
+    (_g1_idx("waist_pitch_joint"), _g1_idx("right_shoulder_pitch_joint")),
+    (_g1_idx("right_shoulder_pitch_joint"), _g1_idx("right_shoulder_roll_joint")),
+    (_g1_idx("right_shoulder_roll_joint"), _g1_idx("right_shoulder_yaw_joint")),
+    (_g1_idx("right_shoulder_yaw_joint"), _g1_idx("right_elbow_pitch_joint")),
+    (_g1_idx("right_elbow_pitch_joint"), _g1_idx("right_elbow_roll_joint")),
+    (_g1_idx("right_elbow_roll_joint"), _g1_idx("right_wrist_pitch_joint")),
+    (_g1_idx("right_wrist_pitch_joint"), _g1_idx("right_wrist_yaw_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_pinky_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_ring_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_middle_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_index_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_thumb_bend_joint")),
+    (_g1_idx("right_hand_thumb_bend_joint"), _g1_idx("right_hand_thumb_rotation_joint")),
+    (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_aux_joint")),
+]
 
 
 class IsaacLabLeRobotError(Exception):
