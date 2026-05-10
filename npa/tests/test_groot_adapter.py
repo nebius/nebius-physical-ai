@@ -510,6 +510,31 @@ def test_lerobot_to_groot_real_g1_writes_canonical_modality(
     assert stats["action.real_g1.navigate_command"]["std"] == [1.0] * 3
 
 
+def test_lerobot_to_groot_ignores_appledouble_sidecar_parquets(
+    standard_lerobot_dataset: Path,
+    tmp_path: Path,
+) -> None:
+    (standard_lerobot_dataset / "data" / "chunk-000" / "._file-000.parquet").write_text(
+        "not a parquet file"
+    )
+    (
+        standard_lerobot_dataset
+        / "meta"
+        / "episodes"
+        / "chunk-000"
+        / "._file-000.parquet"
+    ).write_text("not a parquet file")
+
+    out = lerobot_to_groot(
+        standard_lerobot_dataset,
+        tmp_path / "groot-sidecar",
+        robot_embodiment="NEW_EMBODIMENT",
+    )
+
+    assert (out / "data" / "chunk-000" / "episode_000000.parquet").exists()
+    assert (out / "data" / "chunk-000" / "episode_000001.parquet").exists()
+
+
 def test_groot_to_lerobot_restores_standard_metadata(
     standard_lerobot_dataset: Path,
     tmp_path: Path,

@@ -236,9 +236,17 @@ def _table_rows(path: Path) -> list[dict[str, Any]]:
     return pq.read_table(path).to_pylist()
 
 
+def _is_sidecar_path(path: Path) -> bool:
+    return any(part.startswith("._") or part == ".DS_Store" for part in path.parts)
+
+
+def _parquet_files(root: Path) -> list[Path]:
+    return sorted(path for path in root.rglob("*.parquet") if not _is_sidecar_path(path))
+
+
 def _read_lerobot_data_table(input_dir: Path, info: dict[str, Any]) -> pa.Table:
     data_path = info.get("data_path", LEROBOT_DATA_PATH_TPL)
-    files = sorted((input_dir / "data").rglob("*.parquet"))
+    files = _parquet_files(input_dir / "data")
     if not files:
         raise GR00TAdapterError(f"No parquet data files found under {input_dir / 'data'}")
     if "episode_" in data_path:
@@ -254,7 +262,7 @@ def _read_groot_data_table(
     tables: list[pa.Table] = []
     data_pattern = info.get("data_path", GROOT_DATA_PATH_TPL)
     if not episode_rows:
-        files = sorted((input_dir / "data").rglob("*.parquet"))
+        files = _parquet_files(input_dir / "data")
     else:
         files = [
             input_dir
@@ -277,7 +285,7 @@ def _read_lerobot_episode_rows(input_dir: Path) -> list[dict[str, Any]]:
     if jsonl_rows:
         return jsonl_rows
     rows: list[dict[str, Any]] = []
-    for path in sorted((input_dir / "meta" / "episodes").rglob("*.parquet")):
+    for path in _parquet_files(input_dir / "meta" / "episodes"):
         rows.extend(_table_rows(path))
     return rows
 
