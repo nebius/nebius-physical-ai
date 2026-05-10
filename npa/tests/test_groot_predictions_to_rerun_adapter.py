@@ -50,6 +50,14 @@ def _write_predictions_json(root: Path, *, frames: int = 10) -> Path:
     return path
 
 
+def _write_mismatched_skeleton_predictions_json(root: Path, *, frames: int = 10) -> Path:
+    path = root / "mismatched-predictions.json"
+    predictions = np.zeros((frames, G1_STATE_DIM - 1, 3), dtype=np.float32)
+    predictions[:, :, 2] = 1.0
+    path.write_text(json.dumps({"predicted_actions": predictions.tolist()}))
+    return path
+
+
 def _recording_chunks(path: Path):
     from rerun.recording import load_recording
 
@@ -124,3 +132,11 @@ def test_groot_predictions_to_rerun_repeats_short_prediction_horizon(tmp_path: P
     chunks = _recording_chunks(output)
     assert _dynamic_row_count(chunks, "/world/skeleton/joints") == 50
     assert _dynamic_row_count(chunks, "/world/predictions/joints") == 50
+
+
+def test_groot_predictions_to_rerun_mismatched_joint_count_is_clean_error(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
+    predictions = _write_mismatched_skeleton_predictions_json(tmp_path, frames=10)
+
+    with pytest.raises(RerunAdapterError, match="Prediction skeleton shape must match"):
+        groot_predictions_to_rerun(predictions, dataset, tmp_path / "mismatched.rrd")

@@ -3,9 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 
 from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_DIM, convert
 from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, lerobot_to_rerun
+from npa.viz.lerobot import VizDataError
 
 
 def _write_g1_raw_dataset(root: Path, *, frames: int = 10) -> Path:
@@ -30,6 +34,25 @@ def _write_lerobot_dataset(root: Path, *, frames: int = 10, fps: int = 10) -> Pa
         fps=fps,
         task="Isaac-Velocity-Flat-G1-v0",
     )
+
+
+def _write_empty_lerobot_dataset(root: Path, *, fps: int = 10) -> Path:
+    dataset = root / "empty-lerobot"
+    data_path = dataset / "data" / "chunk-000" / "file-000.parquet"
+    data_path.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "observation.state": pa.array([], type=pa.list_(pa.float32(), G1_STATE_DIM)),
+                "index": pa.array([], type=pa.int64()),
+            }
+        ),
+        data_path,
+    )
+    meta_path = dataset / "meta" / "info.json"
+    meta_path.parent.mkdir(parents=True)
+    meta_path.write_text(f'{{"fps": {fps}, "robot_type": "unitree_g1"}}')
+    return dataset
 
 
 def _recording_chunks(path: Path):
@@ -80,6 +103,34 @@ def test_lerobot_to_rerun_duration_cap_subsamples_to_five_seconds(tmp_path: Path
     chunks = _recording_chunks(output)
     assert _dynamic_row_count(chunks, "/world/skeleton/joints") == 50
     assert _dynamic_row_count(chunks, "/world/skeleton/bones") == 50
+
+
+def test_lerobot_to_rerun_caps_trajectory_longer_than_ten_seconds(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=120, fps=10)
+    output = tmp_path / "capped-long.rrd"
+
+    lerobot_to_rerun(dataset, output)
+
+    chunks = _recording_chunks(output)
+    assert _dynamic_row_count(chunks, "/world/skeleton/joints") == 50
+
+
+def test_lerobot_to_rerun_single_frame_dataset(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=1, fps=10)
+    output = tmp_path / "single-frame.rrd"
+
+    lerobot_to_rerun(dataset, output)
+
+    chunks = _recording_chunks(output)
+    assert _dynamic_row_count(chunks, "/world/skeleton/joints") == 1
+    assert _dynamic_row_count(chunks, "/world/skeleton/bones") == 1
+
+
+def test_lerobot_to_rerun_empty_dataset_is_clean_error(tmp_path: Path) -> None:
+    dataset = _write_empty_lerobot_dataset(tmp_path)
+
+    with pytest.raises(VizDataError, match="No observation.state rows found"):
+        lerobot_to_rerun(dataset, tmp_path / "empty.rrd")
 
 
 def test_lerobot_to_rerun_records_bone_segments(tmp_path: Path) -> None:
