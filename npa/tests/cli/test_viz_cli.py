@@ -131,7 +131,7 @@ def test_rerun_backend_gives_clean_error() -> None:
     )
 
     assert result.exit_code == 1
-    assert "Rerun backend is not implemented yet" in result.output
+    assert "Input path does not exist" in result.output
 
 
 def test_s3_input_and_predictions_are_materialized(tmp_path: Path, mocker) -> None:
@@ -169,4 +169,3 @@ def test_output_path_local_and_s3_upload(tmp_path: Path, mocker) -> None:
     storage.upload_file.assert_called_once_with(str(s3_local), "s3://bucket/visuals/out.mp4")
     for temp_dir in temp_dirs:
         temp_dir.cleanup()
-

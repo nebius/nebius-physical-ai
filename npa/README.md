@@ -25,6 +25,8 @@ Extra tools required by specific commands:
 
 - `nebius` CLI and `terraform` for `npa workbench lerobot deploy`
 - `ffmpeg` for `npa adapter convert`
+- `ffmpeg` and Chrome/Chromium for `npa viz lerobot --backend rerun`
+  (`NPA_RERUN_FFMPEG` and `NPA_RERUN_CHROME` may point to explicit executables)
 
 ## CLI layout
 
@@ -32,6 +34,7 @@ Extra tools required by specific commands:
 npa workbench lerobot ...
 npa workbench genesis ...
 npa adapter convert ...
+npa viz lerobot ...
 npa workflow ...
 ```
 
