@@ -80,6 +80,56 @@ def ensure_alias_ingress(
     )
 
 
+def resolve_deploy_instance_id(
+    *,
+    tf_outputs: dict[str, Any],
+    project_alias: str | None,
+    name: str | None,
+) -> str:
+    """Resolve a deploy target instance ID from Terraform outputs or saved alias config."""
+    instance_id = str(tf_outputs.get("instance_id", "") or "")
+    if instance_id:
+        return instance_id
+    try:
+        return resolve_alias_record(project_alias, name).instance_id
+    except ConfigError:
+        return ""
+
+
+def ensure_deploy_ingress(
+    *,
+    tool: str,
+    port: int,
+    alias: str,
+    instance_id: str,
+    source: str = "0.0.0.0/0",
+    warn,
+) -> EnsureIngressResult | None:
+    """Best-effort deploy-time ingress management.
+
+    Deploy already completed by the time this runs, so ingress failures are
+    reported as operator-actionable warnings instead of aborting the deploy.
+    """
+    if not instance_id:
+        warn(f"Debug: skipping network ingress for port {port}: instance_id unavailable.")
+        return None
+    try:
+        result = ensure_ingress(
+            vm_id=instance_id,
+            ports=(int(port),),
+            source=source,
+            tool=tool,
+        )
+    except Exception as exc:
+        warn(
+            f"Warning: could not ensure network ingress for port {port}: {exc}. "
+            f"Run 'npa workbench {tool} ensure-ingress -n {alias}' to retry after fixing permissions."
+        )
+        return None
+    warn(f"Network ingress confirmed for port {port}: {ingress_summary(result, port)}")
+    return result
+
+
 def ingress_summary(result: EnsureIngressResult, port: int) -> str:
     """Return a concise user-facing ingress status string."""
     if result.changed:

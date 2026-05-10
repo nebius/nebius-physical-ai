@@ -18,7 +18,12 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
-from npa.cli.ingress import ensure_alias_ingress, ingress_summary
+from npa.cli.ingress import (
+    ensure_alias_ingress,
+    ensure_deploy_ingress,
+    ingress_summary,
+    resolve_deploy_instance_id,
+)
 from npa.cli.path_contract import PathContractError, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
@@ -1386,6 +1391,18 @@ def deploy_cmd(
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
+        if not dry_run:
+            ensure_deploy_ingress(
+                tool="cosmos",
+                port=server_port,
+                alias=wb_name,
+                instance_id=resolve_deploy_instance_id(
+                    tf_outputs=tf_outputs,
+                    project_alias=proj_alias,
+                    name=wb_name,
+                ),
+                warn=console.print,
+            )
 
     step += 1
     console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
