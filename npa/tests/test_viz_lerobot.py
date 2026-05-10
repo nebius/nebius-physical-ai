@@ -7,10 +7,12 @@ import pytest
 
 from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM, convert
 from npa.viz.lerobot import (
+    REAL_G1_ACTION_DIM,
     VizDataError,
     load_lerobot_state_vectors,
     load_predictions_skeleton,
     load_render_inputs,
+    real_g1_action_vectors_to_g1_state_vectors,
     resolve_duration_s,
     select_frames,
 )
@@ -98,10 +100,33 @@ def test_load_predictions_npz_to_skeleton(tmp_path: Path) -> None:
     assert predictions.shape == (2, G1_STATE_DIM, 3)
 
 
+def test_load_real_g1_action_predictions_to_skeleton(tmp_path: Path) -> None:
+    pred_dir = tmp_path / "predictions"
+    pred_dir.mkdir()
+    actions = np.zeros((2, REAL_G1_ACTION_DIM), dtype=np.float32)
+    actions[:, 32] = 0.5
+    actions[:, 46] = -0.25
+    np.savez_compressed(pred_dir / "predicted_actions.npz", trajectory_0=actions)
+
+    predictions = load_predictions_skeleton(
+        pred_dir,
+        source_fps=2,
+        output_fps=2,
+        duration_s=1.0,
+        target_joint_count=G1_STATE_DIM,
+    )
+
+    assert predictions.shape == (2, G1_STATE_DIM, 3)
+
+
+def test_real_g1_action_mapping_rejects_wrong_dim() -> None:
+    with pytest.raises(VizDataError, match="Expected 53D"):
+        real_g1_action_vectors_to_g1_state_vectors(np.zeros((2, 52), dtype=np.float32))
+
+
 def test_load_lerobot_state_vectors_rejects_missing_data(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
 
     with pytest.raises(VizDataError, match="data directory is missing"):
         load_lerobot_state_vectors(empty)
-

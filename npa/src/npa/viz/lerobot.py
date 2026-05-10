@@ -19,6 +19,14 @@ PREDICTION_LAYOUTS = {"side-by-side", "overlay"}
 
 G1_JOINT_NAMES = list(G1_STATE_NAMES_43)
 _G1_INDEX = {name: idx for idx, name in enumerate(G1_JOINT_NAMES)}
+REAL_G1_ACTION_DIM = 53
+REAL_G1_ACTION_SLICES = {
+    "left_hand": slice(18, 25),
+    "right_hand": slice(25, 32),
+    "left_arm": slice(32, 39),
+    "right_arm": slice(39, 46),
+    "waist": slice(46, 49),
+}
 
 
 def _idx(name: str) -> int:
@@ -263,10 +271,14 @@ def load_predictions_skeleton(
     elif predictions.ndim >= 2 and predictions.shape[-1] == G1_STATE_DIM:
         state_vectors = predictions.reshape(-1, G1_STATE_DIM).astype(np.float32, copy=False)
         skeleton = g1_state_vectors_to_skeleton(state_vectors)
+    elif predictions.ndim >= 2 and predictions.shape[-1] == REAL_G1_ACTION_DIM:
+        action_vectors = predictions.reshape(-1, REAL_G1_ACTION_DIM).astype(np.float32, copy=False)
+        skeleton = g1_state_vectors_to_skeleton(real_g1_action_vectors_to_g1_state_vectors(action_vectors))
     else:
         raise VizDataError(
             "Predictions must be either G1 state/action vectors with last dimension "
-            f"{G1_STATE_DIM} or skeleton positions shaped [T, J, 3]; got {predictions.shape}"
+            f"{G1_STATE_DIM}, REAL_G1 action vectors with last dimension {REAL_G1_ACTION_DIM}, "
+            f"or skeleton positions shaped [T, J, 3]; got {predictions.shape}"
         )
 
     selected, _indices = select_frames(
@@ -292,6 +304,33 @@ def g1_state_vectors_to_skeleton(state_vectors: np.ndarray) -> np.ndarray:
     for frame, row in enumerate(state):
         poses[frame] = _g1_pose_from_state(row)
     return poses
+
+
+def real_g1_action_vectors_to_g1_state_vectors(action_vectors: np.ndarray) -> np.ndarray:
+    """Map GR00T REAL_G1 53D action vectors into the 43D G1 joint visualization layout."""
+    actions = np.asarray(action_vectors, dtype=np.float32)
+    if actions.ndim != 2:
+        raise VizDataError(f"REAL_G1 action vectors must be 2D [T, {REAL_G1_ACTION_DIM}], got {actions.shape}")
+    if actions.shape[1] != REAL_G1_ACTION_DIM:
+        raise VizDataError(f"Expected {REAL_G1_ACTION_DIM}D REAL_G1 action vectors, got {actions.shape[1]}D")
+
+    state = np.zeros((actions.shape[0], G1_STATE_DIM), dtype=np.float32)
+    state[:, _idx("left_hand_pinky_joint") : _idx("left_hand_aux_joint") + 1] = actions[
+        :, REAL_G1_ACTION_SLICES["left_hand"]
+    ]
+    state[:, _idx("right_hand_pinky_joint") : _idx("right_hand_aux_joint") + 1] = actions[
+        :, REAL_G1_ACTION_SLICES["right_hand"]
+    ]
+    state[:, _idx("left_shoulder_pitch_joint") : _idx("left_wrist_yaw_joint") + 1] = actions[
+        :, REAL_G1_ACTION_SLICES["left_arm"]
+    ]
+    state[:, _idx("right_shoulder_pitch_joint") : _idx("right_wrist_yaw_joint") + 1] = actions[
+        :, REAL_G1_ACTION_SLICES["right_arm"]
+    ]
+    state[:, _idx("waist_yaw_joint") : _idx("waist_pitch_joint") + 1] = actions[
+        :, REAL_G1_ACTION_SLICES["waist"]
+    ]
+    return state
 
 
 def _read_info(root: Path) -> dict[str, Any]:
