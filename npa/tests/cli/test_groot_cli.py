@@ -1091,6 +1091,40 @@ def test_groot_convert_dispatches_lerobot_to_groot(tmp_path: Path, mocker) -> No
     assert "status: converted" in result.output
 
 
+def test_groot_convert_accepts_real_g1_embodiment_tag_alias(tmp_path: Path, mocker) -> None:
+    input_dir = tmp_path / "lerobot"
+    converted_dir = tmp_path / "groot"
+    input_dir.mkdir()
+    converted_dir.mkdir()
+    storage = mocker.MagicMock()
+    storage.download_directory.return_value = str(input_dir)
+    storage.upload_directory.return_value = "s3://bucket/groot/"
+    mocker.patch("npa.cli.groot._storage_client_for_project_or_environment", return_value=storage)
+    convert_mock = mocker.patch(
+        "npa.adapter.groot.lerobot_to_groot",
+        return_value=converted_dir,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "convert",
+            "--input-path",
+            "s3://bucket/lerobot/",
+            "--output-path",
+            "s3://bucket/groot/",
+            "--embodiment-tag",
+            "REAL_G1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert convert_mock.call_args.kwargs["robot_embodiment"] == "REAL_G1"
+    storage.upload_directory.assert_called_once_with(str(converted_dir), "s3://bucket/groot/")
+
+
 def test_groot_convert_dispatches_groot_to_lerobot(tmp_path: Path, mocker) -> None:
     input_dir = tmp_path / "groot"
     converted_dir = tmp_path / "lerobot"

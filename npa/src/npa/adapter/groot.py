@@ -26,6 +26,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -58,6 +59,42 @@ BUILTIN_CARTESIAN_TAGS = {
 }
 
 NEW_EMBODIMENT_TAGS = {"new", "new_embodiment", "new-embodiment", "newembodiment"}
+REAL_G1_TAGS = {"real_g1", "real_g1_relative_eef_relative_joints"}
+
+# Canonical REAL_G1 schema from nvidia/GR00T-N1.7-3B processor_config.json:
+# processor_kwargs.modality_configs.real_g1_relative_eef_relative_joints.
+REAL_G1_STATE_KEYS = [
+    "left_wrist_eef_9d",
+    "right_wrist_eef_9d",
+    "left_hand",
+    "right_hand",
+    "left_arm",
+    "right_arm",
+    "waist",
+]
+REAL_G1_ACTION_KEYS = [
+    "left_wrist_eef_9d",
+    "right_wrist_eef_9d",
+    "left_hand",
+    "right_hand",
+    "left_arm",
+    "right_arm",
+    "waist",
+    "base_height_command",
+    "navigate_command",
+]
+REAL_G1_GROUP_DIMS = {
+    "left_wrist_eef_9d": 9,
+    "right_wrist_eef_9d": 9,
+    "left_hand": 7,
+    "right_hand": 7,
+    "left_arm": 7,
+    "right_arm": 7,
+    "waist": 3,
+    "base_height_command": 1,
+    "navigate_command": 3,
+}
+REAL_G1_IDENTITY_EEF_9D = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
 
 
 class GR00TAdapterError(Exception):
@@ -85,12 +122,22 @@ def lerobot_to_groot(
     episode_rows = _read_lerobot_episode_rows(input_dir)
     task_rows = _read_lerobot_task_rows(input_dir)
 
+    action_space = _infer_action_space(info, robot_embodiment=robot_embodiment)
+    modality = _build_modality_json(
+        info,
+        robot_embodiment=robot_embodiment,
+        action_space=action_space,
+    )
+    data_table = _add_synthetic_feature_columns(data_table, modality, info)
+
     _write_groot_episode_parquets(output_dir, data_table, episode_rows, info)
     _copy_or_write_stats(input_dir, output_dir)
+    _write_synthetic_feature_stats(output_dir, modality, data_table)
     _write_jsonl(meta_dir / "episodes.jsonl", _groot_episode_rows(episode_rows, data_table))
     _write_jsonl(meta_dir / "tasks.jsonl", task_rows or [{"task_index": 0, "task": ""}])
 
-    groot_info = dict(info)
+    groot_info = {**info, "features": dict(info.get("features", {}))}
+    _add_synthetic_info_features(groot_info, modality)
     groot_info["codebase_version"] = "v2.1"
     groot_info["data_path"] = GROOT_DATA_PATH_TPL
     if _video_features(info):
@@ -101,12 +148,6 @@ def lerobot_to_groot(
     groot_info["robot_type"] = robot_embodiment
     _write_json(meta_dir / "info.json", groot_info)
 
-    action_space = _infer_action_space(info, robot_embodiment=robot_embodiment)
-    modality = _build_modality_json(
-        info,
-        robot_embodiment=robot_embodiment,
-        action_space=action_space,
-    )
     _write_json(meta_dir / "modality.json", modality)
     if _should_write_generated_modality_config(robot_embodiment, action_space):
         (meta_dir / GENERATED_MODALITY_CONFIG).write_text(
@@ -318,11 +359,148 @@ def _copy_or_write_stats(input_dir: Path, output_dir: Path) -> None:
         shutil.copy2(rel_src, output_dir / "meta" / "relative_stats.json")
 
 
+def _synthetic_feature_specs(
+    modality: dict[str, Any],
+    existing_columns: set[str] | None = None,
+) -> dict[str, int]:
+    specs: dict[str, int] = {}
+    existing_columns = existing_columns or set()
+    for section in ("state", "action"):
+        for group in modality.get(section, {}).values():
+            original_key = group.get("original_key")
+            if not original_key or original_key in existing_columns:
+                continue
+            specs[str(original_key)] = int(group["end"]) - int(group["start"])
+    return specs
+
+
+def _real_g1_synthetic_group(feature_key: str) -> tuple[str, str] | None:
+    for modality, prefix in (
+        ("state", "observation.real_g1."),
+        ("action", "action.real_g1."),
+    ):
+        if feature_key.startswith(prefix):
+            return modality, feature_key.removeprefix(prefix)
+    return None
+
+
+def _synthetic_feature_values(
+    data_table: pa.Table,
+    info: dict[str, Any],
+    feature_key: str,
+    dim: int,
+) -> list[list[float]]:
+    real_g1_group = _real_g1_synthetic_group(feature_key)
+    if real_g1_group is not None:
+        modality, group = real_g1_group
+        if group in {"left_wrist_eef_9d", "right_wrist_eef_9d"}:
+            return [list(REAL_G1_IDENTITY_EEF_9D) for _ in range(data_table.num_rows)]
+        source_key = "observation.state" if modality == "state" else "action"
+        mapping = _g1_source_group(info, source_key=source_key, group=group)
+        if mapping is not None and source_key in data_table.column_names:
+            start = int(mapping["start"])
+            end = int(mapping["end"])
+            values = []
+            for row in data_table[source_key].to_pylist():
+                segment = [float(value) for value in (row or [])[start:end]]
+                if len(segment) < dim:
+                    segment.extend([0.0] * (dim - len(segment)))
+                values.append(segment[:dim])
+            return values
+
+    return [[0.0] * dim for _ in range(data_table.num_rows)]
+
+
+def _add_synthetic_feature_columns(
+    data_table: pa.Table,
+    modality: dict[str, Any],
+    info: dict[str, Any],
+) -> pa.Table:
+    specs = _synthetic_feature_specs(modality, set(data_table.column_names))
+    for key, dim in specs.items():
+        values = _synthetic_feature_values(data_table, info, key, dim)
+        data_table = data_table.append_column(
+            key,
+            pa.array(values, type=pa.list_(pa.float32(), dim)),
+        )
+    return data_table
+
+
+def _add_synthetic_info_features(info: dict[str, Any], modality: dict[str, Any]) -> None:
+    features = info.setdefault("features", {})
+    for key, dim in _synthetic_feature_specs(modality, set(features)).items():
+        features[key] = {
+            "dtype": "float32",
+            "shape": [dim],
+            "names": None,
+        }
+
+
+def _zero_feature_stats(dim: int, total_frames: int) -> dict[str, Any]:
+    zeros = [0.0] * dim
+    return {
+        "min": zeros,
+        "max": zeros,
+        "mean": zeros,
+        "std": [1.0] * dim,
+        "count": [int(total_frames)],
+        "q01": zeros,
+        "q10": zeros,
+        "q50": zeros,
+        "q90": zeros,
+        "q99": zeros,
+    }
+
+
+def _feature_stats_from_table(data_table: pa.Table, key: str, dim: int) -> dict[str, Any]:
+    if key not in data_table.column_names or data_table.num_rows == 0:
+        return _zero_feature_stats(dim, data_table.num_rows)
+    values = np.asarray(data_table[key].to_pylist(), dtype=np.float32)
+    if values.ndim != 2:
+        values = values.reshape(data_table.num_rows, dim)
+    if values.shape[1] < dim:
+        values = np.pad(values, ((0, 0), (0, dim - values.shape[1])), constant_values=0.0)
+    values = values[:, :dim]
+    std = values.std(axis=0)
+    std = np.where(std == 0.0, 1.0, std)
+    return {
+        "min": values.min(axis=0).tolist(),
+        "max": values.max(axis=0).tolist(),
+        "mean": values.mean(axis=0).tolist(),
+        "std": std.tolist(),
+        "count": [int(data_table.num_rows)],
+        "q01": np.quantile(values, 0.01, axis=0).tolist(),
+        "q10": np.quantile(values, 0.10, axis=0).tolist(),
+        "q50": np.quantile(values, 0.50, axis=0).tolist(),
+        "q90": np.quantile(values, 0.90, axis=0).tolist(),
+        "q99": np.quantile(values, 0.99, axis=0).tolist(),
+    }
+
+
+def _write_synthetic_feature_stats(
+    output_dir: Path,
+    modality: dict[str, Any],
+    data_table: pa.Table,
+) -> None:
+    path = output_dir / "meta" / "stats.json"
+    stats = _load_json(path) if path.exists() else {}
+    for key, dim in _synthetic_feature_specs(modality, set(stats)).items():
+        stats[key] = _feature_stats_from_table(data_table, key, dim)
+    _write_json(path, stats)
+
+
 def _feature_dim(info: dict[str, Any], key: str) -> int:
     shape = info.get("features", {}).get(key, {}).get("shape") or []
     if not shape:
         return 0
     return int(shape[0])
+
+
+def _feature_names(info: dict[str, Any], key: str) -> list[str]:
+    names = info.get("features", {}).get(key, {}).get("names") or []
+    if len(names) == 1 and isinstance(names[0], list):
+        names = names[0]
+    return [str(name) for name in names if isinstance(name, str)]
 
 
 def _video_features(info: dict[str, Any]) -> list[str]:
@@ -397,6 +575,10 @@ def _tag_key(robot_embodiment: str) -> str:
     return robot_embodiment.strip().lower().replace("-", "_")
 
 
+def _is_real_g1(robot_embodiment: str) -> bool:
+    return _tag_key(robot_embodiment) in REAL_G1_TAGS
+
+
 def _infer_action_space(info: dict[str, Any], *, robot_embodiment: str) -> str:
     state_dim = _feature_dim(info, "observation.state")
     action_dim = _feature_dim(info, "action")
@@ -461,12 +643,205 @@ def _builtin_cartesian_state_modality(robot_embodiment: str) -> dict[str, dict[s
     return {key: {"start": idx, "end": idx + 1} for idx, key in enumerate(keys)}
 
 
+def _real_g1_synthetic_key(modality: str, group: str) -> str:
+    prefix = "observation.real_g1" if modality == "state" else "action.real_g1"
+    return f"{prefix}.{group}"
+
+
+def _normalized_joint_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _contiguous_span(indices: list[int]) -> tuple[int, int] | None:
+    if not indices:
+        return None
+    ordered = sorted(indices)
+    start, end = ordered[0], ordered[-1] + 1
+    if ordered != list(range(start, end)):
+        return None
+    return start, end
+
+
+def _named_joint_span(info: dict[str, Any], feature_key: str, group: str) -> tuple[int, int] | None:
+    names = [_normalized_joint_name(name) for name in _feature_names(info, feature_key)]
+    if not names:
+        return None
+
+    def matches(name: str) -> bool:
+        if group == "left_arm":
+            return "left" in name and not "hand" in name and any(
+                token in name for token in ("shoulder", "elbow", "wrist")
+            )
+        if group == "right_arm":
+            return "right" in name and not "hand" in name and any(
+                token in name for token in ("shoulder", "elbow", "wrist")
+            )
+        if group == "left_hand":
+            return "left" in name and "hand" in name
+        if group == "right_hand":
+            return "right" in name and "hand" in name
+        if group == "waist":
+            return "waist" in name
+        return False
+
+    return _contiguous_span([idx for idx, name in enumerate(names) if matches(name)])
+
+
+def _fallback_g1_joint_span(dim: int, group: str) -> tuple[int, int] | None:
+    if dim == 26:
+        spans = {
+            "left_arm": (0, 7),
+            "right_arm": (7, 14),
+            "left_hand": (14, 20),
+            "right_hand": (20, 26),
+        }
+    elif dim == 43:
+        spans = {
+            "waist": (12, 15),
+            "left_arm": (15, 22),
+            "left_hand": (22, 29),
+            "right_arm": (29, 36),
+            "right_hand": (36, 43),
+        }
+    else:
+        spans = {}
+    return spans.get(group)
+
+
+def _g1_source_group(
+    info: dict[str, Any],
+    *,
+    source_key: str,
+    group: str,
+) -> dict[str, int | str] | None:
+    span = _named_joint_span(info, source_key, group) or _fallback_g1_joint_span(
+        _feature_dim(info, source_key),
+        group,
+    )
+    if span is None:
+        return None
+    start, end = span
+    return {"start": start, "end": end, "original_key": source_key}
+
+
+def _real_g1_zero_group(modality: str, group: str) -> dict[str, int | str]:
+    dim = REAL_G1_GROUP_DIMS[group]
+    return {
+        "start": 0,
+        "end": dim,
+        "original_key": _real_g1_synthetic_key(modality, group),
+    }
+
+
+def _real_g1_required_source_group(
+    info: dict[str, Any],
+    *,
+    source_key: str,
+    group: str,
+    modality: str,
+) -> dict[str, int | str]:
+    mapping = _g1_source_group(info, source_key=source_key, group=group)
+    if mapping is None:
+        raise GR00TAdapterError(
+            f"Cannot convert dataset to REAL_G1: unable to locate {group!r} in "
+            f"{source_key!r}. Provide G1 joint names or a supported 26D/43D G1 layout."
+        )
+    expected_dim = REAL_G1_GROUP_DIMS[group]
+    actual_dim = int(mapping["end"]) - int(mapping["start"])
+    if actual_dim != expected_dim:
+        return {
+            "start": 0,
+            "end": expected_dim,
+            "original_key": _real_g1_synthetic_key(modality, group),
+        }
+    return mapping
+
+
+def _real_g1_optional_source_group(
+    info: dict[str, Any],
+    *,
+    source_key: str,
+    group: str,
+    modality: str,
+) -> dict[str, int | str] | None:
+    mapping = _g1_source_group(info, source_key=source_key, group=group)
+    if mapping is None:
+        return None
+    expected_dim = REAL_G1_GROUP_DIMS[group]
+    actual_dim = int(mapping["end"]) - int(mapping["start"])
+    if actual_dim != expected_dim:
+        return {
+            "start": 0,
+            "end": expected_dim,
+            "original_key": _real_g1_synthetic_key(modality, group),
+        }
+    return mapping
+
+
+def _real_g1_state_modality(info: dict[str, Any]) -> dict[str, dict[str, int | str]]:
+    return {
+        "left_wrist_eef_9d": _real_g1_zero_group("state", "left_wrist_eef_9d"),
+        "right_wrist_eef_9d": _real_g1_zero_group("state", "right_wrist_eef_9d"),
+        "left_hand": _real_g1_required_source_group(
+            info, source_key="observation.state", group="left_hand", modality="state"
+        ),
+        "right_hand": _real_g1_required_source_group(
+            info, source_key="observation.state", group="right_hand", modality="state"
+        ),
+        "left_arm": _real_g1_required_source_group(
+            info, source_key="observation.state", group="left_arm", modality="state"
+        ),
+        "right_arm": _real_g1_required_source_group(
+            info, source_key="observation.state", group="right_arm", modality="state"
+        ),
+        "waist": _real_g1_optional_source_group(
+            info, source_key="observation.state", group="waist", modality="state"
+        )
+        or _real_g1_zero_group("state", "waist"),
+    }
+
+
+def _real_g1_action_modality(info: dict[str, Any]) -> dict[str, dict[str, int | str]]:
+    return {
+        "left_wrist_eef_9d": _real_g1_zero_group("action", "left_wrist_eef_9d"),
+        "right_wrist_eef_9d": _real_g1_zero_group("action", "right_wrist_eef_9d"),
+        "left_hand": _real_g1_required_source_group(
+            info, source_key="action", group="left_hand", modality="action"
+        ),
+        "right_hand": _real_g1_required_source_group(
+            info, source_key="action", group="right_hand", modality="action"
+        ),
+        "left_arm": _real_g1_required_source_group(
+            info, source_key="action", group="left_arm", modality="action"
+        ),
+        "right_arm": _real_g1_required_source_group(
+            info, source_key="action", group="right_arm", modality="action"
+        ),
+        "waist": _real_g1_optional_source_group(
+            info, source_key="action", group="waist", modality="action"
+        )
+        or _real_g1_zero_group("action", "waist"),
+        "base_height_command": _real_g1_zero_group("action", "base_height_command"),
+        "navigate_command": _real_g1_zero_group("action", "navigate_command"),
+    }
+
+
+def _real_g1_video_modality(info: dict[str, Any]) -> dict[str, dict[str, str]]:
+    video_features = _video_features(info)
+    if not video_features:
+        return {}
+    return {"ego_view": {"original_key": video_features[0]}}
+
+
 def _state_modality_for_action_space(
-    state_dim: int,
+    info: dict[str, Any],
     *,
     robot_embodiment: str,
     action_space: str,
-) -> dict[str, dict[str, int]]:
+) -> dict[str, dict[str, int | str]]:
+    if _is_real_g1(robot_embodiment):
+        return _real_g1_state_modality(info)
+    state_dim = _feature_dim(info, "observation.state")
     if action_space == ACTION_SPACE_JOINT:
         return _split_vector_modality(state_dim)
     if _tag_key(robot_embodiment) in BUILTIN_CARTESIAN_TAGS:
@@ -474,7 +849,15 @@ def _state_modality_for_action_space(
     return {"joint_position": {"start": 0, "end": state_dim}}
 
 
-def _action_modality_for_action_space(action_dim: int, action_space: str) -> dict[str, dict[str, int]]:
+def _action_modality_for_action_space(
+    info: dict[str, Any],
+    *,
+    robot_embodiment: str,
+    action_space: str,
+) -> dict[str, dict[str, int | str]]:
+    if _is_real_g1(robot_embodiment):
+        return _real_g1_action_modality(info)
+    action_dim = _feature_dim(info, "action")
     if action_space == ACTION_SPACE_JOINT:
         return _split_vector_modality(action_dim)
     return _cartesian_modality(action_dim)
@@ -493,16 +876,22 @@ def _build_modality_json(
     robot_embodiment: str,
     action_space: str,
 ) -> dict[str, Any]:
-    state_dim = _feature_dim(info, "observation.state")
-    action_dim = _feature_dim(info, "action")
     return {
         "state": _state_modality_for_action_space(
-            state_dim,
+            info,
             robot_embodiment=robot_embodiment,
             action_space=action_space,
         ),
-        "action": _action_modality_for_action_space(action_dim, action_space),
-        "video": _video_modality(info),
+        "action": _action_modality_for_action_space(
+            info,
+            robot_embodiment=robot_embodiment,
+            action_space=action_space,
+        ),
+        "video": (
+            _real_g1_video_modality(info)
+            if _is_real_g1(robot_embodiment)
+            else _video_modality(info)
+        ),
         "annotation": {
             _language_key(robot_embodiment): {
                 "original_key": "task_index",

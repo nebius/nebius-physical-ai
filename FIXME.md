@@ -219,3 +219,23 @@ Always pass `-p <project>` and `-n <alias>` to `status`, `serve`, `infer`, and s
 
 **Proper fix:**
 When `-p` and `-n` are omitted, status should either error and prompt for the alias, or default to the most-recently-used alias for the project (tracked in `~/.npa/state` or similar). Silently hitting a stale or hardcoded default produces misleading output that looks like a real failure.
+
+
+## Isaac Lab train does not export trajectories or list registered tasks
+**Symptom:**
+The 2026-05-09 investigation for the Monday physical AI demo found that `npa workbench isaac-lab train` only writes `npa_isaac_lab_train_summary.json` and `npa_isaac_lab_random_policy_checkpoint.json`. It does not persist synced observations, actions, or states. `npa adapter convert` expects a numpy episode folder contract:
+
+```text
+episode_NNNN/obs_workspace.npy
+episode_NNNN/obs_wrist.npy
+episode_NNNN/state.npy
+episode_NNNN/actions.npy
+```
+
+The Isaac Lab CLI also has no `list-tasks` command, so operators cannot enumerate humanoid/G1-compatible tasks through the public CLI.
+
+**Workaround:**
+No supported CLI-only workaround. Do not fake the Isaac Lab -> LeRobot -> GR00T demo path with Franka, quadruped, or other non-REAL_G1 data.
+
+**Proper fix:**
+Add `--export-trajectory / --no-export-trajectory` to `npa workbench isaac-lab train` defaulting off. When enabled, write one episode folder per exported episode under `--output-path` using the numpy contract above, with synced observations, actions, and states. Add `npa workbench isaac-lab list-tasks` to print registered Isaac Lab gym task names, one per line. Add unit coverage for exported folder structure/array shapes and for a non-empty task listing in the test environment. If the Isaac Lab gym registry cannot be accessed without the Isaac Lab container/runtime, document that limitation explicitly in CLI help and tests.
