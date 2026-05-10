@@ -1541,14 +1541,19 @@ def _save_inference_output(
     local_path = Path(tmp.name) / _s3_path_name(output_path)
     _write_inference_output(data, local_path)
     try:
-        return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
-    except Exception:
-        return _upload_local_file_via_remote_env(
+        saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+        data["upload_mode"] = "local"
+        return saved_to
+    except Exception as local_exc:
+        data["local_upload_error"] = str(local_exc)
+        saved_to = _upload_local_file_via_remote_env(
             SSHClient(cfg.ssh),
             local_path,
             output_path,
             temp_dirs,
         )
+        data["upload_mode"] = "remote"
+        return saved_to
 
 
 def _upload_remote_file_via_env(
@@ -1632,6 +1637,8 @@ def _download_remote_output(
     output_path: str,
     cfg: Any,
     temp_dirs: list[tempfile.TemporaryDirectory[str]],
+    *,
+    result: dict[str, Any] | None = None,
 ) -> str:
     if _is_s3_uri(output_path):
         tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-output-")
@@ -1640,9 +1647,17 @@ def _download_remote_output(
         ssh = SSHClient(cfg.ssh)
         ssh.download_file(remote_path, str(local_path))
         try:
-            return _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
-        except Exception:
-            return _upload_remote_file_via_env(ssh, remote_path, output_path)
+            saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+            if result is not None:
+                result["upload_mode"] = "local"
+            return saved_to
+        except Exception as local_exc:
+            if result is not None:
+                result["local_upload_error"] = str(local_exc)
+            saved_to = _upload_remote_file_via_env(ssh, remote_path, output_path)
+            if result is not None:
+                result["upload_mode"] = "remote"
+            return saved_to
 
     local_path = _local_output_path(remote_path, output_path)
     return SSHClient(cfg.ssh).download_file(remote_path, str(local_path))
@@ -1772,7 +1787,13 @@ def infer_cmd(
         result = {**data, "job_id": job_id}
         remote_output_path = str(data.get("output_path") or "")
         if remote_output_path:
-            downloaded_to = _download_remote_output(remote_output_path, output_path, cfg, temp_dirs)
+            downloaded_to = _download_remote_output(
+                remote_output_path,
+                output_path,
+                cfg,
+                temp_dirs,
+                result=result,
+            )
             result["downloaded_to"] = downloaded_to
             if _is_s3_uri(downloaded_to):
                 result["saved_to"] = downloaded_to

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 
@@ -21,6 +22,8 @@ from npa.cli.cosmos import (
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
     _build_install_command,
+    _download_remote_output,
+    _save_inference_output,
 )
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
@@ -46,6 +49,13 @@ def _cfg(app_status: str = "", *, hf_token: str = "") -> WorkbenchConfig:
 @contextmanager
 def _active_endpoint(url: str):
     yield SimpleNamespace(url=url)
+
+
+def _access_denied(message: str = "AccessDenied") -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": message}},
+        "PutObject",
+    )
 
 
 @pytest.mark.parametrize(
@@ -573,6 +583,67 @@ def test_cosmos_infer_falls_back_to_remote_env_upload_on_local_access_denied(
     assert "AWS_ACCESS_KEY_ID" in remote_upload_cmd
     assert "AccessDenied" not in remote_upload_cmd
     assert f'"saved_to": "{output_uri}"' in result.output
+    assert '"upload_mode": "remote"' in result.output
+    assert "AccessDenied" in result.output
+
+
+def test_cosmos_upload_logging_records_local_and_remote_modes(
+    mocker,
+) -> None:
+    output_uri = "s3://bucket/results/out.mp4"
+    cfg = _cfg()
+    temp_dirs = []
+    store = mocker.MagicMock()
+    store.upload_file.side_effect = [
+        _access_denied("AccessDenied: local base64 upload denied"),
+        output_uri,
+        _access_denied("AccessDenied: local remote-output upload denied"),
+        output_uri,
+    ]
+    mocker.patch("npa.cli.cosmos._storage_client_for_config", return_value=store)
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "npa_remote_s3_upload_done", "")
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    try:
+        base64_result = {"video_base64": base64.b64encode(b"video").decode("ascii")}
+        saved_to = _save_inference_output(base64_result, output_uri, cfg, temp_dirs)
+        assert saved_to == output_uri
+        assert base64_result["upload_mode"] == "remote"
+        assert "AccessDenied: local base64 upload denied" in base64_result["local_upload_error"]
+
+        base64_success = {"video_base64": base64.b64encode(b"video").decode("ascii")}
+        saved_to = _save_inference_output(base64_success, output_uri, cfg, temp_dirs)
+        assert saved_to == output_uri
+        assert base64_success["upload_mode"] == "local"
+        assert "local_upload_error" not in base64_success
+
+        remote_result: dict[str, str] = {}
+        saved_to = _download_remote_output(
+            "/opt/cosmos-data/outputs/out.mp4",
+            output_uri,
+            cfg,
+            temp_dirs,
+            result=remote_result,
+        )
+        assert saved_to == output_uri
+        assert remote_result["upload_mode"] == "remote"
+        assert "AccessDenied: local remote-output upload denied" in remote_result["local_upload_error"]
+
+        remote_success: dict[str, str] = {}
+        saved_to = _download_remote_output(
+            "/opt/cosmos-data/outputs/out-2.mp4",
+            output_uri,
+            cfg,
+            temp_dirs,
+            result=remote_success,
+        )
+        assert saved_to == output_uri
+        assert remote_success["upload_mode"] == "local"
+        assert "local_upload_error" not in remote_success
+    finally:
+        for tmp in temp_dirs:
+            tmp.cleanup()
 
 
 def test_cosmos_infer_rejects_local_output_path_before_config(mocker) -> None:
