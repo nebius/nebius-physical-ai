@@ -1709,6 +1709,10 @@ def export_lerobot_cmd(
             try:
                 saved_to = _storage_client(cfg).upload_directory(str(converted), output_path)
                 result["upload_mode"] = "local"
+            # FIXME(network/iam): bare except triggers fallback on any error.
+            # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
+            # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
+            # fallback exception handling".
             except Exception as upload_exc:
                 result["local_upload_error"] = str(upload_exc)
                 remote_converted_dir = (

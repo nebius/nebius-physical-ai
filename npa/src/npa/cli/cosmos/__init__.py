@@ -1544,6 +1544,10 @@ def _save_inference_output(
         saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
         data["upload_mode"] = "local"
         return saved_to
+    # FIXME(network/iam): bare except triggers fallback on any error.
+    # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
+    # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
+    # fallback exception handling".
     except Exception as local_exc:
         data["local_upload_error"] = str(local_exc)
         saved_to = _upload_local_file_via_remote_env(
@@ -1651,6 +1655,10 @@ def _download_remote_output(
             if result is not None:
                 result["upload_mode"] = "local"
             return saved_to
+        # FIXME(network/iam): bare except triggers fallback on any error.
+        # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
+        # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
+        # fallback exception handling".
         except Exception as local_exc:
             if result is not None:
                 result["local_upload_error"] = str(local_exc)
