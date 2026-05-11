@@ -1641,10 +1641,16 @@ def export_lerobot_cmd(
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
-        help="Allow fallback to VM host credentials when scoped S3 upload credentials are denied.",
+        help=(
+            "Use --allow-host-creds to allow fallback to VM host credentials "
+            "when scoped S3 upload credentials are denied."
+        ),
     ),
 ) -> None:
-    """Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset."""
+    """Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset.
+
+    Use --allow-host-creds only for intentional VM host credential fallback.
+    """
     if num_episodes <= 0:
         _fail(f"--num-episodes must be positive, got {num_episodes}")
     if steps_per_episode <= 0:
