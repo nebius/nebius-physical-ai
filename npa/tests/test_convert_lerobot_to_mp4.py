@@ -80,12 +80,13 @@ def _assert_valid_mp4(path: Path) -> None:
     subprocess.run(["ffprobe", "-v", "error", str(path)], check=True)
 
 
-pytestmark = pytest.mark.skipif(
+requires_mp4_tools = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg and ffprobe are required for MP4 validation",
 )
 
 
+@requires_mp4_tools
 def test_matplotlib_renderer_produces_valid_mp4(tmp_path: Path) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=3, fps=3)
     output = tmp_path / "matplotlib.mp4"
@@ -103,6 +104,7 @@ def test_matplotlib_renderer_produces_valid_mp4(tmp_path: Path) -> None:
     _assert_valid_mp4(output)
 
 
+@requires_mp4_tools
 def test_rerun_renderer_produces_valid_mp4_with_backend_dispatch(
     tmp_path: Path,
     mocker,
@@ -132,6 +134,7 @@ def test_rerun_renderer_produces_valid_mp4_with_backend_dispatch(
     _assert_valid_mp4(output)
 
 
+@requires_mp4_tools
 def test_predictions_overlay_keeps_short_prediction_window(
     tmp_path: Path, mocker
 ) -> None:
@@ -164,6 +167,16 @@ def test_predictions_overlay_keeps_short_prediction_window(
     )
 
     _assert_valid_mp4(output)
+
+
+def test_convert_lerobot_to_mp4_help_smoke() -> None:
+    result = runner.invoke(app, ["convert", "lerobot-to-mp4", "--help"])
+
+    assert result.exit_code == 0
+    assert "--input-path" in result.output
+    assert "--output-path" in result.output
+    assert "--renderer" in result.output
+    assert "--layout" in result.output
 
 
 def test_convert_lerobot_to_mp4_renderer_flag_dispatches(
@@ -216,6 +229,44 @@ def test_convert_lerobot_to_mp4_renderer_flag_dispatches(
     )
 
 
+def test_convert_lerobot_to_mp4_dispatches_layout_values(
+    tmp_path: Path, mocker
+) -> None:
+    output = tmp_path / "out.mp4"
+    render = mocker.patch(
+        "npa.cli.convert.lerobot_to_mp4.render_lerobot_to_mp4_result",
+        return_value=LeRobotMP4RenderResult(
+            local_path=output,
+            saved_to=str(output),
+            duration_s=1.0,
+            resolution=(1280, 720),
+            fps=30,
+            frame_count=30,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            "lerobot-to-mp4",
+            "--input-path",
+            str(tmp_path / "dataset"),
+            "--predictions-path",
+            str(tmp_path / "predictions.json"),
+            "--layout",
+            "overlay",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert render.call_args.kwargs["layout"] == "overlay"
+    assert render.call_args.kwargs["predictions_path"] == str(
+        tmp_path / "predictions.json"
+    )
+
+
+@requires_mp4_tools
 def test_output_path_is_honored(tmp_path: Path, mocker) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=2, fps=2)
     output = tmp_path / "nested" / "honored.mp4"
@@ -262,3 +313,20 @@ def test_missing_input_raises_render_error(tmp_path: Path) -> None:
             tmp_path / "out.mp4",
             renderer="matplotlib",
         )
+
+
+def test_convert_lerobot_to_mp4_rerun_error_is_clean() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            "lerobot-to-mp4",
+            "--input-path",
+            "missing",
+            "--renderer",
+            "rerun",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Input path does not exist" in result.output

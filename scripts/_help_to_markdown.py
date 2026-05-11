@@ -74,8 +74,16 @@ def main() -> int:
     print("```bash")
     print(f"{command_path} --help")
     if commands:
-        first = commands[0][0]
-        print(f"{command_path} {first} --help")
+        first = next(
+            (
+                command
+                for command, description in commands
+                if "DEPRECATED" not in description
+            ),
+            "",
+        )
+        if first:
+            print(f"{command_path} {first} --help")
     print("```")
     print()
     print(

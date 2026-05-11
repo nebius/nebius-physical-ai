@@ -3,8 +3,8 @@
 This package contains standalone Rerun `.rrd` exporters for Unitree G1
 LeRobotDataset artifacts and GR00T prediction artifacts.
 
-The adapters are intentionally separate from `npa viz lerobot --backend rerun`.
-The `viz` backend renders MP4s for quick review; these adapters create reusable
+The adapters are intentionally separate from `npa convert lerobot-to-mp4 --renderer rerun`.
+The MP4 renderer creates quick-review videos; these adapters create reusable
 Rerun recordings for customer artifacts, handoff, and post-demo inspection.
 
 ## LeRobotDataset to Rerun

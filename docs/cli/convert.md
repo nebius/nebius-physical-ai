@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 lerobot-to-rrd  Convert a LeRobotDataset to a Rerun .rrd recording.
+lerobot-to-mp4  Convert a LeRobotDataset trajectory to MP4.
 ```
 
 ## Options
@@ -24,6 +25,7 @@ lerobot-to-rrd  Convert a LeRobotDataset to a Rerun .rrd recording.
 | Command | Description |
 | --- | --- |
 | `lerobot-to-rrd` | Convert a LeRobotDataset to a Rerun .rrd recording. |
+| `lerobot-to-mp4` | Convert a LeRobotDataset trajectory to MP4. |
 
 ## Examples
 

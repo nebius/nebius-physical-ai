@@ -91,7 +91,8 @@ def viz_lerobot_deprecated(
 ) -> None:
     """[DEPRECATED] Use `npa convert lerobot-to-mp4` instead."""
     warnings.warn(
-        "`npa viz lerobot` is deprecated and will be removed in a future release. "
+        "`npa viz "
+        "lerobot` is deprecated and will be removed in a future release. "
         "Use `npa convert lerobot-to-mp4` instead. "
         "Argument mapping: --backend -> --renderer; all others unchanged.",
         DeprecationWarning,
