@@ -15,6 +15,7 @@ from npa.errors import ScopedCredentialError
 
 
 runner = CliRunner()
+HELLO_SHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
 
 class DemoStageFakeS3:
@@ -125,7 +126,7 @@ def test_default_demo_manifest_parses() -> None:
 
 def test_stage_is_idempotent_with_sha_metadata(tmp_path: Path) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     s3 = DemoStageFakeS3()
     s3.add("source", "path/file.bin", body)
@@ -145,7 +146,7 @@ def test_stage_is_idempotent_with_sha_metadata(tmp_path: Path) -> None:
 
 def test_stage_hash_mismatch_redownloads_and_uploads(tmp_path: Path) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     s3 = DemoStageFakeS3()
     s3.add("source", "path/file.bin", body)
@@ -161,7 +162,7 @@ def test_stage_hash_mismatch_redownloads_and_uploads(tmp_path: Path) -> None:
 
 def test_stage_missing_metadata_redownloads_legacy_object(tmp_path: Path) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     s3 = DemoStageFakeS3()
     s3.add("source", "path/file.bin", body)
@@ -186,7 +187,7 @@ def test_stage_auth_error_raises_scoped_credential_error(tmp_path: Path) -> None
 
 def test_demo_stage_scoped_creds_fail_without_flag(tmp_path: Path) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     objects: dict[tuple[str, str], dict] = {}
     scoped_s3 = DemoStageFakeS3(objects)
@@ -209,7 +210,7 @@ def test_demo_stage_scoped_creds_fail_with_flag_warns_and_falls_back(
     caplog,
 ) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     objects: dict[tuple[str, str], dict] = {}
     scoped_s3 = DemoStageFakeS3(objects)
@@ -242,7 +243,7 @@ def test_demo_stage_help_includes_allow_host_creds() -> None:
 
 def test_verify_returns_no_issues_on_clean_state(tmp_path: Path) -> None:
     body = b"hello"
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     s3 = DemoStageFakeS3()
     s3.add("target", "staged/file.bin", body, {"sha256": sha})
@@ -253,8 +254,41 @@ def test_verify_returns_no_issues_on_clean_state(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("metadata_key", ["sha256", "Sha256", "SHA256", "sHa256"])
+def test_verify_accepts_sha256_metadata_key_case_variants(
+    tmp_path: Path,
+    metadata_key: str,
+) -> None:
+    body = b"hello"
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("target", "staged/file.bin", body, {metadata_key: HELLO_SHA256})
+
+    assert (
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+        == []
+    )
+
+
+def test_stage_skips_existing_artifact_with_title_case_sha_metadata(
+    tmp_path: Path,
+) -> None:
+    body = b"hello"
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("source", "path/file.bin", body)
+    s3.add("target", "staged/file.bin", body, {"Sha256": HELLO_SHA256})
+
+    result = stage_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert result == [{"name": "file-one", "action": "skip"}]
+    assert s3.put_calls == []
+
+
 def test_verify_cli_exits_nonzero_on_missing_artifact(tmp_path: Path, mocker) -> None:
-    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
     mocker.patch("npa.cli.demo._s3_client", return_value=DemoStageFakeS3())
 
@@ -277,6 +311,38 @@ def test_verify_returns_issue_on_hash_mismatch(tmp_path: Path) -> None:
     )
 
     assert any("sha256 metadata mismatch" in issue for issue in issues)
+
+
+def test_verify_reports_actual_mismatch_with_title_case_sha_metadata(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("target", "staged/file.bin", b"hello", {"Sha256": "different"})
+
+    issues = verify_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert issues == [
+        f"file-one: sha256 metadata mismatch "
+        f"(expected {HELLO_SHA256}, found different)"
+    ]
+
+
+def test_verify_reports_missing_sha256_metadata(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("target", "staged/file.bin", b"hello")
+
+    issues = verify_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert issues == [
+        f"file-one: sha256 metadata mismatch "
+        f"(expected {HELLO_SHA256}, found missing)"
+    ]
 
 
 def test_prefix_artifacts_verified_by_listing(tmp_path: Path) -> None:
