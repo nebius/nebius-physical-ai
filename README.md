@@ -23,6 +23,11 @@ To get started with the `npa` workbench CLI, follow the [npa quickstart](docs/qu
 To reproduce the Cosmos, Isaac Lab, GR00T, and FiftyOne workbench demo in your
 own Nebius project, follow the [8-GPU H200 demo runbook](docs/demo/8gpu-h200.md).
 
+## API Reference
+
+CLI reference pages are generated from the Typer help output in
+[docs/cli](docs/cli/README.md).
+
 ## Contributing
 
 We welcome contributions from the community! Whether you're adding new solutions, improving documentation, or reporting issues, your contributions help make Nebius Physical AI better for everyone.
