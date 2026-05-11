@@ -33,15 +33,30 @@ invoked, performs action, exits.
 Current verbs include:
 
 - `convert` - Format conversion (`lerobot-to-rrd`, `lerobot-to-mp4`)
-- `network` - Network and ingress configuration
 - `rerun` - Stateless Rerun sharing (`host`, `share`, `list-shares`, `revoke`)
 - `demo` - Demo orchestration (`stage`, `verify`)
+- `workflow` - Multi-stage workflow orchestration (`run`, `status`, `logs`,
+  `teardown`, `distill`)
 
 A command belongs at top level when it:
 
 - Has no Nebius service lifecycle to manage
 - Operates on files, S3 objects, or existing infrastructure
 - Composes outputs of workbench tools without being a service
+
+## Current Top-Level Surface
+
+| Command | Type | Status |
+| --- | --- | --- |
+| `workbench` | Tool group | Lifecycle-bearing workbench tools: `lerobot`, `cosmos`, `groot`, `fiftyone`, `genesis`, `isaac-lab` |
+| `convert` | Verb | `lerobot-to-rrd`, `lerobot-to-mp4` |
+| `rerun` | Verb | `host`, `share`, `list-shares`, `revoke` |
+| `demo` | Verb | `stage`, `verify` |
+| `workflow` | Verb | `run`, `status`, `logs`, `teardown`, `distill` |
+| `viz` | Deprecated namespace | `lerobot`; use `npa convert lerobot-to-mp4` |
+| `adapter` | Transitional one-entry namespace | `convert`; consolidation tracked by `ADAPTER_NAMESPACE_CONSOLIDATION` |
+| `network` | Transitional one-entry namespace | `ensure-ingress`; consolidation tracked by `NETWORK_NAMESPACE_CONSOLIDATION` |
+| `configure`, `init` | Bare commands | Setup guidance commands; `init` is currently an alias for `configure` |
 
 ## Boundary Case: `npa rerun` At Top Level
 
@@ -61,6 +76,11 @@ premature or misclassified. Example: `npa viz lerobot` was a one-entry
 namespace. LeRobot rendering is adapter-layer work that belongs under
 `npa convert`, so it moved to `npa convert lerobot-to-mp4`, and `viz` was
 deprecated.
+
+Current acknowledged exceptions are `adapter` and `network`. They are
+transitional one-entry namespaces, not patterns to copy for new command
+families. Consolidation is tracked by `ADAPTER_NAMESPACE_CONSOLIDATION` and
+`NETWORK_NAMESPACE_CONSOLIDATION`.
 
 Category names that overpromise: `viz` implied coverage of all visualization
 paths, including FiftyOne, Rerun, and matplotlib. The command only did one
@@ -85,19 +105,21 @@ principals for each. When a scoped principal is missing access, the
 `ScopedCredentialError` names the failed project, operation, and bucket, and
 points at host-credential fallback or IAM grants as remediation.
 
-## SDK Shape
+## Python API Status
 
-The CLI surface is also the SDK surface. Any command should be invokable from
-Python as well:
+The CLI is currently the primary invocation surface. Python API access for SDK
+consumers, such as orchestrators that submit `npa` workloads programmatically,
+is on the roadmap.
+
+Today, advanced users can import low-level adapter functions directly:
 
 ```python
-from npa import convert, demo, rerun
+from npa.adapter.lerobot.render import render_lerobot_to_mp4_result
 
-convert.lerobot_to_mp4(input_path=..., output_path=...)
-rerun.host(path=...)
-demo.stage(target_bucket=...)
+result = render_lerobot_to_mp4_result(...)
 ```
 
-For developers building orchestrators on top of `npa`, rather than operators
-using the CLI directly, the SDK is the primary surface. The CLI is the thin
-wrapper.
+A clean public SDK surface, such as `from npa import convert, demo, rerun` with
+stable public methods, is planned but not yet implemented. See
+`SDK_PUBLIC_SURFACE` for status. Until that exists, the CLI is the stable
+operator surface and adapter imports are lower-level implementation APIs.

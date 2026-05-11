@@ -239,3 +239,24 @@ No supported CLI-only workaround. Do not fake the Isaac Lab -> LeRobot -> GR00T 
 
 **Proper fix:**
 Add `--export-trajectory / --no-export-trajectory` to `npa workbench isaac-lab train` defaulting off. When enabled, write one episode folder per exported episode under `--output-path` using the numpy contract above, with synced observations, actions, and states. Add `npa workbench isaac-lab list-tasks` to print registered Isaac Lab gym task names, one per line. Add unit coverage for exported folder structure/array shapes and for a non-empty task listing in the test environment. If the Isaac Lab gym registry cannot be accessed without the Isaac Lab container/runtime, document that limitation explicitly in CLI help and tests.
+
+---
+
+## [M] SDK_PUBLIC_SURFACE
+
+Wire up `npa/__init__.py` to expose a clean public SDK surface, such as
+`from npa import convert, demo, rerun` with stable public methods. The
+architecture doc now states this SDK surface is roadmap, not current behavior.
+Likely scope: decide what is public versus internal, build re-exports, document
+the API, and add import/behavior tests.
+
+## [L] ADAPTER_NAMESPACE_CONSOLIDATION
+
+`npa adapter convert` is the only command in the adapter namespace. Either grow
+more adapter commands or fold this into another namespace, such as
+`npa convert <adapter-name>`.
+
+## [L] NETWORK_NAMESPACE_CONSOLIDATION
+
+`npa network ensure-ingress` is the only command in the network namespace.
+Either grow more network commands or fold this into a different command shape.
