@@ -257,7 +257,7 @@ def test_share_ttl_over_limit_fails_before_s3_calls() -> None:
 def test_list_shares_json_cli_outputs_programmatic_schema(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     s3 = RerunShareFakeS3()
-    mocker.patch("npa.cli.rerun._s3_client", return_value=s3)
+    mocker.patch("npa.cli.rerun.s3_client_for_project", return_value=s3)
     mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunShareFakeS3())
     s3.add(
         "target",
@@ -280,3 +280,116 @@ def test_list_shares_json_cli_outputs_programmatic_schema(mocker) -> None:
     assert data[0]["workspace"] == "default"
     assert data[0]["sha256"] == "aaa"
     assert "expires_at" not in data[0]
+
+
+def test_share_cli_routes_source_and_target_project_credentials(mocker) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    source_s3 = RerunShareFakeS3()
+    target_s3 = RerunShareFakeS3()
+    body = b"remote-recording"
+    sha = hashlib.sha256(body).hexdigest()
+    source_s3.add("source", "recordings/input.rrd", body, {"sha256": sha})
+    clients = {"project-source": source_s3, "project-target": target_s3}
+    s3_client_for_project = mocker.patch(
+        "npa.cli.rerun.s3_client_for_project",
+        side_effect=lambda project, **_: clients[project],
+    )
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunShareFakeS3())
+
+    result = runner.invoke(
+        app,
+        [
+            "rerun",
+            "share",
+            "s3://source/recordings/input.rrd",
+            "--target-bucket",
+            "target",
+            "--source-project",
+            "project-source",
+            "--target-project",
+            "project-target",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    s3_client_for_project.assert_any_call(
+        "project-source", allow_host_creds=False
+    )
+    s3_client_for_project.assert_any_call(
+        "project-target", allow_host_creds=False
+    )
+    assert s3_client_for_project.call_count == 2
+    assert target_s3.put_calls == [
+        (
+            "target",
+            f"rerun-shares/default/{sha}.rrd",
+            {"sha256": sha, "rerun-workspace": "default"},
+        )
+    ]
+
+
+def test_list_shares_cli_routes_target_project_credentials(mocker) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    s3 = RerunShareFakeS3()
+    s3.add(
+        "target",
+        "rerun-shares/default/aaa.rrd",
+        metadata={"sha256": "aaa", "rerun-workspace": "default"},
+    )
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunShareFakeS3())
+    s3_client_for_project = mocker.patch(
+        "npa.cli.rerun.s3_client_for_project", return_value=s3
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "rerun",
+            "list-shares",
+            "--target-bucket",
+            "target",
+            "--target-project",
+            "project-target",
+        ],
+    )
+
+    assert result.exit_code == 0
+    s3_client_for_project.assert_called_once_with(
+        "project-target", allow_host_creds=False
+    )
+    assert "aaa" in result.output
+
+
+def test_revoke_cli_routes_target_project_credentials(mocker) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    s3 = RerunShareFakeS3()
+    s3.add(
+        "target",
+        "rerun-shares/default/aaa.rrd",
+        metadata={"sha256": "aaa", "rerun-workspace": "default"},
+    )
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunShareFakeS3())
+    s3_client_for_project = mocker.patch(
+        "npa.cli.rerun.s3_client_for_project", return_value=s3
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "rerun",
+            "revoke",
+            "aaa",
+            "--target-bucket",
+            "target",
+            "--target-project",
+            "project-target",
+        ],
+    )
+
+    assert result.exit_code == 0
+    s3_client_for_project.assert_called_once_with(
+        "project-target", allow_host_creds=False
+    )
+    assert s3.delete_calls == [("target", "rerun-shares/default/aaa.rrd")]

@@ -16,7 +16,8 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 import typer
 
-from npa.clients.config import StorageConfig, resolve_project_storage
+from npa.clients.config import resolve_project_storage
+from npa.clients.project_credentials import s3_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
     run_with_host_credential_fallback,
@@ -70,6 +71,8 @@ def host_recording(
     target_bucket: str = "",
     ttl_hours: int = 1,
     allow_host_creds: bool = False,
+    source_project: str | None = None,
+    target_project: str | None = None,
     s3_client=None,
     host_s3_client=None,
     now: datetime | None = None,
@@ -79,13 +82,20 @@ def host_recording(
     if ttl_hours > MAX_TTL_HOURS:
         raise RerunHostError("--ttl-hours cannot exceed 168 hours (7 days)")
 
-    storage = resolve_project_storage()
-    endpoint = storage.endpoint_url
+    source_project = source_project or None
+    target_project = target_project or None
+    storage = resolve_project_storage(
+        source_project if _is_s3_uri(recording_path) else target_project
+    )
     target_bucket = target_bucket or _default_target_bucket(storage)
-    scoped_s3 = s3_client or _s3_client(storage)
-    fallback_s3 = host_s3_client or _host_s3_client(endpoint)
 
     if _is_s3_uri(recording_path):
+        scoped_s3 = _scoped_s3_client(
+            source_project,
+            injected_client=s3_client,
+            allow_host_creds=allow_host_creds,
+        )
+        fallback_s3 = host_s3_client or _host_s3_client_for_project(source_project)
         bucket, key, data, sha = _prepare_s3_recording(
             scoped_s3,
             fallback_s3,
@@ -93,6 +103,12 @@ def host_recording(
             allow_host_creds=allow_host_creds,
         )
     else:
+        scoped_s3 = _scoped_s3_client(
+            target_project,
+            injected_client=s3_client,
+            allow_host_creds=allow_host_creds,
+        )
+        fallback_s3 = host_s3_client or _host_s3_client_for_project(target_project)
         bucket, key, data, sha = _prepare_local_recording(recording_path, target_bucket)
 
     uri = f"s3://{bucket}/{key}"
@@ -128,6 +144,8 @@ def share_recording(
     label: str = "",
     workspace: str = "default",
     allow_host_creds: bool = False,
+    source_project: str | None = None,
+    target_project: str | None = None,
     s3_client=None,
     host_s3_client=None,
     now: datetime | None = None,
@@ -137,16 +155,29 @@ def share_recording(
     if ttl_hours > MAX_TTL_HOURS:
         raise RerunHostError("--ttl-hours cannot exceed 168 hours (7 days)")
 
-    storage = resolve_project_storage()
-    endpoint = storage.endpoint_url
+    source_project = source_project or None
+    target_project = target_project or None
+    storage = resolve_project_storage(target_project)
     target_bucket = target_bucket or _default_target_bucket(storage)
-    scoped_s3 = s3_client or _s3_client(storage)
-    fallback_s3 = host_s3_client or _host_s3_client(endpoint)
+    target_scoped_s3 = _scoped_s3_client(
+        target_project,
+        injected_client=s3_client,
+        allow_host_creds=allow_host_creds,
+    )
+    target_fallback_s3 = host_s3_client or _host_s3_client_for_project(target_project)
 
     if _is_s3_uri(recording_path):
+        source_scoped_s3 = _scoped_s3_client(
+            source_project,
+            injected_client=s3_client,
+            allow_host_creds=allow_host_creds,
+        )
+        source_fallback_s3 = host_s3_client or _host_s3_client_for_project(
+            source_project
+        )
         _source_bucket, _source_key, data, sha = _prepare_s3_recording(
-            scoped_s3,
-            fallback_s3,
+            source_scoped_s3,
+            source_fallback_s3,
             recording_path,
             allow_host_creds=allow_host_creds,
         )
@@ -163,8 +194,8 @@ def share_recording(
         metadata["rerun-label"] = label
 
     _ensure_uploaded(
-        scoped_s3,
-        fallback_s3,
+        target_scoped_s3,
+        target_fallback_s3,
         bucket,
         key,
         data,
@@ -172,7 +203,7 @@ def share_recording(
         allow_host_creds=allow_host_creds,
         metadata=metadata,
     )
-    presigned = _presign(scoped_s3, bucket, key, ttl_hours)
+    presigned = _presign(target_scoped_s3, bucket, key, ttl_hours)
     expires_at = ((now or datetime.now(UTC)) + timedelta(hours=ttl_hours)).replace(
         microsecond=0
     )
@@ -192,13 +223,18 @@ def list_share_items(
     s3_client=None,
     host_s3_client=None,
     allow_host_creds: bool = False,
+    target_project: str | None = None,
     now: datetime | None = None,
 ) -> list[RerunShareListItem]:
-    storage = resolve_project_storage()
-    endpoint = storage.endpoint_url
+    target_project = target_project or None
+    storage = resolve_project_storage(target_project)
     target_bucket = target_bucket or _default_target_bucket(storage)
-    scoped_s3 = s3_client or _s3_client(storage)
-    fallback_s3 = host_s3_client or _host_s3_client(endpoint)
+    scoped_s3 = _scoped_s3_client(
+        target_project,
+        injected_client=s3_client,
+        allow_host_creds=allow_host_creds,
+    )
+    fallback_s3 = host_s3_client or _host_s3_client_for_project(target_project)
     bucket, configured_prefix = _target_bucket_prefix(target_bucket)
     list_prefix = "/".join(part for part in (configured_prefix, "rerun-shares") if part)
     if list_prefix:
@@ -252,12 +288,17 @@ def revoke_share(
     s3_client=None,
     host_s3_client=None,
     allow_host_creds: bool = False,
+    target_project: str | None = None,
 ) -> int:
-    storage = resolve_project_storage()
-    endpoint = storage.endpoint_url
+    target_project = target_project or None
+    storage = resolve_project_storage(target_project)
     target_bucket = target_bucket or _default_target_bucket(storage)
-    scoped_s3 = s3_client or _s3_client(storage)
-    fallback_s3 = host_s3_client or _host_s3_client(endpoint)
+    scoped_s3 = _scoped_s3_client(
+        target_project,
+        injected_client=s3_client,
+        allow_host_creds=allow_host_creds,
+    )
+    fallback_s3 = host_s3_client or _host_s3_client_for_project(target_project)
     bucket, _prefix = _target_bucket_prefix(target_bucket)
     matches = [
         item
@@ -266,6 +307,7 @@ def revoke_share(
             s3_client=scoped_s3,
             host_s3_client=fallback_s3,
             allow_host_creds=allow_host_creds,
+            target_project=target_project,
         )
         if item.sha256 == identifier or item.label == identifier
     ]
@@ -288,6 +330,16 @@ def host_cmd(
         "--target-bucket",
         help="Target bucket or s3://bucket/prefix for local uploads. Defaults to configured project storage.",
     ),
+    source_project: str = typer.Option(
+        "",
+        "--source-project",
+        help="Project alias whose scoped principal reads s3:// recording inputs.",
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes local recording uploads.",
+    ),
     ttl_hours: int = typer.Option(
         1, "--ttl-hours", help="Presigned URL lifetime in hours, max 168."
     ),
@@ -307,6 +359,8 @@ def host_cmd(
             target_bucket=target_bucket,
             ttl_hours=ttl_hours,
             allow_host_creds=allow_host_creds,
+            source_project=source_project or None,
+            target_project=target_project or None,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -325,6 +379,16 @@ def share_cmd(
         "",
         "--target-bucket",
         help="Target bucket or s3://bucket/prefix for shared recordings. Defaults to configured project storage.",
+    ),
+    source_project: str = typer.Option(
+        "",
+        "--source-project",
+        help="Project alias whose scoped principal reads s3:// recording inputs.",
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes shared recordings.",
     ),
     ttl_hours: int = typer.Option(
         MAX_TTL_HOURS,
@@ -353,6 +417,8 @@ def share_cmd(
             label=label,
             workspace=workspace,
             allow_host_creds=allow_host_creds,
+            source_project=source_project or None,
+            target_project=target_project or None,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -371,6 +437,11 @@ def list_shares_cmd(
         "--target-bucket",
         help="Target bucket or s3://bucket/prefix to list. Defaults to configured project storage.",
     ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal reads shared recordings.",
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -385,6 +456,7 @@ def list_shares_cmd(
         items = list_share_items(
             target_bucket=target_bucket,
             allow_host_creds=allow_host_creds,
+            target_project=target_project or None,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -412,6 +484,11 @@ def revoke_cmd(
         "--target-bucket",
         help="Target bucket or s3://bucket/prefix to search. Defaults to configured project storage.",
     ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal deletes shared recordings.",
+    ),
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
@@ -424,6 +501,7 @@ def revoke_cmd(
             identifier,
             target_bucket=target_bucket,
             allow_host_creds=allow_host_creds,
+            target_project=target_project or None,
         )
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -654,14 +732,20 @@ def _share_url(presigned_url: str) -> str:
     return f"https://app.rerun.io/version/{RERUN_VERSION}/?url={quote(presigned_url, safe='')}"
 
 
-def _s3_client(storage: StorageConfig):
-    return boto3.client(
-        "s3",
-        endpoint_url=storage.endpoint_url,
-        aws_access_key_id=storage.aws_access_key_id or None,
-        aws_secret_access_key=storage.aws_secret_access_key or None,
-        config=BotoConfig(signature_version="s3v4"),
+def _scoped_s3_client(
+    project: str | None,
+    *,
+    injected_client=None,
+    allow_host_creds: bool,
+):
+    return injected_client or s3_client_for_project(
+        project, allow_host_creds=allow_host_creds
     )
+
+
+def _host_s3_client_for_project(project: str | None):
+    storage = resolve_project_storage(project)
+    return _host_s3_client(storage.endpoint_url)
 
 
 def _host_s3_client(endpoint_url: str):

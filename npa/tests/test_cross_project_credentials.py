@@ -164,6 +164,8 @@ def test_demo_stage_cross_project_host_fallback_uses_target_host_credentials(
 def test_cross_project_flags_are_visible_in_help() -> None:
     commands = [
         ["demo", "stage"],
+        ["rerun", "host"],
+        ["rerun", "share"],
         ["workbench", "cosmos", "infer"],
         ["workbench", "groot", "infer"],
         ["workbench", "isaac-lab", "export-lerobot"],
@@ -174,3 +176,8 @@ def test_cross_project_flags_are_visible_in_help() -> None:
         assert "target-project" in result.output
         if command[-1] != "export-lerobot":
             assert "source-project" in result.output
+
+    for command in [["demo", "verify"], ["rerun", "list-shares"], ["rerun", "revoke"]]:
+        result = runner.invoke(app, [*command, "--help"])
+        assert result.exit_code == 0
+        assert "target-project" in result.output

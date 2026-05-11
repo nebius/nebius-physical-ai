@@ -229,7 +229,7 @@ def test_json_output_contains_full_schema(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     scoped = RerunHostFakeS3()
     host = RerunHostFakeS3()
-    mocker.patch("npa.cli.rerun._s3_client", return_value=scoped)
+    mocker.patch("npa.cli.rerun.s3_client_for_project", return_value=scoped)
     mocker.patch("npa.cli.rerun._host_s3_client", return_value=host)
     path, sha = _rrd(tmp_path)
 
@@ -261,6 +261,67 @@ def test_json_output_contains_full_schema(tmp_path: Path, mocker) -> None:
     assert data["rerun_version"] == RERUN_VERSION
     assert "app.rerun.io" in data["share_url"]
     assert "version" in data["share_url"]
+
+
+def test_host_cli_routes_target_project_credentials(
+    tmp_path: Path,
+    mocker,
+) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    scoped = RerunHostFakeS3()
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunHostFakeS3())
+    s3_client_for_project = mocker.patch(
+        "npa.cli.rerun.s3_client_for_project", return_value=scoped
+    )
+    path, sha = _rrd(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "rerun",
+            "host",
+            str(path),
+            "--target-bucket",
+            "target",
+            "--target-project",
+            "project-target",
+        ],
+    )
+
+    assert result.exit_code == 0
+    s3_client_for_project.assert_called_once_with(
+        "project-target", allow_host_creds=False
+    )
+    assert scoped.put_calls == [("target", f"rerun-shared/{sha}.rrd", {"sha256": sha})]
+
+
+def test_host_cli_routes_source_project_for_s3_input(mocker) -> None:
+    mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
+    body = b"remote-recording"
+    sha = hashlib.sha256(body).hexdigest()
+    scoped = RerunHostFakeS3()
+    scoped.add("source", "recordings/input.rrd", body, {"sha256": sha})
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunHostFakeS3())
+    s3_client_for_project = mocker.patch(
+        "npa.cli.rerun.s3_client_for_project", return_value=scoped
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "rerun",
+            "host",
+            "s3://source/recordings/input.rrd",
+            "--source-project",
+            "project-source",
+        ],
+    )
+
+    assert result.exit_code == 0
+    s3_client_for_project.assert_called_once_with(
+        "project-source", allow_host_creds=False
+    )
+    assert scoped.get_calls == [("source", "recordings/input.rrd")]
 
 
 def test_expiration_parameter_matches_ttl_hours(tmp_path: Path, mocker) -> None:
