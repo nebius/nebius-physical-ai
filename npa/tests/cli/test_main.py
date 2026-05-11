@@ -20,6 +20,7 @@ runner = CliRunner()
         (["convert", "--help"], "standalone formats"),
         (["demo", "--help"], "Demo artifact bootstrap"),
         (["network", "--help"], "Network operations"),
+        (["rerun", "--help"], "Host and share Rerun"),
         (["viz", "--help"], "visualization"),
         (["workflow", "--help"], "Multi-stage training workflow"),
         (["configure", "--help"], "credential and config setup guidance"),
@@ -43,6 +44,7 @@ def test_no_args_shows_top_level_help() -> None:
     assert "convert" in result.output
     assert "demo" in result.output
     assert "network" in result.output
+    assert "rerun" in result.output
     assert "viz" in result.output
     assert "workflow" in result.output
     assert "configure" in result.output
