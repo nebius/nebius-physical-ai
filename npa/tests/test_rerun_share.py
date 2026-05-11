@@ -24,7 +24,7 @@ from npa.clients.config import StorageConfig
 runner = CliRunner()
 
 
-class FakeS3:
+class RerunShareFakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
         self.put_calls: list[tuple[str, str, dict[str, str]]] = []
@@ -111,13 +111,13 @@ def _rrd(tmp_path: Path, body: bytes = b"recording") -> tuple[Path, str]:
 def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
 
     result = share_recording(
         str(path),
         target_bucket="target",
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunShareFakeS3(),
         now=datetime(2026, 5, 11, 22, 30, tzinfo=UTC),
     )
 
@@ -129,14 +129,14 @@ def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> No
 def test_share_label_is_stored_in_metadata(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
 
     share_recording(
         str(path),
         target_bucket="target",
         label="weekly-failure-review",
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunShareFakeS3(),
     )
 
     metadata = s3.objects[("target", f"rerun-shares/default/{sha}.rrd")]["Metadata"]
@@ -147,14 +147,14 @@ def test_share_label_is_stored_in_metadata(tmp_path: Path, mocker) -> None:
 def test_share_workspace_controls_object_path(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
 
     result = share_recording(
         str(path),
         target_bucket="s3://target/prefix",
         workspace="team-perception",
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunShareFakeS3(),
     )
 
     key = f"prefix/rerun-shares/team-perception/{sha}.rrd"
@@ -164,7 +164,7 @@ def test_share_workspace_controls_object_path(tmp_path: Path, mocker) -> None:
 
 def test_list_shares_returns_metadata_for_active_shares(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
     now = datetime(2026, 5, 11, 22, 30, tzinfo=UTC)
     s3.add(
         "target",
@@ -193,7 +193,7 @@ def test_list_shares_returns_metadata_for_active_shares(mocker) -> None:
 
 def test_revoke_by_sha_deletes_matching_object(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
     s3.add(
         "target",
         "rerun-shares/default/aaa.rrd",
@@ -209,7 +209,7 @@ def test_revoke_by_sha_deletes_matching_object(mocker) -> None:
 
 def test_revoke_by_label_deletes_matching_object(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
     s3.add(
         "target",
         "rerun-shares/default/aaa.rrd",
@@ -238,7 +238,7 @@ def test_revoke_by_label_deletes_matching_object(mocker) -> None:
 
 def test_revoke_when_already_gone_is_success(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
 
     assert revoke_share("missing", target_bucket="target", s3_client=s3) == 0
     assert s3.delete_calls == []
@@ -256,9 +256,9 @@ def test_share_ttl_over_limit_fails_before_s3_calls() -> None:
 
 def test_list_shares_json_cli_outputs_programmatic_schema(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    s3 = FakeS3()
+    s3 = RerunShareFakeS3()
     mocker.patch("npa.cli.rerun._s3_client", return_value=s3)
-    mocker.patch("npa.cli.rerun._host_s3_client", return_value=FakeS3())
+    mocker.patch("npa.cli.rerun._host_s3_client", return_value=RerunShareFakeS3())
     s3.add(
         "target",
         "rerun-shares/default/aaa.rrd",

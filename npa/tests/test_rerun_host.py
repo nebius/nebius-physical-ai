@@ -19,7 +19,7 @@ from npa.errors import ScopedCredentialError
 runner = CliRunner()
 
 
-class FakeS3:
+class RerunHostFakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
         self.put_calls: list[tuple[str, str, dict[str, str]]] = []
@@ -95,13 +95,13 @@ def test_local_file_uploads_with_sha_metadata_and_generates_versioned_url(
 ) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
 
     result = host_recording(
         str(path),
         target_bucket="target",
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunHostFakeS3(),
         now=datetime(2026, 5, 11, 22, 30, tzinfo=UTC),
     )
 
@@ -122,13 +122,13 @@ def test_s3_file_with_matching_metadata_skips_upload(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     body = b"remote"
     sha = hashlib.sha256(body).hexdigest()
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
     s3.add("bucket", "path/input.rrd", body, {"sha256": sha})
 
     result = host_recording(
         "s3://bucket/path/input.rrd",
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunHostFakeS3(),
     )
 
     assert result.rrd_s3_uri == "s3://bucket/path/input.rrd"
@@ -141,10 +141,10 @@ def test_s3_file_with_stale_metadata_reuploads(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     body = b"remote"
     sha = hashlib.sha256(body).hexdigest()
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
     s3.add("bucket", "path/input.rrd", body, {"sha256": "stale"})
 
-    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=FakeS3())
+    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3())
 
     assert s3.put_calls == [("bucket", "path/input.rrd", {"sha256": sha})]
     assert s3.objects[("bucket", "path/input.rrd")]["Metadata"]["sha256"] == sha
@@ -154,10 +154,10 @@ def test_s3_file_with_missing_metadata_reuploads(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     body = b"remote"
     sha = hashlib.sha256(body).hexdigest()
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
     s3.add("bucket", "path/input.rrd", body)
 
-    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=FakeS3())
+    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3())
 
     assert s3.put_calls == [("bucket", "path/input.rrd", {"sha256": sha})]
 
@@ -168,8 +168,8 @@ def test_missing_file_is_clear_error(tmp_path: Path, mocker) -> None:
     with pytest.raises(RerunHostError, match="does not exist"):
         host_recording(
             str(tmp_path / "missing.rrd"),
-            s3_client=FakeS3(),
-            host_s3_client=FakeS3(),
+            s3_client=RerunHostFakeS3(),
+            host_s3_client=RerunHostFakeS3(),
         )
 
 
@@ -178,7 +178,7 @@ def test_missing_scoped_creds_without_flag_raises_scoped_credential_error(
 ) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, _ = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
     s3.head_error = NoCredentialsError()
 
     with pytest.raises(ScopedCredentialError, match="target"):
@@ -186,7 +186,7 @@ def test_missing_scoped_creds_without_flag_raises_scoped_credential_error(
             str(path),
             target_bucket="target",
             s3_client=s3,
-            host_s3_client=FakeS3(),
+            host_s3_client=RerunHostFakeS3(),
         )
 
 
@@ -195,10 +195,10 @@ def test_missing_scoped_creds_with_flag_warns_and_uses_host_fallback(
 ) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, sha = _rrd(tmp_path)
-    scoped = FakeS3()
+    scoped = RerunHostFakeS3()
     scoped.head_error = NoCredentialsError()
     scoped.put_error = NoCredentialsError()
-    host = FakeS3()
+    host = RerunHostFakeS3()
 
     with caplog.at_level("WARNING"):
         result = host_recording(
@@ -227,8 +227,8 @@ def test_ttl_over_limit_fails_before_s3_calls() -> None:
 
 def test_json_output_contains_full_schema(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
-    scoped = FakeS3()
-    host = FakeS3()
+    scoped = RerunHostFakeS3()
+    host = RerunHostFakeS3()
     mocker.patch("npa.cli.rerun._s3_client", return_value=scoped)
     mocker.patch("npa.cli.rerun._host_s3_client", return_value=host)
     path, sha = _rrd(tmp_path)
@@ -266,14 +266,14 @@ def test_json_output_contains_full_schema(tmp_path: Path, mocker) -> None:
 def test_expiration_parameter_matches_ttl_hours(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     path, _ = _rrd(tmp_path)
-    s3 = FakeS3()
+    s3 = RerunHostFakeS3()
 
     host_recording(
         str(path),
         target_bucket="target",
         ttl_hours=6,
         s3_client=s3,
-        host_s3_client=FakeS3(),
+        host_s3_client=RerunHostFakeS3(),
     )
 
     assert s3.presign_calls[-1]["ExpiresIn"] == 6 * 3600
