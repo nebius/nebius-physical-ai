@@ -173,7 +173,7 @@ def verify_artifacts(
             issues.append(f"{artifact.name}: missing target object s3://{bucket}/{key}")
             continue
         metadata = head.get("Metadata", {}) or {}
-        actual_sha = str(metadata.get("sha256", ""))
+        actual_sha = _get_metadata_value(metadata, "sha256") or ""
         if actual_sha != artifact.sha256:
             issues.append(
                 f"{artifact.name}: sha256 metadata mismatch "
@@ -670,11 +670,22 @@ def _ensure_prefix(key: str) -> str:
     return key if key.endswith("/") else key + "/"
 
 
+def _get_metadata_value(metadata: dict | None, key: str) -> str | None:
+    """Look up an S3 user metadata value case-insensitively."""
+    if not metadata:
+        return None
+    lowered_target = key.lower()
+    for metadata_key, value in metadata.items():
+        if str(metadata_key).lower() == lowered_target:
+            return str(value)
+    return None
+
+
 def _head_matches_artifact(head, artifact: DemoArtifact) -> bool:
     if head is None:
         return False
     metadata = head.get("Metadata", {}) or {}
-    if metadata.get("sha256") != artifact.sha256:
+    if _get_metadata_value(metadata, "sha256") != artifact.sha256:
         return False
     if (
         artifact.size_bytes is not None
