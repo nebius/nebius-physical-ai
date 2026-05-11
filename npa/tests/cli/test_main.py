@@ -18,6 +18,7 @@ runner = CliRunner()
         (["workbench", "genesis", "--help"], "Genesis simulation"),
         (["adapter", "--help"], "Convert simulation data"),
         (["convert", "--help"], "standalone formats"),
+        (["demo", "--help"], "Demo artifact bootstrap"),
         (["network", "--help"], "Network operations"),
         (["viz", "--help"], "visualization"),
         (["workflow", "--help"], "Multi-stage training workflow"),
@@ -40,6 +41,7 @@ def test_no_args_shows_top_level_help() -> None:
     assert "workbench" in result.output
     assert "adapter" in result.output
     assert "convert" in result.output
+    assert "demo" in result.output
     assert "network" in result.output
     assert "viz" in result.output
     assert "workflow" in result.output

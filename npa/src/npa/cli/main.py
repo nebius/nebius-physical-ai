@@ -7,6 +7,7 @@ import typer
 from npa.cli.workbench import app as workbench_app
 from npa.cli.adapter import app as adapter_app
 from npa.cli.convert import app as convert_app
+from npa.cli.demo import app as demo_app
 from npa.cli.network import app as network_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow import app as workflow_app
@@ -19,6 +20,7 @@ app = typer.Typer(
 app.add_typer(workbench_app, name="workbench")
 app.add_typer(adapter_app, name="adapter")
 app.add_typer(convert_app, name="convert")
+app.add_typer(demo_app, name="demo")
 app.add_typer(network_app, name="network")
 app.add_typer(viz_app, name="viz")
 app.add_typer(workflow_app, name="workflow")
