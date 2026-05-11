@@ -12,5 +12,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.command("lerobot", help="Render a LeRobotDataset trajectory to MP4.")(lerobot_cmd)
-
+app.command(
+    "lerobot",
+    help="[DEPRECATED] Use `npa convert lerobot-to-mp4` instead.",
+)(lerobot_cmd)

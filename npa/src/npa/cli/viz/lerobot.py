@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -47,7 +48,7 @@ class VizCLIError(Exception):
     """Raised for user-facing viz CLI failures."""
 
 
-def lerobot_cmd(
+def viz_lerobot_deprecated(
     input_path: str = typer.Option(
         ...,
         "--input-path",
@@ -88,7 +89,14 @@ def lerobot_cmd(
     fps: int = typer.Option(30, "--fps", help="Output frame rate."),
     title: str = typer.Option("", "--title", help="Optional render title."),
 ) -> None:
-    """Render a LeRobotDataset trajectory to an MP4 visualization."""
+    """[DEPRECATED] Use `npa convert lerobot-to-mp4` instead."""
+    warnings.warn(
+        "`npa viz lerobot` is deprecated and will be removed in a future release. "
+        "Use `npa convert lerobot-to-mp4` instead. "
+        "Argument mapping: --backend -> --renderer; all others unchanged.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     try:
         result = render_lerobot(
             input_path=input_path,
@@ -111,6 +119,9 @@ def lerobot_cmd(
     console.print(f"  frames: {result.frame_count}")
     console.print(f"  fps:    {result.fps}")
     console.print(f"  size:   {result.resolution[0]}x{result.resolution[1]}")
+
+
+lerobot_cmd = viz_lerobot_deprecated
 
 
 def render_lerobot(
