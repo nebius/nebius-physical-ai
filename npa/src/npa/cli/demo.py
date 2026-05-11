@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from npa.clients.config import resolve_project_storage
 from npa.clients.scoped_credentials import (
     SCOPED_CREDENTIAL_ERROR_CODES,
     client_error_code,
+    run_with_host_credential_fallback,
 )
 from npa.errors import ScopedCredentialError
 
@@ -30,6 +32,7 @@ app = typer.Typer(
 DEFAULT_MANIFEST = (
     Path(__file__).resolve().parents[3] / "manifests" / "demo-8gpu-h200.yaml"
 )
+logger = logging.getLogger(__name__)
 
 
 class DemoManifestError(ValueError):
@@ -101,9 +104,15 @@ def stage_artifacts(
     target_bucket: str,
     manifest_path: Path = DEFAULT_MANIFEST,
     s3_client=None,
+    host_s3_client=None,
+    allow_host_creds: bool = False,
 ) -> list[dict[str, str]]:
     manifest = load_manifest(manifest_path)
-    s3 = s3_client or _s3_client()
+    s3 = _stage_s3_client(
+        s3_client=s3_client,
+        host_s3_client=host_s3_client,
+        allow_host_creds=allow_host_creds,
+    )
     actions: list[dict[str, str]] = []
     for artifact in manifest.artifacts:
         if artifact.is_prefix:
@@ -183,10 +192,19 @@ def stage_cmd(
         ),
     ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    allow_host_creds: bool = typer.Option(
+        False,
+        "--allow-host-creds",
+        help="Use --allow-host-creds to fall back to host credentials for S3 upload.",
+    ),
 ) -> None:
     """Stage demo artifacts into an operator-owned bucket."""
     try:
-        actions = stage_artifacts(target_bucket=target_bucket, manifest_path=manifest)
+        actions = stage_artifacts(
+            target_bucket=target_bucket,
+            manifest_path=manifest,
+            allow_host_creds=allow_host_creds,
+        )
     except (DemoManifestError, ScopedCredentialError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -315,6 +333,113 @@ def _s3_client():
         aws_secret_access_key=storage.aws_secret_access_key or None,
         config=BotoConfig(signature_version="s3v4"),
     )
+
+
+def _host_s3_client():
+    storage = resolve_project_storage()
+    return boto3.client(
+        "s3",
+        endpoint_url=storage.endpoint_url or None,
+        config=BotoConfig(signature_version="s3v4"),
+    )
+
+
+def _stage_s3_client(*, s3_client=None, host_s3_client=None, allow_host_creds: bool):
+    scoped_s3 = s3_client or _s3_client()
+    if not allow_host_creds and host_s3_client is None:
+        return scoped_s3
+    return _HostFallbackS3(
+        scoped_s3,
+        host_s3_client or _host_s3_client(),
+        allow_host_creds=allow_host_creds,
+    )
+
+
+class _HostFallbackS3:
+    def __init__(self, scoped_s3, host_s3, *, allow_host_creds: bool) -> None:
+        self._scoped_s3 = scoped_s3
+        self._host_s3 = host_s3
+        self._allow_host_creds = allow_host_creds
+
+    def head_object(self, *, Bucket: str, Key: str):
+        return self._run(
+            lambda: self._scoped_s3.head_object(Bucket=Bucket, Key=Key),
+            lambda: self._host_s3.head_object(Bucket=Bucket, Key=Key),
+            bucket=Bucket,
+            operation=f"head s3://{Bucket}/{Key}",
+        )
+
+    def get_object(self, *, Bucket: str, Key: str):
+        return self._run(
+            lambda: self._scoped_s3.get_object(Bucket=Bucket, Key=Key),
+            lambda: self._host_s3.get_object(Bucket=Bucket, Key=Key),
+            bucket=Bucket,
+            operation=f"read s3://{Bucket}/{Key}",
+        )
+
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
+    ):
+        return self._run(
+            lambda: self._scoped_s3.put_object(
+                Bucket=Bucket, Key=Key, Body=Body, Metadata=Metadata
+            ),
+            lambda: self._host_s3.put_object(
+                Bucket=Bucket, Key=Key, Body=Body, Metadata=Metadata
+            ),
+            bucket=Bucket,
+            operation=f"upload s3://{Bucket}/{Key}",
+        )
+
+    def copy_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        CopySource: dict[str, str],
+        MetadataDirective: str,
+    ):
+        source_bucket = CopySource["Bucket"]
+        source_key = CopySource["Key"]
+        return self._run(
+            lambda: self._scoped_s3.copy_object(
+                Bucket=Bucket,
+                Key=Key,
+                CopySource=CopySource,
+                MetadataDirective=MetadataDirective,
+            ),
+            lambda: self._host_s3.copy_object(
+                Bucket=Bucket,
+                Key=Key,
+                CopySource=CopySource,
+                MetadataDirective=MetadataDirective,
+            ),
+            bucket=source_bucket,
+            operation=f"copy s3://{source_bucket}/{source_key} to s3://{Bucket}/{Key}",
+        )
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
+    ):
+        kwargs = {"Bucket": Bucket, "Prefix": Prefix}
+        if ContinuationToken:
+            kwargs["ContinuationToken"] = ContinuationToken
+        return self._run(
+            lambda: self._scoped_s3.list_objects_v2(**kwargs),
+            lambda: self._host_s3.list_objects_v2(**kwargs),
+            bucket=Bucket,
+            operation=f"list s3://{Bucket}/{Prefix}",
+        )
+
+    def _run(self, scoped_operation, host_fallback, *, bucket: str, operation: str):
+        return run_with_host_credential_fallback(
+            scoped_operation,
+            host_fallback,
+            bucket=bucket,
+            operation=operation,
+            allow_host_creds=self._allow_host_creds,
+            logger=logger,
+        )
 
 
 def _optional_int(value) -> int | None:

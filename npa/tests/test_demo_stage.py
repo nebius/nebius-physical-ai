@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import logging
 import os
 from pathlib import Path
 
@@ -17,11 +18,12 @@ runner = CliRunner()
 
 
 class FakeS3:
-    def __init__(self) -> None:
-        self.objects: dict[tuple[str, str], dict] = {}
+    def __init__(self, objects: dict[tuple[str, str], dict] | None = None) -> None:
+        self.objects = objects if objects is not None else {}
         self.put_calls: list[tuple[str, str]] = []
         self.copy_calls: list[tuple[str, str, str, str]] = []
         self.fail_get: Exception | None = None
+        self.fail_put: Exception | None = None
 
     def add(
         self, bucket: str, key: str, body: bytes, metadata: dict[str, str] | None = None
@@ -45,6 +47,8 @@ class FakeS3:
     def put_object(
         self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
     ):
+        if self.fail_put is not None:
+            raise self.fail_put
         self.put_calls.append((Bucket, Key))
         self.add(Bucket, Key, Body, Metadata)
 
@@ -178,6 +182,62 @@ def test_stage_auth_error_raises_scoped_credential_error(tmp_path: Path) -> None
 
     with pytest.raises(ScopedCredentialError, match="source"):
         stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+
+def test_demo_stage_scoped_creds_fail_without_flag(tmp_path: Path) -> None:
+    body = b"hello"
+    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
+    objects: dict[tuple[str, str], dict] = {}
+    scoped_s3 = FakeS3(objects)
+    host_s3 = FakeS3(objects)
+    scoped_s3.add("source", "path/file.bin", body)
+    scoped_s3.fail_put = _access_denied()
+
+    with pytest.raises(ScopedCredentialError, match="target"):
+        stage_artifacts(
+            target_bucket="target",
+            manifest_path=manifest,
+            s3_client=scoped_s3,
+            host_s3_client=host_s3,
+            allow_host_creds=False,
+        )
+
+
+def test_demo_stage_scoped_creds_fail_with_flag_warns_and_falls_back(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    body = b"hello"
+    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
+    objects: dict[tuple[str, str], dict] = {}
+    scoped_s3 = FakeS3(objects)
+    host_s3 = FakeS3(objects)
+    scoped_s3.add("source", "path/file.bin", body)
+    scoped_s3.fail_put = _access_denied()
+
+    with caplog.at_level(logging.WARNING, logger="npa.cli.demo"):
+        result = stage_artifacts(
+            target_bucket="target",
+            manifest_path=manifest,
+            s3_client=scoped_s3,
+            host_s3_client=host_s3,
+            allow_host_creds=True,
+        )
+
+    assert result == [{"name": "file-one", "action": "upload"}]
+    assert scoped_s3.put_calls == []
+    assert host_s3.put_calls == [("target", "staged/file.bin")]
+    assert "falling back to host credentials" in caplog.text
+    assert "target" in caplog.text
+
+
+def test_demo_stage_help_includes_allow_host_creds() -> None:
+    result = runner.invoke(app, ["demo", "stage", "--help"])
+
+    assert result.exit_code == 0
+    assert "allow-host-creds" in result.output or "allow_host_creds" in result.output
 
 
 def test_verify_returns_no_issues_on_clean_state(tmp_path: Path) -> None:
