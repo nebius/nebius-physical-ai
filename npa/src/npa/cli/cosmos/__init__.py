@@ -57,6 +57,7 @@ from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.network import NetworkIngressError
+from npa.clients.project_credentials import storage_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
     run_with_host_credential_fallback,
@@ -107,7 +108,9 @@ COSMOS_MODEL_DIR = f"{COSMOS_DATA_HOME}/models"
 COSMOS_HF_CACHE = f"{COSMOS_DATA_HOME}/hf_cache"
 COSMOS_OUTPUT_DIR = f"{COSMOS_DATA_HOME}/outputs"
 COSMOS_SERVICE = "npa-cosmos-server"
-COSMOS_PIP_EXTRA_INDEX_URL = "https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple"
+COSMOS_PIP_EXTRA_INDEX_URL = (
+    "https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple"
+)
 COSMOS_TORCH_VERSION = "2.6.0"
 COSMOS_TORCHVISION_VERSION = "0.21.0"
 COSMOS_FLASH_ATTN_VERSION = "2.6.3"
@@ -207,13 +210,19 @@ def _print_ngc_env_audit(
     remote_path: str,
 ) -> None:
     tokens = getattr(credentials, "tokens", {}) or {}
-    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get("NGC_API_KEY", "")
+    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get(
+        "NGC_API_KEY", ""
+    )
     if ngc_api_key and service_env.get("NGC_API_KEY"):
         console.print("    Credential audit: NGC credentials merged and written.")
     elif ngc_api_key:
-        console.print(f"    Warning: NGC credentials configured but not written to {remote_path}")
+        console.print(
+            f"    Warning: NGC credentials configured but not written to {remote_path}"
+        )
     else:
-        console.print("    Warning: NGC credentials not configured; continuing without NGC service env.")
+        console.print(
+            "    Warning: NGC credentials not configured; continuing without NGC service env."
+        )
 
 
 def _apply_saved_terraform_state(
@@ -333,7 +342,11 @@ def _is_s3_uri(path: str) -> bool:
 
 
 def _s3_path_name(path: str, default: str = "result.json") -> str:
-    name = Path(urlparse(path).path.rstrip("/")).name if _is_s3_uri(path) else Path(path).name
+    name = (
+        Path(urlparse(path).path.rstrip("/")).name
+        if _is_s3_uri(path)
+        else Path(path).name
+    )
     return name or default
 
 
@@ -353,7 +366,9 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     if not gpu_type:
         _fail("Missing --gpu-type. Cosmos deploy does not provide a default GPU type.")
     if not gpu_preset:
-        _fail("Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type.")
+        _fail(
+            "Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type."
+        )
 
 
 @app.command("ensure-ingress")
@@ -386,8 +401,12 @@ def ensure_ingress_cmd(
 
 @app.command("register-byovm")
 def register_byovm_cmd(
-    alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
-    instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
+    alias: str = typer.Option(
+        ..., "--alias", help="Workbench alias to create or update."
+    ),
+    instance_id: str = typer.Option(
+        ..., "--instance-id", help="Nebius compute instance ID."
+    ),
     port: int = typer.Option(8081, "--port", help="Cosmos HTTP service port."),
 ) -> None:
     """Register an existing VM as a Cosmos BYOVM alias and ensure ingress."""
@@ -783,15 +802,23 @@ def _read_existing_outputs(
         work_dir = provisioner.working_dir_path(proj_alias, wb_name)
         if work_dir.exists():
             try:
-                provisioner.init(tf_dir=str(work_dir), backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=str(work_dir),
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
                 return provisioner.outputs(tf_dir=str(work_dir))
             except ProvisionerError:
                 pass
 
-    from npa.clients.config import _deep_get, _load_yaml, _resolve_project_section, _resolve_workbench_in_project
+    from npa.clients.config import (
+        _deep_get,
+        _load_yaml,
+        _resolve_project_section,
+        _resolve_workbench_in_project,
+    )
 
     try:
         yml = _load_yaml()
@@ -810,7 +837,9 @@ def _read_existing_outputs(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List configured Cosmos workbenches."""
     projects = list_projects()
@@ -821,26 +850,35 @@ def list_cmd(
         filtered = {}
         for pname, pcfg in projects.items():
             wbs = {
-                k: v for k, v in pcfg.get("workbenches", {}).items()
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
                 if _is_cosmos_workbench(k, v)
             }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench cosmos deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench cosmos deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
         workbenches = {
-            k: v for k, v in proj_cfg.get("workbenches", {}).items()
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
             if _is_cosmos_workbench(k, v)
         }
         if not workbenches:
@@ -861,7 +899,9 @@ def list_cmd(
             )
 
     if not any_shown:
-        typer.echo("No Cosmos workbenches configured. Run 'npa workbench cosmos deploy' to create one.")
+        typer.echo(
+            "No Cosmos workbenches configured. Run 'npa workbench cosmos deploy' to create one."
+        )
 
 
 @app.command("deploy")
@@ -871,21 +911,49 @@ def deploy_cmd(
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only deploy the app."),
-    skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
-    skip_model_check: bool = typer.Option(False, "--skip-model-check", help="Skip Hugging Face gated-model access validation."),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only deploy the app."
+    ),
+    skip_app: bool = typer.Option(
+        False, "--skip-app", help="Skip app installation, only provision infra."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
+    skip_model_check: bool = typer.Option(
+        False,
+        "--skip-model-check",
+        help="Skip Hugging Face gated-model access validation.",
+    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
         help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
     ),
-    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Hugging Face Cosmos model ID to download and serve."),
+    verify_env: bool = typer.Option(
+        bool(os.environ.get("CI")),
+        "--verify-env/--no-verify-env",
+        help="Audit deployed shared credentials after app deploy.",
+    ),
+    model: str = typer.Option(
+        DEFAULT_MODEL,
+        "--model",
+        help="Hugging Face Cosmos model ID to download and serve.",
+    ),
     backend: Backend = typer.Option(
         Backend.basic,
         "--backend",
@@ -894,16 +962,40 @@ def deploy_cmd(
             "nim will use NVIDIA NIM containers; triton will use Triton/TensorRT model serving."
         ),
     ),
-    server_port: int = typer.Option(8080, "--server-port", help="Cosmos server port on the VM."),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    server_port: int = typer.Option(
+        8080, "--server-port", help="Cosmos server port on the VM."
+    ),
+    preemptible: bool = typer.Option(
+        True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy or destroy a Cosmos model serving VM."""
     _ensure_basic_backend(backend)
@@ -979,15 +1071,17 @@ def deploy_cmd(
                 _fail(f"Nebius bootstrap failed: {exc}")
                 return
             console.print("  Environment ready")
-            write_config({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+            write_config(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
@@ -1025,22 +1119,28 @@ def deploy_cmd(
             return
 
     if use_remote_state and nebius_creds and not dry_run:
-        write_config({
-            "projects": {
-                proj_alias: {
-                    "terraform_state": _terraform_state_config(merged_vars),
+        write_config(
+            {
+                "projects": {
+                    proj_alias: {
+                        "terraform_state": _terraform_state_config(merged_vars),
+                    },
                 },
-            },
-        })
+            }
+        )
 
     instance_name = f"cosmos-{proj_alias}-{wb_name}"
 
     if destroy:
         if byovm:
-            console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             if not dry_run:
                 remove_workbench_config(proj_alias, wb_name)
-            console.print(f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified.")
+            console.print(
+                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+            )
             return
 
         console.print(f"  [1/2] Destroying {proj_alias}/{wb_name}...")
@@ -1050,19 +1150,26 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -1109,19 +1216,25 @@ def deploy_cmd(
     if not skip_infra:
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
+        console.print(
+            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+        )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
         else:
@@ -1131,9 +1244,12 @@ def deploy_cmd(
                         "access_key": merged_vars.get("nebius_api_key", ""),
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
                     }
-                    if use_remote_state else None
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -1147,7 +1263,9 @@ def deploy_cmd(
             "enable_preemptible": "true" if preemptible else "false",
             **merged_vars,
         }
-        console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
+        console.print(
+            f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})..."
+        )
         if dry_run:
             tf_outputs = {
                 "vm_ip": "<pending>",
@@ -1158,7 +1276,9 @@ def deploy_cmd(
             }
         else:
             try:
-                tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                tf_outputs = provisioner.apply(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform apply failed: {exc}")
                 return
@@ -1167,22 +1287,38 @@ def deploy_cmd(
         step += 1
         console.print(
             f"  [{step}/{total_steps}] "
-            + ("Using BYOVM target..." if byovm else "Skipping infra, reading existing config...")
+            + (
+                "Using BYOVM target..."
+                if byovm
+                else "Skipping infra, reading existing config..."
+            )
         )
         resolved_tf_dir = tf_dir
         if byovm:
             try:
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
-                bucket = merged_vars.get("s3_bucket", "") or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get("AWS_ENDPOINT_URL", "")
-                tf_outputs = workbench_storage_outputs(target=target, bucket=bucket, endpoint=storage_ep)
+                target = resolve_byovm_target(
+                    host=host, ssh_key=ssh_key, ssh_user=ssh_user
+                )
+                bucket = merged_vars.get("s3_bucket", "") or os.environ.get(
+                    "NPA_CHECKPOINT_BUCKET", ""
+                )
+                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get(
+                    "AWS_ENDPOINT_URL", ""
+                )
+                tf_outputs = workbench_storage_outputs(
+                    target=target, bucket=bucket, endpoint=storage_ep
+                )
                 if not dry_run:
-                    ssh = SSHClient(ssh_config_for_target(target, tokens=credentials.tokens))
+                    ssh = SSHClient(
+                        ssh_config_for_target(target, tokens=credentials.tokens)
+                    )
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -1201,7 +1337,9 @@ def deploy_cmd(
                 merged_vars,
             )
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     vm_ip = tf_outputs.get("vm_ip", "")
@@ -1210,7 +1348,11 @@ def deploy_cmd(
     bucket = tf_outputs.get("storage_bucket", "")
     storage_ep = tf_outputs.get("storage_endpoint", "")
     endpoint = f"http://{vm_ip}:{server_port}"
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
         effective_count=byovm_effective_gpu_count or None,
@@ -1238,7 +1380,10 @@ def deploy_cmd(
                         "backend": backend.value,
                         **byovm_fields,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+                        "storage": {
+                            "checkpoint_bucket": bucket_display,
+                            "endpoint_url": storage_ep,
+                        },
                     },
                 },
             },
@@ -1263,10 +1408,14 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
-        ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
+        ssh_cfg = SSHConfig(
+            host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens
+        )
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
+        console.print(
+            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+        )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
@@ -1280,7 +1429,9 @@ def deploy_cmd(
 
         if runtime_uses_container(runtime):
             step += 1
-            console.print(f"  [{step}/{total_steps}] Starting Cosmos container and preparing {model}...")
+            console.print(
+                f"  [{step}/{total_steps}] Starting Cosmos container and preparing {model}..."
+            )
             service_env = _cosmos_service_env(
                 model=model,
                 server_port=server_port,
@@ -1295,11 +1446,16 @@ def deploy_cmd(
                 include_shared_creds=not no_shared_creds,
             )
             if dry_run:
-                console.print("    [dry-run] Would pull and run the Cosmos container image")
+                console.print(
+                    "    [dry-run] Would pull and run the Cosmos container image"
+                )
                 console.print("    [dry-run] Service env:")
                 console.print(render_redacted_env_file(service_env).rstrip())
             else:
-                from npa.deploy.configurator import deploy_workbench_container, write_remote_docker_env_file
+                from npa.deploy.configurator import (
+                    deploy_workbench_container,
+                    write_remote_docker_env_file,
+                )
 
                 try:
                     write_remote_docker_env_file(
@@ -1312,7 +1468,9 @@ def deploy_cmd(
                         "cosmos",
                         registry=resolve_container_registry(proj_alias),
                     )
-                    ssh.run("sudo systemctl stop npa-cosmos-server >/dev/null 2>&1 || true")
+                    ssh.run(
+                        "sudo systemctl stop npa-cosmos-server >/dev/null 2>&1 || true"
+                    )
                     deploy_workbench_container(
                         ssh,
                         image_ref=image_ref,
@@ -1322,7 +1480,11 @@ def deploy_cmd(
                             f"{COSMOS_DATA_HOME}:{COSMOS_DATA_HOME}",
                             "/etc/npa-cosmos-server/env:/etc/npa-cosmos-server/env:ro",
                         ],
-                        work_dirs=[COSMOS_MODEL_DIR, COSMOS_HF_CACHE, COSMOS_OUTPUT_DIR],
+                        work_dirs=[
+                            COSMOS_MODEL_DIR,
+                            COSMOS_HF_CACHE,
+                            COSMOS_OUTPUT_DIR,
+                        ],
                         command=(
                             "-lc "
                             + shlex.quote(
@@ -1334,11 +1496,14 @@ def deploy_cmd(
                     )
                     model_slug = _model_slug(model)
                     download_cmd = (
-                        f"if [ -n \"${{HF_TOKEN:-}}\" ]; then "
-                        f"huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug} --token \"$HF_TOKEN\"; "
+                        f'if [ -n "${{HF_TOKEN:-}}" ]; then '
+                        f'huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug} --token "$HF_TOKEN"; '
                         f"else huggingface-cli download {shlex.quote(model)} --local-dir {COSMOS_MODEL_DIR}/{model_slug}; fi"
                     )
-                    ssh.run_or_raise(docker_exec_cmd(COSMOS_CONTAINER_NAME, download_cmd), stream=True)
+                    ssh.run_or_raise(
+                        docker_exec_cmd(COSMOS_CONTAINER_NAME, download_cmd),
+                        stream=True,
+                    )
                     ssh.run_or_raise(f"sudo docker restart {COSMOS_CONTAINER_NAME}")
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(
@@ -1363,12 +1528,18 @@ def deploy_cmd(
                     return
         else:
             step += 1
-            console.print(f"  [{step}/{total_steps}] Installing Cosmos serving stack and downloading {model}...")
+            console.print(
+                f"  [{step}/{total_steps}] Installing Cosmos serving stack and downloading {model}..."
+            )
             if dry_run:
-                console.print("    [dry-run] Would create /opt/cosmos/venv, install Cosmos dependencies, and download model weights")
+                console.print(
+                    "    [dry-run] Would create /opt/cosmos/venv, install Cosmos dependencies, and download model weights"
+                )
             else:
                 try:
-                    ssh.run_or_raise(_build_install_command(model, server_port), stream=True)
+                    ssh.run_or_raise(
+                        _build_install_command(model, server_port), stream=True
+                    )
                 except SSHError as exc:
                     fail_app(f"Cosmos installation failed: {exc}")
                     return
@@ -1389,21 +1560,24 @@ def deploy_cmd(
                     console.print(f"    {health_note}")
                 endpoint_strategy = (
                     "ssh"
-                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
+                    if byovm
+                    and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
                     else "public"
                 )
-                write_config({
-                    "projects": {
-                        proj_alias: {
-                            "workbenches": {
-                                wb_name: {
-                                    "endpoint_strategy": endpoint_strategy,
-                                    "service_port": server_port,
+                write_config(
+                    {
+                        "projects": {
+                            proj_alias: {
+                                "workbenches": {
+                                    wb_name: {
+                                        "endpoint_strategy": endpoint_strategy,
+                                        "service_port": server_port,
+                                    },
                                 },
                             },
                         },
-                    },
-                })
+                    }
+                )
             else:
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
@@ -1412,7 +1586,12 @@ def deploy_cmd(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="cosmos", version=COSMOS_VERSION, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="cosmos",
+                    version=COSMOS_VERSION,
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
@@ -1430,7 +1609,9 @@ def deploy_cmd(
             )
 
     step += 1
-    console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
+    console.print(
+        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+    )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
@@ -1443,24 +1624,31 @@ def deploy_cmd(
     console.print(f"  Try: npa workbench cosmos -p {proj_alias} -n {wb_name} status")
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias,
-            "name": wb_name,
-            "endpoint": endpoint,
-            "vm_ip": vm_ip,
-            "ssh_user": ssh_user,
-            "gpu_platform": gpu_type,
-            "gpu_preset": gpu_preset,
-            "runtime": runtime.value,
-            "model": model,
-            "backend": backend.value,
-            "tf_outputs": tf_outputs,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "endpoint": endpoint,
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": gpu_type,
+                    "gpu_preset": gpu_preset,
+                    "runtime": runtime.value,
+                    "model": model,
+                    "backend": backend.value,
+                    "tf_outputs": tf_outputs,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command("serve")
 def serve_cmd(
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Hugging Face Cosmos model ID to serve."),
+    model: str = typer.Option(
+        DEFAULT_MODEL, "--model", help="Hugging Face Cosmos model ID to serve."
+    ),
     backend: Backend = typer.Option(
         Backend.basic,
         "--backend",
@@ -1470,7 +1658,9 @@ def serve_cmd(
         ),
     ),
     port: int = typer.Option(8080, "--port", help="Server port."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Start or restart the Cosmos model server over SSH."""
     _ensure_basic_backend(backend)
@@ -1484,7 +1674,9 @@ def serve_cmd(
     if runtime_uses_container(getattr(cfg, "runtime", "vm")):
         try:
             with service_endpoint(cfg, default_port=port, service_port=port) as active:
-                served = HTTPClient(active.url, timeout=120.0, retries=1).serve_model(model, timeout=120.0)
+                served = HTTPClient(active.url, timeout=120.0, retries=1).serve_model(
+                    model, timeout=120.0
+                )
             out = json.dumps(served)
         except EndpointError as exc:
             _fail(f"Cosmos serve endpoint setup failed: {exc}")
@@ -1533,9 +1725,16 @@ def optimize_cmd() -> None:
     raise typer.Exit(1)
 
 
-def _storage_client_for_config(cfg: Any):
+def _storage_client_for_config(
+    cfg: Any,
+    *,
+    project: str | None = None,
+    allow_host_creds: bool = False,
+):
     from npa.clients.storage import StorageClient
 
+    if project:
+        return storage_client_for_project(project, allow_host_creds=allow_host_creds)
     return StorageClient.from_environment(
         endpoint_url=cfg.storage.endpoint_url,
         aws_access_key_id=cfg.storage.aws_access_key_id,
@@ -1547,6 +1746,8 @@ def _resolve_infer_input(
     input_path: str,
     cfg: Any,
     temp_dirs: list[tempfile.TemporaryDirectory[str]],
+    *,
+    source_project: str | None = None,
 ) -> Path | None:
     if not input_path:
         return None
@@ -1555,7 +1756,11 @@ def _resolve_infer_input(
 
     tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-input-")
     temp_dirs.append(tmp)
-    downloaded = Path(_storage_client_for_config(cfg).download_path(input_path, tmp.name))
+    downloaded = Path(
+        _storage_client_for_config(cfg, project=source_project).download_path(
+            input_path, tmp.name
+        )
+    )
     if downloaded.is_file():
         return downloaded
 
@@ -1574,7 +1779,8 @@ def _build_infer_payload(prompt: str, input_path: Path | None) -> dict[str, Any]
             _fail(f"Input file not found: {input_path}")
         payload["input"] = {
             "filename": input_path.name,
-            "mime_type": mimetypes.guess_type(str(input_path))[0] or "application/octet-stream",
+            "mime_type": mimetypes.guess_type(str(input_path))[0]
+            or "application/octet-stream",
             "content_base64": base64.b64encode(input_path.read_bytes()).decode("ascii"),
         }
     if not payload:
@@ -1601,6 +1807,7 @@ def _save_inference_output(
     temp_dirs: list[tempfile.TemporaryDirectory[str]],
     *,
     allow_host_creds: bool = False,
+    target_project: str | None = None,
 ) -> str:
     if not output_path:
         return ""
@@ -1614,8 +1821,13 @@ def _save_inference_output(
     temp_dirs.append(tmp)
     local_path = Path(tmp.name) / _s3_path_name(output_path)
     _write_inference_output(data, local_path)
+
     def scoped_upload() -> str:
-        saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+        saved_to = _storage_client_for_config(
+            cfg,
+            project=target_project,
+            allow_host_creds=allow_host_creds,
+        ).upload_file(str(local_path), output_path)
         data["upload_mode"] = "local"
         return saved_to
 
@@ -1727,15 +1939,23 @@ def _download_remote_output(
     *,
     result: dict[str, Any] | None = None,
     allow_host_creds: bool = False,
+    target_project: str | None = None,
 ) -> str:
     if _is_s3_uri(output_path):
         tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-output-")
         temp_dirs.append(tmp)
-        local_path = Path(tmp.name) / (Path(remote_path).name or f"cosmos-output-{uuid.uuid4().hex}")
+        local_path = Path(tmp.name) / (
+            Path(remote_path).name or f"cosmos-output-{uuid.uuid4().hex}"
+        )
         ssh = SSHClient(cfg.ssh)
         ssh.download_file(remote_path, str(local_path))
+
         def scoped_upload() -> str:
-            saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
+            saved_to = _storage_client_for_config(
+                cfg,
+                project=target_project,
+                allow_host_creds=allow_host_creds,
+            ).upload_file(str(local_path), output_path)
             if result is not None:
                 result["upload_mode"] = "local"
             return saved_to
@@ -1781,7 +2001,9 @@ def _poll_inference_job(
             _fail(f"Inference timed out waiting for job {job_id}")
 
         try:
-            data = client.job_status(job_id, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, remaining)))
+            data = client.job_status(
+                job_id, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, remaining))
+            )
         except ServerError as exc:
             _fail(f"Inference status check failed: {exc}")
 
@@ -1798,14 +2020,18 @@ def _poll_inference_job(
             step = ""
             if data.get("step") is not None and data.get("total_steps") is not None:
                 step = f" (step {data.get('step')}/{data.get('total_steps')})"
-            typer.echo(f"[{elapsed}s] Generating...{progress} (status: {status or 'unknown'}){step}")
+            typer.echo(
+                f"[{elapsed}s] Generating...{progress} (status: {status or 'unknown'}){step}"
+            )
 
         if status == "completed":
             return data
         if status in {"failed", "error"}:
             _fail(f"Inference job failed: {data.get('error', 'unknown error')}")
         if status not in {"running", "queued", "pending"}:
-            _fail(f"Inference job {job_id} returned unknown status: {status or '<missing>'}")
+            _fail(
+                f"Inference job {job_id} returned unknown status: {status or '<missing>'}"
+            )
 
         sleep_for = min(poll_interval, max(0.0, deadline - time.monotonic()))
         if sleep_for > 0:
@@ -1814,7 +2040,9 @@ def _poll_inference_job(
 
 @app.command("infer")
 def infer_cmd(
-    prompt: str = typer.Option("", "--prompt", help="Text prompt for text-to-world generation."),
+    prompt: str = typer.Option(
+        "", "--prompt", help="Text prompt for text-to-world generation."
+    ),
     input_path: str = typer.Option(
         "",
         "--input-path",
@@ -1827,6 +2055,16 @@ def infer_cmd(
         "--output",
         help="S3 URI where the generated output file is saved.",
     ),
+    source_project: str = typer.Option(
+        "",
+        "--source-project",
+        help="Project alias whose scoped principal reads S3 inference inputs.",
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes S3 inference outputs.",
+    ),
     timeout: float = typer.Option(
         1200.0,
         "--timeout",
@@ -1837,8 +2075,12 @@ def infer_cmd(
         "--poll-interval",
         help="Seconds between Cosmos job status checks.",
     ),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="CLI output format."),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress progress output while polling."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="CLI output format."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", help="Suppress progress output while polling."
+    ),
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
@@ -1852,20 +2094,36 @@ def infer_cmd(
         _fail(str(exc))
 
     cfg = _get_config()
+    resolved_source_project = source_project or None
+    resolved_target_project = target_project or None
     temp_dirs: list[tempfile.TemporaryDirectory[str]] = []
     try:
-        payload = _build_infer_payload(prompt, _resolve_infer_input(input_path, cfg, temp_dirs))
+        payload = _build_infer_payload(
+            prompt,
+            _resolve_infer_input(
+                input_path,
+                cfg,
+                temp_dirs,
+                source_project=resolved_source_project,
+            ),
+        )
         deadline = time.monotonic() + timeout
 
         try:
             with service_endpoint(cfg, default_port=8080) as active:
-                client = HTTPClient(active.url, timeout=COSMOS_INFER_HTTP_TIMEOUT, retries=1)
+                client = HTTPClient(
+                    active.url, timeout=COSMOS_INFER_HTTP_TIMEOUT, retries=1
+                )
                 generation_started = time.monotonic()
-                submitted = client.infer(payload, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, timeout)))
+                submitted = client.infer(
+                    payload, timeout=min(COSMOS_INFER_HTTP_TIMEOUT, max(1.0, timeout))
+                )
 
                 job_id = str(submitted.get("job_id") or "")
                 if not job_id:
-                    _fail(f"Inference submit response did not include job_id: {submitted}")
+                    _fail(
+                        f"Inference submit response did not include job_id: {submitted}"
+                    )
                 if output_format != OutputFormat.json:
                     typer.echo(f"  job_id: {job_id}")
                     typer.echo(f"  job_status: {submitted.get('status', 'unknown')}")
@@ -1886,7 +2144,9 @@ def infer_cmd(
             _fail(f"Inference endpoint setup failed: {exc}")
             return
         if output_format != OutputFormat.json and not quiet:
-            typer.echo(f"Generation complete in {time.monotonic() - generation_started:.1f}s")
+            typer.echo(
+                f"Generation complete in {time.monotonic() - generation_started:.1f}s"
+            )
 
         result = {**data, "job_id": job_id}
         remote_output_path = str(data.get("output_path") or "")
@@ -1898,6 +2158,7 @@ def infer_cmd(
                 temp_dirs,
                 result=result,
                 allow_host_creds=allow_host_creds,
+                target_project=resolved_target_project,
             )
             result["downloaded_to"] = downloaded_to
             if _is_s3_uri(downloaded_to):
@@ -1909,6 +2170,7 @@ def infer_cmd(
                 cfg,
                 temp_dirs,
                 allow_host_creds=allow_host_creds,
+                target_project=resolved_target_project,
             )
             if saved_to:
                 result["saved_to"] = saved_to
@@ -1920,7 +2182,9 @@ def infer_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check the Cosmos endpoint health."""
     cfg = _get_config()
@@ -1932,12 +2196,17 @@ def status_cmd(
             endpoint_url = active.url
     except EndpointError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo("  app_status: unreachable")
@@ -1945,12 +2214,17 @@ def status_cmd(
         return
     except ServerError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo("  app_status: unreachable")
@@ -1965,9 +2239,13 @@ def status_cmd(
         "blockers": [],
     }
     if not readiness["hf_token_present"]:
-        readiness["blockers"].append("HF_TOKEN not configured - gated model downloads will fail")
+        readiness["blockers"].append(
+            "HF_TOKEN not configured - gated model downloads will fail"
+        )
     if not loaded:
-        readiness["blockers"].append(f"Model {data.get('model') or DEFAULT_MODEL} not loaded")
+        readiness["blockers"].append(
+            f"Model {data.get('model') or DEFAULT_MODEL} not loaded"
+        )
     app_status = "healthy" if loaded else "degraded"
 
     result = {
@@ -1992,7 +2270,9 @@ def status_cmd(
 
 @app.command("system-info")
 def system_info_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Collect and display system hardware information from the Cosmos VM."""
     cfg = _get_ssh_config()
@@ -2016,11 +2296,16 @@ def system_info_cmd(
         return
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "system_info": out.strip(),
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "system_info": out.strip(),
+                },
+                indent=2,
+            )
+        )
     else:
         if out:
             typer.echo(out.strip())

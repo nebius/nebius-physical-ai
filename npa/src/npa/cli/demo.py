@@ -16,6 +16,7 @@ import typer
 import yaml
 
 from npa.clients.config import resolve_project_storage
+from npa.clients.project_credentials import resolve_credentials
 from npa.clients.scoped_credentials import (
     SCOPED_CREDENTIAL_ERROR_CODES,
     client_error_code,
@@ -106,12 +107,25 @@ def stage_artifacts(
     s3_client=None,
     host_s3_client=None,
     allow_host_creds: bool = False,
+    source_project: str | None = None,
+    target_project: str | None = None,
 ) -> list[dict[str, str]]:
     manifest = load_manifest(manifest_path)
+    source_buckets = {
+        _parse_s3_uri(artifact.source_uri)[0] for artifact in manifest.artifacts
+    }
+    target_buckets = {
+        _target_bucket_key(target_bucket, artifact.target_path)[0]
+        for artifact in manifest.artifacts
+    }
     s3 = _stage_s3_client(
         s3_client=s3_client,
         host_s3_client=host_s3_client,
         allow_host_creds=allow_host_creds,
+        source_project=source_project,
+        target_project=target_project,
+        source_buckets=source_buckets,
+        target_buckets=target_buckets,
     )
     actions: list[dict[str, str]] = []
     for artifact in manifest.artifacts:
@@ -191,11 +205,21 @@ def stage_cmd(
             "the active Nebius S3 principal."
         ),
     ),
+    source_project: str = typer.Option(
+        "",
+        "--source-project",
+        help="Project alias whose scoped principal reads manifest source artifacts.",
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes staged artifacts.",
+    ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
-        help="Use --allow-host-creds to fall back to host credentials for S3 upload.",
+        help="Use --allow-host-creds to fall back to host credentials for source or target S3 operations.",
     ),
 ) -> None:
     """Stage demo artifacts into an operator-owned bucket."""
@@ -204,6 +228,8 @@ def stage_cmd(
             target_bucket=target_bucket,
             manifest_path=manifest,
             allow_host_creds=allow_host_creds,
+            source_project=source_project or None,
+            target_project=target_project or None,
         )
     except (DemoManifestError, ScopedCredentialError) as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -344,15 +370,195 @@ def _host_s3_client():
     )
 
 
-def _stage_s3_client(*, s3_client=None, host_s3_client=None, allow_host_creds: bool):
-    scoped_s3 = s3_client or _s3_client()
-    if not allow_host_creds and host_s3_client is None:
-        return scoped_s3
-    return _HostFallbackS3(
-        scoped_s3,
-        host_s3_client or _host_s3_client(),
-        allow_host_creds=allow_host_creds,
+def _s3_client_for_project(project: str | None, *, allow_host_creds: bool):
+    if not project:
+        return _s3_client()
+    credentials = resolve_credentials(project, allow_host_creds=allow_host_creds)
+    return boto3.client(
+        "s3",
+        endpoint_url=credentials.endpoint_url,
+        aws_access_key_id=credentials.aws_access_key_id or None,
+        aws_secret_access_key=credentials.aws_secret_access_key or None,
+        config=BotoConfig(signature_version="s3v4"),
     )
+
+
+def _host_s3_client_for_project(project: str | None):
+    storage = resolve_project_storage(project)
+    return boto3.client(
+        "s3",
+        endpoint_url=storage.endpoint_url or None,
+        config=BotoConfig(signature_version="s3v4"),
+    )
+
+
+def _stage_s3_client(
+    *,
+    s3_client=None,
+    host_s3_client=None,
+    allow_host_creds: bool,
+    source_project: str | None = None,
+    target_project: str | None = None,
+    source_buckets: set[str] | None = None,
+    target_buckets: set[str] | None = None,
+):
+    if not source_project and not target_project:
+        scoped_s3 = s3_client or _s3_client()
+        if not allow_host_creds and host_s3_client is None:
+            return scoped_s3
+        return _HostFallbackS3(
+            scoped_s3,
+            host_s3_client or _host_s3_client(),
+            allow_host_creds=allow_host_creds,
+        )
+    if s3_client is not None:
+        scoped_s3 = s3_client
+        if not allow_host_creds and host_s3_client is None:
+            return scoped_s3
+        return _HostFallbackS3(
+            scoped_s3,
+            host_s3_client or _host_s3_client(),
+            allow_host_creds=allow_host_creds,
+        )
+    source_scoped = _s3_client_for_project(
+        source_project, allow_host_creds=allow_host_creds
+    )
+    target_scoped = _s3_client_for_project(
+        target_project, allow_host_creds=allow_host_creds
+    )
+    return _ProjectBoundaryS3(
+        source_scoped,
+        target_scoped,
+        _host_s3_client_for_project(source_project),
+        _host_s3_client_for_project(target_project),
+        allow_host_creds=allow_host_creds,
+        source_project=source_project,
+        target_project=target_project,
+        source_buckets=source_buckets or set(),
+        target_buckets=target_buckets or set(),
+    )
+
+
+class _ProjectBoundaryS3:
+    def __init__(
+        self,
+        source_scoped_s3,
+        target_scoped_s3,
+        source_host_s3,
+        target_host_s3,
+        *,
+        allow_host_creds: bool,
+        source_project: str | None,
+        target_project: str | None,
+        source_buckets: set[str],
+        target_buckets: set[str],
+    ) -> None:
+        self._source_scoped_s3 = source_scoped_s3
+        self._target_scoped_s3 = target_scoped_s3
+        self._source_host_s3 = source_host_s3
+        self._target_host_s3 = target_host_s3
+        self._allow_host_creds = allow_host_creds
+        self._source_project = source_project
+        self._target_project = target_project
+        self._source_buckets = source_buckets
+        self._target_buckets = target_buckets
+
+    def head_object(self, *, Bucket: str, Key: str):
+        side = self._side_for_bucket(Bucket)
+        scoped, host = self._clients(side)
+        return self._run(
+            side,
+            lambda: scoped.head_object(Bucket=Bucket, Key=Key),
+            lambda: host.head_object(Bucket=Bucket, Key=Key),
+            bucket=Bucket,
+            operation=f"head s3://{Bucket}/{Key}",
+        )
+
+    def get_object(self, *, Bucket: str, Key: str):
+        scoped, host = self._clients("source")
+        return self._run(
+            "source",
+            lambda: scoped.get_object(Bucket=Bucket, Key=Key),
+            lambda: host.get_object(Bucket=Bucket, Key=Key),
+            bucket=Bucket,
+            operation=f"read s3://{Bucket}/{Key}",
+        )
+
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
+    ):
+        scoped, host = self._clients("target")
+        return self._run(
+            "target",
+            lambda: scoped.put_object(
+                Bucket=Bucket, Key=Key, Body=Body, Metadata=Metadata
+            ),
+            lambda: host.put_object(
+                Bucket=Bucket, Key=Key, Body=Body, Metadata=Metadata
+            ),
+            bucket=Bucket,
+            operation=f"upload s3://{Bucket}/{Key}",
+        )
+
+    def copy_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        CopySource: dict[str, str],
+        MetadataDirective: str,
+    ):
+        source_bucket = CopySource["Bucket"]
+        source_key = CopySource["Key"]
+        obj = self.get_object(Bucket=source_bucket, Key=source_key)
+        metadata = obj.get("Metadata", {}) or {}
+        self.put_object(
+            Bucket=Bucket,
+            Key=Key,
+            Body=obj["Body"].read(),
+            Metadata={str(k): str(v) for k, v in metadata.items()},
+        )
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
+    ):
+        side = self._side_for_bucket(Bucket)
+        scoped, host = self._clients(side)
+        kwargs = {"Bucket": Bucket, "Prefix": Prefix}
+        if ContinuationToken:
+            kwargs["ContinuationToken"] = ContinuationToken
+        return self._run(
+            side,
+            lambda: scoped.list_objects_v2(**kwargs),
+            lambda: host.list_objects_v2(**kwargs),
+            bucket=Bucket,
+            operation=f"list s3://{Bucket}/{Prefix}",
+        )
+
+    def _side_for_bucket(self, bucket: str) -> str:
+        if bucket in self._source_buckets and bucket not in self._target_buckets:
+            return "source"
+        return "target"
+
+    def _clients(self, side: str):
+        if side == "source":
+            return self._source_scoped_s3, self._source_host_s3
+        return self._target_scoped_s3, self._target_host_s3
+
+    def _run(
+        self, side: str, scoped_operation, host_fallback, *, bucket: str, operation: str
+    ):
+        project = self._source_project if side == "source" else self._target_project
+        if project:
+            operation = f"{side} project '{project}' {operation}"
+        return run_with_host_credential_fallback(
+            scoped_operation,
+            host_fallback,
+            bucket=bucket,
+            operation=operation,
+            allow_host_creds=self._allow_host_creds,
+            logger=logger,
+        )
 
 
 class _HostFallbackS3:

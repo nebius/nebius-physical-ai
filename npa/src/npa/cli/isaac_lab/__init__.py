@@ -17,7 +17,11 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
-from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -37,6 +41,7 @@ from npa.clients.config import (
     write_config,
 )
 from npa.clients.credentials import apply_shared_credential_env
+from npa.clients.project_credentials import storage_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
     run_with_host_credential_fallback,
@@ -158,9 +163,16 @@ def _is_s3_uri(path: str) -> bool:
     return path.startswith("s3://")
 
 
-def _storage_client(cfg):
+def _storage_client(
+    cfg,
+    *,
+    project: str | None = None,
+    allow_host_creds: bool = False,
+):
     from npa.clients.storage import StorageClient
 
+    if project:
+        return storage_client_for_project(project, allow_host_creds=allow_host_creds)
     return StorageClient.from_environment(
         endpoint_url=cfg.storage.endpoint_url,
         aws_access_key_id=cfg.storage.aws_access_key_id,
@@ -168,7 +180,14 @@ def _storage_client(cfg):
     )
 
 
-def _upload_remote_directory_to_s3(ssh: SSHClient, cfg, remote_dir: str, output_path: str) -> str:
+def _upload_remote_directory_to_s3(
+    ssh: SSHClient,
+    cfg,
+    remote_dir: str,
+    output_path: str,
+    *,
+    target_project: str | None = None,
+) -> str:
     archive_remote = f"/tmp/npa-isaac-lab-output-{int(time.time() * 1000)}.tgz"
     with tempfile.TemporaryDirectory(prefix="npa-isaac-lab-output-") as tmp:
         archive_local = Path(tmp) / "output.tgz"
@@ -185,10 +204,14 @@ def _upload_remote_directory_to_s3(ssh: SSHClient, cfg, remote_dir: str, output_
         extract_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_local, "r:gz") as archive:
             archive.extractall(extract_dir, filter="data")
-        return _storage_client(cfg).upload_directory(str(extract_dir), output_path)
+        return _storage_client(cfg, project=target_project).upload_directory(
+            str(extract_dir), output_path
+        )
 
 
-def _download_remote_directory(ssh: SSHClient, remote_dir: str, local_dir: Path) -> Path:
+def _download_remote_directory(
+    ssh: SSHClient, remote_dir: str, local_dir: Path
+) -> Path:
     archive_remote = f"/tmp/npa-isaac-lab-download-{int(time.time() * 1000)}.tgz"
     archive_local = local_dir.parent / "raw.tgz"
     ssh.run_or_raise(
@@ -221,7 +244,11 @@ def _upload_local_directory_via_remote_env(
     if parsed.scheme != "s3" or not bucket or not prefix.strip("/"):
         raise SSHError(f"Remote upload expects an s3:// output path: {output_path}")
 
-    ssh.run_or_raise(_remote_bash(f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}"))
+    ssh.run_or_raise(
+        _remote_bash(
+            f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}"
+        )
+    )
     try:
         ssh.upload_directory(str(local_dir), remote_dir)
         script = f"""\
@@ -286,7 +313,9 @@ def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
             for path in local_dir.rglob("*")
             if path.is_file() and path.name.endswith((".json", ".pt", ".pth"))
         )
-        local_checkpoint = checkpoint_candidates[0] if checkpoint_candidates else local_dir
+        local_checkpoint = (
+            checkpoint_candidates[0] if checkpoint_candidates else local_dir
+        )
         if local_checkpoint.is_dir():
             ssh.upload_directory(str(local_checkpoint), remote_dir)
             return remote_dir
@@ -308,9 +337,13 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     if not gpu_type and not gpu_preset:
         _fail(_gpu_selection_error())
     if not gpu_type:
-        _fail("Missing --gpu-type. Isaac Lab deploy does not provide a default GPU type.")
+        _fail(
+            "Missing --gpu-type. Isaac Lab deploy does not provide a default GPU type."
+        )
     if not gpu_preset:
-        _fail("Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type.")
+        _fail(
+            "Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type."
+        )
 
 
 def _build_install_command() -> str:
@@ -364,26 +397,26 @@ def _activate_prefix() -> str:
     return (
         f"set -euo pipefail\n"
         f"source {ISAAC_LAB_VENV}/bin/activate\n"
-        f"export OMNI_KIT_ACCEPT_EULA=\"${{OMNI_KIT_ACCEPT_EULA:-YES}}\"\n"
-        f"export ACCEPT_EULA=\"${{ACCEPT_EULA:-Y}}\"\n"
-        f"export ISAACSIM_ACCEPT_EULA=\"${{ISAACSIM_ACCEPT_EULA:-YES}}\"\n"
+        f'export OMNI_KIT_ACCEPT_EULA="${{OMNI_KIT_ACCEPT_EULA:-YES}}"\n'
+        f'export ACCEPT_EULA="${{ACCEPT_EULA:-Y}}"\n'
+        f'export ISAACSIM_ACCEPT_EULA="${{ISAACSIM_ACCEPT_EULA:-YES}}"\n'
         f"export ISAACLAB_PKG={ISAAC_LAB_PKG}\n"
-        "export PYTHONPATH=\"$ISAACLAB_PKG/source/isaaclab:"
+        'export PYTHONPATH="$ISAACLAB_PKG/source/isaaclab:'
         "$ISAACLAB_PKG/source/isaaclab_tasks:"
         "$ISAACLAB_PKG/source/isaaclab_rl:"
         "$ISAACLAB_PKG/source/isaaclab_assets:"
         "$ISAACLAB_PKG/source/isaaclab_mimic:"
         "$ISAACLAB_PKG/source/isaaclab_contrib:"
-        "${PYTHONPATH:-}\"\n"
+        '${PYTHONPATH:-}"\n'
     )
 
 
 def _container_prefix() -> str:
     return (
         "set -euo pipefail\n"
-        "export OMNI_KIT_ACCEPT_EULA=\"${OMNI_KIT_ACCEPT_EULA:-YES}\"\n"
-        "export ACCEPT_EULA=\"${ACCEPT_EULA:-Y}\"\n"
-        "export ISAACSIM_ACCEPT_EULA=\"${ISAACSIM_ACCEPT_EULA:-YES}\"\n"
+        'export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"\n'
+        'export ACCEPT_EULA="${ACCEPT_EULA:-Y}"\n'
+        'export ISAACSIM_ACCEPT_EULA="${ISAACSIM_ACCEPT_EULA:-YES}"\n'
         "export PYTHONUNBUFFERED=1\n"
     )
 
@@ -472,7 +505,9 @@ finally:
 """
 
 
-def _build_eval_script(task: str, checkpoint: str, num_episodes: int, output_dir: str) -> str:
+def _build_eval_script(
+    task: str, checkpoint: str, num_episodes: int, output_dir: str
+) -> str:
     return f"""\
 import json
 import time
@@ -779,26 +814,35 @@ def list_cmd(
         filtered = {}
         for pname, pcfg in projects.items():
             wbs = {
-                k: v for k, v in pcfg.get("workbenches", {}).items()
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
                 if _is_isaac_lab_workbench(k, v)
             }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench isaac-lab deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench isaac-lab deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
         workbenches = {
-            k: v for k, v in proj_cfg.get("workbenches", {}).items()
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
             if _is_isaac_lab_workbench(k, v)
         }
         if not workbenches:
@@ -812,10 +856,14 @@ def list_cmd(
             gpu = wb_cfg.get("gpu_platform", "?")
             host = wb_cfg.get("ssh", {}).get("host", "?")
             app_status = wb_cfg.get("app_status", "unknown")
-            typer.echo(f"    {wb_name}{wb_marker}  gpu={gpu}  ssh={host}  app_status={app_status}")
+            typer.echo(
+                f"    {wb_name}{wb_marker}  gpu={gpu}  ssh={host}  app_status={app_status}"
+            )
 
     if not any_shown:
-        typer.echo("No Isaac Lab workbenches configured. Run 'npa workbench isaac-lab deploy' to create one.")
+        typer.echo(
+            "No Isaac Lab workbenches configured. Run 'npa workbench isaac-lab deploy' to create one."
+        )
 
 
 @app.command("deploy")
@@ -825,22 +873,60 @@ def deploy_cmd(
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only deploy the app."),
-    skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only deploy the app."
+    ),
+    skip_app: bool = typer.Option(
+        False, "--skip-app", help="Skip app installation, only provision infra."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
+    preemptible: bool = typer.Option(
+        True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Deploy or destroy an Isaac Lab workbench."""
     byovm = is_byovm_runtime(runtime)
@@ -906,15 +992,17 @@ def deploy_cmd(
                 return
             console.print("  Environment ready")
 
-            write_config({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+            write_config(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
@@ -945,17 +1033,19 @@ def deploy_cmd(
 
     instance_name = f"isaac-lab-{proj_alias}-{wb_name}"
     cloud_init_workbench_type = (
-        "lerobot-container"
-        if runtime_uses_container(runtime)
-        else "isaac-lab"
+        "lerobot-container" if runtime_uses_container(runtime) else "isaac-lab"
     )
 
     if destroy:
         if byovm:
-            console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             if not dry_run:
                 remove_workbench_config(proj_alias, wb_name)
-            console.print(f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified.")
+            console.print(
+                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+            )
             return
 
         console.print(f"  [1/2] Destroying {proj_alias}/{wb_name}...")
@@ -965,19 +1055,26 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -1023,19 +1120,25 @@ def deploy_cmd(
     if not skip_infra:
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
+        console.print(
+            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+        )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
         else:
@@ -1045,9 +1148,12 @@ def deploy_cmd(
                         "access_key": merged_vars.get("nebius_api_key", ""),
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
                     }
-                    if use_remote_state else None
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -1061,7 +1167,9 @@ def deploy_cmd(
             "enable_preemptible": "true" if preemptible else "false",
             **merged_vars,
         }
-        console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
+        console.print(
+            f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})..."
+        )
         if dry_run:
             tf_outputs = {
                 "vm_ip": "<pending>",
@@ -1072,7 +1180,9 @@ def deploy_cmd(
             }
         else:
             try:
-                tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                tf_outputs = provisioner.apply(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform apply failed: {exc}")
                 return
@@ -1081,22 +1191,40 @@ def deploy_cmd(
         step += 1
         console.print(
             f"  [{step}/{total_steps}] "
-            + ("Using BYOVM target..." if byovm else "Skipping infra, reading existing config...")
+            + (
+                "Using BYOVM target..."
+                if byovm
+                else "Skipping infra, reading existing config..."
+            )
         )
         resolved_tf_dir = tf_dir
         if byovm:
             try:
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
-                bucket = merged_vars.get("s3_bucket", "") or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get("AWS_ENDPOINT_URL", "")
-                tf_outputs = workbench_storage_outputs(target=target, bucket=bucket, endpoint=storage_ep)
+                target = resolve_byovm_target(
+                    host=host, ssh_key=ssh_key, ssh_user=ssh_user
+                )
+                bucket = merged_vars.get("s3_bucket", "") or os.environ.get(
+                    "NPA_CHECKPOINT_BUCKET", ""
+                )
+                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get(
+                    "AWS_ENDPOINT_URL", ""
+                )
+                tf_outputs = workbench_storage_outputs(
+                    target=target, bucket=bucket, endpoint=storage_ep
+                )
                 if not dry_run:
-                    ssh = SSHClient(ssh_config_for_target(target, tokens=resolve_credentials().tokens))
+                    ssh = SSHClient(
+                        ssh_config_for_target(
+                            target, tokens=resolve_credentials().tokens
+                        )
+                    )
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -1115,16 +1243,24 @@ def deploy_cmd(
             work_dir = provisioner.working_dir_path(proj_alias, wb_name)
             if work_dir.exists():
                 try:
-                    provisioner.init(tf_dir=str(work_dir), backend_config={
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    })
+                    provisioner.init(
+                        tf_dir=str(work_dir),
+                        backend_config={
+                            "access_key": merged_vars.get("nebius_api_key", ""),
+                            "secret_key": merged_vars.get("nebius_secret_key", ""),
+                        },
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=str(work_dir))
                 except ProvisionerError:
                     pass
 
         if not tf_outputs:
-            from npa.clients.config import _deep_get, _load_yaml, _resolve_project_section, _resolve_workbench_in_project
+            from npa.clients.config import (
+                _deep_get,
+                _load_yaml,
+                _resolve_project_section,
+                _resolve_workbench_in_project,
+            )
 
             yml = _load_yaml()
             proj = _resolve_project_section(yml, proj_alias)
@@ -1132,13 +1268,21 @@ def deploy_cmd(
             tf_outputs = {
                 "vm_ip": _deep_get(wb, "ssh", "host", default=""),
                 "ssh_user": _deep_get(wb, "ssh", "user", default="ubuntu"),
-                "ssh_key_path": _deep_get(wb, "ssh", "key_path", default="~/.ssh/id_ed25519"),
-                "storage_bucket": _deep_get(wb, "storage", "checkpoint_bucket", default=""),
-                "storage_endpoint": _deep_get(wb, "storage", "endpoint_url", default=""),
+                "ssh_key_path": _deep_get(
+                    wb, "ssh", "key_path", default="~/.ssh/id_ed25519"
+                ),
+                "storage_bucket": _deep_get(
+                    wb, "storage", "checkpoint_bucket", default=""
+                ),
+                "storage_endpoint": _deep_get(
+                    wb, "storage", "endpoint_url", default=""
+                ),
             }
 
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     vm_ip = tf_outputs.get("vm_ip", "")
@@ -1146,7 +1290,11 @@ def deploy_cmd(
     ssh_key = tf_outputs.get("ssh_key_path", "~/.ssh/id_ed25519")
     bucket = tf_outputs.get("storage_bucket", "")
     storage_ep = tf_outputs.get("storage_endpoint", "")
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
         effective_count=byovm_effective_gpu_count or None,
@@ -1168,7 +1316,10 @@ def deploy_cmd(
                         "app_status": APP_STATUS_PROVISIONED,
                         **byovm_fields,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+                        "storage": {
+                            "checkpoint_bucket": bucket_display,
+                            "endpoint_url": storage_ep,
+                        },
                     },
                 },
             },
@@ -1202,7 +1353,9 @@ def deploy_cmd(
         )
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
+        console.print(
+            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+        )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
@@ -1218,9 +1371,14 @@ def deploy_cmd(
             step += 1
             console.print(f"  [{step}/{total_steps}] Starting Isaac Lab container...")
             if dry_run:
-                console.print("    [dry-run] Would pull and run the Isaac Lab container image")
+                console.print(
+                    "    [dry-run] Would pull and run the Isaac Lab container image"
+                )
             else:
-                from npa.deploy.configurator import deploy_workbench_container, write_remote_docker_env_file
+                from npa.deploy.configurator import (
+                    deploy_workbench_container,
+                    write_remote_docker_env_file,
+                )
 
                 try:
                     service_env = {
@@ -1229,7 +1387,9 @@ def deploy_cmd(
                         "OMNI_KIT_ACCEPT_EULA": "YES",
                         "PRIVACY_CONSENT": "Y",
                         "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                        "AWS_SECRET_ACCESS_KEY": merged_vars.get(
+                            "nebius_secret_key", ""
+                        ),
                         "AWS_ENDPOINT_URL": storage_ep,
                         "NEBIUS_S3_ENDPOINT": storage_ep,
                         "NEBIUS_S3_BUCKET": bucket,
@@ -1241,7 +1401,9 @@ def deploy_cmd(
                             visible_devices=byovm_visible_devices,
                         ),
                     }
-                    apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                    apply_shared_credential_env(
+                        service_env, credentials, include=not no_shared_creds
+                    )
                     write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-isaac-lab/env",
@@ -1274,9 +1436,13 @@ def deploy_cmd(
                     return
         else:
             step += 1
-            console.print(f"  [{step}/{total_steps}] Installing Isaac Lab {ISAAC_LAB_VERSION}...")
+            console.print(
+                f"  [{step}/{total_steps}] Installing Isaac Lab {ISAAC_LAB_VERSION}..."
+            )
             if dry_run:
-                console.print("    [dry-run] Would install Python 3.11, Isaac Lab, and Isaac Sim")
+                console.print(
+                    "    [dry-run] Would install Python 3.11, Isaac Lab, and Isaac Sim"
+                )
             else:
                 try:
                     ssh.run_or_raise(_build_install_command(), stream=True)
@@ -1288,13 +1454,20 @@ def deploy_cmd(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="isaac-lab", version=ISAAC_LAB_VERSION, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="isaac-lab",
+                    version=ISAAC_LAB_VERSION,
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
 
     step += 1
-    console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
+    console.print(
+        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+    )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
@@ -1305,17 +1478,22 @@ def deploy_cmd(
     console.print(f"  Try: npa workbench isaac-lab -p {proj_alias} -n {wb_name} status")
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias,
-            "name": wb_name,
-            "vm_ip": vm_ip,
-            "ssh_user": ssh_user,
-            "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
-            "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
-            "gpu_count": byovm_fields.get("gpu_count"),
-            "runtime": runtime.value,
-            "tf_outputs": tf_outputs,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
+                    "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
+                    "gpu_count": byovm_fields.get("gpu_count"),
+                    "runtime": runtime.value,
+                    "tf_outputs": tf_outputs,
+                },
+                indent=2,
+            )
+        )
 
 
 def _deploy_step_count(skip_infra: bool, skip_app: bool) -> int:
@@ -1328,7 +1506,9 @@ def _deploy_step_count(skip_infra: bool, skip_app: bool) -> int:
 
 @app.command("status")
 def status_cmd(
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Check Isaac Lab VM status via SSH."""
     cfg = _get_ssh_config()
@@ -1340,7 +1520,7 @@ def status_cmd(
             "echo '' && echo '=== uptime ===' && uptime && "
             "echo '' && echo '=== container ===' && sudo docker inspect -f 'state={{.State.Status}} image={{.Config.Image}}' npa-isaac-lab && "
             "echo '' && echo '=== isaac lab version ===' && "
-            "sudo docker exec npa-isaac-lab bash -lc '/isaac-sim/python.sh -c \"import importlib.metadata as m; print(m.version(\\\"isaaclab\\\"))\"'"
+            'sudo docker exec npa-isaac-lab bash -lc \'/isaac-sim/python.sh -c "import importlib.metadata as m; print(m.version(\\"isaaclab\\"))"\''
         )
     else:
         status_cmd_str = (
@@ -1358,25 +1538,35 @@ def status_cmd(
         code, out, err = ssh.run_or_raise(status_cmd_str)
     except SSHError as exc:
         if output_format == OutputFormat.json:
-            typer.echo(json.dumps({
-                "host": cfg.ssh.host,
-                "app_status": cfg.app_status or "unknown",
-                "status": "unreachable",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "host": cfg.ssh.host,
+                        "app_status": cfg.app_status or "unknown",
+                        "status": "unreachable",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"app_status: {cfg.app_status or 'unknown'}")
         _fail(f"SSH error: {exc}")
         return
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "app_status": cfg.app_status or "unknown",
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "status": "reachable" if code == 0 else "error",
-            "output": out.strip() if out else "",
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "app_status": cfg.app_status or "unknown",
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "status": "reachable" if code == 0 else "error",
+                    "output": out.strip() if out else "",
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"[bold]Isaac Lab VM: {cfg.ssh.host}[/bold]")
         typer.echo(f"app_status: {cfg.app_status or 'unknown'}")
@@ -1389,7 +1579,9 @@ def status_cmd(
 
 @app.command("system-info")
 def system_info_cmd(
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Collect and display system hardware information from the Isaac Lab VM."""
     cfg = _get_ssh_config()
@@ -1413,11 +1605,16 @@ def system_info_cmd(
         return
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "system_info": out.strip(),
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "system_info": out.strip(),
+                },
+                indent=2,
+            )
+        )
     else:
         if out:
             typer.echo(out.strip())
@@ -1427,8 +1624,12 @@ def system_info_cmd(
 
 @app.command("train")
 def train_cmd(
-    task: str = typer.Option(..., "--task", help="Isaac Lab task, e.g. Isaac-Reach-Franka-v0."),
-    num_envs: int = typer.Option(64, "--num-envs", help="Number of parallel environments."),
+    task: str = typer.Option(
+        ..., "--task", help="Isaac Lab task, e.g. Isaac-Reach-Franka-v0."
+    ),
+    num_envs: int = typer.Option(
+        64, "--num-envs", help="Number of parallel environments."
+    ),
     steps: int = typer.Option(1000, "--steps", help="Training iterations to run."),
     output_path: str = typer.Option(
         "",
@@ -1438,7 +1639,9 @@ def train_cmd(
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Run Isaac Lab training on the VM via SSH."""
     if num_envs <= 0:
@@ -1468,7 +1671,7 @@ def train_cmd(
         cfg,
         prefix
         + f"mkdir -p {shlex.quote(remote_output_dir)}\n"
-        + f"{python_bin} - <<'PY'\n{_build_train_script(task, num_envs, steps, remote_output_dir)}PY\n"
+        + f"{python_bin} - <<'PY'\n{_build_train_script(task, num_envs, steps, remote_output_dir)}PY\n",
     )
     stream_logs = output_format != OutputFormat.json
 
@@ -1515,7 +1718,9 @@ def train_cmd(
 
 @app.command("eval")
 def eval_cmd(
-    task: str = typer.Option(..., "--task", help="Isaac Lab task, e.g. Isaac-Reach-Franka-v0."),
+    task: str = typer.Option(
+        ..., "--task", help="Isaac Lab task, e.g. Isaac-Reach-Franka-v0."
+    ),
     input_path: str = typer.Option(
         "",
         "--input-path",
@@ -1524,7 +1729,9 @@ def eval_cmd(
     ),
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
-    num_episodes: int = typer.Option(10, "--num-episodes", help="Number of evaluation episodes."),
+    num_episodes: int = typer.Option(
+        10, "--num-episodes", help="Number of evaluation episodes."
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -1533,7 +1740,9 @@ def eval_cmd(
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Run Isaac Lab evaluation on the VM via SSH."""
     if num_episodes <= 0:
@@ -1579,7 +1788,7 @@ def eval_cmd(
         cfg,
         prefix
         + f"mkdir -p {shlex.quote(remote_output_dir)}\n"
-        + f"{python_bin} - <<'PY'\n{_build_eval_script(task, remote_checkpoint, num_episodes, remote_output_dir)}PY\n"
+        + f"{python_bin} - <<'PY'\n{_build_eval_script(task, remote_checkpoint, num_episodes, remote_output_dir)}PY\n",
     )
     stream_logs = output_format != OutputFormat.json
 
@@ -1627,17 +1836,34 @@ def eval_cmd(
 
 @app.command("export-lerobot")
 def export_lerobot_cmd(
-    task: str = typer.Option(..., "--task", help="Isaac Lab humanoid/G1 task to roll out."),
-    num_episodes: int = typer.Option(10, "--num-episodes", help="Number of episodes to export."),
-    steps_per_episode: int = typer.Option(50, "--steps-per-episode", help="Maximum steps recorded per episode."),
-    output_path: str = typer.Option(..., "--output-path", "-o", help="S3 URI for the LeRobotDataset output."),
-    fps: int = typer.Option(50, "--fps", help="Frame rate to record in LeRobot metadata."),
+    task: str = typer.Option(
+        ..., "--task", help="Isaac Lab humanoid/G1 task to roll out."
+    ),
+    num_episodes: int = typer.Option(
+        10, "--num-episodes", help="Number of episodes to export."
+    ),
+    steps_per_episode: int = typer.Option(
+        50, "--steps-per-episode", help="Maximum steps recorded per episode."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", "-o", help="S3 URI for the LeRobotDataset output."
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes the LeRobotDataset output.",
+    ),
+    fps: int = typer.Option(
+        50, "--fps", help="Frame rate to record in LeRobot metadata."
+    ),
     placeholder_video: bool = typer.Option(
         True,
         "--placeholder-video/--no-placeholder-video",
         help="Include a small synthetic ego-view video so visual GR00T loaders have an image modality.",
     ),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
@@ -1670,6 +1896,7 @@ def export_lerobot_cmd(
         return
 
     cfg = _get_ssh_config()
+    resolved_target_project = target_project or None
     ssh = SSHClient(cfg.ssh)
     remote_raw_dir = f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/raw"
     prefix = _container_prefix() if _is_container_runtime(cfg) else _activate_prefix()
@@ -1679,7 +1906,9 @@ def export_lerobot_cmd(
         prefix
         + f"rm -rf {shlex.quote(remote_raw_dir)} && mkdir -p {shlex.quote(remote_raw_dir)}\n"
         + f"{python_bin} - <<'PY'\n"
-        + _build_export_lerobot_script(task, num_episodes, steps_per_episode, remote_raw_dir)
+        + _build_export_lerobot_script(
+            task, num_episodes, steps_per_episode, remote_raw_dir
+        )
         + "PY\n",
     )
     stream_logs = output_format != OutputFormat.json
@@ -1724,15 +1953,18 @@ def export_lerobot_cmd(
                 task=task,
                 include_placeholder_video=placeholder_video,
             )
+
             def scoped_upload() -> str:
-                saved_to = _storage_client(cfg).upload_directory(str(converted), output_path)
+                saved_to = _storage_client(
+                    cfg,
+                    project=resolved_target_project,
+                    allow_host_creds=allow_host_creds,
+                ).upload_directory(str(converted), output_path)
                 result["upload_mode"] = "local"
                 return saved_to
 
             def remote_upload() -> str:
-                remote_converted_dir = (
-                    f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/converted"
-                )
+                remote_converted_dir = f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/converted"
                 saved_to = _upload_local_directory_via_remote_env(
                     ssh,
                     converted,

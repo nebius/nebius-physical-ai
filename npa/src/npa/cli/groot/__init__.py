@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import shlex
@@ -23,7 +22,11 @@ from npa.cli.ingress import (
     register_byovm_alias,
     resolve_deploy_instance_id,
 )
-from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -54,15 +57,14 @@ from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.network import NetworkIngressError
+from npa.clients.project_credentials import storage_env_for_project
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
     HealthCheckMode,
     audit_remote_env,
     docker_exec_cmd,
-    health_check,
     health_check_auto,
-    health_check_ssh,
     write_manifest,
     write_remote_docker_env_file,
 )
@@ -248,13 +250,19 @@ def _print_ngc_env_audit(
     remote_path: str,
 ) -> None:
     tokens = getattr(credentials, "tokens", {}) or {}
-    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get("NGC_API_KEY", "")
+    ngc_api_key = getattr(credentials, "ngc_api_key", "") or tokens.get(
+        "NGC_API_KEY", ""
+    )
     if ngc_api_key and service_env.get("NGC_API_KEY"):
         console.print("    Credential audit: NGC credentials merged and written.")
     elif ngc_api_key:
-        console.print(f"    Warning: NGC credentials configured but not written to {remote_path}")
+        console.print(
+            f"    Warning: NGC credentials configured but not written to {remote_path}"
+        )
     else:
-        console.print("    Warning: NGC credentials not configured; continuing without NGC service env.")
+        console.print(
+            "    Warning: NGC credentials not configured; continuing without NGC service env."
+        )
 
 
 EMBODIMENT_ALIASES = {
@@ -417,8 +425,12 @@ def ensure_ingress_cmd(
 
 @app.command("register-byovm")
 def register_byovm_cmd(
-    alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
-    instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
+    alias: str = typer.Option(
+        ..., "--alias", help="Workbench alias to create or update."
+    ),
+    instance_id: str = typer.Option(
+        ..., "--instance-id", help="Nebius compute instance ID."
+    ),
     port: int = typer.Option(8082, "--port", help="GR00T HTTP service port."),
 ) -> None:
     """Register an existing VM as a GR00T BYOVM alias and ensure ingress."""
@@ -461,7 +473,11 @@ def _is_ngc_model_ref(model: str) -> bool:
 
 
 def _s3_path_name(path: str, default: str = "result.json") -> str:
-    name = Path(urlparse(path).path.rstrip("/")).name if _is_s3_uri(path) else Path(path).name
+    name = (
+        Path(urlparse(path).path.rstrip("/")).name
+        if _is_s3_uri(path)
+        else Path(path).name
+    )
     return name or default
 
 
@@ -610,7 +626,7 @@ def _is_container_config(cfg: Any) -> bool:
 def _container_exec_env(names: tuple[str, ...]) -> str:
     if not names:
         return ""
-    env_assignments = " ".join(f"{name}=\"${{{name}:-}}\"" for name in names)
+    env_assignments = " ".join(f'{name}="${{{name}:-}}"' for name in names)
     env_flags = " ".join(f"-e {name}" for name in names)
     return f"sudo env {env_assignments} docker exec {env_flags} {shlex.quote(GROOT_CONTAINER_NAME)} bash -lc "
 
@@ -635,7 +651,9 @@ def _runtime_command(
 def _service_env_lines(fields: dict[str, str] | None) -> str:
     if not fields:
         return ""
-    return "\n".join(f"{key}={shlex.quote(value)}" for key, value in fields.items() if value)
+    return "\n".join(
+        f"{key}={shlex.quote(value)}" for key, value in fields.items() if value
+    )
 
 
 def _gpu_env_from_config(cfg: Any) -> dict[str, str]:
@@ -1062,11 +1080,13 @@ def _build_serve_command(
     env_fields: dict[str, str] | None = None,
 ) -> str:
     server_py = _build_server_py(model_path, embodiment_tag)
-    payload = json.dumps({
-        "model_path": model_path,
-        "embodiment_tag": embodiment_tag,
-        "device": "cuda",
-    })
+    payload = json.dumps(
+        {
+            "model_path": model_path,
+            "embodiment_tag": embodiment_tag,
+            "device": "cuda",
+        }
+    )
     extra_env = _service_env_lines(env_fields)
     script = f"""\
 set -euo pipefail
@@ -1103,12 +1123,16 @@ exit 1
     return _remote_bash(script)
 
 
-def _build_container_serve_command(model_path: str, embodiment_tag: str, port: int) -> str:
-    payload = json.dumps({
-        "model_path": model_path,
-        "embodiment_tag": embodiment_tag,
-        "device": "cuda",
-    })
+def _build_container_serve_command(
+    model_path: str, embodiment_tag: str, port: int
+) -> str:
+    payload = json.dumps(
+        {
+            "model_path": model_path,
+            "embodiment_tag": embodiment_tag,
+            "device": "cuda",
+        }
+    )
     script = f"""\
 set -euo pipefail
 for i in $(seq 1 120); do
@@ -1203,17 +1227,21 @@ echo "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
     return _remote_bash(script)
 
 
-def _build_download_command(model: str, output_path: str, endpoint_url: str = "") -> str:
+def _build_download_command(
+    model: str, output_path: str, endpoint_url: str = ""
+) -> str:
     model_ref = model.removeprefix("ngc://")
     slug = _model_slug(model)
     output_is_s3 = _is_s3_uri(output_path)
-    local_dir = f"{GROOT_MODEL_DIR}/{slug}" if not output_path or output_is_s3 else output_path
+    local_dir = (
+        f"{GROOT_MODEL_DIR}/{slug}" if not output_path or output_is_s3 else output_path
+    )
     source_kind = "ngc" if _is_ngc_model_ref(model) else "hf"
     revision_flag = _hf_revision_flag(model)
     upload_cmd = (
         _remote_upload_dir_cmd(local_dir, output_path, endpoint_url)
-        if output_is_s3 else
-        "true"
+        if output_is_s3
+        else "true"
     )
     script = f"""\
 set -euo pipefail
@@ -1250,13 +1278,19 @@ echo {shlex.quote(local_dir)}
     return _remote_bash(script)
 
 
-def _resolve_remote_path_setup(ref: str, local_dir: str, endpoint_url: str) -> tuple[str, str]:
+def _resolve_remote_path_setup(
+    ref: str, local_dir: str, endpoint_url: str
+) -> tuple[str, str]:
     if _is_s3_uri(ref):
-        return local_dir, _remote_download_dir_cmd(ref, local_dir, endpoint_url) + " && "
+        return local_dir, _remote_download_dir_cmd(
+            ref, local_dir, endpoint_url
+        ) + " && "
     return ref, ""
 
 
-def _resolve_remote_file_setup(ref: str, local_file: str, endpoint_url: str) -> tuple[str, str]:
+def _resolve_remote_file_setup(
+    ref: str, local_file: str, endpoint_url: str
+) -> tuple[str, str]:
     if not _is_s3_uri(ref):
         return ref, ""
     parsed = urlparse(ref)
@@ -1303,7 +1337,9 @@ def _build_finetune_command(
         endpoint_url,
     )
     if _is_hf_groot_model_ref(base_model):
-        resolved_base, base_setup = _resolve_infer_checkpoint_setup(base_model, endpoint_url)
+        resolved_base, base_setup = _resolve_infer_checkpoint_setup(
+            base_model, endpoint_url
+        )
     else:
         resolved_base, base_setup = _resolve_remote_path_setup(
             base_model,
@@ -1322,13 +1358,13 @@ def _build_finetune_command(
     output_is_s3 = _is_s3_uri(output_path)
     output_dir = (
         f"{GROOT_DATA_MOUNT}/checkpoints/finetune-{int(time.time())}"
-        if output_is_s3 else
-        output_path
+        if output_is_s3
+        else output_path
     )
     upload_cmd = (
         _remote_upload_dir_cmd(output_dir, output_path, endpoint_url)
-        if output_is_s3 else
-        "true"
+        if output_is_s3
+        else "true"
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
@@ -1395,13 +1431,13 @@ def _build_offline_eval_command(
     output_is_s3 = _is_s3_uri(output_path)
     output_dir = (
         f"{GROOT_OUTPUT_DIR}/offline-eval-{int(time.time())}"
-        if output_is_s3 else
-        output_path
+        if output_is_s3
+        else output_path
     )
     upload_cmd = (
         _remote_upload_dir_cmd(output_dir, output_path, endpoint_url)
-        if output_is_s3 else
-        "true"
+        if output_is_s3
+        else "true"
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     script = f"""\
@@ -1466,7 +1502,9 @@ def _resolve_infer_checkpoint_setup(
 ) -> tuple[str, str]:
     if _is_s3_uri(ref):
         local_dir = _cache_dir("checkpoint", ref)
-        return local_dir, _remote_download_dir_cmd(ref, local_dir, endpoint_url) + " && "
+        return local_dir, _remote_download_dir_cmd(
+            ref, local_dir, endpoint_url
+        ) + " && "
     if _is_hf_groot_model_ref(ref):
         local_dir = f"{GROOT_MODEL_DIR}/{_model_slug(ref)}"
         revision_flag = _hf_revision_flag(ref)
@@ -1507,14 +1545,12 @@ def _build_infer_command(
     )
     output_is_s3 = _is_s3_uri(output_path)
     output_dir = (
-        f"{GROOT_OUTPUT_DIR}/infer-{int(time.time())}"
-        if output_is_s3 else
-        output_path
+        f"{GROOT_OUTPUT_DIR}/infer-{int(time.time())}" if output_is_s3 else output_path
     )
     upload_cmd = (
         _remote_upload_dir_cmd(output_dir, output_path, endpoint_url)
-        if output_is_s3 else
-        "true"
+        if output_is_s3
+        else "true"
     )
     tag = _normalize_embodiment_tag(embodiment_tag)
     script = f"""\
@@ -1665,16 +1701,20 @@ def _build_system_info_command(*, container: bool = False) -> str:
         )
     )
     container_cmd = (
-        f"echo '' && echo '=== container ===' && "
-        f"sudo docker inspect -f 'state={{{{.State.Status}}}} image={{{{.Config.Image}}}}' {shlex.quote(GROOT_CONTAINER_NAME)} && "
-    ) if container else ""
+        (
+            f"echo '' && echo '=== container ===' && "
+            f"sudo docker inspect -f 'state={{{{.State.Status}}}} image={{{{.Config.Image}}}}' {shlex.quote(GROOT_CONTAINER_NAME)} && "
+        )
+        if container
+        else ""
+    )
     return (
         "echo '=== nvidia-smi ===' && nvidia-smi && "
         "echo '' && echo '=== lscpu ===' && lscpu && "
         "echo '' && echo '=== free -h ===' && free -h && "
-        "echo '' && echo '=== lsblk ===' && lsblk && " +
-        container_cmd +
-        f"echo '' && echo '=== gr00t ===' && {gr00t_cmd} && "
+        "echo '' && echo '=== lsblk ===' && lsblk && "
+        + container_cmd
+        + f"echo '' && echo '=== gr00t ===' && {gr00t_cmd} && "
         f"echo '' && echo '=== isaac lab ===' && {isaac_cmd}"
     )
 
@@ -1705,15 +1745,23 @@ def _read_existing_outputs(
         work_dir = provisioner.working_dir_path(proj_alias, wb_name)
         if work_dir.exists():
             try:
-                provisioner.init(tf_dir=str(work_dir), backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=str(work_dir),
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
                 return provisioner.outputs(tf_dir=str(work_dir))
             except ProvisionerError:
                 pass
 
-    from npa.clients.config import _deep_get, _load_yaml, _resolve_project_section, _resolve_workbench_in_project
+    from npa.clients.config import (
+        _deep_get,
+        _load_yaml,
+        _resolve_project_section,
+        _resolve_workbench_in_project,
+    )
 
     try:
         yml = _load_yaml()
@@ -1732,7 +1780,9 @@ def _read_existing_outputs(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List configured GR00T workbenches."""
     projects = list_projects()
@@ -1743,26 +1793,35 @@ def list_cmd(
         filtered = {}
         for pname, pcfg in projects.items():
             wbs = {
-                k: v for k, v in pcfg.get("workbenches", {}).items()
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
                 if _is_groot_workbench(k, v)
             }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench groot deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench groot deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
         workbenches = {
-            k: v for k, v in proj_cfg.get("workbenches", {}).items()
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
             if _is_groot_workbench(k, v)
         }
         if not workbenches:
@@ -1783,42 +1842,102 @@ def list_cmd(
             )
 
     if not any_shown:
-        typer.echo("No GR00T workbenches configured. Run 'npa workbench groot deploy' to create one.")
+        typer.echo(
+            "No GR00T workbenches configured. Run 'npa workbench groot deploy' to create one."
+        )
 
 
 @app.command("deploy")
 def deploy_cmd(
-    gpu_type: str = typer.Option("gpu-l40s-a", "--gpu-type", help="Nebius GPU platform; defaults to L40S."),
-    gpu_preset: str = typer.Option("1gpu-40vcpu-160gb", "--gpu-preset", help="Nebius GPU preset."),
-    data_disk_size: int = typer.Option(200, "--data-disk-size", help="Attached GR00T data disk size in GiB."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH user. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
+    gpu_type: str = typer.Option(
+        "gpu-l40s-a", "--gpu-type", help="Nebius GPU platform; defaults to L40S."
+    ),
+    gpu_preset: str = typer.Option(
+        "1gpu-40vcpu-160gb", "--gpu-preset", help="Nebius GPU preset."
+    ),
+    data_disk_size: int = typer.Option(
+        200, "--data-disk-size", help="Attached GR00T data disk size in GiB."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH user. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only deploy the app."),
-    skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
-    skip_model_check: bool = typer.Option(False, "--skip-model-check", help="Skip Hugging Face gated-model access validation."),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only deploy the app."
+    ),
+    skip_app: bool = typer.Option(
+        False, "--skip-app", help="Skip app installation, only provision infra."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
+    skip_model_check: bool = typer.Option(
+        False,
+        "--skip-model-check",
+        help="Skip Hugging Face gated-model access validation.",
+    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
         help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
     ),
-    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Hugging Face GR00T model ID to validate and record."),
-    server_port: int = typer.Option(DEFAULT_SERVER_PORT, "--server-port", help="GR00T HTTP server port on the VM."),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    verify_env: bool = typer.Option(
+        bool(os.environ.get("CI")),
+        "--verify-env/--no-verify-env",
+        help="Audit deployed shared credentials after app deploy.",
+    ),
+    model: str = typer.Option(
+        DEFAULT_MODEL,
+        "--model",
+        help="Hugging Face GR00T model ID to validate and record.",
+    ),
+    server_port: int = typer.Option(
+        DEFAULT_SERVER_PORT, "--server-port", help="GR00T HTTP server port on the VM."
+    ),
+    preemptible: bool = typer.Option(
+        True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy or destroy a GR00T runtime VM with Isaac Lab available for sim evaluation."""
     if data_disk_size <= 0:
@@ -1894,15 +2013,17 @@ def deploy_cmd(
                 _fail(f"Nebius bootstrap failed: {exc}")
                 return
             console.print("  Environment ready")
-            write_config({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+            write_config(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
@@ -1932,13 +2053,15 @@ def deploy_cmd(
         )
 
     if use_remote_state and nebius_creds and not dry_run:
-        write_config({
-            "projects": {
-                proj_alias: {
-                    "terraform_state": _terraform_state_config(merged_vars),
+        write_config(
+            {
+                "projects": {
+                    proj_alias: {
+                        "terraform_state": _terraform_state_config(merged_vars),
+                    },
                 },
-            },
-        })
+            }
+        )
 
     instance_name = f"groot-{proj_alias}-{wb_name}"
     tf_workbench_type = GROOT_CONTAINER_WORKBENCH_TYPE if container_runtime else "groot"
@@ -1946,9 +2069,13 @@ def deploy_cmd(
     if destroy:
         if byovm:
             if dry_run:
-                console.print("  [dry-run] Would unregister BYOVM workbench only; VM would not be modified.")
+                console.print(
+                    "  [dry-run] Would unregister BYOVM workbench only; VM would not be modified."
+                )
                 return
-            console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             remove_workbench_config(proj_alias, wb_name)
             console.print("  BYOVM target was not stopped, destroyed, or modified.")
             return
@@ -1960,19 +2087,26 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -2026,19 +2160,25 @@ def deploy_cmd(
     if not skip_infra:
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
+        console.print(
+            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+        )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
         else:
@@ -2048,9 +2188,12 @@ def deploy_cmd(
                         "access_key": merged_vars.get("nebius_api_key", ""),
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
                     }
-                    if use_remote_state else None
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -2070,7 +2213,9 @@ def deploy_cmd(
         except ValueError as exc:
             _fail(str(exc))
             return
-        console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
+        console.print(
+            f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})..."
+        )
         if dry_run:
             tf_outputs = {
                 "vm_ip": "<pending>",
@@ -2081,29 +2226,44 @@ def deploy_cmd(
             }
         else:
             try:
-                tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                tf_outputs = provisioner.apply(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform apply failed: {exc}")
                 return
         console.print(f"    VM IP: {tf_outputs.get('vm_ip', 'unknown')}")
     else:
         step += 1
-        console.print(f"  [{step}/{total_steps}] {'Using BYOVM target' if byovm else 'Skipping infra, reading existing config'}...")
+        console.print(
+            f"  [{step}/{total_steps}] {'Using BYOVM target' if byovm else 'Skipping infra, reading existing config'}..."
+        )
         resolved_tf_dir = tf_dir
         if byovm:
             try:
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
+                target = resolve_byovm_target(
+                    host=host, ssh_key=ssh_key, ssh_user=ssh_user
+                )
             except ValueError as exc:
                 _fail(str(exc))
                 return
-            ssh = SSHClient(SSHConfig(host=target.host, user=target.user, key_path=target.key_path, tokens=resolve_credentials().tokens))
+            ssh = SSHClient(
+                SSHConfig(
+                    host=target.host,
+                    user=target.user,
+                    key_path=target.key_path,
+                    tokens=resolve_credentials().tokens,
+                )
+            )
             if not dry_run:
                 try:
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -2115,11 +2275,15 @@ def deploy_cmd(
                     return
             else:
                 byovm_effective_gpu_count = gpu_count or 0
-                byovm_visible_devices = ",".join(str(i) for i in range(byovm_effective_gpu_count))
+                byovm_visible_devices = ",".join(
+                    str(i) for i in range(byovm_effective_gpu_count)
+                )
             tf_outputs = workbench_storage_outputs(
                 target=target,
-                bucket=merged_vars.get("s3_bucket", "") or os.environ.get("NPA_CHECKPOINT_BUCKET", ""),
-                endpoint=merged_vars.get("s3_endpoint", "") or os.environ.get("AWS_ENDPOINT_URL", ""),
+                bucket=merged_vars.get("s3_bucket", "")
+                or os.environ.get("NPA_CHECKPOINT_BUCKET", ""),
+                endpoint=merged_vars.get("s3_endpoint", "")
+                or os.environ.get("AWS_ENDPOINT_URL", ""),
             )
         else:
             tf_outputs = _read_existing_outputs(
@@ -2130,7 +2294,9 @@ def deploy_cmd(
                 merged_vars,
             )
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     vm_ip = tf_outputs.get("vm_ip", "")
@@ -2139,7 +2305,11 @@ def deploy_cmd(
     bucket = tf_outputs.get("storage_bucket", "")
     storage_ep = tf_outputs.get("storage_endpoint", "")
     endpoint = f"http://{vm_ip}:{server_port}"
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
         effective_count=byovm_effective_gpu_count or None,
@@ -2168,7 +2338,10 @@ def deploy_cmd(
                         "model": model,
                         "embodiment_tag": DEFAULT_EMBODIMENT_TAG,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+                        "storage": {
+                            "checkpoint_bucket": bucket_display,
+                            "endpoint_url": storage_ep,
+                        },
                         **byovm_fields,
                     },
                 },
@@ -2194,7 +2367,9 @@ def deploy_cmd(
 
     if not skip_app:
         mark_app_status(APP_STATUS_INSTALLING)
-        ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
+        ssh_cfg = SSHConfig(
+            host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens
+        )
         service_env = {
             "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
             "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
@@ -2212,10 +2387,14 @@ def deploy_cmd(
                 visible_devices=byovm_visible_devices,
             ),
         }
-        apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+        apply_shared_credential_env(
+            service_env, credentials, include=not no_shared_creds
+        )
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
+        console.print(
+            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+        )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
@@ -2241,7 +2420,9 @@ def deploy_cmd(
                 include_shared_creds=False,
             )
             if dry_run:
-                console.print("    [dry-run] Would pull and run the GR00T container image")
+                console.print(
+                    "    [dry-run] Would pull and run the GR00T container image"
+                )
                 console.print("    [dry-run] Service env:")
                 console.print(render_redacted_env_file(full_service_env).rstrip())
             else:
@@ -2259,7 +2440,9 @@ def deploy_cmd(
                     )
                     from npa.deploy.configurator import deploy_workbench_container
 
-                    ssh.run(f"sudo systemctl stop {GROOT_SERVICE} >/dev/null 2>&1 || true")
+                    ssh.run(
+                        f"sudo systemctl stop {GROOT_SERVICE} >/dev/null 2>&1 || true"
+                    )
                     deploy_workbench_container(
                         ssh,
                         image_ref=image_ref,
@@ -2312,12 +2495,19 @@ def deploy_cmd(
                     fail_app(f"GR00T container deployment failed: {exc}")
                     return
         else:
-            console.print(f"  [{step}/{total_steps}] Installing GR00T {GROOT_RELEASE} runtime...")
+            console.print(
+                f"  [{step}/{total_steps}] Installing GR00T {GROOT_RELEASE} runtime..."
+            )
             if dry_run:
-                console.print("    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab")
+                console.print(
+                    "    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab"
+                )
             else:
                 try:
-                    ssh.run_or_raise(_build_install_command(server_port, env_fields=service_env), stream=True)
+                    ssh.run_or_raise(
+                        _build_install_command(server_port, env_fields=service_env),
+                        stream=True,
+                    )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(
                             ssh,
@@ -2356,21 +2546,24 @@ def deploy_cmd(
                     console.print(f"    {health_note}")
                 endpoint_strategy = (
                     "ssh"
-                    if byovm and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
+                    if byovm
+                    and (health_check_mode == HealthCheckMode.ssh or bool(health_note))
                     else "public"
                 )
-                write_config({
-                    "projects": {
-                        proj_alias: {
-                            "workbenches": {
-                                wb_name: {
-                                    "endpoint_strategy": endpoint_strategy,
-                                    "service_port": server_port,
+                write_config(
+                    {
+                        "projects": {
+                            proj_alias: {
+                                "workbenches": {
+                                    wb_name: {
+                                        "endpoint_strategy": endpoint_strategy,
+                                        "service_port": server_port,
+                                    },
                                 },
                             },
                         },
-                    },
-                })
+                    }
+                )
             else:
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
@@ -2379,7 +2572,12 @@ def deploy_cmd(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="groot", version=GROOT_RELEASE, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="groot",
+                    version=GROOT_RELEASE,
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
@@ -2397,7 +2595,9 @@ def deploy_cmd(
             )
 
     step += 1
-    console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
+    console.print(
+        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+    )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
@@ -2410,24 +2610,31 @@ def deploy_cmd(
     console.print(f"  Try: npa workbench groot -p {proj_alias} -n {wb_name} status")
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias,
-            "name": wb_name,
-            "endpoint": endpoint,
-            "vm_ip": vm_ip,
-            "ssh_user": ssh_user,
-            "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
-            "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
-            "gpu_count": byovm_fields.get("gpu_count"),
-            "data_disk_size_gb": data_disk_size,
-            "model": model,
-            "tf_outputs": tf_outputs,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "endpoint": endpoint,
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
+                    "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
+                    "gpu_count": byovm_fields.get("gpu_count"),
+                    "data_disk_size_gb": data_disk_size,
+                    "model": model,
+                    "tf_outputs": tf_outputs,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command("download")
 def download_cmd(
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="GR00T model ID or NGC model ref."),
+    model: str = typer.Option(
+        DEFAULT_MODEL, "--model", help="GR00T model ID or NGC model ref."
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -2438,7 +2645,9 @@ def download_cmd(
         "--ngc-api-key",
         help="NGC API key. Falls back to NGC_API_KEY env var or ~/.npa/credentials.yaml.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Download GR00T model weights to the workbench VM or shared S3 storage."""
     try:
@@ -2460,9 +2669,7 @@ def download_cmd(
             _runtime_command(
                 cfg,
                 _build_download_command(model, target, cfg.storage.endpoint_url),
-            pass_env=(
-                *GROOT_REMOTE_ENV_NAMES,
-            ),
+                pass_env=(*GROOT_REMOTE_ENV_NAMES,),
             ),
             stream=output != OutputFormat.json,
         )
@@ -2485,17 +2692,31 @@ def download_cmd(
 
 @app.command("reload-env")
 def reload_env_cmd(
-    port: int = typer.Option(0, "--port", help="GR00T HTTP server port. Defaults to the saved service port."),
-    restart: bool = typer.Option(True, "--restart/--no-restart", help="Restart GR00T after updating the env file."),
+    port: int = typer.Option(
+        0, "--port", help="GR00T HTTP server port. Defaults to the saved service port."
+    ),
+    restart: bool = typer.Option(
+        True,
+        "--restart/--no-restart",
+        help="Restart GR00T after updating the env file.",
+    ),
     preserve_loaded: bool = typer.Option(
         True,
         "--preserve-loaded/--no-preserve-loaded",
         help="After restart, re-serve the model that was loaded before the env update.",
     ),
-    model: str = typer.Option("", "--model", help="Model ID/path to serve after reloading env."),
-    robot_embodiment: str = typer.Option("", "--robot-embodiment", help="Embodiment tag to serve after reloading env."),
-    timeout: float = typer.Option(600.0, "--timeout", help="Seconds to wait for optional model re-serve."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    model: str = typer.Option(
+        "", "--model", help="Model ID/path to serve after reloading env."
+    ),
+    robot_embodiment: str = typer.Option(
+        "", "--robot-embodiment", help="Embodiment tag to serve after reloading env."
+    ),
+    timeout: float = typer.Option(
+        600.0, "--timeout", help="Seconds to wait for optional model re-serve."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Propagate local shared credentials into the running GR00T service env without redeploying."""
     cfg = _get_config()
@@ -2508,13 +2729,17 @@ def reload_env_cmd(
     if not credential_env:
         _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
 
-    service_port = port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    service_port = (
+        port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    )
     pre_health: dict[str, Any] = {}
     pre_health_error = ""
     should_probe_loaded = preserve_loaded or bool(model) or bool(robot_embodiment)
     if should_probe_loaded:
         try:
-            with service_endpoint(cfg, default_port=service_port, service_port=service_port) as active:
+            with service_endpoint(
+                cfg, default_port=service_port, service_port=service_port
+            ) as active:
                 pre_health = HTTPClient(active.url, timeout=10.0, retries=1).health()
         except (EndpointError, ServerError) as exc:
             pre_health_error = str(exc)
@@ -2545,21 +2770,31 @@ def reload_env_cmd(
     serve_model = model
     serve_tag = robot_embodiment
     if preserve_loaded and not serve_model and pre_health.get("loaded"):
-        serve_model = str(pre_health.get("loaded_model") or pre_health.get("model") or "")
+        serve_model = str(
+            pre_health.get("loaded_model") or pre_health.get("model") or ""
+        )
         serve_tag = serve_tag or str(pre_health.get("embodiment_tag") or "")
     if robot_embodiment and not serve_model:
-        serve_model = str(pre_health.get("loaded_model") or pre_health.get("model") or DEFAULT_MODEL)
+        serve_model = str(
+            pre_health.get("loaded_model") or pre_health.get("model") or DEFAULT_MODEL
+        )
 
     served: dict[str, Any] | None = None
     endpoint_url = ""
     if serve_model:
         tag = _normalize_embodiment_tag(serve_tag or DEFAULT_EMBODIMENT_TAG)
         try:
-            with service_endpoint(cfg, default_port=service_port, service_port=service_port) as active:
+            with service_endpoint(
+                cfg, default_port=service_port, service_port=service_port
+            ) as active:
                 served = HTTPClient(active.url, timeout=timeout, retries=1)._request(
                     "POST",
                     "/serve",
-                    json={"model_path": serve_model, "embodiment_tag": tag, "device": "cuda"},
+                    json={
+                        "model_path": serve_model,
+                        "embodiment_tag": tag,
+                        "device": "cuda",
+                    },
                     timeout=timeout,
                 )
                 endpoint_url = active.url
@@ -2583,7 +2818,9 @@ def reload_env_cmd(
     if served is not None:
         result["served"] = {
             "model": serve_model,
-            "embodiment_tag": _normalize_embodiment_tag(serve_tag or DEFAULT_EMBODIMENT_TAG),
+            "embodiment_tag": _normalize_embodiment_tag(
+                serve_tag or DEFAULT_EMBODIMENT_TAG
+            ),
             "endpoint": endpoint_url,
             "response": served,
         }
@@ -2594,23 +2831,47 @@ def reload_env_cmd(
 
 @app.command("finetune")
 def finetune_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI for a GR00T LeRobot training dataset."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI for a fine-tuned checkpoint directory."),
-    base_model: str = typer.Option(DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID or S3 URI."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 URI for a GR00T LeRobot training dataset."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 URI for a fine-tuned checkpoint directory."
+    ),
+    base_model: str = typer.Option(
+        DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID or S3 URI."
+    ),
     robot_embodiment: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--robot-embodiment",
         help="GR00T embodiment tag, e.g. NEW_EMBODIMENT, REAL_G1, UNITREE_G1, LIBERO_PANDA.",
     ),
-    num_gpus: int = typer.Option(1, "--num-gpus", help="Number of GPUs for PyTorch fine-tuning."),
-    config: str = typer.Option("", "--config", help="Optional GR00T modality/training config path."),
-    max_steps: int | None = typer.Option(None, "--max-steps", help="Override GR00T training max_steps."),
-    global_batch_size: int | None = typer.Option(None, "--global-batch-size", help="Override effective training batch size."),
-    dataloader_num_workers: int | None = typer.Option(None, "--dataloader-num-workers", help="Override dataloader workers."),
-    save_steps: int | None = typer.Option(None, "--save-steps", help="Override checkpoint save interval."),
-    save_total_limit: int | None = typer.Option(None, "--save-total-limit", help="Override checkpoint retention."),
-    save_only_model: bool = typer.Option(False, "--save-only-model", help="Save only model weights in checkpoints."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    num_gpus: int = typer.Option(
+        1, "--num-gpus", help="Number of GPUs for PyTorch fine-tuning."
+    ),
+    config: str = typer.Option(
+        "", "--config", help="Optional GR00T modality/training config path."
+    ),
+    max_steps: int | None = typer.Option(
+        None, "--max-steps", help="Override GR00T training max_steps."
+    ),
+    global_batch_size: int | None = typer.Option(
+        None, "--global-batch-size", help="Override effective training batch size."
+    ),
+    dataloader_num_workers: int | None = typer.Option(
+        None, "--dataloader-num-workers", help="Override dataloader workers."
+    ),
+    save_steps: int | None = typer.Option(
+        None, "--save-steps", help="Override checkpoint save interval."
+    ),
+    save_total_limit: int | None = typer.Option(
+        None, "--save-total-limit", help="Override checkpoint retention."
+    ),
+    save_only_model: bool = typer.Option(
+        False, "--save-only-model", help="Save only model weights in checkpoints."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Fine-tune a GR00T action head on demonstration data with PyTorch."""
     if num_gpus <= 0:
@@ -2681,8 +2942,12 @@ def finetune_cmd(
 
 @app.command("eval")
 def eval_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI for a fine-tuned checkpoint."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI for eval results."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 URI for a fine-tuned checkpoint."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 URI for eval results."
+    ),
     robot_embodiment: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--robot-embodiment",
@@ -2693,14 +2958,20 @@ def eval_cmd(
         "--dataset-path",
         help="Held-out GR00T LeRobot dataset for offline open-loop eval.",
     ),
-    sim: bool = typer.Option(False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."),
+    sim: bool = typer.Option(
+        False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
+    ),
     isaac_lab_workbench: str = typer.Option(
         "",
         "--isaac-lab-workbench",
         help="Named Isaac Lab workbench used for sim evaluation.",
     ),
-    num_episodes: int = typer.Option(100, "--num-episodes", help="Number of sim episodes."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    num_episodes: int = typer.Option(
+        100, "--num-episodes", help="Number of sim episodes."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Evaluate a fine-tuned GR00T policy offline or through the S3 Isaac Lab data bus."""
     tag = _normalize_embodiment_tag(robot_embodiment)
@@ -2752,7 +3023,10 @@ def eval_cmd(
             ),
         }
         saved_to = _write_eval_request(request, output_path)
-        _output({"status": "sim_eval_request_created", "request_path": saved_to, **request}, output)
+        _output(
+            {"status": "sim_eval_request_created", "request_path": saved_to, **request},
+            output,
+        )
         return
 
     if not dataset_path:
@@ -2803,7 +3077,11 @@ def _write_eval_request(request: dict[str, Any], output_path: str) -> str:
         try:
             local = Path(tmp.name) / "groot_sim_eval_request.json"
             local.write_text(json.dumps(request, indent=2))
-            dest = f"{target}/groot_sim_eval_request.json" if not target.endswith(".json") else target
+            dest = (
+                f"{target}/groot_sim_eval_request.json"
+                if not target.endswith(".json")
+                else target
+            )
             return _storage_client_for_config(cfg).upload_file(str(local), dest)
         finally:
             tmp.cleanup()
@@ -2818,13 +3096,29 @@ def _write_eval_request(request: dict[str, Any], output_path: str) -> str:
 
 @app.command("serve")
 def serve_cmd(
-    input_path: str = typer.Option("", "--input-path", help="S3 URI for a fine-tuned checkpoint directory."),
-    model: str = typer.Option("", "--model", help="Downloaded/base model ID to serve instead of --input-path."),
-    robot_embodiment: str = typer.Option(DEFAULT_EMBODIMENT_TAG, "--robot-embodiment", help="GR00T embodiment tag."),
-    port: int = typer.Option(DEFAULT_SERVER_PORT, "--port", help="GR00T HTTP server port."),
-    timeout: float = typer.Option(600.0, "--timeout", help="Seconds to wait for model load before failing."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print the pending live serve placeholder without touching the VM."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    input_path: str = typer.Option(
+        "", "--input-path", help="S3 URI for a fine-tuned checkpoint directory."
+    ),
+    model: str = typer.Option(
+        "", "--model", help="Downloaded/base model ID to serve instead of --input-path."
+    ),
+    robot_embodiment: str = typer.Option(
+        DEFAULT_EMBODIMENT_TAG, "--robot-embodiment", help="GR00T embodiment tag."
+    ),
+    port: int = typer.Option(
+        DEFAULT_SERVER_PORT, "--port", help="GR00T HTTP server port."
+    ),
+    timeout: float = typer.Option(
+        600.0, "--timeout", help="Seconds to wait for model load before failing."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the pending live serve placeholder without touching the VM.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Load a GR00T checkpoint and serve synchronous policy inference."""
     if bool(input_path) == bool(model):
@@ -2840,13 +3134,16 @@ def serve_cmd(
         except PathContractError as exc:
             _fail(str(exc))
     if dry_run:
-        _output({
-            "status": "pending",
-            "message": "Would ask the running GR00T server to load the selected model.",
-            "input_path": input_path or None,
-            "model": model or None,
-            "port": port,
-        }, output)
+        _output(
+            {
+                "status": "pending",
+                "message": "Would ask the running GR00T server to load the selected model.",
+                "input_path": input_path or None,
+                "model": model or None,
+                "port": port,
+            },
+            output,
+        )
         return
     cfg = _get_config()
     ssh = _ssh_client(cfg)
@@ -2855,7 +3152,10 @@ def serve_cmd(
     setup_cmd = ""
     if input_path and _is_s3_uri(input_path):
         model_path = _cache_dir("checkpoint", input_path)
-        setup_cmd = _remote_download_dir_cmd(input_path, model_path, cfg.storage.endpoint_url) + " && "
+        setup_cmd = (
+            _remote_download_dir_cmd(input_path, model_path, cfg.storage.endpoint_url)
+            + " && "
+        )
     elif model:
         model_path = model
 
@@ -2879,7 +3179,11 @@ def serve_cmd(
             served = HTTPClient(active.url, timeout=timeout, retries=1)._request(
                 "POST",
                 "/serve",
-                json={"model_path": model_path, "embodiment_tag": tag, "device": "cuda"},
+                json={
+                    "model_path": model_path,
+                    "embodiment_tag": tag,
+                    "device": "cuda",
+                },
                 timeout=timeout,
             )
             endpoint_url = active.url
@@ -2889,7 +3193,10 @@ def serve_cmd(
     except ServerError as exc:
         message = str(exc)
         lowered = message.lower()
-        if any(term in lowered for term in ("gated", "authentication", "401", "403", "access to model")):
+        if any(
+            term in lowered
+            for term in ("gated", "authentication", "401", "403", "access to model")
+        ):
             repo = model or model_path
             message += (
                 f"\nRequest access at https://huggingface.co/{repo} and ensure "
@@ -2913,9 +3220,27 @@ def serve_cmd(
 
 @app.command("infer")
 def infer_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 URI or Hugging Face model ID for a GR00T checkpoint."),
-    dataset_path: str = typer.Option(..., "--dataset-path", help="S3 URI for a GR00T LeRobot dataset."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI for predicted actions."),
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        help="S3 URI or Hugging Face model ID for a GR00T checkpoint.",
+    ),
+    dataset_path: str = typer.Option(
+        ..., "--dataset-path", help="S3 URI for a GR00T LeRobot dataset."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 URI for predicted actions."
+    ),
+    source_project: str = typer.Option(
+        "",
+        "--source-project",
+        help="Project alias whose scoped principal reads S3 checkpoint and dataset inputs.",
+    ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal writes S3 prediction outputs.",
+    ),
     embodiment_tag: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
         "--embodiment-tag",
@@ -2928,13 +3253,17 @@ def infer_cmd(
         help="Inference backend.",
     ),
     steps: int = typer.Option(32, "--steps", help="Maximum episode steps to process."),
-    action_horizon: int = typer.Option(16, "--action-horizon", help="Predicted action horizon."),
+    action_horizon: int = typer.Option(
+        16, "--action-horizon", help="Predicted action horizon."
+    ),
     trt_engine_path: str = typer.Option(
         "./gr00t_n1d7_engines",
         "--trt-engine-path",
         help="TensorRT engine path used when --inference-mode=tensorrt.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run GR00T policy inference over evaluation episodes and save predicted actions."""
     if steps <= 0:
@@ -2963,7 +3292,13 @@ def infer_cmd(
     except PathContractError as exc:
         _fail(str(exc))
     cfg = _get_ssh_config()
-    ssh = _ssh_client(cfg)
+    remote_storage_project = target_project or source_project
+    extra_tokens = (
+        storage_env_for_project(remote_storage_project)
+        if remote_storage_project
+        else None
+    )
+    ssh = _ssh_client(cfg, extra_tokens=extra_tokens)
     tag = _normalize_embodiment_tag(embodiment_tag)
     cmd = _runtime_command(
         cfg,
@@ -3019,7 +3354,9 @@ def _resolve_infer_input(
 
     tmp = tempfile.TemporaryDirectory(prefix="npa-groot-input-")
     temp_dirs.append(tmp)
-    downloaded = Path(_storage_client_for_config(cfg).download_path(input_path, tmp.name))
+    downloaded = Path(
+        _storage_client_for_config(cfg).download_path(input_path, tmp.name)
+    )
     if downloaded.is_file():
         return downloaded
     files = [path for path in downloaded.rglob("*") if path.is_file()]
@@ -3033,7 +3370,9 @@ def _build_infer_payload(input_path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(data.decode("utf-8"))
     except json.JSONDecodeError as exc:
-        _fail(f"GR00T infer input must be JSON matching the Policy API observation format: {exc}")
+        _fail(
+            f"GR00T infer input must be JSON matching the Policy API observation format: {exc}"
+        )
     if isinstance(payload, dict) and "observation" in payload:
         return payload
     return {"observation": payload}
@@ -3060,8 +3399,12 @@ def _save_json_result(
 
 @app.command("convert")
 def convert_cmd(
-    input_path: str = typer.Option(..., "--input-path", "--input", "-i", help="S3 URI for the input dataset."),
-    output_path: str = typer.Option(..., "--output-path", "--output", "-o", help="S3 URI for the output dataset."),
+    input_path: str = typer.Option(
+        ..., "--input-path", "--input", "-i", help="S3 URI for the input dataset."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", "--output", "-o", help="S3 URI for the output dataset."
+    ),
     direction: ConvertDirection = typer.Option(
         ConvertDirection.lerobot_to_groot,
         "--direction",
@@ -3073,7 +3416,9 @@ def convert_cmd(
         "--embodiment-tag",
         help="GR00T embodiment tag to record in the converted dataset.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Convert datasets between standard LeRobot and GR00T LeRobot layout."""
     from npa.adapter.groot import GR00TAdapterError, groot_to_lerobot, lerobot_to_groot
@@ -3138,7 +3483,9 @@ def convert_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check the GR00T endpoint health."""
     cfg = _get_config()
@@ -3150,12 +3497,17 @@ def status_cmd(
             endpoint_url = active.url
     except EndpointError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo("  app_status: unreachable")
@@ -3163,12 +3515,17 @@ def status_cmd(
         return
     except ServerError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "endpoint": cfg.endpoint,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "endpoint": cfg.endpoint,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  endpoint: {cfg.endpoint}")
             typer.echo("  app_status: unreachable")
@@ -3186,11 +3543,15 @@ def status_cmd(
         "blockers": [],
     }
     if not hf_present:
-        readiness["blockers"].append("HF_TOKEN not configured - gated model downloads will fail")
+        readiness["blockers"].append(
+            "HF_TOKEN not configured - gated model downloads will fail"
+        )
     if not ngc_ok:
         readiness["blockers"].append("NGC credentials not configured")
     if not loaded:
-        readiness["blockers"].append(f"Model {data.get('model') or DEFAULT_MODEL} not loaded")
+        readiness["blockers"].append(
+            f"Model {data.get('model') or DEFAULT_MODEL} not loaded"
+        )
     app_status = "healthy" if loaded else "degraded"
 
     result = {
@@ -3207,19 +3568,25 @@ def status_cmd(
 
 @app.command("system-info")
 def system_info_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Collect system information and GR00T runtime status from the VM."""
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
     try:
-        _, out, err = ssh.run_or_raise(_build_system_info_command(container=_is_container_config(cfg)))
+        _, out, err = ssh.run_or_raise(
+            _build_system_info_command(container=_is_container_config(cfg))
+        )
     except SSHError as exc:
         _fail(f"SSH error: {exc}")
         return
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({"host": cfg.ssh.host, "system_info": out.strip()}, indent=2))
+        typer.echo(
+            json.dumps({"host": cfg.ssh.host, "system_info": out.strip()}, indent=2)
+        )
     else:
         if out:
             typer.echo(out.strip())
