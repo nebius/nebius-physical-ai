@@ -32,7 +32,6 @@ from npa.viz.lerobot import (
     g1_state_vectors_to_skeleton,
     load_lerobot_state_vectors,
     real_g1_action_vectors_to_g1_state_vectors,
-    select_frames,
 )
 
 
@@ -79,7 +78,7 @@ def _write_groot_overlay_recording(
     input_rgb = _normalize_color(input_color)
     predictions_rgb = _normalize_color(predictions_color)
     input_states, source_fps, _title = load_lerobot_state_vectors(input_dataset_path)
-    selected_input_states, _input_indices, resolved_duration_s = _select_adapter_frames(
+    selected_input_states, _input_indices, _resolved_duration_s = _select_adapter_frames(
         input_states,
         fps=source_fps,
         duration_s=duration_s,
@@ -87,18 +86,26 @@ def _write_groot_overlay_recording(
     input_skeleton = g1_state_vectors_to_skeleton(selected_input_states)
     prediction_skeleton, prediction_states = _load_prediction_frames(
         predictions_path,
-        source_fps=source_fps,
-        duration_s=resolved_duration_s,
     )
-    if prediction_skeleton.shape != input_skeleton.shape:
+    if prediction_skeleton.shape[1] != input_skeleton.shape[1]:
         raise RerunAdapterError(
-            "Prediction skeleton shape must match input skeleton shape after sampling: "
-            f"{prediction_skeleton.shape} != {input_skeleton.shape}"
+            "Prediction joint count must match input joint count: "
+            f"{prediction_skeleton.shape[1]} != {input_skeleton.shape[1]}"
         )
-    if prediction_states.shape != selected_input_states.shape:
+    if prediction_states.shape[1] != selected_input_states.shape[1]:
         raise RerunAdapterError(
-            "Prediction angle state shape must match input state shape after sampling: "
-            f"{prediction_states.shape} != {selected_input_states.shape}"
+            "Prediction angle state width must match input state width: "
+            f"{prediction_states.shape[1]} != {selected_input_states.shape[1]}"
+        )
+    if prediction_skeleton.shape[0] != prediction_states.shape[0]:
+        raise RerunAdapterError(
+            "Prediction skeleton and angle state frame counts must match: "
+            f"{prediction_skeleton.shape[0]} != {prediction_states.shape[0]}"
+        )
+    if prediction_skeleton.shape[0] > input_skeleton.shape[0]:
+        raise RerunAdapterError(
+            "Prediction frame count cannot exceed input frame count after sampling: "
+            f"{prediction_skeleton.shape[0]} > {input_skeleton.shape[0]}"
         )
 
     output_rrd_path = Path(output_rrd_path)
@@ -112,6 +119,7 @@ def _write_groot_overlay_recording(
     rr.send_blueprint(blueprint, recording=recording)
     _log_angle_series_styles(rr, recording, INPUT_ENTITY_ROOT, input_rgb)
     _log_angle_series_styles(rr, recording, PREDICTIONS_ENTITY_ROOT, predictions_rgb)
+    prediction_frame_count = int(prediction_skeleton.shape[0])
     for frame_idx in range(input_skeleton.shape[0]):
         _set_time_seconds(rr, recording, frame_idx / float(source_fps))
         _log_frame(
@@ -122,14 +130,15 @@ def _write_groot_overlay_recording(
             selected_input_states[frame_idx],
             input_rgb,
         )
-        _log_frame(
-            rr,
-            recording,
-            PREDICTIONS_ENTITY_ROOT,
-            prediction_skeleton[frame_idx],
-            prediction_states[frame_idx],
-            predictions_rgb,
-        )
+        if frame_idx < prediction_frame_count:
+            _log_frame(
+                rr,
+                recording,
+                PREDICTIONS_ENTITY_ROOT,
+                prediction_skeleton[frame_idx],
+                prediction_states[frame_idx],
+                predictions_rgb,
+            )
     rr.disconnect(recording=recording)
 
     if not output_rrd_path.exists() or output_rrd_path.stat().st_size == 0:
@@ -138,9 +147,6 @@ def _write_groot_overlay_recording(
 
 def _load_prediction_frames(
     predictions_path: Path,
-    *,
-    source_fps: int,
-    duration_s: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     try:
         predictions = _load_prediction_array(Path(predictions_path))
@@ -162,17 +168,9 @@ def _load_prediction_frames(
             f"{G1_STATE_DIM}, REAL_G1 action vectors with last dimension {REAL_G1_ACTION_DIM}, "
             f"or skeleton positions shaped [T, J, 3]; got {predictions.shape}"
         )
-    try:
-        selected_skeleton, indices = select_frames(
-            skeleton,
-            source_fps=source_fps,
-            output_fps=source_fps,
-            duration_s=duration_s,
-        )
-    except VizDataError as exc:
-        raise RerunAdapterError(str(exc)) from exc
-    indices = np.asarray(indices, dtype=np.int64)
-    return selected_skeleton, states[indices]
+    if skeleton.shape[0] <= 0:
+        raise RerunAdapterError("Predictions must contain at least one frame")
+    return skeleton, states
 
 
 def _materialize_predictions(predictions_path: str | Path, stack: ExitStack) -> Path:

@@ -97,7 +97,7 @@ def test_load_predictions_npz_to_skeleton(tmp_path: Path) -> None:
         target_joint_count=G1_STATE_DIM,
     )
 
-    assert predictions.shape == (2, G1_STATE_DIM, 3)
+    assert predictions.shape == (6, G1_STATE_DIM, 3)
 
 
 def test_load_real_g1_action_predictions_to_skeleton(tmp_path: Path) -> None:
@@ -117,6 +117,44 @@ def test_load_real_g1_action_predictions_to_skeleton(tmp_path: Path) -> None:
     )
 
     assert predictions.shape == (2, G1_STATE_DIM, 3)
+
+
+def test_load_render_inputs_preserves_short_prediction_horizon(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=8, fps=4)
+    pred_dir = tmp_path / "predictions"
+    pred_dir.mkdir()
+    actions = np.zeros((3, REAL_G1_ACTION_DIM), dtype=np.float32)
+    actions[:, 32] = 0.5
+    np.savez_compressed(pred_dir / "predicted_actions.npz", trajectory_0=actions)
+
+    loaded = load_render_inputs(
+        dataset,
+        predictions_path=pred_dir,
+        layout="overlay",
+        duration_s=2.0,
+        output_fps=4,
+    )
+
+    assert loaded.skeleton_data.shape == (8, G1_STATE_DIM, 3)
+    assert loaded.predictions_data is not None
+    assert loaded.predictions_data.shape == (3, G1_STATE_DIM, 3)
+
+
+def test_load_render_inputs_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=4, fps=4)
+    pred_dir = tmp_path / "predictions"
+    pred_dir.mkdir()
+    actions = np.zeros((5, REAL_G1_ACTION_DIM), dtype=np.float32)
+    np.savez_compressed(pred_dir / "predicted_actions.npz", trajectory_0=actions)
+
+    with pytest.raises(VizDataError, match="Prediction frame count cannot exceed input frame count"):
+        load_render_inputs(
+            dataset,
+            predictions_path=pred_dir,
+            layout="overlay",
+            duration_s=1.0,
+            output_fps=4,
+        )
 
 
 def test_real_g1_action_mapping_rejects_wrong_dim() -> None:

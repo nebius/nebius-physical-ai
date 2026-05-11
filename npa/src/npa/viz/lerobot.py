@@ -149,6 +149,11 @@ def load_render_inputs(
             duration_s=resolved_duration,
             target_joint_count=skeleton_data.shape[1],
         )
+        if predictions_data.shape[0] > skeleton_data.shape[0]:
+            raise VizDataError(
+                "Prediction frame count cannot exceed input frame count after sampling: "
+                f"{predictions_data.shape[0]} > {skeleton_data.shape[0]}"
+            )
 
     validate_layout_predictions(layout, predictions_data)
     return RenderInputs(
@@ -265,6 +270,11 @@ def load_predictions_skeleton(
     duration_s: float,
     target_joint_count: int,
 ) -> np.ndarray:
+    if source_fps <= 0 or output_fps <= 0:
+        raise VizDataError(f"fps values must be positive, got source={source_fps} output={output_fps}")
+    if duration_s <= 0:
+        raise VizDataError(f"duration must be positive, got {duration_s}")
+
     predictions = _load_prediction_array(Path(path))
     if predictions.ndim == 3 and predictions.shape[-1] == 3:
         skeleton = predictions.astype(np.float32, copy=False)
@@ -281,17 +291,13 @@ def load_predictions_skeleton(
             f"or skeleton positions shaped [T, J, 3]; got {predictions.shape}"
         )
 
-    selected, _indices = select_frames(
-        skeleton,
-        source_fps=source_fps,
-        output_fps=output_fps,
-        duration_s=duration_s,
-    )
-    if selected.shape[1] != target_joint_count:
+    if skeleton.shape[0] <= 0:
+        raise VizDataError("Predictions must contain at least one frame")
+    if skeleton.shape[1] != target_joint_count:
         raise VizDataError(
-            f"Prediction joint count {selected.shape[1]} does not match input joint count {target_joint_count}"
+            f"Prediction joint count {skeleton.shape[1]} does not match input joint count {target_joint_count}"
         )
-    return selected
+    return skeleton
 
 
 def g1_state_vectors_to_skeleton(state_vectors: np.ndarray) -> np.ndarray:

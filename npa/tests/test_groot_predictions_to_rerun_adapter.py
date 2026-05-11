@@ -122,7 +122,7 @@ def test_groot_predictions_to_rerun_color_differentiates_input_and_predictions(t
     assert _first_packed_color(chunks, "/world/predictions/bones", "LineStrips3D:colors") == ORANGE_PACKED
 
 
-def test_groot_predictions_to_rerun_repeats_short_prediction_horizon(tmp_path: Path) -> None:
+def test_groot_predictions_to_rerun_preserves_short_prediction_horizon(tmp_path: Path) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=50, fps=10)
     predictions = _write_predictions_json(tmp_path, frames=4)
     output = tmp_path / "short-horizon.rrd"
@@ -131,12 +131,22 @@ def test_groot_predictions_to_rerun_repeats_short_prediction_horizon(tmp_path: P
 
     chunks = _recording_chunks(output)
     assert _dynamic_row_count(chunks, "/world/skeleton/joints") == 50
-    assert _dynamic_row_count(chunks, "/world/predictions/joints") == 50
+    assert _dynamic_row_count(chunks, "/world/skeleton/bones") == 50
+    assert _dynamic_row_count(chunks, "/world/predictions/joints") == 4
+    assert _dynamic_row_count(chunks, "/world/predictions/bones") == 4
+
+
+def test_groot_predictions_to_rerun_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+    dataset = _write_lerobot_dataset(tmp_path, frames=4, fps=10)
+    predictions = _write_predictions_json(tmp_path, frames=5)
+
+    with pytest.raises(RerunAdapterError, match="Prediction frame count cannot exceed input frame count"):
+        groot_predictions_to_rerun(predictions, dataset, tmp_path / "too-long.rrd")
 
 
 def test_groot_predictions_to_rerun_mismatched_joint_count_is_clean_error(tmp_path: Path) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=10, fps=10)
     predictions = _write_mismatched_skeleton_predictions_json(tmp_path, frames=10)
 
-    with pytest.raises(RerunAdapterError, match="Prediction skeleton shape must match"):
+    with pytest.raises(RerunAdapterError, match="Prediction joint count must match"):
         groot_predictions_to_rerun(predictions, dataset, tmp_path / "mismatched.rrd")

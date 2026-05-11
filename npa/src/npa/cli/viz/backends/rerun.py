@@ -121,9 +121,19 @@ def _validate_inputs(
         raise RerunRenderError(f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}")
     if skeleton.shape[0] == 0 or skeleton.shape[1] == 0:
         raise RerunRenderError("skeleton_data must contain at least one frame and one joint")
-    if predictions is not None and predictions.shape != skeleton.shape:
+    if predictions is not None and (predictions.ndim != 3 or predictions.shape[-1] != 3):
         raise RerunRenderError(
-            f"predictions_data shape {predictions.shape} must match skeleton_data shape {skeleton.shape}"
+            f"predictions_data must have shape [T, J, 3], got {predictions.shape}"
+        )
+    if predictions is not None and predictions.shape[1:] != skeleton.shape[1:]:
+        raise RerunRenderError(
+            "predictions_data joint shape must match skeleton_data joint shape: "
+            f"{predictions.shape[1:]} != {skeleton.shape[1:]}"
+        )
+    if predictions is not None and predictions.shape[0] > skeleton.shape[0]:
+        raise RerunRenderError(
+            "predictions_data frame count cannot exceed skeleton_data frame count: "
+            f"{predictions.shape[0]} > {skeleton.shape[0]}"
         )
     if not joint_connections:
         raise RerunRenderError("joint_connections must not be empty")
@@ -322,7 +332,9 @@ def _write_single_frame_recording(
     rr.send_blueprint(blueprint, recording=recording)
 
     input_frame = skeleton[frame_idx]
-    prediction_frame = None if predictions is None else predictions[frame_idx]
+    prediction_frame = None
+    if predictions is not None and frame_idx < int(predictions.shape[0]):
+        prediction_frame = predictions[frame_idx]
     if layout == "side-by-side" and prediction_frame is not None:
         input_frame = input_frame + np.array([-side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
         prediction_frame = prediction_frame + np.array([side_by_side_offset / 2.0, 0.0, 0.0], dtype=np.float32)
@@ -428,7 +440,7 @@ def _log_motion_series(
         _set_time_seconds(rr, recording, seconds)
         for label, value in _representative_values(skeleton[frame_idx]):
             rr.log(f"world/input/angles/{label}", rr.Scalars(float(value)), recording=recording)
-        if predictions is not None:
+        if predictions is not None and frame_idx < int(predictions.shape[0]):
             for label, value in _representative_values(predictions[frame_idx]):
                 rr.log(f"world/predictions/angles/{label}", rr.Scalars(float(value)), recording=recording)
     if hasattr(rr, "reset_time"):
