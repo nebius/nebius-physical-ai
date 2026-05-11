@@ -15,6 +15,7 @@ def test_convert_help_smoke() -> None:
     assert result.exit_code == 0
     assert "standalone formats" in result.output
     assert "lerobot-to-rrd" in result.output
+    assert "lerobot-to-mp4" in result.output
 
 
 def test_convert_lerobot_to_rrd_help_smoke() -> None:
