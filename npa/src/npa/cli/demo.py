@@ -16,7 +16,7 @@ import typer
 import yaml
 
 from npa.clients.config import resolve_project_storage
-from npa.clients.project_credentials import resolve_credentials
+from npa.clients.project_credentials import s3_client_for_project
 from npa.clients.scoped_credentials import (
     SCOPED_CREDENTIAL_ERROR_CODES,
     client_error_code,
@@ -370,20 +370,7 @@ def _host_s3_client():
     )
 
 
-def _s3_client_for_project(project: str | None, *, allow_host_creds: bool):
-    if not project:
-        return _s3_client()
-    credentials = resolve_credentials(project, allow_host_creds=allow_host_creds)
-    return boto3.client(
-        "s3",
-        endpoint_url=credentials.endpoint_url,
-        aws_access_key_id=credentials.aws_access_key_id or None,
-        aws_secret_access_key=credentials.aws_secret_access_key or None,
-        config=BotoConfig(signature_version="s3v4"),
-    )
-
-
-def _host_s3_client_for_project(project: str | None):
+def _host_client_for_project(project: str | None):
     storage = resolve_project_storage(project)
     return boto3.client(
         "s3",
@@ -420,17 +407,17 @@ def _stage_s3_client(
             host_s3_client or _host_s3_client(),
             allow_host_creds=allow_host_creds,
         )
-    source_scoped = _s3_client_for_project(
+    source_scoped = s3_client_for_project(
         source_project, allow_host_creds=allow_host_creds
     )
-    target_scoped = _s3_client_for_project(
+    target_scoped = s3_client_for_project(
         target_project, allow_host_creds=allow_host_creds
     )
     return _ProjectBoundaryS3(
         source_scoped,
         target_scoped,
-        _host_s3_client_for_project(source_project),
-        _host_s3_client_for_project(target_project),
+        _host_client_for_project(source_project),
+        _host_client_for_project(target_project),
         allow_host_creds=allow_host_creds,
         source_project=source_project,
         target_project=target_project,

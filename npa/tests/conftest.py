@@ -92,5 +92,4 @@ def mock_cross_project_creds(monkeypatch):
     monkeypatch.setattr(
         "npa.clients.project_credentials.resolve_credentials", fake_resolve
     )
-    monkeypatch.setattr("npa.cli.demo.resolve_credentials", fake_resolve)
     return creds_by_project
