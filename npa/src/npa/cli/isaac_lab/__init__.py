@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import tarfile
@@ -36,7 +37,12 @@ from npa.clients.config import (
     write_config,
 )
 from npa.clients.credentials import apply_shared_credential_env
+from npa.clients.scoped_credentials import (
+    bucket_from_s3_uri,
+    run_with_host_credential_fallback,
+)
 from npa.clients.ssh import SSHClient, SSHError
+from npa.errors import ScopedCredentialError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
     RUNTIME_HELP,
@@ -62,6 +68,7 @@ app = typer.Typer(
 )
 
 console = Console(stderr=True)
+logger = logging.getLogger(__name__)
 
 _project_alias: str = ""
 _workbench_name: str = ""
@@ -1631,6 +1638,11 @@ def export_lerobot_cmd(
         help="Include a small synthetic ego-view video so visual GR00T loaders have an image modality.",
     ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    allow_host_creds: bool = typer.Option(
+        False,
+        "--allow-host-creds",
+        help="Allow fallback to VM host credentials when scoped S3 upload credentials are denied.",
+    ),
 ) -> None:
     """Generate Isaac Lab G1 rollouts and export them as a standard LeRobotDataset."""
     if num_episodes <= 0:
@@ -1706,15 +1718,12 @@ def export_lerobot_cmd(
                 task=task,
                 include_placeholder_video=placeholder_video,
             )
-            try:
+            def scoped_upload() -> str:
                 saved_to = _storage_client(cfg).upload_directory(str(converted), output_path)
                 result["upload_mode"] = "local"
-            # FIXME(network/iam): bare except triggers fallback on any error.
-            # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
-            # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
-            # fallback exception handling".
-            except Exception as upload_exc:
-                result["local_upload_error"] = str(upload_exc)
+                return saved_to
+
+            def remote_upload() -> str:
                 remote_converted_dir = (
                     f"{ISAAC_LAB_HOME}/runs/npa-export-lerobot-{int(time.time())}/converted"
                 )
@@ -1725,12 +1734,28 @@ def export_lerobot_cmd(
                     output_path,
                 )
                 result["upload_mode"] = "remote-env"
+                return saved_to
+
+            def record_fallback(upload_exc: BaseException) -> None:
+                result["local_upload_error"] = str(upload_exc)
+
+            saved_to = run_with_host_credential_fallback(
+                scoped_upload,
+                remote_upload,
+                bucket=bucket_from_s3_uri(output_path),
+                operation="Isaac Lab export-lerobot upload",
+                allow_host_creds=allow_host_creds,
+                logger=logger,
+                on_fallback=record_fallback,
+            )
         except (IsaacLabLeRobotError, SSHError, OSError, tarfile.TarError) as exc:
             result["status"] = "failed"
             result["exit_code"] = 1
             result["export_error"] = str(exc)
             _output(result, output_format)
             raise typer.Exit(1) from exc
+        except ScopedCredentialError:
+            raise
         except Exception as exc:
             result["status"] = "failed"
             result["exit_code"] = 1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 
@@ -18,6 +19,13 @@ def _ssh_cfg() -> WorkbenchConfig:
         endpoint="",
         ssh=SSHConfig(host="isaac", user="ubuntu", key_path="~/.ssh/id"),
         storage=StorageConfig(checkpoint_bucket="", endpoint_url=""),
+    )
+
+
+def _access_denied(message: str = "AccessDenied") -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": message}},
+        "PutObject",
     )
 
 
@@ -470,7 +478,7 @@ def test_isaac_lab_export_lerobot_falls_back_to_remote_env_upload(
     mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
     mocker.patch("npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw")
     storage = mocker.MagicMock()
-    storage.upload_directory.side_effect = RuntimeError("AccessDenied")
+    storage.upload_directory.side_effect = _access_denied("AccessDenied")
     mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
     converted = tmp_path / "converted"
     converted.mkdir()
@@ -489,6 +497,7 @@ def test_isaac_lab_export_lerobot_falls_back_to_remote_env_upload(
             "s3://bucket/isaac-lab/g1/",
             "--output-format",
             "json",
+            "--allow-host-creds",
         ],
     )
 

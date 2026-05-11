@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 import shlex
@@ -56,15 +57,17 @@ from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.network import NetworkIngressError
+from npa.clients.scoped_credentials import (
+    bucket_from_s3_uri,
+    run_with_host_credential_fallback,
+)
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
     HealthCheckMode,
     audit_remote_env,
     docker_exec_cmd,
-    health_check,
     health_check_auto,
-    health_check_ssh,
     write_manifest,
 )
 from npa.deploy.byovm import (
@@ -91,6 +94,7 @@ app = typer.Typer(
 )
 
 console = Console(stderr=True)
+logger = logging.getLogger(__name__)
 
 _project_alias: str = ""
 _workbench_name: str = ""
@@ -1595,6 +1599,8 @@ def _save_inference_output(
     output_path: str,
     cfg: Any,
     temp_dirs: list[tempfile.TemporaryDirectory[str]],
+    *,
+    allow_host_creds: bool = False,
 ) -> str:
     if not output_path:
         return ""
@@ -1608,16 +1614,12 @@ def _save_inference_output(
     temp_dirs.append(tmp)
     local_path = Path(tmp.name) / _s3_path_name(output_path)
     _write_inference_output(data, local_path)
-    try:
+    def scoped_upload() -> str:
         saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
         data["upload_mode"] = "local"
         return saved_to
-    # FIXME(network/iam): bare except triggers fallback on any error.
-    # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
-    # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
-    # fallback exception handling".
-    except Exception as local_exc:
-        data["local_upload_error"] = str(local_exc)
+
+    def remote_upload() -> str:
         saved_to = _upload_local_file_via_remote_env(
             SSHClient(cfg.ssh),
             local_path,
@@ -1626,6 +1628,19 @@ def _save_inference_output(
         )
         data["upload_mode"] = "remote"
         return saved_to
+
+    def record_fallback(local_exc: BaseException) -> None:
+        data["local_upload_error"] = str(local_exc)
+
+    return run_with_host_credential_fallback(
+        scoped_upload,
+        remote_upload,
+        bucket=bucket_from_s3_uri(output_path),
+        operation="Cosmos infer output upload",
+        allow_host_creds=allow_host_creds,
+        logger=logger,
+        on_fallback=record_fallback,
+    )
 
 
 def _upload_remote_file_via_env(
@@ -1711,6 +1726,7 @@ def _download_remote_output(
     temp_dirs: list[tempfile.TemporaryDirectory[str]],
     *,
     result: dict[str, Any] | None = None,
+    allow_host_creds: bool = False,
 ) -> str:
     if _is_s3_uri(output_path):
         tmp = tempfile.TemporaryDirectory(prefix="npa-cosmos-output-")
@@ -1718,22 +1734,31 @@ def _download_remote_output(
         local_path = Path(tmp.name) / (Path(remote_path).name or f"cosmos-output-{uuid.uuid4().hex}")
         ssh = SSHClient(cfg.ssh)
         ssh.download_file(remote_path, str(local_path))
-        try:
+        def scoped_upload() -> str:
             saved_to = _storage_client_for_config(cfg).upload_file(str(local_path), output_path)
             if result is not None:
                 result["upload_mode"] = "local"
             return saved_to
-        # FIXME(network/iam): bare except triggers fallback on any error.
-        # Narrow to ClientError filtered to AccessDenied/Forbidden/NoSuchBucket
-        # and gate fallback on opt-in flag. See FIXME.md "[H] Narrow upload-
-        # fallback exception handling".
-        except Exception as local_exc:
-            if result is not None:
-                result["local_upload_error"] = str(local_exc)
+
+        def remote_upload() -> str:
             saved_to = _upload_remote_file_via_env(ssh, remote_path, output_path)
             if result is not None:
                 result["upload_mode"] = "remote"
             return saved_to
+
+        def record_fallback(local_exc: BaseException) -> None:
+            if result is not None:
+                result["local_upload_error"] = str(local_exc)
+
+        return run_with_host_credential_fallback(
+            scoped_upload,
+            remote_upload,
+            bucket=bucket_from_s3_uri(output_path),
+            operation="Cosmos infer output upload",
+            allow_host_creds=allow_host_creds,
+            logger=logger,
+            on_fallback=record_fallback,
+        )
 
     local_path = _local_output_path(remote_path, output_path)
     return SSHClient(cfg.ssh).download_file(remote_path, str(local_path))
@@ -1749,7 +1774,6 @@ def _poll_inference_job(
     quiet: bool = False,
     initial_status: str = "",
 ) -> dict[str, Any]:
-    last_status = initial_status.lower()
     started_at = time.monotonic()
     while True:
         remaining = deadline - time.monotonic()
@@ -1775,7 +1799,6 @@ def _poll_inference_job(
             if data.get("step") is not None and data.get("total_steps") is not None:
                 step = f" (step {data.get('step')}/{data.get('total_steps')})"
             typer.echo(f"[{elapsed}s] Generating...{progress} (status: {status or 'unknown'}){step}")
-            last_status = status
 
         if status == "completed":
             return data
@@ -1816,6 +1839,11 @@ def infer_cmd(
     ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="CLI output format."),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress progress output while polling."),
+    allow_host_creds: bool = typer.Option(
+        False,
+        "--allow-host-creds",
+        help="Allow fallback to VM host credentials when scoped S3 upload credentials are denied.",
+    ),
 ) -> None:
     """Submit a Cosmos inference job, poll until completion, then download the output."""
     try:
@@ -1869,12 +1897,19 @@ def infer_cmd(
                 cfg,
                 temp_dirs,
                 result=result,
+                allow_host_creds=allow_host_creds,
             )
             result["downloaded_to"] = downloaded_to
             if _is_s3_uri(downloaded_to):
                 result["saved_to"] = downloaded_to
         elif output_path:
-            saved_to = _save_inference_output(result, output_path, cfg, temp_dirs)
+            saved_to = _save_inference_output(
+                result,
+                output_path,
+                cfg,
+                temp_dirs,
+                allow_host_creds=allow_host_creds,
+            )
             if saved_to:
                 result["saved_to"] = saved_to
         _output(result, output_format)

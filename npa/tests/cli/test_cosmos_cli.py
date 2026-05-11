@@ -544,7 +544,7 @@ def test_cosmos_infer_falls_back_to_remote_env_upload_on_local_access_denied(
 ) -> None:
     output_uri = "s3://bucket/results/out.mp4"
     store = mocker.MagicMock()
-    store.upload_file.side_effect = RuntimeError("AccessDenied")
+    store.upload_file.side_effect = _access_denied("AccessDenied")
     mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=store)
     http = mocker.MagicMock()
     http.infer.return_value = {"job_id": "job-1", "status": "running"}
@@ -572,6 +572,7 @@ def test_cosmos_infer_falls_back_to_remote_env_upload_on_local_access_denied(
             output_uri,
             "--output-format",
             "json",
+            "--allow-host-creds",
         ],
     )
 
@@ -607,7 +608,13 @@ def test_cosmos_upload_logging_records_local_and_remote_modes(
 
     try:
         base64_result = {"video_base64": base64.b64encode(b"video").decode("ascii")}
-        saved_to = _save_inference_output(base64_result, output_uri, cfg, temp_dirs)
+        saved_to = _save_inference_output(
+            base64_result,
+            output_uri,
+            cfg,
+            temp_dirs,
+            allow_host_creds=True,
+        )
         assert saved_to == output_uri
         assert base64_result["upload_mode"] == "remote"
         assert "AccessDenied: local base64 upload denied" in base64_result["local_upload_error"]
@@ -625,6 +632,7 @@ def test_cosmos_upload_logging_records_local_and_remote_modes(
             cfg,
             temp_dirs,
             result=remote_result,
+            allow_host_creds=True,
         )
         assert saved_to == output_uri
         assert remote_result["upload_mode"] == "remote"
