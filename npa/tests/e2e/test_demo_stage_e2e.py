@@ -131,7 +131,7 @@ def test_demo_verify_agrees_with_demo_stage(
     stage = _run_demo_stage(demo_stage_bucket, e2e_project)
     assert stage.returncode == 0, _format_result(stage)
 
-    verify = _run_npa(["demo", "verify", "--target-bucket", demo_stage_bucket])
+    verify = _run_demo_verify(demo_stage_bucket, e2e_project)
     assert verify.returncode == 0, _format_result(verify)
 
     file_artifact = next(
@@ -142,7 +142,7 @@ def test_demo_verify_agrees_with_demo_stage(
         Key=file_artifact["target_path"],
     )
 
-    verify_missing = _run_npa(["demo", "verify", "--target-bucket", demo_stage_bucket])
+    verify_missing = _run_demo_verify(demo_stage_bucket, e2e_project)
     assert verify_missing.returncode != 0, _format_result(verify_missing)
 
 
@@ -172,6 +172,23 @@ def _run_demo_stage(
             ]
         )
     return _run_npa(args, timeout=600)
+
+
+def _run_demo_verify(
+    bucket: str,
+    e2e_project: str | None,
+) -> subprocess.CompletedProcess[str]:
+    args = [
+        "demo",
+        "verify",
+        "--target-bucket",
+        bucket,
+        "--manifest",
+        str(MANIFEST_PATH),
+    ]
+    if e2e_project:
+        args.extend(["--target-project", e2e_project])
+    return _run_npa(args)
 
 
 def _run_npa(
