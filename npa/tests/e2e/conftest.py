@@ -92,13 +92,26 @@ def e2e_test_bucket(
     e2e_project: str | None,
 ) -> Iterator[str]:
     """Create a real S3 test bucket and tear it down after the test."""
+    yield from _test_bucket(request.node.name, e2e_project)
+
+
+@pytest.fixture(scope="module")
+def e2e_module_test_bucket(
+    request: pytest.FixtureRequest,
+    e2e_project: str | None,
+) -> Iterator[str]:
+    """Create a real S3 test bucket shared by tests in one module."""
+    yield from _test_bucket(request.node.name, e2e_project)
+
+
+def _test_bucket(test_name: str, e2e_project: str | None) -> Iterator[str]:
     if _bucket_count() >= E2E_BUCKET_MAX_CREATIONS:
         pytest.fail("E2E bucket budget exhausted (8 buckets created this run)")
 
     client = s3_client_for_project(e2e_project)
     _prune_concurrent_test_buckets(client)
 
-    bucket_name = _bucket_name_for_test(request.node.name)
+    bucket_name = _bucket_name_for_test(test_name)
     try:
         client.create_bucket(Bucket=bucket_name)
     except Exception:
@@ -204,11 +217,19 @@ class S3Helper:
 
     def list_objects(self, bucket: str, prefix: str = "") -> list[str]:
         """Return object keys in bucket under the given prefix."""
+        return [obj["Key"] for obj in self.list_object_summaries(bucket, prefix)]
+
+    def list_object_summaries(
+        self,
+        bucket: str,
+        prefix: str = "",
+    ) -> list[dict[str, Any]]:
+        """Return object summary mappings in bucket under the given prefix."""
         paginator = self.client.get_paginator("list_objects_v2")
-        keys: list[str] = []
+        objects: list[dict[str, Any]] = []
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            keys.extend(obj["Key"] for obj in page.get("Contents", []))
-        return keys
+            objects.extend(page.get("Contents", []))
+        return objects
 
     def count_objects(self, bucket: str, prefix: str = "") -> int:
         return len(self.list_objects(bucket, prefix))
