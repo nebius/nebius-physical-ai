@@ -298,7 +298,26 @@ Use explicit `-p` and `-n` on status, launch, serve, infer, and destroy
 commands. Current known issues include confusing defaults when these flags are
 omitted.
 
-## 7. Where to next
+## 7. Viewing Rerun recordings in the browser
+
+If you have generated `.rrd` files with `npa convert lerobot-to-rrd` and want
+to share them without requiring teammates to install Rerun locally:
+
+```bash
+# Upload your .rrd to Nebius S3 and get a browser-viewable URL
+npa rerun host /path/to/your-recording.rrd
+
+# For team-shared review workflows with persistent links up to 7 days
+npa rerun share /path/to/your-recording.rrd \
+  --label "weekly-failure-review" \
+  --workspace "team-perception"
+```
+
+The URL opens Rerun's hosted web viewer at `app.rerun.io` loaded with your
+recording. Teammates can scrub the timeline, orbit the 3D view, and inspect
+data without a local Rerun install.
+
+## 8. Where to next
 
 - [Repository overview](../README.md)
 - [CLI and package overview](../npa/README.md)
@@ -306,7 +325,7 @@ omitted.
 - [Known onboarding and runtime gotchas](../FIXME.md)
 - [CLI source map](../npa/src/npa/cli/)
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 `npa: command not found`
 

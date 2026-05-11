@@ -14,6 +14,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench isaac-lab](isaac-lab.md)
 - [npa workbench lerobot](lerobot.md)
 - [npa network](network.md)
+- [npa rerun](rerun.md)
 - [npa viz](viz.md)
 - [npa workbench](workbench.md)
 - [npa workflow](workflow.md)

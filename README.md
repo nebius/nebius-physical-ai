@@ -28,6 +28,10 @@ own Nebius project, follow the [8-GPU H200 demo runbook](docs/demo/8gpu-h200.md)
 CLI reference pages are generated from the Typer help output in
 [docs/cli](docs/cli/README.md).
 
+For browser-based Rerun review workflows, `npa rerun host` and
+`npa rerun share` publish `.rrd` recordings through Nebius S3 presigned URLs
+for viewing in `app.rerun.io`.
+
 ## Contributing
 
 We welcome contributions from the community! Whether you're adding new solutions, improving documentation, or reporting issues, your contributions help make Nebius Physical AI better for everyone.
