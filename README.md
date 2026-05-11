@@ -18,6 +18,11 @@ This repository is organized to support both Nebius and community-created physic
 
 To get started with the `npa` workbench CLI, follow the [npa quickstart](docs/quickstart.md). For other Nebius Physical AI Solutions, explore the solutions directory and review the documentation for your specific use case. Each solution includes its own README with setup instructions and usage examples.
 
+## Reproducing the Demo
+
+To reproduce the Cosmos, Isaac Lab, GR00T, and FiftyOne workbench demo in your
+own Nebius project, follow the [8-GPU H200 demo runbook](docs/demo/8gpu-h200.md).
+
 ## Contributing
 
 We welcome contributions from the community! Whether you're adding new solutions, improving documentation, or reporting issues, your contributions help make Nebius Physical AI better for everyone.
