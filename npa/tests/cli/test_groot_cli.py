@@ -1116,6 +1116,77 @@ def test_groot_infer_runs_remote_batch_inference(mocker) -> None:
     assert "inference_mode: pytorch" in result.output
 
 
+def test_groot_infer_rejects_conflicting_cross_project_flags() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "infer",
+            "--input-path",
+            "s3://bucket/checkpoint/",
+            "--dataset-path",
+            "s3://bucket/dataset/",
+            "--output-path",
+            "s3://bucket/infer/",
+            "--source-project",
+            "project-a",
+            "--target-project",
+            "project-b",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "single credential" in result.output
+    assert "NOVEL_ISSUE_E6_AUTH_SCOPE" in result.output
+    assert "demo stage" in result.output
+
+
+@pytest.mark.parametrize(
+    ("project_flags", "expected_project"),
+    [
+        (["--source-project", "project-a"], "project-a"),
+        (["--target-project", "project-b"], "project-b"),
+        (
+            ["--source-project", "project-a", "--target-project", "project-a"],
+            "project-a",
+        ),
+    ],
+)
+def test_groot_infer_accepts_single_remote_storage_project(
+    mocker, project_flags: list[str], expected_project: str
+) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "NPA_GROOT_INFER_COMPLETE\n", "")
+    mocker.patch("npa.cli.groot.resolve_ssh_config", return_value=_cfg())
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    storage_env = mocker.patch(
+        "npa.cli.groot.storage_env_for_project",
+        return_value={"AWS_ACCESS_KEY_ID": "scoped-key"},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "infer",
+            "--input-path",
+            "s3://bucket/checkpoint/",
+            "--dataset-path",
+            "s3://bucket/dataset/",
+            "--output-path",
+            "s3://bucket/infer/",
+            *project_flags,
+        ],
+    )
+
+    assert result.exit_code == 0
+    storage_env.assert_called_once_with(expected_project)
+    ssh_config = ssh_cls.call_args.args[0]
+    assert ssh_config.tokens["AWS_ACCESS_KEY_ID"] == "scoped-key"
+
+
 def test_groot_infer_rejects_invalid_steps() -> None:
     result = runner.invoke(
         app,

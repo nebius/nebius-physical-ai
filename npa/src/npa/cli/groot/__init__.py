@@ -3234,12 +3234,21 @@ def infer_cmd(
     source_project: str = typer.Option(
         "",
         "--source-project",
-        help="Project alias whose scoped principal reads S3 checkpoint and dataset inputs.",
+        help=(
+            "Project alias for S3 credential resolution. GR00T inference runs "
+            "remotely under a single credential set, so source and target projects "
+            "must match when both are provided. See NOVEL_ISSUE_E6_AUTH_SCOPE."
+        ),
     ),
     target_project: str = typer.Option(
         "",
         "--target-project",
-        help="Project alias whose scoped principal writes S3 prediction outputs.",
+        help=(
+            "Project alias for S3 output credential resolution. GR00T inference "
+            "runs remotely under a single credential set, so source and target "
+            "projects must match when both are provided. See "
+            "NOVEL_ISSUE_E6_AUTH_SCOPE."
+        ),
     ),
     embodiment_tag: str = typer.Option(
         DEFAULT_EMBODIMENT_TAG,
@@ -3270,6 +3279,14 @@ def infer_cmd(
         _fail("--steps must be positive.")
     if action_horizon <= 0:
         _fail("--action-horizon must be positive.")
+    if source_project and target_project and source_project != target_project:
+        _fail(
+            "groot infer cannot route distinct source and target credentials. "
+            "The remote GR00T process runs under a single credential set "
+            "(NOVEL_ISSUE_E6_AUTH_SCOPE). For cross-project staging, use "
+            "`npa demo stage`; for GR00T inference, set --source-project or "
+            "--target-project, or set both to the same value."
+        )
     try:
         input_path = validate_read_path(
             input_path,
