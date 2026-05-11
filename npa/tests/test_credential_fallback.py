@@ -46,7 +46,9 @@ def test_scoped_credentials_access_denied_without_flag_raises() -> None:
         )
 
 
-def test_scoped_credentials_access_denied_with_flag_warns_and_falls_back(caplog) -> None:
+def test_scoped_credentials_access_denied_with_flag_warns_and_falls_back(
+    caplog,
+) -> None:
     calls: list[str] = []
     logger = logging.getLogger("npa.tests.credential_fallback")
 
