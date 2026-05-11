@@ -83,9 +83,17 @@ def render(
     def update(frame: int) -> list[object]:
         _update_skeleton(artists[0], skeleton[frame], joint_connections)
         if layout == "side-by-side":
-            _update_skeleton(artists[1], predictions[frame], joint_connections)
+            if frame < int(predictions.shape[0]):
+                _set_skeleton_visible(artists[1], True)
+                _update_skeleton(artists[1], predictions[frame], joint_connections)
+            else:
+                _set_skeleton_visible(artists[1], False)
         elif layout == "overlay" and predictions is not None and len(artists) > 1:
-            _update_skeleton(artists[1], predictions[frame], joint_connections)
+            if frame < int(predictions.shape[0]):
+                _set_skeleton_visible(artists[1], True)
+                _update_skeleton(artists[1], predictions[frame], joint_connections)
+            else:
+                _set_skeleton_visible(artists[1], False)
         time_marker.set_xdata([frame / fps, frame / fps])
         updated: list[object] = [time_marker]
         for skeleton_artists in artists:
@@ -126,9 +134,19 @@ def _validate_inputs(
         raise MatplotlibRenderError(f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}")
     if skeleton.shape[0] == 0 or skeleton.shape[1] == 0:
         raise MatplotlibRenderError("skeleton_data must contain at least one frame and one joint")
-    if predictions is not None and predictions.shape != skeleton.shape:
+    if predictions is not None and (predictions.ndim != 3 or predictions.shape[-1] != 3):
         raise MatplotlibRenderError(
-            f"predictions_data shape {predictions.shape} must match skeleton_data shape {skeleton.shape}"
+            f"predictions_data must have shape [T, J, 3], got {predictions.shape}"
+        )
+    if predictions is not None and predictions.shape[1:] != skeleton.shape[1:]:
+        raise MatplotlibRenderError(
+            "predictions_data joint shape must match skeleton_data joint shape: "
+            f"{predictions.shape[1:]} != {skeleton.shape[1:]}"
+        )
+    if predictions is not None and predictions.shape[0] > skeleton.shape[0]:
+        raise MatplotlibRenderError(
+            "predictions_data frame count cannot exceed skeleton_data frame count: "
+            f"{predictions.shape[0]} > {skeleton.shape[0]}"
         )
     if not joint_connections:
         raise MatplotlibRenderError("joint_connections must not be empty")
@@ -196,6 +214,12 @@ def _update_skeleton(
     artists.joints._offsets3d = (frame[:, 0], frame[:, 1], frame[:, 2])
 
 
+def _set_skeleton_visible(artists: _SkeletonArtists, visible: bool) -> None:
+    for line in artists.lines:
+        line.set_visible(visible)
+    artists.joints.set_visible(visible)
+
+
 def _style_3d_axis(ax, title: str, limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]) -> None:
     ax.set_facecolor(BACKGROUND)
     ax.set_title(title, color=TEXT_COLOR, fontsize=12, pad=0)
@@ -250,8 +274,16 @@ def _add_motion_trace(trace_ax, skeleton: np.ndarray, predictions: np.ndarray | 
     for trace in _representative_traces(skeleton):
         trace_ax.plot(time, trace, color=INPUT_COLOR, linewidth=1.3, alpha=0.62)
     if predictions is not None:
+        prediction_time = np.arange(predictions.shape[0], dtype=np.float32) / fps
         for trace in _representative_traces(predictions):
-            trace_ax.plot(time, trace, color=PREDICTION_COLOR, linewidth=1.3, alpha=0.60, linestyle="--")
+            trace_ax.plot(
+                prediction_time,
+                trace,
+                color=PREDICTION_COLOR,
+                linewidth=1.3,
+                alpha=0.60,
+                linestyle="--",
+            )
     trace_ax.tick_params(axis="x", colors=MUTED_TEXT_COLOR, labelsize=8)
     trace_ax.tick_params(axis="y", colors=MUTED_TEXT_COLOR, labelsize=8)
     for spine in trace_ax.spines.values():

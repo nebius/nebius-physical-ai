@@ -58,3 +58,41 @@ def test_matplotlib_backend_requires_predictions_for_overlay(tmp_path: Path) -> 
             "test render",
             G1_JOINT_CONNECTIONS,
         )
+
+
+def test_matplotlib_backend_accepts_short_prediction_window(tmp_path: Path, mocker) -> None:
+    skeleton = _skeleton(frames=4)
+    predictions = _skeleton(frames=2) + np.array([0.03, 0.0, 0.0], dtype=np.float32)
+    save = mocker.patch("matplotlib.animation.Animation.save")
+
+    matplotlib_backend.render(
+        skeleton,
+        predictions,
+        "overlay",
+        tmp_path / "short-window.mp4",
+        (320, 180),
+        4,
+        1.0,
+        "test render",
+        G1_JOINT_CONNECTIONS,
+    )
+
+    save.assert_called_once()
+
+
+def test_matplotlib_backend_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+    skeleton = _skeleton(frames=2)
+    predictions = _skeleton(frames=3)
+
+    with pytest.raises(matplotlib_backend.MatplotlibRenderError, match="frame count cannot exceed"):
+        matplotlib_backend.render(
+            skeleton,
+            predictions,
+            "overlay",
+            tmp_path / "too-long.mp4",
+            (320, 180),
+            4,
+            1.0,
+            "test render",
+            G1_JOINT_CONNECTIONS,
+        )
