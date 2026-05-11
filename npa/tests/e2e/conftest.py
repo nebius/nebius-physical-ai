@@ -213,7 +213,11 @@ class S3Helper:
         response = self.head_object(bucket, key)
         if response is None:
             return None
-        return response.get("Metadata", {}).get("sha256")
+        metadata = response.get("Metadata", {})
+        for metadata_key, value in metadata.items():
+            if metadata_key.lower() == "sha256":
+                return value
+        return None
 
     def list_objects(self, bucket: str, prefix: str = "") -> list[str]:
         """Return object keys in bucket under the given prefix."""
