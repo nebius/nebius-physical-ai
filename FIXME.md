@@ -260,3 +260,32 @@ more adapter commands or fold this into another namespace, such as
 
 `npa network ensure-ingress` is the only command in the network namespace.
 Either grow more network commands or fold this into a different command shape.
+
+---
+
+## [M] CC_REVIEW_M4
+
+`groot infer` is missing `--allow-host-creds` while other cross-project commands
+have it. The difference is semantically defensible because GR00T inference runs
+remote S3 I/O under a single credential set, but the inconsistency is not
+documented in cross-project docs or command help. Add that note, or add the flag
+with intentionally constrained behavior.
+
+## [L] CC_REVIEW_M7
+
+`_ProjectBoundaryS3._side_for_bucket` silently routes to `target` when a bucket
+appears in both source and target sets. Edge case, but it repeats the silent
+collapse pattern from I1. Either error on ambiguous membership or split dispatch
+by operation intent.
+
+## [L] CC_REVIEW_N1
+
+`npa.cli.viz.lerobot` has no-op `as <same-name>` re-exports of private adapter
+functions to silence linting. `npa/tests/cli/test_viz_cli.py` imports the
+privates through this path. Cleaner migration: update test imports to point at
+`npa.adapter.lerobot.render` and delete the re-exports.
+
+## [L] CC_REVIEW_N2
+
+`npa init` is a literal alias for `npa configure`. Either drop the alias or add
+a one-line help distinction.
