@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from npa.cli.viz.backends import rerun as rerun_backend
+from npa.viz.backends import rerun as rerun_backend
 
 
 CONNECTIONS = [(0, 1), (1, 2), (2, 3), (3, 4)]

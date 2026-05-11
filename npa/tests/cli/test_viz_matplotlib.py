@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM
-from npa.cli.viz.backends import matplotlib as matplotlib_backend
+from npa.viz.backends import matplotlib as matplotlib_backend
 from npa.viz.lerobot import G1_JOINT_CONNECTIONS, g1_state_vectors_to_skeleton
 
 

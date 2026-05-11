@@ -16,7 +16,7 @@ from npa.adapter.lerobot.render import (
     render_lerobot_to_mp4,
 )
 from npa.cli.main import app
-from npa.cli.viz.backends import matplotlib as matplotlib_backend
+from npa.viz.backends import matplotlib as matplotlib_backend
 from npa.viz.lerobot import REAL_G1_ACTION_DIM
 
 
@@ -116,7 +116,7 @@ def test_rerun_renderer_produces_valid_mp4_with_backend_dispatch(
         _write_tiny_mp4(args[3])
 
     get_backend = mocker.patch(
-        "npa.cli.viz.backends.get_backend",
+        "npa.viz.backends.get_backend",
         return_value=SimpleNamespace(render=render),
     )
 
@@ -152,7 +152,7 @@ def test_predictions_overlay_keeps_short_prediction_window(
         _write_tiny_mp4(output_path)
 
     mocker.patch(
-        "npa.cli.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
+        "npa.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
     )
 
     render_lerobot_to_mp4(
@@ -275,7 +275,7 @@ def test_output_path_is_honored(tmp_path: Path, mocker) -> None:
         _write_tiny_mp4(args[3])
 
     mocker.patch(
-        "npa.cli.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
+        "npa.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
     )
 
     rendered = render_lerobot_to_mp4(
@@ -293,7 +293,7 @@ def test_backend_errors_propagate_without_wrapping(tmp_path: Path, mocker) -> No
         raise RuntimeError("backend exploded")
 
     mocker.patch(
-        "npa.cli.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
+        "npa.viz.backends.get_backend", return_value=SimpleNamespace(render=render)
     )
 
     with pytest.raises(RuntimeError, match="backend exploded"):

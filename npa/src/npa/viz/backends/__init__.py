@@ -11,12 +11,12 @@ class BackendUnavailable(Exception):
 
 def get_backend(name: str) -> ModuleType:
     if name == "matplotlib":
-        from npa.cli.viz.backends import matplotlib
+        from npa.viz.backends import matplotlib
 
         return matplotlib
     if name == "rerun":
         try:
-            from npa.cli.viz.backends import rerun  # type: ignore[attr-defined]
+            from npa.viz.backends import rerun  # type: ignore[attr-defined]
         except ImportError as exc:
             raise BackendUnavailable(
                 "Rerun backend is not implemented yet. Use --backend matplotlib."

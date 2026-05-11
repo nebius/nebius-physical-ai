@@ -65,7 +65,7 @@ def render_lerobot_to_mp4_result(
     fps: int = 30,
 ) -> LeRobotMP4RenderResult:
     """Core LeRobot-to-MP4 rendering used by CLI entry points."""
-    from npa.cli.viz.backends import BackendUnavailable, get_backend
+    from npa.viz.backends import BackendUnavailable, get_backend
     from npa.viz.lerobot import (
         G1_JOINT_CONNECTIONS,
         VizDataError,
