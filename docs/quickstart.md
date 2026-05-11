@@ -235,6 +235,33 @@ storage:
 Omit keys you do not have yet. Do not leave placeholder token values in a file
 you plan to use for model downloads.
 
+### 4d. Cross-project workflows
+
+If you submit `npa` workloads from an orchestrator that reads resources from one
+project and writes outputs to another, pass explicit project aliases for each
+side of the S3 boundary:
+
+```python
+from npa import demo
+
+demo.stage(
+    source_project="project-a-where-source-artifacts-live",
+    target_project="project-b-customer-bucket",
+    target_bucket="s3://customer-bucket/demo-artifacts/",
+)
+```
+
+Each project resolves credentials independently. If a scoped principal is
+missing access on either side, `ScopedCredentialError` names the specific
+project, operation, and bucket that failed.
+
+For development workflows where host credentials are acceptable:
+
+```bash
+npa demo stage --source-project project-a --target-project project-b \
+  --target-bucket s3://customer-bucket/demo-artifacts/ --allow-host-creds
+```
+
 ## 5. First commands: offline, no infra
 
 These commands should not provision cloud resources:

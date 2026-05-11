@@ -73,6 +73,18 @@ works when there are multiple stateless actions for that tool. A single-action
 tool name is usually misclassified: it is either lifecycle-bearing and belongs
 under `workbench`, or it is a one-entry namespace that should be reconsidered.
 
+## Cross-Project Credential Model
+
+Commands that operate across project boundaries use `--source-project` and
+`--target-project` flags. When unset, they preserve the current default project
+behavior. Credentials are resolved per project at the point of the S3 operation.
+
+This is necessary because SDK consumers building orchestrators commonly need to
+read inputs from one project and write outputs to another, with different scoped
+principals for each. When a scoped principal is missing access, the
+`ScopedCredentialError` names the failed project, operation, and bucket, and
+points at host-credential fallback or IAM grants as remediation.
+
 ## SDK Shape
 
 The CLI surface is also the SDK surface. Any command should be invokable from
