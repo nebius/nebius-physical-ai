@@ -32,6 +32,11 @@ For browser-based Rerun review workflows, `npa rerun host` and
 `npa rerun share` publish `.rrd` recordings through Nebius S3 presigned URLs
 for viewing in `app.rerun.io`.
 
+## Architecture
+
+CLI namespace conventions are documented in
+[docs/architecture/cli-namespaces.md](docs/architecture/cli-namespaces.md).
+
 ## Contributing
 
 We welcome contributions from the community! Whether you're adding new solutions, improving documentation, or reporting issues, your contributions help make Nebius Physical AI better for everyone.
