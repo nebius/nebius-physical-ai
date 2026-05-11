@@ -241,6 +241,14 @@ def test_demo_stage_help_includes_allow_host_creds() -> None:
     assert "allow-host-creds" in result.output or "allow_host_creds" in result.output
 
 
+def test_demo_verify_help_includes_project_credential_flags() -> None:
+    result = runner.invoke(app, ["demo", "verify", "--help"])
+
+    assert result.exit_code == 0
+    assert "target-project" in result.output or "target_project" in result.output
+    assert "allow-host-creds" in result.output or "allow_host_creds" in result.output
+
+
 def test_verify_returns_no_issues_on_clean_state(tmp_path: Path) -> None:
     body = b"hello"
     sha = HELLO_SHA256
@@ -287,10 +295,87 @@ def test_stage_skips_existing_artifact_with_title_case_sha_metadata(
     assert s3.put_calls == []
 
 
+def test_verify_uses_project_scoped_credentials(tmp_path: Path, mocker) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    mock_resolve = mocker.patch(
+        "npa.cli.demo.s3_client_for_project", return_value=s3
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "demo",
+            "verify",
+            "--target-bucket",
+            "target",
+            "--target-project",
+            "project-a",
+            "--manifest",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing target object" in result.output
+    mock_resolve.assert_called_once_with("project-a", allow_host_creds=False)
+
+
+def test_verify_rejects_default_project_when_unset_and_default_misconfigured(
+    tmp_path: Path,
+    mocker,
+) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    mocker.patch(
+        "npa.cli.demo.s3_client_for_project",
+        side_effect=ScopedCredentialError(
+            "default",
+            "resolve storage credentials for project 'default'",
+            remediation="Configure object-storage credentials for this project.",
+            failed_project="default",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["demo", "verify", "--target-bucket", "target", "--manifest", str(manifest)],
+    )
+
+    assert result.exit_code == 1
+    assert "Configure object-storage credentials" in result.output
+
+
+def test_verify_respects_allow_host_creds_flag(tmp_path: Path, mocker) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    mock_resolve = mocker.patch(
+        "npa.cli.demo.s3_client_for_project", return_value=s3
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "demo",
+            "verify",
+            "--target-bucket",
+            "target",
+            "--target-project",
+            "project-a",
+            "--allow-host-creds",
+            "--manifest",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing target object" in result.output
+    mock_resolve.assert_called_once_with("project-a", allow_host_creds=True)
+
+
 def test_verify_cli_exits_nonzero_on_missing_artifact(tmp_path: Path, mocker) -> None:
     sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
-    mocker.patch("npa.cli.demo._s3_client", return_value=DemoStageFakeS3())
+    mocker.patch("npa.cli.demo.s3_client_for_project", return_value=DemoStageFakeS3())
 
     result = runner.invoke(
         app,

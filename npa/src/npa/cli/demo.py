@@ -142,9 +142,13 @@ def verify_artifacts(
     target_bucket: str,
     manifest_path: Path = DEFAULT_MANIFEST,
     s3_client=None,
+    target_project: str | None = None,
+    allow_host_creds: bool = False,
 ) -> list[str]:
     manifest = load_manifest(manifest_path)
-    s3 = s3_client or _s3_client()
+    s3 = s3_client or s3_client_for_project(
+        target_project, allow_host_creds=allow_host_creds
+    )
     issues: list[str] = []
     for artifact in manifest.artifacts:
         bucket, key = _target_bucket_key(target_bucket, artifact.target_path)
@@ -252,11 +256,26 @@ def verify_cmd(
     manifest: Path = typer.Option(
         DEFAULT_MANIFEST, "--manifest", help="Artifact manifest."
     ),
+    target_project: str = typer.Option(
+        "",
+        "--target-project",
+        help="Project alias whose scoped principal reads staged artifacts.",
+    ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
+    allow_host_creds: bool = typer.Option(
+        False,
+        "--allow-host-creds",
+        help="Use --allow-host-creds to fall back to host credentials for target S3 operations.",
+    ),
 ) -> None:
     """Verify staged demo artifacts without downloading object contents."""
     try:
-        issues = verify_artifacts(target_bucket=target_bucket, manifest_path=manifest)
+        issues = verify_artifacts(
+            target_bucket=target_bucket,
+            manifest_path=manifest,
+            target_project=target_project or None,
+            allow_host_creds=allow_host_creds,
+        )
     except (DemoManifestError, ScopedCredentialError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
