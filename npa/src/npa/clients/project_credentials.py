@@ -48,6 +48,7 @@ def resolve_credentials(
                 f"Configure project '{normalized}' in ~/.npa/config.yaml, "
                 "or pass an existing project alias."
             ),
+            failed_project=normalized,
         )
 
     storage = resolve_project_storage(normalized)
@@ -85,6 +86,7 @@ def resolve_credentials(
             "Configure object-storage credentials for this project, "
             "or pass --allow-host-creds to use host credentials."
         ),
+        failed_project=label,
     )
 
 

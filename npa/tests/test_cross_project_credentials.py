@@ -24,6 +24,7 @@ class FakeS3:
         self.objects: dict[tuple[str, str], dict] = {}
         self.get_calls: list[tuple[str, str]] = []
         self.put_calls: list[tuple[str, str]] = []
+        self.fail_get: Exception | None = None
         self.fail_put: Exception | None = None
 
     def add(
@@ -40,6 +41,8 @@ class FakeS3:
         return {"ContentLength": len(item["Body"]), "Metadata": dict(item["Metadata"])}
 
     def get_object(self, *, Bucket: str, Key: str):
+        if self.fail_get is not None:
+            raise self.fail_get
         self.get_calls.append((Bucket, Key))
         item = self.objects[(Bucket, Key)]
         return {"Body": BytesIO(item["Body"]), "Metadata": dict(item["Metadata"])}
@@ -197,13 +200,38 @@ def test_demo_stage_cross_project_failure_names_target_project(
     clients = _fake_s3_factory(monkeypatch)
     clients["tgt-key"].fail_put = _access_denied()
 
-    with pytest.raises(ScopedCredentialError, match="project-target"):
+    with pytest.raises(ScopedCredentialError, match="project-target") as exc_info:
         stage_artifacts(
             target_bucket="target",
             manifest_path=_manifest(tmp_path / "manifest.yaml"),
             source_project="project-source",
             target_project="project-target",
         )
+    assert exc_info.value.source_project == "project-source"
+    assert exc_info.value.target_project == "project-target"
+    assert exc_info.value.failed_project == "project-target"
+    assert "--allow-host-creds" in str(exc_info.value)
+
+
+def test_demo_stage_cross_project_failure_names_source_project(
+    tmp_path: Path,
+    cross_project_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients = _fake_s3_factory(monkeypatch)
+    clients["src-key"].fail_get = _access_denied()
+
+    with pytest.raises(ScopedCredentialError, match="project-source") as exc_info:
+        stage_artifacts(
+            target_bucket="target",
+            manifest_path=_manifest(tmp_path / "manifest.yaml"),
+            source_project="project-source",
+            target_project="project-target",
+        )
+    assert exc_info.value.source_project == "project-source"
+    assert exc_info.value.target_project == "project-target"
+    assert exc_info.value.failed_project == "project-source"
+    assert "--allow-host-creds" in str(exc_info.value)
 
 
 def test_demo_stage_cross_project_host_fallback_uses_target_host_credentials(

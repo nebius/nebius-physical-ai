@@ -36,7 +36,7 @@ def test_scoped_credentials_succeed_without_warning(caplog) -> None:
 
 
 def test_scoped_credentials_access_denied_without_flag_raises() -> None:
-    with pytest.raises(ScopedCredentialError, match="bucket"):
+    with pytest.raises(ScopedCredentialError, match="bucket") as exc_info:
         run_with_host_credential_fallback(
             lambda: (_ for _ in ()).throw(_access_denied()),
             lambda: "host-ok",
@@ -44,6 +44,9 @@ def test_scoped_credentials_access_denied_without_flag_raises() -> None:
             operation="test upload",
             allow_host_creds=False,
         )
+    assert exc_info.value.source_project is None
+    assert exc_info.value.target_project is None
+    assert exc_info.value.failed_project is None
 
 
 def test_scoped_credentials_access_denied_with_flag_warns_and_falls_back(

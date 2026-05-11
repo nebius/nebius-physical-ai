@@ -558,6 +558,9 @@ class _ProjectBoundaryS3:
             operation=operation,
             allow_host_creds=self._allow_host_creds,
             logger=logger,
+            source_project=self._source_project,
+            target_project=self._target_project,
+            failed_project=project,
         )
 
 

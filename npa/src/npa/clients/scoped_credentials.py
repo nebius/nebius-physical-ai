@@ -34,6 +34,9 @@ def run_with_host_credential_fallback(
     allow_host_creds: bool,
     logger: logging.Logger | None = None,
     on_fallback: Callable[[BaseException], None] | None = None,
+    source_project: str | None = None,
+    target_project: str | None = None,
+    failed_project: str | None = None,
 ) -> T:
     """Run a scoped operation and optionally fall back to host credentials.
 
@@ -54,6 +57,9 @@ def run_with_host_credential_fallback(
             allow_host_creds=allow_host_creds,
             logger=logger,
             on_fallback=on_fallback,
+            source_project=source_project,
+            target_project=target_project,
+            failed_project=failed_project,
         )
     except NoCredentialsError as exc:
         return _fallback_or_raise(
@@ -64,6 +70,9 @@ def run_with_host_credential_fallback(
             allow_host_creds=allow_host_creds,
             logger=logger,
             on_fallback=on_fallback,
+            source_project=source_project,
+            target_project=target_project,
+            failed_project=failed_project,
         )
 
 
@@ -76,9 +85,18 @@ def _fallback_or_raise(
     allow_host_creds: bool,
     logger: logging.Logger | None,
     on_fallback: Callable[[BaseException], None] | None,
+    source_project: str | None,
+    target_project: str | None,
+    failed_project: str | None,
 ) -> T:
     if not allow_host_creds:
-        raise ScopedCredentialError(bucket, operation) from exc
+        raise ScopedCredentialError(
+            bucket,
+            operation,
+            source_project=source_project,
+            target_project=target_project,
+            failed_project=failed_project,
+        ) from exc
 
     active_logger = logger or logging.getLogger(__name__)
     active_logger.warning(
