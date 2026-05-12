@@ -110,6 +110,72 @@ def test_create_endpoint_builds_expected_args() -> None:
     ]
 
 
+def test_create_endpoint_extra_env_none_adds_no_env_flags() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _endpoint_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+    )
+
+    client.create_endpoint(spec, extra_env=None)
+
+    assert "--env" not in calls[0]
+
+
+def test_create_endpoint_extra_env_adds_repeatable_env_flags() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _endpoint_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+    )
+
+    client.create_endpoint(spec, extra_env={"FOO": "bar"})
+
+    assert ["--env", "FOO=bar"] == calls[0][-4:-2]
+
+
+def test_create_endpoint_extra_env_masks_sensitive_debug_logs(caplog) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _endpoint_json())
+
+    caplog.set_level("DEBUG", logger="npa.clients.serverless")
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+    )
+
+    client.create_endpoint(spec, extra_env={"HF_TOKEN": "hf_secret_value"})
+
+    assert "HF_TOKEN=hf_secret_value" in calls[0]
+    assert "hf_secret_value" not in caplog.text
+    assert "HF_TOKEN=<redacted>" in caplog.text
+
+
 def test_create_endpoint_resolves_endpoint_when_cli_returns_operation() -> None:
     calls: list[list[str]] = []
 

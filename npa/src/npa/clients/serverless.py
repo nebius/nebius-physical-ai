@@ -6,8 +6,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import logging
 import os
 import shutil
+import shlex
 import subprocess
 import time
 from typing import Any
@@ -71,6 +73,9 @@ _SECRET_KEY_PARTS = (
     "access_key",
     "private_key",
 )
+_SENSITIVE_VALUE_FLAGS = {"--registry-password", "--token"}
+
+logger = logging.getLogger(__name__)
 
 
 class EndpointStatus(str, Enum):
@@ -292,6 +297,42 @@ def _is_secret_env_key(key: str) -> bool:
     return any(part in lowered for part in _SECRET_KEY_PARTS)
 
 
+def _is_sensitive_log_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in ("token", "key", "secret", "password", "passwd"))
+
+
+def _redact_env_arg(value: str) -> str:
+    key, sep, _raw_value = value.partition("=")
+    if sep and _is_sensitive_log_key(key):
+        return f"{key}=<redacted>"
+    return value
+
+
+def _redact_cli_args(args: list[str]) -> list[str]:
+    redacted: list[str] = []
+    redact_next = False
+    redact_env_next = False
+    for arg in args:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+            continue
+        if redact_env_next:
+            redacted.append(_redact_env_arg(arg))
+            redact_env_next = False
+            continue
+        if arg.startswith("--env="):
+            redacted.append("--env=" + _redact_env_arg(arg.removeprefix("--env=")))
+            continue
+        redacted.append(arg)
+        if arg == "--env":
+            redact_env_next = True
+        elif arg in _SENSITIVE_VALUE_FLAGS:
+            redact_next = True
+    return redacted
+
+
 class ServerlessClient:
     """Subprocess wrapper for ``nebius ai endpoint`` commands."""
 
@@ -310,9 +351,14 @@ class ServerlessClient:
         self._poll_interval = poll_interval
         self._sleep = sleep
 
-    def create_endpoint(self, spec: EndpointSpec) -> EndpointInfo:
+    def create_endpoint(
+        self,
+        spec: EndpointSpec,
+        *,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> EndpointInfo:
         """Create an endpoint."""
-        args = self._build_create_args(spec)
+        args = self._build_create_args(spec, extra_env=extra_env)
         result = self._run(args, timeout=self._timeout)
         if result.returncode != 0:
             self._raise_for_error(result, f"create_endpoint failed for {spec.name} in project {spec.project_id}")
@@ -471,6 +517,7 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         full_args = [self._nebius_bin, *args]
+        logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
         return self._runner(
             full_args,
             capture_output=True,
@@ -479,7 +526,12 @@ class ServerlessClient:
             env=dict(env) if env is not None else None,
         )
 
-    def _build_create_args(self, spec: EndpointSpec) -> list[str]:
+    def _build_create_args(
+        self,
+        spec: EndpointSpec,
+        *,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> list[str]:
         if not spec.name:
             raise ValueError("Endpoint name is required")
         if not spec.project_id:
@@ -513,7 +565,12 @@ class ServerlessClient:
                 raise ValueError(
                     f"Refusing to pass secret-like env var {key} on the command line"
                 )
+            if extra_env and key in extra_env:
+                continue
             args.extend(["--env", f"{key}={value}"])
+        for key, value in (extra_env or {}).items():
+            if value:
+                args.extend(["--env", f"{key}={value}"])
         for volume in spec.volumes:
             args.extend(["--volume", volume])
         if spec.args:

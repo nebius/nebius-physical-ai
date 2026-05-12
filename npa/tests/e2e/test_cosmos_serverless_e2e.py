@@ -16,6 +16,7 @@ from npa.clients.config import (
     update_workbench_serverless_endpoint,
     write_config,
 )
+from npa.clients.credentials import load_credentials
 from npa.clients.serverless import (
     AuthError,
     EndpointInfo,
@@ -49,6 +50,22 @@ def _platform() -> str:
 
 def _preset() -> str:
     return os.environ.get("NPA_E2E_SERVERLESS_PRESET", "1gpu-16vcpu-200gb")
+
+
+def _endpoint_extra_env() -> dict[str, str]:
+    file_credentials = load_credentials(environ={})
+    token = (
+        file_credentials.hf_token
+        or os.environ.get("HF_TOKEN", "")
+        or os.environ.get("HUGGINGFACE_TOKEN", "")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN", "")
+    )
+    if not token:
+        return {}
+    return {
+        "HF_TOKEN": token,
+        "HUGGINGFACE_HUB_TOKEN": token,
+    }
 
 
 def _subnet_id(project_id: str) -> str:
@@ -128,7 +145,10 @@ def _create_with_fallback(client: ServerlessClient, name: str) -> tuple[str, End
         if project_id is None:
             pytest.skip(f"All projects in fallback chain are NER-exhausted: {last_error}")
         try:
-            return project_id, client.create_endpoint(_endpoint_spec(project_id, name))
+            return project_id, client.create_endpoint(
+                _endpoint_spec(project_id, name),
+                extra_env=_endpoint_extra_env(),
+            )
         except NotEnoughResourcesError as exc:
             last_error = exc
             chain.mark_ner(project_id)

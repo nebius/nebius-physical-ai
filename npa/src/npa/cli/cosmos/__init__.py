@@ -54,6 +54,7 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import (
     apply_shared_credential_env,
+    load_credentials,
     shared_credential_env,
     warn_if_hf_token_missing,
 )
@@ -1078,6 +1079,22 @@ def _serverless_endpoint_ref(cfg: Any) -> str:
     )
 
 
+def _serverless_hf_env() -> dict[str, str]:
+    file_credentials = load_credentials(environ={})
+    token = (
+        file_credentials.hf_token
+        or os.environ.get("HF_TOKEN", "")
+        or os.environ.get("HUGGINGFACE_TOKEN", "")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN", "")
+    )
+    if not token:
+        return {}
+    return {
+        "HF_TOKEN": token,
+        "HUGGINGFACE_HUB_TOKEN": token,
+    }
+
+
 def _serverless_project_id(cfg: Any) -> str:
     serverless = getattr(cfg, "serverless", None)
     return (
@@ -1160,6 +1177,7 @@ def _deploy_serverless_endpoint(
         "COSMOS_SERVER_PORT": str(container_port),
         **env_vars,
     }
+    extra_env = _serverless_hf_env()
 
     existing = workbench_entry(proj_alias, wb_name)
     if existing and str(existing.get("runtime", "")).lower() == "serverless" and not replace:
@@ -1184,7 +1202,7 @@ def _deploy_serverless_endpoint(
             "subnet_id": subnet_id,
             "model": model,
             "volumes": volumes,
-            "env_keys": sorted(serverless_env),
+            "env_keys": sorted(set(serverless_env) | set(extra_env)),
             "replace": replace,
         }
         _output(result, output)
@@ -1215,7 +1233,7 @@ def _deploy_serverless_endpoint(
     )
 
     try:
-        info = client.create_endpoint(spec)
+        info = client.create_endpoint(spec, extra_env=extra_env)
         if wait:
             info = client.wait_for_running(project_id, info.id or endpoint_name)
     except ValueError as exc:

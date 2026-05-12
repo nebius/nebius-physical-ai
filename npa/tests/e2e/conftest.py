@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from npa.clients.config import list_projects, resolve_project_storage
+from npa.clients.credentials import load_credentials
 from npa.clients.project_credentials import s3_client_for_project
 
 E2E_BUCKET_PREFIX = "npa-e2e-test-"
@@ -19,20 +20,42 @@ E2E_BUCKET_MAX_CREATIONS = 8
 E2E_BUCKET_COUNTER = Path("/tmp/npa-e2e-run-bucket-counter.txt")
 
 
+def _hf_token_configured() -> bool:
+    file_credentials = load_credentials(environ={})
+    return bool(
+        file_credentials.hf_token
+        or os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGINGFACE_TOKEN")
+        or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
     """Skip e2e tests unless NPA_INTEGRATION_E2E is set."""
-    if os.getenv("NPA_INTEGRATION_E2E"):
+    if not os.getenv("NPA_INTEGRATION_E2E"):
+        skip_marker = pytest.mark.skip(
+            reason="e2e tests require NPA_INTEGRATION_E2E=1"
+        )
+        for item in items:
+            if "e2e" in item.keywords:
+                item.add_marker(skip_marker)
         return
 
-    skip_marker = pytest.mark.skip(
-        reason="e2e tests require NPA_INTEGRATION_E2E=1"
+    if _hf_token_configured():
+        return
+
+    serverless_skip = pytest.mark.skip(
+        reason=(
+            "Cosmos serverless e2e requires HF_TOKEN in ~/.npa/credentials.yaml "
+            "or HF_TOKEN/HUGGINGFACE_TOKEN/HUGGINGFACE_HUB_TOKEN in the environment"
+        )
     )
     for item in items:
-        if "e2e" in item.keywords:
-            item.add_marker(skip_marker)
+        if "e2e_serverless" in item.keywords:
+            item.add_marker(serverless_skip)
 
 
 def _bucket_counter_path() -> Path:
