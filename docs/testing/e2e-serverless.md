@@ -29,6 +29,29 @@ export NPA_E2E_SERVERLESS_PROJECT=project-eXXXXXXXXXXXX
 pytest npa/tests/e2e/test_cosmos_serverless_e2e.py -v -m e2e_serverless
 ```
 
+## Credentials
+
+Cosmos serverless inference uses the gated
+`nvidia/Cosmos-1.0-Diffusion-7B-Text2World` model. The e2e harness requires a
+Hugging Face token from `~/.npa/credentials.yaml` or from `HF_TOKEN`,
+`HUGGINGFACE_TOKEN`, or `HUGGINGFACE_HUB_TOKEN` in the operator environment.
+Token values are never printed in pytest output.
+
+When a token is available, Cosmos serverless deploy propagates it to the
+Endpoint runtime as both `HF_TOKEN` and `HUGGINGFACE_HUB_TOKEN`.
+
+## Inference Timing
+
+The prompt inference e2e path deploys the real Cosmos 7B text-to-world model.
+Cold endpoint startup, model load, and diffusion sampling can exceed a short
+synchronous CLI wait.
+
+`test_e2e_cli_infer_prompt` therefore dispatches inference with
+`cosmos infer --submit-only --output-format json`, then polls the Endpoint job
+status every 30 seconds for up to 2400 seconds. The full real-Nebius suite was
+validated on 2026-05-12 with `8 passed, 1 skipped`; the skip is the documented
+forced-NER scenario that only runs when `NPA_E2E_FORCE_NER` is set.
+
 ## NER Fallback Chain
 
 NER means a capacity/resource condition, not a generic failure. The client maps

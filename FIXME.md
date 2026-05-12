@@ -329,14 +329,18 @@ a one-line help distinction.
   `NPA_E2E_SERVERLESS_PROJECT=<project-id>` in the run environment, and builds a
   run-wide NER fallback chain across non-production project IDs.
 - Added mocked unit tests, fake-`nebius` smoke tests, and real-Nebius e2e tests
-  for Cosmos serverless endpoint flows. The real e2e run created endpoints in
-  the sandbox and cleaned them up successfully; no `npa-e2e-*` endpoint or alias
-  leak remained after Gate B.
-- `NOVEL_ISSUE_PHASE5_CREATE_OUTPUT_PARSE`: Phase 5 halted after three
-  consecutive real e2e failures caused by Nebius CLI endpoint create emitting
-  progress/non-JSON output even with `--format json`. The client was hardened to
-  resolve the created endpoint by name when create output is unparseable, but
-  the real e2e suite was not rerun after the halt boundary.
+  for Cosmos serverless endpoint flows. Follow-up validation on 2026-05-12
+  closed the real-Nebius loop with `8 passed, 1 skipped`; the skip is the
+  documented forced-NER scenario gated by `NPA_E2E_FORCE_NER`. Report:
+  `/tmp/npa-serverless-cosmos-infer-timeout-20260512T210106Z.md`.
+- Resolved `NOVEL_ISSUE_PHASE5_CREATE_OUTPUT_PARSE`: the create parser fallback
+  was validated against real Nebius, endpoint URLs are read from
+  `status.public_endpoints`/`status.publicEndpoints`, and bare addresses are
+  normalized before CLI inference.
+- Cosmos serverless e2e now propagates operator Hugging Face auth to deployed
+  Endpoints and polls long-running prompt inference asynchronously so the real
+  7B text-to-world workload can finish without the previous 600s CLI timeout.
+  No `npa-e2e-*` endpoint or alias leak remained after validation.
 - Operator-ratified Decision 3 is implemented: changing the served Cosmos model,
   image, platform, preset, env, or volumes requires redeploying the endpoint.
 - Deferred: Jobs substrate, GR00T/LeRobot/FiftyOne serverless, K8s backends,
