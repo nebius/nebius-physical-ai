@@ -129,6 +129,16 @@ COSMOS_PEFT_MIN_VERSION = "0.17.0"
 DEFAULT_MODEL = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
 COSMOS_INFER_HTTP_TIMEOUT = 30.0
 COSMOS_INFER_POLL_INTERVAL = 10.0
+COSMOS_ENV_FILE = "/etc/npa-cosmos-server/env"
+COSMOS_CREDENTIAL_ENV_NAMES = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NEBIUS_S3_BUCKET",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+}
 
 
 def _cosmos_gated_models(model: str) -> list[str]:
@@ -339,6 +349,171 @@ def _get_ssh_config(**overrides: str):
 
 def _remote_bash(script: str) -> str:
     return f"bash -lc {shlex.quote(script)}"
+
+
+def _storage_env_tokens(cfg: Any) -> dict[str, str]:
+    storage = getattr(cfg, "storage", None)
+    if storage is None:
+        return {}
+    tokens: dict[str, str] = {}
+    endpoint_url = getattr(storage, "endpoint_url", "")
+    if endpoint_url:
+        tokens["AWS_ENDPOINT_URL"] = endpoint_url
+        tokens["NEBIUS_S3_ENDPOINT"] = endpoint_url
+    aws_access_key_id = getattr(storage, "aws_access_key_id", "")
+    if aws_access_key_id:
+        tokens["AWS_ACCESS_KEY_ID"] = aws_access_key_id
+    aws_secret_access_key = getattr(storage, "aws_secret_access_key", "")
+    if aws_secret_access_key:
+        tokens["AWS_SECRET_ACCESS_KEY"] = aws_secret_access_key
+    checkpoint_bucket = getattr(storage, "checkpoint_bucket", "")
+    if checkpoint_bucket:
+        tokens["NEBIUS_S3_BUCKET"] = checkpoint_bucket
+    return tokens
+
+
+def _ssh_client(cfg: Any, *, extra_tokens: dict[str, str] | None = None) -> SSHClient:
+    tokens = dict(getattr(cfg.ssh, "tokens", {}) or {})
+    tokens.update(_storage_env_tokens(cfg))
+    for key, value in (extra_tokens or {}).items():
+        if value:
+            tokens[key] = value
+    ssh_cfg = SSHConfig(
+        host=cfg.ssh.host,
+        user=cfg.ssh.user,
+        key_path=cfg.ssh.key_path,
+        tokens=tokens,
+    )
+    return SSHClient(ssh_cfg)
+
+
+def _shared_cosmos_env_or_fail(cfg: Any, credentials: Any) -> dict[str, str]:
+    merged = {**_storage_env_tokens(cfg), **shared_credential_env(credentials)}
+    credential_env = {
+        key: value
+        for key, value in merged.items()
+        if key in COSMOS_CREDENTIAL_ENV_NAMES and value
+    }
+    if not credential_env:
+        _fail("No shared credentials found in environment, ~/.npa/credentials.yaml, or project config.")
+    return credential_env
+
+
+def _build_reload_env_command(
+    env_names: tuple[str, ...],
+    *,
+    port: int,
+    restart: bool = True,
+) -> str:
+    names_json = json.dumps(list(env_names))
+    env_assignments = " ".join(f'{name}="${{{name}:-}}"' for name in env_names)
+    restart_block = ""
+    if restart:
+        restart_block = f"""
+if [ "$mode" = "systemd" ]; then
+  sudo systemctl restart {COSMOS_SERVICE}
+elif [ "$mode" = "container" ]; then
+  sudo docker restart {COSMOS_CONTAINER_NAME} >/dev/null
+fi
+for i in $(seq 1 120); do
+  if curl -fsS "http://127.0.0.1:{port}/health" >/dev/null 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS "http://127.0.0.1:{port}/health" >/dev/null
+"""
+    script = f"""\
+set -euo pipefail
+env_path={COSMOS_ENV_FILE}
+mode=""
+if sudo systemctl cat {COSMOS_SERVICE} >/dev/null 2>&1; then
+  mode="systemd"
+elif sudo docker inspect {COSMOS_CONTAINER_NAME} >/dev/null 2>&1; then
+  mode="container"
+elif sudo test -f "$env_path"; then
+  mode="env-only"
+else
+  echo "No Cosmos service env file found" >&2
+  exit 2
+fi
+sudo env {env_assignments} python3 - "$env_path" {shlex.quote(names_json)} <<'PY'
+from pathlib import Path
+import json
+import os
+import sys
+
+path = Path(sys.argv[1])
+env_names = json.loads(sys.argv[2])
+updates = {{name: os.environ.get(name, "") for name in env_names if os.environ.get(name, "")}}
+if not updates:
+    raise SystemExit("No credential values were supplied")
+
+path.parent.mkdir(parents=True, exist_ok=True)
+lines = path.read_text().splitlines() if path.exists() else []
+seen = set()
+out = []
+for line in lines:
+    key = line.split("=", 1)[0] if "=" in line else ""
+    if key in updates:
+        if key not in seen:
+            out.append(f"{{key}}={{updates[key]}}")
+            seen.add(key)
+        continue
+    out.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        out.append(f"{{key}}={{value}}")
+path.write_text("\\n".join(out).rstrip() + "\\n")
+path.chmod(0o600)
+print("updated_keys=" + ",".join(sorted(updates)))
+PY
+{restart_block}
+echo "NPA_COSMOS_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
+"""
+    return _remote_bash(script)
+
+
+def _apply_env_update(
+    cfg: Any,
+    credential_env: dict[str, str],
+    *,
+    service_port: int,
+    restart: bool,
+    output: OutputFormat,
+) -> dict[str, Any]:
+    ssh = _ssh_client(cfg, extra_tokens=credential_env)
+    env_names = tuple(sorted(credential_env))
+    try:
+        _, stdout, stderr = ssh.run_or_raise(
+            _build_reload_env_command(env_names, port=service_port, restart=restart),
+            stream=output != OutputFormat.json,
+        )
+    except SSHError as exc:
+        _fail(f"Cosmos env reload failed: {exc}")
+
+    env_path = ""
+    env_mode = ""
+    for line in stdout.splitlines():
+        if line.startswith("NPA_COSMOS_RELOAD_ENV_COMPLETE "):
+            parts = dict(
+                item.split("=", 1)
+                for item in line.removeprefix("NPA_COSMOS_RELOAD_ENV_COMPLETE ").split()
+                if "=" in item
+            )
+            env_path = parts.get("env_path", "")
+            env_mode = parts.get("mode", "")
+
+    result: dict[str, Any] = {
+        "updated_keys": list(env_names),
+        "env_path": env_path,
+        "mode": env_mode,
+        "restarted": restart,
+        "port": service_port,
+    }
+    if stderr.strip():
+        result["stderr_tail"] = stderr.strip()[-1000:]
+    return result
 
 
 def _model_slug(model: str) -> str:
@@ -1684,6 +1859,35 @@ def deploy_cmd(
                 indent=2,
             )
         )
+
+
+@app.command("reload-env")
+def reload_env_cmd(
+    port: int = typer.Option(
+        0, "--port", help="Cosmos HTTP server port. Defaults to the saved service port."
+    ),
+    restart: bool = typer.Option(
+        True,
+        "--restart/--no-restart",
+        help="Restart Cosmos after updating the env file.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
+) -> None:
+    """Propagate local shared credentials into the running Cosmos service env without redeploying."""
+    cfg = _get_config()
+    credentials = resolve_credentials()
+    credential_env = _shared_cosmos_env_or_fail(cfg, credentials)
+    service_port = port or int(getattr(cfg, "service_port", 0) or 0) or 8080
+    result = _apply_env_update(
+        cfg,
+        credential_env,
+        service_port=service_port,
+        restart=restart,
+        output=output,
+    )
+    _output({"status": "reloaded", **result}, output)
 
 
 @app.command("serve")

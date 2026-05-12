@@ -21,6 +21,7 @@ from npa.cli.cosmos import (
     COSMOS_TORCH_VERSION,
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
+    _build_reload_env_command,
     _build_install_command,
     _download_remote_output,
     _save_inference_output,
@@ -62,6 +63,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
     "command",
     [
         "deploy",
+        "reload-env",
         "serve",
         "infer",
         "finetune",
@@ -459,6 +461,86 @@ def test_cosmos_deploy_byovm_alias_skips_terraform(mocker) -> None:
     assert result.exit_code == 0
     init.assert_not_called()
     apply.assert_not_called()
+
+
+def test_cosmos_reload_env_command_updates_credentials_without_embedding_secret() -> None:
+    cmd = _build_reload_env_command(("HF_TOKEN", "AWS_ACCESS_KEY_ID"), port=8081)
+
+    assert "/etc/npa-cosmos-server/env" in cmd
+    assert "HF_TOKEN=\"${HF_TOKEN:-}\"" in cmd
+    assert "AWS_ACCESS_KEY_ID=\"${AWS_ACCESS_KEY_ID:-}\"" in cmd
+    assert "npa-cosmos-server" in cmd
+    assert "NPA_COSMOS_RELOAD_ENV_COMPLETE" in cmd
+    assert "hf-token" not in cmd
+
+
+def test_cosmos_reload_env_writes_env_via_ssh(mocker) -> None:
+    cfg = _cfg(hf_token="hf-token")
+    cfg.service_port = 8081
+    cfg.storage = StorageConfig(
+        checkpoint_bucket="s3://bucket/checkpoints/",
+        endpoint_url="https://storage.example",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "updated_keys=AWS_ACCESS_KEY_ID,HF_TOKEN\n"
+        "NPA_COSMOS_RELOAD_ENV_COMPLETE env_path=/etc/npa-cosmos-server/env mode=systemd\n",
+        "",
+    )
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "reload-env", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "reloaded"
+    assert payload["env_path"] == "/etc/npa-cosmos-server/env"
+    assert payload["mode"] == "systemd"
+    assert payload["restarted"] is True
+    assert "HF_TOKEN" in payload["updated_keys"]
+    cmd = ssh.run_or_raise.call_args.args[0]
+    assert "HF_TOKEN=\"${HF_TOKEN:-}\"" in cmd
+    assert "hf-token" not in cmd
+    ssh_tokens = ssh_cls.call_args.args[0].tokens
+    assert ssh_tokens["HF_TOKEN"] == "hf-token"
+    assert ssh_tokens["AWS_ACCESS_KEY_ID"] == "key"
+
+
+def test_cosmos_reload_env_fails_clean_on_missing_credentials(mocker) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=CredentialsConfig())
+    ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient")
+
+    result = runner.invoke(app, ["workbench", "cosmos", "reload-env"])
+
+    assert result.exit_code == 1
+    assert "No shared credentials found" in result.output
+    ssh_cls.assert_not_called()
+
+
+def test_cosmos_reload_env_propagates_ssh_failure(mocker) -> None:
+    cfg = _cfg(hf_token="hf-token")
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.side_effect = SSHError("transport down")
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "reload-env"])
+
+    assert result.exit_code == 1
+    assert "Cosmos env reload failed: transport down" in result.output
 
 
 def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
