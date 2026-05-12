@@ -1,3 +1,5 @@
+# TODO: digest-pin this image once registry auth is available.
+# Phase 2 (2026-05-12) could not resolve digest: NGC registry requires auth or does not allow anonymous manifest HEAD.
 FROM nvcr.io/nvidia/isaac-lab:2.3.2
 
 ARG ISAAC_LAB_VERSION=2.3.2.post1

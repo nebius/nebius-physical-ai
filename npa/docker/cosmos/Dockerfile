@@ -1,4 +1,6 @@
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
+# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.6.3-devel-ubuntu22.04
+# To update: re-resolve via registry API and update digest below.
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
 
 ARG COSMOS_VERSION=1.0.9
 ARG COSMOS_TORCH_VERSION=2.6.0

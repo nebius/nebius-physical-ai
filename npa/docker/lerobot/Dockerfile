@@ -1,4 +1,6 @@
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.4.1-devel-ubuntu22.04
+# To update: re-resolve via registry API and update digest below.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG LEROBOT_VERSION=0.5.1
 
