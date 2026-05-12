@@ -74,6 +74,13 @@ from npa.deploy.configurator import (
     write_manifest,
     write_remote_docker_env_file,
 )
+from npa.deploy.cleanup import (
+    CleanupPartialError,
+    classify_alias_state,
+    list_terraform_managed_resources,
+    remove_partial_config_entry,
+    terraform_destroy_partial,
+)
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -2011,6 +2018,46 @@ def list_cmd(
         typer.echo(
             "No GR00T workbenches configured. Run 'npa workbench groot deploy' to create one."
         )
+
+
+@app.command("cleanup-partial")
+def cleanup_partial_cmd(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Clean up orphaned Terraform resources from an interrupted GR00T deploy."""
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    if not proj_alias or not wb_name:
+        _fail("cleanup-partial requires --project and --name.")
+
+    state = classify_alias_state(proj_alias, wb_name)
+    if state == "fresh":
+        typer.echo(f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up.")
+        return
+    if state == "byovm":
+        typer.echo(f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean.")
+        return
+    if state == "fully_deployed":
+        typer.echo(f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead.")
+        raise typer.Exit(code=1)
+
+    try:
+        resources = list_terraform_managed_resources(proj_alias, wb_name)
+    except CleanupPartialError as exc:
+        _fail(f"Cleanup discovery failed: {exc}")
+        return
+    typer.echo(f"Found orphaned resources for {proj_alias}/{wb_name}:")
+    for resource in resources:
+        typer.echo(f"  - {resource}")
+    if not yes:
+        _confirm_or_exit(f"Destroy these {len(resources)} resources?")
+    try:
+        terraform_destroy_partial(proj_alias, wb_name)
+        remove_partial_config_entry(proj_alias, wb_name)
+    except CleanupPartialError as exc:
+        _fail(f"Cleanup failed: {exc}")
+        return
+    typer.echo(f"Cleanup complete for {proj_alias}/{wb_name}.")
 
 
 @app.command("deploy")

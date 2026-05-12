@@ -73,6 +73,7 @@ def _active_endpoint(url: str):
         "status",
         "system-info",
         "list",
+        "cleanup-partial",
     ],
 )
 def test_groot_command_help(command: str) -> None:

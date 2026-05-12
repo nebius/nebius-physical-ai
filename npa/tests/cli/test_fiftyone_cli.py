@@ -60,6 +60,7 @@ def _active_endpoint(url: str):
         "system-info",
         "datasets",
         "list",
+        "cleanup-partial",
     ],
 )
 def test_fiftyone_command_help(command: str) -> None:

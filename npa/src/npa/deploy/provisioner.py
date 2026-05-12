@@ -242,6 +242,13 @@ def destroy(
         raise ProvisionerError(f"terraform destroy failed (exit {result.returncode})")
 
 
+def state_list(tf_dir: str | Path | None = None) -> list[str]:
+    """Run terraform state list and return managed resource addresses."""
+    tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
+    result = _run(["state", "list"], cwd=tf_dir, capture=True)
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def outputs(tf_dir: str | Path | None = None) -> dict[str, Any]:
     """Run terraform output -json, parse and return dict of {key: value}."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR

@@ -71,6 +71,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "status",
         "system-info",
         "list",
+        "cleanup-partial",
     ],
 )
 def test_cosmos_command_help(command: str) -> None:

@@ -39,6 +39,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "eval",
         "export-lerobot",
         "list",
+        "cleanup-partial",
     ],
 )
 def test_isaac_lab_command_help(command: str) -> None:
