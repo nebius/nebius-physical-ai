@@ -107,6 +107,25 @@ class EndpointStatus(str, Enum):
         return cls.UNKNOWN
 
 
+_JOB_STATUS_ALIASES = {
+    "queued": {"queued", "pending", "created", "provisioning", "starting"},
+    "running": {"running", "active"},
+    "succeeded": {"succeeded", "success", "completed", "complete", "done"},
+    "failed": {"failed", "error", "crashed"},
+    "cancelling": {"cancelling", "canceling", "stopping"},
+    "cancelled": {"cancelled", "canceled", "stopped"},
+}
+_JOB_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+
+
+def _job_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    for status, aliases in _JOB_STATUS_ALIASES.items():
+        if normalized in aliases:
+            return status
+    return "unknown"
+
+
 @dataclass(frozen=True)
 class EndpointSpec:
     """Create request for a Nebius Serverless AI endpoint."""
@@ -139,6 +158,20 @@ class EndpointInfo:
     project_id: str
     status: EndpointStatus = EndpointStatus.UNKNOWN
     url: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class JobInfo:
+    id: str
+    name: str
+    project_id: str
+    status: str = "unknown"
+    created_at: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    output_uris: tuple[str, ...] = ()
+    log_tail: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -509,6 +542,115 @@ class ServerlessClient:
             f"Endpoint {endpoint} did not reach running within {timeout}s (last status: {status})"
         )
 
+    def create_job(
+        self, *, project_id: str, name: str, image: str, command: str, gpu_type: str,
+        gpu_count: int, output_path: str, extra_env: Mapping[str, str] | None = None,
+        env: Mapping[str, str] | None = None, preset: str = "", timeout: str = "1h",
+        subnet_id: str = "",
+    ) -> JobInfo:
+        for label, value in {
+            "Job name": name,
+            "Project ID": project_id,
+            "Container image": image,
+            "Job command": command,
+        }.items():
+            if not value:
+                raise ValueError(f"{label} is required")
+        if gpu_count < 1:
+            raise ValueError("GPU count must be positive")
+        args = ["ai", "job", "create", "--parent-id", project_id, "--name", name]
+        args += ["--image", image, "--container-command", command, "--platform", gpu_type]
+        args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb", "--env", f"NPA_OUTPUT_PATH={output_path}"]
+        for key, value in (env or {}).items():
+            if _is_secret_env_key(key):
+                raise ValueError(f"Refusing to pass secret-like env var {key} on the command line")
+            if not extra_env or key not in extra_env:
+                args.extend(["--env", f"{key}={value}"])
+        for key, value in (extra_env or {}).items():
+            if value:
+                args.extend(["--env", f"{key}={value}"])
+        for flag, value in (("--timeout", timeout), ("--subnet-id", subnet_id)):
+            if value:
+                args.extend([flag, value])
+        args.extend(["--format", "json"])
+        result = self._run(args, timeout=self._timeout)
+        if result.returncode != 0:
+            self._raise_for_error(result, f"create_job failed for {name} in project {project_id}")
+        try:
+            info = self._parse_job_info(result.stdout, project_id=project_id)
+        except json.JSONDecodeError:
+            return self.get_job(name, project_id)
+        return info if info.name else self.get_job(info.id or name, project_id)
+
+    def list_jobs(self, project_id: str, name_prefix: str | None = None) -> list[JobInfo]:
+        result = self._run(["ai", "job", "list", "--parent-id", project_id, "--format", "json"])
+        if result.returncode != 0:
+            self._raise_for_error(result, f"list_jobs failed for project {project_id}")
+        jobs = [
+            self._job_info_from_dict(item, fallback_project_id=project_id)
+            for item in _as_items(_json_loads(result.stdout))
+        ]
+        return [job for job in jobs if not name_prefix or job.name.startswith(name_prefix)]
+
+    def get_job(self, job_id_or_name: str, project_id: str) -> JobInfo:
+        commands = (
+            ["ai", "job", "get", "--id", job_id_or_name, "--format", "json"],
+            ["ai", "job", "get-by-name", "--parent-id", project_id, "--name", job_id_or_name, "--format", "json"],
+        )
+        for args in commands:
+            result = self._run(args)
+            if result.returncode == 0:
+                info = self._parse_job_info(result.stdout, project_id=project_id)
+                if info.id or info.name:
+                    return info
+            elif _classify_error(result.returncode, result.stderr) is not EndpointNotFoundError:
+                self._raise_for_error(result, f"get_job failed for {job_id_or_name}")
+        raise EndpointNotFoundError(f"Job {job_id_or_name} not found in project {project_id}")
+
+    def cancel_job(self, job_id_or_name: str, project_id: str) -> JobInfo:
+        info = self.get_job(job_id_or_name, project_id)
+        if info.status in _JOB_TERMINAL_STATUSES:
+            return info
+        result = self._run(["ai", "job", "cancel", "--id", info.id, "--format", "json"])
+        if result.returncode != 0:
+            error_class = _classify_error(result.returncode, result.stderr)
+            if error_class is EndpointNotFoundError:
+                return info
+            self._raise_for_error(result, f"cancel_job failed for {job_id_or_name}")
+        try:
+            parsed = self._parse_job_info(result.stdout, project_id=project_id)
+        except json.JSONDecodeError:
+            parsed = JobInfo(id="", name="", project_id=project_id)
+        return parsed if parsed.id or parsed.name else self.get_job(info.id, project_id)
+
+    def poll_job(
+        self, job_id: str, project_id: str, *, interval_s: float = 30.0,
+        ceiling_s: float = 2400.0, on_state_change: Callable[[JobInfo], None] | None = None,
+    ) -> JobInfo:
+        deadline = time.monotonic() + ceiling_s
+        last: JobInfo | None = None
+        last_status: str | None = None
+        transient_failures = 0
+        while time.monotonic() <= deadline:
+            try:
+                current = self.get_job(job_id, project_id)
+            except ServerlessClientError:
+                transient_failures += 1
+                if transient_failures > 1:
+                    raise
+                self._sleep(interval_s)
+                continue
+            transient_failures = 0
+            last = current
+            if current.status is not last_status and on_state_change is not None:
+                on_state_change(current)
+            last_status = current.status
+            if current.status in _JOB_TERMINAL_STATUSES:
+                return current
+            self._sleep(interval_s)
+        status = last.status.value if last else "unknown"
+        raise TimeoutError(f"Job {job_id} did not finish within {ceiling_s}s (last status: {status})")
+
     def _run(
         self,
         args: list[str],
@@ -609,6 +751,33 @@ class ServerlessClient:
             project_id=_endpoint_project_id(data, fallback_project_id),
             status=_endpoint_status(data),
             url=_endpoint_url(data),
+            raw=data,
+        )
+
+    def _parse_job_info(self, raw: str, *, project_id: str = "") -> JobInfo:
+        items = _as_items(_json_loads(raw))
+        if not items:
+            return JobInfo(id="", name="", project_id=project_id, raw={})
+        return self._job_info_from_dict(items[0], fallback_project_id=project_id)
+
+    def _job_info_from_dict(self, data: dict[str, Any], *, fallback_project_id: str = "") -> JobInfo:
+        outputs = _deep_get(data, ("status", "output_uris"), ("status", "outputs"), ("output_uris",), ("output_path",), ("spec", "output_path"))
+        if isinstance(outputs, str):
+            output_uris = (outputs,) if outputs else ()
+        elif isinstance(outputs, list):
+            output_uris = tuple(str(value) for value in outputs if value)
+        else:
+            output_uris = ()
+        return JobInfo(
+            id=_endpoint_id(data),
+            name=_endpoint_name(data),
+            project_id=_endpoint_project_id(data, fallback_project_id),
+            status=_job_status(_deep_get(data, ("status", "state"), ("status",), ("state",))),
+            created_at=str(_deep_get(data, ("metadata", "created_at"), ("created_at",))),
+            started_at=str(_deep_get(data, ("status", "started_at"), ("started_at",))),
+            ended_at=str(_deep_get(data, ("status", "ended_at"), ("ended_at",))),
+            output_uris=output_uris,
+            log_tail=str(_deep_get(data, ("status", "message"), ("status", "log_tail"), ("log_tail",))),
             raw=data,
         )
 

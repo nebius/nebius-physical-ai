@@ -39,6 +39,15 @@ def _endpoint_json(
     )
 
 
+def _job_json(state: str = "SUCCEEDED") -> str:
+    return f'{{"metadata": {{"id": "job-1", "name": "cosmos-train", "parent_id": "project-1"}}, "status": {{"state": "{state}", "output_uris": ["s3://bucket/jobs/cosmos-train/"], "message": "tail"}}}}'
+
+
+def _create_job(client: ServerlessClient, **kwargs):
+    defaults = {"project_id": "project-1", "name": "cosmos-train", "image": "registry/cosmos:cuda12", "command": "bash -lc train", "gpu_type": "gpu-h200-sxm", "gpu_count": 1, "output_path": "s3://bucket/jobs/cosmos-train/"}
+    return client.create_job(**(defaults | kwargs))
+
+
 def test_create_endpoint_builds_expected_args() -> None:
     calls: list[list[str]] = []
 
@@ -520,3 +529,75 @@ def test_subprocess_env_is_not_used_for_nonsecret_args() -> None:
     client.create_endpoint(spec)
 
     assert observed_kwargs["env"] is None
+
+
+def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json())
+
+    caplog.set_level("DEBUG", logger="npa.clients.serverless")
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    info = _create_job(client, env={"MODE": "smoke"}, extra_env={"HF_TOKEN": "hf_secret_value"})
+
+    assert info.status == "succeeded"
+    assert info.output_uris == ("s3://bucket/jobs/cosmos-train/",)
+    assert calls[0][1:4] == ["ai", "job", "create"]
+    assert "MODE=smoke" in calls[0]
+    assert "HF_TOKEN=hf_secret_value" in calls[0]
+    assert "hf_secret_value" not in caplog.text
+    assert "HF_TOKEN=<redacted>" in caplog.text
+
+
+def test_create_job_parser_fallback_resolves_by_name_and_ner_raises() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "create":
+            return _result(args, 0, "[1/1] waiting\n")
+        if args[3] == "get":
+            return _result(args, 1, stderr="not found")
+        return _result(args, 0, _job_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    assert _create_job(client).id == "job-1"
+    assert [call[3] for call in calls] == ["create", "get", "get-by-name"]
+
+    def fake_runner(args, **kwargs):
+        return _result(args, 1, stderr="scheduling failed: no GPU available")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    with pytest.raises(NotEnoughResourcesError):
+        _create_job(client, gpu_count=8)
+
+
+def test_job_state_cancel_idempotency_and_poll() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json(state="SUCCEEDED"))
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    assert client.cancel_job("job-1", "project-1").status == "succeeded"
+    assert [call[3] for call in calls] == ["get"]
+
+    states = iter([ServerlessClientError("temporary"), _job_json(state="RUNNING"), _job_json()])
+
+    def fake_runner(args, **kwargs):
+        value = next(states)
+        if isinstance(value, ServerlessClientError):
+            return _result(args, 1, stderr="temporary")
+        return _result(args, 0, value)
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner, sleep=lambda seconds: None)
+    assert client.poll_job("job-1", "project-1", interval_s=0, ceiling_s=10).status == "succeeded"
+
+    running = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda args, **kwargs: _result(args, 0, _job_json(state="RUNNING")), sleep=lambda seconds: None)
+    with pytest.raises(TimeoutError, match="did not finish"):
+        running.poll_job("job-1", "project-1", interval_s=0, ceiling_s=0)
