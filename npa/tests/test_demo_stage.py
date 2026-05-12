@@ -114,6 +114,27 @@ artifacts:
     return path
 
 
+def _overlap_manifest(path: Path) -> Path:
+    path.write_text(
+        f"""\
+version: 1
+artifacts:
+  - name: file-one
+    source_uri: s3://source/files/file.bin
+    target_path: staged/dataset/file.bin
+    sha256: {HELLO_SHA256}
+    size_bytes: 5
+  - name: prefix-one
+    source_uri: s3://source/dataset/
+    target_path: staged/dataset/
+    is_prefix: true
+    expected_count: 2
+    total_size_bytes: 9
+"""
+    )
+    return path
+
+
 def test_default_demo_manifest_parses() -> None:
     manifest = load_manifest(Path("npa/manifests/demo-8gpu-h200.yaml"))
 
@@ -174,6 +195,49 @@ def test_stage_missing_metadata_redownloads_legacy_object(tmp_path: Path) -> Non
 
     assert result == [{"name": "file-one", "action": "upload"}]
     assert s3.objects[("target", "staged/file.bin")]["Metadata"]["sha256"] == sha
+
+
+def test_stage_does_not_clobber_file_metadata_with_prefix_upload(
+    tmp_path: Path,
+) -> None:
+    manifest = _overlap_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "files/file.bin", b"hello")
+    s3.add("source", "dataset/file.bin", b"hello")
+    s3.add("source", "dataset/other.bin", b"data")
+
+    result = stage_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert result == [
+        {"name": "file-one", "action": "upload"},
+        {"name": "prefix-one", "action": "copy"},
+    ]
+    assert ("source", "dataset/file.bin", "target", "staged/dataset/file.bin") not in (
+        s3.copy_calls
+    )
+    assert s3.copy_calls == [
+        ("source", "dataset/other.bin", "target", "staged/dataset/other.bin")
+    ]
+    assert s3.objects[("target", "staged/dataset/file.bin")]["Metadata"] == {
+        "sha256": HELLO_SHA256
+    }
+
+
+def test_stage_verify_works_in_isolation_after_fresh_stage(tmp_path: Path) -> None:
+    manifest = _overlap_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "files/file.bin", b"hello")
+    s3.add("source", "dataset/file.bin", b"hello")
+    s3.add("source", "dataset/other.bin", b"data")
+
+    stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+    assert (
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+        == []
+    )
 
 
 def test_stage_auth_error_raises_scoped_credential_error(tmp_path: Path) -> None:

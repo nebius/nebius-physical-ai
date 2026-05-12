@@ -118,6 +118,11 @@ def stage_artifacts(
         _target_bucket_key(target_bucket, artifact.target_path)[0]
         for artifact in manifest.artifacts
     }
+    file_artifacts_by_target = {
+        _target_bucket_key(target_bucket, artifact.target_path): artifact
+        for artifact in manifest.artifacts
+        if not artifact.is_prefix
+    }
     s3 = _stage_s3_client(
         s3_client=s3_client,
         host_s3_client=host_s3_client,
@@ -130,7 +135,9 @@ def stage_artifacts(
     actions: list[dict[str, str]] = []
     for artifact in manifest.artifacts:
         if artifact.is_prefix:
-            action = _stage_prefix(s3, artifact, target_bucket)
+            action = _stage_prefix(
+                s3, artifact, target_bucket, file_artifacts_by_target
+            )
         else:
             action = _stage_file(s3, artifact, target_bucket)
         actions.append({"name": artifact.name, "action": action})
@@ -331,11 +338,17 @@ def _stage_file(s3, artifact: DemoArtifact, target_bucket: str) -> str:
     return "upload"
 
 
-def _stage_prefix(s3, artifact: DemoArtifact, target_bucket: str) -> str:
+def _stage_prefix(
+    s3,
+    artifact: DemoArtifact,
+    target_bucket: str,
+    file_artifacts_by_target: dict[tuple[str, str], DemoArtifact] | None = None,
+) -> str:
     source_bucket, source_prefix = _parse_s3_uri(artifact.source_uri)
     dest_bucket, dest_prefix = _target_bucket_key(target_bucket, artifact.target_path)
     source_prefix = _ensure_prefix(source_prefix)
     dest_prefix = _ensure_prefix(dest_prefix)
+    file_artifacts_by_target = file_artifacts_by_target or {}
     source_objects = _list_objects(
         s3, source_bucket, source_prefix, operation=f"list {artifact.name}"
     )
@@ -358,6 +371,8 @@ def _stage_prefix(s3, artifact: DemoArtifact, target_bucket: str) -> str:
         if not rel:
             continue
         dest_key = dest_prefix + rel
+        if (dest_bucket, dest_key) in file_artifacts_by_target:
+            continue
         _copy_object(
             s3,
             source_bucket,
