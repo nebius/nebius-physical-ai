@@ -43,3 +43,6 @@ class ScopedCredentialError(NpaError):
             f"Scoped credentials failed for {operation} on bucket '{bucket}'"
             f"{project_context}. {self.remediation}"
         )
+
+
+__all__ = ["NpaError", "ScopedCredentialError"]
