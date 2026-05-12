@@ -288,3 +288,28 @@ privates through this path. Cleaner migration: update test imports to point at
 
 `npa init` is a literal alias for `npa configure`. Either drop the alias or add
 a one-line help distinction.
+
+---
+
+## CLOSED 2026-05-12 (deploy lifecycle safety run)
+
+- `<tool> deploy against existing alias provisions replacement infrastructure` — CLOSED
+  Added existing-alias detection for groot, cosmos, isaac-lab, and fiftyone.
+  Re-running deploy against a saved alias now avoids Terraform by default;
+  replacement provisioning requires explicit `--replace` and confirmation
+  unless `--yes` is set.
+
+- `No reload-env command for env updates without model unload` — CLOSED FOR COSMOS
+  Added `npa workbench cosmos reload-env`; groot already had reload-env.
+  isaac-lab and fiftyone remain lower-priority future candidates.
+
+- `Add --dry-run to groot reload-env` — CLOSED
+  Added `--dry-run` to both groot and cosmos reload-env. Dry-run reads the
+  remote env file, prints a redacted unified diff, and shows the commands that
+  would run without applying changes.
+
+- `No cleanup path for partial deploys` — CLOSED
+  Added `npa workbench <tool> cleanup-partial` for cosmos, groot, isaac-lab,
+  and fiftyone. The command classifies alias state and only runs Terraform
+  destroy for `partial`; fully deployed aliases are refused and BYOVM aliases
+  are skipped. Confirmation is required unless `--yes` is passed.
