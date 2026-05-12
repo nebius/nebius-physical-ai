@@ -91,6 +91,20 @@ class TerraformStateConfig:
 
 
 @dataclass
+class ServerlessConfig:
+    resource_type: str = ""
+    endpoint_id: str = ""
+    endpoint_name: str = ""
+    project_id: str = ""
+    url: str = ""
+    image: str = ""
+    platform: str = ""
+    preset: str = ""
+    container_port: int = 0
+    auth: str = "none"
+
+
+@dataclass
 class WorkbenchConfig:
     endpoint: str
     ssh: SSHConfig
@@ -113,6 +127,7 @@ class WorkbenchConfig:
     gpu_count: int = 0
     detected_gpu_count: int = 0
     cuda_visible_devices: str = ""
+    serverless: ServerlessConfig = field(default_factory=ServerlessConfig)
 
 
 class ConfigError(Exception):
@@ -476,6 +491,77 @@ def update_workbench_endpoint_strategy(
     })
 
 
+def update_workbench_serverless_endpoint(
+    project: str,
+    name: str,
+    *,
+    endpoint_id: str,
+    endpoint_name: str,
+    project_id: str,
+    url: str,
+    image: str,
+    platform: str,
+    preset: str,
+    container_port: int,
+    auth: str = "none",
+) -> Path:
+    """Persist Nebius Serverless AI endpoint metadata for a workbench alias."""
+    return write_config({
+        "projects": {
+            project: {
+                "workbenches": {
+                    name: {
+                        "endpoint": url,
+                        "endpoint_strategy": "public",
+                        "service_port": int(container_port),
+                        "runtime": "serverless",
+                        "app_status": APP_STATUS_PROVISIONED,
+                        "serverless": {
+                            "resource_type": "endpoint",
+                            "endpoint_id": endpoint_id,
+                            "endpoint_name": endpoint_name,
+                            "project_id": project_id,
+                            "url": url,
+                            "image": image,
+                            "platform": platform,
+                            "preset": preset,
+                            "container_port": int(container_port),
+                            "auth": auth,
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+
+def _serverless_config(wb: dict[str, Any]) -> ServerlessConfig:
+    raw = wb.get("serverless", {})
+    if not isinstance(raw, dict):
+        raw = {}
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = raw.get(key)
+            if value is not None and value != "":
+                return str(value)
+        return ""
+
+    port_raw = pick("container_port", "port")
+    return ServerlessConfig(
+        resource_type=pick("resource_type") or "endpoint",
+        endpoint_id=pick("endpoint_id", "id"),
+        endpoint_name=pick("endpoint_name", "name"),
+        project_id=pick("project_id"),
+        url=pick("url", "endpoint_url"),
+        image=pick("image"),
+        platform=pick("platform"),
+        preset=pick("preset"),
+        container_port=int(port_raw) if port_raw.isdigit() else 0,
+        auth=pick("auth") or "none",
+    )
+
+
 # ── Config resolution ────────────────────────────────────────────────────
 
 
@@ -508,7 +594,12 @@ def resolve_config(
         yaml_val = _deep_get(wb, *yaml_path)
         return str(yaml_val) if yaml_val is not None else ""
 
-    ep = pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint")
+    runtime = pick(None, "", "runtime") or "vm"
+    serverless = _serverless_config(wb)
+    ep = (
+        pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint")
+        or serverless.url
+    )
     s_host = pick(ssh_host, "NPA_SSH_HOST", "ssh", "host")
     s_user = pick(ssh_user, "NPA_SSH_USER", "ssh", "user")
     s_key = pick(ssh_key, "NPA_SSH_KEY", "ssh", "key_path")
@@ -520,7 +611,6 @@ def resolve_config(
 
     tin = pick(None, "", "tf_instance_name")
     app_status = pick(None, "", "app_status")
-    runtime = pick(None, "", "runtime") or "vm"
     endpoint_strategy = pick(None, "NPA_ENDPOINT_STRATEGY", "endpoint_strategy")
     endpoint_strategy_configured = (
         "NPA_ENDPOINT_STRATEGY" in os.environ
@@ -545,9 +635,10 @@ def resolve_config(
     cuda_visible_devices = pick(None, "", "cuda_visible_devices")
 
     _require(ep, "Workbench endpoint", "NPA_WORKBENCH_ENDPOINT")
-    _require(s_host, "SSH host", "NPA_SSH_HOST")
-    _require(s_user, "SSH user", "NPA_SSH_USER")
-    _require(s_key, "SSH key path", "NPA_SSH_KEY")
+    if runtime != "serverless":
+        _require(s_host, "SSH host", "NPA_SSH_HOST")
+        _require(s_user, "SSH user", "NPA_SSH_USER")
+        _require(s_key, "SSH key path", "NPA_SSH_KEY")
 
     return WorkbenchConfig(
         endpoint=ep,
@@ -576,6 +667,7 @@ def resolve_config(
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
         cuda_visible_devices=cuda_visible_devices,
+        serverless=serverless,
     )
 
 

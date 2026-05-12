@@ -36,6 +36,17 @@ def test_service_endpoint_defaults_to_public() -> None:
         assert active.strategy == "public"
 
 
+def test_service_endpoint_serverless_uses_saved_public_url(mocker) -> None:
+    cfg = _cfg(strategy="ssh", endpoint="https://cosmos.example", runtime="serverless")
+    popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
+
+    with service_endpoint(cfg) as active:
+        assert active.url == "https://cosmos.example"
+        assert active.strategy == "serverless"
+
+    popen.assert_not_called()
+
+
 def test_service_endpoint_keeps_existing_loopback_tunnel() -> None:
     cfg = _cfg(strategy="ssh", endpoint="http://127.0.0.1:18081")
 

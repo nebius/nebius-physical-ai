@@ -112,6 +112,10 @@ def _is_byovm_config(cfg: Any) -> bool:
     return getattr(cfg, "managed_lifecycle", None) is False
 
 
+def _is_serverless_config(cfg: Any) -> bool:
+    return str(getattr(cfg, "runtime", "") or "").lower() == "serverless"
+
+
 def _public_endpoint_open(base_url: str, *, default_port: int = 0) -> bool:
     parsed = urlparse(base_url)
     host = parsed.hostname
@@ -212,6 +216,11 @@ def service_endpoint(
     strategy = str(getattr(cfg, "endpoint_strategy", "") or "public").lower()
     strategy_configured = bool(getattr(cfg, "endpoint_strategy_configured", False))
     service_port_configured = bool(getattr(cfg, "service_port_configured", False))
+
+    if _is_serverless_config(cfg):
+        yield ActiveEndpoint(url=base_url, strategy="serverless")
+        return
+
     byovm_public = _is_byovm_config(cfg) and strategy == "public"
     legacy_byovm = _is_byovm_config(cfg) and (not strategy_configured or byovm_public)
     persist_missing_ssh_port = (

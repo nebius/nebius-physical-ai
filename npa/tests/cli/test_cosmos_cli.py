@@ -117,6 +117,13 @@ def test_cosmos_backend_help_describes_choices() -> None:
     assert "TensorRT" in serve.output
 
 
+def test_cosmos_deploy_help_lists_serverless_runtime() -> None:
+    result = runner.invoke(app, ["workbench", "cosmos", "deploy", "--help"])
+
+    assert result.exit_code == 0
+    assert "serverless" in result.output
+
+
 @pytest.mark.parametrize("command", ["finetune", "optimize"])
 def test_cosmos_placeholders_exit_not_implemented(command: str) -> None:
     result = runner.invoke(app, ["workbench", "cosmos", command])

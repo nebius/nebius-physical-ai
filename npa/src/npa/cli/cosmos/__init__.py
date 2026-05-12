@@ -291,6 +291,7 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    serverless = "serverless"
 
 
 COSMOS_CONTAINER_NAME = "npa-cosmos"

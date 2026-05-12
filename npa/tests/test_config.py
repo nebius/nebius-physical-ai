@@ -282,6 +282,110 @@ def test_resolve_config_keeps_network_fields_optional(isolated_config: Path) -> 
     assert resolved.security_group_id == ""
 
 
+def test_resolve_config_parses_serverless_alias_without_ssh(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "project_id": "project-1",
+                        "region": "eu-north1",
+                        "workbenches": {
+                            "cosmos": {
+                                "runtime": "serverless",
+                                "endpoint": "https://cosmos.example",
+                                "serverless": {
+                                    "resource_type": "endpoint",
+                                    "endpoint_id": "endpoint-1",
+                                    "endpoint_name": "cosmos",
+                                    "project_id": "project-1",
+                                    "url": "https://cosmos.example",
+                                    "image": "registry/cosmos:cuda12",
+                                    "platform": "gpu-h200-sxm",
+                                    "preset": "1gpu-16vcpu-200gb",
+                                    "container_port": 8080,
+                                    "auth": "none",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            sort_keys=False,
+        )
+    )
+
+    resolved = config.resolve_config(project="proj", name="cosmos")
+
+    assert resolved.runtime == "serverless"
+    assert resolved.endpoint == "https://cosmos.example"
+    assert resolved.ssh.host == ""
+    assert resolved.serverless.endpoint_id == "endpoint-1"
+    assert resolved.serverless.endpoint_name == "cosmos"
+    assert resolved.serverless.project_id == "project-1"
+    assert resolved.serverless.image == "registry/cosmos:cuda12"
+    assert resolved.serverless.container_port == 8080
+
+
+def test_resolve_config_uses_serverless_url_as_endpoint(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "workbenches": {
+                            "cosmos": {
+                                "runtime": "serverless",
+                                "serverless": {
+                                    "endpoint_id": "endpoint-1",
+                                    "url": "https://cosmos.example",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            sort_keys=False,
+        )
+    )
+
+    resolved = config.resolve_config(project="proj", name="cosmos")
+
+    assert resolved.endpoint == "https://cosmos.example"
+
+
+def test_update_workbench_serverless_endpoint_persists_metadata(
+    isolated_config: Path,
+) -> None:
+    config.update_workbench_serverless_endpoint(
+        "proj",
+        "cosmos",
+        endpoint_id="endpoint-1",
+        endpoint_name="cosmos",
+        project_id="project-1",
+        url="https://cosmos.example",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+        container_port=8080,
+        auth="none",
+    )
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    wb = saved["projects"]["proj"]["workbenches"]["cosmos"]
+    assert wb["runtime"] == "serverless"
+    assert wb["endpoint"] == "https://cosmos.example"
+    assert wb["serverless"]["endpoint_id"] == "endpoint-1"
+    assert wb["serverless"]["project_id"] == "project-1"
+    assert wb["serverless"]["container_port"] == 8080
+
+
 def test_resolve_config_env_overrides_yaml(
     isolated_config: Path,
     monkeypatch: pytest.MonkeyPatch,
