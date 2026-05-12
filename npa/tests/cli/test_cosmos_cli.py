@@ -543,6 +543,58 @@ def test_cosmos_reload_env_propagates_ssh_failure(mocker) -> None:
     assert "Cosmos env reload failed: transport down" in result.output
 
 
+def test_cosmos_reload_env_dry_run_does_not_apply(mocker) -> None:
+    cfg = _cfg(hf_token="hf-token")
+    cfg.service_port = 8081
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "NPA_COSMOS_ENV_READ env_path=/etc/npa-cosmos-server/env mode=systemd\n"
+        "HF_TOKEN=old-token\n",
+        "",
+    )
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "reload-env", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Dry run" in result.output
+    assert "No changes applied" in result.output
+    command = ssh.run_or_raise.call_args.args[0]
+    assert "NPA_COSMOS_ENV_READ" in command
+    assert "NPA_COSMOS_RELOAD_ENV_COMPLETE" not in command
+
+
+def test_cosmos_reload_env_dry_run_shows_changes(mocker) -> None:
+    cfg = _cfg(hf_token="hf-token")
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "NPA_COSMOS_ENV_READ env_path=/etc/npa-cosmos-server/env mode=systemd\n"
+        "HF_TOKEN=old-token\n",
+        "",
+    )
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "reload-env", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "--- current" in result.output
+    assert "+++ proposed" in result.output
+    assert "-HF_TOKEN=old-" in result.output
+    assert "+HF_TOKEN=hf-t" in result.output
+
+
 def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")

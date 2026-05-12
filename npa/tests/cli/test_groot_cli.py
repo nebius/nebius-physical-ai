@@ -895,6 +895,58 @@ def test_groot_apply_env_update_helper_used_by_deploy_and_reload_env(mocker) -> 
     assert apply_env_update.call_count == 2
 
 
+def test_groot_reload_env_dry_run_does_not_apply(mocker) -> None:
+    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg.service_port = 8082
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "NPA_GROOT_ENV_READ env_path=/etc/npa-groot-server/env mode=systemd\n"
+        "HF_TOKEN=old-token\n",
+        "",
+    )
+    mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "groot", "reload-env", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Dry run" in result.output
+    assert "No changes applied" in result.output
+    command = ssh.run_or_raise.call_args.args[0]
+    assert "NPA_GROOT_ENV_READ" in command
+    assert "NPA_GROOT_RELOAD_ENV_COMPLETE" not in command
+
+
+def test_groot_reload_env_dry_run_shows_changes(mocker) -> None:
+    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (
+        0,
+        "NPA_GROOT_ENV_READ env_path=/etc/npa-groot-server/env mode=systemd\n"
+        "HF_TOKEN=old-token\n",
+        "",
+    )
+    mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+
+    result = runner.invoke(app, ["workbench", "groot", "reload-env", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "--- current" in result.output
+    assert "+++ proposed" in result.output
+    assert "-HF_TOKEN=old-" in result.output
+    assert "+HF_TOKEN=hf-t" in result.output
+
+
 def test_groot_reload_env_requires_shared_credentials(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
     mocker.patch("npa.cli.groot.resolve_credentials", return_value=CredentialsConfig())

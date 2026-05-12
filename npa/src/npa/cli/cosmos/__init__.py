@@ -54,7 +54,11 @@ from npa.clients.credentials import (
     shared_credential_env,
     warn_if_hf_token_missing,
 )
-from npa.clients.env import render_redacted_env_file
+from npa.clients.env import (
+    merge_env_file_content,
+    render_redacted_env_diff,
+    render_redacted_env_file,
+)
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
@@ -470,8 +474,56 @@ print("updated_keys=" + ",".join(sorted(updates)))
 PY
 {restart_block}
 echo "NPA_COSMOS_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
+    """
+    return _remote_bash(script)
+
+
+def _build_read_env_command() -> str:
+    script = f"""\
+set -euo pipefail
+env_path={COSMOS_ENV_FILE}
+mode=""
+if sudo systemctl cat {COSMOS_SERVICE} >/dev/null 2>&1; then
+  mode="systemd"
+elif sudo docker inspect {COSMOS_CONTAINER_NAME} >/dev/null 2>&1; then
+  mode="container"
+elif sudo test -f "$env_path"; then
+  mode="env-only"
+else
+  echo "NPA_COSMOS_ENV_READ env_path= mode=missing"
+  exit 0
+fi
+echo "NPA_COSMOS_ENV_READ env_path=$env_path mode=$mode"
+sudo cat "$env_path" || true
 """
     return _remote_bash(script)
+
+
+def _parse_env_read(stdout: str) -> tuple[str, str, str]:
+    env_path = ""
+    mode = ""
+    body: list[str] = []
+    for line in stdout.splitlines():
+        if line.startswith("NPA_COSMOS_ENV_READ "):
+            parts = dict(
+                item.split("=", 1)
+                for item in line.removeprefix("NPA_COSMOS_ENV_READ ").split()
+                if "=" in item
+            )
+            env_path = parts.get("env_path", "")
+            mode = parts.get("mode", "")
+            continue
+        body.append(line)
+    return env_path, mode, "\n".join(body) + ("\n" if body else "")
+
+
+def _read_current_env_for_dry_run(cfg: Any, credential_env: dict[str, str]) -> tuple[str, str, str]:
+    ssh = _ssh_client(cfg, extra_tokens=credential_env)
+    try:
+        _, stdout, _ = ssh.run_or_raise(_build_read_env_command(), stream=False)
+    except SSHError:
+        return "", "missing", ""
+    return _parse_env_read(stdout)
 
 
 def _apply_env_update(
@@ -1871,6 +1923,11 @@ def reload_env_cmd(
         "--restart/--no-restart",
         help="Restart Cosmos after updating the env file.",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview env changes and restart commands without applying them.",
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -1880,6 +1937,42 @@ def reload_env_cmd(
     credentials = resolve_credentials()
     credential_env = _shared_cosmos_env_or_fail(cfg, credentials)
     service_port = port or int(getattr(cfg, "service_port", 0) or 0) or 8080
+    if dry_run:
+        env_path, env_mode, current_env = _read_current_env_for_dry_run(
+            cfg, credential_env
+        )
+        proposed_env = merge_env_file_content(current_env, credential_env)
+        diff = render_redacted_env_diff(current_env, proposed_env)
+        if output == OutputFormat.json:
+            _output(
+                {
+                    "status": "dry_run",
+                    "updated_keys": sorted(credential_env),
+                    "env_path": env_path,
+                    "mode": env_mode,
+                    "restart": restart,
+                    "port": service_port,
+                    "diff": diff,
+                    "commands": [
+                        f"systemctl restart {COSMOS_SERVICE}" if restart else "no restart",
+                        f"curl http://127.0.0.1:{service_port}/health",
+                    ],
+                },
+                output,
+            )
+        else:
+            typer.echo("=== Dry run: would change env file ===")
+            typer.echo(diff or "(no changes)")
+            typer.echo("=== Would execute: ===")
+            if restart:
+                typer.echo(f"  systemctl restart {COSMOS_SERVICE}")
+                typer.echo(f"  curl http://127.0.0.1:{service_port}/health")
+            else:
+                typer.echo("  no restart (--no-restart)")
+            typer.echo("")
+            typer.echo("No changes applied (--dry-run).")
+        return
+
     result = _apply_env_update(
         cfg,
         credential_env,

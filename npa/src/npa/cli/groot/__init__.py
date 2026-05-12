@@ -54,7 +54,11 @@ from npa.clients.credentials import (
     shared_credential_env,
     warn_if_hf_token_missing,
 )
-from npa.clients.env import render_redacted_env_file
+from npa.clients.env import (
+    merge_env_file_content,
+    render_redacted_env_diff,
+    render_redacted_env_file,
+)
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
@@ -115,6 +119,7 @@ GROOT_EVAL_DATA_CACHE = f"{GROOT_DATA_MOUNT}/eval_data_cache"
 GROOT_CONFIG_CACHE = f"{GROOT_DATA_MOUNT}/config_cache"
 GROOT_SERVICE = "npa-groot-server"
 GROOT_CONTAINER_NAME = "npa-groot"
+GROOT_ENV_FILE = "/etc/npa-groot-server/env"
 GROOT_CONTAINER_ENV_FILE = "/etc/npa-groot/env"
 GROOT_CONTAINER_WORKBENCH_TYPE = "groot-container"
 GROOT_REMOTE_ENV_NAMES = (
@@ -1185,7 +1190,7 @@ curl -fsS "http://127.0.0.1:{port}/health" >/dev/null
 """
     script = f"""\
 set -euo pipefail
-server_env=/etc/npa-groot-server/env
+server_env={GROOT_ENV_FILE}
 container_env={GROOT_CONTAINER_ENV_FILE}
 env_path=""
 mode=""
@@ -1235,6 +1240,47 @@ echo "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
     return _remote_bash(script)
 
 
+def _build_read_env_command() -> str:
+    script = f"""\
+set -euo pipefail
+server_env={GROOT_ENV_FILE}
+container_env={GROOT_CONTAINER_ENV_FILE}
+env_path=""
+mode=""
+if sudo test -f "$server_env"; then
+  env_path="$server_env"
+  mode="systemd"
+elif sudo test -f "$container_env"; then
+  env_path="$container_env"
+  mode="container"
+else
+  echo "NPA_GROOT_ENV_READ env_path= mode=missing"
+  exit 0
+fi
+echo "NPA_GROOT_ENV_READ env_path=$env_path mode=$mode"
+sudo cat "$env_path" || true
+"""
+    return _remote_bash(script)
+
+
+def _parse_env_read(stdout: str) -> tuple[str, str, str]:
+    env_path = ""
+    mode = ""
+    body: list[str] = []
+    for line in stdout.splitlines():
+        if line.startswith("NPA_GROOT_ENV_READ "):
+            parts = dict(
+                item.split("=", 1)
+                for item in line.removeprefix("NPA_GROOT_ENV_READ ").split()
+                if "=" in item
+            )
+            env_path = parts.get("env_path", "")
+            mode = parts.get("mode", "")
+            continue
+        body.append(line)
+    return env_path, mode, "\n".join(body) + ("\n" if body else "")
+
+
 def _shared_groot_env_or_fail(credentials: Any) -> dict[str, str]:
     credential_env = {
         key: value
@@ -1244,6 +1290,15 @@ def _shared_groot_env_or_fail(credentials: Any) -> dict[str, str]:
     if not credential_env:
         _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
     return credential_env
+
+
+def _read_current_env_for_dry_run(cfg: Any, credential_env: dict[str, str]) -> tuple[str, str, str]:
+    ssh = _ssh_client(cfg, extra_tokens=credential_env)
+    try:
+        _, stdout, _ = ssh.run_or_raise(_build_read_env_command(), stream=False)
+    except SSHError:
+        return "", "missing", ""
+    return _parse_env_read(stdout)
 
 
 def _apply_env_update(
@@ -2869,6 +2924,11 @@ def reload_env_cmd(
     timeout: float = typer.Option(
         600.0, "--timeout", help="Seconds to wait for optional model re-serve."
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview env changes and restart commands without applying them.",
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -2881,6 +2941,42 @@ def reload_env_cmd(
     service_port = (
         port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
     )
+    if dry_run:
+        env_path, env_mode, current_env = _read_current_env_for_dry_run(
+            cfg, credential_env
+        )
+        proposed_env = merge_env_file_content(current_env, credential_env)
+        diff = render_redacted_env_diff(current_env, proposed_env)
+        if output == OutputFormat.json:
+            _output(
+                {
+                    "status": "dry_run",
+                    "updated_keys": sorted(credential_env),
+                    "env_path": env_path,
+                    "mode": env_mode,
+                    "restart": restart,
+                    "port": service_port,
+                    "diff": diff,
+                    "commands": [
+                        f"systemctl restart {GROOT_SERVICE}" if restart else "no restart",
+                        f"curl http://127.0.0.1:{service_port}/health",
+                    ],
+                },
+                output,
+            )
+        else:
+            typer.echo("=== Dry run: would change env file ===")
+            typer.echo(diff or "(no changes)")
+            typer.echo("=== Would execute: ===")
+            if restart:
+                typer.echo(f"  systemctl restart {GROOT_SERVICE}")
+                typer.echo(f"  curl http://127.0.0.1:{service_port}/health")
+            else:
+                typer.echo("  no restart (--no-restart)")
+            typer.echo("")
+            typer.echo("No changes applied (--dry-run).")
+        return
+
     pre_health: dict[str, Any] = {}
     pre_health_error = ""
     should_probe_loaded = preserve_loaded or bool(model) or bool(robot_embodiment)

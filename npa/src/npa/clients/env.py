@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Any, Mapping
 
@@ -63,3 +64,49 @@ def redacted_env(env: Mapping[str, Any]) -> dict[str, str]:
 
 def render_redacted_env_file(env: Mapping[str, Any]) -> str:
     return render_shell_env_file(redacted_env(env))
+
+
+def merge_env_file_content(current: str, updates: Mapping[str, Any]) -> str:
+    """Return env-file content with updates applied while preserving other lines."""
+    clean_updates = {
+        validate_env_name(str(key)): str(value)
+        for key, value in updates.items()
+        if value is not None and str(value)
+    }
+    lines = current.splitlines()
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        key = line.split("=", 1)[0] if "=" in line else ""
+        if key in clean_updates:
+            if key not in seen:
+                out.append(f"{key}={clean_updates[key]}")
+                seen.add(key)
+            continue
+        out.append(line)
+    for key, value in clean_updates.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    return "\n".join(out).rstrip() + ("\n" if out else "")
+
+
+def _redact_env_file_content(content: str) -> str:
+    lines: list[str] = []
+    for line in content.splitlines():
+        if "=" not in line or line.lstrip().startswith("#"):
+            lines.append(line)
+            continue
+        key, value = line.split("=", 1)
+        lines.append(f"{key}={redact_value(value)}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def render_redacted_env_diff(current: str, proposed: str) -> str:
+    """Return a unified diff with env values redacted."""
+    diff = difflib.unified_diff(
+        _redact_env_file_content(current).splitlines(keepends=True),
+        _redact_env_file_content(proposed).splitlines(keepends=True),
+        fromfile="current",
+        tofile="proposed",
+    )
+    return "".join(diff)
