@@ -18,6 +18,24 @@ permissions:
   security-events: write
 
 jobs:
+  tag-strategy-check:
+    name: Two-tag strategy consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyYAML
+        run: python -m pip install PyYAML
+
+      - name: Run tag consistency check
+        run: python npa/docker/check_tag_consistency.py
+
   dockerfile-static-scan:
     name: Static Dockerfile scan (Trivy config)
     runs-on: ubuntu-latest
