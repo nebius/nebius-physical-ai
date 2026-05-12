@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 
 class ServerlessClientError(Exception):
@@ -251,6 +252,14 @@ def _endpoint_status(data: Mapping[str, Any]) -> EndpointStatus:
 
 
 def _endpoint_url(data: Mapping[str, Any]) -> str:
+    def normalize_url(raw: Any) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        if urlparse(value).scheme:
+            return value
+        return f"http://{value}"
+
     value = _deep_get(
         data,
         ("status", "url"),
@@ -261,15 +270,20 @@ def _endpoint_url(data: Mapping[str, Any]) -> str:
         ("url",),
     )
     if value:
-        return str(value)
+        return normalize_url(value)
 
     status = data.get("status")
     if isinstance(status, Mapping):
+        for key in ("public_endpoints", "publicEndpoints"):
+            public_endpoints = status.get(key)
+            if isinstance(public_endpoints, list) and public_endpoints:
+                return normalize_url(public_endpoints[0])
         endpoints = status.get("endpoints")
         if isinstance(endpoints, list) and endpoints:
             first = endpoints[0]
             if isinstance(first, Mapping):
-                return str(first.get("url") or first.get("address") or "")
+                return normalize_url(first.get("url") or first.get("address") or "")
+            return normalize_url(first)
     return ""
 
 
