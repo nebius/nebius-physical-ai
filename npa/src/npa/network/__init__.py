@@ -19,7 +19,7 @@ def ensure_ingress(
 ):
     """Ensure TCP ingress to a VM security group."""
     if isinstance(ports, str):
-        parsed_ports = parse_ports(ports)
+        parsed_ports = list(parse_ports(ports))
     else:
         parsed_ports = [int(port) for port in ports]
     return _ensure_ingress(
