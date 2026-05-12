@@ -144,6 +144,164 @@ def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(tmp_path: Path, mocke
     assert wb_cfg["app_status"] == "provisioned"
 
 
+def test_fiftyone_deploy_existing_alias_no_replace_skips_terraform(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch(
+        "npa.cli.fiftyone._read_existing_outputs",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    apply = mocker.patch("npa.cli.fiftyone.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "deploy", "--skip-app"],
+    )
+
+    assert result.exit_code == 0
+    assert "updating in place without Terraform" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_fiftyone_deploy_existing_alias_with_replace_prompts_confirmation(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.fiftyone.typer.confirm", return_value=False)
+    init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    apply = mocker.patch("npa.cli.fiftyone.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "deploy", "--replace"],
+    )
+
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_fiftyone_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    confirm = mocker.patch("npa.cli.fiftyone.typer.confirm")
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate",
+            "deploy",
+            "--replace",
+            "--yes",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    apply.assert_called_once()
+
+
+def test_fiftyone_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "fresh",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    apply.assert_called_once()
+
+
+def test_fiftyone_deploy_byovm_alias_skips_terraform(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=True)
+    mocker.patch(
+        "npa.cli.fiftyone._read_existing_outputs",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    apply = mocker.patch("npa.cli.fiftyone.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "-p", "proj", "-n", "byovm", "deploy", "--skip-app"],
+    )
+
+    assert result.exit_code == 0
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
 def test_fiftyone_deploy_accepts_cpu_override_flags(tmp_path: Path, mocker) -> None:
     mocker.patch("npa.cli.fiftyone.provisioner.init")
     apply = mocker.patch(
