@@ -259,6 +259,136 @@ def test_groot_deploy_passes_custom_data_disk_size(tmp_path: Path, mocker) -> No
     assert apply.call_args.kwargs["tf_vars"]["data_disk_size_gb"] == "384"
 
 
+def test_groot_deploy_existing_alias_no_replace_uses_idempotent_path(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    update_existing = mocker.patch("npa.cli.groot._update_existing_deployment")
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(app, ["workbench", "groot", "-p", "proj", "-n", "groot", "deploy"])
+
+    assert result.exit_code == 0
+    update_existing.assert_called_once()
+    assert update_existing.call_args.kwargs["project"] == "proj"
+    assert update_existing.call_args.kwargs["name"] == "groot"
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_groot_deploy_existing_alias_with_replace_prompts_confirmation(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.typer.confirm", return_value=False)
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(app, ["workbench", "groot", "-p", "proj", "-n", "groot", "deploy", "--replace"])
+
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_groot_deploy_existing_alias_with_replace_and_yes_skips_prompt(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    confirm = mocker.patch("npa.cli.groot.typer.confirm")
+    mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.groot.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.9",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.groot.write_config")
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--replace",
+            "--yes",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    apply.assert_called_once()
+
+
+def test_groot_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.groot.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.9",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.groot.write_config")
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "new",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    apply.assert_called_once()
+
+
+def test_groot_deploy_byovm_alias_skips_terraform_regardless(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=True)
+    update_existing = mocker.patch("npa.cli.groot._update_existing_deployment")
+    init = mocker.patch("npa.cli.groot.provisioner.init")
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(app, ["workbench", "groot", "-p", "proj", "-n", "byovm", "deploy"])
+
+    assert result.exit_code == 0
+    update_existing.assert_called_once()
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
 def test_groot_deploy_container_runtime_starts_container(tmp_path: Path, mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected\n", "")
@@ -721,6 +851,48 @@ def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mo
         json={"model_path": DEFAULT_MODEL, "embodiment_tag": "REAL_G1", "device": "cuda"},
         timeout=600.0,
     )
+
+
+def test_groot_apply_env_update_helper_used_by_deploy_and_reload_env(mocker) -> None:
+    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg.service_port = 8082
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+    )
+    apply_env_update = mocker.patch(
+        "npa.cli.groot._apply_env_update",
+        return_value={
+            "updated_keys": ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"],
+            "env_path": "/etc/npa-groot-server/env",
+            "mode": "systemd",
+            "restarted": True,
+            "port": 8082,
+        },
+    )
+
+    deploy_result = runner.invoke(app, ["workbench", "groot", "-p", "proj", "-n", "groot", "deploy"])
+    reload_result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "reload-env",
+            "--no-preserve-loaded",
+        ],
+    )
+
+    assert deploy_result.exit_code == 0
+    assert reload_result.exit_code == 0
+    assert apply_env_update.call_count == 2
 
 
 def test_groot_reload_env_requires_shared_credentials(mocker) -> None:

@@ -34,6 +34,7 @@ from npa.clients.config import (
     APP_STATUS_PROVISIONED,
     ConfigError,
     SSHConfig,
+    alias_has_terraform_state,
     default_project_name,
     default_workbench_name,
     list_projects,
@@ -45,6 +46,7 @@ from npa.clients.config import (
     resolve_ssh_config,
     resolve_terraform_state,
     update_workbench_app_status,
+    workbench_is_byovm,
     write_config,
 )
 from npa.clients.credentials import (
@@ -324,6 +326,12 @@ def main(
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}")
     raise typer.Exit(code)
+
+
+def _confirm_or_exit(prompt: str) -> None:
+    if not typer.confirm(prompt, default=False):
+        typer.echo("Aborted.")
+        raise typer.Exit(code=1)
 
 
 def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
@@ -1223,8 +1231,61 @@ print("updated_keys=" + ",".join(sorted(updates)))
 PY
 {restart_block}
 echo "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
-"""
+    """
     return _remote_bash(script)
+
+
+def _shared_groot_env_or_fail(credentials: Any) -> dict[str, str]:
+    credential_env = {
+        key: value
+        for key, value in shared_credential_env(credentials).items()
+        if key in GROOT_CREDENTIAL_ENV_NAMES and value
+    }
+    if not credential_env:
+        _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
+    return credential_env
+
+
+def _apply_env_update(
+    cfg: Any,
+    credential_env: dict[str, str],
+    *,
+    service_port: int,
+    restart: bool,
+    output: OutputFormat,
+) -> dict[str, Any]:
+    ssh = _ssh_client(cfg, extra_tokens=credential_env)
+    env_names = tuple(sorted(credential_env))
+    try:
+        _, stdout, stderr = ssh.run_or_raise(
+            _build_reload_env_command(env_names, port=service_port, restart=restart),
+            stream=output != OutputFormat.json,
+        )
+    except SSHError as exc:
+        _fail(f"GR00T env reload failed: {exc}")
+
+    env_path = ""
+    env_mode = ""
+    for line in stdout.splitlines():
+        if line.startswith("NPA_GROOT_RELOAD_ENV_COMPLETE "):
+            parts = dict(
+                item.split("=", 1)
+                for item in line.removeprefix("NPA_GROOT_RELOAD_ENV_COMPLETE ").split()
+                if "=" in item
+            )
+            env_path = parts.get("env_path", "")
+            env_mode = parts.get("mode", "")
+
+    result: dict[str, Any] = {
+        "updated_keys": list(env_names),
+        "env_path": env_path,
+        "mode": env_mode,
+        "restarted": restart,
+        "port": service_port,
+    }
+    if stderr.strip():
+        result["stderr_tail"] = stderr.strip()[-1000:]
+    return result
 
 
 def _build_download_command(
@@ -1778,6 +1839,56 @@ def _read_existing_outputs(
     }
 
 
+def _update_existing_deployment(
+    *,
+    project: str,
+    name: str,
+    port: int,
+    dry_run: bool,
+    output: OutputFormat,
+) -> None:
+    """Update an existing GR00T alias in place without Terraform."""
+    if dry_run:
+        _output(
+            {
+                "status": "would_update_existing",
+                "project": project,
+                "name": name,
+                "terraform": "skipped",
+                "action": "reload_env",
+            },
+            output,
+        )
+        return
+
+    try:
+        cfg = resolve_config(project=project, name=name)
+    except ConfigError as exc:
+        _fail(str(exc))
+        return
+
+    credentials = resolve_credentials()
+    credential_env = _shared_groot_env_or_fail(credentials)
+    service_port = port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    result = _apply_env_update(
+        cfg,
+        credential_env,
+        service_port=service_port,
+        restart=True,
+        output=output,
+    )
+    _output(
+        {
+            "status": "updated_existing",
+            "project": project,
+            "name": name,
+            "terraform": "skipped",
+            **result,
+        },
+        output,
+    )
+
+
 @app.command("list")
 def list_cmd(
     output: OutputFormat = typer.Option(
@@ -1901,6 +2012,21 @@ def deploy_cmd(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would happen without doing it."
     ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help=(
+            "Provision replacement infrastructure for an existing alias. "
+            "Without this flag, deploy against an existing alias updates env "
+            "and config in place without Terraform."
+        ),
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompts (use with --replace for automation).",
+    ),
     no_shared_creds: bool = typer.Option(
         False,
         "--no-shared-creds",
@@ -1972,6 +2098,35 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
+
+    existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
+    existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
+    if not destroy and (existing_managed_alias or existing_byovm_alias):
+        if existing_byovm_alias:
+            if replace:
+                _fail(
+                    f"{proj_alias}/{wb_name} is a BYOVM alias; --replace is only valid for Terraform-managed aliases."
+                )
+                return
+            return _update_existing_deployment(
+                project=proj_alias,
+                name=wb_name,
+                port=server_port,
+                dry_run=dry_run,
+                output=output,
+            )
+        if not replace:
+            return _update_existing_deployment(
+                project=proj_alias,
+                name=wb_name,
+                port=server_port,
+                dry_run=dry_run,
+                output=output,
+            )
+        if not yes:
+            _confirm_or_exit(
+                f"--replace will provision replacement infrastructure for '{proj_alias}/{wb_name}'. Continue?"
+            )
 
     credentials = resolve_credentials()
     if not destroy and not skip_app:
@@ -2721,13 +2876,7 @@ def reload_env_cmd(
     """Propagate local shared credentials into the running GR00T service env without redeploying."""
     cfg = _get_config()
     credentials = resolve_credentials()
-    credential_env = {
-        key: value
-        for key, value in shared_credential_env(credentials).items()
-        if key in GROOT_CREDENTIAL_ENV_NAMES and value
-    }
-    if not credential_env:
-        _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
+    credential_env = _shared_groot_env_or_fail(credentials)
 
     service_port = (
         port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
@@ -2744,28 +2893,13 @@ def reload_env_cmd(
         except (EndpointError, ServerError) as exc:
             pre_health_error = str(exc)
 
-    ssh = _ssh_client(cfg, extra_tokens=credential_env)
-    env_names = tuple(sorted(credential_env))
-    try:
-        _, stdout, stderr = ssh.run_or_raise(
-            _build_reload_env_command(env_names, port=service_port, restart=restart),
-            stream=output != OutputFormat.json,
-        )
-    except SSHError as exc:
-        _fail(f"GR00T env reload failed: {exc}")
-        return
-
-    env_path = ""
-    env_mode = ""
-    for line in stdout.splitlines():
-        if line.startswith("NPA_GROOT_RELOAD_ENV_COMPLETE "):
-            parts = dict(
-                item.split("=", 1)
-                for item in line.removeprefix("NPA_GROOT_RELOAD_ENV_COMPLETE ").split()
-                if "=" in item
-            )
-            env_path = parts.get("env_path", "")
-            env_mode = parts.get("mode", "")
+    env_update = _apply_env_update(
+        cfg,
+        credential_env,
+        service_port=service_port,
+        restart=restart,
+        output=output,
+    )
 
     serve_model = model
     serve_tag = robot_embodiment
@@ -2807,11 +2941,7 @@ def reload_env_cmd(
 
     result: dict[str, Any] = {
         "status": "reloaded",
-        "updated_keys": list(env_names),
-        "env_path": env_path,
-        "mode": env_mode,
-        "restarted": restart,
-        "port": service_port,
+        **env_update,
     }
     if pre_health_error:
         result["pre_health_error"] = pre_health_error
@@ -2824,8 +2954,6 @@ def reload_env_cmd(
             "endpoint": endpoint_url,
             "response": served,
         }
-    if stderr.strip():
-        result["stderr_tail"] = stderr.strip()[-1000:]
     _output(result, output)
 
 

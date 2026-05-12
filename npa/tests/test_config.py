@@ -167,6 +167,28 @@ def test_resolve_terraform_state_missing_returns_empty(isolated_config: Path) ->
     assert config.resolve_terraform_state("missing") == config.TerraformStateConfig()
 
 
+def test_alias_has_terraform_state_for_saved_managed_alias(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.alias_has_terraform_state("proj-a", "wb-a") is True
+
+
+def test_alias_has_terraform_state_false_for_missing_alias(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.alias_has_terraform_state("proj-a", "missing") is False
+
+
+def test_alias_has_terraform_state_false_for_byovm_alias(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+    data = yaml.safe_load(isolated_config.read_text())
+    data["projects"]["proj-a"]["workbenches"]["wb-a"]["runtime"] = "byovm"
+    isolated_config.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    assert config.alias_has_terraform_state("proj-a", "wb-a") is False
+    assert config.workbench_is_byovm("proj-a", "wb-a") is True
+
+
 def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> None:
     isolated_config.parent.mkdir(parents=True)
     isolated_config.write_text(

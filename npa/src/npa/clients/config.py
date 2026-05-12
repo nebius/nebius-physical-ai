@@ -397,6 +397,49 @@ def remove_workbench_config(
         CONFIG_PATH.chmod(0o600)
 
 
+def workbench_entry(project: str | None, name: str | None) -> dict[str, Any]:
+    """Return the raw configured workbench entry, or an empty dict."""
+    if not project or not name:
+        return {}
+    yml = _load_yaml()
+    try:
+        proj = _resolve_project_section(yml, project)
+    except ConfigError:
+        return {}
+    workbenches = proj.get("workbenches", {}) if isinstance(proj, dict) else {}
+    if not isinstance(workbenches, dict):
+        return {}
+    wb = workbenches.get(name, {})
+    return wb if isinstance(wb, dict) else {}
+
+
+def workbench_is_byovm(project: str | None, name: str | None) -> bool:
+    """Return True when the saved alias is a BYOVM registration."""
+    wb = workbench_entry(project, name)
+    return str(wb.get("runtime", "") or "").lower() == "byovm"
+
+
+def alias_has_terraform_state(project: str | None, name: str | None) -> bool:
+    """Return True if a saved alias should use managed Terraform state.
+
+    Terraform backend credentials are project-level in config.yaml, while the
+    state object key is per workbench alias. BYOVM aliases are never treated as
+    Terraform-managed.
+    """
+    if not project or not name or workbench_is_byovm(project, name):
+        return False
+    if not workbench_entry(project, name):
+        return False
+
+    yml = _load_yaml()
+    try:
+        proj = _resolve_project_section(yml, project)
+    except ConfigError:
+        return False
+    state = proj.get("terraform_state", {}) if isinstance(proj, dict) else {}
+    return isinstance(state, dict) and any(bool(value) for value in state.values())
+
+
 def update_workbench_app_status(project: str, name: str, app_status: str) -> Path:
     """Set ``projects.<project>.workbenches.<name>.app_status``."""
     return write_config({
