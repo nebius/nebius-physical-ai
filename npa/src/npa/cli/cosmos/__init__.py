@@ -309,6 +309,12 @@ def is_serverless_runtime(runtime: Any) -> bool:
     return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
 
 
+COSMOS_RUNTIME_HELP = (
+    f"{RUNTIME_HELP} serverless creates a Nebius Serverless AI Endpoint "
+    "for the Cosmos container and stores its endpoint URL in the workbench alias."
+)
+
+
 COSMOS_CONTAINER_NAME = "npa-cosmos"
 
 
@@ -1552,13 +1558,15 @@ def deploy_cmd(
         ),
     ),
     server_port: int = typer.Option(
-        8080, "--server-port", help="Cosmos server port on the VM."
+        8080,
+        "--server-port",
+        help="Cosmos server port on the VM. For serverless deploys this is the default container port.",
     ),
     preemptible: bool = typer.Option(
         True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
     ),
     runtime: WorkbenchRuntime = typer.Option(
-        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+        WorkbenchRuntime.vm, "--runtime", help=COSMOS_RUNTIME_HELP
     ),
     host: str = typer.Option(
         "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
@@ -1586,7 +1594,7 @@ def deploy_cmd(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Deploy or destroy a Cosmos model serving VM."""
+    """Deploy or destroy a Cosmos model serving backend."""
     _ensure_basic_backend(backend)
     byovm = is_byovm_runtime(runtime)
     serverless = is_serverless_runtime(runtime)
@@ -2426,7 +2434,7 @@ def serve_cmd(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Start or restart the Cosmos model server over SSH."""
+    """Start or pre-warm the saved Cosmos model server."""
     _ensure_basic_backend(backend)
     cfg = _get_config()
 

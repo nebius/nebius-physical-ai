@@ -23,7 +23,8 @@ pip install -e ".[genesis]"  # Genesis + distillation stages
 
 Extra tools required by specific commands:
 
-- `nebius` CLI and `terraform` for `npa workbench lerobot deploy`
+- `nebius` CLI for Serverless AI Endpoint deploys and managed Nebius deploy commands
+- `terraform` for VM and container workbench deploys
 - `ffmpeg` for `npa adapter convert`
 - `ffmpeg` and Chrome/Chromium for `npa convert lerobot-to-mp4 --renderer rerun`
   (`NPA_RERUN_FFMPEG` and `NPA_RERUN_CHROME` may point to explicit executables)
@@ -68,11 +69,38 @@ npa workflow run distill --remote --project eu-north1 --s3-bucket s3://my-bucket
 
 ## Workbench Runtimes
 
-Deploy commands support three runtime modes:
+Deploy commands support these runtime modes where implemented:
 
 - `vm`: provisions and manages a Nebius VM with Terraform and installs the tool over SSH.
 - `container`: provisions and manages a Nebius VM with Terraform, then starts the tool container over SSH.
 - `byovm`: skips Terraform entirely and deploys the app to an existing SSH-accessible VM.
+- `serverless`: creates a Nebius Serverless AI Endpoint for a containerized serving backend. Cosmos supports this runtime first.
+
+For Cosmos, `deploy --runtime serverless` creates the Endpoint resource with
+the image, platform, preset, environment, and volumes baked into the resource.
+`serve` is only a pre-warm/health operation; changing the served model or image
+requires redeploying the endpoint.
+
+```bash
+npa workbench cosmos -p eu-north1 -n cosmos-sl deploy \
+  --runtime serverless \
+  --project-id project-... \
+  --image cr.eu-north1.nebius.cloud/npa/cosmos:cuda12 \
+  --platform gpu-h200-sxm \
+  --preset 1gpu-16vcpu-200gb \
+  --server-port 8080 \
+  --subnet-id vpcsubnet-... \
+  --wait
+
+npa workbench cosmos -p eu-north1 -n cosmos-sl status
+npa workbench cosmos -p eu-north1 -n cosmos-sl serve
+npa workbench cosmos -p eu-north1 -n cosmos-sl infer --prompt "A robot arm stacks colored cubes"
+npa workbench cosmos -p eu-north1 -n cosmos-sl teardown --yes
+```
+
+When a Nebius project has multiple subnets, pass `--subnet-id` on serverless
+deploy. Secrets should come from `~/.npa/credentials.yaml` or environment
+variables; do not pass tokens as command-line arguments.
 
 Use `byovm` when the VM already exists, for example for pre-provisioned
 multi-GPU machines. BYOVM does not create, stop, start, resize, or destroy the

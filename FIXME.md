@@ -313,3 +313,31 @@ a one-line help distinction.
   and fiftyone. The command classifies alias state and only runs Terraform
   destroy for `partial`; fully deployed aliases are refused and BYOVM aliases
   are skipped. Confirmation is required unless `--yes` is passed.
+
+---
+
+## CLOSED 2026-05-12 (serverless Cosmos Endpoint backend with self-discovery + NER fallback)
+
+- Added `--runtime serverless` for Cosmos workbench. `deploy` creates a Nebius
+  Serverless AI Endpoint, `status` reads endpoint state and HTTP health,
+  `serve` is an optional pre-warm, `infer` uses the saved endpoint URL, and
+  `teardown` deletes the endpoint plus local alias.
+- Added `ServerlessClient` for `nebius ai endpoint` with explicit
+  `NotEnoughResourcesError` classification. Auth errors are not treated as NER.
+- E2E setup self-discovers a sandbox project from `~/.npa/config.yaml`, prefers
+  the project ID whose region is `eu-north1`, sets `NPA_INTEGRATION_E2E=1` and
+  `NPA_E2E_SERVERLESS_PROJECT=<project-id>` in the run environment, and builds a
+  run-wide NER fallback chain across non-production project IDs.
+- Added mocked unit tests, fake-`nebius` smoke tests, and real-Nebius e2e tests
+  for Cosmos serverless endpoint flows. The real e2e run created endpoints in
+  the sandbox and cleaned them up successfully; no `npa-e2e-*` endpoint or alias
+  leak remained after Gate B.
+- `NOVEL_ISSUE_PHASE5_CREATE_OUTPUT_PARSE`: Phase 5 halted after three
+  consecutive real e2e failures caused by Nebius CLI endpoint create emitting
+  progress/non-JSON output even with `--format json`. The client was hardened to
+  resolve the created endpoint by name when create output is unparseable, but
+  the real e2e suite was not rerun after the halt boundary.
+- Operator-ratified Decision 3 is implemented: changing the served Cosmos model,
+  image, platform, preset, env, or volumes requires redeploying the endpoint.
+- Deferred: Jobs substrate, GR00T/LeRobot/FiftyOne serverless, K8s backends,
+  DevPods, and pipeline orchestration.
