@@ -154,6 +154,227 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     assert update_status.call_args_list[-1].args == ("proj", "isaac", "healthy")
 
 
+def _isaac_existing_config() -> dict:
+    return {
+        "projects": {
+            "proj": {
+                "workbenches": {
+                    "isaac": {
+                        "ssh": {
+                            "host": "10.0.0.5",
+                            "user": "ubuntu",
+                            "key_path": "~/.ssh/id",
+                        },
+                        "storage": {
+                            "checkpoint_bucket": "s3://bucket/checkpoints/",
+                            "endpoint_url": "https://storage.example",
+                        },
+                    },
+                    "byovm": {
+                        "runtime": "byovm",
+                        "ssh": {
+                            "host": "10.0.0.6",
+                            "user": "ubuntu",
+                            "key_path": "~/.ssh/id",
+                        },
+                        "storage": {
+                            "checkpoint_bucket": "s3://bucket/checkpoints/",
+                            "endpoint_url": "https://storage.example",
+                        },
+                    },
+                }
+            }
+        }
+    }
+
+
+def test_isaac_lab_deploy_existing_alias_no_replace_skips_terraform(mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.clients.config._load_yaml", return_value=_isaac_existing_config())
+    mocker.patch("npa.cli.isaac_lab.write_config")
+    mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+    init = mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    apply = mocker.patch("npa.cli.isaac_lab.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "deploy",
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "updating in place without Terraform" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.typer.confirm", return_value=False)
+    init = mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    apply = mocker.patch("npa.cli.isaac_lab.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "deploy",
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--replace",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
+def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=True)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
+    confirm = mocker.patch("npa.cli.isaac_lab.typer.confirm")
+    mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.isaac_lab.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.5",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.isaac_lab.write_config")
+    mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "deploy",
+            "--replace",
+            "--yes",
+            "--tf-dir",
+            str(tmp_path),
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    apply.assert_called_once()
+
+
+def test_isaac_lab_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    apply = mocker.patch(
+        "npa.cli.isaac_lab.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.5",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.cli.isaac_lab.write_config")
+    mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "new",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    apply.assert_called_once()
+
+
+def test_isaac_lab_deploy_byovm_alias_skips_terraform(mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=True)
+    mocker.patch("npa.clients.config._load_yaml", return_value=_isaac_existing_config())
+    mocker.patch("npa.cli.isaac_lab.write_config")
+    mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+    init = mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    apply = mocker.patch("npa.cli.isaac_lab.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "byovm",
+            "deploy",
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    init.assert_not_called()
+    apply.assert_not_called()
+
+
 def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")

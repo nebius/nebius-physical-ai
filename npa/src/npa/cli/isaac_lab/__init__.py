@@ -29,6 +29,7 @@ from npa.clients.config import (
     APP_STATUS_PROVISIONED,
     ConfigError,
     SSHConfig,
+    alias_has_terraform_state,
     default_project_name,
     default_workbench_name,
     list_projects,
@@ -38,6 +39,7 @@ from npa.clients.config import (
     resolve_container_registry,
     resolve_ssh_config,
     update_workbench_app_status,
+    workbench_is_byovm,
     write_config,
 )
 from npa.clients.credentials import apply_shared_credential_env
@@ -124,6 +126,12 @@ def main(
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}")
     raise typer.Exit(code)
+
+
+def _confirm_or_exit(prompt: str) -> None:
+    if not typer.confirm(prompt, default=False):
+        typer.echo("Aborted.")
+        raise typer.Exit(code=1)
 
 
 def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
@@ -891,6 +899,20 @@ def deploy_cmd(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would happen without doing it."
     ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help=(
+            "Provision replacement infrastructure for an existing alias. "
+            "Without this flag, deploy against an existing alias updates in place without Terraform."
+        ),
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompts (use with --replace for automation).",
+    ),
     no_shared_creds: bool = typer.Option(
         False,
         "--no-shared-creds",
@@ -959,6 +981,26 @@ def deploy_cmd(
 
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
+
+    existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
+    existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
+    if not destroy and (existing_managed_alias or existing_byovm_alias):
+        if replace and existing_byovm_alias:
+            _fail(
+                f"{proj_alias}/{wb_name} is a BYOVM alias; --replace is only valid for Terraform-managed aliases."
+            )
+            return
+        if replace:
+            if not yes:
+                _confirm_or_exit(
+                    f"--replace will provision replacement infrastructure for '{proj_alias}/{wb_name}'. Continue?"
+                )
+        else:
+            console.print(
+                f"Existing alias {proj_alias}/{wb_name} found; updating in place without Terraform."
+            )
+            skip_infra = True
+            use_remote_state = False
 
     nebius_creds: dict[str, str] = {}
     if use_remote_state and not skip_infra:
