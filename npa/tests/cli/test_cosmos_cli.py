@@ -744,6 +744,8 @@ def test_cosmos_deploy_serverless_creates_endpoint_and_persists_config(mocker) -
             "1gpu-16vcpu-200gb",
             "--container-port",
             "8080",
+            "--subnet-id",
+            "vpcsubnet-1",
             "--env",
             "MODE=smoke",
             "--volume",
@@ -759,6 +761,7 @@ def test_cosmos_deploy_serverless_creates_endpoint_and_persists_config(mocker) -
     assert spec.platform == "gpu-h200-sxm"
     assert spec.preset == "1gpu-16vcpu-200gb"
     assert spec.container_ports == [8080]
+    assert spec.subnet_id == "vpcsubnet-1"
     assert spec.env["COSMOS_MODEL_ID"] == "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
     assert spec.env["MODE"] == "smoke"
     assert spec.volumes == ["s3://bucket:/data:rw"]

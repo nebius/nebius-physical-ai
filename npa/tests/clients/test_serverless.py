@@ -110,6 +110,65 @@ def test_create_endpoint_builds_expected_args() -> None:
     ]
 
 
+def test_create_endpoint_resolves_endpoint_when_cli_returns_operation() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "create":
+            return _result(
+                args,
+                0,
+                '[1/1] waiting for operation "op-1" over resource "endpoint-1" to complete\n'
+                '{"id":"op-1","resource_id":"endpoint-1","status":{}}',
+            )
+        if args[3] == "list":
+            return _result(args, 0, '{"items": [' + _endpoint_json() + "]}")
+        raise AssertionError(args)
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+    )
+
+    info = client.create_endpoint(spec)
+
+    assert info.id == "endpoint-1"
+    assert info.name == "cosmos"
+    assert [call[3] for call in calls] == ["create", "list"]
+
+
+def test_create_endpoint_resolves_by_name_when_cli_returns_progress_only() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "create":
+            return _result(args, 0, "[1/1] waiting for operation to complete\n")
+        if args[3] == "list":
+            return _result(args, 0, '{"items": [' + _endpoint_json() + "]}")
+        raise AssertionError(args)
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+    )
+
+    info = client.create_endpoint(spec)
+
+    assert info.id == "endpoint-1"
+    assert info.name == "cosmos"
+    assert [call[3] for call in calls] == ["create", "list"]
+
+
 def test_create_endpoint_requires_image() -> None:
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
     spec = EndpointSpec(
@@ -395,4 +454,3 @@ def test_subprocess_env_is_not_used_for_nonsecret_args() -> None:
     client.create_endpoint(spec)
 
     assert observed_kwargs["env"] is None
-

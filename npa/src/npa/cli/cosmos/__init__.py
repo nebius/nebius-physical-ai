@@ -1128,6 +1128,7 @@ def _deploy_serverless_endpoint(
     container_port: int,
     model: str,
     auth: str,
+    subnet_id: str,
     env_vars: dict[str, str],
     volumes: list[str],
     replace: bool,
@@ -1174,6 +1175,7 @@ def _deploy_serverless_endpoint(
             "preset": preset,
             "container_port": container_port,
             "auth": auth,
+            "subnet_id": subnet_id,
             "model": model,
             "volumes": volumes,
             "env_keys": sorted(serverless_env),
@@ -1201,6 +1203,7 @@ def _deploy_serverless_endpoint(
         preset=preset,
         container_ports=[container_port],
         auth=auth,
+        subnet_id=subnet_id,
         env=serverless_env,
         volumes=volumes,
     )
@@ -1460,6 +1463,11 @@ def deploy_cmd(
         "--auth",
         help="Serverless endpoint auth mode: none or token.",
     ),
+    subnet_id: str = typer.Option(
+        "",
+        "--subnet-id",
+        help="Serverless subnet ID. Required by Nebius when a project has multiple subnets.",
+    ),
     env: list[str] = typer.Option(
         [],
         "--env",
@@ -1639,6 +1647,7 @@ def deploy_cmd(
             container_port=container_port or server_port,
             model=model,
             auth=auth,
+            subnet_id=subnet_id,
             env_vars=serverless_env,
             volumes=volume,
             replace=replace,

@@ -157,9 +157,27 @@ def _classify_error(returncode: int, stderr: str) -> type[ServerlessClientError]
 
 
 def _json_loads(raw: str) -> Any:
-    if not raw.strip():
+    stripped = raw.strip()
+    if not stripped:
         return {}
-    return json.loads(raw)
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError as first_exc:
+        decoder = json.JSONDecoder()
+        parsed: list[Any] = []
+        last_exc: json.JSONDecodeError = first_exc
+        for idx, char in enumerate(stripped):
+            if char not in "{[":
+                continue
+            try:
+                value, _ = decoder.raw_decode(stripped[idx:])
+            except json.JSONDecodeError as exc:
+                last_exc = exc
+                continue
+            parsed.append(value)
+        if parsed:
+            return parsed[-1]
+        raise last_exc
 
 
 def _as_items(data: Any) -> list[dict[str, Any]]:
@@ -202,6 +220,7 @@ def _endpoint_id(data: Mapping[str, Any]) -> str:
     value = _deep_get(
         data,
         ("metadata", "id"),
+        ("resource_id",),
         ("id",),
     )
     return str(value or "")
@@ -267,7 +286,7 @@ class ServerlessClient:
         *,
         nebius_bin: str | None = None,
         subprocess_runner: SubprocessRunner | None = None,
-        timeout: int = 60,
+        timeout: int = 900,
         poll_interval: float = 5.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -283,7 +302,14 @@ class ServerlessClient:
         result = self._run(args, timeout=self._timeout)
         if result.returncode != 0:
             self._raise_for_error(result, f"create_endpoint failed for {spec.name} in project {spec.project_id}")
-        return self._parse_endpoint_info(result.stdout, project_id=spec.project_id)
+        try:
+            info = self._parse_endpoint_info(result.stdout, project_id=spec.project_id)
+        except json.JSONDecodeError:
+            return self.get_endpoint(spec.project_id, spec.name)
+        if info.name:
+            return info
+        endpoint_ref = info.id or spec.name
+        return self.get_endpoint(spec.project_id, endpoint_ref)
 
     def list_endpoints(self, project_id: str) -> list[EndpointInfo]:
         """List endpoints in a project."""
@@ -523,4 +549,3 @@ class ServerlessClient:
         error_class = _classify_error(result.returncode, result.stderr)
         stderr = result.stderr.strip()
         raise error_class(f"{prefix}: {stderr}")
-
