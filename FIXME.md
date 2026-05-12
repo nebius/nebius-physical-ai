@@ -242,13 +242,12 @@ Add `--export-trajectory / --no-export-trajectory` to `npa workbench isaac-lab t
 
 ---
 
-## [M] SDK_PUBLIC_SURFACE
+## [L] SDK_V1_STABILIZATION
 
-Wire up `npa/__init__.py` to expose a clean public SDK surface, such as
-`from npa import convert, demo, rerun` with stable public methods. The
-architecture doc now states this SDK surface is roadmap, not current behavior.
-Likely scope: decide what is public versus internal, build re-exports, document
-the API, and add import/behavior tests.
+The public SDK surface now exists as v0:
+`from npa import convert, demo, rerun, workbench, network, workflow, errors`.
+Before declaring v1 stability, add type stubs or stronger typing coverage,
+settle semver policy, and bake the wrapper signatures with customer usage.
 
 ## [L] ADAPTER_NAMESPACE_CONSOLIDATION
 

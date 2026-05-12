@@ -105,21 +105,48 @@ principals for each. When a scoped principal is missing access, the
 `ScopedCredentialError` names the failed project, operation, and bucket, and
 points at host-credential fallback or IAM grants as remediation.
 
-## Python API Status
+## Python API (SDK)
 
-The CLI is currently the primary invocation surface. Python API access for SDK
-consumers, such as orchestrators that submit `npa` workloads programmatically,
-is on the roadmap.
+The SDK mirrors the supported CLI namespaces with Python identifiers. Hyphenated
+CLI names become underscores: `list-shares` is `list_shares`, `isaac-lab` is
+`isaac_lab`, and `--target-project` is `target_project`.
 
-Today, advanced users can import low-level adapter functions directly:
+```python
+from npa import convert, demo, rerun, workbench
+from npa.errors import ScopedCredentialError
+
+# Render a LeRobot dataset to MP4.
+convert.lerobot_to_mp4(input_path="dataset", output_path="out.mp4")
+
+# Stage demo artifacts to a target bucket.
+demo.stage(target_bucket="my-bucket", target_project="eu-north1")
+
+# Share a Rerun recording through the hosted web viewer.
+result = rerun.host("recording.rrd", target_bucket="my-bucket")
+print(result.share_url)
+
+# Deploy a Cosmos workbench.
+workbench.cosmos.deploy(project_id="project-id", tenant_id="tenant-id")
+```
+
+Public top-level SDK namespaces are:
+
+- `npa.convert` - `lerobot_to_mp4`, `lerobot_to_rrd`
+- `npa.demo` - `stage`, `verify`
+- `npa.rerun` - `host`, `share`, `list_shares`, `revoke`
+- `npa.network` - `ensure_ingress`
+- `npa.workflow` - `run`, `status`, `logs`, `teardown`, `distill`
+- `npa.workbench` - `cosmos`, `fiftyone`, `genesis`, `groot`, `isaac_lab`,
+  and `lerobot` submodules
+- `npa.errors` - `NpaError`, `ScopedCredentialError`
+
+The SDK is currently v0 and unstable. Signatures may change before v1, so
+customers should pin the exact `npa` version for integrations. For maximum
+stability today, the CLI remains the operator contract.
+
+Lower-level adapter imports remain available for advanced use cases, but they
+are implementation APIs rather than the preferred SDK surface:
 
 ```python
 from npa.adapter.lerobot.render import render_lerobot_to_mp4_result
-
-result = render_lerobot_to_mp4_result(...)
 ```
-
-A clean public SDK surface, such as `from npa import convert, demo, rerun` with
-stable public methods, is planned but not yet implemented. See
-`SDK_PUBLIC_SURFACE` for status. Until that exists, the CLI is the stable
-operator surface and adapter imports are lower-level implementation APIs.

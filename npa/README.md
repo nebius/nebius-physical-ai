@@ -192,19 +192,28 @@ plus `GetObject` on that object and `ListBucket` on the bucket/prefix.
 ## SDK examples
 
 ```python
-from pathlib import Path
+from npa import convert, demo, rerun
 
-from npa.adapter.sim_to_lerobot import convert
+# Convert a LeRobot dataset to MP4.
+convert.lerobot_to_mp4(
+    input_path="s3://my-bucket/dataset/",
+    output_path="trajectory.mp4",
+    renderer="matplotlib",
+)
+
+# Stage demo artifacts.
+demo.stage(target_bucket="customer-bucket", target_project="eu-north1")
+
+# Share a Rerun recording.
+result = rerun.host("recording.rrd")
+print(f"View at: {result.share_url}")
+```
+
+Lower-level access for advanced workflows:
+
+```python
+from npa.adapter.lerobot.render import render_lerobot_to_mp4_result
 from npa.clients.http import HTTPClient
-from npa.workflows.distill import run_distillation
-
-convert(Path("./demos"), Path("./dataset"), fps=20, robot_type="franka_panda")
-
-client = HTTPClient("http://workbench-ip:8080")
-client.serve("/opt/lerobot/checkpoints/job/checkpoints/last/pretrained_model")
-result = client.infer({"observation.state": [0.0] * 10})  # 9 joints + 1 gripper
-
-run_distillation(project="eu-north1", remote=True, s3_bucket="s3://my-bucket/checkpoints/")
 ```
 
 ## Package map
@@ -216,4 +225,6 @@ run_distillation(project="eu-north1", remote=True, s3_bucket="s3://my-bucket/che
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
 - `npa.lerobot`: local student training helpers
+- `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
+  `npa.workflow`: public SDK namespaces mirroring supported CLI commands
 - `npa.workflows`: end-to-end distillation orchestration
