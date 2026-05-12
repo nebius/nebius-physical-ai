@@ -2893,6 +2893,11 @@ def infer_cmd(
     quiet: bool = typer.Option(
         False, "--quiet", help="Suppress progress output while polling."
     ),
+    submit_only: bool = typer.Option(
+        False,
+        "--submit-only",
+        help="Submit the inference job and return before polling for completion.",
+    ),
     allow_host_creds: bool = typer.Option(
         False,
         "--allow-host-creds",
@@ -2939,6 +2944,9 @@ def infer_cmd(
                 if output_format != OutputFormat.json:
                     typer.echo(f"  job_id: {job_id}")
                     typer.echo(f"  job_status: {submitted.get('status', 'unknown')}")
+                if submit_only:
+                    _output({**submitted, "job_id": job_id}, output_format)
+                    return
 
                 data = _poll_inference_job(
                     client,

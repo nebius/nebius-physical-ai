@@ -25,12 +25,15 @@ from npa.clients.serverless import (
     NotEnoughResourcesError,
     ServerlessClient,
 )
+from npa.clients.http import HTTPClient, ServerError
 from npa.deploy.images import container_image_for_tool
 
 from ._serverless_fallback import FallbackChain
 
 
 pytestmark = pytest.mark.e2e_serverless
+COSMOS_E2E_INFER_MAX_WAIT = 2400.0
+COSMOS_E2E_INFER_POLL_INTERVAL = 30.0
 
 
 def _skip_if_not_e2e() -> None:
@@ -112,6 +115,28 @@ def _run_npa(args: list[str], *, timeout: int = 900) -> subprocess.CompletedProc
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=False,
+    )
+
+
+def _wait_for_inference_job(endpoint_url: str, job_id: str) -> dict[str, object]:
+    client = HTTPClient(endpoint_url, timeout=10.0, retries=1)
+    deadline = time.monotonic() + COSMOS_E2E_INFER_MAX_WAIT
+    last: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        try:
+            last = client.job_status(job_id, timeout=10.0)
+        except ServerError:
+            time.sleep(COSMOS_E2E_INFER_POLL_INTERVAL)
+            continue
+        status = str(last.get("status", "")).lower()
+        if status == "completed":
+            return last
+        if status in {"failed", "error"}:
+            pytest.fail(f"Inference job {job_id} failed: {last.get('error') or last}")
+        time.sleep(COSMOS_E2E_INFER_POLL_INTERVAL)
+    pytest.fail(
+        f"Inference job {job_id} did not complete within "
+        f"{int(COSMOS_E2E_INFER_MAX_WAIT)}s; last status: {last}"
     )
 
 
@@ -326,17 +351,19 @@ def test_e2e_cli_infer_prompt(cosmos_endpoint: dict[str, str]) -> None:
             "infer",
             "--prompt",
             "A robot arm stacks colored cubes",
-            "--poll-interval",
-            "5",
-            "--timeout",
-            "600",
+            "--submit-only",
+            "--output-format",
+            "json",
         ],
-        timeout=720,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "job_id:" in result.stdout
-    assert "Generation complete" in result.stdout
+    submitted = json.loads(result.stdout)
+    job_id = str(submitted.get("job_id") or "")
+    assert job_id
+    completed = _wait_for_inference_job(cosmos_endpoint["url"], job_id)
+    assert completed.get("status") == "completed"
 
 
 def test_e2e_cli_deploy_dry_run_uses_selected_project(cosmos_endpoint: dict[str, str]) -> None:
