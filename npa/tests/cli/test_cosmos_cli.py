@@ -31,7 +31,7 @@ from npa.clients import credentials as credentials_module
 from npa.clients.config import SSHConfig, ServerlessConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
-from npa.clients.serverless import EndpointInfo, EndpointStatus, ServerlessClientError
+from npa.clients.serverless import EndpointInfo, EndpointNotFoundError, EndpointStatus, ServerlessClientError
 from npa.clients.ssh import SSHError
 
 
@@ -96,6 +96,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "reload-env",
         "serve",
         "infer",
+        "train",
         "finetune",
         "optimize",
         "status",
@@ -116,6 +117,75 @@ def test_cosmos_registered_under_workbench() -> None:
 
     assert result.exit_code == 0
     assert "cosmos" in result.output
+
+
+def _mock_train_env(mocker):
+    mocker.patch("npa.cli.cosmos.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.cosmos.resolve_project_storage",
+        return_value=SimpleNamespace(
+            checkpoint_bucket="s3://bucket/checkpoints",
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.cosmos.resolve_container_registry", return_value="registry.example")
+    mocker.patch("npa.cli.cosmos.container_image_for_tool", return_value="registry.example/npa-cosmos:smoke")
+    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
+
+
+def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=())
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--job-name", "npa-e2e-jobs-test", "--output-format", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["job_id"] == "job-1"
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["project_id"] == "project-1"
+    assert kwargs["output_path"] == "s3://bucket/checkpoints/jobs/npa-e2e-jobs-test/"
+    assert kwargs["env"]["COSMOS_TRAIN_SMOKE"] == "1"
+    assert kwargs["extra_env"]["HF_TOKEN"] == "hf_secret"
+    assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
+    client.poll_job.assert_not_called()
+
+
+def test_cosmos_train_serverless_sync_waits_and_status_cancel_dispatch(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = [
+        EndpointNotFoundError("missing"),
+        SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=()),
+    ]
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=())
+    client.poll_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="succeeded", output_uris=())
+    client.cancel_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="cancelled")
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train", "--runtime", "serverless", "--smoke"])
+    assert result.exit_code == 0
+    client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=2400.0)
+
+    status = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "train", "--runtime", "serverless", "status", "job-1", "--output-format", "json"])
+    assert status.exit_code == 0
+    assert json.loads(status.output)["status"] == "running"
+
+    cancel = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "train", "--runtime", "serverless", "cancel", "job-1", "--output-format", "json"])
+    assert cancel.exit_code == 0
+    assert json.loads(cancel.output)["status"] == "cancelled"
 
 
 def test_cosmos_placeholder_help_describes_roadmap() -> None:

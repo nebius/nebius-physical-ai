@@ -44,6 +44,7 @@ from npa.clients.config import (
     resolve_container_registry,
     resolve_credentials,
     resolve_environment,
+    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
     update_workbench_serverless_endpoint,
@@ -1093,6 +1094,56 @@ def _serverless_hf_env() -> dict[str, str]:
         "HF_TOKEN": token,
         "HUGGINGFACE_HUB_TOKEN": token,
     }
+
+
+def _serverless_job_name(project: str, name: str) -> str:
+    raw = f"npa-cosmos-jobs-{project}-{name}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _serverless_train_output_path(project: str, job_name: str, output_path: str) -> str:
+    if output_path:
+        if not output_path.startswith("s3://"):
+            _fail("Cosmos train --output-path expects an S3 URI for serverless jobs.")
+        return output_path.rstrip("/") + "/"
+    storage = resolve_project_storage(project)
+    bucket = getattr(storage, "checkpoint_bucket", "")
+    if not bucket:
+        _fail("Cosmos train --runtime serverless requires storage.checkpoint_bucket.")
+    return f"{bucket.rstrip('/')}/jobs/{job_name}/"
+
+
+def _serverless_job_env(project: str, *, require_hf: bool) -> tuple[dict[str, str], dict[str, str]]:
+    storage = resolve_project_storage(project)
+    env = {"NPA_REQUIRE_HF": "1" if require_hf else "0", "PYTHONUNBUFFERED": "1"}
+    extra = _serverless_hf_env()
+    for key, value in {
+        "AWS_ACCESS_KEY_ID": storage.aws_access_key_id,
+        "AWS_SECRET_ACCESS_KEY": storage.aws_secret_access_key,
+        "AWS_ENDPOINT_URL": storage.endpoint_url,
+        "NEBIUS_S3_ENDPOINT": storage.endpoint_url,
+    }.items():
+        if value:
+            extra[key] = value
+    return env, extra
+
+
+def _cosmos_train_smoke_command(seconds: int) -> str:
+    script = f"""
+import json, os, time
+from urllib.parse import urlparse
+if os.environ.get("NPA_REQUIRE_HF") == "1" and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")):
+    raise SystemExit("HF auth missing")
+time.sleep({max(0, seconds)})
+uri = os.environ["NPA_OUTPUT_PATH"]
+p = urlparse(uri)
+key = p.path.strip("/") + "/checkpoint.json"
+body = json.dumps({{"status": "succeeded", "job": os.environ.get("NPA_JOB_NAME", ""), "smoke": True}}).encode()
+import boto3
+boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL")).put_object(Bucket=p.netloc, Key=key, Body=body)
+print("NPA_COSMOS_TRAIN_SMOKE_DONE", "s3://" + p.netloc + "/" + key, flush=True)
+""".strip()
+    return _remote_bash(f"python - <<'PY'\n{script}\nPY")
 
 
 def _serverless_project_id(cfg: Any) -> str:
@@ -2525,6 +2576,88 @@ def finetune_cmd() -> None:
     """LoRA or full fine-tuning of Cosmos models on custom data."""
     typer.echo("not yet implemented")
     raise typer.Exit(1)
+
+
+@app.command("train", help="Submit a Cosmos training job.")
+def train_cmd(
+    action: str = typer.Argument("submit", help="submit, status, or cancel."),
+    job_id: str = typer.Argument("", help="Job ID or name for status/cancel."),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Application runtime. serverless creates a Nebius AI Job for Cosmos training."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image for the training job."),
+    gpu_type: str = typer.Option("gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."),
+    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count."),
+    gpu_preset: str = typer.Option("1gpu-16vcpu-200gb", "--gpu-preset", help="Nebius GPU preset."),
+    output_path: str = typer.Option("", "--output-path", "--output", help="S3 checkpoint output URI."),
+    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
+    smoke: bool = typer.Option(False, "--smoke", help="Run the minimal e2e smoke workload."),
+    smoke_seconds: int = typer.Option(0, "--smoke-seconds", help="Seconds the smoke job should run."),
+    require_hf: bool = typer.Option(False, "--require-hf", help="Require HF token inside the job."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit and return before polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between status checks."),
+    timeout: float = typer.Option(2400.0, "--timeout", help="Seconds to wait for completion."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="CLI output format."),
+) -> None:
+    if not is_serverless_runtime(runtime):
+        _fail("Cosmos train currently supports --runtime serverless only.")
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    env_cfg = resolve_environment(proj_alias)
+    resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
+    if not resolved_project_id:
+        _fail("Cosmos train --runtime serverless requires a Nebius project ID.")
+    client = ServerlessClient()
+    ref = job_id or job_name
+    if action == "status":
+        if not ref:
+            _fail("Provide a job ID or name for train status.")
+        info = client.get_job(ref, resolved_project_id)
+        _output({"job_id": info.id, "job_name": info.name, "status": info.status, "output_uris": list(info.output_uris)}, output)
+        return
+    if action == "cancel":
+        if not ref:
+            _fail("Provide a job ID or name for train cancel.")
+        info = client.cancel_job(ref, resolved_project_id)
+        _output({"job_id": info.id, "job_name": info.name, "status": info.status}, output)
+        return
+    if action != "submit":
+        _fail("Cosmos train action must be submit, status, or cancel.")
+    if not smoke:
+        _fail("Cosmos train requires --smoke until full Cosmos training is implemented.")
+    name = job_name or _serverless_job_name(proj_alias, wb_name)
+    out = _serverless_train_output_path(proj_alias, name, output_path)
+    try:
+        existing = client.get_job(name, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+    if existing is not None:
+        info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        return
+    env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf)
+    env.update({"COSMOS_TRAIN_SMOKE": "1", "NPA_JOB_NAME": name})
+    try:
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name,
+            image=image or container_image_for_tool("cosmos", registry=resolve_container_registry(proj_alias)),
+            command=_cosmos_train_smoke_command(smoke_seconds),
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            preset=gpu_preset,
+            output_path=out,
+            env=env,
+            extra_env=extra_env,
+        )
+        if not submit_only:
+            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless train failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
 
 
 @app.command(
