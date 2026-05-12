@@ -28,23 +28,53 @@ from npa.cli.cosmos import (
 )
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
-from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.clients.config import SSHConfig, ServerlessConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
+from npa.clients.serverless import EndpointInfo, EndpointStatus, ServerlessClientError
 from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
 
 
-def _cfg(app_status: str = "", *, hf_token: str = "") -> WorkbenchConfig:
+def _cfg(
+    app_status: str = "",
+    *,
+    hf_token: str = "",
+    runtime: str = "vm",
+    serverless: ServerlessConfig | None = None,
+) -> WorkbenchConfig:
     return WorkbenchConfig(
         endpoint="http://cosmos:8080",
         ssh=SSHConfig(host="cosmos", user="ubuntu", key_path="~/.ssh/id"),
         storage=StorageConfig(checkpoint_bucket="", endpoint_url=""),
         hf_token=hf_token,
         app_status=app_status,
+        runtime=runtime,
+        serverless=serverless or ServerlessConfig(),
     )
+
+
+def _serverless_cfg() -> WorkbenchConfig:
+    cfg = _cfg(
+        runtime="serverless",
+        serverless=ServerlessConfig(
+            resource_type="endpoint",
+            endpoint_id="endpoint-1",
+            endpoint_name="npa-cosmos-proj-cosmos",
+            project_id="project-1",
+            url="https://cosmos.example",
+            image="registry/cosmos:cuda12",
+            platform="gpu-h200-sxm",
+            preset="1gpu-16vcpu-200gb",
+            container_port=8080,
+        ),
+    )
+    cfg.endpoint = "https://cosmos.example"
+    cfg.project = "proj"
+    cfg.name = "cosmos"
+    return cfg
 
 
 @contextmanager
@@ -673,6 +703,336 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     assert update_status.call_args_list[-1].args == ("proj", "cosmos-container", "healthy")
 
 
+def test_cosmos_deploy_serverless_creates_endpoint_and_persists_config(mocker) -> None:
+    client = mocker.MagicMock()
+    client.create_endpoint.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.CREATING,
+        url="https://cosmos.example",
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+    mocker.patch("npa.cli.cosmos.workbench_entry", return_value={})
+    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
+    update_serverless = mocker.patch("npa.cli.cosmos.update_workbench_serverless_endpoint")
+    write_config = mocker.patch("npa.cli.cosmos.write_config")
+    model_check = mocker.patch("npa.cli.cosmos.validate_hf_access")
+    provisioner_apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--image",
+            "registry/cosmos:cuda12",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+            "--container-port",
+            "8080",
+            "--env",
+            "MODE=smoke",
+            "--volume",
+            "s3://bucket:/data:rw",
+        ],
+    )
+
+    assert result.exit_code == 0
+    spec = client.create_endpoint.call_args.args[0]
+    assert spec.name == "npa-cosmos-proj-cosmos"
+    assert spec.project_id == "project-1"
+    assert spec.image == "registry/cosmos:cuda12"
+    assert spec.platform == "gpu-h200-sxm"
+    assert spec.preset == "1gpu-16vcpu-200gb"
+    assert spec.container_ports == [8080]
+    assert spec.env["COSMOS_MODEL_ID"] == "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
+    assert spec.env["MODE"] == "smoke"
+    assert spec.volumes == ["s3://bucket:/data:rw"]
+    update_serverless.assert_called_once()
+    write_config.assert_called_once()
+    model_check.assert_not_called()
+    provisioner_apply.assert_not_called()
+
+
+def test_cosmos_deploy_serverless_waits_when_requested(mocker) -> None:
+    client = mocker.MagicMock()
+    client.create_endpoint.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.CREATING,
+        url="",
+    )
+    client.wait_for_running.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.RUNNING,
+        url="https://cosmos.example",
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+    mocker.patch("npa.cli.cosmos.workbench_entry", return_value={})
+    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
+    mocker.patch("npa.cli.cosmos.update_workbench_serverless_endpoint")
+    update_status = mocker.patch("npa.cli.cosmos.update_workbench_app_status")
+    mocker.patch("npa.cli.cosmos.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+            "--wait",
+        ],
+    )
+
+    assert result.exit_code == 0
+    client.wait_for_running.assert_called_once_with("project-1", "endpoint-1")
+    update_status.assert_called_once_with("proj", "cosmos", "healthy")
+
+
+def test_cosmos_deploy_serverless_dry_run_does_not_create_endpoint(mocker) -> None:
+    client_cls = mocker.patch("npa.cli.cosmos.ServerlessClient")
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "dry_run"' in result.output
+    assert '"runtime": "serverless"' in result.output
+    client_cls.assert_not_called()
+
+
+def test_cosmos_deploy_serverless_rejects_invalid_env(mocker) -> None:
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+            "--env",
+            "BROKEN",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid --env format" in result.output
+
+
+def test_cosmos_deploy_serverless_existing_alias_requires_replace(mocker) -> None:
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+    mocker.patch("npa.cli.cosmos.workbench_entry", return_value={"runtime": "serverless"})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use --replace" in result.output
+
+
+def test_cosmos_deploy_serverless_replace_deletes_existing_endpoint(mocker) -> None:
+    old_cfg = _serverless_cfg()
+    client = mocker.MagicMock()
+    client.create_endpoint.return_value = EndpointInfo(
+        id="endpoint-2",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.CREATING,
+        url="https://new.example",
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
+    )
+    mocker.patch("npa.cli.cosmos.workbench_entry", return_value={"runtime": "serverless"})
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=old_cfg)
+    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
+    mocker.patch("npa.cli.cosmos.update_workbench_serverless_endpoint")
+    mocker.patch("npa.cli.cosmos.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--platform",
+            "gpu-h200-sxm",
+            "--preset",
+            "1gpu-16vcpu-200gb",
+            "--replace",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    client.delete_endpoint.assert_called_once_with("project-1", "endpoint-1")
+
+
+def test_cosmos_deploy_destroy_serverless_deletes_endpoint_and_config(mocker) -> None:
+    cfg = _serverless_cfg()
+    client = mocker.MagicMock()
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    remove = mocker.patch("npa.cli.cosmos.remove_workbench_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--destroy",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    client.delete_endpoint.assert_called_once_with("project-1", "endpoint-1")
+    remove.assert_called_once_with("proj", "cosmos")
+    assert '"status": "deleted"' in result.output
+
+
+def test_cosmos_teardown_serverless_deletes_endpoint_and_config(mocker) -> None:
+    cfg = _serverless_cfg()
+    client = mocker.MagicMock()
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    remove = mocker.patch("npa.cli.cosmos.remove_workbench_config")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "cosmos", "teardown", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    client.delete_endpoint.assert_called_once_with("project-1", "endpoint-1")
+    remove.assert_called_once_with("proj", "cosmos")
+    assert "config_removed: True" in result.output
+
+
+def test_cosmos_teardown_serverless_dry_run_does_not_delete(mocker) -> None:
+    cfg = _serverless_cfg()
+    client_cls = mocker.patch("npa.cli.cosmos.ServerlessClient")
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    remove = mocker.patch("npa.cli.cosmos.remove_workbench_config")
+
+    result = runner.invoke(
+        app,
+        ["workbench", "cosmos", "teardown", "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "status: dry_run" in result.output
+    client_cls.assert_not_called()
+    remove.assert_not_called()
+
+
+def test_cosmos_teardown_rejects_vm_alias(mocker) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
+
+    result = runner.invoke(app, ["workbench", "cosmos", "teardown", "--yes"])
+
+    assert result.exit_code == 1
+    assert "serverless aliases" in result.output
+
+
 def test_cosmos_install_command_installs_torch_before_flash_attn_and_cosmos() -> None:
     cmd = _build_install_command("nvidia/Cosmos-Test", 8080)
 
@@ -782,6 +1142,29 @@ def test_cosmos_serve_maps_ssh_error(mocker) -> None:
     assert "ssh failed" in result.output
 
 
+def test_cosmos_serve_serverless_prewarms_health_only(mocker) -> None:
+    cfg = _serverless_cfg()
+    http = mocker.MagicMock()
+    http.health.return_value = {"status": "ok", "model": "baked-model"}
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    endpoint = mocker.patch(
+        "npa.cli.cosmos.service_endpoint",
+        return_value=_active_endpoint("https://cosmos.example"),
+    )
+    http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+    ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient")
+
+    result = runner.invoke(app, ["workbench", "cosmos", "serve"])
+
+    assert result.exit_code == 0
+    assert "status: prewarmed" in result.output
+    endpoint.assert_called_once_with(cfg, default_port=8080, service_port=8080)
+    http_cls.assert_called_once_with("https://cosmos.example", timeout=120.0, retries=1)
+    http.health.assert_called_once()
+    assert not http.serve_model.called
+    ssh_cls.assert_not_called()
+
+
 def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
     source = tmp_path / "input.jpg"
     source.write_bytes(b"image-bytes")
@@ -838,9 +1221,44 @@ def test_cosmos_infer_posts_prompt_and_input(tmp_path: Path, mocker) -> None:
     store.upload_file.assert_called_once()
     sleep.assert_not_called()
     assert "job_id: job-1" in result.output
+
+
+def test_cosmos_infer_serverless_uses_saved_endpoint_without_ssh(mocker) -> None:
+    http = mocker.MagicMock()
+    http.infer.return_value = {"job_id": "job-1", "status": "running"}
+    http.job_status.return_value = {
+        "job_id": "job-1",
+        "status": "completed",
+        "result": "ok",
+    }
+    cfg = _serverless_cfg()
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    endpoint = mocker.patch(
+        "npa.cli.cosmos.service_endpoint",
+        return_value=_active_endpoint("https://cosmos.example"),
+    )
+    http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+    ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "robot arm",
+            "--poll-interval",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    endpoint.assert_called_once_with(cfg, default_port=8080)
+    http_cls.assert_called_once_with("https://cosmos.example", timeout=30.0, retries=1)
+    ssh_cls.assert_not_called()
     assert "Generating... (status: completed)" in result.output
     assert "Generation complete in" in result.output
-    assert f"downloaded_to: {output_uri}" in result.output
 
 
 def test_cosmos_infer_s3_input_and_output(tmp_path: Path, mocker) -> None:
@@ -1095,6 +1513,56 @@ def test_cosmos_status_checks_health_endpoint(mocker) -> None:
     assert "server: up" in result.output
     http_cls.assert_called_once_with("http://cosmos:8080", timeout=10.0, retries=1)
     http.health.assert_called_once()
+
+
+def test_cosmos_status_serverless_reports_nebius_and_health(mocker) -> None:
+    cfg = _serverless_cfg()
+    client = mocker.MagicMock()
+    client.get_endpoint.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.RUNNING,
+        url="https://cosmos.example",
+    )
+    http = mocker.MagicMock()
+    http.health.return_value = {"status": "ok", "model": "baked-model"}
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    http_cls = mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+    ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient")
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status"])
+
+    assert result.exit_code == 0
+    assert "runtime: serverless" in result.output
+    assert "serverless_status: running" in result.output
+    client.get_endpoint.assert_called_once_with("project-1", "endpoint-1")
+    http_cls.assert_called_once_with("https://cosmos.example", timeout=10.0, retries=1)
+    ssh_cls.assert_not_called()
+
+
+def test_cosmos_status_serverless_keeps_resource_status_when_health_fails(mocker) -> None:
+    cfg = _serverless_cfg()
+    client = mocker.MagicMock()
+    client.get_endpoint.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.RUNNING,
+        url="https://cosmos.example",
+    )
+    http = mocker.MagicMock()
+    http.health.side_effect = ServerError("connection refused")
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+    mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status"])
+
+    assert result.exit_code == 0
+    assert "server: down" in result.output
+    assert "health_error: connection refused" in result.output
 
 
 def test_cosmos_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:

@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shlex
 import tempfile
 import time
@@ -45,7 +46,9 @@ from npa.clients.config import (
     resolve_environment,
     resolve_ssh_config,
     resolve_terraform_state,
+    update_workbench_serverless_endpoint,
     update_workbench_app_status,
+    workbench_entry,
     workbench_is_byovm,
     write_config,
 )
@@ -69,6 +72,14 @@ from npa.clients.scoped_credentials import (
     run_with_host_credential_fallback,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.serverless import (
+    EndpointInfo,
+    EndpointSpec,
+    EndpointStatus,
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
     HealthCheckMode,
@@ -292,6 +303,10 @@ class WorkbenchRuntime(str, Enum):
     container = "container"
     byovm = "byovm"
     serverless = "serverless"
+
+
+def is_serverless_runtime(runtime: Any) -> bool:
+    return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
 
 
 COSMOS_CONTAINER_NAME = "npa-cosmos"
@@ -1029,6 +1044,235 @@ def _deploy_step_count(skip_infra: bool, skip_app: bool, destroy: bool) -> int:
     return count
 
 
+def _parse_key_value_options(items: list[str], *, flag: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            _fail(f"Invalid {flag} format: {item} (expected KEY=VALUE)")
+        key, value = item.split("=", 1)
+        if not key:
+            _fail(f"Invalid {flag} format: {item} (empty key)")
+        parsed[key] = value
+    return parsed
+
+
+def _serverless_endpoint_name(project: str, name: str) -> str:
+    raw = f"npa-cosmos-{project}-{name}".lower()
+    normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+    normalized = re.sub(r"-+", "-", normalized)
+    return normalized[:63].rstrip("-") or "npa-cosmos"
+
+
+def _serverless_endpoint_ref(cfg: Any) -> str:
+    serverless = getattr(cfg, "serverless", None)
+    return (
+        str(getattr(serverless, "endpoint_id", "") or "")
+        or str(getattr(serverless, "endpoint_name", "") or "")
+        or str(getattr(cfg, "name", "") or "")
+    )
+
+
+def _serverless_project_id(cfg: Any) -> str:
+    serverless = getattr(cfg, "serverless", None)
+    return (
+        str(getattr(serverless, "project_id", "") or "")
+        or str(getattr(cfg, "project_id", "") or "")
+    )
+
+
+def _delete_serverless_endpoint_for_config(
+    cfg: Any,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    project_id = _serverless_project_id(cfg)
+    endpoint_ref = _serverless_endpoint_ref(cfg)
+    if not project_id:
+        raise ServerlessClientError("Serverless project_id is not saved for this alias")
+    if not endpoint_ref:
+        raise ServerlessClientError("Serverless endpoint ID/name is not saved for this alias")
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "project_id": project_id,
+            "endpoint": endpoint_ref,
+        }
+    client = ServerlessClient()
+    client.delete_endpoint(project_id, endpoint_ref)
+    return {
+        "status": "deleted",
+        "project_id": project_id,
+        "endpoint": endpoint_ref,
+    }
+
+
+def _serverless_endpoint_status(cfg: Any) -> EndpointInfo:
+    project_id = _serverless_project_id(cfg)
+    endpoint_ref = _serverless_endpoint_ref(cfg)
+    if not project_id:
+        raise ServerlessClientError("Serverless project_id is not saved for this alias")
+    if not endpoint_ref:
+        raise EndpointNotFoundError("Serverless endpoint ID/name is not saved for this alias")
+    return ServerlessClient().get_endpoint(project_id, endpoint_ref)
+
+
+def _deploy_serverless_endpoint(
+    *,
+    proj_alias: str,
+    wb_name: str,
+    project_id: str,
+    env_region: str,
+    image: str,
+    platform: str,
+    preset: str,
+    container_port: int,
+    model: str,
+    auth: str,
+    env_vars: dict[str, str],
+    volumes: list[str],
+    replace: bool,
+    default: bool,
+    wait: bool,
+    dry_run: bool,
+    output: OutputFormat,
+) -> None:
+    if not project_id:
+        _fail(
+            "Serverless deploy requires a Nebius project ID. Configure the project "
+            "in ~/.npa/config.yaml or pass --project-id."
+        )
+    if not platform or not preset:
+        _validate_gpu_selection(platform, preset)
+
+    endpoint_name = _serverless_endpoint_name(proj_alias, wb_name)
+    image_ref = image or container_image_for_tool(
+        "cosmos", registry=resolve_container_registry(proj_alias)
+    )
+    serverless_env = {
+        "COSMOS_MODEL_ID": model,
+        "COSMOS_SERVER_PORT": str(container_port),
+        **env_vars,
+    }
+
+    existing = workbench_entry(proj_alias, wb_name)
+    if existing and str(existing.get("runtime", "")).lower() == "serverless" and not replace:
+        _fail(
+            f"Serverless alias {proj_alias}/{wb_name} already exists. "
+            "Use --replace to delete and recreate the endpoint."
+        )
+
+    if dry_run:
+        result = {
+            "status": "dry_run",
+            "project": proj_alias,
+            "name": wb_name,
+            "runtime": "serverless",
+            "serverless_project_id": project_id,
+            "endpoint_name": endpoint_name,
+            "image": image_ref,
+            "platform": platform,
+            "preset": preset,
+            "container_port": container_port,
+            "auth": auth,
+            "model": model,
+            "volumes": volumes,
+            "env_keys": sorted(serverless_env),
+            "replace": replace,
+        }
+        _output(result, output)
+        return
+
+    if replace and existing:
+        try:
+            cfg = resolve_config(project=proj_alias, name=wb_name)
+            _delete_serverless_endpoint_for_config(cfg)
+        except (ConfigError, EndpointNotFoundError):
+            pass
+        except ServerlessClientError as exc:
+            _fail(f"Existing serverless endpoint cleanup failed: {exc}")
+
+    set_default = default or not list_projects()
+    client = ServerlessClient()
+    spec = EndpointSpec(
+        name=endpoint_name,
+        project_id=project_id,
+        image=image_ref,
+        platform=platform,
+        preset=preset,
+        container_ports=[container_port],
+        auth=auth,
+        env=serverless_env,
+        volumes=volumes,
+    )
+
+    try:
+        info = client.create_endpoint(spec)
+        if wait:
+            info = client.wait_for_running(project_id, info.id or endpoint_name)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless endpoint deploy failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+
+    endpoint_url = info.url
+    update_workbench_serverless_endpoint(
+        proj_alias,
+        wb_name,
+        endpoint_id=info.id,
+        endpoint_name=info.name or endpoint_name,
+        project_id=project_id,
+        url=endpoint_url,
+        image=image_ref,
+        platform=platform,
+        preset=preset,
+        container_port=container_port,
+        auth=auth,
+    )
+    write_config(
+        {
+            "projects": {
+                proj_alias: {
+                    "project_id": project_id,
+                    "region": env_region,
+                    "workbenches": {
+                        wb_name: {
+                            "model": model,
+                            "backend": Backend.basic.value,
+                        },
+                    },
+                },
+            },
+        }
+    )
+    if wait and info.status is EndpointStatus.RUNNING:
+        update_workbench_app_status(proj_alias, wb_name, APP_STATUS_HEALTHY)
+    if set_default:
+        write_config({"default_project": proj_alias, "default_workbench": wb_name})
+
+    result = {
+        "status": "deployed",
+        "project": proj_alias,
+        "name": wb_name,
+        "runtime": "serverless",
+        "serverless_project_id": project_id,
+        "endpoint_id": info.id,
+        "endpoint_name": info.name or endpoint_name,
+        "endpoint": endpoint_url,
+        "serverless_status": info.status.value,
+        "image": image_ref,
+        "platform": platform,
+        "preset": preset,
+        "container_port": container_port,
+        "model": model,
+    }
+    if output == OutputFormat.text:
+        console.print("")
+        console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
+    _output(result, output)
+
+
 def _read_existing_outputs(
     proj_alias: str,
     wb_name: str,
@@ -1191,6 +1435,46 @@ def cleanup_partial_cmd(
 def deploy_cmd(
     gpu_type: str = typer.Option("", "--gpu-type", help="Nebius GPU platform."),
     gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset."),
+    platform: str = typer.Option(
+        "",
+        "--platform",
+        help="Serverless compute platform. Defaults to --gpu-type for serverless deploys.",
+    ),
+    preset: str = typer.Option(
+        "",
+        "--preset",
+        help="Serverless compute preset. Defaults to --gpu-preset for serverless deploys.",
+    ),
+    image: str = typer.Option(
+        "",
+        "--image",
+        help="Container image for serverless endpoint deploys. Defaults to the configured npa Cosmos image.",
+    ),
+    container_port: int = typer.Option(
+        0,
+        "--container-port",
+        help="Container port exposed by serverless endpoint deploys. Defaults to --server-port.",
+    ),
+    auth: str = typer.Option(
+        "none",
+        "--auth",
+        help="Serverless endpoint auth mode: none or token.",
+    ),
+    env: list[str] = typer.Option(
+        [],
+        "--env",
+        help="Non-secret serverless container env var in KEY=VALUE form. Repeatable.",
+    ),
+    volume: list[str] = typer.Option(
+        [],
+        "--volume",
+        help="Serverless endpoint volume mount. Repeatable.",
+    ),
+    wait: bool = typer.Option(
+        False,
+        "--wait",
+        help="Wait for the serverless endpoint to reach RUNNING.",
+    ),
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
@@ -1297,7 +1581,8 @@ def deploy_cmd(
     """Deploy or destroy a Cosmos model serving VM."""
     _ensure_basic_backend(backend)
     byovm = is_byovm_runtime(runtime)
-    if not destroy and not byovm:
+    serverless = is_serverless_runtime(runtime)
+    if not destroy and not byovm and not serverless:
         _validate_gpu_selection(gpu_type, gpu_preset)
 
     proj_alias = _project_alias or None
@@ -1325,7 +1610,44 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
 
     if not proj_alias:
-        proj_alias = env_region or ("byovm" if byovm else "default")
+        proj_alias = env_region or ("serverless" if serverless else ("byovm" if byovm else "default"))
+
+    if serverless:
+        if destroy:
+            try:
+                cfg = resolve_config(project=proj_alias, name=wb_name)
+                result = _delete_serverless_endpoint_for_config(cfg, dry_run=dry_run)
+                if not dry_run:
+                    remove_workbench_config(proj_alias, wb_name)
+                _output({**result, "project": proj_alias, "name": wb_name}, output)
+            except (ConfigError, ServerlessClientError) as exc:
+                _fail(f"Serverless endpoint destroy failed: {exc}")
+            return
+
+        try:
+            serverless_env = _parse_key_value_options(env, flag="--env")
+        except typer.Exit:
+            raise
+        _deploy_serverless_endpoint(
+            proj_alias=proj_alias,
+            wb_name=wb_name,
+            project_id=env_project,
+            env_region=env_region,
+            image=image,
+            platform=platform or gpu_type,
+            preset=preset or gpu_preset,
+            container_port=container_port or server_port,
+            model=model,
+            auth=auth,
+            env_vars=serverless_env,
+            volumes=volume,
+            replace=replace,
+            default=default,
+            wait=wait,
+            dry_run=dry_run,
+            output=output,
+        )
+        return
 
     existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
     existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
@@ -1961,6 +2283,52 @@ def deploy_cmd(
         )
 
 
+@app.command("teardown")
+def teardown_cmd(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompts.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be deleted without changing Nebius or local config.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
+) -> None:
+    """Delete a Cosmos serverless endpoint and remove its local alias."""
+    cfg = _get_config()
+    if not is_serverless_runtime(getattr(cfg, "runtime", "")):
+        _fail("Cosmos teardown currently supports --runtime serverless aliases. Use deploy --destroy for VM aliases.")
+
+    if not yes and not dry_run:
+        _confirm_or_exit(f"Delete serverless endpoint for '{cfg.project}/{cfg.name}'?")
+
+    try:
+        result = _delete_serverless_endpoint_for_config(cfg, dry_run=dry_run)
+    except ServerlessClientError as exc:
+        _fail(f"Serverless endpoint teardown failed: {exc}")
+        return
+
+    if not dry_run:
+        remove_workbench_config(cfg.project, cfg.name)
+
+    _output(
+        {
+            **result,
+            "project": cfg.project,
+            "name": cfg.name,
+            "runtime": "serverless",
+            "config_removed": not dry_run,
+        },
+        output,
+    )
+
+
 @app.command("reload-env")
 def reload_env_cmd(
     port: int = typer.Option(
@@ -2052,6 +2420,28 @@ def serve_cmd(
     """Start or restart the Cosmos model server over SSH."""
     _ensure_basic_backend(backend)
     cfg = _get_config()
+
+    if is_serverless_runtime(getattr(cfg, "runtime", "")):
+        try:
+            with service_endpoint(cfg, default_port=port, service_port=port) as active:
+                data = HTTPClient(active.url, timeout=120.0, retries=1).health()
+        except EndpointError as exc:
+            _fail(f"Cosmos serverless endpoint setup failed: {exc}")
+            return
+        except ServerError as exc:
+            _fail(f"Cosmos serverless pre-warm failed: {exc}")
+            return
+        _output(
+            {
+                "status": "prewarmed",
+                "runtime": "serverless",
+                "endpoint": active.url,
+                "model": data.get("model") or model,
+                "server": data.get("status", "up"),
+            },
+            output,
+        )
+        return
 
     if output != OutputFormat.json:
         console.print(f"[bold]Restarting Cosmos server[/bold]: {model}")
@@ -2575,6 +2965,39 @@ def status_cmd(
 ) -> None:
     """Check the Cosmos endpoint health."""
     cfg = _get_config()
+
+    if is_serverless_runtime(getattr(cfg, "runtime", "")):
+        try:
+            info = _serverless_endpoint_status(cfg)
+        except ServerlessClientError as exc:
+            _fail(f"Cannot read serverless endpoint status: {exc}")
+            return
+
+        endpoint_url = info.url or cfg.endpoint
+        data: dict[str, Any] = {}
+        server = "unknown"
+        health_error = ""
+        if endpoint_url:
+            try:
+                data = HTTPClient(endpoint_url, timeout=10.0, retries=1).health()
+                server = "up"
+            except ServerError as exc:
+                server = "down"
+                health_error = str(exc)
+        result = {
+            "endpoint": endpoint_url,
+            "app_status": "healthy" if server == "up" else "provisioned",
+            "runtime": "serverless",
+            "serverless_status": info.status.value,
+            "server": server,
+            "endpoint_id": info.id,
+            "endpoint_name": info.name,
+            **data,
+        }
+        if health_error:
+            result["health_error"] = health_error
+        _output(result, output)
+        return
 
     try:
         with service_endpoint(cfg, default_port=8080) as active:
