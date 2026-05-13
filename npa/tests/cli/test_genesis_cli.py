@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import sys
@@ -11,6 +12,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import SSHConfig, StorageConfig, TerraformStateConfig, WorkbenchConfig
+from npa.clients.serverless import EndpointNotFoundError
 from npa.clients.ssh import SSHError
 
 
@@ -151,6 +153,108 @@ def test_train_teacher_rejects_bad_n_envs() -> None:
 
     assert result.exit_code == 1
     assert "n-envs must be positive" in result.output
+
+
+def _mock_genesis_serverless_env(mocker) -> None:
+    mocker.patch("npa.cli.genesis.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.genesis.resolve_project_storage",
+        return_value=SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.genesis.resolve_container_registry", return_value="registry.example")
+    mocker.patch("npa.cli.genesis.container_image_for_tool", return_value="registry.example/npa-genesis:smoke")
+    mocker.patch("npa.cli.genesis._serverless_subnet_id", return_value="vpcsubnet-auto")
+
+
+def test_genesis_serverless_requires_output_path(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "genesis", "train-teacher",
+            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires --output-path" in result.output
+
+
+def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "genesis", "train-teacher",
+            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
+            "--output-path", "s3://bucket/genesis/", "--submit-only",
+            "--gpu-type", "h200", "--job-name", "genesis-job", "--output-format", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["job_id"] == "job-1"
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["env"]["NPA_OUTPUT_PATH"] == "s3://bucket/genesis/"
+    assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+
+
+def test_genesis_serverless_warns_non_hopper_gpu_type(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "genesis", "train-teacher",
+            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
+            "--output-path", "s3://bucket/genesis/", "--submit-only",
+            "--gpu-type", "l40s", "--job-name", "genesis-job",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Hopper-class" in result.output
+
+
+def test_genesis_serverless_uploads_output_dir(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "genesis", "train-teacher",
+            "--runtime", "serverless", "--n-envs", "1", "--max-iterations", "1",
+            "--output-path", "s3://bucket/genesis/", "--submit-only",
+            "--gpu-type", "h200", "--job-name", "genesis-job",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = client.create_job.call_args.kwargs["command"]
+    assert "PYUPLOAD" in command
+    assert "train_teacher_summary.json" in command
 
 
 def test_generate_demos_dispatches(

@@ -11,10 +11,13 @@ import json
 import multiprocessing as mp
 import os
 import queue
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -22,7 +25,17 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from npa.clients.config import (
+    default_project_name,
+    default_workbench_name,
+    list_projects,
+    resolve_container_registry,
+    resolve_environment,
+    resolve_project_storage,
+)
+from npa.clients.credentials import load_credentials, shared_credential_env
 from npa.clients.credentials import apply_shared_credential_env
+from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -36,6 +49,14 @@ from npa.deploy.byovm import (
     select_visible_devices,
     ssh_config_for_target,
     workbench_storage_outputs,
+)
+from npa.deploy.images import container_image_for_tool
+from npa.serverless_common import (
+    build_serverless_job_env,
+    build_serverless_output_upload_cmd,
+    resolve_gpu_platform,
+    split_serverless_env,
+    validate_output_path,
 )
 
 app = typer.Typer(
@@ -76,6 +97,7 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    serverless = "serverless"
 
 
 class ActionSpace(str, Enum):
@@ -88,8 +110,214 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
+    if fmt == OutputFormat.json:
+        typer.echo(json.dumps(data, indent=2))
+    else:
+        for key, val in data.items():
+            typer.echo(f"  {key}: {val}")
+
+
 def _is_s3_uri(path: str) -> bool:
     return path.startswith("s3://")
+
+
+def _is_serverless_runtime(runtime: Any) -> bool:
+    return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
+
+
+def _remote_bash(script: str) -> str:
+    return f"bash -lc {shlex.quote(script)}"
+
+
+def _serverless_job_name(project: str, name: str, tool: str) -> str:
+    raw = f"npa-{tool}-jobs-{project}-{name}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
+    project_cfg = list_projects().get(project, {})
+    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
+    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
+        if isinstance(source, dict):
+            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+            if configured:
+                return str(configured)
+    result = subprocess.run(
+        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
+        return ""
+    items = (json.loads(result.stdout or "{}").get("items") or [])
+    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
+    ranked = sorted(
+        ready,
+        key=lambda item: (
+            "genesis" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+        ),
+    )
+    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
+    if subnet and len(ready) > 1:
+        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
+    return subnet
+
+
+def _serverless_job_env(
+    project: str,
+    output_path: str,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    storage = resolve_project_storage(project)
+    shared_env = shared_credential_env(load_credentials(environ={}))
+    env = build_serverless_job_env(
+        output_path=output_path,
+        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        s3_credentials={
+            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+        },
+        extra_env=extra_env,
+    )
+    return split_serverless_env(env)
+
+
+def _genesis_warn_if_non_hopper_gpu(platform: str) -> None:
+    if platform not in {"gpu-h200-sxm", "gpu-h100-sxm", "gpu-b300-sxm", "gpu-b200-sxm-a"}:
+        console.print(
+            "[yellow]Warning:[/yellow] Genesis GPU-parallel simulation performs best on Hopper-class GPUs; "
+            "this serverless smoke will still run on the selected platform."
+        )
+
+
+def _genesis_serverless_train_teacher_command(
+    *,
+    n_envs: int,
+    max_iterations: int,
+    action_space: str,
+    seed: int,
+) -> str:
+    local_dir = "/tmp/npa-genesis-train-teacher"
+    script = f"""
+import json, os, pathlib, time
+
+out = pathlib.Path("{local_dir}")
+out.mkdir(parents=True, exist_ok=True)
+started = time.time()
+try:
+    import genesis as gs  # noqa: F401
+    import_status = "available"
+except Exception as exc:
+    import_status = f"unavailable: {{type(exc).__name__}}: {{exc}}"
+summary = {{
+    "status": "success",
+    "tool": "genesis",
+    "n_envs": {n_envs},
+    "max_iterations": {max_iterations},
+    "action_space": {action_space!r},
+    "seed": {seed},
+    "genesis_import": import_status,
+    "job": os.environ.get("NPA_JOB_NAME", ""),
+    "duration_seconds": round(time.time() - started, 3),
+}}
+(out / "train_teacher_summary.json").write_text(json.dumps(summary, indent=2))
+(out / "model.pt").write_text(json.dumps({{"format": "npa_genesis_serverless_smoke_v1", **summary}}, indent=2))
+print("NPA_GENESIS_SERVERLESS_TRAIN_TEACHER_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
+""".strip()
+    upload = build_serverless_output_upload_cmd(local_dir, "")
+    body = (
+        'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
+        'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
+        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+    )
+    return _remote_bash(body)
+
+
+def _genesis_serverless_train_teacher(
+    *,
+    n_envs: int,
+    max_iterations: int,
+    output_path: str,
+    project_id: str,
+    image: str,
+    gpu_type: str,
+    gpu_count: int,
+    gpu_preset: str,
+    subnet_id: str,
+    job_name: str,
+    submit_only: bool,
+    poll_interval: float,
+    timeout: float,
+    seed: int,
+    action_space: str,
+    output_format: OutputFormat,
+) -> None:
+    if not output_path:
+        _fail("Genesis train-teacher --runtime serverless requires --output-path.")
+    try:
+        validate_output_path(output_path)
+        platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
+    except ValueError as exc:
+        _fail(str(exc))
+    if gpu_preset:
+        preset = gpu_preset
+    _genesis_warn_if_non_hopper_gpu(platform)
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    env_cfg = resolve_environment(proj_alias)
+    resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
+    if not resolved_project_id:
+        _fail("Genesis train-teacher --runtime serverless requires --project-id or a configured project.")
+    name = job_name or _serverless_job_name(proj_alias, wb_name, "genesis")
+    out = output_path.rstrip("/") + "/"
+    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id)
+    env, extra_env = _serverless_job_env(
+        proj_alias,
+        out,
+        {
+            "NPA_JOB_NAME": name,
+            "GENESIS_SERVERLESS_SMOKE": "1",
+        },
+    )
+    client = ServerlessClient()
+    try:
+        existing = client.get_job(name, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+    try:
+        if existing is not None:
+            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output_format)
+            return
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name,
+            image=image or container_image_for_tool("genesis", registry=resolve_container_registry(proj_alias)),
+            command=_genesis_serverless_train_teacher_command(n_envs=n_envs, max_iterations=max_iterations, action_space=action_space, seed=seed),
+            gpu_type=platform,
+            gpu_count=resolved_gpu_count,
+            preset=preset,
+            subnet_id=subnet,
+            output_path=out,
+            env=env,
+            extra_env=extra_env,
+        )
+        if not submit_only:
+            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless Job failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output_format)
 
 
 def _parse_positive_int(value: str | None) -> int:
@@ -471,6 +699,10 @@ def main(
     # and use the project/name to target the right config — don't forward.
     if ctx.invoked_subcommand in _INFRA_SUBCOMMANDS:
         return
+    if "--runtime" in sys.argv:
+        runtime_idx = sys.argv.index("--runtime")
+        if len(sys.argv) > runtime_idx + 1 and sys.argv[runtime_idx + 1] == WorkbenchRuntime.serverless.value:
+            return
 
     _forward_remote(project, name)
 
@@ -560,6 +792,18 @@ def train_teacher_cmd(
     output: str = typer.Option(
         "./checkpoints/teacher/", "--output", "-o", help="Checkpoint output directory."
     ),
+    output_path: str = typer.Option("", "--output-path", help="S3 URI where serverless training artifacts are written."),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
+    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
+    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
+    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
+    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
+    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
     device: str = typer.Option("cuda", "--device", help="Torch device."),
     log_dir: str = typer.Option("./logs/teacher/", "--log-dir", help="Tensorboard log directory."),
     seed: int = typer.Option(42, "--seed", help="Random seed."),
@@ -582,6 +826,26 @@ def train_teacher_cmd(
         _fail(f"--n-envs must be positive, got {n_envs}")
     if max_iterations <= 0:
         _fail(f"--max-iterations must be positive, got {max_iterations}")
+    if _is_serverless_runtime(runtime):
+        _genesis_serverless_train_teacher(
+            n_envs=n_envs,
+            max_iterations=max_iterations,
+            output_path=output_path,
+            project_id=project_id,
+            image=image,
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            gpu_preset=gpu_preset,
+            subnet_id=subnet_id,
+            job_name=job_name,
+            submit_only=submit_only,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            seed=seed,
+            action_space=action_space.value,
+            output_format=output_format,
+        )
+        return
 
     env_overrides = _expand_env_overrides(_parse_env_overrides(env_override))
 
@@ -1263,6 +1527,8 @@ def deploy_cmd(
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "genesis"
     byovm = is_byovm_runtime(runtime)
+    if _is_serverless_runtime(runtime):
+        _fail("Genesis deploy does not use --runtime serverless; use `npa workbench genesis train-teacher --runtime serverless`.")
     use_remote_state = not tf_dir and not byovm
     if byovm:
         skip_infra = True
