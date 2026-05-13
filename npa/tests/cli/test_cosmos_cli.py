@@ -31,7 +31,13 @@ from npa.cli.cosmos import (
 )
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
-from npa.clients.config import SSHConfig, ServerlessConfig, StorageConfig, WorkbenchConfig
+from npa.clients.config import (
+    SSHConfig,
+    ServerlessConfig,
+    ServerlessJobConfig,
+    StorageConfig,
+    WorkbenchConfig,
+)
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
 from npa.clients.serverless import (
@@ -39,6 +45,7 @@ from npa.clients.serverless import (
     EndpointInfo,
     EndpointNotFoundError,
     EndpointStatus,
+    JobInfo,
     NotEnoughResourcesError,
     ServerlessClientError,
 )
@@ -206,6 +213,7 @@ def test_cosmos_train_serverless_sync_waits_and_status_cancel_dispatch(mocker) -
     client.create_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=())
     client.poll_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="succeeded", output_uris=())
     client.cancel_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="cancelled")
+    client.classify_queue_state.return_value = "running"
     mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
 
     result = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train", "--runtime", "serverless", "--smoke"])
@@ -1763,6 +1771,66 @@ def test_cosmos_status_serverless_keeps_resource_status_when_health_fails(mocker
     assert result.exit_code == 0
     assert "server: down" in result.output
     assert "health_error: connection refused" in result.output
+
+
+def test_cosmos_status_shows_waiting_for_capacity_with_hint(mocker) -> None:
+    cfg = _serverless_cfg()
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=492,
+    )
+    client.classify_queue_state.return_value = "waiting_for_capacity"
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status"])
+
+    assert result.exit_code == 0
+    assert "status: waiting_for_capacity" in result.output
+    assert "queue_state_classification: capacity" in result.output
+    assert "Platform may be at capacity" in result.output
+
+
+def test_cosmos_status_json_includes_queue_state_classification(mocker) -> None:
+    cfg = _serverless_cfg()
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=492,
+    )
+    client.classify_queue_state.return_value = "waiting_for_capacity"
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "cosmos", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "waiting_for_capacity"
+    assert payload["queue_state_classification"] == "capacity"
+    assert payload["queued_for_seconds"] == 492
+    assert payload["platform"] == "gpu-h200-sxm"
 
 
 def test_cosmos_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:

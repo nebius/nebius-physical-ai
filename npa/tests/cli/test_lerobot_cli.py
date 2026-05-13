@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from npa.cli.workbench import lerobot
-from npa.clients.config import StorageConfig
+from npa.clients.config import ServerlessJobConfig, StorageConfig
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, NotEnoughResourcesError
 
 from .test_workbench_cli import _cfg, runner
@@ -141,6 +141,68 @@ def test_lerobot_serverless_env_split_keeps_secrets_extra() -> None:
 
     assert safe == {"NPA_JOB_NAME": "job"}
     assert extra == {"HF_TOKEN": "hf"}
+
+
+def test_lerobot_status_shows_waiting_for_capacity_with_hint(mocker) -> None:
+    cfg = _cfg()
+    cfg.runtime = "serverless"
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=492,
+    )
+    client.classify_queue_state.return_value = "waiting_for_capacity"
+    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "lerobot", "status"])
+
+    assert result.exit_code == 0
+    assert "status: waiting_for_capacity" in result.output
+    assert "queue_state_classification: capacity" in result.output
+    assert "Platform may be at capacity" in result.output
+
+
+def test_lerobot_status_json_includes_queue_state_classification(mocker) -> None:
+    cfg = _cfg()
+    cfg.runtime = "serverless"
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=492,
+    )
+    client.classify_queue_state.return_value = "waiting_for_capacity"
+    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "lerobot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "waiting_for_capacity"
+    assert payload["queue_state_classification"] == "capacity"
+    assert payload["queued_for_seconds"] == 492
+    assert payload["platform"] == "gpu-h200-sxm"
 
 
 def test_lerobot_gpu_platform_aliases() -> None:

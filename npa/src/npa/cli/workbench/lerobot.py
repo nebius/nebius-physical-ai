@@ -40,7 +40,7 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.deploy.byovm import (
     RUNTIME_HELP,
@@ -152,6 +152,36 @@ def _fail(msg: str, code: int = 1) -> None:
 def _fail_serverless(exc: ServerlessClientError, output: OutputFormat = OutputFormat.text) -> None:
     typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
     raise typer.Exit(1)
+
+
+def _serverless_job_status_payload(
+    client: ServerlessClient,
+    info: JobInfo,
+    *,
+    platform: str = "",
+    gpu_count: int = 0,
+) -> dict[str, Any]:
+    status = client.classify_queue_state(info)
+    payload: dict[str, Any] = {
+        "job_id": info.id,
+        "job_name": info.name,
+        "status": status,
+        "raw_status": info.status,
+        "output_uris": list(info.output_uris),
+    }
+    if info.status == "queued":
+        payload["queue_state_classification"] = (
+            "capacity" if status == "waiting_for_capacity" else "scheduled"
+        )
+        payload["queued_for_seconds"] = info.queued_for_seconds
+        payload["platform"] = platform or info.platform
+        payload["gpu_count"] = gpu_count or info.gpu_count
+        payload["hint"] = (
+            "Platform may be at capacity. Retry status in a few minutes."
+            if status == "waiting_for_capacity"
+            else "Job is scheduled and waiting to start."
+        )
+    return payload
 
 
 def _get_config(**overrides):
@@ -350,6 +380,26 @@ def status(
 ) -> None:
     """Check what's running on the VM."""
     cfg = _get_config()
+
+    if is_serverless_runtime(getattr(cfg, "runtime", "")):
+        job_cfg = getattr(cfg, "serverless_job", None)
+        job_ref = str(getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", ""))
+        project_id = str(getattr(job_cfg, "project_id", "") or getattr(cfg, "project_id", ""))
+        if job_ref and project_id:
+            client = ServerlessClient()
+            try:
+                info = client.get_job(job_ref, project_id)
+            except ServerlessClientError as exc:
+                _fail_serverless(exc, output)
+            result = _serverless_job_status_payload(
+                client,
+                info,
+                platform=str(getattr(job_cfg, "gpu_type", "")),
+                gpu_count=int(getattr(job_cfg, "gpu_count", 0) or 0),
+            )
+            result.update({"runtime": "serverless", "workbench": getattr(cfg, "name", "")})
+            _output(result, output)
+            return
 
     from npa.clients.http import HTTPClient, ServerError
 

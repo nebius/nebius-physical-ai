@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import json
 import logging
@@ -150,6 +151,7 @@ _JOB_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 _JOB_QUERY_TIMEOUT = 60
 _JOB_CREATE_TIMEOUT = 300
 _JOB_CANCEL_TIMEOUT = 120
+_QUEUE_CAPACITY_THRESHOLD_SECONDS = 180
 
 
 def _job_status(value: Any) -> str:
@@ -158,6 +160,42 @@ def _job_status(value: Any) -> str:
         if normalized in aliases:
             return status
     return "unknown"
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _queued_for_seconds(created_at: str, *, now: datetime | None = None) -> int:
+    if not created_at:
+        return 0
+    normalized = created_at.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        created = datetime.fromisoformat(normalized)
+    except ValueError:
+        return 0
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return max(0, int((current - created.astimezone(timezone.utc)).total_seconds()))
+
+
+def _map_scheduling_state(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return ""
+    if any(marker in normalized for marker in ("capacity", "resource", "quota", "no_gpu")):
+        return "waiting_for_capacity"
+    if any(marker in normalized for marker in ("scheduled", "accepted", "queued", "pending")):
+        return "scheduled"
+    if "running" in normalized:
+        return "running"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -204,6 +242,12 @@ class JobInfo:
     created_at: str = ""
     started_at: str = ""
     ended_at: str = ""
+    scheduling_state: str = ""
+    pending_reason: str = ""
+    platform: str = ""
+    preset: str = ""
+    gpu_count: int = 0
+    queued_for_seconds: int = 0
     output_uris: tuple[str, ...] = ()
     log_tail: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
@@ -820,6 +864,24 @@ class ServerlessClient:
         status = last.status if last else "unknown"
         raise TimeoutError(f"Job {job_id} did not finish within {ceiling_s}s (last status: {status})")
 
+    def classify_queue_state(
+        self,
+        job: JobInfo,
+        *,
+        threshold_seconds: int = _QUEUE_CAPACITY_THRESHOLD_SECONDS,
+    ) -> str:
+        """Classify a Job's user-facing queue state."""
+        if job.status in _JOB_TERMINAL_STATUSES or job.status == "running":
+            return job.status
+        if job.status != "queued":
+            return job.status
+        explicit = _map_scheduling_state(job.scheduling_state or job.pending_reason)
+        if explicit:
+            return explicit
+        if job.queued_for_seconds > threshold_seconds:
+            return "waiting_for_capacity"
+        return "scheduled"
+
     def _run(
         self,
         args: list[str],
@@ -946,14 +1008,27 @@ class ServerlessClient:
             output_uris = tuple(str(value) for value in outputs if value)
         else:
             output_uris = ()
+        created_at = str(_deep_get(data, ("metadata", "created_at"), ("metadata", "createdAt"), ("created_at",), ("createdAt",)))
+        status = _job_status(_deep_get(data, ("status", "state"), ("status",), ("state",)))
+        platform = str(_deep_get(data, ("spec", "platform"), ("spec", "gpu_type"), ("platform",), ("gpu_type",)))
+        preset = str(_deep_get(data, ("spec", "preset"), ("preset",)))
+        gpu_count = _int_value(_deep_get(data, ("spec", "gpu_count"), ("spec", "gpus"), ("gpu_count",), ("gpus",)))
+        if not gpu_count:
+            gpu_count = _gpu_count_from_preset(preset)
         return JobInfo(
             id=_endpoint_id(data),
             name=_endpoint_name(data),
             project_id=_endpoint_project_id(data, fallback_project_id),
-            status=_job_status(_deep_get(data, ("status", "state"), ("status",), ("state",))),
-            created_at=str(_deep_get(data, ("metadata", "created_at"), ("created_at",))),
+            status=status,
+            created_at=created_at,
             started_at=str(_deep_get(data, ("status", "started_at"), ("started_at",))),
             ended_at=str(_deep_get(data, ("status", "ended_at"), ("ended_at",))),
+            scheduling_state=str(_deep_get(data, ("status", "scheduling_state"), ("status", "schedulingState"), ("scheduling_state",), ("schedulingState",))),
+            pending_reason=str(_deep_get(data, ("status", "pending_reason"), ("status", "pendingReason"), ("status", "reason"), ("pending_reason",), ("pendingReason",))),
+            platform=platform,
+            preset=preset,
+            gpu_count=gpu_count,
+            queued_for_seconds=_queued_for_seconds(created_at) if status == "queued" else 0,
             output_uris=output_uris,
             log_tail=str(_deep_get(data, ("status", "message"), ("status", "log_tail"), ("log_tail",))),
             raw=data,

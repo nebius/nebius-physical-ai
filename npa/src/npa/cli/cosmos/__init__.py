@@ -81,6 +81,7 @@ from npa.clients.serverless import (
     EndpointSpec,
     EndpointStatus,
     EndpointNotFoundError,
+    JobInfo,
     ServerlessClient,
     ServerlessClientError,
 )
@@ -1222,6 +1223,54 @@ def _serverless_endpoint_status(cfg: Any) -> EndpointInfo:
     if not endpoint_ref:
         raise EndpointNotFoundError("Serverless endpoint ID/name is not saved for this alias")
     return ServerlessClient().get_endpoint(project_id, endpoint_ref)
+
+
+def _serverless_job_status_payload(
+    client: ServerlessClient,
+    info: JobInfo,
+    *,
+    platform: str = "",
+    gpu_count: int = 0,
+) -> dict[str, Any]:
+    status = client.classify_queue_state(info)
+    payload: dict[str, Any] = {
+        "job_id": info.id,
+        "job_name": info.name,
+        "status": status,
+        "raw_status": info.status,
+        "output_uris": list(info.output_uris),
+    }
+    if info.status == "queued":
+        payload["queue_state_classification"] = (
+            "capacity" if status == "waiting_for_capacity" else "scheduled"
+        )
+        payload["queued_for_seconds"] = info.queued_for_seconds
+        payload["platform"] = platform or info.platform
+        payload["gpu_count"] = gpu_count or info.gpu_count
+        payload["hint"] = (
+            "Platform may be at capacity. Retry status in a few minutes."
+            if status == "waiting_for_capacity"
+            else "Job is scheduled and waiting to start."
+        )
+    return payload
+
+
+def _serverless_job_status_for_config(cfg: Any) -> dict[str, Any] | None:
+    job_cfg = getattr(cfg, "serverless_job", None)
+    job_ref = str(getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", ""))
+    project_id = str(getattr(job_cfg, "project_id", "") or _serverless_project_id(cfg))
+    if not job_ref or not project_id:
+        return None
+    client = ServerlessClient()
+    info = client.get_job(job_ref, project_id)
+    result = _serverless_job_status_payload(
+        client,
+        info,
+        platform=str(getattr(job_cfg, "gpu_type", "")),
+        gpu_count=int(getattr(job_cfg, "gpu_count", 0) or 0),
+    )
+    result.update({"runtime": "serverless", "workbench": getattr(cfg, "name", "")})
+    return result
 
 
 def _deploy_serverless_endpoint(
@@ -2649,7 +2698,15 @@ def train_cmd(
         if not ref:
             _fail("Provide a job ID or name for train status.")
         info = client.get_job(ref, resolved_project_id)
-        _output({"job_id": info.id, "job_name": info.name, "status": info.status, "output_uris": list(info.output_uris)}, output)
+        _output(
+            _serverless_job_status_payload(
+                client,
+                info,
+                platform=gpu_type,
+                gpu_count=gpu_count,
+            ),
+            output,
+        )
         return
     if action == "cancel":
         if not ref:
@@ -3183,6 +3240,10 @@ def status_cmd(
 
     if is_serverless_runtime(getattr(cfg, "runtime", "")):
         try:
+            job_status = _serverless_job_status_for_config(cfg)
+            if job_status is not None:
+                _output(job_status, output)
+                return
             info = _serverless_endpoint_status(cfg)
         except ServerlessClientError as exc:
             _fail_serverless(exc, output)

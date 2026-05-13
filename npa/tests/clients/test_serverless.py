@@ -10,6 +10,7 @@ from npa.clients.serverless import (
     EndpointNotFoundError,
     EndpointSpec,
     EndpointStatus,
+    JobInfo,
     NotEnoughResourcesError,
     QuotaError,
     ServerlessClient,
@@ -418,6 +419,64 @@ def test_str_returns_just_message_for_backward_compat() -> None:
 
     assert str(err) == "plain message"
     assert err.args == ("plain message",)
+
+
+def test_classify_queue_state_running_returns_running() -> None:
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+
+    assert client.classify_queue_state(JobInfo("job-1", "train", "project-1", status="running")) == "running"
+
+
+def test_classify_queue_state_recently_queued_returns_scheduled() -> None:
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=30)
+
+    assert client.classify_queue_state(job) == "scheduled"
+
+
+def test_classify_queue_state_long_queued_returns_waiting_for_capacity() -> None:
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=600)
+
+    assert client.classify_queue_state(job) == "waiting_for_capacity"
+
+
+def test_classify_queue_state_with_explicit_scheduling_state() -> None:
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    job = JobInfo(
+        "job-1",
+        "train",
+        "project-1",
+        status="queued",
+        scheduling_state="insufficient capacity",
+    )
+
+    assert client.classify_queue_state(job) == "waiting_for_capacity"
+
+
+def test_classify_queue_state_respects_threshold_override() -> None:
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+    job = JobInfo("job-1", "train", "project-1", status="queued", queued_for_seconds=11)
+
+    assert client.classify_queue_state(job, threshold_seconds=10) == "waiting_for_capacity"
+
+
+def test_job_parser_derives_queue_metadata() -> None:
+    raw = (
+        '{"metadata": {"id": "job-1", "name": "train", "parent_id": "project-1", '
+        '"createdAt": "2000-01-01T00:00:00Z"}, '
+        '"spec": {"platform": "gpu-h200-sxm", "preset": "8gpu-128vcpu-1600gb"}, '
+        '"status": {"state": "QUEUED", "schedulingState": "accepted"}}'
+    )
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda *a, **k: None)
+
+    info = client._parse_job_info(raw, project_id="project-1")
+
+    assert info.status == "queued"
+    assert info.scheduling_state == "accepted"
+    assert info.platform == "gpu-h200-sxm"
+    assert info.gpu_count == 8
+    assert info.queued_for_seconds > 180
 
 
 def test_list_endpoints_parses_empty_object_as_empty_list() -> None:
