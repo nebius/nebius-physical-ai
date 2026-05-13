@@ -404,3 +404,15 @@ Outstanding observations (deferred):
 - Customer-facing docs: `docs/cli-errors.md`, `docs/sdk/errors.md`.
 - E2E NER test fixture remains deferred as a separate issue; UX coverage
   shipped independently.
+
+---
+
+## CLOSED 2026-05-13 (W4-NER-UX docs polish)
+
+- Added installation + import section to `docs/sdk/errors.md` so SDK consumers
+  know how to install the package and import typed exceptions.
+- Added cross-references between `docs/cli-errors.md` and
+  `docs/sdk/errors.md` so readers landing on either find the other.
+- Added `docs/README.md` with an index of the docs directory structure.
+- W4-NER-UX deliverable is now fully shippable for external partner
+  distribution.
