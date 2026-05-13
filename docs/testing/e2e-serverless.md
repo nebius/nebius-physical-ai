@@ -158,3 +158,89 @@ research):
 
 `--gpu-type b300 --policy-type diffusion` emits a CLI warning per the benchmark
 findings.
+
+## Cosmos Serverless Jobs E2E
+
+Smoke command used by W7-parallel-tools:
+
+```bash
+npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --gpu-type l40s \
+  --gpu-count 1 \
+  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/cosmos-smoke/ \
+  --job-name cosmos-smoke2-20260513T225839Z \
+  --smoke \
+  --smoke-seconds 5
+```
+
+Expected artifact: `checkpoint.json`.
+
+## Isaac Lab Serverless Jobs E2E
+
+```bash
+npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --task Isaac-Reach-Franka-v0 \
+  --num-envs 1 \
+  --steps 1 \
+  --gpu-type l40s \
+  --gpu-count 1 \
+  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/isaac-lab-smoke/ \
+  --job-name isaac-lab-smoke3-20260513T225839Z
+```
+
+Expected artifacts: `npa_isaac_lab_train_summary.json`, `npa_isaac_lab_random_policy_checkpoint.json`.
+
+## FiftyOne Serverless Jobs E2E
+
+```bash
+npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --name w7p-curated \
+  --input-path Voxel51/VisDrone2019-DET \
+  --gpu-type l40s \
+  --gpu-count 1 \
+  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/fiftyone-smoke/ \
+  --job-name fiftyone-smoke-20260513T225839Z
+```
+
+Expected artifact: `npa_fiftyone_dataset_summary.json`.
+
+## Genesis Serverless Jobs E2E
+
+```bash
+npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --n-envs 1 \
+  --max-iterations 1 \
+  --gpu-type l40s \
+  --gpu-count 1 \
+  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/genesis-smoke/ \
+  --job-name genesis-smoke-20260513T225839Z
+```
+
+Expected artifacts: `train_teacher_summary.json`, `model.pt`.
+
+## GR00T Serverless Jobs E2E
+
+```bash
+npa workbench groot -p uk-south1 -n w7p-groot infer \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --input-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/checkpoint/ \
+  --dataset-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/dataset/ \
+  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-smoke/ \
+  --gpu-type h200 \
+  --gpu-count 1 \
+  --model-variant nvidia/GR00T-N1.7-3B \
+  --steps 1 \
+  --action-horizon 1 \
+  --job-name groot-smoke-20260513T225839Z
+```
+
+W7-parallel-tools result: code path and unit coverage are present, but three smoke attempts failed before logs with Nebius internal Job errors. Treat this as `SMOKE_FAILED` until a follow-up run gets a terminal successful Job and uploaded artifacts.
