@@ -117,3 +117,8 @@ Set `NPA_DEBUG=1` when filing an issue or debugging locally.
 - `1`: typed, user-actionable serverless error
 - `2`: unexpected error
 - `130`: interrupted by Ctrl-C
+
+## See also
+
+For programmatic error handling in Python SDK code, see
+[docs/sdk/errors.md](sdk/errors.md).

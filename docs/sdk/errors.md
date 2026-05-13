@@ -99,3 +99,8 @@ Existing code that catches `ServerlessClientError`,
 `NotEnoughResourcesError`, `QuotaError`, `AuthError`, or
 `EndpointNotFoundError` keeps working. The exception names are unchanged and
 `str(exc)` remains the plain message string.
+
+## See also
+
+For end-user CLI error formatting and JSON output mode, see
+[docs/cli-errors.md](../cli-errors.md).
