@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli._error_formatting import format_error_for_user
 from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
@@ -345,6 +346,11 @@ def main(
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}")
     raise typer.Exit(code)
+
+
+def _fail_serverless(exc: ServerlessClientError, output: OutputFormat = OutputFormat.text) -> None:
+    typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
+    raise typer.Exit(1)
 
 
 def _confirm_or_exit(prompt: str) -> None:
@@ -1294,7 +1300,7 @@ def _deploy_serverless_endpoint(
         except (ConfigError, EndpointNotFoundError):
             pass
         except ServerlessClientError as exc:
-            _fail(f"Existing serverless endpoint cleanup failed: {exc}")
+            _fail_serverless(exc, output)
 
     set_default = default or not list_projects()
     client = ServerlessClient()
@@ -1318,7 +1324,7 @@ def _deploy_serverless_endpoint(
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
-        _fail(f"Serverless endpoint deploy failed: {exc}")
+        _fail_serverless(exc, output)
     except TimeoutError as exc:
         _fail(str(exc))
 
@@ -1733,8 +1739,10 @@ def deploy_cmd(
                 if not dry_run:
                     remove_workbench_config(proj_alias, wb_name)
                 _output({**result, "project": proj_alias, "name": wb_name}, output)
-            except (ConfigError, ServerlessClientError) as exc:
+            except ConfigError as exc:
                 _fail(f"Serverless endpoint destroy failed: {exc}")
+            except ServerlessClientError as exc:
+                _fail_serverless(exc, output)
             return
 
         try:
@@ -2425,7 +2433,7 @@ def teardown_cmd(
     try:
         result = _delete_serverless_endpoint_for_config(cfg, dry_run=dry_run)
     except ServerlessClientError as exc:
-        _fail(f"Serverless endpoint teardown failed: {exc}")
+        _fail_serverless(exc, output)
         return
 
     if not dry_run:
@@ -2685,7 +2693,7 @@ def train_cmd(
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
-        _fail(f"Serverless train failed: {exc}")
+        _fail_serverless(exc, output)
     except TimeoutError as exc:
         _fail(str(exc))
     _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
@@ -3177,7 +3185,7 @@ def status_cmd(
         try:
             info = _serverless_endpoint_status(cfg)
         except ServerlessClientError as exc:
-            _fail(f"Cannot read serverless endpoint status: {exc}")
+            _fail_serverless(exc, output)
             return
 
         endpoint_url = info.url or cfg.endpoint

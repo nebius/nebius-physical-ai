@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import typer
 from rich.console import Console
 
+from npa.cli._error_formatting import format_error_for_user
 from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
@@ -146,6 +147,11 @@ def _output(data: dict, fmt: OutputFormat) -> None:
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}")
     raise typer.Exit(code)
+
+
+def _fail_serverless(exc: ServerlessClientError, output: OutputFormat = OutputFormat.text) -> None:
+    typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
+    raise typer.Exit(1)
 
 
 def _get_config(**overrides):
@@ -777,7 +783,7 @@ def _train_serverless(
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
-        _fail(f"Serverless train failed: {exc}")
+        _fail_serverless(exc, output)
     except TimeoutError as exc:
         _fail(str(exc))
 

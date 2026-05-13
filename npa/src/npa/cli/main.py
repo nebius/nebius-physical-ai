@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import traceback
+
 import typer
 
+from npa.cli._error_formatting import format_error_for_user
 from npa.cli.workbench import app as workbench_app
 from npa.cli.adapter import app as adapter_app
 from npa.cli.convert import app as convert_app
@@ -12,6 +17,7 @@ from npa.cli.network import app as network_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow import app as workflow_app
+from npa.clients.serverless import ServerlessClientError
 
 app = typer.Typer(
     name="npa",
@@ -65,4 +71,31 @@ def init() -> None:
 
 
 def app_entry() -> None:
-    app()
+    try:
+        app()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except ServerlessClientError as exc:
+        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        if os.environ.get("NPA_DEBUG"):
+            traceback.print_exc()
+        else:
+            print("  Run with NPA_DEBUG=1 for full traceback.", file=sys.stderr)
+        sys.exit(2)
+
+
+def _detect_error_format() -> str:
+    env_format = os.environ.get("NPA_ERROR_FORMAT", "").lower()
+    if env_format in {"json", "text"}:
+        return env_format
+    args = sys.argv[1:]
+    for index, value in enumerate(args):
+        if value in {"--output", "--output-format", "--format"} and index + 1 < len(args):
+            if args[index + 1].lower() == "json":
+                return "json"
+        if value in {"--output=json", "--output-format=json", "--format=json"}:
+            return "json"
+    return "text"

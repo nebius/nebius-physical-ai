@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from npa.cli.workbench import lerobot
 from npa.clients.config import StorageConfig
-from npa.clients.serverless import EndpointNotFoundError, JobInfo
+from npa.clients.serverless import EndpointNotFoundError, JobInfo, NotEnoughResourcesError
 
 from .test_workbench_cli import _cfg, runner
 from .test_workbench_cli import *  # noqa: F401,F403
@@ -245,6 +245,42 @@ def test_lerobot_train_serverless_sync_polls(mocker) -> None:
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["status"] == "succeeded"
     client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=3600)
+
+
+def test_lerobot_train_serverless_ner_error_formatted_for_user(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+    client.create_job.side_effect = NotEnoughResourcesError(
+        "capacity blocked",
+        project_id="project-1",
+        platform="gpu-h200-sxm",
+        suggested_alternatives=["Retry in a few minutes"],
+    )
+    args = _serverless_train_args("--submit-only")
+    args[args.index("--output") + 1] = "text"
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert "Not enough resources" in result.output
+    assert "Retry in a few minutes" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_lerobot_train_serverless_ner_error_json_mode(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+    client.create_job.side_effect = NotEnoughResourcesError(
+        "capacity blocked",
+        project_id="project-1",
+        platform="gpu-h200-sxm",
+        suggested_alternatives=["Retry in a few minutes"],
+    )
+
+    result = runner.invoke(app, _serverless_train_args("--submit-only"))
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"] == "NotEnoughResources"
+    assert payload["platform"] == "gpu-h200-sxm"
 
 
 def test_lerobot_train_serverless_existing_submit_is_idempotent(mocker) -> None:

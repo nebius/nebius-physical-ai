@@ -34,7 +34,14 @@ from npa.clients import credentials as credentials_module
 from npa.clients.config import SSHConfig, ServerlessConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
-from npa.clients.serverless import EndpointInfo, EndpointNotFoundError, EndpointStatus, ServerlessClientError
+from npa.clients.serverless import (
+    AuthError,
+    EndpointInfo,
+    EndpointNotFoundError,
+    EndpointStatus,
+    NotEnoughResourcesError,
+    ServerlessClientError,
+)
 from npa.clients.ssh import SSHError
 
 
@@ -212,6 +219,84 @@ def test_cosmos_train_serverless_sync_waits_and_status_cancel_dispatch(mocker) -
     cancel = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "train", "--runtime", "serverless", "cancel", "job-1", "--output-format", "json"])
     assert cancel.exit_code == 0
     assert json.loads(cancel.output)["status"] == "cancelled"
+
+
+def test_cosmos_train_serverless_ner_error_formatted_for_user(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.side_effect = NotEnoughResourcesError(
+        "capacity blocked",
+        project_id="project-1",
+        platform="gpu-h200-sxm",
+        preset="8gpu-128vcpu-1600gb",
+        gpu_count=8,
+        suggested_alternatives=["Retry in a few minutes"],
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--job-name", "npa-e2e-jobs-test",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Not enough resources" in result.output
+    assert "Retry in a few minutes" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cosmos_train_serverless_ner_error_json_mode(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.side_effect = NotEnoughResourcesError(
+        "capacity blocked",
+        project_id="project-1",
+        platform="gpu-h200-sxm",
+        suggested_alternatives=["Retry in a few minutes"],
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--job-name", "npa-e2e-jobs-test", "--output-format", "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"] == "NotEnoughResources"
+    assert payload["project_id"] == "project-1"
+    assert payload["platform"] == "gpu-h200-sxm"
+
+
+def test_cosmos_train_serverless_auth_error_shows_hint(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.side_effect = AuthError("permission denied")
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--job-name", "npa-e2e-jobs-test",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Nebius authentication failed" in result.output
+    assert "nebius profile create" in result.output
 
 
 def test_cosmos_train_subnet_selection_prefers_config_and_cosmos_subnet(mocker) -> None:
