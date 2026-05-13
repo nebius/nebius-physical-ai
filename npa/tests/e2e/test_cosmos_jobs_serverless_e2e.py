@@ -229,19 +229,23 @@ def test_e2e_cli_train_happy_path(jobs_to_cleanup: list[tuple[str, str]]) -> Non
 
 
 def test_e2e_cli_train_ner_handling(jobs_to_cleanup: list[tuple[str, str]]) -> None:
+    """Exercise NER with env-overridable resource knobs for platform catalog drift."""
     if os.environ.get("NPA_E2E_FORCE_NER") != "1":
         pytest.skip("NPA_E2E_FORCE_NER not set")
     name = _job_name("ner")
+    ner_platform = os.environ.get("NPA_E2E_NER_PLATFORM", "gpu-h200-sxm")
+    ner_gpu_count = os.environ.get("NPA_E2E_NER_GPU_COUNT", "8")
+    ner_preset = os.environ.get("NPA_E2E_NER_PRESET", "8gpu-128vcpu-1600gb")
     project_id, _payload, result = _submit_train(
         name,
         jobs_to_cleanup,
         "--submit-only",
         "--gpu-type",
-        "gpu-b200-sxm",
+        ner_platform,
         "--gpu-count",
-        "8",
+        ner_gpu_count,
         "--gpu-preset",
-        "8gpu-160vcpu-1792gb",
+        ner_preset,
         fallback=False,
     )
     assert result.returncode != 0
