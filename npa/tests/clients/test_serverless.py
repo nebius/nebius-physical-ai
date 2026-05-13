@@ -330,6 +330,96 @@ def test_error_hierarchy() -> None:
     assert not issubclass(EndpointNotFoundError, NotEnoughResourcesError)
 
 
+def test_not_enough_resources_carries_project_and_platform() -> None:
+    def fake_runner(args, **kwargs):
+        return _result(
+            args,
+            1,
+            stderr='no platform found with name = "gpu-h200-sxm"',
+        )
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+    spec = EndpointSpec(
+        name="cosmos",
+        project_id="project-1",
+        image="registry/cosmos:cuda12",
+        platform="gpu-h200-sxm",
+        preset="8gpu-128vcpu-1600gb",
+    )
+
+    with pytest.raises(NotEnoughResourcesError) as exc_info:
+        client.create_endpoint(spec)
+
+    exc = exc_info.value
+    assert exc.project_id == "project-1"
+    assert exc.platform == "gpu-h200-sxm"
+    assert exc.preset == "8gpu-128vcpu-1600gb"
+    assert exc.gpu_count == 8
+    assert exc.raw_stderr == 'no platform found with name = "gpu-h200-sxm"'
+
+
+def test_quota_error_has_quota_classification() -> None:
+    def fake_runner(args, **kwargs):
+        return _result(args, 1, stderr="quota exceeded for project project-1")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    with pytest.raises(QuotaError) as exc_info:
+        client.list_endpoints("project-1")
+
+    assert exc_info.value.error_class == "quota"
+    assert "quota increase" in exc_info.value.suggested_alternatives[0]
+
+
+def test_auth_error_has_hint() -> None:
+    err = AuthError("permission denied")
+
+    assert err.hint
+    assert "nebius profile create" in err.hint
+
+
+def test_endpoint_not_found_carries_endpoint_metadata() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "list":
+            return _result(args, 0, "{}")
+        return _result(args, 0, "{}")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    with pytest.raises(EndpointNotFoundError) as exc_info:
+        client.get_endpoint("project-1", "cosmos")
+
+    assert exc_info.value.project_id == "project-1"
+    assert exc_info.value.endpoint_name == "cosmos"
+    assert exc_info.value.endpoint_id == "cosmos"
+
+
+def test_suggested_alternatives_populated_for_capacity_error() -> None:
+    err = NotEnoughResourcesError("capacity", error_class="capacity")
+
+    assert err.suggested_alternatives == []
+
+    def fake_runner(args, **kwargs):
+        return _result(args, 1, stderr="insufficient capacity")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    with pytest.raises(NotEnoughResourcesError) as exc_info:
+        client.list_endpoints("project-1")
+
+    assert "Retry in a few minutes" in exc_info.value.suggested_alternatives
+
+
+def test_str_returns_just_message_for_backward_compat() -> None:
+    err = NotEnoughResourcesError("plain message", project_id="project-1")
+
+    assert str(err) == "plain message"
+    assert err.args == ("plain message",)
+
+
 def test_list_endpoints_parses_empty_object_as_empty_list() -> None:
     def fake_runner(args, **kwargs):
         return _result(args, 0, "{}")

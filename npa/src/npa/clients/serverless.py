@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 import json
 import logging
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -16,24 +17,53 @@ from typing import Any
 from urllib.parse import urlparse
 
 
+@dataclass
 class ServerlessClientError(Exception):
     """Base exception for serverless client errors."""
 
+    message: str = ""
 
+    def __post_init__(self) -> None:
+        Exception.__init__(self, self.message)
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass
 class EndpointNotFoundError(ServerlessClientError):
     """Endpoint resource not found."""
 
+    project_id: str = ""
+    endpoint_name: str = ""
+    endpoint_id: str = ""
 
+
+@dataclass
 class AuthError(ServerlessClientError):
     """Authentication or authorization failure. Not a NER condition."""
 
+    hint: str = "Run `nebius profile create` or refresh Nebius credentials."
 
+
+@dataclass
 class NotEnoughResourcesError(ServerlessClientError):
     """Nebius project lacks capacity for the requested endpoint."""
 
+    project_id: str = ""
+    platform: str = ""
+    preset: str = ""
+    gpu_count: int = 0
+    suggested_alternatives: list[str] = field(default_factory=list)
+    raw_stderr: str = ""
+    error_class: str = "capacity"
 
+
+@dataclass
 class QuotaError(NotEnoughResourcesError):
     """Specific NER subtype for quota-limit failures."""
+
+    error_class: str = "quota"
 
 
 _NER_PATTERNS = [
@@ -44,6 +74,7 @@ _NER_PATTERNS = [
     "no capacity available",
     "scheduling failed",
     "no gpu available",
+    "no platform found",
     "no resources available",
     "out of capacity",
     "resource not available",
@@ -196,6 +227,102 @@ def _classify_error(returncode: int, stderr: str) -> type[ServerlessClientError]
     if any(pattern in lower for pattern in _NOT_FOUND_PATTERNS):
         return EndpointNotFoundError
     return ServerlessClientError
+
+
+def _arg_value(args: Sequence[Any], *flags: str) -> str:
+    values = [str(arg) for arg in args]
+    for index, value in enumerate(values):
+        for flag in flags:
+            if value == flag and index + 1 < len(values):
+                return values[index + 1]
+            prefix = f"{flag}="
+            if value.startswith(prefix):
+                return value[len(prefix):]
+    return ""
+
+
+def _regex_group(pattern: str, text: str) -> str:
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _gpu_count_from_preset(preset: str) -> int:
+    match = re.match(r"(\d+)gpu\b", preset)
+    return int(match.group(1)) if match else 0
+
+
+def _suggested_alternatives(error_class: str) -> list[str]:
+    if error_class == "quota":
+        return [
+            "Request quota increase via Nebius support",
+            "Use a different project with available quota",
+            "Reduce request size",
+        ]
+    if error_class == "scheduling":
+        return [
+            "Retry submission",
+            "Check subnet configuration",
+            "Contact Nebius support if persistent",
+        ]
+    return [
+        "Retry in a few minutes",
+        "Reduce gpu-count",
+        "Try a different gpu-type (e.g., l40s)",
+        "Try a different project",
+    ]
+
+
+def _error_class_name(error_type: type[ServerlessClientError], stderr: str) -> str:
+    lower = stderr.lower()
+    if issubclass(error_type, QuotaError):
+        return "quota"
+    if "scheduling failed" in lower or "scheduler" in lower:
+        return "scheduling"
+    return "capacity"
+
+
+def _metadata_error(
+    error_type: type[ServerlessClientError],
+    message: str,
+    *,
+    stderr: str = "",
+    args: Sequence[Any] = (),
+) -> ServerlessClientError:
+    project_id = _arg_value(args, "--parent-id", "--project-id") or _regex_group(
+        r"project(?:[_ -]?id)?\s*(?:=|:|\s)\s*['\"]?([A-Za-z0-9_.:-]+)",
+        stderr,
+    )
+    platform = _arg_value(args, "--platform") or _regex_group(
+        r"platform(?:\s+found\s+with\s+name)?\s*(?:=|:|\s)\s*['\"]?([a-z0-9_.-]+)",
+        stderr,
+    )
+    preset = _arg_value(args, "--preset") or _regex_group(
+        r"preset\s*(?:=|:|\s)\s*['\"]?([A-Za-z0-9_.-]+)",
+        stderr,
+    )
+    gpu_count = _gpu_count_from_preset(preset)
+    if issubclass(error_type, NotEnoughResourcesError):
+        error_class = _error_class_name(error_type, stderr)
+        return error_type(
+            message,
+            project_id=project_id,
+            platform=platform,
+            preset=preset,
+            gpu_count=gpu_count,
+            suggested_alternatives=_suggested_alternatives(error_class),
+            raw_stderr=stderr,
+            error_class=error_class,
+        )
+    if issubclass(error_type, AuthError):
+        return AuthError(message)
+    if issubclass(error_type, EndpointNotFoundError):
+        return EndpointNotFoundError(
+            message,
+            project_id=project_id,
+            endpoint_name=_arg_value(args, "--name"),
+            endpoint_id=_arg_value(args, "--id"),
+        )
+    return error_type(message)
 
 
 def _json_loads(raw: str) -> Any:
@@ -446,7 +573,12 @@ class ServerlessClient:
         info = self._parse_endpoint_info(result.stdout, project_id=project_id)
         if info.id or info.name:
             return info
-        raise EndpointNotFoundError(f"Endpoint {endpoint} not found in project {project_id}")
+        raise EndpointNotFoundError(
+            f"Endpoint {endpoint} not found in project {project_id}",
+            project_id=project_id,
+            endpoint_name=endpoint,
+            endpoint_id=endpoint,
+        )
 
     def delete_endpoint(self, project_id: str, endpoint: str) -> None:
         """Delete an endpoint by name or ID. Missing endpoints are treated as deleted."""
@@ -630,7 +762,12 @@ class ServerlessClient:
                 continue
             elif _classify_error(result.returncode, result.stderr) is not EndpointNotFoundError:
                 self._raise_for_error(result, f"get_job failed for {job_id_or_name}")
-        raise EndpointNotFoundError(f"Job {job_id_or_name} not found in project {project_id}")
+        raise EndpointNotFoundError(
+            f"Job {job_id_or_name} not found in project {project_id}",
+            project_id=project_id,
+            endpoint_name=job_id_or_name,
+            endpoint_id=job_id_or_name,
+        )
 
     def cancel_job(self, job_id_or_name: str, project_id: str) -> JobInfo:
         info = self.get_job(job_id_or_name, project_id)
@@ -829,4 +966,14 @@ class ServerlessClient:
     ) -> None:
         error_class = _classify_error(result.returncode, result.stderr)
         stderr = result.stderr.strip()
-        raise error_class(f"{prefix}: {stderr}")
+        args = (
+            result.args
+            if isinstance(result.args, Sequence) and not isinstance(result.args, (str, bytes))
+            else ()
+        )
+        raise _metadata_error(
+            error_class,
+            f"{prefix}: {stderr}",
+            stderr=stderr,
+            args=args,
+        )
