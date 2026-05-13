@@ -105,6 +105,21 @@ class ServerlessConfig:
 
 
 @dataclass
+class ServerlessJobConfig:
+    resource_type: str = "job"
+    job_id: str = ""
+    job_name: str = ""
+    project_id: str = ""
+    image: str = ""
+    gpu_type: str = ""
+    gpu_count: int = 0
+    subnet_id: str = ""
+    output_path: str = ""
+    last_status: str = ""
+    last_submitted_at: str = ""
+
+
+@dataclass
 class WorkbenchConfig:
     endpoint: str
     ssh: SSHConfig
@@ -128,6 +143,7 @@ class WorkbenchConfig:
     detected_gpu_count: int = 0
     cuda_visible_devices: str = ""
     serverless: ServerlessConfig = field(default_factory=ServerlessConfig)
+    serverless_job: ServerlessJobConfig = field(default_factory=ServerlessJobConfig)
 
 
 class ConfigError(Exception):
@@ -535,6 +551,49 @@ def update_workbench_serverless_endpoint(
     })
 
 
+def update_workbench_serverless_job(
+    project: str,
+    name: str,
+    *,
+    job_id: str,
+    job_name: str,
+    project_id: str,
+    image: str,
+    gpu_type: str,
+    gpu_count: int,
+    subnet_id: str,
+    output_path: str,
+    last_status: str,
+    last_submitted_at: str,
+) -> Path:
+    """Persist Nebius Serverless AI Job metadata for a workbench alias."""
+    return write_config({
+        "projects": {
+            project: {
+                "workbenches": {
+                    name: {
+                        "runtime": "serverless",
+                        "app_status": APP_STATUS_PROVISIONED,
+                        "serverless_job": {
+                            "resource_type": "job",
+                            "job_id": job_id,
+                            "job_name": job_name,
+                            "project_id": project_id,
+                            "image": image,
+                            "gpu_type": gpu_type,
+                            "gpu_count": int(gpu_count),
+                            "subnet_id": subnet_id,
+                            "output_path": output_path,
+                            "last_status": last_status,
+                            "last_submitted_at": last_submitted_at,
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+
 def _serverless_config(wb: dict[str, Any]) -> ServerlessConfig:
     raw = wb.get("serverless", {})
     if not isinstance(raw, dict):
@@ -559,6 +618,37 @@ def _serverless_config(wb: dict[str, Any]) -> ServerlessConfig:
         preset=pick("preset"),
         container_port=int(port_raw) if port_raw.isdigit() else 0,
         auth=pick("auth") or "none",
+    )
+
+
+def _serverless_job_config(wb: dict[str, Any]) -> ServerlessJobConfig:
+    raw = wb.get("serverless_job", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    legacy = wb.get("serverless", {})
+    if not raw and isinstance(legacy, dict) and legacy.get("resource_type") == "job":
+        raw = legacy
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = raw.get(key)
+            if value is not None and value != "":
+                return str(value)
+        return ""
+
+    gpu_count_raw = pick("gpu_count", "gpus")
+    return ServerlessJobConfig(
+        resource_type=pick("resource_type") or "job",
+        job_id=pick("job_id", "id"),
+        job_name=pick("job_name", "name"),
+        project_id=pick("project_id"),
+        image=pick("image"),
+        gpu_type=pick("gpu_type", "platform"),
+        gpu_count=int(gpu_count_raw) if gpu_count_raw.isdigit() else 0,
+        subnet_id=pick("subnet_id", "vpc_subnet_id", "subnet"),
+        output_path=pick("output_path", "output_uri"),
+        last_status=pick("last_status", "status"),
+        last_submitted_at=pick("last_submitted_at", "submitted_at"),
     )
 
 
@@ -596,6 +686,7 @@ def resolve_config(
 
     runtime = pick(None, "", "runtime") or "vm"
     serverless = _serverless_config(wb)
+    serverless_job = _serverless_job_config(wb)
     ep = (
         pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint")
         or serverless.url
@@ -634,7 +725,8 @@ def resolve_config(
     detected_gpu_count_raw = pick(None, "", "detected_gpu_count")
     cuda_visible_devices = pick(None, "", "cuda_visible_devices")
 
-    _require(ep, "Workbench endpoint", "NPA_WORKBENCH_ENDPOINT")
+    if runtime != "serverless":
+        _require(ep, "Workbench endpoint", "NPA_WORKBENCH_ENDPOINT")
     if runtime != "serverless":
         _require(s_host, "SSH host", "NPA_SSH_HOST")
         _require(s_user, "SSH user", "NPA_SSH_USER")
@@ -668,6 +760,7 @@ def resolve_config(
         detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
         cuda_visible_devices=cuda_visible_devices,
         serverless=serverless,
+        serverless_job=serverless_job,
     )
 
 

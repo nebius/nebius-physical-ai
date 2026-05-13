@@ -328,6 +328,7 @@ def test_resolve_config_parses_serverless_alias_without_ssh(
     assert resolved.serverless.project_id == "project-1"
     assert resolved.serverless.image == "registry/cosmos:cuda12"
     assert resolved.serverless.container_port == 8080
+    assert resolved.serverless_job == config.ServerlessJobConfig()
 
 
 def test_resolve_config_uses_serverless_url_as_endpoint(
@@ -384,6 +385,107 @@ def test_update_workbench_serverless_endpoint_persists_metadata(
     assert wb["serverless"]["endpoint_id"] == "endpoint-1"
     assert wb["serverless"]["project_id"] == "project-1"
     assert wb["serverless"]["container_port"] == 8080
+
+
+def test_resolve_config_parses_serverless_job_alias_without_endpoint_or_ssh(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "project_id": "project-1",
+                        "workbenches": {
+                            "lerobot": {
+                                "runtime": "serverless",
+                                "serverless_job": {
+                                    "resource_type": "job",
+                                    "job_id": "job-1",
+                                    "job_name": "train-1",
+                                    "project_id": "project-1",
+                                    "image": "registry/lerobot:0.5.1",
+                                    "gpu_type": "gpu-h200-sxm",
+                                    "gpu_count": 1,
+                                    "subnet_id": "vpcsubnet-1",
+                                    "output_path": "s3://bucket/lerobot/train-1/",
+                                    "last_status": "succeeded",
+                                    "last_submitted_at": "2026-05-13T00:00:00Z",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            sort_keys=False,
+        )
+    )
+
+    resolved = config.resolve_config(project="proj", name="lerobot")
+
+    assert resolved.runtime == "serverless"
+    assert resolved.endpoint == ""
+    assert resolved.ssh.host == ""
+    assert resolved.serverless_job.job_id == "job-1"
+    assert resolved.serverless_job.job_name == "train-1"
+    assert resolved.serverless_job.gpu_type == "gpu-h200-sxm"
+    assert resolved.serverless_job.gpu_count == 1
+    assert resolved.serverless_job.output_path == "s3://bucket/lerobot/train-1/"
+
+
+def test_serverless_job_config_accepts_alias_fields() -> None:
+    parsed = config._serverless_job_config(
+        {
+            "serverless_job": {
+                "id": "job-1",
+                "name": "train-1",
+                "platform": "gpu-h200-sxm",
+                "gpus": "2",
+                "subnet": "vpcsubnet-1",
+                "output_uri": "s3://bucket/out/",
+                "status": "running",
+                "submitted_at": "2026-05-13T00:00:00Z",
+            }
+        }
+    )
+
+    assert parsed.job_id == "job-1"
+    assert parsed.job_name == "train-1"
+    assert parsed.gpu_type == "gpu-h200-sxm"
+    assert parsed.gpu_count == 2
+    assert parsed.subnet_id == "vpcsubnet-1"
+    assert parsed.output_path == "s3://bucket/out/"
+    assert parsed.last_status == "running"
+    assert parsed.last_submitted_at == "2026-05-13T00:00:00Z"
+
+
+def test_update_workbench_serverless_job_persists_metadata(
+    isolated_config: Path,
+) -> None:
+    config.update_workbench_serverless_job(
+        "proj",
+        "lerobot",
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        image="registry/lerobot:0.5.1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=1,
+        subnet_id="vpcsubnet-1",
+        output_path="s3://bucket/lerobot/train-1/",
+        last_status="queued",
+        last_submitted_at="2026-05-13T00:00:00Z",
+    )
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    wb = saved["projects"]["proj"]["workbenches"]["lerobot"]
+    assert wb["runtime"] == "serverless"
+    assert wb["app_status"] == config.APP_STATUS_PROVISIONED
+    assert wb["serverless_job"]["resource_type"] == "job"
+    assert wb["serverless_job"]["job_id"] == "job-1"
+    assert wb["serverless_job"]["project_id"] == "project-1"
+    assert wb["serverless_job"]["output_path"] == "s3://bucket/lerobot/train-1/"
 
 
 def test_resolve_config_env_overrides_yaml(
