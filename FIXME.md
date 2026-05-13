@@ -345,3 +345,21 @@ a one-line help distinction.
   image, platform, preset, env, or volumes requires redeploying the endpoint.
 - Deferred: Jobs substrate, GR00T/LeRobot/FiftyOne serverless, K8s backends,
   DevPods, and pipeline orchestration.
+
+---
+
+## CLOSED 2026-05-13 (LeRobot GPU benchmark reproducibility cookbook published)
+
+- New cookbook at `docs/cookbooks/lerobot-gpu-benchmarks.md` documents
+  reproduction of the May 2026 LeRobot GPU benchmark research via Nebius
+  Workbench.
+- Covers all four policy architectures (VQ-BeT 38M, ACT 52M, Diffusion 263M,
+  SmolVLA 450M) across four NVIDIA GPUs (L40S, H200, B300, RTX PRO 6000).
+- GPU recommendation guide with PTX JIT caveat for B300 + Diffusion.
+- Profiling methodology section warns about torch.profiler per-stage sync
+  misrepresentation (up to 40%).
+- Forward-compatible: current path uses `--runtime container`; serverless path
+  uses `--runtime serverless` when LeRobot Jobs support is present in the
+  installed `npa` version.
+- Partner-facing artifact: suitable for customer evaluation, partner demos, and
+  internal SA reference.
