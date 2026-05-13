@@ -576,7 +576,27 @@ class ServerlessClient:
             if value:
                 args.extend([flag, value])
         args.extend(["--format", "json"])
-        result = self._run(args, timeout=_JOB_CREATE_TIMEOUT)
+        try:
+            result = self._run(args, timeout=_JOB_CREATE_TIMEOUT, wrap_timeout=False)
+        except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "create_job CLI call timed out after %ss; recovering by lookup-by-name for %s",
+                _JOB_CREATE_TIMEOUT,
+                name,
+            )
+            try:
+                info = self.get_job(name, project_id)
+            except EndpointNotFoundError as lookup_exc:
+                raise ServerlessClientError(
+                    f"create_job timed out after {_JOB_CREATE_TIMEOUT}s and lookup-by-name recovery failed "
+                    f"for {name} in project {project_id}"
+                ) from lookup_exc
+            if info.name == name:
+                return info
+            raise ServerlessClientError(
+                f"create_job timed out after {_JOB_CREATE_TIMEOUT}s and lookup-by-name recovered "
+                f"unexpected job {info.name or info.id}"
+            ) from exc
         if result.returncode != 0:
             self._raise_for_error(result, f"create_job failed for {name} in project {project_id}")
         try:
@@ -669,6 +689,7 @@ class ServerlessClient:
         *,
         timeout: int | None = None,
         env: Mapping[str, str] | None = None,
+        wrap_timeout: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         full_args = [self._nebius_bin, *args]
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
@@ -682,6 +703,8 @@ class ServerlessClient:
                 env=dict(env) if env is not None else None,
             )
         except subprocess.TimeoutExpired as exc:
+            if not wrap_timeout:
+                raise
             raise ServerlessClientError(
                 f"Nebius CLI timed out after {effective_timeout}s: {shlex.join(_redact_cli_args(full_args))}"
             ) from exc

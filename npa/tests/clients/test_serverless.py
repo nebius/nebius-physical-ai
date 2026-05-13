@@ -580,6 +580,35 @@ def test_create_job_parser_fallback_resolves_by_name_and_ner_raises() -> None:
         _create_job(client, gpu_count=8)
 
 
+def test_create_job_timeout_fallback_resolves_by_name() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "create":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        if args[3] == "get":
+            return _result(args, 1, stderr="not found")
+        return _result(args, 0, _job_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    assert _create_job(client).id == "job-1"
+    assert [call[3] for call in calls] == ["create", "get", "get-by-name"]
+
+
+def test_create_job_timeout_fallback_raises_when_lookup_fails() -> None:
+    def fake_runner(args, **kwargs):
+        if args[3] == "create":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return _result(args, 1, stderr="not found")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    with pytest.raises(ServerlessClientError, match="lookup-by-name recovery failed"):
+        _create_job(client)
+
+
 def test_job_state_cancel_idempotency_and_poll() -> None:
     calls: list[list[str]] = []
 
