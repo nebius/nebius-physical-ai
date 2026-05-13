@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -125,6 +126,33 @@ def e2e_module_test_bucket(
 ) -> Iterator[str]:
     """Create a real S3 test bucket shared by tests in one module."""
     yield from _test_bucket(request.node.name, e2e_project)
+
+
+@pytest.fixture(scope="session")
+def s3_write_access_required(e2e_project: str | None) -> str:
+    """Verify configured object storage can persist serverless Jobs artifacts."""
+    storage = resolve_project_storage(e2e_project)
+    if not (
+        storage.checkpoint_bucket
+        and storage.endpoint_url
+        and storage.aws_access_key_id
+        and storage.aws_secret_access_key
+    ):
+        pytest.fail("Serverless Jobs e2e requires writable project S3 checkpoint storage")
+    parsed = urlparse(storage.checkpoint_bucket)
+    bucket = parsed.netloc if parsed.scheme == "s3" else storage.checkpoint_bucket
+    prefix = parsed.path.strip("/") if parsed.scheme == "s3" else ""
+    key = "/".join(part for part in [prefix, "npa-e2e-jobs-precondition.txt"] if part)
+    client = s3_client_for_project(e2e_project)
+    try:
+        client.put_object(Bucket=bucket, Key=key, Body=b"npa jobs precondition\n")
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        client.delete_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        pytest.fail(f"Serverless Jobs e2e S3 write/read/delete precondition failed: {exc}")
+    if body != b"npa jobs precondition\n":
+        pytest.fail("Serverless Jobs e2e S3 readback mismatch")
+    return storage.checkpoint_bucket
 
 
 def _test_bucket(test_name: str, e2e_project: str | None) -> Iterator[str]:
