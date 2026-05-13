@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
 import pytest
@@ -22,6 +23,7 @@ from npa.cli.cosmos import (
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
     _build_reload_env_command,
+    _serverless_train_output_path,
     _serverless_train_subnet_id,
     _build_install_command,
     _download_remote_output,
@@ -164,6 +166,27 @@ def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["extra_env"]["HF_TOKEN"] == "hf_secret"
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
     client.poll_job.assert_not_called()
+
+
+def test_serverless_train_output_path_returns_s3_uri(mocker) -> None:
+    mocker.patch(
+        "npa.cli.cosmos.resolve_project_storage",
+        return_value=SimpleNamespace(checkpoint_bucket="bucket", endpoint_url=""),
+    )
+
+    result = _serverless_train_output_path("proj", "job-1", "")
+    parsed = urlparse(result)
+
+    assert result.startswith("s3://")
+    assert parsed.scheme == "s3"
+    assert parsed.netloc == "bucket"
+    assert result == "s3://bucket/jobs/job-1/"
+
+    mocker.patch(
+        "npa.cli.cosmos.resolve_project_storage",
+        return_value=SimpleNamespace(checkpoint_bucket="s3://bucket/checkpoints/", endpoint_url=""),
+    )
+    assert _serverless_train_output_path("proj", "job-1", "") == "s3://bucket/checkpoints/jobs/job-1/"
 
 
 def test_cosmos_train_serverless_sync_waits_and_status_cancel_dispatch(mocker) -> None:
