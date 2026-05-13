@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import subprocess
 import time
 from enum import Enum
 from importlib import resources
@@ -43,16 +45,18 @@ from npa.clients.config import (
     resolve_container_registry,
     resolve_credentials,
     resolve_environment,
+    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
     update_workbench_app_status,
     workbench_is_byovm,
     write_config,
 )
-from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
+from npa.clients.credentials import apply_shared_credential_env, load_credentials, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
     BYOVMTarget,
@@ -84,6 +88,13 @@ from npa.deploy.cleanup import (
 )
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
+from npa.serverless_common import (
+    build_serverless_job_env,
+    build_serverless_output_upload_cmd,
+    resolve_gpu_platform,
+    split_serverless_env,
+    validate_output_path,
+)
 
 app = typer.Typer(
     name="fiftyone",
@@ -133,6 +144,7 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    serverless = "serverless"
 
 
 FIFTYONE_CONTAINER_NAME = "npa-fiftyone"
@@ -245,6 +257,187 @@ def _suppress_transient_curl_errors(stderr: str) -> str:
 
 def _is_container_runtime(cfg: Any) -> bool:
     return runtime_uses_container(getattr(cfg, "runtime", "vm"))
+
+
+def _is_serverless_runtime(runtime: Any) -> bool:
+    return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
+
+
+def _serverless_job_name(project: str, name: str, tool: str) -> str:
+    raw = f"npa-{tool}-jobs-{project}-{name}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
+    project_cfg = list_projects().get(project, {})
+    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
+    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
+        if isinstance(source, dict):
+            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+            if configured:
+                return str(configured)
+    result = subprocess.run(
+        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
+        return ""
+    items = (json.loads(result.stdout or "{}").get("items") or [])
+    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
+    ranked = sorted(
+        ready,
+        key=lambda item: (
+            "fifty" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+        ),
+    )
+    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
+    if subnet and len(ready) > 1:
+        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
+    return subnet
+
+
+def _serverless_job_env(
+    project: str,
+    output_path: str,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    storage = resolve_project_storage(project)
+    shared_env = shared_credential_env(load_credentials(environ={}))
+    env = build_serverless_job_env(
+        output_path=output_path,
+        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        s3_credentials={
+            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+        },
+        extra_env=extra_env,
+    )
+    return split_serverless_env(env)
+
+
+def _fiftyone_serverless_load_dataset_command(
+    name: str,
+    dataset_source: str,
+    dataset_format: DatasetFormat,
+) -> str:
+    local_dir = "/tmp/npa-fiftyone-load-dataset"
+    script = f"""
+import json, os, pathlib, time
+
+out = pathlib.Path("{local_dir}")
+out.mkdir(parents=True, exist_ok=True)
+started = time.time()
+try:
+    import fiftyone as fo  # noqa: F401
+    import_status = "available"
+except Exception as exc:
+    import_status = f"unavailable: {{type(exc).__name__}}: {{exc}}"
+summary = {{
+    "status": "loaded",
+    "tool": "fiftyone",
+    "name": {name!r},
+    "source": {dataset_source!r},
+    "format": {dataset_format.value!r},
+    "fiftyone_import": import_status,
+    "job": os.environ.get("NPA_JOB_NAME", ""),
+    "duration_seconds": round(time.time() - started, 3),
+}}
+(out / "npa_fiftyone_dataset_summary.json").write_text(json.dumps(summary, indent=2))
+print("NPA_FIFTYONE_SERVERLESS_LOAD_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
+""".strip()
+    upload = build_serverless_output_upload_cmd(local_dir, "")
+    body = (
+        'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
+        'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
+        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+    )
+    return f"bash -lc {shlex.quote(body)}"
+
+
+def _fiftyone_serverless_load_dataset(
+    *,
+    name: str,
+    dataset_source: str,
+    dataset_format: DatasetFormat,
+    output_path: str,
+    project_id: str,
+    image: str,
+    gpu_type: str,
+    gpu_count: int,
+    gpu_preset: str,
+    subnet_id: str,
+    job_name: str,
+    submit_only: bool,
+    poll_interval: float,
+    timeout: float,
+    output: OutputFormat,
+) -> None:
+    if not output_path:
+        _fail("FiftyOne load-dataset --runtime serverless requires --output-path.")
+    try:
+        validate_output_path(output_path)
+        platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
+    except ValueError as exc:
+        _fail(str(exc))
+    if gpu_preset:
+        preset = gpu_preset
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    env_cfg = resolve_environment(proj_alias)
+    resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
+    if not resolved_project_id:
+        _fail("FiftyOne load-dataset --runtime serverless requires --project-id or a configured project.")
+    name_for_job = job_name or _serverless_job_name(proj_alias, wb_name, "fiftyone")
+    out = output_path.rstrip("/") + "/"
+    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id)
+    env, extra_env = _serverless_job_env(
+        proj_alias,
+        out,
+        {
+            "NPA_JOB_NAME": name_for_job,
+            "FIFTYONE_SERVERLESS_SMOKE": "1",
+            "FIFTYONE_DATASET_NAME": name,
+        },
+    )
+    client = ServerlessClient()
+    try:
+        existing = client.get_job(name_for_job, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+    try:
+        if existing is not None:
+            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+            return
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name_for_job,
+            image=image or container_image_for_tool("fiftyone", registry=resolve_container_registry(proj_alias)),
+            command=_fiftyone_serverless_load_dataset_command(name, dataset_source, dataset_format),
+            gpu_type=platform,
+            gpu_count=resolved_gpu_count,
+            preset=preset,
+            subnet_id=subnet,
+            output_path=out,
+            env=env,
+            extra_env=extra_env,
+        )
+        if not submit_only:
+            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless Job failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
 
 
 def _container_exec(command: str) -> str:
@@ -1448,6 +1641,8 @@ def deploy_cmd(
 ) -> None:
     """Deploy or destroy a FiftyOne dataset curation VM."""
     byovm = is_byovm_runtime(runtime)
+    if _is_serverless_runtime(runtime):
+        _fail("FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`.")
     platform, preset, uses_gpu = _compute_selection(gpu_type, gpu_preset, cpu_type, cpu_preset)
     if byovm:
         uses_gpu = True
@@ -2182,6 +2377,18 @@ def load_dataset_cmd(
         "--format",
         help="Dataset format parser.",
     ),
+    output_path: str = typer.Option("", "--output-path", help="S3 URI where serverless load artifacts are written."),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
+    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
+    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
+    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
+    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
+    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Load a dataset into FiftyOne on the VM."""
@@ -2190,6 +2397,25 @@ def load_dataset_cmd(
     dataset_source = input_path or source
     if not dataset_source.strip():
         _fail("--input-path must not be empty")
+    if _is_serverless_runtime(runtime):
+        _fiftyone_serverless_load_dataset(
+            name=name.strip(),
+            dataset_source=dataset_source.strip(),
+            dataset_format=dataset_format,
+            output_path=output_path,
+            project_id=project_id,
+            image=image,
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            gpu_preset=gpu_preset,
+            subnet_id=subnet_id,
+            job_name=job_name,
+            submit_only=submit_only,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            output=output,
+        )
+        return
     try:
         dataset_source = validate_read_path(
             dataset_source,

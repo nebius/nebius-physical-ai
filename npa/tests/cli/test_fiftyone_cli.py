@@ -29,6 +29,7 @@ from npa.clients.config import (
     TerraformStateConfig,
     WorkbenchConfig,
 )
+from npa.clients.serverless import EndpointNotFoundError
 from npa.clients.ssh import SSHError
 
 
@@ -926,6 +927,108 @@ def test_fiftyone_load_dataset_builds_source_specific_command(
     assert "NPA_FIFTYONE_APP_READY" in cmd
     for snippet in expected:
         assert snippet in cmd
+
+
+def _mock_fiftyone_serverless_env(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.fiftyone.resolve_project_storage",
+        return_value=SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_container_registry", return_value="registry.example")
+    mocker.patch("npa.cli.fiftyone.container_image_for_tool", return_value="registry.example/npa-fiftyone:smoke")
+    mocker.patch("npa.cli.fiftyone._serverless_subnet_id", return_value="vpcsubnet-auto")
+
+
+def test_fiftyone_serverless_requires_output_path(mocker) -> None:
+    _mock_fiftyone_serverless_env(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "fiftyone", "-p", "proj", "-n", "curate", "load-dataset",
+            "--runtime", "serverless", "--name", "curated", "--input-path", "Voxel51/VisDrone2019-DET",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires --output-path" in result.output
+
+
+def test_fiftyone_serverless_uses_shared_env_builder(mocker) -> None:
+    _mock_fiftyone_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="fiftyone-job", status="running", output_uris=())
+    mocker.patch("npa.cli.fiftyone.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "fiftyone", "-p", "proj", "-n", "curate", "load-dataset",
+            "--runtime", "serverless", "--name", "curated", "--input-path", "Voxel51/VisDrone2019-DET",
+            "--output-path", "s3://bucket/fiftyone/", "--submit-only",
+            "--job-name", "fiftyone-job", "--output", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["job_id"] == "job-1"
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["env"]["NPA_OUTPUT_PATH"] == "s3://bucket/fiftyone/"
+    assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+
+
+def test_fiftyone_serverless_uploads_output_dir(mocker) -> None:
+    _mock_fiftyone_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="fiftyone-job", status="running", output_uris=())
+    mocker.patch("npa.cli.fiftyone.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "fiftyone", "-p", "proj", "-n", "curate", "load-dataset",
+            "--runtime", "serverless", "--name", "curated", "--input-path", "Voxel51/VisDrone2019-DET",
+            "--output-path", "s3://bucket/fiftyone/", "--submit-only",
+            "--job-name", "fiftyone-job",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = client.create_job.call_args.kwargs["command"]
+    assert "PYUPLOAD" in command
+    assert "npa_fiftyone_dataset_summary.json" in command
+
+
+def test_fiftyone_serverless_with_dataset_path(mocker) -> None:
+    _mock_fiftyone_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="fiftyone-job", status="running", output_uris=())
+    mocker.patch("npa.cli.fiftyone.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "fiftyone", "-p", "proj", "-n", "curate", "load-dataset",
+            "--runtime", "serverless", "--name", "curated", "--input-path", "s3://bucket/dataset/",
+            "--output-path", "s3://bucket/fiftyone/", "--submit-only",
+            "--job-name", "fiftyone-job",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "s3://bucket/dataset/" in client.create_job.call_args.kwargs["command"]
 
 
 def test_fiftyone_load_dataset_video_format_uses_video_loader(mocker) -> None:
