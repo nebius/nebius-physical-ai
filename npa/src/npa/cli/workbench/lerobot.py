@@ -687,7 +687,7 @@ def _lerobot_train_container_command(
         "cd /opt/lerobot && "
         "source /opt/lerobot/venv/bin/activate && "
         "if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi && "
-        f"mkdir -p {output_dir} /tmp/hf_home && "
+        "mkdir -p /tmp/hf_home && "
         f"{dataset_setup_cmd}"
         f"lerobot-train "
         f"--policy.type={shlex.quote(policy_type)} "

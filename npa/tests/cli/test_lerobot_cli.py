@@ -228,6 +228,21 @@ def test_lerobot_train_container_command_uses_smoke_settings() -> None:
     assert "NPA_TRAIN_COMPLETE" in command
 
 
+def test_lerobot_train_container_command_does_not_pre_create_output_dir() -> None:
+    command = lerobot._lerobot_train_container_command(
+        "act",
+        "lerobot/pusht",
+        "",
+        50,
+        4,
+        2,
+        smoke=True,
+    )
+
+    assert "mkdir -p /tmp/lerobot_output" not in command
+    assert "mkdir -p /tmp/hf_home" in command
+
+
 def test_lerobot_train_container_command_supports_s3_input() -> None:
     command = lerobot._lerobot_train_container_command(
         "diffusion",
