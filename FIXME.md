@@ -416,3 +416,35 @@ Outstanding observations (deferred):
 - Added `docs/README.md` with an index of the docs directory structure.
 - W4-NER-UX deliverable is now fully shippable for external partner
   distribution.
+
+---
+
+## CLOSED 2026-05-13 (LeRobot × Jobs e2e closeout, W2 through W2.7)
+
+- Substrate landed by W2 (commits `52ba1f6` through `b3c7825`):
+  ServerlessJobConfig persistence, `--runtime serverless` for LeRobot train,
+  helpers, 17 unit tests, and 7 smoke tests.
+- W2.5 (`1dbbb3c`) fixed e2e harness HOME isolation to preserve Nebius CLI
+  auth while protecting local npa config.
+- W2.6 diagnostic identified root cause of workload failures: spurious
+  `mkdir -p /tmp/lerobot_output` in `_lerobot_train_container_command`
+  triggered LeRobot 0.5.1's `FileExistsError` on `output_dir`.
+- W2.7 fix (`48ca938`) removed the spurious mkdir; LeRobot's own training
+  script creates `output_dir`. Regression test added.
+- W2.7 validated 7/10 LeRobot × Jobs e2e hardening dimensions against real
+  Nebius. Happy path, status lifecycle, HF propagation, idempotent submit,
+  HF dataset training, Diffusion on H200, and `--submit-only` passed.
+- First tool-axis expansion of Jobs substrate is shippable with caveats:
+  Cosmos and LeRobot both run under `--runtime serverless`.
+- GPU recommendations encoded from May 2026 benchmark research; PTX JIT
+  warning fires for `--gpu-type b300 --policy-type diffusion`.
+
+Outstanding (deferred):
+- W5-refactor: extract generic `ServerlessJobSubmitter` and
+  `ServerlessEndpointDeployer` to eliminate per-tool serverless duplication.
+- Deterministic NER e2e fixture needs a quota-bound sandbox project or a valid
+  platform/preset combination that reliably produces `NotEnoughResources`.
+- LeRobot cancel e2e still hits intermittent Nebius internal cancel errors;
+  cleanup succeeds, but the hardening dimension is not validated.
+- Dataset-from-S3 remains skipped until `NPA_E2E_LEROBOT_S3_DATASET` is
+  provided.

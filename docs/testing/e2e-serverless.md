@@ -125,3 +125,36 @@ output, status commands, and SDK exceptions.
 To verify NER UX manually, temporarily inject a `NotEnoughResourcesError` via a
 mock test or use a quota-bound sandbox project coordinated with the Nebius
 platform team.
+
+## LeRobot × Jobs (training)
+
+`npa workbench lerobot train --runtime serverless` runs LeRobot policy training
+as a Nebius Serverless Job. Mirrors the Cosmos × Jobs pattern.
+
+E2E validation: 7 of 10 hardening dimensions confirmed against real Nebius:
+
+- happy-path: PASS
+- NER handling: PLATFORM (high-GPU LeRobot preset mapping is not deterministic)
+- cancel: TEST_FAILURE (Nebius internal cancel error; cleanup succeeded)
+- status lifecycle: PASS
+- HF propagation: PASS
+- idempotent submit: PASS
+- dataset from HF: PASS
+- dataset from S3: SKIP (`NPA_E2E_LEROBOT_S3_DATASET` not set)
+- Diffusion on H200: PASS
+- `--submit-only`: PASS
+
+Run: `pytest npa/tests/e2e/test_lerobot_jobs_serverless_e2e.py -v -m e2e_serverless`
+
+Requires `NPA_INTEGRATION_E2E=1` and
+`NPA_E2E_SERVERLESS_PROJECT=<sandbox-project-id>`. NER test platform can be
+overridden via `NPA_E2E_NER_PLATFORM`.
+
+Default GPU type per policy (encoded from May 2026 LeRobot GPU benchmark
+research):
+
+- Diffusion Policy: H200 preferred (~2.5x faster than B300 with stock PyTorch)
+- Transformer-heavy (ACT, SmolVLA, VQ-BeT): H200 default, B300 acceptable
+
+`--gpu-type b300 --policy-type diffusion` emits a CLI warning per the benchmark
+findings.
