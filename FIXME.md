@@ -448,3 +448,31 @@ Outstanding (deferred):
   cleanup succeeds, but the hardening dimension is not validated.
 - Dataset-from-S3 remains skipped until `NPA_E2E_LEROBOT_S3_DATASET` is
   provided.
+
+---
+
+## CLOSED 2026-05-13 (W7-parallel-tools: generic serverless across Workbench tools)
+
+- Extracted shared serverless infrastructure to `npa/src/npa/serverless_common/`
+  for env construction, secret splitting, GPU platform mapping, output upload,
+  and S3 output validation.
+- Subnet resolution and Job polling intentionally remain per-tool; polling uses
+  the existing `ServerlessClient.poll_job` API directly.
+- Added `--runtime serverless` to Cosmos (shared-infra refactor), Isaac Lab
+  `train`, FiftyOne `load-dataset`, Genesis `train-teacher`, and GR00T `infer`.
+- Nebius Serverless smoke results: 4/5 PASS. Cosmos, Isaac Lab, FiftyOne, and
+  Genesis uploaded real artifacts to
+  `s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/`.
+- GR00T code and unit tests landed, but smoke attempts failed before container
+  logs with Nebius internal Job errors on H200 and L40S.
+- Cross-tool docs landed at `docs/cookbooks/serverless-tools-coverage.md`.
+- LeRobot serverless integration remained owned by W7-full-reproduction; this
+  run did not edit LeRobot CLI/tests/cookbook files.
+- Did not touch `npa/src/npa/clients/serverless.py` to avoid W7 collision.
+
+Outstanding (deferred):
+- Re-run GR00T smoke once Nebius Job internal errors are cleared.
+- LeRobot can optionally migrate to `npa.serverless_common` after W7 lands.
+- Subnet resolution extraction can be revisited if the per-tool patterns
+  stabilize.
+- Multi-region storage credentials remain single-block operator state.
