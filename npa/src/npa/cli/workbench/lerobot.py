@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -22,13 +25,21 @@ from npa.clients.config import (
     APP_STATUS_INSTALLING,
     APP_STATUS_PROVISIONED,
     ConfigError,
+    default_project_name,
+    default_workbench_name,
+    list_projects,
     resolve_config,
     resolve_container_registry,
+    resolve_credentials,
+    resolve_environment,
+    resolve_project_storage,
     resolve_terraform_state,
     update_workbench_app_status,
+    update_workbench_serverless_job,
 )
 from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
+from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.deploy.byovm import (
     RUNTIME_HELP,
@@ -90,6 +101,12 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    serverless = "serverless"
+
+
+def is_serverless_runtime(runtime: WorkbenchRuntime | str) -> bool:
+    value = runtime.value if isinstance(runtime, WorkbenchRuntime) else runtime
+    return value == WorkbenchRuntime.serverless.value
 
 
 class OutputFormat(str, Enum):
@@ -161,6 +178,10 @@ def _remote_cache_dir(kind: str, uri: str) -> str:
 
 def _remote_python(script: str) -> str:
     return f"python3 -c {shlex.quote(script)}"
+
+
+def _remote_bash(script: str) -> str:
+    return f"bash -lc {shlex.quote(script)}"
 
 
 def _runtime_exec_cmd(cfg: Any, command: str) -> str:
@@ -396,6 +417,376 @@ def status(
             typer.echo(f"  jobs: none")
 
 
+def _lerobot_serverless_job_name(wb_name: str, suffix: str | None = None) -> str:
+    timestamp = suffix or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    raw = f"npa-lerobot-{wb_name}-{timestamp}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _lerobot_serverless_train_output_path(bucket: str, wb_name: str, job_name: str) -> str:
+    if not bucket:
+        _fail("LeRobot train --runtime serverless requires storage.checkpoint_bucket.")
+    normalized = bucket.rstrip("/")
+    if not normalized.startswith("s3://"):
+        normalized = f"s3://{normalized.lstrip('/')}"
+    return f"{normalized}/lerobot/{wb_name}/{job_name}/"
+
+
+def _lerobot_serverless_output_path(
+    project: str,
+    wb_name: str,
+    job_name: str,
+    output_path: str,
+) -> str:
+    if output_path:
+        if not output_path.startswith("s3://"):
+            _fail("LeRobot train --output-path expects an S3 URI for serverless jobs.")
+        return output_path.rstrip("/") + "/"
+    storage = resolve_project_storage(project)
+    return _lerobot_serverless_train_output_path(storage.checkpoint_bucket, wb_name, job_name)
+
+
+def _configured_lerobot_subnet(project_id: str, project: str = "", name: str = "") -> str:
+    projects = list_projects()
+    candidates: list[dict[str, Any]] = []
+    if project and isinstance(projects.get(project), dict):
+        candidates.append(projects[project])
+    for cfg in projects.values():
+        if isinstance(cfg, dict) and str(cfg.get("project_id") or "") == project_id:
+            candidates.append(cfg)
+
+    for project_cfg in candidates:
+        workbenches = project_cfg.get("workbenches") if isinstance(project_cfg, dict) else {}
+        wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) and name else {}
+        sources = (
+            wb_cfg.get("serverless_job", {}) if isinstance(wb_cfg, dict) else {},
+            wb_cfg,
+            project_cfg.get("serverless_job", {}),
+            project_cfg,
+        )
+        for source in sources:
+            if isinstance(source, dict):
+                configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+                if configured:
+                    return str(configured)
+    return ""
+
+
+def _lerobot_serverless_train_subnet_id(project_id: str, project: str = "", name: str = "") -> str:
+    configured = _configured_lerobot_subnet(project_id, project, name)
+    if configured:
+        return configured
+    result = subprocess.run(
+        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
+        return ""
+    items = (json.loads(result.stdout or "{}").get("items") or [])
+    ready = [
+        item for item in items
+        if str(((item.get("status") or {}).get("state") or "")).upper() in {"READY", ""}
+    ]
+    ranked = sorted(
+        ready,
+        key=lambda item: (
+            "lerobot" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+        ),
+    )
+    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
+    if subnet and len(ready) > 1:
+        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
+    return subnet
+
+
+def _lerobot_serverless_job_env(
+    hf_token: str,
+    s3_access_key: str,
+    s3_secret_key: str,
+    output_path: str,
+    *,
+    s3_endpoint: str = "",
+) -> dict[str, str]:
+    env = {
+        "NPA_OUTPUT_PATH": output_path,
+        "PYTHONUNBUFFERED": "1",
+        "HF_HOME": "/tmp/hf_home",
+        "LEROBOT_HF_HOME": "/tmp/hf_home",
+    }
+    if hf_token:
+        env["HF_TOKEN"] = hf_token
+        env["HUGGING_FACE_HUB_TOKEN"] = hf_token
+    if s3_access_key:
+        env["AWS_ACCESS_KEY_ID"] = s3_access_key
+        env["S3_ACCESS_KEY"] = s3_access_key
+    if s3_secret_key:
+        env["AWS_SECRET_ACCESS_KEY"] = s3_secret_key
+        env["S3_SECRET_KEY"] = s3_secret_key
+    if s3_endpoint:
+        env["AWS_ENDPOINT_URL"] = s3_endpoint
+        env["NEBIUS_S3_ENDPOINT"] = s3_endpoint
+    return {key: value for key, value in env.items() if value}
+
+
+def _split_serverless_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    secret_names = {
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+    }
+    safe = {key: value for key, value in env.items() if key not in secret_names}
+    extra = {key: value for key, value in env.items() if key in secret_names}
+    return safe, extra
+
+
+def _lerobot_gpu_platform(gpu_type: str) -> str:
+    normalized = gpu_type.strip().lower()
+    aliases = {
+        "h200": "gpu-h200-sxm",
+        "b300": "gpu-b300-sxm",
+        "l40s": "gpu-l40s-a",
+    }
+    return aliases.get(normalized, gpu_type)
+
+
+def _warn_for_lerobot_gpu_policy(policy_type: str, gpu_type: str) -> None:
+    normalized_policy = policy_type.strip().lower()
+    normalized_gpu = gpu_type.strip().lower()
+    if normalized_policy == "diffusion" and "b300" in normalized_gpu:
+        console.print(
+            "[yellow]Warning:[/yellow] B300 is ~2.5x slower than H200 on Diffusion Policy "
+            "due to PTX JIT compilation. Consider --gpu-type h200 unless you specifically "
+            "need B300 for memory or availability."
+        )
+
+
+def _serverless_upload_output_cmd(local_dir: str) -> str:
+    script = f"""
+import os
+import pathlib
+from urllib.parse import urlparse
+import boto3
+
+uri = os.environ["NPA_OUTPUT_PATH"]
+parsed = urlparse(uri)
+if parsed.scheme != "s3" or not parsed.netloc:
+    raise SystemExit(f"NPA_OUTPUT_PATH must be s3:// URI, got: {{uri}}")
+base = pathlib.Path({local_dir!r})
+if not base.exists():
+    raise SystemExit(f"output directory missing: {{base}}")
+prefix = parsed.path.strip("/")
+prefix_with_slash = prefix + "/" if prefix else ""
+s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None)
+for file_path in base.rglob("*"):
+    if file_path.is_file():
+        s3.upload_file(str(file_path), parsed.netloc, prefix_with_slash + str(file_path.relative_to(base)))
+print("NPA_LEROBOT_OUTPUT_UPLOADED", uri.rstrip("/") + "/", flush=True)
+"""
+    return _remote_python(script)
+
+
+def _lerobot_train_container_command(
+    policy_type: str,
+    dataset: str,
+    input_path: str,
+    steps: int,
+    batch_size: int,
+    num_workers: int,
+    *,
+    env_type: str = "",
+    env_task: str = "",
+    device: str = "cuda",
+    smoke: bool = False,
+) -> str:
+    effective_steps = 50 if smoke else steps
+    effective_batch = 4 if smoke else batch_size
+    output_dir = "/tmp/lerobot_output"
+    dataset_setup_cmd = ""
+    if input_path:
+        if _is_s3_uri(input_path):
+            resolved_dataset = f"/tmp/lerobot_dataset/{_path_name(input_path)}"
+            dataset_setup_cmd = _remote_download_dir_cmd(input_path, resolved_dataset) + " && "
+        else:
+            resolved_dataset = input_path
+        dataset_arg = (
+            f"--dataset.repo_id={shlex.quote(_path_name(input_path))} "
+            f"--dataset.root={shlex.quote(resolved_dataset)} "
+        )
+    else:
+        dataset_arg = f"--dataset.repo_id={shlex.quote(dataset)} "
+    env_type_arg = f"--env.type={shlex.quote(env_type)} " if env_type else ""
+    env_task_arg = f"--env.task={shlex.quote(env_task)} " if env_task else ""
+    num_workers_arg = f"--num_workers={num_workers} " if num_workers >= 0 else ""
+    command = (
+        "set -euo pipefail && "
+        "cd /opt/lerobot && "
+        "source /opt/lerobot/venv/bin/activate && "
+        "if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi && "
+        f"mkdir -p {output_dir} /tmp/hf_home && "
+        f"{dataset_setup_cmd}"
+        f"lerobot-train "
+        f"--policy.type={shlex.quote(policy_type)} "
+        f"--policy.push_to_hub=false "
+        f"{dataset_arg}"
+        f"{env_type_arg}"
+        f"{env_task_arg}"
+        f"{num_workers_arg}"
+        f"--output_dir={output_dir} "
+        f"--steps={effective_steps} "
+        f"--save_freq={effective_steps} "
+        f"--eval_freq=1000000 "
+        f"--batch_size={effective_batch} "
+        f"--policy.device={shlex.quote(device)} "
+        f"--eval.batch_size=1 "
+        f"--eval.n_episodes=1 && "
+        f"{_serverless_upload_output_cmd(output_dir)} && "
+        "echo NPA_TRAIN_COMPLETE"
+    )
+    return _remote_bash(command)
+
+
+def _train_serverless(
+    *,
+    proj_alias: str,
+    wb_name: str,
+    project_id: str,
+    policy_type: str,
+    dataset: str,
+    input_path: str,
+    job_name: str,
+    steps: int,
+    batch_size: int,
+    num_workers: int,
+    gpu_count: int,
+    device: str,
+    env_type: str,
+    env_task: str,
+    output_path: str,
+    image: str,
+    gpu_type: str,
+    subnet_id: str,
+    submit_only: bool,
+    smoke: bool,
+    wait_timeout: int,
+    output: OutputFormat,
+) -> None:
+    if num_workers < -1:
+        _fail(f"--num-workers must be -1 (omit) or >= 0, got {num_workers}")
+    if gpu_count < 0:
+        _fail(f"--gpu-count must be 0 (default 1 for serverless) or positive, got {gpu_count}")
+    dataset_ref = input_path or dataset
+    if not dataset_ref:
+        _fail("Provide --dataset or --input-path.")
+    resolved_project_id = project_id
+    if not resolved_project_id:
+        env_cfg = resolve_environment(proj_alias)
+        resolved_project_id = env_cfg.project_id if env_cfg else ""
+    if not resolved_project_id:
+        _fail("LeRobot train --runtime serverless requires a Nebius project ID.")
+
+    _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
+    name = job_name or _lerobot_serverless_job_name(wb_name)
+    out = _lerobot_serverless_output_path(proj_alias, wb_name, name, output_path)
+    client = ServerlessClient()
+    try:
+        existing = client.get_job(name, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+    platform = _lerobot_gpu_platform(gpu_type)
+    resolved_image = image or container_image_for_tool("lerobot", registry=resolve_container_registry(proj_alias))
+    if existing is not None:
+        info = existing
+        if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
+            info = client.poll_job(existing.id, resolved_project_id, ceiling_s=wait_timeout)
+        update_workbench_serverless_job(
+            proj_alias,
+            wb_name,
+            job_id=info.id,
+            job_name=info.name,
+            project_id=resolved_project_id,
+            image=resolved_image,
+            gpu_type=platform,
+            gpu_count=gpu_count or 1,
+            subnet_id=subnet_id,
+            output_path=out,
+            last_status=info.status,
+            last_submitted_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        return
+
+    storage = resolve_project_storage(proj_alias)
+    credentials = resolve_credentials()
+    env = _lerobot_serverless_job_env(
+        credentials.hf_token,
+        storage.aws_access_key_id or credentials.s3_access_key_id,
+        storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        out,
+        s3_endpoint=storage.endpoint_url or credentials.s3_endpoint,
+    )
+    env["NPA_JOB_NAME"] = name
+    safe_env, extra_env = _split_serverless_env(env)
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    subnet = subnet_id or _lerobot_serverless_train_subnet_id(resolved_project_id, proj_alias, wb_name)
+    try:
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name,
+            image=resolved_image,
+            command=_lerobot_train_container_command(
+                policy_type,
+                dataset,
+                input_path,
+                steps,
+                batch_size,
+                num_workers,
+                env_type=env_type,
+                env_task=env_task,
+                device=device,
+                smoke=smoke,
+            ),
+            gpu_type=platform,
+            gpu_count=gpu_count or 1,
+            subnet_id=subnet,
+            output_path=out,
+            env=safe_env,
+            extra_env=extra_env,
+        )
+        if not submit_only:
+            info = client.poll_job(info.id, resolved_project_id, ceiling_s=wait_timeout)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless train failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+
+    update_workbench_serverless_job(
+        proj_alias,
+        wb_name,
+        job_id=info.id,
+        job_name=info.name,
+        project_id=resolved_project_id,
+        image=resolved_image,
+        gpu_type=platform,
+        gpu_count=gpu_count or 1,
+        subnet_id=subnet,
+        output_path=out,
+        last_status=info.status,
+        last_submitted_at=submitted_at,
+    )
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+
+
 # ── train ────────────────────────────────────────────────────────────────
 
 
@@ -421,6 +812,14 @@ def train(
         "--output-path",
         help="S3 URI where the checkpoint output is written.",
     ),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime backend: vm, container, byovm, or serverless."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID override for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image override for serverless Jobs."),
+    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs (h200, b300, l40s, or Nebius platform)."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Subnet ID for serverless Jobs (auto-discovered if omitted)."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit Job and return immediately without polling."),
+    smoke: bool = typer.Option(False, "--smoke", help="Use smoke training settings for serverless Jobs."),
+    wait_timeout: int = typer.Option(3600, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Run lerobot-train on the VM via SSH, stream logs."""
@@ -440,6 +839,33 @@ def train(
     dataset_ref = input_path or dataset
     if not dataset_ref:
         _fail("Provide --dataset or --input-path.")
+        return
+
+    if is_serverless_runtime(runtime):
+        _train_serverless(
+            proj_alias=_project_alias or default_project_name(),
+            wb_name=_workbench_name or default_workbench_name(),
+            project_id=project_id,
+            policy_type=policy_type,
+            dataset=dataset,
+            input_path=input_path,
+            job_name=job_name,
+            steps=steps,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            gpu_count=gpu_count,
+            device=device,
+            env_type=env_type,
+            env_task=env_task,
+            output_path=output_path,
+            image=image,
+            gpu_type=gpu_type,
+            subnet_id=subnet_id,
+            submit_only=submit_only,
+            smoke=smoke,
+            wait_timeout=wait_timeout,
+            output=output,
+        )
         return
 
     cfg = _get_config()
