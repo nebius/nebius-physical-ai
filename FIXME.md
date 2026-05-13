@@ -363,3 +363,25 @@ a one-line help distinction.
   installed `npa` version.
 - Partner-facing artifact: suitable for customer evaluation, partner demos, and
   internal SA reference.
+
+---
+
+## CLOSED 2026-05-13 (Cosmos × Jobs e2e closeout, W1 + W1.5)
+
+- Fixed `s3://` scheme bug in `_serverless_train_output_path` (W1: `b7149e0`).
+- Added unit test for output path scheme (W1: `1e2f3ae`).
+- Parameterized NER test platform via `NPA_E2E_NER_PLATFORM` env var (W1.5: `2781039`).
+- Validated 5/6 Cosmos Jobs e2e hardening dimensions against real Nebius:
+  happy-path completion, cancel, status lifecycle, HF token propagation, and
+  idempotent submission.
+- NER fixture is now resilient to Nebius platform catalog changes, but the
+  sandbox accepted the largest valid discovered H200 request, so NER fallback
+  was not reproduced in W1.5.
+
+Outstanding observations (deferred):
+- Need a deterministic NER trigger for Jobs e2e; current `gpu-h200-sxm`
+  `8gpu-128vcpu-1600gb` request created Jobs successfully in eu-north1.
+- Cancel-internal-error finding from May 12 remains deferred; W1.5 saw
+  transient internal cancel errors during NER fixture teardown, but follow-up
+  cleanup removed all `npa-e2e-jobs-*` Jobs.
+- Delete-operation auth polling from May 13 remains a transient to monitor.

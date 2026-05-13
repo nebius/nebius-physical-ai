@@ -85,3 +85,24 @@ Some projects have multiple VPC subnets. Cosmos serverless deploy accepts
 `--subnet-id`; the e2e harness discovers a READY subnet with
 `nebius vpc subnet list --parent-id <project-id> --format json` and passes that
 subnet explicitly.
+
+## Cosmos × Jobs (training)
+
+The Cosmos training workload runs as a Nebius Serverless Job under
+`--runtime serverless`. W1/W1.5 validated 5 of 6 hardening dimensions against
+real Nebius:
+
+- happy-path submission and completion: PASS
+- NotEnoughResources fallback (project rotation): NOT REPRODUCED; the valid
+  `gpu-h200-sxm` 8-GPU request was accepted in the sandbox
+- cancel mid-execution: PASS
+- status lifecycle transitions: PASS
+- HF token propagation to the Job container env: PASS
+- idempotent re-submission: PASS
+
+Run: `pytest npa/tests/e2e/test_cosmos_jobs_serverless_e2e.py -v -m e2e_serverless`
+
+Requires `NPA_INTEGRATION_E2E=1` and
+`NPA_E2E_SERVERLESS_PROJECT=<sandbox-project-id>`. The NER test platform can be
+overridden via `NPA_E2E_NER_PLATFORM`; related resource knobs are
+`NPA_E2E_NER_PRESET` and `NPA_E2E_NER_GPU_COUNT`.
