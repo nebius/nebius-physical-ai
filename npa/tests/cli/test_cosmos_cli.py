@@ -23,6 +23,8 @@ from npa.cli.cosmos import (
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
     _build_reload_env_command,
+    _cosmos_train_smoke_command,
+    _serverless_job_env,
     _serverless_train_output_path,
     _serverless_train_subnet_id,
     _build_install_command,
@@ -177,9 +179,88 @@ def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["output_path"] == "s3://bucket/checkpoints/jobs/npa-e2e-jobs-test/"
     assert kwargs["subnet_id"] == "vpcsubnet-auto"
     assert kwargs["env"]["COSMOS_TRAIN_SMOKE"] == "1"
+    assert kwargs["env"]["NPA_OUTPUT_PATH"] == "s3://bucket/checkpoints/jobs/npa-e2e-jobs-test/"
+    assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["HF_TOKEN"] == "hf_secret"
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
+    assert "PYUPLOAD" in kwargs["command"]
     client.poll_job.assert_not_called()
+
+
+def test_cosmos_train_serverless_maps_gpu_alias(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=())
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--gpu-type", "l40s",
+            "--job-name", "npa-e2e-jobs-test", "--output-format", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["gpu_type"] == "gpu-l40s-a"
+    assert kwargs["preset"] == "1gpu-40vcpu-160gb"
+
+
+def test_cosmos_serverless_job_env_uses_shared_builder(mocker) -> None:
+    mocker.patch(
+        "npa.cli.cosmos.resolve_project_storage",
+        return_value=SimpleNamespace(
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
+
+    env, extra_env = _serverless_job_env("proj", require_hf=True, output_path="s3://bucket/out/")
+
+    assert env["NPA_OUTPUT_PATH"] == "s3://bucket/out/"
+    assert env["NPA_REQUIRE_HF"] == "1"
+    assert env["HF_HOME"] == "/tmp/hf_home"
+    assert env["AWS_ENDPOINT_URL"] == "https://s3.example"
+    assert extra_env["HF_TOKEN"] == "hf_secret"
+    assert extra_env["AWS_ACCESS_KEY_ID"] == "AKIA"
+    assert extra_env["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+
+
+def test_cosmos_train_smoke_command_uses_shared_upload_helper() -> None:
+    command = _cosmos_train_smoke_command(0)
+
+    assert "boto3" in command
+    assert "PYUPLOAD" in command
+    assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in command
+
+
+def test_cosmos_train_serverless_rejects_bad_output_path(mocker) -> None:
+    _mock_train_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "train",
+            "--runtime", "serverless", "--smoke", "--submit-only",
+            "--job-name", "npa-e2e-jobs-test",
+            "--output-path", "file:///tmp/out",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "expects an S3 URI" in result.output
+    client.create_job.assert_not_called()
 
 
 def test_serverless_train_output_path_returns_s3_uri(mocker) -> None:

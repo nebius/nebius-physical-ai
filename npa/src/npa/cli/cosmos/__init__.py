@@ -116,6 +116,13 @@ from npa.deploy.byovm import (
 )
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
+from npa.serverless_common import (
+    build_serverless_job_env,
+    build_serverless_output_upload_cmd,
+    resolve_gpu_platform,
+    split_serverless_env,
+    validate_output_path,
+)
 
 app = typer.Typer(
     name="cosmos",
@@ -1111,7 +1118,9 @@ def _serverless_job_name(project: str, name: str) -> str:
 
 def _serverless_train_output_path(project: str, job_name: str, output_path: str) -> str:
     if output_path:
-        if not output_path.startswith("s3://"):
+        try:
+            validate_output_path(output_path)
+        except ValueError:
             _fail("Cosmos train --output-path expects an S3 URI for serverless jobs.")
         return output_path.rstrip("/") + "/"
     storage = resolve_project_storage(project)
@@ -1148,37 +1157,52 @@ def _serverless_train_subnet_id(project: str, name: str, project_id: str) -> str
     return subnet
 
 
-def _serverless_job_env(project: str, *, require_hf: bool) -> tuple[dict[str, str], dict[str, str]]:
+def _serverless_job_env(
+    project: str,
+    *,
+    require_hf: bool,
+    output_path: str = "",
+) -> tuple[dict[str, str], dict[str, str]]:
     storage = resolve_project_storage(project)
-    env = {"NPA_REQUIRE_HF": "1" if require_hf else "0", "PYTHONUNBUFFERED": "1"}
-    extra = _serverless_hf_env()
-    for key, value in {
-        "AWS_ACCESS_KEY_ID": storage.aws_access_key_id,
-        "AWS_SECRET_ACCESS_KEY": storage.aws_secret_access_key,
-        "AWS_ENDPOINT_URL": storage.endpoint_url,
-        "NEBIUS_S3_ENDPOINT": storage.endpoint_url,
-    }.items():
-        if value:
-            extra[key] = value
-    return env, extra
+    hf_env = _serverless_hf_env()
+    shared_env = shared_credential_env(load_credentials(environ={}))
+    hf_token = (
+        hf_env.get("HF_TOKEN")
+        or hf_env.get("HUGGING_FACE_HUB_TOKEN")
+        or hf_env.get("HUGGINGFACE_HUB_TOKEN")
+        or shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+    )
+    env = build_serverless_job_env(
+        output_path=output_path,
+        hf_token=hf_token or None,
+        s3_credentials={
+            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+        },
+        extra_env={"NPA_REQUIRE_HF": "1" if require_hf else "0"},
+    )
+    return split_serverless_env(env)
 
 
 def _cosmos_train_smoke_command(seconds: int) -> str:
+    local_dir = "/tmp/npa-cosmos-train-smoke"
     script = f"""
-import json, os, time
+import json, os, pathlib, time
 from urllib.parse import urlparse
 if os.environ.get("NPA_REQUIRE_HF") == "1" and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")):
     raise SystemExit("HF auth missing")
 time.sleep({max(0, seconds)})
 uri = os.environ["NPA_OUTPUT_PATH"]
 p = urlparse(uri)
-key = p.path.strip("/") + "/checkpoint.json"
-body = json.dumps({{"status": "succeeded", "job": os.environ.get("NPA_JOB_NAME", ""), "smoke": True}}).encode()
-import boto3
-boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL")).put_object(Bucket=p.netloc, Key=key, Body=body)
-print("NPA_COSMOS_TRAIN_SMOKE_DONE", "s3://" + p.netloc + "/" + key, flush=True)
+out = pathlib.Path("{local_dir}")
+out.mkdir(parents=True, exist_ok=True)
+(out / "checkpoint.json").write_text(json.dumps({{"status": "succeeded", "job": os.environ.get("NPA_JOB_NAME", ""), "smoke": True}}, indent=2))
+print("NPA_COSMOS_TRAIN_SMOKE_DONE", uri.rstrip("/") + "/checkpoint.json", flush=True)
 """.strip()
-    return _remote_bash(f"python - <<'PY'\n{script}\nPY")
+    upload = build_serverless_output_upload_cmd(local_dir, "")
+    return _remote_bash(f"python3 - <<'PY'\n{script}\nPY\n{upload}")
 
 
 def _serverless_project_id(cfg: Any) -> str:
@@ -2718,6 +2742,19 @@ def train_cmd(
         _fail("Cosmos train action must be submit, status, or cancel.")
     if not smoke:
         _fail("Cosmos train requires --smoke until full Cosmos training is implemented.")
+    try:
+        resolved_gpu_type, resolved_gpu_preset, resolved_gpu_count = resolve_gpu_platform(
+            gpu_type,
+            gpu_count,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+    if gpu_preset and not (
+        gpu_preset == "1gpu-16vcpu-200gb"
+        and resolved_gpu_preset != gpu_preset
+        and gpu_type.lower() not in {"h200", "h100", "gpu-h200-sxm", "gpu-h100-sxm"}
+    ):
+        resolved_gpu_preset = gpu_preset
     name = job_name or _serverless_job_name(proj_alias, wb_name)
     out = _serverless_train_output_path(proj_alias, name, output_path)
     try:
@@ -2729,7 +2766,7 @@ def train_cmd(
         _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
         return
     subnet_id = subnet_id or _serverless_train_subnet_id(proj_alias, wb_name, resolved_project_id)
-    env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf)
+    env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf, output_path=out)
     env.update({"COSMOS_TRAIN_SMOKE": "1", "NPA_JOB_NAME": name})
     try:
         info = client.create_job(
@@ -2737,9 +2774,9 @@ def train_cmd(
             name=name,
             image=image or container_image_for_tool("cosmos", registry=resolve_container_registry(proj_alias)),
             command=_cosmos_train_smoke_command(smoke_seconds),
-            gpu_type=gpu_type,
-            gpu_count=gpu_count,
-            preset=gpu_preset,
+            gpu_type=resolved_gpu_type,
+            gpu_count=resolved_gpu_count,
+            preset=resolved_gpu_preset,
             subnet_id=subnet_id,
             output_path=out,
             env=env,
