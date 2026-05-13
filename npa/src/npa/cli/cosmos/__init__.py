@@ -1111,7 +1111,10 @@ def _serverless_train_output_path(project: str, job_name: str, output_path: str)
     bucket = getattr(storage, "checkpoint_bucket", "")
     if not bucket:
         _fail("Cosmos train --runtime serverless requires storage.checkpoint_bucket.")
-    return f"{bucket.rstrip('/')}/jobs/{job_name}/"
+    bucket = bucket.rstrip("/")
+    if not bucket.startswith("s3://"):
+        bucket = f"s3://{bucket}"
+    return f"{bucket}/jobs/{job_name}/"
 
 
 def _serverless_train_subnet_id(project: str, name: str, project_id: str) -> str:
