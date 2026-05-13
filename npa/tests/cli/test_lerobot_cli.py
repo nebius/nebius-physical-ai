@@ -244,7 +244,7 @@ def test_lerobot_train_serverless_sync_polls(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["status"] == "succeeded"
-    client.poll_job.assert_called_once_with("job-1", "project-1", ceiling_s=3600)
+    client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=3600)
 
 
 def test_lerobot_train_serverless_existing_submit_is_idempotent(mocker) -> None:
@@ -268,7 +268,7 @@ def test_lerobot_train_serverless_existing_running_polls(mocker) -> None:
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["job_status"] == "succeeded"
     client.create_job.assert_not_called()
-    client.poll_job.assert_called_once_with("job-1", "project-1", ceiling_s=3600)
+    client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=3600)
 
 
 def test_lerobot_train_serverless_b300_diffusion_warning(mocker) -> None:

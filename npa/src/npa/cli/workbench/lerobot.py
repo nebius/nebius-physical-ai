@@ -676,6 +676,7 @@ def _train_serverless(
     subnet_id: str,
     submit_only: bool,
     smoke: bool,
+    poll_interval: float,
     wait_timeout: int,
     output: OutputFormat,
 ) -> None:
@@ -706,7 +707,12 @@ def _train_serverless(
     if existing is not None:
         info = existing
         if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
-            info = client.poll_job(existing.id, resolved_project_id, ceiling_s=wait_timeout)
+            info = client.poll_job(
+                existing.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=wait_timeout,
+            )
         update_workbench_serverless_job(
             proj_alias,
             wb_name,
@@ -762,7 +768,12 @@ def _train_serverless(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, ceiling_s=wait_timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=wait_timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
@@ -819,6 +830,7 @@ def train(
     subnet_id: str = typer.Option("", "--subnet-id", help="Subnet ID for serverless Jobs (auto-discovered if omitted)."),
     submit_only: bool = typer.Option(False, "--submit-only", help="Submit Job and return immediately without polling."),
     smoke: bool = typer.Option(False, "--smoke", help="Use smoke training settings for serverless Jobs."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless Job status checks."),
     wait_timeout: int = typer.Option(3600, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -863,6 +875,7 @@ def train(
             subnet_id=subnet_id,
             submit_only=submit_only,
             smoke=smoke,
+            poll_interval=poll_interval,
             wait_timeout=wait_timeout,
             output=output,
         )
