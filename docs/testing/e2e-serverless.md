@@ -106,3 +106,22 @@ Requires `NPA_INTEGRATION_E2E=1` and
 `NPA_E2E_SERVERLESS_PROJECT=<sandbox-project-id>`. The NER test platform can be
 overridden via `NPA_E2E_NER_PLATFORM`; related resource knobs are
 `NPA_E2E_NER_PRESET` and `NPA_E2E_NER_GPU_COUNT`.
+
+## NER E2E Deferral
+
+The Cosmos Jobs NER e2e test (`ner_handling`) is currently marked as not
+reproducible in the standard sandbox. The largest valid H200 request was
+accepted by Nebius rather than rejected with `NotEnoughResources`, so the
+project-rotation code path was not exercised end-to-end.
+
+NER detection and classification logic is covered by unit tests in
+`npa/tests/clients/test_serverless.py`, including the `_NER_PATTERNS`
+classifier and structured exception metadata.
+
+The customer-facing NER UX is covered by `docs/cli-errors.md` and
+`docs/sdk/errors.md`, which describe how capacity failures surface in CLI
+output, status commands, and SDK exceptions.
+
+To verify NER UX manually, temporarily inject a `NotEnoughResourcesError` via a
+mock test or use a quota-bound sandbox project coordinated with the Nebius
+platform team.

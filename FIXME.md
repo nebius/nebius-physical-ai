@@ -385,3 +385,22 @@ Outstanding observations (deferred):
   transient internal cancel errors during NER fixture teardown, but follow-up
   cleanup removed all `npa-e2e-jobs-*` Jobs.
 - Delete-operation auth polling from May 13 remains a transient to monitor.
+
+---
+
+## CLOSED 2026-05-13 (NER UX hardening - three surfaces shipped)
+
+- Move 1 (CLI): top-level error handler formats typed exceptions with
+  actionable messages, suggested alternatives, and consistent exit codes.
+  Stack traces are hidden by default; `NPA_DEBUG=1` enables them.
+- Move 2 (Status): `npa workbench <tool> status` distinguishes `scheduled`
+  from `waiting_for_capacity`, with hints.
+- Move 3 (SDK): typed exceptions carry structured fields (`project_id`,
+  `platform`, `preset`, `gpu_count`, `suggested_alternatives`, `error_class`)
+  for agent and orchestrator branching logic.
+- JSON output mode is supported for typed CLI errors and status payloads.
+- Backward compatible: existing exception class names and `str(exc)` behavior
+  are unchanged; new fields are additive.
+- Customer-facing docs: `docs/cli-errors.md`, `docs/sdk/errors.md`.
+- E2E NER test fixture remains deferred as a separate issue; UX coverage
+  shipped independently.
