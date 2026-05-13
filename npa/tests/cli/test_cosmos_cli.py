@@ -22,6 +22,7 @@ from npa.cli.cosmos import (
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
     _build_reload_env_command,
+    _serverless_train_subnet_id,
     _build_install_command,
     _download_remote_output,
     _save_inference_output,
@@ -133,6 +134,7 @@ def _mock_train_env(mocker):
     mocker.patch("npa.cli.cosmos.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.cosmos.container_image_for_tool", return_value="registry.example/npa-cosmos:smoke")
     mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
+    mocker.patch("npa.cli.cosmos._serverless_train_subnet_id", return_value="vpcsubnet-auto")
 
 
 def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
@@ -157,6 +159,7 @@ def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
     kwargs = client.create_job.call_args.kwargs
     assert kwargs["project_id"] == "project-1"
     assert kwargs["output_path"] == "s3://bucket/checkpoints/jobs/npa-e2e-jobs-test/"
+    assert kwargs["subnet_id"] == "vpcsubnet-auto"
     assert kwargs["env"]["COSMOS_TRAIN_SMOKE"] == "1"
     assert kwargs["extra_env"]["HF_TOKEN"] == "hf_secret"
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
@@ -186,6 +189,22 @@ def test_cosmos_train_serverless_sync_waits_and_status_cancel_dispatch(mocker) -
     cancel = runner.invoke(app, ["workbench", "cosmos", "-p", "proj", "train", "--runtime", "serverless", "cancel", "job-1", "--output-format", "json"])
     assert cancel.exit_code == 0
     assert json.loads(cancel.output)["status"] == "cancelled"
+
+
+def test_cosmos_train_subnet_selection_prefers_config_and_cosmos_subnet(mocker) -> None:
+    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {"workbenches": {"cosmos": {"serverless": {"subnet_id": "vpcsubnet-config"}}}}})
+    assert _serverless_train_subnet_id("proj", "cosmos", "project-1") == "vpcsubnet-config"
+
+    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
+    mocker.patch(
+        "npa.cli.cosmos.subprocess.run",
+        return_value=SimpleNamespace(
+            returncode=0,
+            stdout='{"items": [{"metadata": {"id": "vpcsubnet-default", "name": "default-subnet"}, "status": {"state": "READY"}}, {"metadata": {"id": "vpcsubnet-cosmos", "name": "cosmos-eu-north1-h200-cosmos-subnet"}, "status": {"state": "READY"}}]}',
+            stderr="",
+        ),
+    )
+    assert _serverless_train_subnet_id("proj", "cosmos", "project-1") == "vpcsubnet-cosmos"
 
 
 def test_cosmos_placeholder_help_describes_roadmap() -> None:

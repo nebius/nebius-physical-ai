@@ -532,10 +532,10 @@ def test_subprocess_env_is_not_used_for_nonsecret_args() -> None:
 
 
 def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], dict]] = []
 
     def fake_runner(args, **kwargs):
-        calls.append(args)
+        calls.append((args, kwargs))
         return _result(args, 0, _job_json())
 
     caplog.set_level("DEBUG", logger="npa.clients.serverless")
@@ -545,9 +545,13 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
 
     assert info.status == "succeeded"
     assert info.output_uris == ("s3://bucket/jobs/cosmos-train/",)
-    assert calls[0][1:4] == ["ai", "job", "create"]
-    assert "MODE=smoke" in calls[0]
-    assert "HF_TOKEN=hf_secret_value" in calls[0]
+    assert calls[0][0][1:4] == ["ai", "job", "create"]
+    assert calls[0][1]["timeout"] == 300
+    assert "--subnet-id" not in calls[0][0]
+    _create_job(client, subnet_id="vpcsubnet-1")
+    assert calls[1][0][calls[1][0].index("--subnet-id") + 1] == "vpcsubnet-1"
+    assert "MODE=smoke" in calls[0][0]
+    assert "HF_TOKEN=hf_secret_value" in calls[0][0]
     assert "hf_secret_value" not in caplog.text
     assert "HF_TOKEN=<redacted>" in caplog.text
 
@@ -601,3 +605,14 @@ def test_job_state_cancel_idempotency_and_poll() -> None:
     running = ServerlessClient(nebius_bin="nebius", subprocess_runner=lambda args, **kwargs: _result(args, 0, _job_json(state="RUNNING")), sleep=lambda seconds: None)
     with pytest.raises(TimeoutError, match="did not finish"):
         running.poll_job("job-1", "project-1", interval_s=0, ceiling_s=0)
+
+    interrupt_calls: list[list[str]] = []
+
+    def interrupted_runner(args, **kwargs):
+        interrupt_calls.append(args)
+        return _result(args, 0, _job_json(state="RUNNING" if args[3] == "get" else "CANCELLED"))
+
+    interrupted = ServerlessClient(nebius_bin="nebius", subprocess_runner=interrupted_runner, sleep=lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        interrupted.poll_job("job-1", "project-1", interval_s=1, ceiling_s=10)
+    assert any(call[3] == "cancel" for call in interrupt_calls)

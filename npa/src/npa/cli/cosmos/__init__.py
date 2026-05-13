@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import shlex
+import subprocess
 import tempfile
 import time
 import uuid
@@ -1111,6 +1112,30 @@ def _serverless_train_output_path(project: str, job_name: str, output_path: str)
     if not bucket:
         _fail("Cosmos train --runtime serverless requires storage.checkpoint_bucket.")
     return f"{bucket.rstrip('/')}/jobs/{job_name}/"
+
+
+def _serverless_train_subnet_id(project: str, name: str, project_id: str) -> str:
+    project_cfg = list_projects().get(project, {})
+    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
+    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
+        if isinstance(source, dict):
+            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+            if configured:
+                return str(configured)
+    result = subprocess.run(
+        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
+        return ""
+    items = (json.loads(result.stdout or "{}").get("items") or [])
+    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
+    ranked = sorted(ready, key=lambda item: ("cosmos" not in str((item.get("metadata") or {}).get("name", "")).lower(), "default" not in str((item.get("metadata") or {}).get("name", "")).lower()))
+    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
+    if subnet and len(ready) > 1:
+        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
+    return subnet
 
 
 def _serverless_job_env(project: str, *, require_hf: bool) -> tuple[dict[str, str], dict[str, str]]:
@@ -2588,6 +2613,7 @@ def train_cmd(
     gpu_type: str = typer.Option("gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."),
     gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count."),
     gpu_preset: str = typer.Option("1gpu-16vcpu-200gb", "--gpu-preset", help="Nebius GPU preset."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
     output_path: str = typer.Option("", "--output-path", "--output", help="S3 checkpoint output URI."),
     job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
     smoke: bool = typer.Option(False, "--smoke", help="Run the minimal e2e smoke workload."),
@@ -2634,6 +2660,7 @@ def train_cmd(
         info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
         _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
         return
+    subnet_id = subnet_id or _serverless_train_subnet_id(proj_alias, wb_name, resolved_project_id)
     env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf)
     env.update({"COSMOS_TRAIN_SMOKE": "1", "NPA_JOB_NAME": name})
     try:
@@ -2645,6 +2672,7 @@ def train_cmd(
             gpu_type=gpu_type,
             gpu_count=gpu_count,
             preset=gpu_preset,
+            subnet_id=subnet_id,
             output_path=out,
             env=env,
             extra_env=extra_env,

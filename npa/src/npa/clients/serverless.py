@@ -116,6 +116,9 @@ _JOB_STATUS_ALIASES = {
     "cancelled": {"cancelled", "canceled", "stopped"},
 }
 _JOB_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+_JOB_QUERY_TIMEOUT = 60
+_JOB_CREATE_TIMEOUT = 300
+_JOB_CANCEL_TIMEOUT = 120
 
 
 def _job_status(value: Any) -> str:
@@ -573,7 +576,7 @@ class ServerlessClient:
             if value:
                 args.extend([flag, value])
         args.extend(["--format", "json"])
-        result = self._run(args, timeout=self._timeout)
+        result = self._run(args, timeout=_JOB_CREATE_TIMEOUT)
         if result.returncode != 0:
             self._raise_for_error(result, f"create_job failed for {name} in project {project_id}")
         try:
@@ -583,7 +586,7 @@ class ServerlessClient:
         return info if info.name else self.get_job(info.id or name, project_id)
 
     def list_jobs(self, project_id: str, name_prefix: str | None = None) -> list[JobInfo]:
-        result = self._run(["ai", "job", "list", "--parent-id", project_id, "--format", "json"])
+        result = self._run(["ai", "job", "list", "--parent-id", project_id, "--format", "json"], timeout=_JOB_QUERY_TIMEOUT)
         if result.returncode != 0:
             self._raise_for_error(result, f"list_jobs failed for project {project_id}")
         jobs = [
@@ -597,12 +600,14 @@ class ServerlessClient:
             ["ai", "job", "get", "--id", job_id_or_name, "--format", "json"],
             ["ai", "job", "get-by-name", "--parent-id", project_id, "--name", job_id_or_name, "--format", "json"],
         )
-        for args in commands:
-            result = self._run(args)
+        for index, args in enumerate(commands):
+            result = self._run(args, timeout=_JOB_QUERY_TIMEOUT)
             if result.returncode == 0:
                 info = self._parse_job_info(result.stdout, project_id=project_id)
                 if info.id or info.name:
                     return info
+            elif index == 0:
+                continue
             elif _classify_error(result.returncode, result.stderr) is not EndpointNotFoundError:
                 self._raise_for_error(result, f"get_job failed for {job_id_or_name}")
         raise EndpointNotFoundError(f"Job {job_id_or_name} not found in project {project_id}")
@@ -611,7 +616,7 @@ class ServerlessClient:
         info = self.get_job(job_id_or_name, project_id)
         if info.status in _JOB_TERMINAL_STATUSES:
             return info
-        result = self._run(["ai", "job", "cancel", "--id", info.id, "--format", "json"])
+        result = self._run(["ai", "job", "cancel", "--id", info.id, "--format", "json"], timeout=_JOB_CANCEL_TIMEOUT)
         if result.returncode != 0:
             error_class = _classify_error(result.returncode, result.stderr)
             if error_class is EndpointNotFoundError:
@@ -631,24 +636,31 @@ class ServerlessClient:
         last: JobInfo | None = None
         last_status: str | None = None
         transient_failures = 0
-        while time.monotonic() <= deadline:
-            try:
-                current = self.get_job(job_id, project_id)
-            except ServerlessClientError:
-                transient_failures += 1
-                if transient_failures > 1:
-                    raise
+        try:
+            while time.monotonic() <= deadline:
+                try:
+                    current = self.get_job(job_id, project_id)
+                except ServerlessClientError:
+                    transient_failures += 1
+                    if transient_failures > 1:
+                        raise
+                    self._sleep(interval_s)
+                    continue
+                transient_failures = 0
+                last = current
+                if current.status is not last_status and on_state_change is not None:
+                    on_state_change(current)
+                last_status = current.status
+                if current.status in _JOB_TERMINAL_STATUSES:
+                    return current
                 self._sleep(interval_s)
-                continue
-            transient_failures = 0
-            last = current
-            if current.status is not last_status and on_state_change is not None:
-                on_state_change(current)
-            last_status = current.status
-            if current.status in _JOB_TERMINAL_STATUSES:
-                return current
-            self._sleep(interval_s)
-        status = last.status.value if last else "unknown"
+        except KeyboardInterrupt:
+            try:
+                self.cancel_job(job_id, project_id)
+            except ServerlessClientError as exc:
+                logger.warning("Job cancellation after interrupt failed for %s: %s", job_id, exc)
+            raise
+        status = last.status if last else "unknown"
         raise TimeoutError(f"Job {job_id} did not finish within {ceiling_s}s (last status: {status})")
 
     def _run(
@@ -660,13 +672,19 @@ class ServerlessClient:
     ) -> subprocess.CompletedProcess[str]:
         full_args = [self._nebius_bin, *args]
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
-        return self._runner(
-            full_args,
-            capture_output=True,
-            text=True,
-            timeout=timeout or self._timeout,
-            env=dict(env) if env is not None else None,
-        )
+        effective_timeout = timeout or self._timeout
+        try:
+            return self._runner(
+                full_args,
+                capture_output=True,
+                text=True,
+                timeout=effective_timeout,
+                env=dict(env) if env is not None else None,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ServerlessClientError(
+                f"Nebius CLI timed out after {effective_timeout}s: {shlex.join(_redact_cli_args(full_args))}"
+            ) from exc
 
     def _build_create_args(
         self,
