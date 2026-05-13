@@ -18,7 +18,11 @@ def validate_output_path(output_path: str) -> None:
 def build_serverless_output_upload_cmd(local_dir: str, output_path: str) -> str:
     """Return a bash snippet that uploads local_dir contents to NPA_OUTPUT_PATH."""
 
-    return f'''python3 << 'PYUPLOAD'
+    return f'''NPA_PYTHON_BIN="${{NPA_PYTHON_BIN:-python3}}"
+if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then
+  NPA_PYTHON_BIN=python
+fi
+"$NPA_PYTHON_BIN" << 'PYUPLOAD'
 import os
 import pathlib
 from urllib.parse import urlparse
