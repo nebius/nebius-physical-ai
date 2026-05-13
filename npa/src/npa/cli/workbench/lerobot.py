@@ -610,8 +610,33 @@ def _lerobot_gpu_platform(gpu_type: str) -> str:
         "h200": "gpu-h200-sxm",
         "b300": "gpu-b300-sxm",
         "l40s": "gpu-l40s-a",
+        "gpu-rtx-pro-6000": "gpu-rtx6000",
+        "rtx-pro-6000": "gpu-rtx6000",
+        "rtx6000": "gpu-rtx6000",
     }
     return aliases.get(normalized, gpu_type)
+
+
+def _lerobot_serverless_gpu_preset(platform: str, gpu_count: int) -> str:
+    presets = {
+        "gpu-b300-sxm": {
+            1: "1gpu-24vcpu-346gb",
+            8: "8gpu-192vcpu-2768gb",
+        },
+        "gpu-l40s-a": {
+            1: "1gpu-40vcpu-160gb",
+        },
+        "gpu-l40s-d": {
+            1: "1gpu-48vcpu-288gb",
+            2: "2gpu-96vcpu-576gb",
+            4: "4gpu-192vcpu-1152gb",
+        },
+        "gpu-rtx6000": {
+            1: "1gpu-24vcpu-218gb",
+            8: "8gpu-192vcpu-1744gb",
+        },
+    }
+    return presets.get(platform, {}).get(gpu_count, "")
 
 
 def _warn_for_lerobot_gpu_policy(policy_type: str, gpu_type: str) -> None:
@@ -623,6 +648,15 @@ def _warn_for_lerobot_gpu_policy(policy_type: str, gpu_type: str) -> None:
             "due to PTX JIT compilation. Consider --gpu-type h200 unless you specifically "
             "need B300 for memory or availability."
         )
+
+
+def _default_lerobot_profile_script_path() -> Path:
+    relative = Path("research/lerobot-deploy/training/profile_train.py")
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / relative
+        if candidate.exists():
+            return candidate
+    return Path.cwd() / relative
 
 
 def _serverless_upload_output_cmd(local_dir: str) -> str:
@@ -708,6 +742,114 @@ def _lerobot_train_container_command(
         "echo NPA_TRAIN_COMPLETE"
     )
     return _remote_bash(command)
+
+
+def _lerobot_profile_train_container_command(
+    *,
+    script_path: Path,
+    mode: str,
+    policy_type: str,
+    dataset_repo_id: str,
+    steps: int,
+    batch_size: int,
+    num_workers: int,
+    warmup_steps: int,
+    output_path: str,
+    compile_model: bool = False,
+    skip_first: int = 10,
+    warmup: int = 5,
+    active: int = 50,
+) -> str:
+    """Build the container command for serverless LeRobot profile runs."""
+    import base64
+    import gzip
+
+    script_path = script_path.expanduser().resolve()
+    script_size = script_path.stat().st_size
+    if script_size > 100_000:
+        raise ValueError(
+            f"Script {script_path} is {script_size} bytes; inline embed supports up to 100KB. "
+            "Future: implement S3 transient upload for larger scripts."
+        )
+    if not output_path.startswith("s3://"):
+        raise ValueError(f"--output-path must start with s3:// for serverless profile-train; got {output_path}")
+    if num_workers < 0:
+        raise ValueError(f"--num-workers must be >= 0 for profile-train, got {num_workers}")
+
+    script_b64 = base64.b64encode(gzip.compress(script_path.read_bytes())).decode("ascii")
+    compile_arg = " --compile" if compile_model else ""
+    command = f"""
+set -euo pipefail
+cd /opt/lerobot
+source /opt/lerobot/venv/bin/activate
+if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi
+export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+mkdir -p /tmp/hf_home
+export HF_HOME=/tmp/hf_home
+export LEROBOT_HF_HOME=/tmp/hf_home
+
+OUTPUT_DIR=/tmp/lerobot_profile_$(date +%s)_$$
+mkdir -p "$OUTPUT_DIR"
+export OUTPUT_DIR
+
+NUM_WORKERS={num_workers}
+if [ "$NUM_WORKERS" = "0" ]; then
+    NUM_WORKERS=$(nproc)
+fi
+
+printf '%s' {shlex.quote(script_b64)} | base64 -d | gzip -dc > /tmp/profile_train.py
+chmod +x /tmp/profile_train.py
+
+python /tmp/profile_train.py \\
+    --mode={shlex.quote(mode)} \\
+    --policy_type={shlex.quote(policy_type)} \\
+    --dataset_repo_id={shlex.quote(dataset_repo_id)} \\
+    --steps={steps} \\
+    --batch_size={batch_size} \\
+    --num_workers="$NUM_WORKERS" \\
+    --warmup_steps={warmup_steps} \\
+    --skip_first={skip_first} \\
+    --warmup={warmup} \\
+    --active={active} \\
+    --output_dir="$OUTPUT_DIR" \\
+    --device=cuda{compile_arg}
+
+python3 <<'PYUPLOAD'
+import os
+import pathlib
+from urllib.parse import urlparse
+
+import boto3
+
+output_path = os.environ["NPA_OUTPUT_PATH"]
+parsed = urlparse(output_path)
+if parsed.scheme != "s3" or not parsed.netloc:
+    raise SystemExit(f"NPA_OUTPUT_PATH must be s3:// URI, got: {{output_path}}")
+prefix = parsed.path.strip("/")
+prefix_with_slash = prefix + "/" if prefix else ""
+output_dir = pathlib.Path(os.environ["OUTPUT_DIR"])
+s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None)
+count = 0
+for path in output_dir.rglob("*"):
+    if path.is_file():
+        key = prefix_with_slash + str(path.relative_to(output_dir))
+        s3.upload_file(str(path), parsed.netloc, key)
+        print(f"uploaded s3://{{parsed.netloc}}/{{key}}", flush=True)
+        count += 1
+print(f"NPA_PROFILE_UPLOAD_COMPLETE files={{count}}", flush=True)
+PYUPLOAD
+
+echo NPA_PROFILE_COMPLETE
+"""
+    wrapped = _remote_bash(command)
+    if len(wrapped) > 32_000:
+        raise ValueError(
+            f"Embedded profile-train command is {len(wrapped)} characters after compression; "
+            "Nebius Serverless currently accepts at most about 32768 characters. "
+            "Use a smaller script or add transient object storage upload support."
+        )
+    return wrapped
 
 
 def _train_serverless(
@@ -822,6 +964,7 @@ def _train_serverless(
             output_path=out,
             env=safe_env,
             extra_env=extra_env,
+            preset=_lerobot_serverless_gpu_preset(platform, gpu_count or 1),
         )
         if not submit_only:
             info = client.poll_job(
@@ -846,6 +989,175 @@ def _train_serverless(
         image=resolved_image,
         gpu_type=platform,
         gpu_count=gpu_count or 1,
+        subnet_id=subnet,
+        output_path=out,
+        last_status=info.status,
+        last_submitted_at=submitted_at,
+    )
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+
+
+def _profile_train_serverless(
+    *,
+    proj_alias: str,
+    wb_name: str,
+    project_id: str,
+    image: str,
+    script: Path,
+    mode: str,
+    policy_type: str,
+    dataset_repo_id: str,
+    steps: int,
+    batch_size: int,
+    num_workers: int,
+    warmup_steps: int,
+    skip_first: int,
+    warmup: int,
+    active: int,
+    compile_model: bool,
+    gpu_type: str,
+    gpu_count: int,
+    subnet_id: str,
+    job_name: str,
+    output_path: str,
+    submit_only: bool,
+    poll_interval: float,
+    wait_timeout: int,
+    output: OutputFormat,
+) -> None:
+    if mode not in ("wallclock", "profiler", "inference"):
+        _fail(f"Invalid --mode: {mode} (choose from: wallclock, profiler, inference)")
+    if steps <= 0:
+        _fail(f"--steps must be positive, got {steps}")
+    if warmup_steps < 0:
+        _fail(f"--warmup-steps must be >= 0, got {warmup_steps}")
+    if steps <= warmup_steps and mode in {"wallclock", "inference"}:
+        _fail(f"--steps ({steps}) must be greater than --warmup-steps ({warmup_steps})")
+    if gpu_count < 1:
+        _fail(f"--gpu-count must be positive for serverless profile-train, got {gpu_count}")
+    if not dataset_repo_id:
+        _fail("LeRobot profile-train --runtime serverless requires --dataset-repo-id.")
+    if not policy_type:
+        _fail("LeRobot profile-train --runtime serverless requires --policy-type.")
+    if not output_path:
+        _fail("LeRobot profile-train --runtime serverless requires --output-path.")
+    if not output_path.startswith("s3://"):
+        _fail("LeRobot profile-train --output-path expects an S3 URI for serverless jobs.")
+    if not script.exists() or not script.is_file():
+        _fail(f"LeRobot profile-train script not found: {script}")
+
+    resolved_project_id = project_id
+    if not resolved_project_id:
+        env_cfg = resolve_environment(proj_alias)
+        resolved_project_id = env_cfg.project_id if env_cfg else ""
+    if not resolved_project_id:
+        _fail("LeRobot profile-train --runtime serverless requires a Nebius project ID.")
+
+    _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
+    name = job_name or _lerobot_serverless_job_name(wb_name)
+    out = output_path.rstrip("/") + "/"
+    client = ServerlessClient()
+    platform = _lerobot_gpu_platform(gpu_type)
+    resolved_image = image or container_image_for_tool("lerobot", registry=resolve_container_registry(proj_alias))
+
+    try:
+        existing = client.get_job(name, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    subnet = subnet_id or _lerobot_serverless_train_subnet_id(resolved_project_id, proj_alias, wb_name)
+
+    if existing is not None:
+        info = existing
+        if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
+            info = client.poll_job(
+                existing.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=wait_timeout,
+            )
+        update_workbench_serverless_job(
+            proj_alias,
+            wb_name,
+            job_id=info.id,
+            job_name=info.name,
+            project_id=resolved_project_id,
+            image=resolved_image,
+            gpu_type=platform,
+            gpu_count=gpu_count,
+            subnet_id=subnet,
+            output_path=out,
+            last_status=info.status,
+            last_submitted_at=submitted_at,
+        )
+        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        return
+
+    storage = resolve_project_storage(proj_alias)
+    credentials = resolve_credentials()
+    env = _lerobot_serverless_job_env(
+        credentials.hf_token,
+        storage.aws_access_key_id or credentials.s3_access_key_id,
+        storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        out,
+        s3_endpoint=storage.endpoint_url or credentials.s3_endpoint,
+    )
+    env["NPA_JOB_NAME"] = name
+    safe_env, extra_env = _split_serverless_env(env)
+    job_timeout = f"{max(1, int((wait_timeout + 3599) // 3600))}h"
+    try:
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name,
+            image=resolved_image,
+            command=_lerobot_profile_train_container_command(
+                script_path=script,
+                mode=mode,
+                policy_type=policy_type,
+                dataset_repo_id=dataset_repo_id,
+                steps=steps,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                warmup_steps=warmup_steps,
+                output_path=out,
+                compile_model=compile_model,
+                skip_first=skip_first,
+                warmup=warmup,
+                active=active,
+            ),
+            gpu_type=platform,
+            gpu_count=gpu_count,
+            subnet_id=subnet,
+            output_path=out,
+            env=safe_env,
+            extra_env=extra_env,
+            timeout=job_timeout,
+            preset=_lerobot_serverless_gpu_preset(platform, gpu_count),
+        )
+        if not submit_only:
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=wait_timeout,
+            )
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail_serverless(exc, output)
+    except TimeoutError as exc:
+        _fail(str(exc))
+
+    update_workbench_serverless_job(
+        proj_alias,
+        wb_name,
+        job_id=info.id,
+        job_name=info.name,
+        project_id=resolved_project_id,
+        image=resolved_image,
+        gpu_type=platform,
+        gpu_count=gpu_count,
         subnet_id=subnet,
         output_path=out,
         last_status=info.status,
@@ -2423,11 +2735,14 @@ def benchmark_cmd(
 
 @app.command("profile-train")
 def profile_train_cmd(
-    run: list[str] = typer.Option(
-        ..., "--run", "-r",
+    run: list[str] | None = typer.Option(
+        None, "--run", "-r",
         help="Training spec as POLICY:DATASET:STEPS (repeatable).",
     ),
     mode: str = typer.Option("wallclock", "--mode", "-m", help="Measurement mode: wallclock, profiler, or inference."),
+    policy_type: str = typer.Option("", "--policy-type", help="Policy type for --runtime serverless."),
+    dataset_repo_id: str = typer.Option("", "--dataset-repo-id", help="HF dataset repo ID for --runtime serverless."),
+    steps: int = typer.Option(100, "--steps", help="Training steps for --runtime serverless."),
     compile_model: bool = typer.Option(False, "--compile", help="Apply torch.compile to the policy model."),
     num_workers: int = typer.Option(0, "--num-workers", "-w", help="Dataloader num_workers (0 = max CPUs)."),
     batch_size: int = typer.Option(8, "--batch-size", help="Batch size."),
@@ -2435,15 +2750,35 @@ def profile_train_cmd(
     skip_first: int = typer.Option(10, "--skip-first", help="(profiler mode) Profiler schedule skip_first."),
     warmup: int = typer.Option(5, "--warmup", help="(profiler mode) Profiler schedule warmup."),
     active: int = typer.Option(50, "--active", help="(profiler mode) Profiler schedule active."),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime backend: vm, container, byovm, or serverless."),
+    script: Path | None = typer.Option(
+        None,
+        "--script",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Path to local profile script to execute. Required for --runtime serverless. "
+            "Defaults to research/lerobot-deploy/training/profile_train.py if not specified."
+        ),
+    ),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID override for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image override for serverless Jobs."),
+    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs (h200, b300, l40s, gpu-rtx-pro-6000, or Nebius platform)."),
+    gpu_count: int = typer.Option(1, "--gpu-count", help="Number of GPUs for serverless Jobs."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Subnet ID for serverless Jobs (auto-discovered if omitted)."),
+    job_name: str = typer.Option("", "--job-name", help="Unique serverless Job name."),
+    output_path: str = typer.Option("", "--output-path", help="S3 URI where profile artifacts are written for serverless Jobs."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit Job and return immediately without polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless Job status checks."),
+    wait_timeout: int = typer.Option(5400, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Profile training on the VM. Modes: wallclock (throughput, no overhead), profiler (torch.profiler stage breakdown), or inference (forward-only latency at batch_size=1)."""
+    """Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference."""
     import base64
 
-    cfg = _get_config()
-    from npa.clients.ssh import SSHClient, SSHError
-
-    ssh = SSHClient(cfg.ssh)
     stream = output != OutputFormat.json
 
     # Inference mode measures single-sample latency — force batch_size=1.
@@ -2452,9 +2787,64 @@ def profile_train_cmd(
             console.print(f"  [yellow]Note: inference mode overrides batch_size={batch_size} → 1[/yellow]")
         batch_size = 1
 
+    run_specs = run or []
+
+    if is_serverless_runtime(runtime):
+        if run_specs:
+            if len(run_specs) != 1:
+                _fail("LeRobot profile-train --runtime serverless accepts exactly one --run spec.")
+            parts = run_specs[0].split(":")
+            if len(parts) != 3:
+                _fail(f"Invalid --run format: '{run_specs[0]}' (expected POLICY:DATASET:STEPS)")
+            if not policy_type:
+                policy_type = parts[0]
+            if not dataset_repo_id:
+                dataset_repo_id = parts[1]
+            try:
+                steps = int(parts[2])
+            except ValueError:
+                _fail(f"Invalid STEPS value in --run '{run_specs[0]}': '{parts[2]}' is not an integer")
+                return
+        script_path = script or _default_lerobot_profile_script_path()
+        _profile_train_serverless(
+            proj_alias=_project_alias or default_project_name(),
+            wb_name=_workbench_name or default_workbench_name(),
+            project_id=project_id,
+            image=image,
+            script=script_path,
+            mode=mode,
+            policy_type=policy_type,
+            dataset_repo_id=dataset_repo_id,
+            steps=steps,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            warmup_steps=warmup_steps,
+            skip_first=skip_first,
+            warmup=warmup,
+            active=active,
+            compile_model=compile_model,
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            subnet_id=subnet_id,
+            job_name=job_name,
+            output_path=output_path,
+            submit_only=submit_only,
+            poll_interval=poll_interval,
+            wait_timeout=wait_timeout,
+            output=output,
+        )
+        return
+
+    cfg = _get_config(runtime=runtime.value) if runtime != WorkbenchRuntime.vm else _get_config()
+    from npa.clients.ssh import SSHClient, SSHError
+
+    ssh = SSHClient(cfg.ssh)
+
     # Parse run specs
     specs: list[dict[str, Any]] = []
-    for r in run:
+    if not run_specs:
+        _fail("LeRobot profile-train requires at least one --run spec unless --runtime serverless is used.")
+    for r in run_specs:
         parts = r.split(":")
         if len(parts) != 3:
             _fail(f"Invalid --run format: '{r}' (expected POLICY:DATASET:STEPS)")

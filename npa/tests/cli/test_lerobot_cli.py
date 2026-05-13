@@ -5,9 +5,14 @@ this file so targeted runs match the per-tool naming convention used by the
 other workbench tools.
 """
 
+import base64
+import gzip
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
+
+import pytest
 
 from npa.cli.workbench import lerobot
 from npa.clients.config import ServerlessJobConfig, StorageConfig
@@ -32,6 +37,50 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
     client.poll_job.return_value = JobInfo(
         id="job-1",
         name="train-1",
+        project_id="project-1",
+        status=poll_status,
+    )
+    mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
+    mocker.patch("npa.cli.workbench.lerobot.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_credentials",
+        return_value=SimpleNamespace(
+            hf_token="hf-token",
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="",
+        ),
+    )
+    mocker.patch("npa.cli.workbench.lerobot.resolve_container_registry", return_value="registry.example/npa")
+    mocker.patch("npa.cli.workbench.lerobot._lerobot_serverless_train_subnet_id", return_value="vpcsubnet-1")
+    update = mocker.patch("npa.cli.workbench.lerobot.update_workbench_serverless_job")
+    return client, update
+
+
+def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"):
+    client = mocker.Mock()
+    if existing is None:
+        client.get_job.side_effect = EndpointNotFoundError("missing")
+    else:
+        client.get_job.return_value = existing
+    client.create_job.return_value = JobInfo(
+        id="job-1",
+        name="profile-1",
+        project_id="project-1",
+        status="queued",
+    )
+    client.poll_job.return_value = JobInfo(
+        id="job-1",
+        name="profile-1",
         project_id="project-1",
         status=poll_status,
     )
@@ -86,6 +135,49 @@ def _serverless_train_args(*extra: str) -> list[str]:
         "0",
         "--gpu-count",
         "1",
+        "--output-path",
+        "s3://bucket/out/",
+        "--output",
+        "json",
+        *extra,
+    ]
+
+
+def _serverless_profile_args(script: Path, *extra: str) -> list[str]:
+    return [
+        "workbench",
+        "lerobot",
+        "-p",
+        "proj",
+        "-n",
+        "lerobot",
+        "profile-train",
+        "--runtime",
+        "serverless",
+        "--project-id",
+        "project-1",
+        "--script",
+        str(script),
+        "--mode",
+        "wallclock",
+        "--policy-type",
+        "act",
+        "--dataset-repo-id",
+        "lerobot/pusht",
+        "--steps",
+        "7",
+        "--batch-size",
+        "2",
+        "--num-workers",
+        "0",
+        "--warmup-steps",
+        "1",
+        "--gpu-type",
+        "h200",
+        "--gpu-count",
+        "1",
+        "--job-name",
+        "profile-1",
         "--output-path",
         "s3://bucket/out/",
         "--output",
@@ -208,7 +300,10 @@ def test_lerobot_status_json_includes_queue_state_classification(mocker) -> None
 def test_lerobot_gpu_platform_aliases() -> None:
     assert lerobot._lerobot_gpu_platform("h200") == "gpu-h200-sxm"
     assert lerobot._lerobot_gpu_platform("b300") == "gpu-b300-sxm"
+    assert lerobot._lerobot_gpu_platform("gpu-rtx-pro-6000") == "gpu-rtx6000"
     assert lerobot._lerobot_gpu_platform("gpu-h100-sxm") == "gpu-h100-sxm"
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-b300-sxm", 1) == "1gpu-24vcpu-346gb"
+    assert lerobot._lerobot_serverless_gpu_preset("gpu-rtx6000", 1) == "1gpu-24vcpu-218gb"
 
 
 def test_lerobot_train_container_command_uses_smoke_settings() -> None:
@@ -394,6 +489,142 @@ def test_lerobot_train_serverless_b300_diffusion_warning(mocker) -> None:
     assert result.exit_code == 0, result.output
     assert "B300 is ~2.5x slower than H200 on Diffusion Policy" in result.output
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-b300-sxm"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-24vcpu-346gb"
+
+
+def test_profile_train_serverless_requires_output_path(tmp_path: Path, mocker) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+    _mock_serverless_profile(mocker)
+    args = _serverless_profile_args(script)
+    del args[args.index("--output-path"): args.index("--output-path") + 2]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert "requires --output-path" in result.output
+
+
+def test_profile_train_serverless_default_script_path(tmp_path: Path, mocker) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+    client, _update = _mock_serverless_profile(mocker)
+    mocker.patch("npa.cli.workbench.lerobot._default_lerobot_profile_script_path", return_value=script)
+    args = _serverless_profile_args(script, "--submit-only")
+    del args[args.index("--script"): args.index("--script") + 2]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["status"] == "submitted"
+    assert "/tmp/profile_train.py" in client.create_job.call_args.kwargs["command"]
+
+
+def test_profile_train_serverless_inline_embeds_script(tmp_path: Path) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('embedded profile')\n")
+
+    command = lerobot._lerobot_profile_train_container_command(
+        script_path=script,
+        mode="wallclock",
+        policy_type="act",
+        dataset_repo_id="lerobot/pusht",
+        steps=7,
+        batch_size=2,
+        num_workers=1,
+        warmup_steps=1,
+        output_path="s3://bucket/out/",
+    )
+
+    assert base64.b64encode(gzip.compress(script.read_bytes())).decode("ascii") in command
+    assert "base64 -d | gzip -dc > /tmp/profile_train.py" in command
+    assert "NPA_PROFILE_COMPLETE" in command
+
+
+def test_profile_train_serverless_num_workers_zero_resolves_to_nproc(tmp_path: Path) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+
+    command = lerobot._lerobot_profile_train_container_command(
+        script_path=script,
+        mode="wallclock",
+        policy_type="act",
+        dataset_repo_id="lerobot/pusht",
+        steps=7,
+        batch_size=2,
+        num_workers=0,
+        warmup_steps=1,
+        output_path="s3://bucket/out/",
+    )
+
+    assert "NUM_WORKERS=0" in command
+    assert "NUM_WORKERS=$(nproc)" in command
+    assert '--num_workers="$NUM_WORKERS"' in command
+
+
+def test_profile_train_serverless_validates_s3_scheme(tmp_path: Path) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+
+    with pytest.raises(ValueError, match="must start with s3://"):
+        lerobot._lerobot_profile_train_container_command(
+            script_path=script,
+            mode="wallclock",
+            policy_type="act",
+            dataset_repo_id="lerobot/pusht",
+            steps=7,
+            batch_size=2,
+            num_workers=1,
+            warmup_steps=1,
+            output_path="/tmp/out",
+        )
+
+
+def test_profile_train_serverless_warns_b300_diffusion(tmp_path: Path, mocker) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+    client, _update = _mock_serverless_profile(mocker)
+    args = _serverless_profile_args(script, "--submit-only", "--gpu-type", "b300")
+    args[args.index("--policy-type") + 1] = "diffusion"
+    args[args.index("--output") + 1] = "text"
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert "B300 is ~2.5x slower than H200 on Diffusion Policy" in result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-b300-sxm"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-24vcpu-346gb"
+
+
+def test_profile_train_serverless_script_size_limit(tmp_path: Path) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_bytes(b"x" * 100_001)
+
+    with pytest.raises(ValueError, match="inline embed supports up to 100KB"):
+        lerobot._lerobot_profile_train_container_command(
+            script_path=script,
+            mode="wallclock",
+            policy_type="act",
+            dataset_repo_id="lerobot/pusht",
+            steps=7,
+            batch_size=2,
+            num_workers=1,
+            warmup_steps=1,
+            output_path="s3://bucket/out/",
+        )
+
+
+def test_profile_train_serverless_submit_only(tmp_path: Path, mocker) -> None:
+    script = tmp_path / "profile_train.py"
+    script.write_text("print('profile')\n")
+    client, update = _mock_serverless_profile(mocker)
+
+    result = runner.invoke(app, _serverless_profile_args(script, "--submit-only"))
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["status"] == "submitted"
+    client.poll_job.assert_not_called()
+    update.assert_called_once()
 
 
 def test_lerobot_train_default_runtime_still_uses_ssh(mocker) -> None:
