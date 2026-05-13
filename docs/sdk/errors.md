@@ -4,6 +4,27 @@ The serverless SDK exposes typed exceptions from
 `npa.clients.serverless`. Existing exception class names are stable and
 `str(exc)` returns only the message for backward compatibility.
 
+## Installation and import
+
+The SDK ships with the `npa` package:
+
+```bash
+pip install npa  # or via your team's internal package source
+```
+
+Import typed exceptions from `npa.clients.serverless`:
+
+```python
+from npa.clients.serverless import (
+    ServerlessClient,
+    ServerlessClientError,
+    NotEnoughResourcesError,
+    QuotaError,
+    AuthError,
+    EndpointNotFoundError,
+)
+```
+
 ## Exception hierarchy
 
 ```text
