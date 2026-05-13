@@ -590,6 +590,36 @@ def _lerobot_serverless_job_env(
     return {key: value for key, value in env.items() if value}
 
 
+def _s3_bucket_name(uri: str) -> str:
+    if not uri:
+        return ""
+    normalized = uri if uri.startswith("s3://") else f"s3://{uri.lstrip('/')}"
+    return urlparse(normalized).netloc
+
+
+def _serverless_storage_env_values(storage: Any, credentials: Any, output_path: str) -> tuple[str, str, str]:
+    storage_bucket = _s3_bucket_name(getattr(storage, "checkpoint_bucket", ""))
+    output_bucket = _s3_bucket_name(output_path)
+    use_credentials_storage = bool(
+        output_bucket
+        and storage_bucket
+        and output_bucket != storage_bucket
+        and getattr(credentials, "s3_access_key_id", "")
+        and getattr(credentials, "s3_secret_access_key", "")
+    )
+    if use_credentials_storage:
+        return (
+            str(getattr(credentials, "s3_access_key_id", "")),
+            str(getattr(credentials, "s3_secret_access_key", "")),
+            str(getattr(credentials, "s3_endpoint", "") or getattr(storage, "endpoint_url", "")),
+        )
+    return (
+        str(getattr(storage, "aws_access_key_id", "") or getattr(credentials, "s3_access_key_id", "")),
+        str(getattr(storage, "aws_secret_access_key", "") or getattr(credentials, "s3_secret_access_key", "")),
+        str(getattr(storage, "endpoint_url", "") or getattr(credentials, "s3_endpoint", "")),
+    )
+
+
 def _split_serverless_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     secret_names = {
         "HF_TOKEN",
@@ -930,12 +960,13 @@ def _train_serverless(
 
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
+    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
-        storage.aws_access_key_id or credentials.s3_access_key_id,
-        storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        s3_access_key,
+        s3_secret_key,
         out,
-        s3_endpoint=storage.endpoint_url or credentials.s3_endpoint,
+        s3_endpoint=s3_endpoint,
     )
     env["NPA_JOB_NAME"] = name
     safe_env, extra_env = _split_serverless_env(env)
@@ -1096,12 +1127,13 @@ def _profile_train_serverless(
 
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
+    s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
-        storage.aws_access_key_id or credentials.s3_access_key_id,
-        storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        s3_access_key,
+        s3_secret_key,
         out,
-        s3_endpoint=storage.endpoint_url or credentials.s3_endpoint,
+        s3_endpoint=s3_endpoint,
     )
     env["NPA_JOB_NAME"] = name
     safe_env, extra_env = _split_serverless_env(env)
