@@ -31,6 +31,7 @@ from npa.cli.main import app
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
+from npa.clients.serverless import EndpointNotFoundError
 from npa.clients.ssh import SSHError
 
 
@@ -1432,6 +1433,93 @@ def test_groot_infer_rejects_invalid_steps() -> None:
 
     assert result.exit_code == 1
     assert "--steps must be positive" in result.output
+
+
+def _mock_groot_serverless_env(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.groot.resolve_project_storage",
+        return_value=SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.groot.resolve_container_registry", return_value="registry.example")
+    mocker.patch("npa.cli.groot.container_image_for_tool", return_value="registry.example/npa-groot:smoke")
+    mocker.patch("npa.cli.groot._serverless_subnet_id", return_value="vpcsubnet-auto")
+
+
+def test_groot_serverless_requires_output_path() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "infer",
+            "--runtime", "serverless",
+            "--input-path", "s3://bucket/checkpoint/",
+            "--dataset-path", "s3://bucket/dataset/",
+            "--output-path", "file:///tmp/out",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "expects an S3 URI" in result.output
+
+
+def test_groot_serverless_uses_shared_env_builder(mocker) -> None:
+    _mock_groot_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="groot-job", status="running", output_uris=())
+    mocker.patch("npa.cli.groot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "infer",
+            "--runtime", "serverless",
+            "--input-path", "s3://bucket/checkpoint/",
+            "--dataset-path", "s3://bucket/dataset/",
+            "--output-path", "s3://bucket/groot/",
+            "--submit-only", "--job-name", "groot-job", "--output", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["job_id"] == "job-1"
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["env"]["NPA_OUTPUT_PATH"] == "s3://bucket/groot/"
+    assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+
+
+def test_groot_serverless_with_model_variant_arg(mocker) -> None:
+    _mock_groot_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="groot-job", status="running", output_uris=())
+    mocker.patch("npa.cli.groot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "infer",
+            "--runtime", "serverless",
+            "--input-path", "s3://bucket/checkpoint/",
+            "--dataset-path", "s3://bucket/dataset/",
+            "--output-path", "s3://bucket/groot/",
+            "--model-variant", "nvidia/GR00T-N1.7-3B",
+            "--submit-only", "--job-name", "groot-job",
+        ],
+    )
+
+    assert result.exit_code == 0
+    command = client.create_job.call_args.kwargs["command"]
+    assert "nvidia/GR00T-N1.7-3B" in command
+    assert "PYUPLOAD" in command
 
 
 def test_groot_convert_dispatches_lerobot_to_groot(tmp_path: Path, mocker) -> None:

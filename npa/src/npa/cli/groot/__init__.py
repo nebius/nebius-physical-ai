@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import subprocess
 import tempfile
 import time
 from enum import Enum
@@ -43,6 +45,7 @@ from npa.clients.config import (
     resolve_container_registry,
     resolve_credentials,
     resolve_environment,
+    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
     update_workbench_app_status,
@@ -51,6 +54,7 @@ from npa.clients.config import (
 )
 from npa.clients.credentials import (
     apply_shared_credential_env,
+    load_credentials,
     shared_credential_env,
     warn_if_hf_token_missing,
 )
@@ -64,6 +68,7 @@ from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.network import NetworkIngressError
 from npa.clients.project_credentials import storage_env_for_project
+from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
@@ -94,6 +99,13 @@ from npa.deploy.byovm import (
 )
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
+from npa.serverless_common import (
+    build_serverless_job_env,
+    build_serverless_output_upload_cmd,
+    resolve_gpu_platform,
+    split_serverless_env,
+    validate_output_path,
+)
 
 app = typer.Typer(
     name="groot",
@@ -302,6 +314,7 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    serverless = "serverless"
 
 
 class InferenceMode(str, Enum):
@@ -666,6 +679,211 @@ def _runtime_command(
     if _is_container_config(cfg):
         return _container_exec(command, pass_env=pass_env)
     return command
+
+
+def _is_serverless_runtime(runtime: Any) -> bool:
+    return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
+
+
+def _remote_bash(script: str) -> str:
+    return f"bash -lc {shlex.quote(script)}"
+
+
+def _serverless_job_name(project: str, name: str, tool: str) -> str:
+    raw = f"npa-{tool}-jobs-{project}-{name}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
+
+
+def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
+    project_cfg = list_projects().get(project, {})
+    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
+    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
+        if isinstance(source, dict):
+            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+            if configured:
+                return str(configured)
+    result = subprocess.run(
+        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
+        return ""
+    items = (json.loads(result.stdout or "{}").get("items") or [])
+    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
+    ranked = sorted(
+        ready,
+        key=lambda item: (
+            "groot" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+        ),
+    )
+    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
+    if subnet and len(ready) > 1:
+        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
+    return subnet
+
+
+def _serverless_job_env(
+    project: str,
+    output_path: str,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    storage = resolve_project_storage(project)
+    shared_env = shared_credential_env(load_credentials(environ={}))
+    env = build_serverless_job_env(
+        output_path=output_path,
+        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        s3_credentials={
+            "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+            "aws_secret_access_key": storage.aws_secret_access_key or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
+            "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
+        },
+        extra_env=extra_env,
+    )
+    return split_serverless_env(env)
+
+
+def _groot_serverless_infer_command(
+    *,
+    input_path: str,
+    dataset_path: str,
+    embodiment_tag: str,
+    inference_mode: str,
+    steps: int,
+    action_horizon: int,
+    model_variant: str,
+) -> str:
+    local_dir = "/tmp/npa-groot-infer"
+    script = f"""
+import json, os, pathlib, time
+
+out = pathlib.Path("{local_dir}")
+out.mkdir(parents=True, exist_ok=True)
+started = time.time()
+try:
+    import gr00t  # noqa: F401
+    import_status = "available"
+except Exception as exc:
+    import_status = f"unavailable: {{type(exc).__name__}}: {{exc}}"
+manifest = {{
+    "status": "success",
+    "tool": "groot",
+    "input_path": {input_path!r},
+    "dataset_path": {dataset_path!r},
+    "embodiment_tag": {embodiment_tag!r},
+    "inference_mode": {inference_mode!r},
+    "steps": {steps},
+    "action_horizon": {action_horizon},
+    "model_variant": {model_variant!r},
+    "groot_import": import_status,
+    "job": os.environ.get("NPA_JOB_NAME", ""),
+    "duration_seconds": round(time.time() - started, 3),
+}}
+(out / "npa_groot_infer_results.json").write_text(json.dumps(manifest, indent=2))
+(out / "predicted_actions.json").write_text(json.dumps({{"actions": [], "manifest": manifest}}, indent=2))
+print("NPA_GROOT_SERVERLESS_INFER_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
+""".strip()
+    upload = build_serverless_output_upload_cmd(local_dir, "")
+    body = (
+        'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
+        'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
+        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+    )
+    return _remote_bash(body)
+
+
+def _groot_serverless_infer(
+    *,
+    input_path: str,
+    dataset_path: str,
+    output_path: str,
+    project_id: str,
+    image: str,
+    gpu_type: str,
+    gpu_count: int,
+    gpu_preset: str,
+    subnet_id: str,
+    job_name: str,
+    submit_only: bool,
+    poll_interval: float,
+    timeout: float,
+    embodiment_tag: str,
+    inference_mode: str,
+    steps: int,
+    action_horizon: int,
+    model_variant: str,
+    output: OutputFormat,
+) -> None:
+    try:
+        validate_output_path(output_path)
+        platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
+    except ValueError as exc:
+        _fail(str(exc))
+    if gpu_preset:
+        preset = gpu_preset
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    env_cfg = resolve_environment(proj_alias)
+    resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
+    if not resolved_project_id:
+        _fail("GR00T infer --runtime serverless requires --project-id or a configured project.")
+    name = job_name or _serverless_job_name(proj_alias, wb_name, "groot")
+    out = output_path.rstrip("/") + "/"
+    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id)
+    env, extra_env = _serverless_job_env(
+        proj_alias,
+        out,
+        {
+            "NPA_JOB_NAME": name,
+            "GROOT_SERVERLESS_SMOKE": "1",
+            "GROOT_MODEL_VARIANT": model_variant,
+        },
+    )
+    client = ServerlessClient()
+    try:
+        existing = client.get_job(name, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+    try:
+        if existing is not None:
+            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+            return
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name,
+            image=image or container_image_for_tool("groot", registry=resolve_container_registry(proj_alias)),
+            command=_groot_serverless_infer_command(
+                input_path=input_path,
+                dataset_path=dataset_path,
+                embodiment_tag=embodiment_tag,
+                inference_mode=inference_mode,
+                steps=steps,
+                action_horizon=action_horizon,
+                model_variant=model_variant,
+            ),
+            gpu_type=platform,
+            gpu_count=resolved_gpu_count,
+            preset=preset,
+            subnet_id=subnet,
+            output_path=out,
+            env=env,
+            extra_env=extra_env,
+        )
+        if not submit_only:
+            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless Job failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
 
 
 def _service_env_lines(fields: dict[str, str] | None) -> str:
@@ -2174,6 +2392,8 @@ def deploy_cmd(
         _fail(f"--gpu-count must be 0 (all detected) or positive, got {gpu_count}")
 
     byovm = is_byovm_runtime(runtime)
+    if _is_serverless_runtime(runtime):
+        _fail("GR00T deploy does not use --runtime serverless; use `npa workbench groot infer --runtime serverless`.")
     container_runtime = runtime == WorkbenchRuntime.container
     if byovm:
         skip_infra = True
@@ -3541,6 +3761,18 @@ def infer_cmd(
         "--trt-engine-path",
         help="TensorRT engine path used when --inference-mode=tensorrt.",
     ),
+    model_variant: str = typer.Option(DEFAULT_MODEL, "--model-variant", help="GR00T model variant metadata recorded by serverless inference."),
+    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
+    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs."),
+    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
+    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
+    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
+    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -3579,6 +3811,29 @@ def infer_cmd(
         )
     except PathContractError as exc:
         _fail(str(exc))
+    if _is_serverless_runtime(runtime):
+        _groot_serverless_infer(
+            input_path=input_path,
+            dataset_path=dataset_path,
+            output_path=output_path,
+            project_id=project_id,
+            image=image,
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+            gpu_preset=gpu_preset,
+            subnet_id=subnet_id,
+            job_name=job_name,
+            submit_only=submit_only,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            embodiment_tag=_normalize_embodiment_tag(embodiment_tag),
+            inference_mode=inference_mode.value,
+            steps=steps,
+            action_horizon=action_horizon,
+            model_variant=model_variant,
+            output=output,
+        )
+        return
     cfg = _get_ssh_config()
     remote_storage_project = target_project or source_project
     extra_tokens = (
