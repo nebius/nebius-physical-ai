@@ -857,7 +857,12 @@ def _groot_serverless_infer(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("groot", registry=resolve_container_registry(proj_alias)),
+            image=image
+            or container_image_for_tool(
+                "groot",
+                registry=resolve_container_registry(proj_alias),
+                tag=GROOT_RUNTIME_VERSION,
+            ),
             command=_groot_serverless_infer_command(
                 input_path=input_path,
                 dataset_path=dataset_path,
