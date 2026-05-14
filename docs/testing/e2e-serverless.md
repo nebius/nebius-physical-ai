@@ -341,3 +341,49 @@ place, but the local SONIC image did not build within the three-attempt Phase B
 budget. No L40S job was submitted and no GPU spend was incurred. Re-run the
 serverless smoke after the linux/amd64 image builds and is pushed to the Nebius
 container registry.
+
+## LanceDB S3-backed E2E (VM Downgrade)
+
+The LanceDB e2e test is marked `e2e_serverless` so it stays outside default
+pytest runs with the other real-infrastructure tests. Phase 0 of W7-lancedb-e2e
+found that `npa workbench lancedb deploy --runtime vm --dry-run` is accepted,
+but the non-dry-run VM/BYOVM path currently exits before provisioning. Until
+managed VM provisioning is wired, the test exercises the real public CLI with
+the container runtime and Nebius S3-backed storage.
+
+Run:
+
+```bash
+export NPA_INTEGRATION_E2E=1
+export NPA_E2E_SERVERLESS_PROJECT=YOUR_PROJECT_ID
+export NPA_E2E_PROJECT=eu-north1
+
+npa/.venv/bin/pytest npa/tests/e2e/test_lancedb_e2e.py -m e2e_serverless -k lancedb -v
+```
+
+Resources used:
+
+- Project: `YOUR_PROJECT_ID` (`eu-north1`)
+- Runtime: local Docker container, image `npa-lancedb:0.30.2`
+- S3 bucket: `YOUR_S3_BUCKET`
+- Storage prefix: `s3://YOUR_S3_BUCKET/w7lancedb-e2e-<timestamp>-<id>/db/`
+- Test duration: about 20 seconds when the image is already built
+- Nebius compute cost: $0 for this downgraded path; S3 writes are a few small
+  Lance files
+
+What the test validates:
+
+- Public `npa workbench lancedb` CLI deploys a LanceDB wrapper container
+- Endpoint health check reaches `status: ok`
+- A 100-row, 8-dimensional vector table can be created
+- `list` returns the created table
+- Basic vector query returns nearest-neighbor rows with distance fields
+- Scalar filtered query returns only matching `label = 'robot'` rows
+- LanceDB persists table files to Nebius S3 under a unique prefix
+- Teardown removes the Docker container even if assertions fail after deploy
+
+What remains pending:
+
+- Full `--runtime vm` provisioning on Nebius CPU VM
+- VM endpoint readiness and teardown through the LanceDB deploy command
+- VM orphan-resource verification as part of the test itself
