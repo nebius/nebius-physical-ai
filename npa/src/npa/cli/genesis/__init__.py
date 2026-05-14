@@ -14,7 +14,6 @@ import queue
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -52,9 +51,11 @@ from npa.deploy.byovm import (
 )
 from npa.deploy.images import container_image_for_tool
 from npa.serverless_common import (
+    SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
+    resolve_subnet,
     split_serverless_env,
     validate_output_path,
 )
@@ -133,40 +134,6 @@ def _remote_bash(script: str) -> str:
 def _serverless_job_name(project: str, name: str, tool: str) -> str:
     raw = f"npa-{tool}-jobs-{project}-{name}".lower()
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
-
-
-def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
-    project_cfg = list_projects().get(project, {})
-    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
-    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
-        if isinstance(source, dict):
-            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-            if configured:
-                return str(configured)
-    result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
-        return ""
-    items = (json.loads(result.stdout or "{}").get("items") or [])
-    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
-    ranked = sorted(
-        ready,
-        key=lambda item: (
-            "genesis" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-        ),
-    )
-    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
-    if subnet and len(ready) > 1:
-        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
-    return subnet
 
 
 def _serverless_job_env(
@@ -277,7 +244,13 @@ def _genesis_serverless_train_teacher(
         _fail("Genesis train-teacher --runtime serverless requires --project-id or a configured project.")
     name = job_name or _serverless_job_name(proj_alias, wb_name, "genesis")
     out = output_path.rstrip("/") + "/"
-    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id)
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
     env, extra_env = _serverless_job_env(
         proj_alias,
         out,

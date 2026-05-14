@@ -155,7 +155,7 @@ def test_train_teacher_rejects_bad_n_envs() -> None:
     assert "n-envs must be positive" in result.output
 
 
-def _mock_genesis_serverless_env(mocker) -> None:
+def _mock_genesis_serverless_env(mocker):
     mocker.patch("npa.cli.genesis.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
     mocker.patch(
         "npa.cli.genesis.resolve_project_storage",
@@ -168,7 +168,7 @@ def _mock_genesis_serverless_env(mocker) -> None:
     )
     mocker.patch("npa.cli.genesis.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.genesis.container_image_for_tool", return_value="registry.example/npa-genesis:smoke")
-    mocker.patch("npa.cli.genesis._serverless_subnet_id", return_value="vpcsubnet-auto")
+    return mocker.patch("npa.cli.genesis.resolve_subnet", return_value="vpcsubnet-auto")
 
 
 def test_genesis_serverless_requires_output_path(mocker) -> None:
@@ -187,7 +187,7 @@ def test_genesis_serverless_requires_output_path(mocker) -> None:
 
 
 def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
-    _mock_genesis_serverless_env(mocker)
+    resolver = _mock_genesis_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
     client.create_job.return_value = SimpleNamespace(id="job-1", name="genesis-job", status="running", output_uris=())
@@ -211,6 +211,7 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
 def test_genesis_serverless_warns_non_hopper_gpu_type(mocker) -> None:
