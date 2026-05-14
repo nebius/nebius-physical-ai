@@ -694,7 +694,7 @@ def _serverless_job_name(project: str, name: str, tool: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
 
 
-def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
+def _serverless_subnet_id(project: str, name: str, project_id: str, gpu_type: str = "") -> str:
     projects = list_projects()
     candidates: list[dict[str, Any]] = []
     project_cfg = projects.get(project)
@@ -710,13 +710,23 @@ def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
 
     for project_cfg in candidates:
         workbenches = project_cfg.get("workbenches") if isinstance(project_cfg, dict) else {}
-        wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) and name else {}
+        wb_names = list(dict.fromkeys(filter(None, (name, gpu_type))))
+        wb_sources: list[dict[str, Any]] = []
+        if isinstance(workbenches, dict):
+            for wb_name in wb_names:
+                wb_cfg = workbenches.get(wb_name, {})
+                if isinstance(wb_cfg, dict):
+                    wb_sources.extend(
+                        (
+                            wb_cfg.get("serverless_job", {}),
+                            wb_cfg.get("serverless", {}),
+                            wb_cfg,
+                        )
+                    )
         for source in (
-            wb_cfg.get("serverless_job", {}) if isinstance(wb_cfg, dict) else {},
-            wb_cfg.get("serverless", {}) if isinstance(wb_cfg, dict) else {},
-            wb_cfg,
-            project_cfg.get("serverless_job", {}),
-            project_cfg.get("serverless", {}),
+            *wb_sources,
+            project_cfg.get("serverless_job", {}) if isinstance(project_cfg, dict) else {},
+            project_cfg.get("serverless", {}) if isinstance(project_cfg, dict) else {},
             project_cfg,
         ):
             if isinstance(source, dict):
@@ -855,7 +865,7 @@ def _groot_serverless_infer(
         _fail("GR00T infer --runtime serverless requires --project-id or a configured project.")
     name = job_name or _serverless_job_name(proj_alias, wb_name, "groot")
     out = output_path.rstrip("/") + "/"
-    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id)
+    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id, gpu_type)
     env, extra_env = _serverless_job_env(
         proj_alias,
         out,

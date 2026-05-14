@@ -1452,6 +1452,59 @@ def _mock_groot_serverless_env(mocker):
     return image_for_tool
 
 
+def test_groot_serverless_uses_gpu_workbench_configured_subnet(mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=SimpleNamespace(project_id="YOUR_PROJECT_ID"))
+    mocker.patch(
+        "npa.cli.groot.resolve_project_storage",
+        return_value=SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="https://s3.example",
+            aws_access_key_id="AKIA",
+            aws_secret_access_key="SECRET",
+        ),
+    )
+    mocker.patch("npa.cli.groot.resolve_container_registry", return_value="registry.example")
+    mocker.patch("npa.cli.groot.container_image_for_tool", return_value="registry.example/npa-groot:smoke")
+    mocker.patch(
+        "npa.cli.groot.list_projects",
+        return_value={
+            "eu-north1": {
+                "project_id": "YOUR_PROJECT_ID",
+                "workbenches": {
+                    "h200": {
+                        "serverless_job": {
+                            "subnet_id": "vpcsubnet-e00d59bv87a7a300bw",
+                        }
+                    }
+                },
+            }
+        },
+    )
+    discover = mocker.patch("npa.cli.groot.subprocess.run")
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    client.create_job.return_value = SimpleNamespace(id="job-1", name="groot-job", status="running", output_uris=())
+    mocker.patch("npa.cli.groot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "-p", "eu-north1", "-n", "w7all-retry1", "infer",
+            "--runtime", "serverless",
+            "--project-id", "YOUR_PROJECT_ID",
+            "--input-path", "s3://bucket/checkpoint/",
+            "--dataset-path", "s3://bucket/dataset/",
+            "--output-path", "s3://bucket/groot/",
+            "--gpu-type", "h200",
+            "--submit-only", "--job-name", "groot-job", "--output", "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert client.create_job.call_args.kwargs["subnet_id"] == "vpcsubnet-e00d59bv87a7a300bw"
+    discover.assert_not_called()
+
+
 def test_groot_serverless_requires_output_path() -> None:
     result = runner.invoke(
         app,
