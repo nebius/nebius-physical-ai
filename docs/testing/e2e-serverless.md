@@ -308,3 +308,36 @@ W7-lancedb result: local container smoke passed with 10 rows and an
 8-dimensional query vector. The public parent command still needs the
 Workbench parent Typer registration follow-up; the smoke was run through the
 new LanceDB subapp directly to stay inside the W7-lancedb write allowlist.
+
+## SONIC
+
+SONIC uses Nebius Serverless Jobs for Isaac Lab training smoke. The smoke target
+is a short Unitree G1 run that validates the self-contained SONIC image,
+`gear_sonic`, Isaac Lab imports, and S3 artifact upload:
+
+```bash
+SMOKE_TS=$(date -u +%Y%m%dT%H%M%SZ)
+npa workbench sonic -p uk-south1 -n w7sonic train \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --gpu-type l40s \
+  --gpu-count 1 \
+  --embodiment unitree-g1 \
+  --steps 10 \
+  --output-path s3://YOUR_S3_BUCKET/w7sonic-smoke/$SMOKE_TS/ \
+  --job-name sonic-smoke-$SMOKE_TS \
+  --timeout 3600 \
+  --poll-interval 15
+```
+
+Expected artifacts:
+
+- `sonic_smoke_result.json`
+- `sonic_train_summary.json`
+- `checkpoint_smoke.json`
+
+W7-sonic result: `FAIL_PLATFORM`. The CLI, tests, docs, and Dockerfile are in
+place, but the local SONIC image did not build within the three-attempt Phase B
+budget. No L40S job was submitted and no GPU spend was incurred. Re-run the
+serverless smoke after the linux/amd64 image builds and is pushed to the Nebius
+container registry.

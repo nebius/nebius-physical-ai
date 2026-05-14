@@ -12,6 +12,7 @@ The Workbench supports `--runtime serverless` on these non-LeRobot tools, each b
 | Genesis | `train-teacher` | available | L40S | PASS |
 | GR00T | `infer` | available | H200, L40S retries | SMOKE_FAILED; Nebius handoff |
 | LeRobot | `train`, `profile-train` | available; see [LeRobot cookbook](lerobot-gpu-benchmarks.md) | varies | varies |
+| SONIC | `train` | available; image build blocked | L40S planned | FAIL_PLATFORM; Phase B blocked |
 
 GR00T code and unit coverage are in place, but smoke validation is still open.
 W7p-groot-debug classified the W7-parallel-tools failures as an image tag
