@@ -496,3 +496,21 @@ Outstanding (deferred):
   deferred to a separate run.
 - `lancedb`: Backup and restore commands are deferred to v2; use storage-level
   snapshot or prefix replication for now.
+
+---
+
+## W7-sonic deferred follow-ups
+
+- `sonic`: GR00T+SONIC composition using PolicyServer plus SONIC decoder is
+  deferred to separate orchestration discovery and build.
+- `sonic`: additional embodiments beyond Unitree G1 are deferred until customer
+  signal or hardware availability justifies qualification.
+- `sonic`: NIM distribution path was not confirmed in discovery; the Workbench
+  integration uses the Hugging Face distribution path and should revisit NIM if
+  it becomes the preferred customer path.
+- `sonic`: GR00T cookbook should reference SONIC for the full VLA-to-actuator
+  pipeline pattern in a separate cross-tool documentation update.
+- `sonic`: Dockerfile build is blocked locally after three attempts. The final
+  state pins linux/amd64 for Nebius L40S, but the image still needs an amd64
+  rebuild, C++ deploy dependency validation, and registry push before serverless
+  smoke can run.
