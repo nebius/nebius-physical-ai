@@ -695,13 +695,34 @@ def _serverless_job_name(project: str, name: str, tool: str) -> str:
 
 
 def _serverless_subnet_id(project: str, name: str, project_id: str) -> str:
-    project_cfg = list_projects().get(project, {})
-    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
-    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
-        if isinstance(source, dict):
-            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-            if configured:
-                return str(configured)
+    projects = list_projects()
+    candidates: list[dict[str, Any]] = []
+    project_cfg = projects.get(project)
+    if isinstance(project_cfg, dict):
+        candidates.append(project_cfg)
+    for cfg in projects.values():
+        if (
+            isinstance(cfg, dict)
+            and str(cfg.get("project_id") or "") == project_id
+            and cfg not in candidates
+        ):
+            candidates.append(cfg)
+
+    for project_cfg in candidates:
+        workbenches = project_cfg.get("workbenches") if isinstance(project_cfg, dict) else {}
+        wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) and name else {}
+        for source in (
+            wb_cfg.get("serverless_job", {}) if isinstance(wb_cfg, dict) else {},
+            wb_cfg.get("serverless", {}) if isinstance(wb_cfg, dict) else {},
+            wb_cfg,
+            project_cfg.get("serverless_job", {}),
+            project_cfg.get("serverless", {}),
+            project_cfg,
+        ):
+            if isinstance(source, dict):
+                configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
+                if configured:
+                    return str(configured)
     result = subprocess.run(
         ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
         text=True,
