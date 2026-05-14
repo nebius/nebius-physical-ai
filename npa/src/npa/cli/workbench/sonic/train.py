@@ -43,6 +43,7 @@ import importlib
 import json
 import os
 import pathlib
+import sys
 import time
 
 out = pathlib.Path("{local_dir}")
@@ -56,8 +57,12 @@ def import_state(name):
     except Exception as exc:
         return f"unavailable: {{type(exc).__name__}}: {{exc}}"
 
+gear_sonic_import = import_state("gear_sonic")
+isaaclab_import = import_state("isaaclab")
+isaaclab_app_import = import_state("isaaclab.app")
+ok = all(value == "available" for value in (gear_sonic_import, isaaclab_import, isaaclab_app_import))
 summary = {{
-    "status": "success",
+    "status": "success" if ok else "failed",
     "tool": "sonic",
     "embodiment": {embodiment!r},
     "checkpoint": {checkpoint!r},
@@ -67,8 +72,9 @@ summary = {{
     "headless": {headless},
     "max_iterations": {max_iterations},
     "isaac_lab_version": {isaac_lab_version!r},
-    "gear_sonic_import": import_state("gear_sonic"),
-    "isaaclab_import": import_state("isaaclab"),
+    "gear_sonic_import": gear_sonic_import,
+    "isaaclab_import": isaaclab_import,
+    "isaaclab_app_import": isaaclab_app_import,
     "job": os.environ.get("NPA_JOB_NAME", ""),
     "duration_seconds": round(time.time() - started, 3),
 }}
@@ -76,6 +82,7 @@ summary = {{
 (out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
 (out / "checkpoint_smoke.json").write_text(json.dumps({{"format": "npa_sonic_serverless_smoke_v1", **summary}}, indent=2))
 print("NPA_SONIC_SERVERLESS_TRAIN_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
+sys.exit(0 if ok else 1)
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
@@ -83,7 +90,7 @@ print("NPA_SONIC_SERVERLESS_TRAIN_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), 
         'elif [ -x /opt/isaac-lab/venv/bin/python ]; then NPA_PYTHON_BIN=/opt/isaac-lab/venv/bin/python; '
         'else NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"; fi\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\nsonic_rc=$?\n{upload}\nexit "$sonic_rc"'
     )
     return remote_bash(body)
 

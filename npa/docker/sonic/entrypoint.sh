@@ -65,6 +65,7 @@ import importlib
 import json
 import os
 import pathlib
+import sys
 import time
 
 out = pathlib.Path(${OUTPUT_DIR@Q})
@@ -77,8 +78,16 @@ def import_state(name):
     except Exception as exc:
         return f"unavailable: {type(exc).__name__}: {exc}"
 
+gear_sonic_import = import_state("gear_sonic")
+isaaclab_import = import_state("isaaclab")
+isaaclab_app_import = import_state("isaaclab.app")
+sonic_import_alias = import_state("sonic")
+ok = all(
+    value == "available"
+    for value in (gear_sonic_import, isaaclab_import, isaaclab_app_import, sonic_import_alias)
+)
 summary = {
-    "status": "success",
+    "status": "success" if ok else "failed",
     "tool": "sonic",
     "command": ${command@Q},
     "embodiment": os.environ.get("SONIC_EMBODIMENT", "UNITREE_G1_SONIC"),
@@ -87,14 +96,16 @@ summary = {
     "sample_data": os.environ.get("SONIC_SAMPLE_DATA", "1") == "1",
     "num_envs": int(os.environ.get("SONIC_NUM_ENVS", "16")),
     "steps": int(os.environ.get("SONIC_STEPS", os.environ.get("SONIC_MAX_ITERATIONS", "5"))),
-    "gear_sonic_import": import_state("gear_sonic"),
-    "isaaclab_import": import_state("isaaclab"),
-    "sonic_import_alias": import_state("sonic"),
+    "gear_sonic_import": gear_sonic_import,
+    "isaaclab_import": isaaclab_import,
+    "isaaclab_app_import": isaaclab_app_import,
+    "sonic_import_alias": sonic_import_alias,
     "timestamp": int(time.time()),
 }
 (out / "sonic_smoke_result.json").write_text(json.dumps(summary, indent=2))
 (out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
 print("NPA_SONIC_CONTAINER_SMOKE_DONE", out / "sonic_smoke_result.json", flush=True)
+sys.exit(0 if ok else 1)
 PY
 }
 
@@ -109,10 +120,19 @@ download_sample_data() {
   "$PYTHON_BIN" /opt/sonic/download_from_hf.py --sample "${token_arg[@]}"
 }
 
+write_upload_and_exit() {
+  local command="$1"
+  set +e
+  write_smoke_summary "$command"
+  local rc=$?
+  set -e
+  upload_outputs
+  exit "$rc"
+}
+
 case "$MODE" in
   smoke)
-    write_smoke_summary smoke
-    upload_outputs
+    write_upload_and_exit smoke
     ;;
   train)
     download_sample_data
@@ -127,14 +147,11 @@ case "$MODE" in
         "headless=${SONIC_HEADLESS:-True}" \
         "++algo.config.num_learning_iterations=${SONIC_MAX_ITERATIONS:-5}"
     fi
-    write_smoke_summary train
-    upload_outputs
+    write_upload_and_exit train
     ;;
   serve)
     if [ "${SONIC_SMOKE:-1}" = "1" ]; then
-      write_smoke_summary serve
-      upload_outputs
-      exit 0
+      write_upload_and_exit serve
     fi
     cd /opt/sonic/gear_sonic_deploy
     exec ./deploy.sh "${SONIC_DEPLOY_TARGET:-sim}" "$@"
