@@ -1448,11 +1448,11 @@ def _mock_groot_serverless_env(mocker):
     )
     mocker.patch("npa.cli.groot.resolve_container_registry", return_value="registry.example")
     image_for_tool = mocker.patch("npa.cli.groot.container_image_for_tool", return_value="registry.example/npa-groot:smoke")
-    mocker.patch("npa.cli.groot._serverless_subnet_id", return_value="vpcsubnet-auto")
+    mocker.patch("npa.cli.groot.resolve_subnet", return_value="vpcsubnet-auto")
     return image_for_tool
 
 
-def test_groot_serverless_uses_gpu_workbench_configured_subnet(mocker) -> None:
+def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=SimpleNamespace(project_id="YOUR_PROJECT_ID"))
     mocker.patch(
         "npa.cli.groot.resolve_project_storage",
@@ -1465,22 +1465,7 @@ def test_groot_serverless_uses_gpu_workbench_configured_subnet(mocker) -> None:
     )
     mocker.patch("npa.cli.groot.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.groot.container_image_for_tool", return_value="registry.example/npa-groot:smoke")
-    mocker.patch(
-        "npa.cli.groot.list_projects",
-        return_value={
-            "eu-north1": {
-                "project_id": "YOUR_PROJECT_ID",
-                "workbenches": {
-                    "h200": {
-                        "serverless_job": {
-                            "subnet_id": "vpcsubnet-e00d59bv87a7a300bw",
-                        }
-                    }
-                },
-            }
-        },
-    )
-    discover = mocker.patch("npa.cli.groot.subprocess.run")
+    resolver = mocker.patch("npa.cli.groot.resolve_subnet", return_value="vpcsubnet-e00h9xcpssv53b3y3n")
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
     client.create_job.return_value = SimpleNamespace(id="job-1", name="groot-job", status="running", output_uris=())
@@ -1501,8 +1486,11 @@ def test_groot_serverless_uses_gpu_workbench_configured_subnet(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    assert client.create_job.call_args.kwargs["subnet_id"] == "vpcsubnet-e00d59bv87a7a300bw"
-    discover.assert_not_called()
+    assert client.create_job.call_args.kwargs["subnet_id"] == "vpcsubnet-e00h9xcpssv53b3y3n"
+    resolver.assert_called_once_with(
+        project_id="YOUR_PROJECT_ID",
+        explicit_subnet_id="",
+    )
 
 
 def test_groot_serverless_requires_output_path() -> None:

@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import tempfile
 import time
 from enum import Enum
@@ -100,9 +99,11 @@ from npa.deploy.byovm import (
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 from npa.serverless_common import (
+    SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
+    resolve_subnet,
     split_serverless_env,
     validate_output_path,
 )
@@ -694,71 +695,6 @@ def _serverless_job_name(project: str, name: str, tool: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
 
 
-def _serverless_subnet_id(project: str, name: str, project_id: str, gpu_type: str = "") -> str:
-    projects = list_projects()
-    candidates: list[dict[str, Any]] = []
-    project_cfg = projects.get(project)
-    if isinstance(project_cfg, dict):
-        candidates.append(project_cfg)
-    for cfg in projects.values():
-        if (
-            isinstance(cfg, dict)
-            and str(cfg.get("project_id") or "") == project_id
-            and cfg not in candidates
-        ):
-            candidates.append(cfg)
-
-    for project_cfg in candidates:
-        workbenches = project_cfg.get("workbenches") if isinstance(project_cfg, dict) else {}
-        wb_names = list(dict.fromkeys(filter(None, (name, gpu_type))))
-        wb_sources: list[dict[str, Any]] = []
-        if isinstance(workbenches, dict):
-            for wb_name in wb_names:
-                wb_cfg = workbenches.get(wb_name, {})
-                if isinstance(wb_cfg, dict):
-                    wb_sources.extend(
-                        (
-                            wb_cfg.get("serverless_job", {}),
-                            wb_cfg.get("serverless", {}),
-                            wb_cfg,
-                        )
-                    )
-        for source in (
-            *wb_sources,
-            project_cfg.get("serverless_job", {}) if isinstance(project_cfg, dict) else {},
-            project_cfg.get("serverless", {}) if isinstance(project_cfg, dict) else {},
-            project_cfg,
-        ):
-            if isinstance(source, dict):
-                configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-                if configured:
-                    return str(configured)
-    result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
-        return ""
-    items = (json.loads(result.stdout or "{}").get("items") or [])
-    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
-    ranked = sorted(
-        ready,
-        key=lambda item: (
-            "groot" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-        ),
-    )
-    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
-    if subnet and len(ready) > 1:
-        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
-    return subnet
-
-
 def _serverless_job_env(
     project: str,
     output_path: str,
@@ -865,7 +801,13 @@ def _groot_serverless_infer(
         _fail("GR00T infer --runtime serverless requires --project-id or a configured project.")
     name = job_name or _serverless_job_name(proj_alias, wb_name, "groot")
     out = output_path.rstrip("/") + "/"
-    subnet = subnet_id or _serverless_subnet_id(proj_alias, wb_name, resolved_project_id, gpu_type)
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
     env, extra_env = _serverless_job_env(
         proj_alias,
         out,
