@@ -13,6 +13,7 @@ CONTAINER_IMAGE_NAMES = {
     "cosmos": "npa-cosmos",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
+    "sonic": "npa-sonic",
 }
 
 
