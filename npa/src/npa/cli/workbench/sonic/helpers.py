@@ -7,7 +7,6 @@ from enum import Enum
 import json
 import re
 import shlex
-import subprocess
 from typing import Any
 
 import typer
@@ -192,40 +191,6 @@ def serverless_job_name(project: str, name: str, tool: str = "sonic") -> str:
 
 def remote_bash(script: str) -> str:
     return f"bash -lc {shlex.quote(script)}"
-
-
-def serverless_subnet_id(project: str, name: str, project_id: str) -> str:
-    project_cfg = list_projects().get(project, {})
-    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
-    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
-        if isinstance(source, dict):
-            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-            if configured:
-                return str(configured)
-    result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
-        return ""
-    items = (json.loads(result.stdout or "{}").get("items") or [])
-    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
-    ranked = sorted(
-        ready,
-        key=lambda item: (
-            "sonic" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-        ),
-    )
-    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
-    if subnet and len(ready) > 1:
-        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
-    return subnet
 
 
 def serverless_job_env(

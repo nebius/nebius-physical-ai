@@ -16,11 +16,16 @@ from npa.cli.workbench.sonic.helpers import (
     resolve_project_id,
     serverless_job_env,
     serverless_job_name,
-    serverless_subnet_id,
     sonic_image,
 )
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
-from npa.serverless_common import build_serverless_output_upload_cmd, resolve_gpu_platform, validate_output_path
+from npa.serverless_common import (
+    SubnetResolutionError,
+    build_serverless_output_upload_cmd,
+    resolve_gpu_platform,
+    resolve_subnet,
+    validate_output_path,
+)
 import typer
 
 
@@ -140,7 +145,13 @@ def _run_serverless_train(
     resolved_project_id = resolve_project_id(project_id)
     name = job_name or serverless_job_name(ctx.project, ctx.name, "sonic")
     out = output_path.rstrip("/") + "/"
-    subnet = subnet_id or serverless_subnet_id(ctx.project, ctx.name, resolved_project_id)
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        fail(str(exc))
     env, extra_env = serverless_job_env(
         ctx.project,
         out,

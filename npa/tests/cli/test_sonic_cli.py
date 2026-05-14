@@ -27,7 +27,10 @@ def _mock_sonic_serverless(mocker) -> object:
     client.create_job.return_value = SimpleNamespace(id="job-1", name="sonic-job", status="running")
     mocker.patch("npa.cli.workbench.sonic.train.ServerlessClient", return_value=client)
     mocker.patch("npa.cli.workbench.sonic.train.resolve_project_id", return_value="project-1")
-    mocker.patch("npa.cli.workbench.sonic.train.serverless_subnet_id", return_value="vpcsubnet-auto")
+    client.subnet_resolver = mocker.patch(
+        "npa.cli.workbench.sonic.train.resolve_subnet",
+        return_value="vpcsubnet-auto",
+    )
     mocker.patch("npa.cli.workbench.sonic.train.sonic_image", return_value="registry.example/npa-sonic:0.1.0")
     mocker.patch(
         "npa.cli.workbench.sonic.train.serverless_job_env",
@@ -123,6 +126,7 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert payload["embodiment"] == "UNITREE_G1_SONIC"
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
+    client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
 def test_sonic_train_validates_gpu_type() -> None:
