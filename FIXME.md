@@ -480,3 +480,19 @@ Outstanding (deferred):
 - Subnet resolution extraction can be revisited if the per-tool patterns
   stabilize.
 - Multi-region storage credentials remain single-block operator state.
+
+---
+
+## W7-lancedb deferred follow-ups
+
+- `lancedb`: LanceDB Cloud and Enterprise provisioning remains partnership-gated;
+  v1 is connection-only for already-provisioned Cloud endpoints.
+- `lancedb`: Parent `npa workbench lancedb` registration requires a follow-up
+  edit to `npa/src/npa/cli/workbench/__init__.py`, which was outside the
+  W7-lancedb write allowlist.
+- `lancedb`: VM and BYOVM app deployment should be completed once parent
+  Workbench registration is allowed; local container smoke is validated.
+- `lancedb`: Cross-tool integration with FiftyOne as an embeddings backend is
+  deferred to a separate run.
+- `lancedb`: Backup and restore commands are deferred to v2; use storage-level
+  snapshot or prefix replication for now.
