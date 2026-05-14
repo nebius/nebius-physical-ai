@@ -1,0 +1,7 @@
+huggingface_hub>=0.24
+pyyaml>=6.0
+pyzmq>=26.0
+msgpack>=1.0
+msgpack-numpy>=0.4
+tyro>=0.8
+docstring-parser==0.16
