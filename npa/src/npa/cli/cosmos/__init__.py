@@ -9,7 +9,6 @@ import mimetypes
 import os
 import re
 import shlex
-import subprocess
 import tempfile
 import time
 import uuid
@@ -117,9 +116,11 @@ from npa.deploy.byovm import (
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 from npa.serverless_common import (
+    SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
+    resolve_subnet,
     split_serverless_env,
     validate_output_path,
 )
@@ -1133,30 +1134,6 @@ def _serverless_train_output_path(project: str, job_name: str, output_path: str)
     return f"{bucket}/jobs/{job_name}/"
 
 
-def _serverless_train_subnet_id(project: str, name: str, project_id: str) -> str:
-    project_cfg = list_projects().get(project, {})
-    wb_cfg = ((project_cfg.get("workbenches") or {}).get(name) or {}) if isinstance(project_cfg, dict) else {}
-    for source in (wb_cfg.get("serverless", {}), wb_cfg, project_cfg.get("serverless", {}), project_cfg):
-        if isinstance(source, dict):
-            configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-            if configured:
-                return str(configured)
-    result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
-        return ""
-    items = (json.loads(result.stdout or "{}").get("items") or [])
-    ready = [item for item in items if str(((item.get("status") or {}).get("state") or "")).upper() == "READY"]
-    ranked = sorted(ready, key=lambda item: ("cosmos" not in str((item.get("metadata") or {}).get("name", "")).lower(), "default" not in str((item.get("metadata") or {}).get("name", "")).lower()))
-    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
-    if subnet and len(ready) > 1:
-        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
-    return subnet
-
-
 def _serverless_job_env(
     project: str,
     *,
@@ -1343,6 +1320,13 @@ def _deploy_serverless_endpoint(
             f"Serverless alias {proj_alias}/{wb_name} already exists. "
             "Use --replace to delete and recreate the endpoint."
         )
+    try:
+        resolved_subnet_id = resolve_subnet(
+            project_id=project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
 
     if dry_run:
         result = {
@@ -1357,7 +1341,7 @@ def _deploy_serverless_endpoint(
             "preset": preset,
             "container_port": container_port,
             "auth": auth,
-            "subnet_id": subnet_id,
+            "subnet_id": resolved_subnet_id,
             "model": model,
             "volumes": volumes,
             "env_keys": sorted(set(serverless_env) | set(extra_env)),
@@ -1385,7 +1369,7 @@ def _deploy_serverless_endpoint(
         preset=preset,
         container_ports=[container_port],
         auth=auth,
-        subnet_id=subnet_id,
+        subnet_id=resolved_subnet_id,
         env=serverless_env,
         volumes=volumes,
     )
@@ -2765,7 +2749,13 @@ def train_cmd(
         info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
         _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
         return
-    subnet_id = subnet_id or _serverless_train_subnet_id(proj_alias, wb_name, resolved_project_id)
+    try:
+        subnet_id = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
     env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf, output_path=out)
     env.update({"COSMOS_TRAIN_SMOKE": "1", "NPA_JOB_NAME": name})
     try:

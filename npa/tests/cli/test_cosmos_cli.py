@@ -23,13 +23,12 @@ from npa.cli.cosmos import (
     COSMOS_TORCHVISION_VERSION,
     COSMOS_VERSION,
     _build_reload_env_command,
-    _cosmos_train_smoke_command,
-    _serverless_job_env,
-    _serverless_train_output_path,
-    _serverless_train_subnet_id,
     _build_install_command,
+    _cosmos_train_smoke_command,
     _download_remote_output,
     _save_inference_output,
+    _serverless_job_env,
+    _serverless_train_output_path,
 )
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
@@ -152,11 +151,11 @@ def _mock_train_env(mocker):
     mocker.patch("npa.cli.cosmos.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.cosmos.container_image_for_tool", return_value="registry.example/npa-cosmos:smoke")
     mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
-    mocker.patch("npa.cli.cosmos._serverless_train_subnet_id", return_value="vpcsubnet-auto")
+    return mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")
 
 
 def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
-    _mock_train_env(mocker)
+    resolver = _mock_train_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
     client.create_job.return_value = SimpleNamespace(id="job-1", name="npa-e2e-jobs-test", status="running", output_uris=())
@@ -186,6 +185,7 @@ def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
     assert "PYUPLOAD" in kwargs["command"]
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
     client.poll_job.assert_not_called()
 
 
@@ -386,22 +386,6 @@ def test_cosmos_train_serverless_auth_error_shows_hint(mocker) -> None:
     assert result.exit_code == 1
     assert "Nebius authentication failed" in result.output
     assert "nebius profile create" in result.output
-
-
-def test_cosmos_train_subnet_selection_prefers_config_and_cosmos_subnet(mocker) -> None:
-    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {"workbenches": {"cosmos": {"serverless": {"subnet_id": "vpcsubnet-config"}}}}})
-    assert _serverless_train_subnet_id("proj", "cosmos", "project-1") == "vpcsubnet-config"
-
-    mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
-    mocker.patch(
-        "npa.cli.cosmos.subprocess.run",
-        return_value=SimpleNamespace(
-            returncode=0,
-            stdout='{"items": [{"metadata": {"id": "vpcsubnet-default", "name": "default-subnet"}, "status": {"state": "READY"}}, {"metadata": {"id": "vpcsubnet-cosmos", "name": "cosmos-eu-north1-h200-cosmos-subnet"}, "status": {"state": "READY"}}]}',
-            stderr="",
-        ),
-    )
-    assert _serverless_train_subnet_id("proj", "cosmos", "project-1") == "vpcsubnet-cosmos"
 
 
 def test_cosmos_placeholder_help_describes_roadmap() -> None:
@@ -1083,6 +1067,7 @@ def test_cosmos_deploy_serverless_waits_when_requested(mocker) -> None:
     mocker.patch("npa.cli.cosmos.update_workbench_serverless_endpoint")
     update_status = mocker.patch("npa.cli.cosmos.update_workbench_app_status")
     mocker.patch("npa.cli.cosmos.write_config")
+    resolver = mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")
 
     result = runner.invoke(
         app,
@@ -1107,6 +1092,7 @@ def test_cosmos_deploy_serverless_waits_when_requested(mocker) -> None:
     assert result.exit_code == 0
     client.wait_for_running.assert_called_once_with("project-1", "endpoint-1")
     update_status.assert_called_once_with("proj", "cosmos", "healthy")
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
 def test_cosmos_deploy_serverless_dry_run_does_not_create_endpoint(mocker) -> None:
@@ -1115,6 +1101,8 @@ def test_cosmos_deploy_serverless_dry_run_does_not_create_endpoint(mocker) -> No
         "npa.cli.cosmos.resolve_environment",
         return_value=SimpleNamespace(project_id="project-1", tenant_id="", region="eu-north1"),
     )
+    mocker.patch("npa.cli.cosmos.workbench_entry", return_value={})
+    resolver = mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")
 
     result = runner.invoke(
         app,
@@ -1141,6 +1129,8 @@ def test_cosmos_deploy_serverless_dry_run_does_not_create_endpoint(mocker) -> No
     assert result.exit_code == 0
     assert '"status": "dry_run"' in result.output
     assert '"runtime": "serverless"' in result.output
+    assert '"subnet_id": "vpcsubnet-auto"' in result.output
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
     client_cls.assert_not_called()
 
 
@@ -1221,6 +1211,7 @@ def test_cosmos_deploy_serverless_replace_deletes_existing_endpoint(mocker) -> N
     mocker.patch("npa.cli.cosmos.list_projects", return_value={"proj": {}})
     mocker.patch("npa.cli.cosmos.update_workbench_serverless_endpoint")
     mocker.patch("npa.cli.cosmos.write_config")
+    resolver = mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")
 
     result = runner.invoke(
         app,
@@ -1245,6 +1236,7 @@ def test_cosmos_deploy_serverless_replace_deletes_existing_endpoint(mocker) -> N
 
     assert result.exit_code == 0
     client.delete_endpoint.assert_called_once_with("project-1", "endpoint-1")
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
 def test_cosmos_deploy_destroy_serverless_deletes_endpoint_and_config(mocker) -> None:
