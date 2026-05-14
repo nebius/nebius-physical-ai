@@ -2,6 +2,27 @@
 
 B300 is validated for the `cuda13-b300` base image and the LeRobot ACT smoke-training workload listed below. SONIC is not yet validated on B300 because its current Isaac Sim / Isaac Lab dependency path does not preserve the CUDA 13 / PyTorch 2.9 x86_64 base contract. Cosmos, GR00T, and Isaac Lab remain vendor-paced, while Genesis remains upstream-blocked on Taichi Blackwell support.
 
+## NVIDIA Physical AI x86_64 vs aarch64 architecture split
+
+As of May 2026, NVIDIA publishes different CUDA / PyTorch versions per host architecture. B300 in the dGPU form factor is x86_64, which is on the older CUDA 12.8 track for the major vendor frameworks.
+
+| Component | x86_64 | aarch64 (Jetson Thor, DGX Spark) |
+|---|---|---|
+| Isaac Lab 2.3+ | torch 2.7.0 + CUDA 12.8 | torch 2.9.0 + CUDA 13.0 |
+| GR00T N1.7 | CUDA 12.8 + Python 3.10 (dGPU) | CUDA 13.0 + Python 3.12 |
+| Cosmos Predict2.5 / Transfer2.5 | CUDA 12.8.1 + Python 3.10 | CUDA 13.0 |
+
+Sources verified 2026-05-14: see `docs/nvidia-platform-architecture-coverage.md`.
+
+Implications:
+
+- Tools depending on these vendor stacks inherit x86_64 CUDA 12.8 on B300.
+- SONIC depends on Isaac Lab 2.3.2 and is transitively vendor-paced.
+- LeRobot is independent of these vendor stacks; it is the Tier 1 deliverable for B300 today.
+- A Cosmos Blackwell nightly Dockerfile exists for x86_64 but is opt-in, not the documented default.
+
+Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` in any of the three vendor sources.
+
 ## Validated Workloads
 
 | Tool | Image | Validation | B300 result | Baseline comparison | Date |
@@ -13,7 +34,7 @@ B300 is validated for the `cuda13-b300` base image and the LeRobot ACT smoke-tra
 
 | Tool | Intended image | Status | Blocking evidence | Next action |
 |---|---|---|---|---|
-| SONIC | `workbench-sonic:cuda13-b300-20260514T214550Z` | Not validated; no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | Wait for or request a vendor-supported Isaac Sim / Isaac Lab x86_64 CUDA 13 / sm_103 package matrix, then rerun SONIC validation. |
+| SONIC | `workbench-sonic:cuda13-b300-20260514T214550Z` | Vendor-paced (Isaac Lab 2.3.2 dependency); no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | ETA tied to NVIDIA Isaac Sim x86_64 CUDA 13 alignment; rerun SONIC validation after that package matrix exists. |
 
 ## Vendor-Paced Workloads
 
