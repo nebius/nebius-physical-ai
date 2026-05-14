@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlparse
 
 import pytest
 
@@ -44,42 +45,42 @@ def test_id() -> str:
 def lancedb_service(test_id: str) -> Iterator[dict[str, str]]:
     port = _free_port()
     container = f"{test_id}-container"
-    endpoint = f"http://127.0.0.1:{port}"
+    endpoint = f"http://localhost:{port}"
     storage_prefix = f"{test_id}/db/"
     storage_path = f"s3://{BUCKET}/{storage_prefix}"
     env = _lancedb_env()
 
-    _ensure_image(env)
-    deploy = _run_npa(
-        [
-            "workbench",
-            "lancedb",
-            "deploy",
-            "--runtime",
-            "container",
-            "--storage-path",
-            storage_path,
-            "--port",
-            str(port),
-            "--auth-mode",
-            "none",
-            "--replace",
-            "--container-name",
-            container,
-            "--image",
-            IMAGE,
-            "--output",
-            "json",
-        ],
-        env=env,
-        timeout=180,
-    )
-    assert deploy.returncode == 0, _format_result(deploy)
-    payload = json.loads(deploy.stdout)
-    assert payload["endpoint"] == endpoint
-    assert payload["storage_path"] == storage_path
-
     try:
+        _ensure_image(env)
+        deploy = _run_npa(
+            [
+                "workbench",
+                "lancedb",
+                "deploy",
+                "--runtime",
+                "container",
+                "--storage-path",
+                storage_path,
+                "--port",
+                str(port),
+                "--auth-mode",
+                "none",
+                "--replace",
+                "--container-name",
+                container,
+                "--image",
+                IMAGE,
+                "--output",
+                "json",
+            ],
+            env=env,
+            timeout=180,
+        )
+        assert deploy.returncode == 0, _format_result(deploy)
+        payload = json.loads(deploy.stdout)
+        endpoint = payload["endpoint"]
+        assert urlparse(endpoint).port == port
+        assert payload["storage_path"] == storage_path
         _wait_for_ready(endpoint, env)
         yield {
             "container": container,
