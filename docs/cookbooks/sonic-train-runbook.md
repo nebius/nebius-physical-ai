@@ -10,6 +10,12 @@ self-contained SONIC image. The job validates that Isaac Lab and SONIC are
 available in the same container, writes `sonic_smoke_result.json`, and uploads
 artifacts to the requested S3 prefix.
 
+The image is an Option A self-contained build: official NVIDIA Isaac Lab base,
+explicit `linux/amd64` target, Isaac Lab normalized to `2.3.2.post1`, then
+`gear_sonic` installed from `NVlabs/GR00T-WholeBodyControl`. The default build
+skips optional C++ deploy compilation; use `BUILD_SONIC_DEPLOY=1` only when
+validating the TensorRT/ONNX Runtime deploy path.
+
 Full SONIC training on BONES-SEED is a large multi-GPU workload. The Workbench
 smoke target is intentionally minimal: it validates environment integration and
 the training entry path, not convergence.
@@ -18,7 +24,7 @@ the training entry path, not convergence.
 
 ```bash
 SMOKE_TS=$(date -u +%Y%m%dT%H%M%SZ)
-npa workbench sonic -p uk-south1 -n w7sonic train \
+npa workbench sonic -p eu-north1 -n w7sonic train \
   --runtime serverless \
   --project-id YOUR_PROJECT_ID \
   --gpu-type l40s \
@@ -29,6 +35,12 @@ npa workbench sonic -p uk-south1 -n w7sonic train \
   --job-name sonic-smoke-$SMOKE_TS \
   --timeout 3600 \
   --poll-interval 15
+```
+
+When validating an unpromoted build, pass the pushed image explicitly:
+
+```bash
+--image cr.eu-north1.nebius.cloud/<registry>/workbench-sonic:<tag>
 ```
 
 Expected output artifacts:
@@ -62,10 +74,10 @@ If `--data-path` is omitted, the command treats the run as a sample-data smoke.
 
 ## Cost Guard
 
-The W7-sonic smoke budget is capped at $60. A single L40S smoke should stay well
-below that if it reaches terminal state promptly. Stop retrying and classify the
-run as platform or training failure if scheduling or startup consumes the budget
-without SONIC logs.
+The W7-sonic build-fix smoke budget is capped at $30. A single L40S smoke
+should stay well below that if it reaches terminal state promptly. Stop retrying
+and classify the run as platform or training failure if scheduling or startup
+consumes the budget without SONIC logs.
 
 ## Failure Classification
 
@@ -79,7 +91,7 @@ If the serverless smoke fails after the retry budget, run a degraded container
 smoke:
 
 ```bash
-docker run --rm npa-sonic:0.1.0 train
+docker run --rm --platform linux/amd64 npa-sonic:0.1.0 smoke
 ```
 
 That validates the container entrypoint and imports without consuming Nebius GPU
@@ -92,3 +104,7 @@ capacity.
   qualified by Workbench smoke.
 - NIM distribution was not confirmed in discovery; the supported path is
   Hugging Face plus the upstream SONIC repository.
+- W7 build-fix local validation passed for build, imports, and entrypoint smoke.
+  The first pushed-image L40S smoke reached Nebius Job `ERROR` before
+  `started_at` and produced no container logs, so that result is classified as
+  `FAIL_PLATFORM`, not a SONIC runtime failure.

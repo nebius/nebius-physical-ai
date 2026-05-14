@@ -23,6 +23,13 @@ future composition workflow.
 The SONIC container is self-contained. It installs SONIC from
 `NVlabs/GR00T-WholeBodyControl` and bundles Isaac Lab as a library dependency
 inside the SONIC image. It does not depend on the Workbench Isaac Lab tool image.
+The image targets `linux/amd64` for Nebius L40S and normalizes the Isaac Lab
+Python package to `isaaclab==2.3.2.post1` during build.
+
+The default image build is focused on training and smoke validation. It includes
+the SONIC C++ deploy source and build tools, but leaves `gear_sonic_deploy`
+compilation opt-in with `BUILD_SONIC_DEPLOY=1` because TensorRT and ONNX Runtime
+discovery are platform-sensitive.
 
 The default embodiment is Unitree G1:
 
