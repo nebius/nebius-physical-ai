@@ -5,6 +5,7 @@ FROM --platform=linux/amd64 nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f4835
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG SONIC_REPO_URL=https://github.com/NVlabs/GR00T-WholeBodyControl.git
 ARG SONIC_REPO_REF=0a87181c9106d0e49293400714b157676e0ec664
+ARG BUILD_SONIC_DEPLOY=0
 
 LABEL npa.tool="sonic" \
       npa.version="0.1.0" \
@@ -44,6 +45,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 RUN mkdir -p /opt/npa/docker/sonic /tmp/npa-sonic-output
 COPY requirements.txt /opt/npa/docker/sonic/requirements.txt
 
+RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir --no-deps --ignore-installed \
+      "isaaclab==${ISAAC_LAB_VERSION}" \
+      --extra-index-url https://pypi.nvidia.com
+
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir \
       -r /opt/npa/docker/sonic/requirements.txt
 
@@ -79,12 +84,16 @@ for module in ("gear_sonic", "sonic", "isaaclab"):
 print("NPA_SONIC_BUILD_IMPORTS_OK")
 PY
 
-# The C++ deploy stack is included for VM/container deployment paths. TensorRT and
-# ONNX Runtime discovery are environment-sensitive, so the source and build tools
-# are present even if downstream operators rebuild with platform-specific paths.
-RUN cd "${SONIC_HOME}/gear_sonic_deploy" \
-    && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -j"$(nproc)"
+# The C++ deploy stack is included for VM/container deployment paths, but
+# TensorRT and ONNX Runtime discovery are environment-sensitive. Keep the default
+# train/smoke image build focused; deploy images can opt into this compile step.
+RUN if [ "${BUILD_SONIC_DEPLOY}" = "1" ]; then \
+      cd "${SONIC_HOME}/gear_sonic_deploy" \
+      && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+      && cmake --build build -j"$(nproc)"; \
+    else \
+      echo "Skipping optional SONIC C++ deploy build (BUILD_SONIC_DEPLOY=0)"; \
+    fi
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
