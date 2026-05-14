@@ -222,6 +222,63 @@ def test_status_json_merges_remote_and_local(monkeypatch) -> None:
     assert saved[0].last_seen_state == "RUNNING"
 
 
+def test_status_name_filters_node_groups(monkeypatch) -> None:
+    h200_state = NodeGroupState(
+        cluster_name="cluster-a",
+        name="cluster-a-h200-gpu",
+        node_group_id="mk8snodegroup-h200",
+        gpu_type="h200",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+        node_count=1,
+        created_at="2026-05-14T22:46:30Z",
+        last_seen_state="RUNNING",
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def list_node_groups(self, cluster_id):
+            return [
+                _node_group(),
+                NodeGroupInfo(
+                    id="mk8snodegroup-h200",
+                    name="cluster-a-h200-gpu",
+                    cluster_id="mk8scluster-a",
+                    status="RUNNING",
+                    node_count=1,
+                    platform="gpu-h200-sxm",
+                    preset="1gpu-16vcpu-200gb",
+                    gpu_type="h200",
+                ),
+            ]
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(node_group_mod, "list_node_group_states", lambda cluster_name: [_node_state(), h200_state])
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "status",
+            "--cluster-name",
+            "cluster-a",
+            "--name",
+            "cluster-a-h200-gpu",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "cluster-a-h200-gpu" in result.output
+    assert "cluster-a-h100-gpu" not in result.output
+
+
 def test_list_table_without_cluster_scans_local(monkeypatch) -> None:
     class FakeClient:
         def __init__(self, **kwargs) -> None:
