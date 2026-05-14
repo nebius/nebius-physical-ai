@@ -55,6 +55,10 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
         calls.append(args)
         assert kwargs["text"] is True
         assert kwargs["check"] is False
+        if args[1:4] == ["mk8s", "cluster", "get"]:
+            return _result(returncode=1, stderr="NotFound")
+        if args[1:4] == ["mk8s", "cluster", "get-by-name"]:
+            return _result(returncode=1, stderr="NotFound")
         if args[1:4] == ["mk8s", "cluster", "create"]:
             return _result(_cluster())
         if args[1:4] == ["mk8s", "node-group", "create"]:
@@ -67,10 +71,33 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
 
     assert info.id == "mk8scluster-a"
     assert info.node_group_id == "mk8snodegroup-a"
-    assert calls[0][1:4] == ["mk8s", "cluster", "create"]
-    assert calls[1][1:4] == ["mk8s", "node-group", "create"]
-    assert "--template-resources-platform" in calls[1]
-    assert "--template-resources-preset" in calls[1]
+    assert calls[2][1:4] == ["mk8s", "cluster", "create"]
+    assert calls[3][1:4] == ["mk8s", "node-group", "create"]
+    assert "--template-resources-platform" in calls[3]
+    assert "--template-resources-preset" in calls[3]
+
+
+def test_create_cluster_reuses_existing_cluster_and_node_group() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if args[1:4] == ["mk8s", "cluster", "get"]:
+            return _result(returncode=1, stderr="NotFound")
+        if args[1:4] == ["mk8s", "cluster", "get-by-name"]:
+            return _result(_cluster(state="RUNNING"))
+        if args[1:4] == ["mk8s", "node-group", "list"]:
+            return _result({"items": [_node_group(state="RUNNING")]})
+        raise AssertionError(f"unexpected command: {args}")
+
+    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+
+    info = client.create_cluster(_config())
+
+    assert info.id == "mk8scluster-a"
+    assert info.status == "RUNNING"
+    assert info.node_group_id == "mk8snodegroup-a"
+    assert not any(call[1:4] == ["mk8s", "cluster", "create"] for call in calls)
 
 
 def test_list_clusters_parses_items() -> None:

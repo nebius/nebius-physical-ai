@@ -16,7 +16,7 @@ from npa.cluster.exceptions import ClusterError, ClusterNotFoundError, ClusterTi
 
 SubprocessRunner = Callable[..., subprocess.CompletedProcess[str]]
 
-READY_STATES = {"READY"}
+READY_STATES = {"READY", "RUNNING"}
 ERROR_STATES = {"ERROR", "FAILED"}
 
 
@@ -68,6 +68,21 @@ class MK8sClient:
             raise ValueError("project_id is required")
         if not config.subnet_id:
             raise ValueError("subnet_id is required")
+
+        try:
+            existing = self.get_cluster(config.name, project_id=config.project_id)
+        except ClusterNotFoundError:
+            existing = None
+        if existing is not None and existing.id:
+            groups = self.list_node_groups(existing.id)
+            if groups:
+                existing.node_group_id = groups[0].id
+                existing.node_count = sum(group.node_count for group in groups)
+                return existing
+            node_group = self.create_node_group(config, existing.id)
+            existing.node_group_id = node_group.id
+            existing.node_count = node_group.node_count
+            return existing
 
         created_cluster_id = ""
         try:
