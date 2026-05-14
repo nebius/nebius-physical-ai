@@ -281,6 +281,7 @@ def test_create_endpoint_refuses_secret_like_env_vars(key: str) -> None:
         ("permission denied for project", AuthError),
         ("403 forbidden", AuthError),
         ("endpoint not found", EndpointNotFoundError),
+        ("rpc error: code = NotFound desc = not found request = 3649f403-e540", EndpointNotFoundError),
         ("404 resource does not exist", EndpointNotFoundError),
         ("quota exceeded: max endpoints reached", QuotaError),
         ("some other failure", ServerlessClientError),

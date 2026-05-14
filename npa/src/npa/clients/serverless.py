@@ -260,7 +260,8 @@ def _classify_error(returncode: int, stderr: str) -> type[ServerlessClientError]
     """Map subprocess error output to a typed exception class."""
     lower = stderr.lower()
 
-    if any(pattern in lower for pattern in _AUTH_PATTERNS):
+    auth_text_patterns = tuple(pattern for pattern in _AUTH_PATTERNS if not pattern.isdigit())
+    if any(pattern in lower for pattern in auth_text_patterns) or re.search(r"\b(401|403)\b", lower):
         return AuthError
     if "quota" in lower and any(
         marker in lower for marker in ("exceeded", "limit", "reached")
