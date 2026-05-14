@@ -485,7 +485,7 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
     assert "ISAAC_LAB_TRAIN_COMPLETE" in cmd
 
 
-def _mock_isaac_serverless_env(mocker) -> None:
+def _mock_isaac_serverless_env(mocker):
     mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
     mocker.patch(
         "npa.cli.isaac_lab.resolve_project_storage",
@@ -498,7 +498,7 @@ def _mock_isaac_serverless_env(mocker) -> None:
     )
     mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.isaac_lab.container_image_for_tool", return_value="registry.example/npa-isaac-lab:smoke")
-    mocker.patch("npa.cli.isaac_lab._serverless_subnet_id", return_value="vpcsubnet-auto")
+    return mocker.patch("npa.cli.isaac_lab.resolve_subnet", return_value="vpcsubnet-auto")
 
 
 def test_isaac_lab_serverless_requires_output_path(mocker) -> None:
@@ -561,7 +561,7 @@ def test_isaac_lab_serverless_warns_non_rt_gpu_type(mocker) -> None:
 
 
 def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:
-    _mock_isaac_serverless_env(mocker)
+    resolver = _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
     client.create_job.return_value = SimpleNamespace(id="job-1", name="isaac-job", status="running", output_uris=())
@@ -585,6 +585,7 @@ def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
+    resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
 def test_isaac_lab_serverless_uploads_output_dir(mocker) -> None:
