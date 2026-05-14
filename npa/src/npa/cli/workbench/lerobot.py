@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -42,6 +41,7 @@ from npa.clients.credentials import apply_shared_credential_env, shared_credenti
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, supported_tool_version
+from npa.serverless_common import SubnetResolutionError, resolve_subnet
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -502,65 +502,6 @@ def _lerobot_serverless_output_path(
     return _lerobot_serverless_train_output_path(storage.checkpoint_bucket, wb_name, job_name)
 
 
-def _configured_lerobot_subnet(project_id: str, project: str = "", name: str = "") -> str:
-    projects = list_projects()
-    candidates: list[dict[str, Any]] = []
-    if project and isinstance(projects.get(project), dict):
-        candidates.append(projects[project])
-    for cfg in projects.values():
-        if isinstance(cfg, dict) and str(cfg.get("project_id") or "") == project_id:
-            candidates.append(cfg)
-
-    for project_cfg in candidates:
-        workbenches = project_cfg.get("workbenches") if isinstance(project_cfg, dict) else {}
-        wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) and name else {}
-        sources = (
-            wb_cfg.get("serverless_job", {}) if isinstance(wb_cfg, dict) else {},
-            wb_cfg,
-            project_cfg.get("serverless_job", {}),
-            project_cfg,
-        )
-        for source in sources:
-            if isinstance(source, dict):
-                configured = source.get("subnet_id") or source.get("vpc_subnet_id") or source.get("subnet")
-                if configured:
-                    return str(configured)
-    return ""
-
-
-def _lerobot_serverless_train_subnet_id(project_id: str, project: str = "", name: str = "") -> str:
-    configured = _configured_lerobot_subnet(project_id, project, name)
-    if configured:
-        return configured
-    result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning:[/yellow] Unable to discover Jobs subnet: {result.stderr.strip()}")
-        return ""
-    items = (json.loads(result.stdout or "{}").get("items") or [])
-    ready = [
-        item for item in items
-        if str(((item.get("status") or {}).get("state") or "")).upper() in {"READY", ""}
-    ]
-    ranked = sorted(
-        ready,
-        key=lambda item: (
-            "lerobot" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
-        ),
-    )
-    subnet = str(((ranked[0].get("metadata") or {}).get("id") or "")) if ranked else ""
-    if subnet and len(ready) > 1:
-        console.print(f"[yellow]Warning:[/yellow] Using discovered Jobs subnet {subnet}. Pass --subnet-id to override.")
-    return subnet
-
-
 def _lerobot_serverless_job_env(
     hf_token: str,
     s3_access_key: str,
@@ -971,7 +912,13 @@ def _train_serverless(
     env["NPA_JOB_NAME"] = name
     safe_env, extra_env = _split_serverless_env(env)
     submitted_at = datetime.now(timezone.utc).isoformat()
-    subnet = subnet_id or _lerobot_serverless_train_subnet_id(resolved_project_id, proj_alias, wb_name)
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
     try:
         info = client.create_job(
             project_id=resolved_project_id,
@@ -1097,7 +1044,13 @@ def _profile_train_serverless(
         existing = None
 
     submitted_at = datetime.now(timezone.utc).isoformat()
-    subnet = subnet_id or _lerobot_serverless_train_subnet_id(resolved_project_id, proj_alias, wb_name)
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
 
     if existing is not None:
         info = existing

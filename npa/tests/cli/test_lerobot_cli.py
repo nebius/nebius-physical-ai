@@ -61,7 +61,10 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
         ),
     )
     mocker.patch("npa.cli.workbench.lerobot.resolve_container_registry", return_value="registry.example/npa")
-    mocker.patch("npa.cli.workbench.lerobot._lerobot_serverless_train_subnet_id", return_value="vpcsubnet-1")
+    client.subnet_resolver = mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_subnet",
+        return_value="vpcsubnet-1",
+    )
     update = mocker.patch("npa.cli.workbench.lerobot.update_workbench_serverless_job")
     return client, update
 
@@ -105,7 +108,10 @@ def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_st
         ),
     )
     mocker.patch("npa.cli.workbench.lerobot.resolve_container_registry", return_value="registry.example/npa")
-    mocker.patch("npa.cli.workbench.lerobot._lerobot_serverless_train_subnet_id", return_value="vpcsubnet-1")
+    client.subnet_resolver = mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_subnet",
+        return_value="vpcsubnet-1",
+    )
     update = mocker.patch("npa.cli.workbench.lerobot.update_workbench_serverless_job")
     return client, update
 
@@ -377,41 +383,6 @@ def test_lerobot_train_container_command_supports_s3_input() -> None:
     assert "--dataset.root=/tmp/lerobot_dataset/pusht" in command
 
 
-def test_lerobot_serverless_subnet_selection_prefers_config(mocker) -> None:
-    mocker.patch(
-        "npa.cli.workbench.lerobot.list_projects",
-        return_value={
-            "proj": {
-                "project_id": "project-1",
-                "workbenches": {"lerobot": {"serverless_job": {"subnet_id": "vpcsubnet-config"}}},
-            }
-        },
-    )
-    run = mocker.patch("npa.cli.workbench.lerobot.subprocess.run")
-
-    assert lerobot._lerobot_serverless_train_subnet_id("project-1", "proj", "lerobot") == "vpcsubnet-config"
-    run.assert_not_called()
-
-
-def test_lerobot_serverless_subnet_selection_prefers_lerobot_name(mocker) -> None:
-    mocker.patch("npa.cli.workbench.lerobot.list_projects", return_value={})
-    run = mocker.patch("npa.cli.workbench.lerobot.subprocess.run")
-    run.return_value = SimpleNamespace(
-        returncode=0,
-        stdout=json.dumps(
-            {
-                "items": [
-                    {"metadata": {"id": "vpcsubnet-default", "name": "default"}, "status": {"state": "READY"}},
-                    {"metadata": {"id": "vpcsubnet-lerobot", "name": "lerobot-train"}, "status": {"state": "READY"}},
-                ]
-            }
-        ),
-        stderr="",
-    )
-
-    assert lerobot._lerobot_serverless_train_subnet_id("project-1") == "vpcsubnet-lerobot"
-
-
 def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     client, update = _mock_serverless_train(mocker)
 
@@ -429,6 +400,7 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["output_path"] == "s3://bucket/out/"
     assert kwargs["env"]["NPA_JOB_NAME"] == "train-1"
     assert kwargs["extra_env"]["HF_TOKEN"] == "hf-token"
+    client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
     client.poll_job.assert_not_called()
     update.assert_called_once()
 
