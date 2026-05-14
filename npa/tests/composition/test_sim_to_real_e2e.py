@@ -42,6 +42,14 @@ JOB_PREFIX = "npa-pipes2r"
 POLL_INTERVAL = float(os.environ.get("NPA_E2E_PIPELINE_POLL_INTERVAL", "30"))
 MAX_WAIT = float(os.environ.get("NPA_E2E_PIPELINE_MAX_WAIT", "7200"))
 STARTING_WAIT = float(os.environ.get("NPA_E2E_PIPELINE_STARTING_WAIT", "3600"))
+SECRET_ENV_NAMES = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+}
 
 
 @dataclass(frozen=True)
@@ -176,7 +184,7 @@ def test_sim_to_real_pipeline_e2e(tmp_path: Path) -> None:
         )
         jobs.append(genesis_demo_job)
         final = _poll_job(settings.project_id, genesis_demo_job.job_id, artifacts_dir)
-        assert final.status == "succeeded", final.raw
+        assert final.status == "succeeded", _redact_job_raw(final.raw)
         _assert_genesis_demos_schema(settings, demo_output, artifacts_dir)
 
         adapter_result = _run_adapter(
@@ -196,7 +204,7 @@ def test_sim_to_real_pipeline_e2e(tmp_path: Path) -> None:
         )
         jobs.append(lerobot_job)
         final = _poll_job(settings.project_id, lerobot_job.job_id, artifacts_dir)
-        assert final.status == "succeeded", final.raw
+        assert final.status == "succeeded", _redact_job_raw(final.raw)
         _assert_checkpoint_loadable(settings, checkpoint_output, artifacts_dir)
 
         genesis_eval_job = _submit_genesis_eval(
@@ -207,7 +215,7 @@ def test_sim_to_real_pipeline_e2e(tmp_path: Path) -> None:
         )
         jobs.append(genesis_eval_job)
         final = _poll_job(settings.project_id, genesis_eval_job.job_id, artifacts_dir)
-        assert final.status == "succeeded", final.raw
+        assert final.status == "succeeded", _redact_job_raw(final.raw)
         _assert_eval_metrics_schema(settings, eval_output, artifacts_dir)
     finally:
         _write_json(
@@ -280,9 +288,9 @@ def _submit_genesis_demo_generation(
         timeout="2h",
     )
     job.job_id = info.id
-    _write_json(artifacts_dir / "stage1-submit.json", info.raw)
+    _write_json(artifacts_dir / "stage1-submit.json", _redact_job_raw(info.raw))
     visible = _wait_for_visible_job(settings.project_id, info.id)
-    _write_json(artifacts_dir / "stage1-visible.json", visible.raw)
+    _write_json(artifacts_dir / "stage1-visible.json", _redact_job_raw(visible.raw))
     assert _submitted_subnet_id(visible.raw), "Genesis demo Job spec.subnet_id is empty"
     return job
 
@@ -315,7 +323,7 @@ def _submit_lerobot_train(
     assert payload["status"] == "submitted"
     job.job_id = str(payload["job_id"])
     visible = _wait_for_visible_job(settings.project_id, job.job_id)
-    _write_json(artifacts_dir / "stage3-visible.json", visible.raw)
+    _write_json(artifacts_dir / "stage3-visible.json", _redact_job_raw(visible.raw))
     assert _submitted_subnet_id(visible.raw), "LeRobot train Job spec.subnet_id is empty"
     return job
 
@@ -351,9 +359,9 @@ def _submit_genesis_eval(
         timeout="2h",
     )
     job.job_id = info.id
-    _write_json(artifacts_dir / "stage4-submit.json", info.raw)
+    _write_json(artifacts_dir / "stage4-submit.json", _redact_job_raw(info.raw))
     visible = _wait_for_visible_job(settings.project_id, info.id)
-    _write_json(artifacts_dir / "stage4-visible.json", visible.raw)
+    _write_json(artifacts_dir / "stage4-visible.json", _redact_job_raw(visible.raw))
     assert _submitted_subnet_id(visible.raw), "Genesis eval Job spec.subnet_id is empty"
     return job
 
@@ -637,7 +645,10 @@ def _poll_job(project_id: str, job_id: str, artifacts_dir: Path):
         tick += 1
         current = client.get_job(job_id, project_id)
         last = current
-        _write_json(artifacts_dir / f"job-detail-{job_id}-tick-{tick:03d}.json", current.raw)
+        _write_json(
+            artifacts_dir / f"job-detail-{job_id}-tick-{tick:03d}.json",
+            _redact_job_raw(current.raw),
+        )
         _capture_logs(job_id, artifacts_dir / f"job-logs-{job_id}-tick-{tick:03d}.txt")
         if current.status in {"running", "succeeded", "failed", "cancelled"}:
             startup_deadline = 0
@@ -839,6 +850,30 @@ def _submitted_subnet_id(raw: dict[str, object]) -> str:
     if isinstance(spec, dict):
         return str(spec.get("subnet_id") or spec.get("subnetId") or "").strip()
     return ""
+
+
+def _redact_job_raw(raw: dict[str, object]) -> dict[str, object]:
+    def redact(value: object) -> object:
+        if isinstance(value, dict):
+            name = str(value.get("name", ""))
+            if name in SECRET_ENV_NAMES and "value" in value:
+                return {**value, "value": "<redacted>"}
+            return {
+                key: "<redacted>" if _looks_secret_key(str(key)) else redact(inner)
+                for key, inner in value.items()
+            }
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    redacted = redact(raw)
+    assert isinstance(redacted, dict)
+    return redacted
+
+
+def _looks_secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in ("secret", "token", "password"))
 
 
 def _write_json(path: Path, payload: object) -> None:
