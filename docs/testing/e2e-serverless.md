@@ -243,4 +243,33 @@ npa workbench groot -p uk-south1 -n w7p-groot infer \
   --job-name groot-smoke-20260513T225839Z
 ```
 
-W7-parallel-tools result: code path and unit coverage are present, but three smoke attempts failed before logs with Nebius internal Job errors. Treat this as `SMOKE_FAILED` until a follow-up run gets a terminal successful Job and uploaded artifacts.
+W7-parallel-tools result: code path and unit coverage are present, but three
+smoke attempts failed before logs. W7p-groot-debug classified those failures as
+a missing image tag: the jobs used `npa-groot:n1.7`, while the pushed GR00T
+runtime image is `npa-groot:0.1.0`.
+
+W7p-groot-debug fixed the default serverless image tag and retried once on
+2026-05-14:
+
+```bash
+npa workbench groot -p uk-south1 -n w7pgd-groot infer \
+  --runtime serverless \
+  --project-id YOUR_PROJECT_ID \
+  --input-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/checkpoint/ \
+  --dataset-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/dataset/ \
+  --output-path s3://YOUR_S3_BUCKET_2/w7pgd-fresh/20260514T001748Z/groot-smoke/ \
+  --gpu-type h200 \
+  --gpu-count 1 \
+  --model-variant nvidia/GR00T-N1.7-3B \
+  --steps 1 \
+  --action-horizon 1 \
+  --job-name groot-smoke-retry-20260514T001748Z \
+  --timeout 3600 \
+  --poll-interval 15
+```
+
+Retry result: `FAIL_DIFFERENT`. The job submitted image `npa-groot:0.1.0`,
+advanced to `STARTING`, and allocated a running compute instance, but produced
+no logs before cleanup. Treat GR00T as `SMOKE_FAILED` until Nebius investigates
+`aijob-e00tygb9eej5d174n7` or a later retry reaches terminal success and uploads
+artifacts.

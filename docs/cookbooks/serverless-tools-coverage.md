@@ -10,10 +10,15 @@ The Workbench supports `--runtime serverless` on these non-LeRobot tools, each b
 | Isaac Lab | `train` | available | L40S | PASS |
 | FiftyOne | `load-dataset` | available | L40S | PASS |
 | Genesis | `train-teacher` | available | L40S | PASS |
-| GR00T | `infer` | available | H200, L40S retries | SMOKE_FAILED |
+| GR00T | `infer` | available | H200, L40S retries | SMOKE_FAILED; Nebius handoff |
 | LeRobot | `train`, `profile-train` | available; see [LeRobot cookbook](lerobot-gpu-benchmarks.md) | varies | varies |
 
-GR00T code and unit coverage are in place, but W7-parallel-tools smoke attempts failed before container logs with Nebius Job internal errors. The failed attempts are captured under `/tmp/w7p-20260513T225839Z/results-groot/`.
+GR00T code and unit coverage are in place, but smoke validation is still open.
+W7p-groot-debug classified the W7-parallel-tools failures as an image tag
+mismatch (`npa-groot:n1.7` was not pushed), fixed the default serverless image
+tag to `npa-groot:0.1.0`, and retried once. The retry reached `STARTING` with a
+running compute instance but produced no logs before cleanup. Nebius handoff:
+`/tmp/w7pgd-20260514T001207Z/NEBIUS-SUPPORT-HANDOFF.md`.
 
 ## Common Interface
 
@@ -116,6 +121,11 @@ npa workbench groot -p uk-south1 -n w7p-groot infer \
   --timeout 3600 \
   --poll-interval 15
 ```
+
+Current status: `SMOKE_FAILED`. W7p-groot-debug fixed the missing-image-tag
+issue and proved the corrected submission uses
+`cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-groot:0.1.0`; the post-fix
+retry stalled in `STARTING` with no logs and was deleted.
 
 ## Shared Infrastructure
 

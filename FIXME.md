@@ -471,7 +471,11 @@ Outstanding (deferred):
 - Did not touch `npa/src/npa/clients/serverless.py` to avoid W7 collision.
 
 Outstanding (deferred):
-- Re-run GR00T smoke once Nebius Job internal errors are cleared.
+- GR00T smoke remains open. W7p-groot-debug fixed the missing default image tag
+  (`npa-groot:n1.7` -> pushed `npa-groot:0.1.0`), but the single post-fix H200
+  retry stalled in `STARTING` with no logs and required `delete --async`
+  cleanup. Nebius handoff:
+  `/tmp/w7pgd-20260514T001207Z/NEBIUS-SUPPORT-HANDOFF.md`.
 - LeRobot can optionally migrate to `npa.serverless_common` after W7 lands.
 - Subnet resolution extraction can be revisited if the per-tool patterns
   stabilize.
