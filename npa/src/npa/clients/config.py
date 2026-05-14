@@ -113,6 +113,10 @@ class ServerlessJobConfig:
     image: str = ""
     gpu_type: str = ""
     gpu_count: int = 0
+    # DEPRECATED (W7-subnet-refactor): Tool CLIs no longer read this field.
+    # Subnet resolution is centralized in npa.serverless_common.resolve_subnet.
+    # Use --subnet-id at command time for overrides. This field is kept for a
+    # migration grace window and should be removed in a future cleanup release.
     subnet_id: str = ""
     output_path: str = ""
     last_status: str = ""
