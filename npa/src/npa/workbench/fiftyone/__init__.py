@@ -18,6 +18,9 @@ launch = make_cli_wrapper("npa.cli.fiftyone", "launch_cmd", "Launch FiftyOne.")
 curate = make_cli_wrapper(
     "npa.cli.fiftyone", "curate_cmd", "Curate and export a LeRobotDataset with FiftyOne."
 )
+eval = make_cli_wrapper(
+    "npa.cli.fiftyone", "eval_cmd", "Evaluate checkpoint outputs with FiftyOne."
+)
 load_dataset = make_cli_wrapper(
     "npa.cli.fiftyone", "load_dataset_cmd", "Load a dataset into FiftyOne."
 )
@@ -37,6 +40,7 @@ __all__ = [
     "deploy",
     "launch",
     "curate",
+    "eval",
     "load_dataset",
     "restart",
     "datasets_list",

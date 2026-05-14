@@ -55,6 +55,8 @@ def _active_endpoint(url: str):
     [
         "deploy",
         "launch",
+        "curate",
+        "eval",
         "load-dataset",
         "restart",
         "status",
