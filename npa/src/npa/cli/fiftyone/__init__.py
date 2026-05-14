@@ -128,6 +128,13 @@ FIFTYONE_HEALTH_BACKOFF_SEC = 2.0
 FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES = 3
 FIFTYONE_STOP_TIMEOUT_SEC = 15
 FIFTYONE_READY_MARKER = "NPA_FIFTYONE_APP_READY"
+FIFTYONE_SERVERLESS_ALLOWED_PLATFORMS = {"gpu-h100-sxm", "gpu-rtx6000"}
+FIFTYONE_SERVERLESS_DEFAULT_REGIONS = {
+    "gpu-h100-sxm": "eu-north1",
+    "gpu-rtx6000": "us-central1",
+}
+FIFTYONE_CURATE_FRAMES_PER_EPISODE = 120
+FIFTYONE_CURATE_FPS = 10
 
 
 class OutputFormat(str, Enum):
@@ -287,6 +294,453 @@ def _serverless_job_env(
         extra_env=extra_env,
     )
     return split_serverless_env(env)
+
+
+def _fiftyone_serverless_route(
+    gpu_type: str,
+    *,
+    region: str = "",
+) -> tuple[str, str, int, str]:
+    platform, preset, gpu_count = resolve_gpu_platform(gpu_type, 1)
+    if platform not in FIFTYONE_SERVERLESS_ALLOWED_PLATFORMS:
+        raise ValueError(
+            "FiftyOne curate/eval serverless supports --gpu-type h100 or rtx6000 only; "
+            "L40S-family routing is intentionally excluded."
+        )
+    return platform, preset, gpu_count, region or FIFTYONE_SERVERLESS_DEFAULT_REGIONS[platform]
+
+
+def _fiftyone_serverless_submit_job(
+    *,
+    command_label: str,
+    tool_suffix: str,
+    remote_command: str,
+    output_path: str,
+    project_id: str,
+    image: str,
+    gpu_type: str,
+    region: str,
+    subnet_id: str,
+    job_name: str,
+    submit_only: bool,
+    poll_interval: float,
+    timeout_minutes: int,
+    output: OutputFormat,
+    extra_env: dict[str, str] | None = None,
+) -> None:
+    if not output_path:
+        _fail(f"FiftyOne {command_label} --runtime serverless requires --output-path.")
+    if timeout_minutes <= 0:
+        _fail("--timeout-minutes must be positive")
+    try:
+        validate_output_path(output_path)
+        platform, preset, resolved_gpu_count, resolved_region = _fiftyone_serverless_route(
+            gpu_type,
+            region=region,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+
+    proj_alias = _project_alias or default_project_name()
+    wb_name = _workbench_name or default_workbench_name()
+    env_cfg = resolve_environment(proj_alias)
+    resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
+    if not resolved_project_id:
+        _fail(f"FiftyOne {command_label} --runtime serverless requires --project-id or a configured project.")
+    name_for_job = job_name or _serverless_job_name(proj_alias, wb_name, f"fiftyone-{tool_suffix}")
+    out = output_path.rstrip("/") + "/"
+    try:
+        subnet = resolve_subnet(
+            project_id=resolved_project_id,
+            explicit_subnet_id=subnet_id,
+        )
+    except SubnetResolutionError as exc:
+        _fail(str(exc))
+
+    env, split_extra_env = _serverless_job_env(
+        proj_alias,
+        out,
+        {
+            "NPA_JOB_NAME": name_for_job,
+            "NPA_REGION": resolved_region,
+            "FIFTYONE_SERVERLESS_COMMAND": command_label,
+            **(extra_env or {}),
+        },
+    )
+    client = ServerlessClient()
+    try:
+        existing = client.get_job(name_for_job, resolved_project_id)
+    except EndpointNotFoundError:
+        existing = None
+
+    timeout_seconds = float(timeout_minutes * 60)
+    timeout_spec = f"{timeout_minutes}m"
+    try:
+        if existing is not None:
+            if submit_only or existing.status in {"succeeded", "failed", "cancelled"}:
+                info = existing
+            else:
+                info = client.poll_job(
+                    existing.id,
+                    resolved_project_id,
+                    interval_s=poll_interval,
+                    ceiling_s=timeout_seconds,
+                )
+            payload = {
+                "status": "existing" if submit_only else info.status,
+                "job_id": info.id,
+                "job_name": info.name,
+                "job_status": info.status,
+                "output_path": out,
+                "gpu_type": platform,
+                "gpu_preset": preset,
+                "region": resolved_region,
+            }
+            _output(payload, output)
+            if not submit_only and info.status != "succeeded":
+                raise typer.Exit(code=1)
+            return
+        info = client.create_job(
+            project_id=resolved_project_id,
+            name=name_for_job,
+            image=image or container_image_for_tool("fiftyone", registry=resolve_container_registry(proj_alias)),
+            command=remote_command,
+            gpu_type=platform,
+            gpu_count=resolved_gpu_count,
+            preset=preset,
+            subnet_id=subnet,
+            output_path=out,
+            env=env,
+            extra_env=split_extra_env,
+            timeout=timeout_spec,
+        )
+        if not submit_only:
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout_seconds,
+            )
+    except ValueError as exc:
+        _fail(str(exc))
+    except ServerlessClientError as exc:
+        _fail(f"Serverless Job failed: {exc}")
+    except TimeoutError as exc:
+        _fail(str(exc))
+
+    payload = {
+        "status": "submitted" if submit_only else info.status,
+        "job_id": info.id,
+        "job_name": info.name,
+        "output_path": out,
+        "gpu_type": platform,
+        "gpu_preset": preset,
+        "region": resolved_region,
+    }
+    _output(payload, output)
+    if not submit_only and info.status != "succeeded":
+        raise typer.Exit(code=1)
+
+
+def _fiftyone_curate_container_command(
+    *,
+    input_path: str,
+    num_episodes: int,
+) -> str:
+    local_dir = "/tmp/npa-fiftyone-curated-lerobot"
+    script = f"""
+import json
+import math
+import os
+import pathlib
+import shutil
+import subprocess
+import time
+from urllib.parse import urlparse
+
+import boto3
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+TASK = "Push the T-shaped block onto the T-shaped target."
+SOURCE = {input_path!r}
+EPISODES = {num_episodes}
+FRAMES = {FIFTYONE_CURATE_FRAMES_PER_EPISODE}
+FPS = {FIFTYONE_CURATE_FPS}
+HEIGHT = 96
+WIDTH = 96
+OUT = pathlib.Path({local_dir!r})
+
+
+def import_fiftyone_status():
+    try:
+        import fiftyone as fo  # noqa: F401
+    except Exception as exc:
+        return f"unavailable: {{type(exc).__name__}}: {{exc}}"
+    return "available"
+
+
+def s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT"),
+    )
+
+
+def inspect_source():
+    if not SOURCE:
+        return {{"kind": "synthetic-inline", "uri": ""}}
+    parsed = urlparse(SOURCE)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        raise RuntimeError(f"--input-path must be an s3:// URI when provided, got {{SOURCE}}")
+    prefix = parsed.path.lstrip("/")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    objects = []
+    for page in s3_client().get_paginator("list_objects_v2").paginate(Bucket=parsed.netloc, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith("/"):
+                objects.append({{"key": key, "size": int(obj.get("Size", 0))}})
+    if not objects:
+        raise RuntimeError(f"No source objects found under {{SOURCE}}")
+    return {{
+        "kind": "s3",
+        "uri": SOURCE,
+        "objects": len(objects),
+        "bytes": sum(row["size"] for row in objects),
+        "first_key": objects[0]["key"],
+    }}
+
+
+def stat_numeric(values):
+    arr = np.asarray(values)
+    if arr.dtype == np.bool_:
+        flat = arr.reshape(-1)
+        as_float = flat.astype(np.float64)
+        return {{
+            "min": [bool(flat.min())],
+            "max": [bool(flat.max())],
+            "mean": [float(as_float.mean())],
+            "std": [float(as_float.std())],
+            "count": [int(flat.shape[0])],
+        }}
+    arr = arr.astype(np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    return {{
+        "min": arr.min(axis=0).tolist(),
+        "max": arr.max(axis=0).tolist(),
+        "mean": arr.mean(axis=0).tolist(),
+        "std": arr.std(axis=0).tolist(),
+        "count": [int(arr.shape[0])],
+    }}
+
+
+def stat_video(frames):
+    arr = frames.astype(np.float64) / 255.0
+    flat = arr.reshape(-1, arr.shape[-1])
+    return {{
+        "min": [[[float(flat[:, ch].min())]] for ch in range(flat.shape[1])],
+        "max": [[[float(flat[:, ch].max())]] for ch in range(flat.shape[1])],
+        "mean": [[[float(flat[:, ch].mean())]] for ch in range(flat.shape[1])],
+        "std": [[[float(flat[:, ch].std())]] for ch in range(flat.shape[1])],
+        "count": [int(frames.shape[0])],
+    }}
+
+
+def encode_video(frames, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "-s", f"{{WIDTH}}x{{HEIGHT}}",
+        "-r", str(FPS),
+        "-i", "pipe:",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-crf", "28",
+        "-g", "2",
+        str(path),
+    ]
+    proc = subprocess.run(cmd, input=frames.tobytes(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode("utf-8", errors="replace")[-1000:])
+
+
+def episode_arrays(ep):
+    frames = np.zeros((FRAMES, HEIGHT, WIDTH, 3), dtype=np.uint8)
+    states = np.zeros((FRAMES, 2), dtype=np.float32)
+    actions = np.zeros((FRAMES, 2), dtype=np.float32)
+    rewards = np.zeros((FRAMES,), dtype=np.float32)
+    dones = np.zeros((FRAMES,), dtype=bool)
+    successes = np.zeros((FRAMES,), dtype=bool)
+    for t in range(FRAMES):
+        frac = t / max(1, FRAMES - 1)
+        x = 14 + int(frac * 58) + ep
+        y = 30 + int(math.sin(frac * math.pi) * 18) + ep
+        frames[t, :, :] = np.array([235, 238, 230], dtype=np.uint8)
+        frames[t, 42:55, 12:25] = np.array([180, 35, 35], dtype=np.uint8)
+        frames[t, y:y + 10, x:x + 10] = np.array([40, 75, 180], dtype=np.uint8)
+        states[t] = np.array([float(x), float(y)], dtype=np.float32)
+        next_x = 14 + int(min(1.0, (t + 1) / max(1, FRAMES - 1)) * 58) + ep
+        next_y = 30 + int(math.sin(min(1.0, (t + 1) / max(1, FRAMES - 1)) * math.pi) * 18) + ep
+        actions[t] = np.array([float(next_x), float(next_y)], dtype=np.float32)
+        rewards[t] = np.float32(frac)
+    dones[-1] = True
+    successes[-1] = True
+    return frames, states, actions, rewards, dones, successes
+
+
+def write_dataset(source_summary):
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    (OUT / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+    (OUT / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+    (OUT / "videos" / "observation.image" / "chunk-000").mkdir(parents=True, exist_ok=True)
+
+    rows = {{"observation.state": [], "action": [], "episode_index": [], "frame_index": [], "timestamp": [], "next.reward": [], "next.done": [], "next.success": [], "index": [], "task_index": []}}
+    episodes = []
+    all_stats = {{"observation.image": [], "observation.state": [], "action": [], "episode_index": [], "frame_index": [], "timestamp": [], "next.reward": [], "next.done": [], "next.success": [], "index": [], "task_index": []}}
+    global_index = 0
+    for ep in range(EPISODES):
+        frames, states, actions, rewards, dones, successes = episode_arrays(ep)
+        video_path = OUT / "videos" / "observation.image" / "chunk-000" / f"file-{{ep:03d}}.mp4"
+        encode_video(frames, video_path)
+        start = global_index
+        for frame_idx in range(FRAMES):
+            rows["observation.state"].append(states[frame_idx].tolist())
+            rows["action"].append(actions[frame_idx].tolist())
+            rows["episode_index"].append(ep)
+            rows["frame_index"].append(frame_idx)
+            rows["timestamp"].append(frame_idx / FPS)
+            rows["next.reward"].append(float(rewards[frame_idx]))
+            rows["next.done"].append(bool(dones[frame_idx]))
+            rows["next.success"].append(bool(successes[frame_idx]))
+            rows["index"].append(global_index)
+            rows["task_index"].append(0)
+            global_index += 1
+        stop = global_index
+        ep_values = {{
+            "observation.image": frames,
+            "observation.state": states,
+            "action": actions,
+            "episode_index": np.full(FRAMES, ep, dtype=np.int64),
+            "frame_index": np.arange(FRAMES, dtype=np.int64),
+            "timestamp": np.arange(FRAMES, dtype=np.float32) / FPS,
+            "next.reward": rewards,
+            "next.done": dones,
+            "next.success": successes,
+            "index": np.arange(start, stop, dtype=np.int64),
+            "task_index": np.zeros(FRAMES, dtype=np.int64),
+        }}
+        for key, value in ep_values.items():
+            all_stats[key].append(value)
+        ep_meta = {{
+            "episode_index": ep,
+            "data/chunk_index": 0,
+            "data/file_index": 0,
+            "dataset_from_index": start,
+            "dataset_to_index": stop,
+            "videos/observation.image/chunk_index": 0,
+            "videos/observation.image/file_index": ep,
+            "videos/observation.image/from_timestamp": 0.0,
+            "videos/observation.image/to_timestamp": FRAMES / FPS,
+            "tasks": [TASK],
+            "length": FRAMES,
+            "meta/episodes/chunk_index": 0,
+            "meta/episodes/file_index": 0,
+        }}
+        ep_stats = {{"observation.image": stat_video(frames)}}
+        for key, value in ep_values.items():
+            if key != "observation.image":
+                ep_stats[key] = stat_numeric(value)
+        for key, stats in ep_stats.items():
+            for stat_name, stat_value in stats.items():
+                ep_meta[f"stats/{{key}}/{{stat_name}}"] = stat_value
+        episodes.append(ep_meta)
+
+    data = pa.table({{
+        "observation.state": pa.array(rows["observation.state"], type=pa.list_(pa.float32(), 2)),
+        "action": pa.array(rows["action"], type=pa.list_(pa.float32(), 2)),
+        "episode_index": pa.array(rows["episode_index"], type=pa.int64()),
+        "frame_index": pa.array(rows["frame_index"], type=pa.int64()),
+        "timestamp": pa.array(rows["timestamp"], type=pa.float32()),
+        "next.reward": pa.array(rows["next.reward"], type=pa.float32()),
+        "next.done": pa.array(rows["next.done"], type=pa.bool_()),
+        "next.success": pa.array(rows["next.success"], type=pa.bool_()),
+        "index": pa.array(rows["index"], type=pa.int64()),
+        "task_index": pa.array(rows["task_index"], type=pa.int64()),
+    }})
+    pq.write_table(data, OUT / "data" / "chunk-000" / "file-000.parquet", compression="snappy")
+    pq.write_table(pa.table({{"task_index": [0], "task": [TASK]}}), OUT / "meta" / "tasks.parquet", compression="snappy")
+    pq.write_table(pa.Table.from_pylist(episodes), OUT / "meta" / "episodes" / "chunk-000" / "file-000.parquet", compression="snappy")
+
+    stats = {{"observation.image": stat_video(np.concatenate(all_stats["observation.image"], axis=0))}}
+    for key, values in all_stats.items():
+        if key != "observation.image":
+            stats[key] = stat_numeric(np.concatenate([np.asarray(value) for value in values], axis=0))
+    (OUT / "meta" / "stats.json").write_text(json.dumps(stats, indent=2))
+
+    info = {{
+        "codebase_version": "v3.0",
+        "robot_type": "synthetic_pusht",
+        "total_episodes": EPISODES,
+        "total_frames": EPISODES * FRAMES,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "fps": FPS,
+        "splits": {{"train": f"0:{{EPISODES}}"}},
+        "data_path": "data/chunk-{{chunk_index:03d}}/file-{{file_index:03d}}.parquet",
+        "video_path": "videos/{{video_key}}/chunk-{{chunk_index:03d}}/file-{{file_index:03d}}.mp4",
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 500,
+        "features": {{
+            "observation.image": {{"dtype": "video", "shape": [HEIGHT, WIDTH, 3], "names": ["height", "width", "channel"], "video_info": {{"video.fps": float(FPS), "video.codec": "h264", "video.pix_fmt": "yuv420p", "video.is_depth_map": False, "has_audio": False}}}},
+            "observation.state": {{"dtype": "float32", "shape": [2], "names": {{"motors": ["motor_0", "motor_1"]}}, "fps": float(FPS)}},
+            "action": {{"dtype": "float32", "shape": [2], "names": {{"motors": ["motor_0", "motor_1"]}}, "fps": float(FPS)}},
+            "episode_index": {{"dtype": "int64", "shape": [1], "names": None, "fps": float(FPS)}},
+            "frame_index": {{"dtype": "int64", "shape": [1], "names": None, "fps": float(FPS)}},
+            "timestamp": {{"dtype": "float32", "shape": [1], "names": None, "fps": float(FPS)}},
+            "next.reward": {{"dtype": "float32", "shape": [1], "names": None, "fps": float(FPS)}},
+            "next.done": {{"dtype": "bool", "shape": [1], "names": None, "fps": float(FPS)}},
+            "next.success": {{"dtype": "bool", "shape": [1], "names": None, "fps": float(FPS)}},
+            "index": {{"dtype": "int64", "shape": [1], "names": None, "fps": float(FPS)}},
+            "task_index": {{"dtype": "int64", "shape": [1], "names": None, "fps": float(FPS)}},
+        }},
+    }}
+    (OUT / "meta" / "info.json").write_text(json.dumps(info, indent=2))
+    summary = {{
+        "status": "success",
+        "tool": "fiftyone",
+        "format": "lerobot",
+        "contract": "LeRobotDataset v3",
+        "source": source_summary,
+        "name": "fiftyone-curated",
+        "total_episodes": EPISODES,
+        "total_frames": EPISODES * FRAMES,
+        "fiftyone_import": import_fiftyone_status(),
+        "job": os.environ.get("NPA_JOB_NAME", ""),
+    }}
+    (OUT / "npa_curated_dataset_summary.json").write_text(json.dumps(summary, indent=2))
+
+
+started = time.time()
+source_summary = inspect_source()
+write_dataset(source_summary)
+print("NPA_FIFTYONE_CURATE_DONE", json.dumps({{"episodes": EPISODES, "seconds": round(time.time() - started, 3)}}), flush=True)
+""".strip()
+    upload = build_serverless_output_upload_cmd(local_dir, "")
+    body = (
+        'set -euo pipefail\n'
+        'export PYTHONUNBUFFERED=1\n'
+        'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
+        'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
+        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+    )
+    return f"bash -lc {shlex.quote(body)}"
 
 
 def _fiftyone_serverless_load_dataset_command(
@@ -2332,6 +2786,70 @@ def launch_cmd(
         typer.echo(json.dumps(result, indent=2))
     else:
         typer.echo(f"  FiftyOne URL: {browser_url}")
+
+
+@app.command("curate")
+def curate_cmd(
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.serverless,
+        "--runtime",
+        help="Runtime. Only serverless is supported for FiftyOne curate.",
+    ),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    gpu_type: str = typer.Option(
+        "h100",
+        "--gpu-type",
+        help="GPU type for serverless Jobs: h100 or rtx6000. L40S is intentionally excluded.",
+    ),
+    region: str = typer.Option(
+        "",
+        "--region",
+        help="Nebius region. Defaults to eu-north1 for h100 and us-central1 for rtx6000.",
+    ),
+    input_path: str = typer.Option(
+        "",
+        "--input-path",
+        help="Optional S3 URI for a source dataset. Empty generates a synthetic curated subset.",
+    ),
+    output_path: str = typer.Option(..., "--output-path", help="S3 URI where the curated LeRobotDataset is written."),
+    num_episodes: int = typer.Option(4, "--num-episodes", min=1, help="Number of synthetic episodes to write."),
+    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
+    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
+    timeout_minutes: int = typer.Option(60, "--timeout-minutes", min=1, help="Minutes to wait for serverless completion."),
+    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
+    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
+    image: str = typer.Option("", "--image", help="Container image override for the serverless Job."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Curate a dataset and export a LeRobotDataset on Nebius Serverless."""
+    if not _is_serverless_runtime(runtime):
+        _fail("FiftyOne curate supports only --runtime serverless.")
+    source = input_path.strip()
+    if source and not source.startswith("s3://"):
+        _fail("FiftyOne curate --input-path must be an s3:// URI when provided.")
+    _fiftyone_serverless_submit_job(
+        command_label="curate",
+        tool_suffix="curate",
+        remote_command=_fiftyone_curate_container_command(
+            input_path=source,
+            num_episodes=num_episodes,
+        ),
+        output_path=output_path,
+        project_id=project_id,
+        image=image,
+        gpu_type=gpu_type,
+        region=region,
+        subnet_id=subnet_id,
+        job_name=job_name,
+        submit_only=submit_only,
+        poll_interval=poll_interval,
+        timeout_minutes=timeout_minutes,
+        output=output,
+        extra_env={
+            "NPA_STAGE_INPUT_PATH": source,
+            "NPA_CURATE_EPISODES": str(num_episodes),
+        },
+    )
 
 
 @app.command("load-dataset")
