@@ -41,7 +41,7 @@ def pytest_collection_modifyitems(
             reason="e2e tests require NPA_INTEGRATION_E2E=1"
         )
         for item in items:
-            if "e2e" in item.keywords:
+            if item.get_closest_marker("e2e") or item.get_closest_marker("e2e_serverless"):
                 item.add_marker(skip_marker)
         return
 
@@ -55,7 +55,7 @@ def pytest_collection_modifyitems(
         )
     )
     for item in items:
-        if "e2e_serverless" in item.keywords:
+        if item.get_closest_marker("e2e_serverless"):
             item.add_marker(serverless_skip)
 
 
