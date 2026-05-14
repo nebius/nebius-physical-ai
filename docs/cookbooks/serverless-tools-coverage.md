@@ -137,3 +137,9 @@ All new non-LeRobot serverless paths use `npa.serverless_common` for:
 - S3 output path validation.
 
 Subnet resolution remains per-tool because project/workbench config conventions differ. Polling calls `ServerlessClient.poll_job()` directly. `npa/src/npa/clients/serverless.py` was not changed by this rollout.
+
+## LanceDB Coverage Note
+
+| Tool | Command | Serverless Status | Smoke GPU | Smoke Result |
+|------|---------|-------------------|-----------|--------------|
+| LanceDB | `deploy` | n/a; persistent CPU service, use `container`, `vm`, `byovm`, or `cloud` | n/a (CPU) | PASS (local container smoke via LanceDB subapp; parent Workbench registration follow-up required) |

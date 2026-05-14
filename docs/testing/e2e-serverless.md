@@ -273,3 +273,38 @@ advanced to `STARTING`, and allocated a running compute instance, but produced
 no logs before cleanup. Treat GR00T as `SMOKE_FAILED` until Nebius investigates
 `aijob-e00tygb9eej5d174n7` or a later retry reaches terminal success and uploads
 artifacts.
+
+## LanceDB
+
+LanceDB does not use Serverless Jobs for `deploy`; it is a persistent,
+CPU-only service. Validate it with the local container smoke before any VM
+smoke:
+
+```bash
+docker build -t npa-lancedb:0.30.2 npa/docker/lancedb/
+
+npa workbench lancedb deploy \
+  --runtime container \
+  --storage-path /tmp/npa-lancedb-smoke \
+  --port 8686 \
+  --auth-mode none \
+  --replace \
+  --image npa-lancedb:0.30.2
+
+npa workbench lancedb create-table \
+  --endpoint http://localhost:8686 \
+  --table smoke_test \
+  --input-path /tmp/tiny_dataset.json \
+  --mode overwrite
+
+npa workbench lancedb query \
+  --endpoint http://localhost:8686 \
+  --table smoke_test \
+  --vector '[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]' \
+  --top-k 5
+```
+
+W7-lancedb result: local container smoke passed with 10 rows and an
+8-dimensional query vector. The public parent command still needs the
+Workbench parent Typer registration follow-up; the smoke was run through the
+new LanceDB subapp directly to stay inside the W7-lancedb write allowlist.
