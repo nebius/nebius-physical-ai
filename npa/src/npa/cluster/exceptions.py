@@ -21,3 +21,15 @@ class ClusterStateError(ClusterError):
 
 class ClusterTimeoutError(ClusterError, TimeoutError):
     """Cluster did not reach the requested state before timeout."""
+
+
+class NodeGroupError(ClusterError):
+    """Base error for node-group lifecycle operations."""
+
+
+class NodeGroupNotFoundError(NodeGroupError):
+    """Node group was not found in Nebius or local state."""
+
+
+class NodeGroupTimeoutError(NodeGroupError, TimeoutError):
+    """Node group did not reach the requested state before timeout."""

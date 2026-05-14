@@ -75,6 +75,35 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
     assert calls[3][1:4] == ["mk8s", "node-group", "create"]
     assert "--template-resources-platform" in calls[3]
     assert "--template-resources-preset" in calls[3]
+    network_index = calls[3].index("--template-network-interfaces") + 1
+    assert json.loads(calls[3][network_index]) == [{"subnet_id": "vpcsubnet-a"}]
+
+
+def test_public_node_ip_is_opt_in() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if args[1:4] == ["mk8s", "node-group", "create"]:
+            return _result(_node_group())
+        raise AssertionError(f"unexpected command: {args}")
+
+    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+
+    client.create_cpu_node_group(
+        ClusterConfig(
+            name="cluster-a",
+            project_id="project-a",
+            subnet_id="vpcsubnet-a",
+            public_node_ip=True,
+        ),
+        "mk8scluster-a",
+    )
+
+    network_index = calls[0].index("--template-network-interfaces") + 1
+    assert json.loads(calls[0][network_index]) == [
+        {"subnet_id": "vpcsubnet-a", "public_ip_address": {}}
+    ]
 
 
 def test_create_cluster_reuses_existing_cluster_and_node_group() -> None:

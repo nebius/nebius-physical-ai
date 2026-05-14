@@ -22,6 +22,7 @@ def test_default_cluster_config_values() -> None:
     assert config.node_preset == DEFAULT_NODE_PRESET
     assert config.k8s_version == DEFAULT_K8S_VERSION
     assert config.wait is True
+    assert config.public_node_ip is False
 
 
 @pytest.mark.parametrize("name", ["bad_name", "-bad", "bad-", "", "x" * 64])

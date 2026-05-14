@@ -31,6 +31,7 @@ def deploy_cmd(
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config or env."),
     subnet_id: str = typer.Option("", "--subnet-id", help="VPC subnet ID. Defaults through NPA subnet resolution."),
     node_platform: str = typer.Option(DEFAULT_NODE_PLATFORM, "--node-platform", help="CPU node platform."),
+    public_ip: bool = typer.Option(False, "--public-ip", help="Assign public IPs to CPU worker nodes."),
 ) -> None:
     """Provision a CPU-only Nebius Managed Kubernetes cluster."""
 
@@ -48,6 +49,7 @@ def deploy_cmd(
             subnet_id=resolved_subnet_id,
             wait=wait,
             timeout_minutes=timeout,
+            public_node_ip=public_ip,
         )
         client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
         typer.echo(f"Creating cluster {config.name} in {config.region}...")

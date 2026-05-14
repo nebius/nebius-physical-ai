@@ -11,8 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from npa.cluster.config import ClusterConfig
-from npa.cluster.exceptions import ClusterError, ClusterNotFoundError, ClusterTimeoutError
+from npa.cluster.config import ClusterConfig, NodeGroupConfig
+from npa.cluster.exceptions import (
+    ClusterError,
+    ClusterNotFoundError,
+    ClusterTimeoutError,
+    NodeGroupError,
+    NodeGroupNotFoundError,
+    NodeGroupTimeoutError,
+)
+from npa.cluster.node_group import gpu_type_from_platform
 
 SubprocessRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -27,6 +35,13 @@ class NodeGroupInfo:
     cluster_id: str
     status: str = "UNKNOWN"
     node_count: int = 0
+    created_at: str = ""
+    platform: str = ""
+    preset: str = ""
+    gpu_type: str = ""
+    public_ip: bool = False
+    autoscaling_min: int | None = None
+    autoscaling_max: int | None = None
     raw: dict[str, Any] | None = None
 
 
@@ -79,7 +94,7 @@ class MK8sClient:
                 existing.node_group_id = groups[0].id
                 existing.node_count = sum(group.node_count for group in groups)
                 return existing
-            node_group = self.create_node_group(config, existing.id)
+            node_group = self.create_cpu_node_group(config, existing.id)
             existing.node_group_id = node_group.id
             existing.node_count = node_group.node_count
             return existing
@@ -114,7 +129,7 @@ class MK8sClient:
             if not cluster.id:
                 cluster = self.get_cluster(config.name, project_id=config.project_id)
             created_cluster_id = cluster.id
-            node_group = self.create_node_group(config, cluster.id)
+            node_group = self.create_cpu_node_group(config, cluster.id)
             cluster.node_group_id = node_group.id
             cluster.node_count = node_group.node_count
             return cluster
@@ -126,47 +141,127 @@ class MK8sClient:
                     pass
             raise
 
-    def create_node_group(self, config: ClusterConfig, cluster_id: str) -> NodeGroupInfo:
-        network_interface: dict[str, Any] = {"subnet_id": config.subnet_id}
-        if config.public_node_ip:
+    def create_cpu_node_group(self, config: ClusterConfig, cluster_id: str) -> NodeGroupInfo:
+        return self.create_node_group(
+            cluster_id=cluster_id,
+            name=f"{config.name}-cpu",
+            platform=config.node_platform,
+            preset=config.node_preset,
+            node_count=config.node_count,
+            public_ip=config.public_node_ip,
+            subnet_id=config.subnet_id,
+            k8s_version=config.k8s_version,
+            boot_disk_type=config.boot_disk_type,
+            boot_disk_size_gib=config.boot_disk_size_gib,
+        )
+
+    def create_gpu_node_group(self, config: NodeGroupConfig, cluster_id: str) -> NodeGroupInfo:
+        return self.create_node_group(
+            cluster_id=cluster_id,
+            name=config.name,
+            platform=config.platform,
+            preset=config.node_preset,
+            node_count=config.node_count,
+            public_ip=config.public_ip,
+            autoscaling_min=config.autoscaling_min,
+            autoscaling_max=config.autoscaling_max,
+            subnet_id=config.subnet_id,
+            k8s_version=config.k8s_version,
+            boot_disk_type=config.boot_disk_type,
+            boot_disk_size_gib=config.boot_disk_size_gib,
+            gpu_type=config.gpu_type,
+            driver_preset=config.driver_preset,
+        )
+
+    def create_node_group(
+        self,
+        *,
+        cluster_id: str,
+        name: str,
+        platform: str,
+        preset: str,
+        node_count: int = 1,
+        public_ip: bool = False,
+        autoscaling_min: int | None = None,
+        autoscaling_max: int | None = None,
+        subnet_id: str = "",
+        k8s_version: str = "",
+        boot_disk_type: str = "network_ssd",
+        boot_disk_size_gib: int = 128,
+        gpu_type: str = "",
+        driver_preset: str = "",
+    ) -> NodeGroupInfo:
+        network_interface: dict[str, Any] = {}
+        if subnet_id:
+            network_interface["subnet_id"] = subnet_id
+        if public_ip:
             network_interface["public_ip_address"] = {}
-        result = self._run(
+        args = [
+            "mk8s",
+            "node-group",
+            "create",
+            "--parent-id",
+            cluster_id,
+            "--name",
+            name,
+        ]
+        if k8s_version:
+            args.extend(["--version", k8s_version])
+        if autoscaling_min is not None and autoscaling_max is not None:
+            args.extend(
+                [
+                    "--autoscaling-min-node-count",
+                    str(autoscaling_min),
+                    "--autoscaling-max-node-count",
+                    str(autoscaling_max),
+                ]
+            )
+        else:
+            args.extend(["--fixed-node-count", str(node_count)])
+        args.extend(
             [
-                "mk8s",
-                "node-group",
-                "create",
-                "--parent-id",
-                cluster_id,
-                "--name",
-                f"{config.name}-cpu",
-                "--version",
-                config.k8s_version,
-                "--fixed-node-count",
-                str(config.node_count),
                 "--template-resources-platform",
-                config.node_platform,
+                platform,
                 "--template-resources-preset",
-                config.node_preset,
+                preset,
                 "--template-boot-disk-type",
-                config.boot_disk_type,
+                boot_disk_type,
                 "--template-boot-disk-size-gibibytes",
-                str(config.boot_disk_size_gib),
+                str(boot_disk_size_gib),
                 "--template-network-interfaces",
                 json.dumps([network_interface], separators=(",", ":")),
-                "--format",
-                "json",
-            ],
-            timeout=self._timeout,
+            ]
         )
+        if driver_preset:
+            args.extend(["--template-gpu-settings-drivers-preset", driver_preset])
+        args.extend(["--format", "json"])
+
+        result = self._run(args, timeout=self._timeout)
         if result.returncode != 0:
-            self._raise_for_error(result, f"create node group failed for {config.name}")
+            self._raise_for_error(result, f"create node group failed for {name}", not_found_error=NodeGroupNotFoundError)
         node_group = self._parse_node_group(result.stdout, cluster_id=cluster_id)
         if not node_group.id:
             groups = self.list_node_groups(cluster_id)
             for group in groups:
-                if group.name == f"{config.name}-cpu":
-                    return group
-        return node_group
+                if group.name == name:
+                    return _enrich_node_group(
+                        group,
+                        platform=platform,
+                        preset=preset,
+                        gpu_type=gpu_type,
+                        public_ip=public_ip,
+                        autoscaling_min=autoscaling_min,
+                        autoscaling_max=autoscaling_max,
+                    )
+        return _enrich_node_group(
+            node_group,
+            platform=platform,
+            preset=preset,
+            gpu_type=gpu_type,
+            public_ip=public_ip,
+            autoscaling_min=autoscaling_min,
+            autoscaling_max=autoscaling_max,
+        )
 
     def list_clusters(self, project_id: str) -> list[ClusterInfo]:
         result = self._run(
@@ -235,6 +330,93 @@ class MK8sClient:
             for item in _as_items(_json_loads(result.stdout))
         ]
 
+    def get_node_group(self, cluster_id: str, name_or_id: str) -> NodeGroupInfo:
+        result = self._run(
+            ["mk8s", "node-group", "get", "--id", name_or_id, "--format", "json"],
+            timeout=120,
+        )
+        if result.returncode == 0:
+            return self._parse_node_group(result.stdout, cluster_id=cluster_id)
+        by_name = self._run(
+            [
+                "mk8s",
+                "node-group",
+                "get-by-name",
+                "--parent-id",
+                cluster_id,
+                "--name",
+                name_or_id,
+                "--format",
+                "json",
+            ],
+            timeout=120,
+        )
+        if by_name.returncode == 0:
+            return self._parse_node_group(by_name.stdout, cluster_id=cluster_id)
+        if self._is_not_found(result) or self._is_not_found(by_name):
+            raise NodeGroupNotFoundError(f"Node group {name_or_id} not found in cluster {cluster_id}")
+        self._raise_for_error(by_name, f"get node group failed for {name_or_id}", not_found_error=NodeGroupNotFoundError)
+        raise AssertionError("unreachable")
+
+    def delete_node_group(self, cluster_id: str, name_or_id: str) -> None:
+        try:
+            node_group = self.get_node_group(cluster_id, name_or_id)
+        except NodeGroupNotFoundError:
+            return
+        result = self._run(["mk8s", "node-group", "delete", "--id", node_group.id], timeout=self._timeout)
+        if result.returncode != 0 and not self._is_not_found(result):
+            self._raise_for_error(
+                result,
+                f"delete node group failed for {name_or_id}",
+                not_found_error=NodeGroupNotFoundError,
+            )
+
+    def wait_for_node_group_ready(
+        self,
+        cluster_id: str,
+        name_or_id: str,
+        *,
+        timeout_minutes: int = 30,
+        on_state_change: Callable[[NodeGroupInfo], None] | None = None,
+    ) -> NodeGroupInfo:
+        deadline = time.monotonic() + timeout_minutes * 60
+        last_status = ""
+        last_node_group: NodeGroupInfo | None = None
+        while time.monotonic() <= deadline:
+            node_group = self.get_node_group(cluster_id, name_or_id)
+            if node_group.status != last_status and on_state_change is not None:
+                on_state_change(node_group)
+            last_status = node_group.status
+            last_node_group = node_group
+            if is_error(node_group.status):
+                raise NodeGroupError(f"Node group {name_or_id} entered terminal state {node_group.status}")
+            if is_ready(node_group.status):
+                return node_group
+            self._sleep(self._poll_interval)
+        status = last_node_group.status if last_node_group else "UNKNOWN"
+        raise NodeGroupTimeoutError(
+            f"Node group {name_or_id} did not become READY within {timeout_minutes} minutes "
+            f"(state={status})"
+        )
+
+    def wait_for_node_group_deleted(
+        self,
+        cluster_id: str,
+        name_or_id: str,
+        *,
+        timeout_minutes: int = 30,
+    ) -> None:
+        deadline = time.monotonic() + timeout_minutes * 60
+        while time.monotonic() <= deadline:
+            try:
+                self.get_node_group(cluster_id, name_or_id)
+            except NodeGroupNotFoundError:
+                return
+            self._sleep(self._poll_interval)
+        raise NodeGroupTimeoutError(
+            f"Node group {name_or_id} was not deleted within {timeout_minutes} minutes"
+        )
+
     def get_kubeconfig(
         self,
         cluster_id: str,
@@ -284,13 +466,13 @@ class MK8sClient:
             last_state = state_key
             last_cluster = cluster
             last_groups = groups
-            if cluster.status in ERROR_STATES:
+            if is_error(cluster.status):
                 raise ClusterError(f"Cluster {cluster.id} entered terminal state {cluster.status}")
-            if any(group.status in ERROR_STATES for group in groups):
+            if any(is_error(group.status) for group in groups):
                 failed = ", ".join(f"{group.name}:{group.status}" for group in groups)
                 raise ClusterError(f"Cluster {cluster.id} has failed node group state: {failed}")
-            ready_nodes = sum(group.node_count for group in groups if group.status in READY_STATES)
-            if cluster.status in READY_STATES and groups and ready_nodes >= expected_node_count:
+            ready_nodes = sum(group.node_count for group in groups if is_ready(group.status))
+            if is_ready(cluster.status) and groups and ready_nodes >= expected_node_count:
                 cluster.node_count = ready_nodes
                 cluster.node_group_id = groups[0].id
                 return cluster
@@ -351,16 +533,48 @@ class MK8sClient:
                 data,
                 ("spec", "fixed_node_count"),
                 ("spec", "fixedNodeCount"),
+                ("spec", "autoscaling", "min_node_count"),
+                ("spec", "autoscaling", "minNodeCount"),
                 ("status", "node_count"),
                 ("status", "nodeCount"),
             )
         )
+        platform = str(
+            _deep_get(
+                data,
+                ("spec", "template", "resources", "platform"),
+                ("template", "resources", "platform"),
+            )
+            or ""
+        )
+        preset = str(
+            _deep_get(
+                data,
+                ("spec", "template", "resources", "preset"),
+                ("template", "resources", "preset"),
+            )
+            or ""
+        )
+        autoscaling_min = _optional_int(
+            _deep_get(data, ("spec", "autoscaling", "min_node_count"), ("spec", "autoscaling", "minNodeCount"))
+        )
+        autoscaling_max = _optional_int(
+            _deep_get(data, ("spec", "autoscaling", "max_node_count"), ("spec", "autoscaling", "maxNodeCount"))
+        )
+        public_ip = _has_public_ip(data)
         return NodeGroupInfo(
             id=str((metadata or {}).get("id") or data.get("id") or ""),
             name=str((metadata or {}).get("name") or data.get("name") or ""),
             cluster_id=cluster_id,
             status=_normalize_state(_deep_get(data, ("status", "state"), ("state",))),
             node_count=node_count,
+            created_at=str((metadata or {}).get("created_at") or data.get("created_at") or ""),
+            platform=platform,
+            preset=preset,
+            gpu_type=gpu_type_from_platform(platform),
+            public_ip=public_ip,
+            autoscaling_min=autoscaling_min,
+            autoscaling_max=autoscaling_max,
             raw=data,
         )
 
@@ -397,9 +611,15 @@ class MK8sClient:
             return last_result
         raise ClusterError(f"Unable to run Nebius CLI: {shlex.join(full_args)}")
 
-    def _raise_for_error(self, result: subprocess.CompletedProcess[str], prefix: str) -> None:
+    def _raise_for_error(
+        self,
+        result: subprocess.CompletedProcess[str],
+        prefix: str,
+        *,
+        not_found_error: type[ClusterError] = ClusterNotFoundError,
+    ) -> None:
         if self._is_not_found(result):
-            raise ClusterNotFoundError(prefix)
+            raise not_found_error(prefix)
         detail = (result.stderr or result.stdout or "").strip()
         suffix = f": {detail}" if detail else f" (exit code {result.returncode})"
         raise ClusterError(f"{prefix}{suffix}")
@@ -470,6 +690,63 @@ def _int_value(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_public_ip(data: dict[str, Any]) -> bool:
+    interfaces = _deep_get(
+        data,
+        ("spec", "template", "network_interfaces"),
+        ("spec", "template", "networkInterfaces"),
+        ("template", "network_interfaces"),
+        ("template", "networkInterfaces"),
+    )
+    if not isinstance(interfaces, list):
+        return False
+    return any(
+        isinstance(interface, dict)
+        and ("public_ip_address" in interface or "publicIpAddress" in interface)
+        for interface in interfaces
+    )
+
+
+def _enrich_node_group(
+    node_group: NodeGroupInfo,
+    *,
+    platform: str,
+    preset: str,
+    gpu_type: str = "",
+    public_ip: bool = False,
+    autoscaling_min: int | None = None,
+    autoscaling_max: int | None = None,
+) -> NodeGroupInfo:
+    node_group.platform = node_group.platform or platform
+    node_group.preset = node_group.preset or preset
+    node_group.gpu_type = node_group.gpu_type or gpu_type
+    node_group.public_ip = node_group.public_ip or public_ip
+    node_group.autoscaling_min = (
+        node_group.autoscaling_min if node_group.autoscaling_min is not None else autoscaling_min
+    )
+    node_group.autoscaling_max = (
+        node_group.autoscaling_max if node_group.autoscaling_max is not None else autoscaling_max
+    )
+    return node_group
+
+
+def is_ready(state: str) -> bool:
+    return _normalize_state(state) in READY_STATES
+
+
+def is_error(state: str) -> bool:
+    return _normalize_state(state) in ERROR_STATES
 
 
 def _endpoint_from_cluster(data: dict[str, Any]) -> str:
