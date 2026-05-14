@@ -34,7 +34,6 @@ def list_cmd(
         resolved,
         "/tables",
         headers=headers,
-        payload={"limit": limit, "prefix": prefix} if False else None,
     )
     tables = payload.get("tables", [])
     if prefix:
