@@ -168,6 +168,30 @@ def test_remove_node_group_handles_remote_only(monkeypatch) -> None:
     ]
 
 
+def test_remove_node_group_missing_everywhere_is_clean_noop(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def get_node_group(self, cluster_id, name):
+            raise NodeGroupNotFoundError("missing")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(node_group_mod, "load_node_group_state", lambda cluster_name, name: None)
+
+    result = runner.invoke(
+        app,
+        ["node-group", "remove", "--cluster-name", "cluster-a", "--name", "missing", "--force"],
+    )
+
+    assert result.exit_code == 0
+    assert "not found" in result.output
+
+
 def test_status_json_merges_remote_and_local(monkeypatch) -> None:
     saved: list[NodeGroupState] = []
 
