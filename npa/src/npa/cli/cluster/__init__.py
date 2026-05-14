@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from npa.cli.cluster.deploy import deploy_cmd
+from npa.cli.cluster.destroy import destroy_cmd
 
 app = typer.Typer(
     name="cluster",
@@ -13,3 +14,4 @@ app = typer.Typer(
 )
 
 app.command("deploy")(deploy_cmd)
+app.command("destroy")(destroy_cmd)
