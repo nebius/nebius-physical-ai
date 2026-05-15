@@ -16,11 +16,11 @@ from npa.cluster.state import ClusterState, list_local_clusters, load_cluster_st
 
 
 def status_cmd(
-    name: str = typer.Option("", "--name", help="Cluster name. Lists all known clusters when omitted."),
+    name: str = typer.Option("", "--name", help="NPA cluster target name. Lists all known targets when omitted."),
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
 ) -> None:
-    """Show cluster state from Nebius and the local cache."""
+    """Show NPA cluster target state from Nebius and the local cache."""
 
     _emit_status(name=name, output_format=output_format, project_id=project_id)
 
@@ -29,7 +29,7 @@ def list_cmd(
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config."),
 ) -> None:
-    """List known NPA clusters."""
+    """List NPA Workbench cluster targets known locally or in the configured project."""
 
     _emit_status(name="", output_format=output_format, project_id=project_id)
 

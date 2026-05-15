@@ -21,19 +21,42 @@ from npa.serverless_common.subnet import resolve_subnet
 
 
 def deploy_cmd(
-    name: str = typer.Option(..., "--name", help="Human-readable cluster name."),
-    region: str = typer.Option(DEFAULT_REGION, "--region", help="Nebius region."),
-    node_count: int = typer.Option(1, "--node-count", help="Number of CPU worker nodes."),
-    node_preset: str = typer.Option(DEFAULT_NODE_PRESET, "--node-preset", help="CPU node preset."),
-    k8s_version: str = typer.Option(DEFAULT_K8S_VERSION, "--k8s-version", help="Kubernetes major.minor version."),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="NPA cluster target/profile name; also used as the kubeconfig context.",
+    ),
+    region: str = typer.Option(DEFAULT_REGION, "--region", help="Nebius region for the NPA-managed cluster target."),
+    node_count: int = typer.Option(1, "--node-count", help="CPU worker count for the initial NPA target node group."),
+    node_preset: str = typer.Option(
+        DEFAULT_NODE_PRESET,
+        "--node-preset",
+        help="CPU node preset for the initial NPA target node group.",
+    ),
+    k8s_version: str = typer.Option(
+        DEFAULT_K8S_VERSION,
+        "--k8s-version",
+        help="Kubernetes major.minor version for target bootstrap. Use nebius mk8s for version discovery and upgrades.",
+    ),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until cluster and node group are READY."),
-    timeout: int = typer.Option(30, "--timeout", help="Deploy wait timeout in minutes."),
+    timeout: int = typer.Option(30, "--timeout", help="Target bootstrap readiness timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config or env."),
     subnet_id: str = typer.Option("", "--subnet-id", help="VPC subnet ID. Defaults through NPA subnet resolution."),
-    node_platform: str = typer.Option(DEFAULT_NODE_PLATFORM, "--node-platform", help="CPU node platform."),
-    public_ip: bool = typer.Option(False, "--public-ip", help="Assign public IPs to CPU worker nodes."),
+    node_platform: str = typer.Option(
+        DEFAULT_NODE_PLATFORM,
+        "--node-platform",
+        help="CPU platform for the initial NPA target node group.",
+    ),
+    public_ip: bool = typer.Option(
+        False,
+        "--public-ip",
+        help="Assign public IPs to the initial CPU nodes for this NPA target.",
+    ),
 ) -> None:
-    """Provision a CPU-only Nebius Managed Kubernetes cluster."""
+    """Bootstrap an NPA Workbench cluster target with local state and a cached kubeconfig.
+
+    Wraps `nebius mk8s` cluster/node-group create and get-credentials.
+    """
 
     try:
         resolved_project_id = resolve_project_id(project_id)

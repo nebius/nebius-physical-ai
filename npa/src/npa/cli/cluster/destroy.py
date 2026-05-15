@@ -16,12 +16,15 @@ from npa.cluster.state import (
 
 
 def destroy_cmd(
-    name: str = typer.Option(..., "--name", help="Cluster name to destroy."),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation."),
-    timeout: int = typer.Option(30, "--timeout", help="Destroy wait timeout in minutes."),
+    name: str = typer.Option(..., "--name", help="NPA cluster target/profile name to clean up."),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation for NPA target cleanup."),
+    timeout: int = typer.Option(30, "--timeout", help="Target cleanup wait timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
 ) -> None:
-    """Destroy a Nebius Managed Kubernetes cluster and remove local state."""
+    """Clean up an NPA Workbench cluster target and remove its local profile state.
+
+    Wraps `nebius mk8s` cluster delete for target cleanup.
+    """
 
     try:
         local_state = load_cluster_state(name)

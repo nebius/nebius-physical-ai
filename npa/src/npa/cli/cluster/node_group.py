@@ -9,6 +9,7 @@ from typing import Any
 
 import typer
 
+from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo
 from npa.cluster.config import DEFAULT_K8S_VERSION, NodeGroupConfig, resolve_project_id
 from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError, NodeGroupNotFoundError
@@ -27,25 +28,55 @@ from npa.cluster.state import (
 
 app = typer.Typer(
     name="node-group",
-    help="Manage GPU node groups for NPA Kubernetes clusters.",
+    help="Manage GPU node groups attached to NPA Workbench cluster targets.",
+    epilog=CLUSTER_SCOPE_EPILOG,
     no_args_is_help=True,
 )
 
 
 def add_cmd(
-    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent cluster name."),
-    name: str = typer.Option("", "--name", help="Node-group name. Defaults from cluster and GPU type."),
+    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent NPA cluster target/profile name."),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="NPA node-group profile name. Defaults from cluster target and GPU type.",
+    ),
     gpu_type: str = typer.Option(..., "--gpu-type", help="GPU type: h100, h200, l40s, or rtx6000."),
-    node_count: int = typer.Option(1, "--node-count", help="Number of GPU worker nodes."),
-    node_preset: str = typer.Option("", "--node-preset", help="Override the default GPU node preset."),
-    public_ip: bool = typer.Option(False, "--public-ip", help="Assign public IPs to GPU worker nodes."),
-    autoscaling_min: int | None = typer.Option(None, "--autoscaling-min", help="Autoscaling minimum nodes."),
-    autoscaling_max: int | None = typer.Option(None, "--autoscaling-max", help="Autoscaling maximum nodes."),
+    node_count: int = typer.Option(1, "--node-count", help="GPU worker count for this NPA node-group profile."),
+    node_preset: str = typer.Option(
+        "",
+        "--node-preset",
+        help="Override the NPA default GPU node preset for this profile.",
+    ),
+    public_ip: bool = typer.Option(
+        False,
+        "--public-ip",
+        help="Assign public IPs to GPU nodes in this NPA target profile.",
+    ),
+    autoscaling_min: int | None = typer.Option(
+        None,
+        "--autoscaling-min",
+        help=(
+            "Autoscaling minimum for this NPA GPU node-group profile. "
+            "Use nebius mk8s for broader node-group administration."
+        ),
+    ),
+    autoscaling_max: int | None = typer.Option(
+        None,
+        "--autoscaling-max",
+        help=(
+            "Autoscaling maximum for this NPA GPU node-group profile. "
+            "Use nebius mk8s for broader node-group administration."
+        ),
+    ),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until node group is READY/RUNNING."),
-    timeout: int = typer.Option(30, "--timeout", help="Wait timeout in minutes."),
+    timeout: int = typer.Option(30, "--timeout", help="GPU target readiness timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
 ) -> None:
-    """Add a GPU node group to an existing MK8s cluster."""
+    """Attach a GPU node-group profile to an NPA Workbench cluster target.
+
+    Wraps `nebius mk8s` node-group create with NPA GPU aliases and local cache.
+    """
 
     try:
         client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
@@ -107,13 +138,16 @@ def add_cmd(
 
 
 def remove_cmd(
-    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent cluster name."),
-    name: str = typer.Option(..., "--name", help="Node-group name to remove."),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation."),
-    timeout: int = typer.Option(30, "--timeout", help="Remove wait timeout in minutes."),
+    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent NPA cluster target/profile name."),
+    name: str = typer.Option(..., "--name", help="NPA node-group profile name to remove."),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation for NPA node-group cleanup."),
+    timeout: int = typer.Option(30, "--timeout", help="Node-group target cleanup wait timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
 ) -> None:
-    """Remove a GPU node group and its local cache."""
+    """Remove an NPA GPU node-group profile and clean up its local cache.
+
+    Wraps `nebius mk8s` node-group delete for target cleanup.
+    """
 
     try:
         client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
@@ -151,22 +185,26 @@ def remove_cmd(
 
 
 def status_cmd(
-    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent cluster name."),
-    name: str = typer.Option("", "--name", help="Node-group name. Lists all node groups when omitted."),
+    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent NPA cluster target/profile name."),
+    name: str = typer.Option("", "--name", help="NPA node-group profile name. Lists all node groups when omitted."),
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
 ) -> None:
-    """Show GPU node-group state from Nebius and the local cache."""
+    """Show NPA GPU node-group target state from Nebius and the local cache."""
 
     _emit_status(cluster_name=cluster_name, name=name, output_format=output_format, project_id=project_id)
 
 
 def list_cmd(
-    cluster_name: str = typer.Option("", "--cluster-name", help="Parent cluster name. Lists all known clusters when omitted."),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help="Parent NPA cluster target/profile name. Lists all known targets when omitted.",
+    ),
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
 ) -> None:
-    """List GPU node groups."""
+    """List GPU node-group profiles attached to NPA Workbench cluster targets."""
 
     _emit_status(cluster_name=cluster_name, name="", output_format=output_format, project_id=project_id)
 
