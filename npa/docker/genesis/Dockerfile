@@ -51,6 +51,13 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/npa/src/npa \
       /opt/npa/docker/genesis
 
+# Permissions fix for /dev/dri access on serverless runtimes.
+# /dev/dri/card0 is owned by root:video (GID 44), while the render node is
+# owned by a runtime-provided numeric render group (GID 992).
+RUN groupadd -g 44 video 2>/dev/null || true; \
+    groupadd -g 992 render 2>/dev/null || true; \
+    usermod -aG video,render ubuntu
+
 USER ubuntu
 WORKDIR /opt/genesis
 
