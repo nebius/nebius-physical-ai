@@ -149,6 +149,12 @@ def test_curate_augment_train_pipeline_shape() -> None:
     assert "failure_categories" in eval_command
 
 
+@pytest.mark.skip(
+    reason=(
+        "Replaced by WorkflowTemplate-backed "
+        "npa/tests/composition/test_curate_augment_train_workflow.py"
+    )
+)
 @pytest.mark.e2e_pipeline
 def test_curate_augment_train_pipeline_e2e(tmp_path: Path) -> None:
     """Validate FiftyOne -> Cosmos -> LeRobot -> FiftyOne composition.

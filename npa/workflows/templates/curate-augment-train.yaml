@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: curate-augment-train
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: npa-workflows
+    npa.nebius.com/reference-architecture: curate-augment-train
+spec:
+  entrypoint: main
+  serviceAccountName: argo-workflow
+  activeDeadlineSeconds: 3600
+  arguments:
+    parameters:
+      - name: dataset-uri
+        value: s3://YOUR_S3_BUCKET/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt
+      - name: output-prefix
+        value: argo-artifacts/{{workflow.name}}/
+      - name: gpu-type
+        value: gpu-h100-sxm
+      - name: min-quality
+        value: "0.80"
+  templates:
+    - name: main
+      inputs:
+        parameters:
+          - name: dataset-uri
+          - name: output-prefix
+          - name: gpu-type
+          - name: min-quality
+      steps:
+        - - name: curate
+            templateRef:
+              name: placeholder-step
+              template: placeholder
+            arguments:
+              parameters:
+                - name: step-name
+                  value: step-curate
+                - name: step-parameters
+                  value: '{"mode":"placeholder","min-quality":"{{inputs.parameters.min-quality}}","output-prefix":"{{inputs.parameters.output-prefix}}"}'
+              artifacts:
+                - name: input
+                  s3:
+                    endpoint: storage.eu-north1.nebius.cloud
+                    bucket: YOUR_S3_BUCKET
+                    key: '{{=sprig.trimPrefix("s3://YOUR_S3_BUCKET/", inputs.parameters["dataset-uri"])}}'
+                    region: eu-north1
+                    insecure: false
+                    accessKeySecret:
+                      name: argo-s3-credentials
+                      key: accessKey
+                    secretKeySecret:
+                      name: argo-s3-credentials
+                      key: secretKey
+        - - name: augment
+            templateRef:
+              name: placeholder-step
+              template: placeholder
+            arguments:
+              parameters:
+                - name: step-name
+                  value: step-augment
+                - name: step-parameters
+                  value: '{"mode":"placeholder","output-prefix":"{{inputs.parameters.output-prefix}}"}'
+              artifacts:
+                - name: input
+                  from: "{{steps.curate.outputs.artifacts.output}}"
+        - - name: train
+            templateRef:
+              name: placeholder-step
+              template: placeholder
+            arguments:
+              parameters:
+                - name: step-name
+                  value: step-train
+                - name: step-parameters
+                  value: '{"mode":"placeholder","gpu-type":"{{inputs.parameters.gpu-type}}","output-prefix":"{{inputs.parameters.output-prefix}}"}'
+              artifacts:
+                - name: input
+                  from: "{{steps.augment.outputs.artifacts.output}}"
