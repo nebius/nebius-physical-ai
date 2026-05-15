@@ -69,7 +69,11 @@ def add_cmd(
             "Use nebius mk8s for broader node-group administration."
         ),
     ),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until node group is READY/RUNNING."),
+    wait: bool = typer.Option(
+        True,
+        "--wait/--no-wait",
+        help="Wait until the NPA GPU node-group target is READY/RUNNING.",
+    ),
     timeout: int = typer.Option(30, "--timeout", help="GPU target readiness timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
 ) -> None:

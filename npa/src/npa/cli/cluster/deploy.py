@@ -38,7 +38,11 @@ def deploy_cmd(
         "--k8s-version",
         help="Kubernetes major.minor version for target bootstrap. Use nebius mk8s for version discovery and upgrades.",
     ),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until cluster and node group are READY."),
+    wait: bool = typer.Option(
+        True,
+        "--wait/--no-wait",
+        help="Wait until the NPA target cluster and initial node group are READY.",
+    ),
     timeout: int = typer.Option(30, "--timeout", help="Target bootstrap readiness timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config or env."),
     subnet_id: str = typer.Option("", "--subnet-id", help="VPC subnet ID. Defaults through NPA subnet resolution."),
