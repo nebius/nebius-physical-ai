@@ -128,11 +128,11 @@ bash /opt/lerobot/validate_policies.sh
 bash /opt/lerobot/benchmark_policies.sh
 ```
 
-**Monitor on preemption:**
+**Resume after preemption:**
 ```bash
-# If instance is preempted, latest checkpoint is auto-uploaded to S3
-# Re-run the wrapper to resume training (it finds and continues from last checkpoint)
-bash /opt/lerobot/train.sh --policy.type=act --dataset.repo_id=lerobot/pusht
+# If instance is preempted, latest checkpoint is auto-uploaded to S3.
+# Set RESUME=true to find the last run dir and pass --resume=true to lerobot-train:
+RESUME=true bash /opt/lerobot/train.sh --policy.type=act --dataset.repo_id=lerobot/pusht
 ```
 
 ## Manage checkpoints via S3

@@ -22,6 +22,9 @@ if [ -f "${_DEPLOY_ROOT}/.env" ]; then
   set +a
 fi
 
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
+
 echo "Starting lerobot-eval at $(date)"
 echo "Arguments: $*"
 

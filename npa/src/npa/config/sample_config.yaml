@@ -1,0 +1,73 @@
+# ~/.npa/config.yaml — Full sample configuration
+#
+# Includes workbench management + distillation workflow settings.
+
+projects:
+  eu-west1:
+    project_id: project-REPLACE_ME
+    tenant_id: tenant-REPLACE_ME
+    region: eu-west1
+    workbenches:
+      sim-gpu:
+        gpu_platform: gpu-l40s
+        gpu_preset: 1gpu-16vcpu-200gb
+        endpoint: http://SIM_VM_IP:8080
+        ssh:
+          host: SIM_VM_IP
+          user: ubuntu
+          key_path: ~/.ssh/id_ed25519
+        storage:
+          checkpoint_bucket: s3://my-bucket/checkpoints/
+          endpoint_url: https://storage.eu-west1.nebius.cloud
+      train-gpu:
+        gpu_platform: gpu-h200-sxm
+        gpu_preset: 1gpu-16vcpu-200gb
+        endpoint: http://TRAIN_VM_IP:8080
+        ssh:
+          host: TRAIN_VM_IP
+          user: ubuntu
+          key_path: ~/.ssh/id_ed25519
+        storage:
+          checkpoint_bucket: s3://my-bucket/checkpoints/
+          endpoint_url: https://storage.eu-west1.nebius.cloud
+
+default_project: eu-west1
+default_workbench: sim-gpu
+
+# Expert distillation workflow configuration
+workflows:
+  distill:
+    sim: genesis
+    trainer: lerobot
+    teacher:
+      algo: ppo
+      n_envs: 4096
+      max_iterations: 500
+      privileged_obs:
+        - object_pose
+        - contact_flags
+        - goal_position
+    demos:
+      n_envs: 4096
+      domain_randomize: true
+      cameras:
+        - workspace
+        - wrist
+      camera_res:
+        - 480
+        - 640
+      fps: 20
+      filter_success: true
+    student:
+      policy: act
+      num_epochs: 100
+      batch_size: 64
+      observation_keys:
+        - observation.images.workspace
+        - observation.images.wrist
+        - observation.state
+    eval:
+      n_envs: 1024
+      n_episodes: 1024
+      domain_randomize: true
+      eval_seed: 7777  # Must differ from demo_seed (42) for held-out evaluation

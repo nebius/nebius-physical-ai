@@ -167,7 +167,8 @@ resource "null_resource" "wait_for_cloud_init" {
         sleep 10
       done
 
-      "$${ssh_cmd[@]}" "/usr/bin/cloud-init status --wait"
+      "$${ssh_cmd[@]}" "cloud-init status --wait || cloud-init status --long || true"
+      "$${ssh_cmd[@]}" "test -x /opt/lerobot/venv/bin/python"
       "$${ssh_cmd[@]}" "/opt/lerobot/venv/bin/python -c 'import lerobot; print(\"LeRobot \" + lerobot.__version__ + \" ready\")'"
     EOT
   }
@@ -185,6 +186,7 @@ resource "null_resource" "sync_runtime_scripts" {
     benchmark_metrics_py_sha    = filesha256("${path.module}/../training/benchmark_metrics.py")
     benchmark_policies_sh_sha   = filesha256("${path.module}/../training/benchmark_policies.sh")
     benchmark_sitecustomize_sha = filesha256("${path.module}/../training/benchmark_python/sitecustomize.py")
+    profile_train_py_sha        = filesha256("${path.module}/../training/profile_train.py")
   }
 
   provisioner "local-exec" {
@@ -212,20 +214,23 @@ resource "null_resource" "sync_runtime_scripts" {
         training/validate_policies.sh \
         training/benchmark_metrics.py \
         training/benchmark_policies.sh \
+        training/profile_train.py \
         training/benchmark_python/sitecustomize.py
 
       "$${scp_cmd[@]}" "$archive" "$user@$host:/tmp/lerobot-runtime-sync.tgz"
       "$${ssh_cmd[@]}" 'set -euo pipefail
         sudo install -d -m 0755 /opt/lerobot /opt/lerobot/benchmark_python
-        tmpdir=$$(mktemp -d)
-        tar -xzf /tmp/lerobot-runtime-sync.tgz -C "$$tmpdir"
-        sudo install -m 0755 "$$tmpdir/s3_sync.py" /opt/lerobot/s3_sync.py
-        sudo install -m 0755 "$$tmpdir/training/train.sh" /opt/lerobot/train.sh
-        sudo install -m 0755 "$$tmpdir/training/eval.sh" /opt/lerobot/eval.sh
-        sudo install -m 0755 "$$tmpdir/training/validate_policies.sh" /opt/lerobot/validate_policies.sh
-        sudo install -m 0644 "$$tmpdir/training/benchmark_metrics.py" /opt/lerobot/benchmark_metrics.py
-        sudo install -m 0755 "$$tmpdir/training/benchmark_policies.sh" /opt/lerobot/benchmark_policies.sh
-        sudo install -m 0644 "$$tmpdir/training/benchmark_python/sitecustomize.py" /opt/lerobot/benchmark_python/sitecustomize.py
+        tmpdir=$(mktemp -d)
+        tar -xzf /tmp/lerobot-runtime-sync.tgz -C "$tmpdir"
+        sudo install -m 0755 "$tmpdir/s3_sync.py" /opt/lerobot/s3_sync.py
+        sudo install -m 0755 "$tmpdir/training/train.sh" /opt/lerobot/train.sh
+        sudo install -m 0755 "$tmpdir/training/eval.sh" /opt/lerobot/eval.sh
+        sudo install -m 0755 "$tmpdir/training/validate_policies.sh" /opt/lerobot/validate_policies.sh
+        sudo install -m 0644 "$tmpdir/training/benchmark_metrics.py" /opt/lerobot/benchmark_metrics.py
+        sudo install -m 0755 "$tmpdir/training/benchmark_policies.sh" /opt/lerobot/benchmark_policies.sh
+        sudo install -m 0644 "$tmpdir/training/profile_train.py" /opt/lerobot/profile_train.py
+        sudo install -m 0644 "$tmpdir/training/benchmark_python/sitecustomize.py" /opt/lerobot/benchmark_python/sitecustomize.py
+        sudo rm -f /opt/lerobot/repair_nvidia_egl.sh
         sudo chown ${var.ssh_user}:${var.ssh_user} \
           /opt/lerobot/s3_sync.py \
           /opt/lerobot/train.sh \
@@ -233,8 +238,9 @@ resource "null_resource" "sync_runtime_scripts" {
           /opt/lerobot/validate_policies.sh \
           /opt/lerobot/benchmark_metrics.py \
           /opt/lerobot/benchmark_policies.sh \
+          /opt/lerobot/profile_train.py \
           /opt/lerobot/benchmark_python/sitecustomize.py
-        rm -rf "$$tmpdir" /tmp/lerobot-runtime-sync.tgz'
+        rm -rf "$tmpdir" /tmp/lerobot-runtime-sync.tgz'
     EOT
   }
 }

@@ -1,0 +1,77 @@
+# Run output and logs
+results/
+runs/
+logs/
+*.log
+*.log*
+
+# Terraform state, plans, and provider working directories
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+tfplan
+*.tfplan
+terraform_backend_local.tf
+terraform_backend_override.tf
+
+# Credentials, secrets, and local environment files
+credentials.yaml
+credentials.yml
+.npa/credentials.yaml
+.npa/credentials.yml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+secrets.yaml
+secrets.yml
+
+# Python caches, environments, and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.eggs/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Model checkpoints and generated datasets
+*.npy
+*.npz
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+
+# Temporary and scratch files
+tmp/
+*.tmp
+*.temp
+
+# Node dependencies
+node_modules/
+
+# Generated security scan reports
+kingfisher-result*.json
+semgrep-*.json

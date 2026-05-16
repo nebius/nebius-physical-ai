@@ -7,26 +7,14 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 
-package_update: true
-
-packages:
-  - build-essential
-  - git
-  - wget
-  - curl
-  - ca-certificates
-  - python3
-  - python3-venv
-  - python3-dev
-  - python3-pip
-  - ffmpeg
-  - libssl-dev
-  - libffi-dev
-  - libsm6
-  - libxext6
-  - libxrender-dev
-
 write_files:
+  - path: /etc/apt/apt.conf.d/99lerobot-network
+    permissions: "0644"
+    content: |
+      Acquire::ForceIPv4 "true";
+      Acquire::Languages "none";
+      Acquire::Retries "5";
+
   - path: /opt/lerobot/.env
     permissions: "0600"
     content: |
@@ -37,6 +25,7 @@ write_files:
       NEBIUS_REGION=${nebius_region}
       HF_LEROBOT_HOME=/opt/lerobot/hf_cache
       MUJOCO_GL=egl
+      PYOPENGL_PLATFORM=egl
       PYTHONUNBUFFERED=1
 
 runcmd:
@@ -53,6 +42,26 @@ runcmd:
     # LeRobot expects output_dir to not exist unless resuming.
     mkdir -p "$DEPLOY_ROOT/data" "$DEPLOY_ROOT/logs" "$DEPLOY_ROOT/hf_cache"
 
+    echo "Installing system dependencies..."
+    apt-get update || { echo "ERROR: Failed to update apt package indexes"; exit 1; }
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      build-essential \
+      git \
+      wget \
+      curl \
+      ca-certificates \
+      python3 \
+      python3-venv \
+      python3-dev \
+      python3-pip \
+      ffmpeg \
+      libssl-dev \
+      libffi-dev \
+      libsm6 \
+      libxext6 \
+      libxrender-dev \
+      || { echo "ERROR: Failed to install system dependencies"; exit 1; }
+
     # Install Node.js 22.x (for npm)
     echo "Installing Node.js 22.x..."
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - || { echo "ERROR: Failed to add NodeSource repo"; exit 1; }
@@ -61,11 +70,23 @@ runcmd:
 
     # Some CUDA images ship the compute driver without the NVIDIA EGL/GL user-space
     # libraries. LIBERO/robosuite need these for headless EGL rendering.
-    NVIDIA_CFG_PKG="$(dpkg-query -W -f='$${Package}\n' 'libnvidia-cfg1-*' 2>/dev/null | sed -n 's/^\(libnvidia-cfg1-[0-9][0-9]*\)$/\1/p' | head -n 1)"
-    if [ -n "$NVIDIA_CFG_PKG" ]; then
+    ensure_nvidia_egl() {
+      NVIDIA_CFG_PKG="$(dpkg-query -W -f='$${Package}\n' 'libnvidia-cfg1-*' 2>/dev/null | sed -n 's/^\(libnvidia-cfg1-[0-9][0-9]*\)$/\1/p' | head -n 1)"
+      if [ -z "$NVIDIA_CFG_PKG" ]; then
+        echo "WARNING: No libnvidia-cfg1-* package found; skipping EGL userspace repair"
+        return 0
+      fi
+
       NVIDIA_BRANCH="$${NVIDIA_CFG_PKG##libnvidia-cfg1-}"
       NVIDIA_VERSION="$(dpkg-query -W -f='$${Version}' "$NVIDIA_CFG_PKG" 2>/dev/null || true)"
-      if [ -n "$NVIDIA_VERSION" ]; then
+      if [ -z "$NVIDIA_VERSION" ]; then
+        echo "ERROR: Could not determine NVIDIA userspace version"
+        return 1
+      fi
+
+      if ! ldconfig -p | grep -q 'libEGL_nvidia.so.0' || \
+         ! grep -Rqs 'libEGL_nvidia.so.0' /usr/share/glvnd/egl_vendor.d 2>/dev/null
+      then
         echo "Installing NVIDIA EGL/GL userspace for branch $NVIDIA_BRANCH ($NVIDIA_VERSION)..."
         apt-get install -y \
           "libnvidia-common-$NVIDIA_BRANCH=$NVIDIA_VERSION" \
@@ -74,9 +95,33 @@ runcmd:
           libnvidia-egl-wayland1 \
           libnvidia-egl-xcb1 \
           libnvidia-egl-xlib1 \
-          || { echo "ERROR: Failed to install NVIDIA EGL/GL userspace"; exit 1; }
+          || { echo "ERROR: Failed to install NVIDIA EGL/GL userspace"; return 1; }
+        ldconfig
       fi
-    fi
+
+      if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && ldconfig -p | grep -q 'libEGL_nvidia.so.0'; then
+        install -d -m 0755 /usr/share/glvnd/egl_vendor.d
+        printf '%s\n' \
+          '{' \
+          '    "file_format_version" : "1.0.0",' \
+          '    "ICD" : {' \
+          '        "library_path" : "libEGL_nvidia.so.0"' \
+          '    }' \
+          '}' \
+          > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+      fi
+
+      ldconfig -p | grep -q 'libEGL_nvidia.so.0' || {
+        echo "ERROR: libEGL_nvidia.so.0 missing after userspace install"
+        return 1
+      }
+      grep -Rqs 'libEGL_nvidia.so.0' /usr/share/glvnd/egl_vendor.d 2>/dev/null || {
+        echo "ERROR: NVIDIA EGL vendor manifest missing after userspace install"
+        return 1
+      }
+    }
+
+    ensure_nvidia_egl || exit 1
 
     # Create venv and install LeRobot from PyPI with pusht env extra
     echo "Creating Python venv at $LEROBOT_VENV..."
@@ -86,7 +131,7 @@ runcmd:
     "$LEROBOT_VENV/bin/pip" install --upgrade pip setuptools wheel || { echo "ERROR: Failed to upgrade pip"; exit 1; }
 
     echo "Installing LeRobot ${lerobot_version}..."
-    "$LEROBOT_VENV/bin/pip" install "lerobot[pusht,libero]==${lerobot_version}" boto3 wandb tensorboard || { echo "ERROR: Failed to install packages"; exit 1; }
+    "$LEROBOT_VENV/bin/pip" install "lerobot[pusht,libero]==${lerobot_version}" boto3 wandb tensorboard num2words || { echo "ERROR: Failed to install packages"; exit 1; }
 
     # Verify installation
     echo "Verifying LeRobot installation..."
