@@ -138,6 +138,12 @@ def query_gpus() -> list[GpuQueryRow]:
         "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total",
         "--format=csv,noheader,nounits",
     ]
+    # Respect CUDA_VISIBLE_DEVICES so the sampler only reports GPUs that
+    # the training process can actually see.  nvidia-smi ignores the env var
+    # itself, but its --id= flag achieves the same filtering.
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if cuda_visible:
+        command.insert(1, f"--id={cuda_visible}")
     result = subprocess.run(command, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         return []
@@ -385,9 +391,12 @@ def detect_bottleneck(summary: dict[str, object]) -> tuple[str, str]:
         float(gpu.get("peak_torch_memory_reserved_mb", 0.0)) if isinstance(gpu, dict) else 0.0
     )
     total_memory_mb = float(gpu.get("total_memory_mb", 0.0)) if isinstance(gpu, dict) else 0.0
+    # total_memory_mb is the sum across all visible GPUs; use per-GPU memory
+    # for bottleneck detection since torch peak memory is per-process.
+    per_gpu_memory_mb = (total_memory_mb / gpu_count) if gpu_count > 0 else total_memory_mb
 
-    torch_allocated_pct = (peak_torch_allocated_mb / total_memory_mb * 100.0) if total_memory_mb > 0 else 0.0
-    torch_reserved_pct = (peak_torch_reserved_mb / total_memory_mb * 100.0) if total_memory_mb > 0 else 0.0
+    torch_allocated_pct = (peak_torch_allocated_mb / per_gpu_memory_mb * 100.0) if per_gpu_memory_mb > 0 else 0.0
+    torch_reserved_pct = (peak_torch_reserved_mb / per_gpu_memory_mb * 100.0) if per_gpu_memory_mb > 0 else 0.0
     gpu_spiky_or_bursty = (
         avg_gpu_util < 70.0
         and p90_gpu_util >= 80.0
@@ -399,8 +408,8 @@ def detect_bottleneck(summary: dict[str, object]) -> tuple[str, str]:
     if torch_allocated_pct >= 85.0 and avg_gpu_util < 75.0:
         return (
             "memory_pressure_bound",
-            f"Peak torch-allocated memory reached {torch_allocated_pct:.1f}% of GPU memory "
-            f"({peak_torch_allocated_mb:.0f}/{total_memory_mb:.0f} MiB) without matching compute utilization, "
+            f"Peak torch-allocated memory reached {torch_allocated_pct:.1f}% of per-GPU memory "
+            f"({peak_torch_allocated_mb:.0f}/{per_gpu_memory_mb:.0f} MiB) without matching compute utilization, "
             "suggesting the model is memory-constrained rather than compute-bound.",
         )
 
@@ -472,17 +481,25 @@ def summarize_run(args: argparse.Namespace) -> int:
     gpu_models = summarize_gpu_model_names(rows)
     torch_memory = load_torch_memory_summary(Path(args.torch_memory_dir) if args.torch_memory_dir else None)
 
+    # In DDP, effective batch = batch_size × gpu_count.  Track both
+    # steps/sec and samples/sec so scaling comparisons are apples-to-apples.
+    effective_batch_size = args.batch_size * args.gpu_count
+    steps_per_second = round(args.work_count / args.run_seconds, 6) if args.run_seconds > 0 else 0.0
+    samples_per_second = round(steps_per_second * effective_batch_size, 6)
+
     summary: dict[str, object] = {
         "phase": args.phase,
         "policy": args.policy,
         "gpu_count_requested": args.gpu_count,
         "batch_size": args.batch_size,
+        "effective_batch_size": effective_batch_size,
         "status": args.status,
         "failure_kind": args.failure_kind,
         "run_seconds": round(args.run_seconds, 3),
         "work_units": args.work_units,
         "work_count": args.work_count,
-        "throughput_per_second": round(args.work_count / args.run_seconds, 6) if args.run_seconds > 0 else 0.0,
+        "throughput_per_second": steps_per_second,
+        "samples_per_second": samples_per_second,
         "samples": {
             "count": len(raw_rows),
             "steady_state_count": len(rows),
@@ -547,6 +564,50 @@ def load_json(path: str) -> dict[str, object]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def maybe_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def load_eval_behavior(path: str | None) -> dict[str, object]:
+    if not path:
+        return {}
+
+    if not Path(path).is_file():
+        return {
+            "path": path,
+            "status": "missing_file",
+        }
+
+    payload = load_json(path)
+    overall = payload.get("overall", {})
+    if not isinstance(overall, dict):
+        return {
+            "path": path,
+            "status": "missing_overall",
+        }
+
+    per_task = payload.get("per_task", [])
+    task_count = len(per_task) if isinstance(per_task, list) else 0
+    behavior: dict[str, object] = {
+        "path": path,
+        "status": "available",
+        "pc_success": overall.get("pc_success"),
+        "avg_sum_reward": overall.get("avg_sum_reward"),
+        "avg_max_reward": overall.get("avg_max_reward"),
+        "n_episodes": overall.get("n_episodes"),
+        "eval_s": overall.get("eval_s"),
+        "eval_ep_s": overall.get("eval_ep_s"),
+        "task_count": task_count,
+    }
+    n_episodes = maybe_float(behavior.get("n_episodes"))
+    if task_count > 0 and n_episodes is not None:
+        behavior["episodes_per_task"] = round(n_episodes / task_count, 3)
+    return behavior
+
+
 def row_gpu_label(row: dict[str, object]) -> str:
     gpu = row.get("gpu", {})
     if isinstance(gpu, dict):
@@ -566,6 +627,18 @@ def row_bottleneck(row: dict[str, object]) -> str:
     return "unknown"
 
 
+def _row_samples_per_second(row: dict[str, object]) -> float:
+    """Extract samples_per_second, falling back to deriving it for older summaries."""
+    sps = row.get("samples_per_second")
+    if sps is not None and float(sps) > 0:
+        return float(sps)
+    # Older summaries only have throughput_per_second (steps/sec).
+    tps = float(row.get("throughput_per_second", 0.0) or 0.0)
+    bs = int(row.get("batch_size", 0) or 0)
+    gpus = int(row.get("gpu_count_requested", 1) or 1)
+    return tps * bs * gpus
+
+
 def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     transitions: list[dict[str, object]] = []
     for previous, current in zip(rows, rows[1:]):
@@ -573,14 +646,15 @@ def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, o
         current_gpus = int(current.get("gpu_count_requested", 0) or 0)
         previous_seconds = float(previous.get("run_seconds", 0.0) or 0.0)
         current_seconds = float(current.get("run_seconds", 0.0) or 0.0)
-        previous_throughput = float(previous.get("throughput_per_second", 0.0) or 0.0)
-        current_throughput = float(current.get("throughput_per_second", 0.0) or 0.0)
+        previous_sps = _row_samples_per_second(previous)
+        current_sps = _row_samples_per_second(current)
         gpu_ratio = (current_gpus / previous_gpus) if previous_gpus > 0 else 0.0
-        speedup = (previous_seconds / current_seconds) if previous_seconds > 0 and current_seconds > 0 else 0.0
-        efficiency = (speedup / gpu_ratio) if gpu_ratio > 0 else 0.0
-        throughput_gain_pct = (
-            ((current_throughput - previous_throughput) / previous_throughput) * 100.0
-            if previous_throughput > 0
+        step_speedup = (previous_seconds / current_seconds) if previous_seconds > 0 and current_seconds > 0 else 0.0
+        sample_throughput_ratio = (current_sps / previous_sps) if previous_sps > 0 else 0.0
+        efficiency = (sample_throughput_ratio / gpu_ratio) if gpu_ratio > 0 else 0.0
+        sample_throughput_gain_pct = (
+            ((current_sps - previous_sps) / previous_sps) * 100.0
+            if previous_sps > 0
             else 0.0
         )
         previous_bottleneck = row_bottleneck(previous)
@@ -589,10 +663,11 @@ def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, o
             {
                 "from_gpu_count": previous_gpus,
                 "to_gpu_count": current_gpus,
-                "speedup_vs_previous": round(speedup, 4),
+                "step_speedup_vs_previous": round(step_speedup, 4),
+                "sample_throughput_ratio_vs_previous": round(sample_throughput_ratio, 4),
                 "gpu_ratio_vs_previous": round(gpu_ratio, 4),
                 "scaling_efficiency_vs_previous": round(efficiency, 4),
-                "throughput_gain_pct": round(throughput_gain_pct, 2),
+                "sample_throughput_gain_pct": round(sample_throughput_gain_pct, 2),
                 "from_bottleneck": previous_bottleneck,
                 "to_bottleneck": current_bottleneck,
                 "bottleneck_changed": previous_bottleneck != current_bottleneck,
@@ -604,6 +679,7 @@ def build_scaling_transitions(rows: list[dict[str, object]]) -> list[dict[str, o
 def combine_profile(args: argparse.Namespace) -> int:
     train = load_json(args.train_summary)
     eval_summary = load_json(args.eval_summary)
+    eval_behavior = load_eval_behavior(args.eval_info)
     train_seconds = float(train.get("run_seconds", 0.0))
     eval_seconds = float(eval_summary.get("run_seconds", 0.0))
     total_seconds = train_seconds + eval_seconds
@@ -625,6 +701,23 @@ def combine_profile(args: argparse.Namespace) -> int:
         headline.append(
             f"Evaluation consumed {eval_share_pct:.1f}% of end-to-end runtime, so eval cost is operationally significant."
         )
+    if eval_behavior:
+        if eval_behavior.get("status") != "available":
+            headline.append(
+                f"Behavioral eval metrics were unavailable; expected eval_info at {eval_behavior.get('path')}."
+            )
+        else:
+            pc_success = maybe_float(eval_behavior.get("pc_success"))
+            avg_sum_reward = maybe_float(eval_behavior.get("avg_sum_reward"))
+            n_episodes = int(maybe_float(eval_behavior.get("n_episodes")) or 0)
+            if pc_success == 0.0 and avg_sum_reward == 0.0 and n_episodes > 0:
+                headline.append(
+                    f"Evaluation achieved zero task success across {n_episodes} episodes."
+                )
+            elif pc_success is not None and n_episodes > 0:
+                headline.append(
+                    f"Evaluation behavior was pc_success={pc_success} across {n_episodes} episodes."
+                )
 
     combined = {
         "policy": train.get("policy"),
@@ -632,6 +725,7 @@ def combine_profile(args: argparse.Namespace) -> int:
         "batch_size": train.get("batch_size"),
         "train": train,
         "eval": eval_summary,
+        "eval_behavior": eval_behavior,
         "workflow_split": {
             "train_seconds": round(train_seconds, 3),
             "eval_seconds": round(eval_seconds, 3),
@@ -659,16 +753,23 @@ def summarize_scaling(args: argparse.Namespace) -> int:
         baseline_seconds = 0.0
         baseline_gpus = 1
 
+    baseline_sps = _row_samples_per_second(baseline) if baseline else 0.0
+
     table = []
     for row in sorted(rows, key=lambda item: int(item.get("gpu_count_requested", 0))):
         gpu_count = int(row.get("gpu_count_requested", 0))
         seconds = float(row.get("run_seconds", 0.0))
+        sps = _row_samples_per_second(row)
         if row.get("status") == "success" and baseline_seconds > 0 and seconds > 0:
-            speedup = baseline_seconds / seconds
+            step_speedup = baseline_seconds / seconds
             gpu_ratio = gpu_count / baseline_gpus if baseline_gpus > 0 else 0.0
-            efficiency = speedup / gpu_ratio if gpu_ratio > 0 else 0.0
+            # In DDP, effective batch = batch_size × gpu_count.  Scaling
+            # efficiency compares sample throughput, not step throughput.
+            sample_throughput_ratio = (sps / baseline_sps) if baseline_sps > 0 else 0.0
+            efficiency = (sample_throughput_ratio / gpu_ratio) if gpu_ratio > 0 else 0.0
         else:
-            speedup = 0.0
+            step_speedup = 0.0
+            sample_throughput_ratio = 0.0
             efficiency = 0.0
         table.append(
             {
@@ -678,7 +779,9 @@ def summarize_scaling(args: argparse.Namespace) -> int:
                 "status": row.get("status"),
                 "train_seconds": round(seconds, 3),
                 "throughput_per_second": row.get("throughput_per_second"),
-                "speedup_vs_baseline": round(speedup, 4),
+                "samples_per_second": sps,
+                "step_speedup_vs_baseline": round(step_speedup, 4),
+                "sample_throughput_ratio_vs_baseline": round(sample_throughput_ratio, 4),
                 "scaling_efficiency_vs_baseline": round(efficiency, 4),
                 "avg_gpu_util_pct": row.get("gpu", {}).get("avg_util_pct", 0.0),  # type: ignore[union-attr]
                 "bottleneck": row.get("bottleneck", {}).get("classification", "unknown"),  # type: ignore[union-attr]
@@ -688,39 +791,40 @@ def summarize_scaling(args: argparse.Namespace) -> int:
     successful_sorted = sorted(successful, key=lambda item: int(item.get("gpu_count_requested", 0) or 0))
     transitions = build_scaling_transitions(successful_sorted)
     headline_findings: list[str] = []
-    if baseline and table:
-        last = table[-1]
+    successful_table = [row for row in table if row["status"] == "success"]
+    if baseline and successful_table:
+        last = successful_table[-1]
         headline_findings.append(
             f"On {row_gpu_label(baseline)}, scaling from {baseline_gpus} to {last['gpu_count']} GPU(s) reached "
-            f"{last['speedup_vs_baseline']:.2f}x speedup with {last['scaling_efficiency_vs_baseline']:.2f} baseline-relative efficiency."
+            f"{last['sample_throughput_ratio_vs_baseline']:.2f}x sample throughput with {last['scaling_efficiency_vs_baseline']:.2f} efficiency."
         )
     if len(successful_sorted) >= 3:
         highest = successful_sorted[-1]
         highest_gpus = int(highest.get("gpu_count_requested", 0) or 0)
-        highest_seconds = float(highest.get("run_seconds", 0.0) or 0.0)
+        highest_sps = _row_samples_per_second(highest)
         flattening_candidates: list[dict[str, object]] = []
         for earlier in successful_sorted[1:-1]:
             earlier_gpus = int(earlier.get("gpu_count_requested", 0) or 0)
-            earlier_seconds = float(earlier.get("run_seconds", 0.0) or 0.0)
+            earlier_sps = _row_samples_per_second(earlier)
             gpu_ratio = (highest_gpus / earlier_gpus) if earlier_gpus > 0 else 0.0
-            speedup = (earlier_seconds / highest_seconds) if earlier_seconds > 0 and highest_seconds > 0 else 0.0
-            efficiency = (speedup / gpu_ratio) if gpu_ratio > 0 else 0.0
+            sample_ratio = (highest_sps / earlier_sps) if earlier_sps > 0 else 0.0
+            efficiency = (sample_ratio / gpu_ratio) if gpu_ratio > 0 else 0.0
             if gpu_ratio >= 2.0:
                 flattening_candidates.append(
                     {
                         "from_gpu_count": earlier_gpus,
                         "to_gpu_count": highest_gpus,
-                        "speedup": speedup,
+                        "sample_throughput_ratio": sample_ratio,
                         "gpu_ratio": gpu_ratio,
                         "efficiency": efficiency,
                     }
                 )
         if flattening_candidates:
             weakest = min(flattening_candidates, key=lambda item: float(item["efficiency"]))
-            if float(weakest["efficiency"]) < 0.5 or float(weakest["speedup"]) < 1.25:
+            if float(weakest["efficiency"]) < 0.5 or float(weakest["sample_throughput_ratio"]) < 1.25:
                 headline_findings.append(
                     f"Scaling flattened from {weakest['from_gpu_count']} to {weakest['to_gpu_count']} GPU(s): "
-                    f"only {float(weakest['speedup']):.2f}x faster for {float(weakest['gpu_ratio']):.2f}x more GPUs "
+                    f"only {float(weakest['sample_throughput_ratio']):.2f}x sample throughput for {float(weakest['gpu_ratio']):.2f}x more GPUs "
                     f"({float(weakest['efficiency']):.2f} efficiency)."
                 )
     bottleneck_shift = next(
@@ -761,7 +865,9 @@ def summarize_scaling(args: argparse.Namespace) -> int:
                 "status",
                 "train_seconds",
                 "throughput_per_second",
-                "speedup_vs_baseline",
+                "samples_per_second",
+                "step_speedup_vs_baseline",
+                "sample_throughput_ratio_vs_baseline",
                 "scaling_efficiency_vs_baseline",
                 "avg_gpu_util_pct",
                 "bottleneck",
@@ -925,6 +1031,7 @@ def build_parser() -> argparse.ArgumentParser:
     combine = subparsers.add_parser("combine-profile")
     combine.add_argument("--train-summary", required=True)
     combine.add_argument("--eval-summary", required=True)
+    combine.add_argument("--eval-info")
     combine.add_argument("--output", required=True)
     combine.set_defaults(func=combine_profile)
 

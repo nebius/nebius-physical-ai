@@ -17,8 +17,20 @@ set -euo pipefail
 _DEPLOY_ROOT="${_DEPLOY_ROOT:-/opt/lerobot}"
 VENV="${_DEPLOY_ROOT}/venv/bin/activate"
 RUNS_DIR="${_DEPLOY_ROOT}/runs"
-RUN_DIR="${RUNS_DIR}/run-$(date +%Y%m%d-%H%M%S)"
+RESUME="${RESUME:-false}"
 DEFAULT_TRAIN_ARGS=(--policy.push_to_hub=false)
+
+if [ "$RESUME" = "true" ]; then
+    RUN_DIR="$(ls -td "$RUNS_DIR"/run-* 2>/dev/null | head -1 || true)"
+    if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
+        echo "Error: No previous run found to resume under $RUNS_DIR"
+        exit 1
+    fi
+    echo "Resuming from: $RUN_DIR"
+    DEFAULT_TRAIN_ARGS+=(--resume=true)
+else
+    RUN_DIR="${RUNS_DIR}/run-$(date +%Y%m%d-%H%M%S)"
+fi
 
 if [ -f "${VENV}" ]; then
   source "${VENV}"
@@ -29,6 +41,9 @@ if [ -f "${_DEPLOY_ROOT}/.env" ]; then
   source "${_DEPLOY_ROOT}/.env"
   set +a
 fi
+
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
 # ── Upload checkpoint on ANY exit (success, Ctrl-C, OOM, error) ────────
 

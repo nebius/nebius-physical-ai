@@ -87,11 +87,13 @@ bash /opt/lerobot/validate_policies.sh
 What it checks:
 - `lerobot` import
 - `torch` import and CUDA visibility
+- NVIDIA EGL userspace presence and automatic repair if the userspace is missing
 - `libero` import
 - LIBERO-10 dataset load
 - ACT train/eval
 - Diffusion Policy train/eval
 - SmolVLA train/eval
+- `eval_info.json` behavioral metrics from each eval run
 - `accelerate launch` path
 
 What it does not check:
@@ -100,6 +102,11 @@ What it does not check:
 - batch-size memory ceilings
 - CPU / input-pipeline bottlenecks
 - train-vs-eval wall-clock split
+
+Validation logs `pc_success`, `avg_sum_reward`, `avg_max_reward`, and
+`n_episodes` from `eval_info.json` after each eval run. To enforce a minimum
+behavioral bar, set `MIN_EVAL_PC_SUCCESS` and/or `MIN_EVAL_AVG_SUM_REWARD`
+before running `validate_policies.sh`.
 
 ## Performance Benchmarks
 
@@ -123,7 +130,7 @@ Artifacts are written under:
 Each benchmark run produces:
 - raw per-sample metrics CSV files
 - per-phase JSON summaries for train and eval
-- profile summaries with train/eval split
+- profile summaries with train/eval split plus eval behavior from `eval_info.json`
 - scaling and memory summary JSON/CSV tables
 
 The suite is designed to answer:
@@ -188,6 +195,18 @@ Notes:
 - On exit, the wrapper tries to upload the latest checkpoint to S3.
 - Do not pre-create the output directory yourself.
 
+Resume after preemption or interruption:
+
+```bash
+RESUME=true bash /opt/lerobot/train.sh --policy.type=act --dataset.repo_id=lerobot/pusht
+```
+
+This finds the most recent run directory and passes `--resume=true` to
+`lerobot-train`, which restores the optimizer state and training step from the
+last saved checkpoint.  Without `RESUME=true`, a fresh run directory is always
+created.  If the default Terraform deployment uses preemptible instances
+(`enable_preemptible = true`), plan for resume when the VM restarts.
+
 ## Evaluate On The VM
 
 Find the latest run:
@@ -215,4 +234,6 @@ bash train.sh --policy.type=act --dataset.repo_id=lerobot/pusht
 ```
 
 The scripts default `DEPLOY_ROOT` to `/opt/lerobot`, so they still use the VM's
-installed environment unless you override that variable manually.
+installed environment unless you override that variable manually. NVIDIA EGL
+repair now lives in cloud-init bootstrap plus the validation preflight rather
+than a separate recovery script.

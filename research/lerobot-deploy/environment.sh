@@ -40,8 +40,18 @@ _lerobot_require_real_id() {
 }
 
 _lerobot_repo_root() {
+  local candidate script_dir
   if command -v git >/dev/null 2>&1; then
-    git rev-parse --show-toplevel 2>/dev/null && return 0
+    candidate="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "${candidate}" ] && [ -d "${candidate}/terraform" ]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  if [ -d "${script_dir}/terraform" ]; then
+    printf '%s\n' "${script_dir}"
+    return 0
   fi
   pwd -P
 }
@@ -488,6 +498,7 @@ EOF
       # Skip blanks and comments.
       case "${line}" in
         ""|\#*) continue ;;
+        NEBIUS_API_KEY=*|NEBIUS_SECRET_KEY=*|NEBIUS_ACCOUNT_ID=*|NEBIUS_PROJECT_ID=*|NEBIUS_REGION=*|NEBIUS_S3_ENDPOINT=*|NEBIUS_S3_BUCKET=*|AWS_ACCESS_KEY_ID=*|AWS_SECRET_ACCESS_KEY=*) continue ;;
       esac
       # Extract key name (everything before first =).
       local key="${line%%=*}"

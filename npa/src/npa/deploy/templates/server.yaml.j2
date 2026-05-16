@@ -1,0 +1,17 @@
+server:
+  host: 0.0.0.0
+  port: {{ server_port | default(8080) }}
+  log_dir: {{ log_dir | default('/var/log/npa-lerobot') }}
+storage:
+  checkpoint_dir: {{ checkpoint_dir | default('/data/checkpoints') }}
+  checkpoint_bucket: {{ checkpoint_bucket }}
+  endpoint_url: {{ storage_endpoint }}
+jobs:
+  status_dir: {{ job_status_dir | default('/data/jobs') }}
+  default_output_dir: {{ training_output_dir | default('/data/training_outputs') }}
+lerobot:
+  default_device: cuda
+  hf_cache_dir: {{ hf_cache_dir | default('/data/huggingface') }}
+credentials:
+  hf_token_file: /etc/npa/secrets/hf_token
+  s3_credentials_file: /etc/npa/secrets/s3

@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Timing methodology: this script times the full lerobot-train process from
+# shell launch to exit, including dataset/env setup and teardown.  The
+# resulting steps_per_second is NOT directly comparable to profile_train.py
+# --mode wallclock, which measures only the training loop after setup.
+# For apples-to-apples stage breakdowns, use profile_train.py exclusively.
+
 DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/lerobot}"
 VENV="$DEPLOY_ROOT/venv/bin/activate"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,6 +33,8 @@ SCALING_STEPS="${SCALING_STEPS:-200}"
 MEMORY_STEPS="${MEMORY_STEPS:-50}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-1}"
+TRAIN_EVAL_EPISODES="${TRAIN_EVAL_EPISODES:-1}"
+TRAIN_EVAL_BATCH_SIZE="${TRAIN_EVAL_BATCH_SIZE:-1}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-1.0}"
 WARMUP_TRIM_SECONDS="${WARMUP_TRIM_SECONDS:-20}"
 STOP_MEMORY_ON_OOM="${STOP_MEMORY_ON_OOM:-1}"
@@ -34,6 +42,14 @@ STOP_MEMORY_ON_OOM="${STOP_MEMORY_ON_OOM:-1}"
 RUN_PROFILE="${RUN_PROFILE:-1}"
 RUN_SCALING="${RUN_SCALING:-1}"
 RUN_MEMORY="${RUN_MEMORY:-1}"
+RUN_TORCH_PROFILE="${RUN_TORCH_PROFILE:-0}"
+TORCH_PROFILE_SKIP_FIRST="${TORCH_PROFILE_SKIP_FIRST:-10}"
+TORCH_PROFILE_WARMUP="${TORCH_PROFILE_WARMUP:-5}"
+TORCH_PROFILE_ACTIVE="${TORCH_PROFILE_ACTIVE:-50}"
+PROFILE_TRAIN_SCRIPT="${PROFILE_TRAIN_SCRIPT:-$DEPLOY_ROOT/profile_train.py}"
+if [ ! -f "$PROFILE_TRAIN_SCRIPT" ]; then
+    PROFILE_TRAIN_SCRIPT="$SCRIPT_DIR/profile_train.py"
+fi
 SCALING_IMPORT_RUN_SUMMARIES="${SCALING_IMPORT_RUN_SUMMARIES:-}"
 MEMORY_IMPORT_RUN_SUMMARIES="${MEMORY_IMPORT_RUN_SUMMARIES:-}"
 
@@ -44,8 +60,6 @@ SMOLVLA_BATCH_SIZE="${SMOLVLA_BATCH_SIZE:-4}"
 ACT_EXTRA_ARGS="${ACT_EXTRA_ARGS:-}"
 DIFFUSION_EXTRA_ARGS="${DIFFUSION_EXTRA_ARGS:-}"
 SMOLVLA_EXTRA_ARGS="${SMOLVLA_EXTRA_ARGS:-}"
-
-export MUJOCO_GL="${MUJOCO_GL:-egl}"
 
 CURRENT_SAMPLER_PID=""
 LAST_SUMMARY_PATH=""
@@ -72,6 +86,9 @@ if [ -f "$DEPLOY_ROOT/.env" ]; then
     set +a
 fi
 
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
+
 log() {
     echo ""
     echo "==== $* ===="
@@ -85,7 +102,15 @@ elapsed_seconds() {
     python3 -c 'import sys; print(round(max(0.0, float(sys.argv[2]) - float(sys.argv[1])), 6))' "$1" "$2"
 }
 
+# Capture the caller's GPU mask before any run overwrites it.
+_INHERITED_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
+
 count_gpus() {
+    # Respect an inherited CUDA_VISIBLE_DEVICES mask (scheduler, container, etc.)
+    if [ -n "$_INHERITED_CUDA_VISIBLE_DEVICES" ]; then
+        echo "$_INHERITED_CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l | tr -d ' '
+        return
+    fi
     if ! command -v nvidia-smi >/dev/null 2>&1; then
         echo 0
         return
@@ -185,6 +210,19 @@ run_phase() {
     rm -rf "$torch_memory_dir"
     mkdir -p "$torch_memory_dir"
 
+    # Restrict GPU visibility so the sampler and training process only see
+    # the GPUs this run is actually using.  Without this, utilization
+    # averages on multi-GPU hosts are diluted by idle GPUs.
+    # When an inherited mask exists (scheduler, container), select from it
+    # rather than overwriting with 0..N-1.
+    local visible_devices
+    if [ -n "$_INHERITED_CUDA_VISIBLE_DEVICES" ]; then
+        visible_devices="$(echo "$_INHERITED_CUDA_VISIBLE_DEVICES" | tr ',' '\n' | head -n "$gpu_count" | paste -sd,)"
+    else
+        visible_devices="$(seq -s, 0 $((gpu_count - 1)))"
+    fi
+    export CUDA_VISIBLE_DEVICES="$visible_devices"
+
     python3 "$METRICS_HELPER" sample --output "$sample_file" --interval "$SAMPLE_INTERVAL" &
     CURRENT_SAMPLER_PID=$!
 
@@ -202,6 +240,13 @@ run_phase() {
     end_ts="$(now_epoch)"
 
     cleanup
+
+    # Restore inherited GPU visibility for helper commands between runs
+    if [ -n "$_INHERITED_CUDA_VISIBLE_DEVICES" ]; then
+        export CUDA_VISIBLE_DEVICES="$_INHERITED_CUDA_VISIBLE_DEVICES"
+    else
+        unset CUDA_VISIBLE_DEVICES
+    fi
 
     duration="$(elapsed_seconds "$start_ts" "$end_ts")"
 
@@ -251,6 +296,11 @@ train_phase() {
         cmd=(lerobot-train)
     fi
 
+    # Always pass --num_workers explicitly so results are comparable with
+    # profile_train.py (which also resolves to nproc by default).
+    local train_num_workers
+    train_num_workers="$(nproc)"
+
     cmd+=(
         --policy.type="$policy"
         --policy.push_to_hub=false
@@ -261,8 +311,11 @@ train_phase() {
         --steps="$steps"
         --save_freq="$steps"
         --eval_freq=1000000
+        --eval.batch_size="$TRAIN_EVAL_BATCH_SIZE"
+        --eval.n_episodes="$TRAIN_EVAL_EPISODES"
         --policy.device=cuda
         --batch_size="$batch_size"
+        --num_workers="$train_num_workers"
     )
     cmd+=("${extra_args[@]}")
 
@@ -288,7 +341,7 @@ eval_phase() {
         --output_dir="$run_root/eval_output"
     )
 
-    run_phase eval "$policy" "$batch_size" 1 episodes "$EVAL_EPISODES" "$run_root" "${cmd[@]}"
+    run_phase eval "$policy" "$EVAL_BATCH_SIZE" 1 episodes "$EVAL_EPISODES" "$run_root" "${cmd[@]}"
 }
 
 write_skip_summary() {
@@ -306,6 +359,7 @@ benchmark_profile_policy() {
     local checkpoint_dir
     local train_summary
     local eval_summary
+    local eval_info
 
     batch_size="$(policy_batch_size "$policy")"
     policy_extra_args "$policy" extra_args
@@ -338,10 +392,12 @@ benchmark_profile_policy() {
         return
     fi
     eval_summary="$LAST_SUMMARY_PATH"
+    eval_info="$run_root/eval_output/eval_info.json"
 
     python3 "$METRICS_HELPER" combine-profile \
         --train-summary "$train_summary" \
         --eval-summary "$eval_summary" \
+        --eval-info "$eval_info" \
         --output "$run_root/profile_summary.json"
 }
 
@@ -499,6 +555,55 @@ if [ "$RUN_MEMORY" = "1" ]; then
     done
 fi
 
+if [ "$RUN_TORCH_PROFILE" = "1" ]; then
+    log "Running torch.profiler stage breakdown..."
+    torch_profile_dir="$SUITE_DIR/torch_profile"
+    mkdir -p "$torch_profile_dir"
+
+    for policy in "${profile_policies[@]}"; do
+        policy="${policy//[[:space:]]/}"
+        [ -n "$policy" ] || continue
+
+        policy_upper="$(echo "$policy" | tr '[:lower:]' '[:upper:]')"
+        batch_size_var="${policy_upper}_BATCH_SIZE"
+        batch_size="${!batch_size_var:-8}"
+        extra_args_var="${policy_upper}_EXTRA_ARGS"
+        extra_args="${!extra_args_var:-}"
+
+        # Resolve dataset: check if extra_args overrides --dataset.repo_id
+        profile_dataset="$DATASET"
+        if echo "$extra_args" | grep -q -- '--dataset.repo_id='; then
+            profile_dataset="$(echo "$extra_args" | sed -n 's/.*--dataset.repo_id=\([^ ]*\).*/\1/p')"
+        fi
+
+        # Resolve num_workers from extra_args if present
+        profile_num_workers="$(nproc)"
+        if echo "$extra_args" | grep -q -- '--num_workers='; then
+            profile_num_workers="$(echo "$extra_args" | sed -n 's/.*--num_workers=\([^ ]*\).*/\1/p')"
+        fi
+
+        run_dir="$torch_profile_dir/$policy"
+        mkdir -p "$run_dir"
+
+        log "Torch profile: $policy (batch=$batch_size workers=$profile_num_workers dataset=$profile_dataset)"
+
+        python3 "$PROFILE_TRAIN_SCRIPT" \
+            --mode=profiler \
+            --policy_type="$policy" \
+            --dataset_repo_id="$profile_dataset" \
+            --steps="$TRAIN_STEPS" \
+            --batch_size="$batch_size" \
+            --num_workers="$profile_num_workers" \
+            --output_dir="$run_dir" \
+            --skip_first="$TORCH_PROFILE_SKIP_FIRST" \
+            --warmup="$TORCH_PROFILE_WARMUP" \
+            --active="$TORCH_PROFILE_ACTIVE" \
+            2>&1 | tee "$run_dir/profile_train.log" || {
+                echo "WARNING: torch profile failed for $policy (exit $?)"
+            }
+    done
+fi
+
 log "Benchmark complete"
 echo "Artifacts written to: $SUITE_DIR"
 echo "Profile summaries:"
@@ -507,3 +612,5 @@ echo "Scaling summaries:"
 find "$SUITE_DIR/scaling" -name 'scaling_summary.json' -print 2>/dev/null | sort || true
 echo "Memory summaries:"
 find "$SUITE_DIR/memory" -name 'memory_summary.json' -print 2>/dev/null | sort || true
+echo "Torch profile summaries:"
+find "$SUITE_DIR/torch_profile" -name 'stage_summary.txt' -print 2>/dev/null | sort || true
