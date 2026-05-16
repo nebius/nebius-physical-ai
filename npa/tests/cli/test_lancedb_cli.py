@@ -36,6 +36,9 @@ def test_lancedb_registered_under_workbench() -> None:
         "import-lerobot",
         "import-bdd100k",
         "backfill",
+        "create-mv",
+        "refresh-mv",
+        "query-table",
     ],
 )
 def test_lancedb_command_help(command: str) -> None:

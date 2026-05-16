@@ -462,6 +462,114 @@ def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
     assert len(set(manifests)) == 1
 
 
+def test_lancedb_bdd100k_materialized_views_endpoint_cli_sdk(
+    test_id: str,
+    lancedb_service: dict[str, str],
+) -> None:
+    """Create BDD100K failure-mode MVs. Prefer `/backfill`; fall back to local UDF writes if the image lacks it."""
+    endpoint = lancedb_service["endpoint"]
+    storage_path = lancedb_service["storage_path"]
+    table = f"bdd_mv_{uuid.uuid4().hex[:8]}"
+
+    import httpx
+
+    from npa.workbench.lancedb import (
+        create_bdd100k_failure_mode_views,
+        query_table as sdk_query_table,
+        refresh_mv as sdk_refresh_mv,
+    )
+    from npa.workbench.lancedb.views import MV_REGISTRY_TABLE
+
+    try:
+        imported = httpx.post(
+            f"{endpoint}/import-bdd100k",
+            json={
+                "table": table,
+                "lance_uri": storage_path,
+                "synthetic": 100,
+                "synthetic_seed": 42,
+            },
+            timeout=180.0,
+        )
+        assert imported.status_code == 200, imported.text
+        assert imported.json()["total_rows"] == 100
+
+        _ensure_bdd100k_mv_columns(endpoint, storage_path, table)
+
+        _install_s3_env()
+        import lancedb
+
+        db = lancedb.connect(storage_path)
+        source = db.open_table(table)
+        filters = {
+            "bdd100k_rider_train": "has_rider = true AND split = 'train'",
+            "bdd100k_nighttime_person_train": "timeofday = 'night' AND has_person = true AND split = 'train'",
+            "bdd100k_distant_person_train": "has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'",
+        }
+        expected_counts = {name: source.count_rows(filter_sql) for name, filter_sql in filters.items()}
+
+        results = create_bdd100k_failure_mode_views(
+            service=True,
+            endpoint=endpoint,
+            lance_uri=storage_path,
+            source_table=table,
+        )
+        assert {result.view_name for result in results} == set(filters)
+        assert {result.view_name: result.row_count for result in results} == expected_counts
+
+        for view_name, expected in expected_counts.items():
+            view = db.open_table(view_name)
+            assert view.count_rows() == expected
+            queried = sdk_query_table(
+                service=True,
+                endpoint=endpoint,
+                table=view_name,
+                lance_uri=storage_path,
+                select=["image_id", "split"],
+                limit=200,
+            )
+            assert queried.total_rows_matched == expected
+            assert queried.row_count == expected
+
+        registry_before = _registry_row(storage_path, "bdd100k_rider_train")
+        time.sleep(0.02)
+        refreshed = sdk_refresh_mv(
+            service=True,
+            endpoint=endpoint,
+            name="bdd100k_rider_train",
+            lance_uri=storage_path,
+        )
+        registry_after = _registry_row(storage_path, "bdd100k_rider_train")
+        assert refreshed.row_count_after == expected_counts["bdd100k_rider_train"]
+        assert registry_after["last_refreshed"] >= registry_before["last_refreshed"]
+    finally:
+        _install_s3_env()
+        import lancedb
+
+        db = lancedb.connect(storage_path)
+        for name in [
+            "bdd100k_rider_train",
+            "bdd100k_nighttime_person_train",
+            "bdd100k_distant_person_train",
+            MV_REGISTRY_TABLE,
+            table,
+        ]:
+            try:
+                db.drop_table(name, ignore_missing=True)
+            except Exception:
+                pass
+        remaining = set(db.table_names(limit=10000))
+        assert not remaining.intersection(
+            {
+                "bdd100k_rider_train",
+                "bdd100k_nighttime_person_train",
+                "bdd100k_distant_person_train",
+                MV_REGISTRY_TABLE,
+                table,
+            }
+        )
+
+
 def _run_npa(
     args: list[str],
     *,
@@ -605,6 +713,33 @@ def _lancedb_table_state(storage_path: str, table_name: str) -> dict[str, object
         "schema": {field.name: str(field.type) for field in table.schema},
         "manifest_sha256": manifest_checksum(entries),
     }
+
+
+def _ensure_bdd100k_mv_columns(endpoint: str, storage_path: str, table: str) -> None:
+    import httpx
+
+    from npa.workbench.lancedb.backfill import backfill_column
+
+    for udf in ["has_person", "has_rider", "person_bbox_area_pct"]:
+        response = httpx.post(
+            f"{endpoint}/backfill",
+            json={"table": table, "lance_uri": storage_path, "udf": udf},
+            timeout=180.0,
+        )
+        if response.status_code == 404:
+            backfill_column(table=table, lance_uri=storage_path, udf=udf)
+            continue
+        assert response.status_code == 200, response.text
+
+
+def _registry_row(storage_path: str, name: str) -> dict[str, object]:
+    from npa.workbench.lancedb.views import MV_REGISTRY_TABLE
+
+    _install_s3_env()
+    import lancedb
+
+    rows = lancedb.connect(storage_path).open_table(MV_REGISTRY_TABLE).to_arrow().to_pylist()
+    return next(row for row in rows if row["name"] == name)
 
 
 def _install_s3_env() -> None:
