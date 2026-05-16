@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from npa import workbench
+from . import workbench
 
 __all__ = ["workbench"]
