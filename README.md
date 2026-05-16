@@ -16,7 +16,26 @@ This repository is organized to support both Nebius and community-created physic
 
 ## Getting Started
 
-To get started with Nebius Physical AI Solutions, explore the solutions directory and review the documentation for your specific use case. Each solution includes its own README with setup instructions and usage examples.
+To get started with the `npa` workbench CLI, follow the [npa quickstart](docs/quickstart.md). For other Nebius Physical AI Solutions, explore the solutions directory and review the documentation for your specific use case. Each solution includes its own README with setup instructions and usage examples.
+
+## Reproducing the Demo
+
+To reproduce the Cosmos, Isaac Lab, GR00T, and FiftyOne workbench demo in your
+own Nebius project, follow the [8-GPU H200 demo runbook](docs/demo/8gpu-h200.md).
+
+## API Reference
+
+CLI reference pages are generated from the Typer help output in
+[docs/cli](docs/cli/README.md).
+
+For browser-based Rerun review workflows, `npa rerun host` and
+`npa rerun share` publish `.rrd` recordings through Nebius S3 presigned URLs
+for viewing in `app.rerun.io`.
+
+## Architecture
+
+CLI namespace conventions are documented in
+[docs/architecture/cli-namespaces.md](docs/architecture/cli-namespaces.md).
 
 ## Contributing
 
