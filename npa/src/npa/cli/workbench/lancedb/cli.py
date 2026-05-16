@@ -6,6 +6,7 @@ import typer
 
 from .create_table import create_table_cmd
 from .deploy import deploy_cmd
+from .import_bdd100k import import_bdd100k_cmd
 from .import_lerobot import import_lerobot_cmd
 from .list import list_cmd
 from .query import query_cmd
@@ -23,3 +24,4 @@ app.command("list")(list_cmd)
 app.command("create-table")(create_table_cmd)
 app.command("query")(query_cmd)
 app.command("import-lerobot")(import_lerobot_cmd)
+app.command("import-bdd100k")(import_bdd100k_cmd)
