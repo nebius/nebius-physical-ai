@@ -1,0 +1,192 @@
+"""Workflow submission helpers for NPA's SkyPilot orchestration layer."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.controller import apply_controller_override
+
+
+@dataclass
+class WorkflowResult:
+    """Result of submitting or querying a SkyPilot managed workflow."""
+
+    status: str
+    job_id: str = ""
+    log_paths: dict[str, str] = field(default_factory=dict)
+    returncode: int = 0
+    stdout: str = ""
+    stderr: str = ""
+    submitted_yaml_path: str = ""
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0 and not self.error
+
+
+def submit_workflow(
+    yaml_path: Path,
+    run_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    sky_bin: str = "sky",
+    timeout: int = 1800,
+) -> WorkflowResult:
+    """Submit a SkyPilot YAML through NPA's controller convention."""
+
+    yaml_path = Path(yaml_path)
+    try:
+        docs = _load_yaml_documents(yaml_path)
+        if not docs:
+            raise ValueError("SkyPilot YAML is empty")
+        submission_dir = _submission_dir(run_id, isolated_config_dir)
+        prepared_yaml = submission_dir / "workflow.yaml"
+        shutil.copy2(yaml_path, prepared_yaml)
+        global_config = apply_controller_override(_load_base_config())
+        config_path = submission_dir / "skypilot-config.yaml"
+        config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+
+        cmd = [
+            sky_bin,
+            "jobs",
+            "launch",
+            "--name",
+            run_id,
+            "--detach-run",
+            "--yes",
+            str(prepared_yaml),
+        ]
+        env = sky_environment(isolated_config_dir)
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
+        result = subprocess.run(
+            cmd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        combined = f"{result.stdout}\n{result.stderr}"
+        job_id = _parse_job_id(combined)
+        status = "SUBMITTED" if result.returncode == 0 else "FAILED_SUBMIT"
+        error = "" if result.returncode == 0 else (result.stderr.strip() or result.stdout.strip())
+        return WorkflowResult(
+            status=status,
+            job_id=job_id,
+            log_paths={"submission_dir": str(submission_dir), "config": str(config_path)},
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            submitted_yaml_path=str(prepared_yaml),
+            error=error,
+        )
+    except Exception as exc:
+        return WorkflowResult(status="FAILED_SUBMIT", returncode=1, error=str(exc))
+
+
+def workflow_status(
+    job_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: str = "sky",
+    timeout: int = 300,
+) -> WorkflowResult:
+    """Query a SkyPilot managed job status via `sky jobs queue`."""
+
+    cmd = [sky_bin, "jobs", "queue", "--all", "--output", "json"]
+    if config_path is not None:
+        cmd[3:3] = ["--config", str(config_path)]
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr.strip() or result.stdout.strip(),
+        )
+
+    status = _status_from_queue_payload(result.stdout, job_id)
+    return WorkflowResult(
+        status=status or "UNKNOWN",
+        job_id=job_id,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as handle:
+        docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
+    if not all(isinstance(doc, dict) for doc in docs):
+        raise ValueError("SkyPilot YAML documents must be mappings")
+    return docs
+
+
+def _load_base_config() -> dict[str, Any]:
+    config_path = os.environ.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"SkyPilot global config must be a mapping: {path}")
+    return data
+
+
+def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
+    if isolated_config_dir is None:
+        root = Path(tempfile.mkdtemp(prefix=f"npa-skypilot-{run_id}-"))
+    else:
+        root = Path(isolated_config_dir) / "submissions" / run_id
+        root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _parse_job_id(output: str) -> str:
+    for pattern in (r"Job submitted,\s*ID:\s*([0-9]+)", r"Managed Job ID:\s*([0-9]+)"):
+        match = re.search(pattern, output)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _status_from_queue_payload(output: str, job_id: str) -> str:
+    try:
+        payload = json.loads(output or "[]")
+    except json.JSONDecodeError:
+        return ""
+    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    for job in jobs or []:
+        current_id = str(job.get("job_id") or job.get("id") or "")
+        if current_id == str(job_id):
+            return str(job.get("status", "")).upper()
+    return ""
