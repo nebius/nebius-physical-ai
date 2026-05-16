@@ -1,0 +1,28 @@
+# Two-tag strategy for npa workbench images.
+#
+# Documented in docs/security/image-reproducibility.md.
+# CI validates references with npa/docker/check_tag_consistency.py.
+tag_families:
+  cuda12:
+    description: CUDA 12.x runtime for H200, L40S, A100, and earlier supported GPUs
+    gpu_targets:
+      - H200
+      - L40S
+      - H100
+      - A100
+      - V100
+    cuda_version: "12.x"
+    pytorch_version_min: "2.0"
+    status: production
+
+  cuda13-b300:
+    description: CUDA 13.x runtime for B300 and future Blackwell GPUs
+    gpu_targets:
+      - B300
+    cuda_version: "13.x"
+    pytorch_version_min: "2.9"
+    status: blocked-on-upstream
+    blockers:
+      - Taichi missing stable sm_103 support
+      - flash-attn stable Blackwell wheels not yet available
+      - "CUDA 13 host driver requirement: >= 580"
