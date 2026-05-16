@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 try:
     from .backfill import (
-        DEFAULT_BATCH_SIZE,
         DEFAULT_DHASH_HAMMING_THRESHOLD,
+        DEFAULT_GPU_DEVICE,
         BackfillError,
         BackfillTableNotFoundError,
         BackfillValidationError,
@@ -40,8 +40,8 @@ try:
     )
 except ImportError:  # pragma: no cover - used by the copied Docker module.
     from npa_lancedb_backfill import (
-        DEFAULT_BATCH_SIZE,
         DEFAULT_DHASH_HAMMING_THRESHOLD,
+        DEFAULT_GPU_DEVICE,
         BackfillError,
         BackfillTableNotFoundError,
         BackfillValidationError,
@@ -99,8 +99,11 @@ class BackfillRequest(BaseModel):
     table: str = DEFAULT_TABLE
     udf: str
     lance_uri: str = DEFAULT_LANCE_URI
-    batch_size: int = DEFAULT_BATCH_SIZE
+    batch_size: int | None = None
     force: bool = False
+    force_recompute: bool | None = None
+    device: str = DEFAULT_GPU_DEVICE
+    precision: str | None = None
     dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD
 
 
@@ -263,6 +266,9 @@ def create_app(
                 lance_uri=body.lance_uri,
                 batch_size=body.batch_size,
                 force=body.force,
+                force_recompute=body.force_recompute,
+                device=body.device,
+                precision=body.precision,
                 dhash_hamming_threshold=body.dhash_hamming_threshold,
             )
         except BackfillValidationError as exc:

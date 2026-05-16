@@ -10,8 +10,8 @@ from typing import Any
 import httpx
 
 from npa.workbench.lancedb.backfill import (
-    DEFAULT_BATCH_SIZE,
     DEFAULT_DHASH_HAMMING_THRESHOLD,
+    DEFAULT_GPU_DEVICE,
     BackfillError,
     BackfillResult,
     BackfillValidationError,
@@ -112,9 +112,12 @@ def backfill(
     table: str = DEFAULT_TABLE,
     udf: str,
     lance_uri: str = DEFAULT_LANCE_URI,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_size: int | None = None,
     force: bool = False,
+    force_recompute: bool | None = None,
     dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD,
+    device: str = DEFAULT_GPU_DEVICE,
+    precision: str | None = None,
     mode: str | None = None,
     service: bool = False,
     endpoint: str = "",
@@ -136,7 +139,10 @@ def backfill(
         "lance_uri": lance_uri,
         "batch_size": batch_size,
         "force": force,
+        "force_recompute": force_recompute,
         "dhash_hamming_threshold": dhash_hamming_threshold,
+        "device": device,
+        "precision": precision,
     }
     if service_mode:
         return _backfill_result_from_payload(
@@ -383,12 +389,7 @@ def _result_from_payload(payload: dict[str, Any]) -> BDD100KImportResult:
 
 
 def _backfill_result_from_payload(payload: dict[str, Any]) -> BackfillResult:
-    names = {field.name for field in fields(BackfillResult)}
-    missing = sorted(name for name in names if name not in payload)
-    if missing:
-        joined = ", ".join(missing)
-        raise BackfillServiceError(f"LanceDB service response is missing: {joined}")
-    return BackfillResult(**{name: payload[name] for name in names})
+    return BackfillResult(**_dataclass_payload(payload, BackfillResult, BackfillServiceError))
 
 
 def _mv_result_from_payload(payload: dict[str, Any]) -> MVResult:

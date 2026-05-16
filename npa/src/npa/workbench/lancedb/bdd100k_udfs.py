@@ -1,4 +1,4 @@
-"""BDD100K-specific CPU UDFs for LanceDB backfills.
+"""BDD100K-specific UDFs for LanceDB backfills.
 
 The perceptual hash UDF uses the standard 8x8 difference hash algorithm with
 Pillow only: decode image bytes, convert to grayscale, resize to 9x8, then
@@ -9,12 +9,19 @@ two's-complement form so it fits LanceDB/PyArrow `int64`.
 from __future__ import annotations
 
 import io
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pyarrow as pa
 from PIL import Image
+
+
+CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
+CLIP_EMBEDDING_DIM = 512
+CLIP_OUTPUT_TYPE = pa.list_(pa.float32(), list_size=CLIP_EMBEDDING_DIM)
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,7 @@ class UDFSpec:
     output_column: str
     output_type: pa.DataType
     dependencies: tuple[str, ...] = ()
+    gpu: bool = False
 
 
 def udf_has_person(batch: pa.RecordBatch) -> pa.Array:
@@ -90,6 +98,37 @@ def udf_is_duplicate(
     return pa.array(values, type=pa.bool_())
 
 
+def udf_clip_embedding(
+    batch: pa.RecordBatch,
+    *,
+    device: str = "cuda:0",
+    precision: str | None = None,
+) -> pa.Array:
+    """Return CLIP image embeddings for each row's image bytes."""
+    raw_values = _column(batch, "image_bytes").to_pylist()
+    images: list[Image.Image] = []
+    image_indexes: list[int] = []
+    values: list[list[float] | None] = [None] * len(raw_values)
+    for index, raw in enumerate(raw_values):
+        if raw is None:
+            continue
+        images.append(_decode_image_bytes(bytes(raw)))
+        image_indexes.append(index)
+
+    if images:
+        model, processor, torch, resolved_device = _clip_components(device=device, precision=precision)
+        inputs = processor(images=images, return_tensors="pt")
+        inputs = {name: value.to(resolved_device) for name, value in inputs.items()}
+        with torch.inference_mode():
+            features = model.get_image_features(**inputs)
+            features = features / features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+            vectors = features.to(torch.float32).detach().cpu().numpy()
+        for index, vector in zip(image_indexes, vectors, strict=True):
+            values[index] = [float(value) for value in vector]
+
+    return _clip_vectors_to_array(values)
+
+
 BDD100K_UDFS: dict[str, UDFSpec] = {
     "has_person": UDFSpec(
         name="has_person",
@@ -126,6 +165,14 @@ BDD100K_UDFS: dict[str, UDFSpec] = {
         output_column="is_duplicate",
         output_type=pa.bool_(),
         dependencies=("dhash",),
+    ),
+    "clip_embedding": UDFSpec(
+        name="clip_embedding",
+        function=udf_clip_embedding,
+        input_columns=("image_bytes",),
+        output_column="clip_embedding",
+        output_type=CLIP_OUTPUT_TYPE,
+        gpu=True,
     ),
 }
 
@@ -173,9 +220,74 @@ def _hamming_distance(left: int, right: int) -> int:
     return (left ^ right).bit_count()
 
 
+_CLIP_CACHE: dict[tuple[str, str | None], tuple[Any, Any, Any, str]] = {}
+
+
+def _clip_components(*, device: str, precision: str | None) -> tuple[Any, Any, Any, str]:
+    key = (device, precision)
+    cached = _CLIP_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        import torch
+        from transformers import CLIPModel, CLIPProcessor
+    except ImportError as exc:
+        raise RuntimeError("clip_embedding requires torch and transformers") from exc
+
+    _seed_clip_runtime(torch)
+    resolved_precision = precision or ("float16" if device.startswith("cuda") else "float32")
+    if resolved_precision not in {"float16", "float32"}:
+        raise ValueError("precision must be 'float16' or 'float32'")
+    model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
+    processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
+    model = model.to(device)
+    if resolved_precision == "float16" and device.startswith("cuda"):
+        model = model.half()
+    else:
+        model = model.float()
+    model.eval()
+    cached = (model, processor, torch, device)
+    _CLIP_CACHE[key] = cached
+    return cached
+
+
+def _seed_clip_runtime(torch: Any) -> None:
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+    if getattr(torch, "cuda", None) is not None and torch.cuda.is_available():
+        torch.cuda.manual_seed_all(0)
+    use_deterministic = getattr(torch, "use_deterministic_algorithms", None)
+    if callable(use_deterministic):
+        use_deterministic(True, warn_only=True)
+
+
+def _decode_image_bytes(raw: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(raw)) as image:
+        return image.convert("RGB")
+
+
+def _clip_vectors_to_array(values: list[list[float] | None] | np.ndarray) -> pa.Array:
+    if isinstance(values, np.ndarray):
+        if values.ndim != 2 or values.shape[1] != CLIP_EMBEDDING_DIM:
+            raise ValueError(f"clip_embedding vectors must have shape [N, {CLIP_EMBEDDING_DIM}]")
+        rows: list[list[float] | None] = [[float(value) for value in row] for row in values]
+    else:
+        rows = values
+        for row in rows:
+            if row is not None and len(row) != CLIP_EMBEDDING_DIM:
+                raise ValueError(f"clip_embedding vectors must have length {CLIP_EMBEDDING_DIM}")
+    return pa.array(rows, type=CLIP_OUTPUT_TYPE)
+
+
 __all__ = [
     "BDD100K_UDFS",
+    "CLIP_EMBEDDING_DIM",
+    "CLIP_MODEL_NAME",
+    "CLIP_OUTPUT_TYPE",
     "UDFSpec",
+    "udf_clip_embedding",
     "udf_dhash",
     "udf_has_person",
     "udf_has_rider",

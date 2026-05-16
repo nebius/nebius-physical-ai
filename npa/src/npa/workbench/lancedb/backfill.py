@@ -19,6 +19,8 @@ except ImportError:  # pragma: no cover - used by the copied Docker module.
 
 
 DEFAULT_BATCH_SIZE = 256
+DEFAULT_GPU_BATCH_SIZE = 32
+DEFAULT_GPU_DEVICE = "cuda:0"
 DEFAULT_DHASH_HAMMING_THRESHOLD = 5
 
 
@@ -46,6 +48,10 @@ class BackfillWriteError(BackfillError):
     """Raised when LanceDB cannot read or write backfill data."""
 
 
+class GPUOOMAtMinimumBatchError(BackfillError):
+    """Raised when a GPU UDF cannot run even at batch size 1."""
+
+
 @dataclass(frozen=True)
 class BackfillResult:
     """Result returned by API, CLI, and SDK backfill calls."""
@@ -61,6 +67,7 @@ class BackfillResult:
     column_added: bool
     duration_ms: int
     manifest_sha256: str
+    gpu_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable result payload."""
@@ -75,16 +82,23 @@ def backfill_column(
     lance_uri: str | None = None,
     table: str | None = None,
     udf: str | None = None,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_size: int | None = None,
     force: bool = False,
+    force_recompute: bool | None = None,
     dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD,
+    device: str = DEFAULT_GPU_DEVICE,
+    precision: str | None = None,
 ) -> BackfillResult:
     """Backfill one BDD100K UDF output column into a LanceDB table."""
     start = time.perf_counter()
     resolved_uri = validate_lance_uri(lance_uri if lance_uri is not None else table_uri or DEFAULT_LANCE_URI)
     resolved_table = validate_table(table if table is not None else table_name or DEFAULT_TABLE)
     resolved_udf = _resolve_udf(udf if udf is not None else udf_name)
-    if batch_size < 1:
+    resolved_batch_size = _resolve_batch_size(batch_size, resolved_udf)
+    resolved_force = force if force_recompute is None else force_recompute
+    resolved_device = _resolve_device(device, resolved_udf)
+    resolved_precision = _resolve_precision(precision)
+    if resolved_batch_size < 1:
         raise BackfillValidationError("batch_size must be positive")
     if dhash_hamming_threshold < 0 or dhash_hamming_threshold > 64:
         raise BackfillValidationError("dhash_hamming_threshold must be between 0 and 64")
@@ -105,11 +119,20 @@ def backfill_column(
         rows_updated, rows_skipped = _backfill_is_duplicate(
             table_obj,
             resolved_udf,
-            force=force,
+            force=resolved_force,
             dhash_hamming_threshold=dhash_hamming_threshold,
         )
+    elif resolved_udf.gpu:
+        rows_updated, rows_skipped = _run_gpu_udf(
+            table_obj,
+            resolved_udf,
+            batch_size=resolved_batch_size,
+            force=resolved_force,
+            device=resolved_device,
+            precision=resolved_precision,
+        )
     else:
-        rows_updated, rows_skipped = _backfill_batches(table_obj, resolved_udf, batch_size=batch_size, force=force)
+        rows_updated, rows_skipped = _backfill_batches(table_obj, resolved_udf, batch_size=resolved_batch_size, force=resolved_force)
 
     table_version_after = _table_version(table_obj)
     manifest_sha256 = _manifest_sha256(table_obj, resolved_udf.output_column)
@@ -125,6 +148,7 @@ def backfill_column(
         column_added=column_added,
         duration_ms=int((time.perf_counter() - start) * 1000),
         manifest_sha256=manifest_sha256,
+        gpu_used=resolved_udf.gpu,
     )
 
 
@@ -137,6 +161,28 @@ def _resolve_udf(name: str | None) -> UDFSpec:
         valid = ", ".join(sorted(BDD100K_UDFS))
         raise UnknownUDFError(f"unknown UDF {value!r}; expected one of {valid}")
     return spec
+
+
+def _resolve_batch_size(batch_size: int | None, spec: UDFSpec) -> int:
+    if batch_size is not None:
+        return batch_size
+    return DEFAULT_GPU_BATCH_SIZE if spec.gpu else DEFAULT_BATCH_SIZE
+
+
+def _resolve_device(device: str, spec: UDFSpec) -> str:
+    value = (device or "").strip()
+    if spec.gpu and not value:
+        raise BackfillValidationError("device is required for GPU UDFs")
+    return value
+
+
+def _resolve_precision(precision: str | None) -> str | None:
+    value = (precision or "").strip().lower()
+    if not value:
+        return None
+    if value not in {"float16", "float32"}:
+        raise BackfillValidationError("precision must be 'float16' or 'float32'")
+    return value
 
 
 def _connect_lancedb(lance_uri: str):
@@ -242,6 +288,77 @@ def _backfill_batches(table_obj: Any, spec: UDFSpec, *, batch_size: int, force: 
     return rows_updated, rows_skipped
 
 
+def _run_gpu_udf(
+    table_obj: Any,
+    spec: UDFSpec,
+    *,
+    batch_size: int,
+    force: bool,
+    device: str,
+    precision: str | None,
+) -> tuple[int, int]:
+    rows_updated = 0
+    rows_skipped = 0
+    columns = _select_columns(spec)
+    try:
+        batches = table_obj.search().select(columns).to_batches(batch_size=batch_size)
+        for batch in batches:
+            updated, skipped = _backfill_gpu_batch(
+                table_obj,
+                spec,
+                batch,
+                batch_size=batch_size,
+                force=force,
+                device=device,
+                precision=precision,
+            )
+            rows_updated += updated
+            rows_skipped += skipped
+    except BackfillError:
+        raise
+    except Exception as exc:
+        raise BackfillWriteError(f"failed to backfill GPU UDF {spec.name}: {exc}") from exc
+    return rows_updated, rows_skipped
+
+
+def _backfill_gpu_batch(
+    table_obj: Any,
+    spec: UDFSpec,
+    batch: pa.RecordBatch,
+    *,
+    batch_size: int,
+    force: bool,
+    device: str,
+    precision: str | None,
+) -> tuple[int, int]:
+    rows_updated = 0
+    rows_skipped = 0
+    offset = 0
+    current_batch_size = max(1, min(batch_size, batch.num_rows or 1))
+    while offset < batch.num_rows:
+        chunk_size = min(current_batch_size, batch.num_rows - offset)
+        chunk = batch.slice(offset, chunk_size)
+        try:
+            output = spec.function(chunk, device=device, precision=precision)
+        except Exception as exc:
+            if not _is_gpu_oom(exc):
+                raise
+            _clear_gpu_cache()
+            if chunk_size <= 1:
+                raise GPUOOMAtMinimumBatchError(
+                    f"HALT_GPU_OOM_AT_MINIMUM_BATCH: {spec.name} failed on {device} with batch_size=1"
+                ) from exc
+            current_batch_size = max(1, chunk_size // 2)
+            continue
+        ids, values, skipped = _updates_for_batch(chunk, spec.output_column, output, force=force)
+        rows_skipped += skipped
+        if ids:
+            _write_updates(table_obj, ids, values, spec)
+            rows_updated += len(ids)
+        offset += chunk_size
+    return rows_updated, rows_skipped
+
+
 def _backfill_is_duplicate(
     table_obj: Any,
     spec: UDFSpec,
@@ -313,6 +430,23 @@ def _write_updates(table_obj: Any, image_ids: list[str], values: list[Any], spec
         raise BackfillWriteError(f"failed to write {spec.output_column} updates: {exc}") from exc
 
 
+def _is_gpu_oom(exc: Exception) -> bool:
+    if exc.__class__.__name__ == "OutOfMemoryError":
+        return True
+    message = str(exc).lower()
+    return "out of memory" in message and ("cuda" in message or "gpu" in message)
+
+
+def _clear_gpu_cache() -> None:
+    try:
+        import torch
+    except ImportError:
+        return
+    cuda = getattr(torch, "cuda", None)
+    if cuda is not None and cuda.is_available():
+        cuda.empty_cache()
+
+
 def _manifest_sha256(table_obj: Any, output_column: str) -> str:
     try:
         rows = table_obj.search().select(["image_id", output_column]).to_arrow().to_pylist()
@@ -337,6 +471,9 @@ __all__ = [
     "BackfillWriteError",
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_DHASH_HAMMING_THRESHOLD",
+    "DEFAULT_GPU_BATCH_SIZE",
+    "DEFAULT_GPU_DEVICE",
+    "GPUOOMAtMinimumBatchError",
     "MissingDependencyError",
     "UnknownUDFError",
     "backfill_column",
