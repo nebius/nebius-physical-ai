@@ -1,0 +1,112 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: placeholder-step
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: npa-workflows
+    npa.nebius.com/workflow-surface: bootstrap
+spec:
+  entrypoint: placeholder
+  templates:
+    - name: placeholder
+      inputs:
+        parameters:
+          - name: step-name
+          - name: step-parameters
+            default: "{}"
+        artifacts:
+          - name: input
+            path: /work/input/input
+      container:
+        image: python:3.11-slim@sha256:9a7765b36773a37061455b332f18e265e7f58f6fea9c419a550d2a8b0e9db834
+        imagePullPolicy: IfNotPresent
+        command: [python, -c]
+        args:
+          - |
+            import hashlib
+            import json
+            import os
+            from datetime import datetime, timezone
+            from pathlib import Path
+
+            input_path = Path("/work/input/input")
+            output_path = Path("/work/output/marker.json")
+            step_name = os.environ["STEP_NAME"]
+            raw_step_parameters = os.environ.get("STEP_PARAMETERS", "{}")
+            sentinel = "W8_WORKFLOW_YAML_BOOTSTRAP_FIXTURE_SENTINEL"
+
+            def iter_files(path):
+                if path.is_file():
+                    yield path
+                    return
+                for item in sorted(path.rglob("*")):
+                    if item.is_file():
+                        yield item
+
+            digest = hashlib.sha256()
+            input_size = 0
+            text_parts = []
+            file_count = 0
+            for item in iter_files(input_path):
+                file_count += 1
+                data = item.read_bytes()
+                input_size += len(data)
+                digest.update(item.relative_to(input_path.parent).as_posix().encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(data)
+                try:
+                    text_parts.append(data.decode("utf-8"))
+                except UnicodeDecodeError:
+                    pass
+
+            input_text = "\n".join(text_parts)
+            upstream_marker = None
+            for text in text_parts:
+                try:
+                    candidate = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and "chain" in candidate:
+                    upstream_marker = candidate
+                    break
+
+            if upstream_marker:
+                chain = list(upstream_marker.get("chain", [])) + [step_name]
+                source_sentinel_detected = bool(upstream_marker.get("source_sentinel_detected"))
+                source_sentinel = upstream_marker.get("source_sentinel")
+            else:
+                chain = [step_name]
+                source_sentinel_detected = sentinel in input_text
+                source_sentinel = sentinel if source_sentinel_detected else None
+
+            try:
+                step_parameters = json.loads(raw_step_parameters)
+            except json.JSONDecodeError:
+                step_parameters = {"raw": raw_step_parameters}
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            marker = {
+                "marker": "npa-placeholder-step-v1",
+                "step_name": step_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "input_path": str(input_path),
+                "input_file_count": file_count,
+                "input_size_bytes": input_size,
+                "input_sha256": digest.hexdigest(),
+                "source_sentinel_detected": source_sentinel_detected,
+                "source_sentinel": source_sentinel,
+                "chain": chain,
+                "step_parameters": step_parameters,
+            }
+            output_path.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print(json.dumps(marker, sort_keys=True))
+        env:
+          - name: STEP_NAME
+            value: "{{inputs.parameters.step-name}}"
+          - name: STEP_PARAMETERS
+            value: "{{inputs.parameters.step-parameters}}"
+      outputs:
+        artifacts:
+          - name: output
+            path: /work/output/marker.json
