@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "npa"
+version = "0.1.0"
+description = "Nebius Physical AI workbench CLI"
+requires-python = ">=3.10"
+dependencies = [
+    "typer~=0.24.1",
+    "httpx~=0.28.1",
+    "paramiko~=4.0.0",
+    "pyyaml~=6.0.3",
+    "rich~=15.0.0",
+    "boto3~=1.42.91",
+    "jinja2~=3.1.6",
+    "matplotlib>=3.8",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "pillow>=10.0",
+    "lancedb==0.30.2",
+    "rerun-sdk==0.31.4",
+    "tomli>=2.0.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
+orchestration = []
+server = ["fastapi~=0.136.1"]
+genesis = [
+    "genesis-world",
+    "rsl-rl-lib==2.2.4",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "tensorboard>=2.14",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+]
+adapter = [
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+]
+groot = [
+    "nvidia-gr00t-sdk==0.1.0",
+]
+
+[project.scripts]
+npa = "npa.cli.main:app_entry"
+
+[tool.npa.supported-tools]
+lerobot = "0.5.1"
+genesis = "0.4.6"
+isaac-lab = "2.3.2.post1"
+cosmos = "1.0.9"
+groot = "n1.7"
+fiftyone = "1.15.0"
+sonic = "0.1.0"
+nebius-cli = "0.12.192"
+terraform = "~> 0.5.201"
+terraform-cli = "1.13.3"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/npa"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+markers = [
+    "e2e: end-to-end tests requiring real Nebius infrastructure (gated on NPA_INTEGRATION_E2E env var).",
+    "e2e_serverless: serverless endpoint e2e tests requiring real Nebius Serverless AI infrastructure.",
+    "e2e_skypilot: SkyPilot e2e tests requiring Nebius, MK8s, and SkyPilot-managed jobs.",
+    "e2e_pipeline: pipeline composition e2e tests that submit multiple real Nebius Serverless AI Jobs.",
+    "smoke: smoke tests that exercise CLI subprocess paths with local fakes.",
+    "multi_gpu: BYOVM multi-GPU tests that require NPA_TEST_BYOVM_* env vars and a live multi-GPU VM.",
+    "ngc_e2e: GR00T NGC credential e2e tests that require NPA_TEST_GROOT_NGC_E2E=1 and a live GR00T workbench.",
+    "byovm_live: BYOVM tests that require opt-in live target environment variables.",
+]
