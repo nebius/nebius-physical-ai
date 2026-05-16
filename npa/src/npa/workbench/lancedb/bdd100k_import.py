@@ -724,10 +724,10 @@ def _table_version(table_obj: Any) -> int | None:
 
 
 def _list_tables(db: Any) -> list[str]:
-    list_tables = getattr(db, "list_tables", None)
-    if callable(list_tables):
-        return _normalize_table_names(list_tables())
-    return _normalize_table_names(db.table_names())
+    table_names = getattr(db, "table_names", None)
+    if callable(table_names):
+        return _normalize_table_names(table_names())
+    return _normalize_table_names(db.list_tables())
 
 
 def _normalize_table_names(values: Any) -> list[str]:
