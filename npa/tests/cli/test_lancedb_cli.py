@@ -27,7 +27,16 @@ def test_lancedb_registered_under_workbench() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["deploy", "status", "list", "create-table", "query", "import-lerobot", "import-bdd100k"],
+    [
+        "deploy",
+        "status",
+        "list",
+        "create-table",
+        "query",
+        "import-lerobot",
+        "import-bdd100k",
+        "backfill",
+    ],
 )
 def test_lancedb_command_help(command: str) -> None:
     result = runner.invoke(lancedb_app, [command, "--help"])

@@ -332,6 +332,136 @@ def test_lancedb_bdd100k_import_endpoint_and_sdk_service_mode(
     assert sdk_state["manifest_sha256"] == sdk_result.manifest_sha256
 
 
+def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
+    test_id: str,
+    lancedb_service: dict[str, str],
+) -> None:
+    endpoint = lancedb_service["endpoint"]
+    env = lancedb_service["env"]
+    storage_path = lancedb_service["storage_path"]
+    table = f"bdd_backfill_{uuid.uuid4().hex[:8]}"
+
+    import httpx
+
+    imported = httpx.post(
+        f"{endpoint}/import-bdd100k",
+        json={
+            "table": table,
+            "lance_uri": storage_path,
+            "synthetic": 50,
+            "synthetic_seed": 42,
+        },
+        timeout=180.0,
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["total_rows"] == 50
+
+    for udf in ["has_person", "has_rider", "person_bbox_area_pct", "dhash", "is_duplicate"]:
+        response = httpx.post(
+            f"{endpoint}/backfill",
+            json={"table": table, "lance_uri": storage_path, "udf": udf},
+            timeout=180.0,
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["rows_updated"] == 50
+        assert payload["rows_skipped"] == 0
+        assert payload["column_added"] is True
+        assert payload["table_version_after"] > payload["table_version_before"]
+
+    _install_s3_env()
+    import lancedb
+
+    lance_table = lancedb.connect(storage_path).open_table(table)
+    schema = {field.name: str(field.type) for field in lance_table.schema}
+    assert len(schema) == 17
+    assert schema["has_person"] == "bool"
+    assert schema["has_rider"] == "bool"
+    assert schema["person_bbox_area_pct"] == "float"
+    assert schema["dhash"] == "int64"
+    assert schema["is_duplicate"] == "bool"
+    rows = lance_table.to_arrow().to_pylist()
+    for column in ["has_person", "has_rider", "person_bbox_area_pct", "dhash", "is_duplicate"]:
+        assert sum(row[column] is not None for row in rows) == 50
+
+    idempotent = httpx.post(
+        f"{endpoint}/backfill",
+        json={"table": table, "lance_uri": storage_path, "udf": "has_person"},
+        timeout=180.0,
+    )
+    assert idempotent.status_code == 200, idempotent.text
+    assert idempotent.json()["rows_updated"] == 0
+    assert idempotent.json()["rows_skipped"] == 50
+
+    forced = httpx.post(
+        f"{endpoint}/backfill",
+        json={"table": table, "lance_uri": storage_path, "udf": "has_person", "force": True},
+        timeout=180.0,
+    )
+    assert forced.status_code == 200, forced.text
+    assert forced.json()["rows_updated"] == 50
+    assert forced.json()["rows_skipped"] == 0
+
+    manifests: list[str] = []
+    for mode in ["api", "cli", "sdk"]:
+        parity_table = f"bdd_parity_{mode}_{uuid.uuid4().hex[:8]}"
+        response = httpx.post(
+            f"{endpoint}/import-bdd100k",
+            json={
+                "table": parity_table,
+                "lance_uri": storage_path,
+                "synthetic": 20,
+                "synthetic_seed": 123,
+            },
+            timeout=180.0,
+        )
+        assert response.status_code == 200, response.text
+        if mode == "api":
+            backfilled = httpx.post(
+                f"{endpoint}/backfill",
+                json={"table": parity_table, "lance_uri": storage_path, "udf": "has_person"},
+                timeout=180.0,
+            )
+            assert backfilled.status_code == 200, backfilled.text
+            manifests.append(backfilled.json()["manifest_sha256"])
+        elif mode == "cli":
+            backfilled = _run_npa(
+                [
+                    "workbench",
+                    "lancedb",
+                    "backfill",
+                    "--service",
+                    "--endpoint",
+                    endpoint,
+                    "--table",
+                    parity_table,
+                    "--lance-uri",
+                    storage_path,
+                    "--udf",
+                    "has_person",
+                    "--output",
+                    "json",
+                ],
+                env=env,
+                timeout=180,
+            )
+            assert backfilled.returncode == 0, _format_result(backfilled)
+            manifests.append(json.loads(backfilled.stdout)["manifest_sha256"])
+        else:
+            from npa.workbench.lancedb import backfill as sdk_backfill
+
+            result = sdk_backfill(
+                service=True,
+                endpoint=endpoint,
+                table=parity_table,
+                lance_uri=storage_path,
+                udf="has_person",
+            )
+            manifests.append(result.manifest_sha256)
+
+    assert len(set(manifests)) == 1
+
+
 def _run_npa(
     args: list[str],
     *,
