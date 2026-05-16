@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
 import inspect
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,9 +11,11 @@ import pytest
 from npa.orchestration.skypilot import cleanup as cleanup_module
 from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
+    InvalidRunIdError,
     cleanup_all_for_run,
     cleanup_jobs_controller,
     cluster_name_patterns_for_run,
+    run_tag,
     sky_down,
     skypilot_workflow,
 )
@@ -78,6 +82,7 @@ def test_context_manager_calls_cleanup_on_exception_and_reraises(monkeypatch: py
 def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     sky_bin = _fake_sky(tmp_path)
     calls: list[str] = []
+    run_id = "w9skypilot-integration-bootstrap-20260516T011706Z"
 
     def fake_matching_jobs(run_id, **kwargs):
         return [{"job_id": "7", "name": f"{run_id}-job", "status": "RUNNING"}]
@@ -91,19 +96,171 @@ def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyP
         return CleanupResult(resources_removed=[cluster_name])
 
     def fake_cleanup_jobs_controller(**kwargs):
-        return CleanupResult(resources_removed=["sky-jobs-controller-abc123"])
+        raise AssertionError("cleanup_all_for_run must not tear down the shared controller by default")
 
     monkeypatch.setattr(cleanup_module, "_matching_jobs", fake_matching_jobs)
     monkeypatch.setattr(cleanup_module, "_cancel_job", fake_cancel)
     monkeypatch.setattr(cleanup_module, "sky_down", fake_down)
     monkeypatch.setattr(cleanup_module, "cleanup_jobs_controller", fake_cleanup_jobs_controller)
 
-    result = cleanup_all_for_run("w9skypilot-integration-bootstrap-20260516T011706Z", sky_bin=sky_bin)
+    result = cleanup_all_for_run(run_id, sky_bin=sky_bin)
 
     assert "cancel:7" in calls
     assert any(call.startswith("down:") and "20260516t011706z" in call for call in calls)
+    assert not any(call.startswith("down:*") for call in calls)
+    assert "sky-jobs-controller-abc123" not in result.resources_removed
+    assert cluster_name_patterns_for_run(run_id)[0] == run_tag(run_id)
+
+
+def test_cluster_name_patterns_for_run_rejects_short_run_id() -> None:
+    with pytest.raises(InvalidRunIdError, match="at least 12 characters"):
+        cluster_name_patterns_for_run("run-1234567")
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "safe-run-123*",
+        "safe-run-123?",
+        "safe-run-[123",
+        "safe-run-]123",
+        "safe-run-{123",
+        "safe-run-}123",
+    ],
+)
+def test_cluster_name_patterns_for_run_rejects_glob_metachars(unsafe: str) -> None:
+    with pytest.raises(InvalidRunIdError, match="ASCII letters"):
+        cluster_name_patterns_for_run(unsafe)
+
+
+@pytest.mark.parametrize("unsafe", ["safe-run 123", "safe-run-123$", "safe-run-123`", "safe-run-123;"])
+def test_cluster_name_patterns_for_run_rejects_shell_special_chars(unsafe: str) -> None:
+    with pytest.raises(InvalidRunIdError, match="ASCII letters"):
+        cluster_name_patterns_for_run(unsafe)
+
+
+def test_cluster_name_patterns_for_run_accepts_bootstrap_convention() -> None:
+    run_id = "w9skypilot-bootstrap-converge-20260516T125841Z"
+
+    patterns = cluster_name_patterns_for_run(run_id)
+
+    assert run_tag(run_id) in patterns
+    assert f"{run_tag(run_id)}-*" in patterns
+
+
+def test_cluster_name_patterns_for_run_uses_boundary_aware_pattern() -> None:
+    run_id = "w9skypilot-bootstrap-converge-20260516T125841Z"
+    tag = run_tag(run_id)
+
+    patterns = cluster_name_patterns_for_run(run_id)
+
+    assert f"{tag}-*" in patterns
+    assert f"*{tag}*" not in patterns
+    assert f"{tag}*" not in patterns
+    assert not any(pattern.startswith("*") for pattern in patterns)
+
+
+def test_cluster_name_patterns_for_run_excludes_substring_collision() -> None:
+    run_id = "w9skypilot-bootstrap-converge-20260516T125841Z"
+    tag = run_tag(run_id)
+    patterns = cluster_name_patterns_for_run(run_id)
+
+    intended_cluster = f"{tag}-stage-1"
+    unrelated_cluster = f"production-{tag}-stage-1"
+
+    assert any(fnmatchcase(intended_cluster, pattern) for pattern in patterns)
+    assert not any(fnmatchcase(unrelated_cluster, pattern) for pattern in patterns)
+
+
+def test_cleanup_all_for_run_rejects_invalid_run_id_before_cleanup_ops(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*args, **kwargs):
+        raise AssertionError("cleanup operations should not run for an invalid run_id")
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", fail)
+    monkeypatch.setattr(cleanup_module, "_cancel_job", fail)
+    monkeypatch.setattr(cleanup_module, "sky_down", fail)
+    monkeypatch.setattr(cleanup_module, "cleanup_jobs_controller", fail)
+
+    with pytest.raises(InvalidRunIdError):
+        cleanup_all_for_run("abc")
+
+
+def test_cleanup_all_for_run_does_not_touch_controller_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    controller_calls: list[str] = []
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", lambda run_id, **kwargs: [])
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster_name, **kwargs: CleanupResult(resources_removed=[cluster_name]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "cleanup_jobs_controller",
+        lambda **kwargs: controller_calls.append("controller") or CleanupResult(resources_removed=["controller"]),
+    )
+
+    cleanup_all_for_run("w9skypilot-controller-default-20260516T151040Z")
+
+    assert controller_calls == []
+
+
+def test_cleanup_all_for_run_touches_controller_when_explicitly_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    controller_calls: list[str] = []
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", lambda run_id, **kwargs: [])
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster_name, **kwargs: CleanupResult(resources_removed=[cluster_name]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "cleanup_jobs_controller",
+        lambda **kwargs: controller_calls.append("controller")
+        or CleanupResult(resources_removed=["sky-jobs-controller-abc123"]),
+    )
+
+    result = cleanup_all_for_run("w9skypilot-controller-optin-20260516T151040Z", also_teardown_controller=True)
+
+    assert controller_calls == ["controller"]
     assert "sky-jobs-controller-abc123" in result.resources_removed
-    assert cluster_name_patterns_for_run("abcDEF_123")[0] == "abcdef-123*"
+
+
+def test_concurrent_cleanup_safety(monkeypatch: pytest.MonkeyPatch) -> None:
+    down_calls: list[str] = []
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", lambda run_id, **kwargs: [])
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster_name, **kwargs: down_calls.append(cluster_name)
+        or CleanupResult(resources_removed=[cluster_name]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "cleanup_jobs_controller",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("controller cleanup should not run")),
+    )
+
+    def run_cleanup(run_id: str) -> None:
+        try:
+            cleanup_all_for_run(run_id)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run_cleanup, args=("w9skypilot-concurrent-a-20260516T151040Z",)),
+        threading.Thread(target=run_cleanup, args=("w9skypilot-concurrent-b-20260516T151040Z",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert down_calls
 
 
 def test_cleanup_jobs_controller_discovers_exact_name_and_confirms_delete(

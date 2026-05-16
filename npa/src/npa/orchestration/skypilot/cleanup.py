@@ -38,6 +38,12 @@ class CleanupResult:
 
 NONTERMINAL_JOB_STATUSES = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
+RUN_ID_MIN_LENGTH = 12
+_RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+
+class InvalidRunIdError(ValueError):
+    """Raised when a run id is unsafe for SkyPilot cleanup matching."""
 
 
 def sky_down(
@@ -123,9 +129,16 @@ def cleanup_all_for_run(
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
+    also_teardown_controller: bool = False,
 ) -> CleanupResult:
-    """Cancel jobs and tear down clusters matching this run's naming pattern."""
+    """Cancel jobs and tear down this run's clusters.
 
+    The SkyPilot managed-jobs controller is shared operator state. It is left in
+    place by default; pass ``also_teardown_controller=True`` only when no other
+    SkyPilot-managed work depends on it.
+    """
+
+    _validate_run_id(run_id)
     cleanup = CleanupResult()
     for job in _matching_jobs(
         run_id,
@@ -152,24 +165,26 @@ def cleanup_all_for_run(
                 sky_bin=sky_bin,
             )
         )
-    cleanup.extend(
-        cleanup_jobs_controller(
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin,
+    if also_teardown_controller:
+        cleanup.extend(
+            cleanup_jobs_controller(
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+            )
         )
-    )
     return cleanup
 
 
 def cluster_name_patterns_for_run(run_id: str) -> list[str]:
-    """Return SkyPilot cluster-name globs derived from a run id."""
+    """Return boundary-aware SkyPilot cluster-name globs for a validated run id."""
 
+    _validate_run_id(run_id)
     tag = run_tag(run_id)
-    patterns = [f"{tag}*", f"*{tag}*"]
+    patterns = [tag, f"{tag}-*"]
     sanitized = _sanitize_name(run_id)
     if sanitized and sanitized != tag:
-        patterns.append(f"{sanitized}*")
+        patterns.extend([sanitized, f"{sanitized}-*"])
     return list(dict.fromkeys(patterns))
 
 
@@ -191,7 +206,10 @@ def skypilot_workflow(
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
 ) -> Iterator["_SkyPilotWorkflow"]:
-    """Context manager that guarantees explicit SkyPilot cleanup."""
+    """Context manager that guarantees run-scoped SkyPilot cleanup.
+
+    The shared managed-jobs controller is not torn down on context exit.
+    """
 
     workflow = _SkyPilotWorkflow(
         run_id=run_id,
@@ -259,6 +277,21 @@ def _matching_jobs(
         if any(pattern and pattern in text for pattern in patterns):
             matched.append(job)
     return matched
+
+
+def _validate_run_id(run_id: str) -> None:
+    value = str(run_id)
+    if len(value) < RUN_ID_MIN_LENGTH:
+        raise InvalidRunIdError(
+            f"SkyPilot run_id must be at least {RUN_ID_MIN_LENGTH} characters "
+            "before cleanup can derive cluster-name patterns."
+        )
+    if not _RUN_ID_ALLOWED_RE.fullmatch(value):
+        raise InvalidRunIdError(
+            "SkyPilot run_id may contain only ASCII letters, digits, and hyphens. "
+            "Use a long timestamp or UUID-style suffix and avoid glob, shell, or "
+            "Kubernetes-unsafe characters."
+        )
 
 
 def _cancel_job(

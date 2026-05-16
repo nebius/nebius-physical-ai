@@ -3,6 +3,7 @@
 from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
 from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
+    InvalidRunIdError,
     cleanup_all_for_run,
     cleanup_jobs_controller,
     cleanup_workflow,
@@ -23,6 +24,7 @@ __all__ = [
     "SKYPILOT_VERSION",
     "CleanupResult",
     "InvalidResourceSpecError",
+    "InvalidRunIdError",
     "NPASpec",
     "SkyPilotNotInstalledError",
     "SkyPilotResourceError",
