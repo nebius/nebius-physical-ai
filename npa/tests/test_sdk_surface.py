@@ -21,6 +21,7 @@ def _public_modules() -> list[ModuleType]:
         workbench.genesis,
         workbench.groot,
         workbench.isaac_lab,
+        workbench.lancedb,
         workbench.lerobot,
     ]
 
@@ -70,6 +71,7 @@ def test_workbench_public_surface() -> None:
         "genesis": ["train_teacher", "generate_demos", "simulate", "deploy"],
         "groot": ["deploy", "serve", "infer", "convert", "status"],
         "isaac_lab": ["deploy", "train", "eval", "export_lerobot", "status"],
+        "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
     }
     for tool, names in expected.items():
@@ -85,6 +87,12 @@ def test_errors_public_surface() -> None:
 
     assert issubclass(ScopedCredentialError, NpaError)
     assert issubclass(NpaError, Exception)
+
+
+def test_sdk_compatibility_namespace_exposes_lancedb_import() -> None:
+    from npa.sdk.workbench.lancedb import import_bdd100k
+
+    assert callable(import_bdd100k)
 
 
 def test_public_functions_have_docstrings_and_no_typer_signature_leaks() -> None:

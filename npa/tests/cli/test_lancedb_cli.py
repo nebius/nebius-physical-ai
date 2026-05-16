@@ -27,7 +27,7 @@ def test_lancedb_registered_under_workbench() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["deploy", "status", "list", "create-table", "query", "import-lerobot"],
+    ["deploy", "status", "list", "create-table", "query", "import-lerobot", "import-bdd100k"],
 )
 def test_lancedb_command_help(command: str) -> None:
     result = runner.invoke(lancedb_app, [command, "--help"])
@@ -217,6 +217,77 @@ def test_lancedb_import_lerobot_dataset_resolution(tmp_path: Path) -> None:
     parquet.write_bytes(b"placeholder")
 
     assert resolve_lerobot_dataset_files(str(tmp_path)) == [parquet]
+
+
+def test_lancedb_import_bdd100k_local_outputs_json(tmp_path: Path) -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "import-bdd100k",
+            "--synthetic",
+            "3",
+            "--synthetic-seed",
+            "5",
+            "--table",
+            "bdd_cli",
+            "--output-path",
+            str(tmp_path / "db"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["table"] == "bdd_cli"
+    assert payload["total_rows"] == 3
+    assert payload["manifest_sha256"]
+
+
+def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    import_module = importlib.import_module("npa.cli.workbench.lancedb.import_bdd100k")
+    seen = {}
+
+    def fake_request(method: str, endpoint: str, path: str, **kwargs):
+        seen.update({"method": method, "endpoint": endpoint, "path": path, **kwargs})
+        return {
+            "table": "bdd_service",
+            "lance_uri": "s3://bucket/lancedb/bdd100k/",
+            "table_uri": "s3://bucket/lancedb/bdd100k/bdd_service.lance",
+            "rows_per_split": {"train": 2, "val": 1},
+            "total_rows": 3,
+            "table_version_before": None,
+            "table_version_after": 1,
+            "table_version": 1,
+            "manifest_sha256": "abc",
+            "row_checksum_sha256": "abc",
+            "splits": ["train", "val"],
+            "synthetic": 3,
+            "synthetic_seed": 5,
+            "source": "",
+        }
+
+    monkeypatch.setattr(import_module, "request_json", fake_request)
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "import-bdd100k",
+            "--service",
+            "--endpoint",
+            "http://localhost:8686",
+            "--synthetic",
+            "3",
+            "--synthetic-seed",
+            "5",
+            "--table",
+            "bdd_service",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/import-bdd100k"
+    assert seen["payload"]["synthetic"] == 3
+    assert json.loads(result.output)["total_rows"] == 3
 
 
 def test_lancedb_container_image_name_resolves() -> None:
