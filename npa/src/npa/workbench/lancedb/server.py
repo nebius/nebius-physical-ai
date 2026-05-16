@@ -11,6 +11,15 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 try:
+    from .backfill import (
+        DEFAULT_BATCH_SIZE,
+        DEFAULT_DHASH_HAMMING_THRESHOLD,
+        BackfillError,
+        BackfillTableNotFoundError,
+        BackfillValidationError,
+        MissingDependencyError,
+        backfill_column,
+    )
     from .bdd100k_import import (
         DEFAULT_LANCE_URI,
         DEFAULT_SPLITS,
@@ -20,6 +29,15 @@ try:
         import_bdd100k,
     )
 except ImportError:  # pragma: no cover - used by the copied Docker module.
+    from npa_lancedb_backfill import (
+        DEFAULT_BATCH_SIZE,
+        DEFAULT_DHASH_HAMMING_THRESHOLD,
+        BackfillError,
+        BackfillTableNotFoundError,
+        BackfillValidationError,
+        MissingDependencyError,
+        backfill_column,
+    )
     from npa_lancedb_bdd100k_import import (
         DEFAULT_LANCE_URI,
         DEFAULT_SPLITS,
@@ -55,6 +73,15 @@ class BDD100KImportRequest(BaseModel):
     synthetic_seed: int | None = None
     splits: list[str] = Field(default_factory=lambda: list(DEFAULT_SPLITS))
     limit: int | None = None
+
+
+class BackfillRequest(BaseModel):
+    table: str = DEFAULT_TABLE
+    udf: str
+    lance_uri: str = DEFAULT_LANCE_URI
+    batch_size: int = DEFAULT_BATCH_SIZE
+    force: bool = False
+    dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD
 
 
 def _list_tables(db: Any) -> list[str]:
@@ -177,6 +204,33 @@ def create_app(
         except BDD100KValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except BDD100KImportError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        known_tables.add(result.table)
+        return result.to_dict()
+
+    @app.post("/backfill")
+    async def backfill_endpoint(
+        body: BackfillRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        await require_auth(request, authorization)
+        try:
+            result = backfill_column(
+                table=body.table,
+                udf=body.udf,
+                lance_uri=body.lance_uri,
+                batch_size=body.batch_size,
+                force=body.force,
+                dhash_hamming_threshold=body.dhash_hamming_threshold,
+            )
+        except BackfillValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except BackfillTableNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MissingDependencyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except BackfillError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         known_tables.add(result.table)
         return result.to_dict()

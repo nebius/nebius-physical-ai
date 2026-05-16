@@ -9,6 +9,14 @@ from typing import Any
 
 import httpx
 
+from npa.workbench.lancedb.backfill import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_DHASH_HAMMING_THRESHOLD,
+    BackfillError,
+    BackfillResult,
+    BackfillValidationError,
+    backfill_column as _backfill_column_local,
+)
 from npa.workbench.lancedb.bdd100k_import import (
     DEFAULT_LANCE_URI,
     DEFAULT_SPLITS,
@@ -18,12 +26,15 @@ from npa.workbench.lancedb.bdd100k_import import (
     BDD100KValidationError,
     import_bdd100k as _import_bdd100k_local,
 )
-
 DEFAULT_TOKEN_ENV = "LANCEDB_TOKEN"
 
 
 class BDD100KServiceError(BDD100KImportError):
     """Raised when a service-mode BDD100K import request fails."""
+
+
+class BackfillServiceError(BackfillError):
+    """Raised when a service-mode backfill request fails."""
 
 
 def import_bdd100k(
@@ -80,6 +91,52 @@ def import_bdd100k(
     )
 
 
+def backfill(
+    *,
+    table: str = DEFAULT_TABLE,
+    udf: str,
+    lance_uri: str = DEFAULT_LANCE_URI,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    force: bool = False,
+    dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD,
+    mode: str | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 600.0,
+) -> BackfillResult:
+    """Backfill one BDD100K-derived LanceDB column.
+
+    Example:
+        from npa.sdk.workbench.lancedb import backfill
+
+        result = backfill(table="bdd100k", udf="has_person")
+        print(f"Updated {result.rows_updated} rows; version {result.table_version_after}")
+    """
+    service_mode = _resolve_mode(mode=mode, service=service)
+    payload = {
+        "table": table,
+        "udf": udf,
+        "lance_uri": lance_uri,
+        "batch_size": batch_size,
+        "force": force,
+        "dhash_hamming_threshold": dhash_hamming_threshold,
+    }
+    if service_mode:
+        return _backfill_result_from_payload(
+            _post_json(
+                endpoint=endpoint or os.environ.get("NPA_LANCEDB_ENDPOINT", ""),
+                token_env=token_env,
+                payload=payload,
+                timeout=timeout,
+                path="/backfill",
+                error_cls=BackfillServiceError,
+                validation_cls=BackfillValidationError,
+            )
+        )
+    return _backfill_column_local(**payload)
+
+
 def _resolve_mode(*, mode: str | None, service: bool) -> bool:
     if mode is None:
         return service
@@ -97,28 +154,31 @@ def _post_json(
     token_env: str,
     payload: dict[str, Any],
     timeout: float,
+    path: str = "/import-bdd100k",
+    error_cls: type[Exception] = BDD100KServiceError,
+    validation_cls: type[Exception] = BDD100KValidationError,
 ) -> dict[str, Any]:
     resolved = endpoint.strip().rstrip("/")
     if not resolved:
-        raise BDD100KValidationError("endpoint is required for service mode")
+        raise validation_cls("endpoint is required for service mode")
     headers: dict[str, str] = {}
     token = os.environ.get(token_env, "")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.post(f"{resolved}/import-bdd100k", json=payload, headers=headers, timeout=timeout)
+        response = httpx.post(f"{resolved}{path}", json=payload, headers=headers, timeout=timeout)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
-        raise BDD100KServiceError(f"LanceDB service request failed ({exc.response.status_code}): {detail}") from exc
+        raise error_cls(f"LanceDB service request failed ({exc.response.status_code}): {detail}") from exc
     except httpx.HTTPError as exc:
-        raise BDD100KServiceError(f"Cannot reach LanceDB service {resolved}: {exc}") from exc
+        raise error_cls(f"Cannot reach LanceDB service {resolved}: {exc}") from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise BDD100KServiceError("LanceDB service returned non-JSON response") from exc
+        raise error_cls("LanceDB service returned non-JSON response") from exc
     if not isinstance(data, dict):
-        raise BDD100KServiceError("LanceDB service returned an unexpected response")
+        raise error_cls("LanceDB service returned an unexpected response")
     return data
 
 
@@ -131,4 +191,24 @@ def _result_from_payload(payload: dict[str, Any]) -> BDD100KImportResult:
     return BDD100KImportResult(**{name: payload[name] for name in names})
 
 
-__all__ = ["import_bdd100k"]
+def _backfill_result_from_payload(payload: dict[str, Any]) -> BackfillResult:
+    names = {field.name for field in fields(BackfillResult)}
+    missing = sorted(name for name in names if name not in payload)
+    if missing:
+        joined = ", ".join(missing)
+        raise BackfillServiceError(f"LanceDB service response is missing: {joined}")
+    return BackfillResult(**{name: payload[name] for name in names})
+
+
+__all__ = [
+    "BDD100KImportError",
+    "BDD100KImportResult",
+    "BDD100KServiceError",
+    "BDD100KValidationError",
+    "BackfillError",
+    "BackfillResult",
+    "BackfillServiceError",
+    "BackfillValidationError",
+    "backfill",
+    "import_bdd100k",
+]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from .backfill import backfill_cmd
 from .create_table import create_table_cmd
 from .deploy import deploy_cmd
 from .import_bdd100k import import_bdd100k_cmd
@@ -25,3 +26,4 @@ app.command("create-table")(create_table_cmd)
 app.command("query")(query_cmd)
 app.command("import-lerobot")(import_lerobot_cmd)
 app.command("import-bdd100k")(import_bdd100k_cmd)
+app.command("backfill")(backfill_cmd)

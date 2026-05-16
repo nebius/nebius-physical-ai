@@ -7,6 +7,11 @@ from npa.workbench.lancedb import (
     BDD100KImportResult,
     BDD100KServiceError,
     BDD100KValidationError,
+    BackfillError,
+    BackfillResult,
+    BackfillServiceError,
+    BackfillValidationError,
+    backfill,
     import_bdd100k,
 )
 
@@ -15,5 +20,10 @@ __all__ = [
     "BDD100KImportResult",
     "BDD100KServiceError",
     "BDD100KValidationError",
+    "BackfillError",
+    "BackfillResult",
+    "BackfillServiceError",
+    "BackfillValidationError",
+    "backfill",
     "import_bdd100k",
 ]
