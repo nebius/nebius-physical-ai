@@ -1,0 +1,66 @@
+ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z
+ARG BUILD_TS=20260514T214550Z
+ARG LEROBOT_VERSION=0.4.4
+ARG LEROBOT_COMMIT=8fff0fde7c79f23a93d845d1a50e985de01f8b8a
+ARG BASE_IMAGE_DIGEST=unknown
+
+LABEL npa.tool="lerobot" \
+      npa.version="${LEROBOT_VERSION}" \
+      npa.target_gpu="b300-sm_103" \
+      npa.base_image="${BASE_IMAGE}" \
+      npa.base_image_digest="${BASE_IMAGE_DIGEST}" \
+      npa.lerobot.commit="${LEROBOT_COMMIT}" \
+      npa.build_ts="${BUILD_TS}" \
+      npa.build_info="lerobot_commit=${LEROBOT_COMMIT};base_image=${BASE_IMAGE};base_image_digest=${BASE_IMAGE_DIGEST};build_ts=${BUILD_TS}"
+
+ENV HF_LEROBOT_HOME=/opt/lerobot/hf_cache \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    PYTHONUNBUFFERED=1 \
+    WANDB_MODE=disabled \
+    NPA_INPUT_PATH=/input \
+    NPA_OUTPUT_PATH=/output \
+    INPUT_PATH=/input \
+    OUTPUT_PATH=/output
+
+SHELL ["/bin/bash", "-lc"]
+
+RUN install -d -m 0755 \
+      /opt/lerobot \
+      /opt/lerobot/checkpoints \
+      /opt/lerobot/data \
+      /opt/lerobot/dataset_cache \
+      /opt/lerobot/checkpoint_cache \
+      /opt/lerobot/hf_cache \
+      /opt/lerobot/job_status \
+      /opt/lerobot/logs \
+      /opt/lerobot/benchmarks \
+      /output
+
+WORKDIR /opt/lerobot
+
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install \
+      "lerobot[pusht,smolvla,libero] @ git+https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}" \
+      boto3 \
+      fastapi~=0.136.1 \
+      num2words \
+      tensorboard \
+      "uvicorn[standard]" \
+      wandb
+
+RUN python - <<'PY'
+import importlib
+from importlib import metadata
+
+for module in ("lerobot", "torch", "torchvision", "flash_attn", "flash_attn.cute"):
+    importlib.import_module(module)
+print("lerobot", metadata.version("lerobot"))
+print("torch", metadata.version("torch"))
+print("flash-attn-4", metadata.version("flash-attn-4"))
+PY
+
+CMD ["lerobot-train", "--help"]
