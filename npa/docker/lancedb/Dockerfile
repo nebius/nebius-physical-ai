@@ -6,10 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+COPY docker/lancedb/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY entrypoint.sh /entrypoint.sh
+COPY src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
+COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
+COPY docker/lancedb/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8686

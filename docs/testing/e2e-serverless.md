@@ -281,7 +281,7 @@ CPU-only service. Validate it with the local container smoke before any VM
 smoke:
 
 ```bash
-docker build -t npa-lancedb:0.30.2 npa/docker/lancedb/
+docker build -f npa/docker/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
 
 npa workbench lancedb deploy \
   --runtime container \

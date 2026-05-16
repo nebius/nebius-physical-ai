@@ -4,4 +4,5 @@ uvicorn[standard]
 boto3
 numpy
 pyarrow
+pillow
 pydantic

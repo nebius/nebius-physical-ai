@@ -10,7 +10,7 @@ store prefix.
 Build the local image:
 
 ```bash
-docker build -t npa-lancedb:0.30.2 npa/docker/lancedb/
+docker build -f npa/docker/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
 ```
 
 Start a local container-backed service:
