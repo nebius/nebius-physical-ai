@@ -25,6 +25,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+orchestration = [
+    "skypilot[nebius,kubernetes]==0.12.2",
+]
 server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
@@ -70,6 +73,7 @@ addopts = "-v --tb=short"
 markers = [
     "e2e: end-to-end tests requiring real Nebius infrastructure (gated on NPA_INTEGRATION_E2E env var).",
     "e2e_serverless: serverless endpoint e2e tests requiring real Nebius Serverless AI infrastructure.",
+    "e2e_skypilot: SkyPilot e2e tests requiring Nebius, MK8s, and SkyPilot-managed jobs.",
     "e2e_pipeline: pipeline composition e2e tests that submit multiple real Nebius Serverless AI Jobs.",
     "smoke: smoke tests that exercise CLI subprocess paths with local fakes.",
     "multi_gpu: BYOVM multi-GPU tests that require NPA_TEST_BYOVM_* env vars and a live multi-GPU VM.",
