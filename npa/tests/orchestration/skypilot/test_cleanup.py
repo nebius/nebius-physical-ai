@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +18,15 @@ from npa.orchestration.skypilot import controller as controller_module
 from npa.orchestration.skypilot import resources as resources_module
 
 
+def _fake_sky(tmp_path: Path) -> Path:
+    sky = tmp_path / "sky"
+    sky.write_text("#!/bin/sh\n", encoding="utf-8")
+    sky.chmod(0o755)
+    return sky
+
+
 def test_sky_down_constructs_expected_subprocess_invocation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    sky_bin = _fake_sky(tmp_path)
     calls: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
@@ -27,9 +36,9 @@ def test_sky_down_constructs_expected_subprocess_invocation(monkeypatch: pytest.
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    result = sky_down("cluster-a", isolated_config_dir=tmp_path)
+    result = sky_down("cluster-a", isolated_config_dir=tmp_path, sky_bin=sky_bin)
 
-    assert calls == [["sky", "down", "--yes", "cluster-a"]]
+    assert calls == [[str(sky_bin), "down", "--yes", "cluster-a"]]
     assert result.resources_removed == ["cluster-a"]
     assert result.errors == []
 
@@ -65,7 +74,8 @@ def test_context_manager_calls_cleanup_on_exception_and_reraises(monkeypatch: py
     assert calls == ["run-456"]
 
 
-def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    sky_bin = _fake_sky(tmp_path)
     calls: list[str] = []
 
     def fake_matching_jobs(run_id, **kwargs):
@@ -83,7 +93,7 @@ def test_cleanup_all_for_run_matches_run_id_patterns(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(cleanup_module, "_cancel_job", fake_cancel)
     monkeypatch.setattr(cleanup_module, "sky_down", fake_down)
 
-    result = cleanup_all_for_run("w9skypilot-integration-bootstrap-20260516T011706Z")
+    result = cleanup_all_for_run("w9skypilot-integration-bootstrap-20260516T011706Z", sky_bin=sky_bin)
 
     assert "cancel:7" in calls
     assert any(call.startswith("down:") and "20260516t011706z" in call for call in calls)

@@ -1,5 +1,6 @@
 """NPA SkyPilot orchestration layer."""
 
+from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
 from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
     cleanup_all_for_run,
@@ -23,6 +24,7 @@ __all__ = [
     "CleanupResult",
     "InvalidResourceSpecError",
     "NPASpec",
+    "SkyPilotNotInstalledError",
     "SkyPilotResourceError",
     "WorkflowResult",
     "cleanup_all_for_run",

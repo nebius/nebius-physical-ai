@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
 from npa.orchestration.skypilot.cleanup import sky_environment
 from npa.orchestration.skypilot.controller import apply_controller_override
 
@@ -41,12 +42,16 @@ def submit_workflow(
     run_id: str,
     *,
     isolated_config_dir: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
+    sky_executable = str(resolve_sky_bin(sky_bin))
     yaml_path = Path(yaml_path)
+    submission_dir: Path | None = None
+    prepared_yaml: Path | None = None
+    config_path: Path | None = None
     try:
         docs = _load_yaml_documents(yaml_path)
         if not docs:
@@ -59,7 +64,7 @@ def submit_workflow(
         config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
 
         cmd = [
-            sky_bin,
+            sky_executable,
             "jobs",
             "launch",
             "--name",
@@ -93,6 +98,21 @@ def submit_workflow(
             submitted_yaml_path=str(prepared_yaml),
             error=error,
         )
+    except subprocess.TimeoutExpired as exc:
+        stdout = _timeout_output(exc.stdout)
+        stderr = _timeout_output(exc.stderr)
+        return WorkflowResult(
+            status="FAILED_SUBMIT",
+            log_paths={
+                "submission_dir": str(submission_dir) if submission_dir else "",
+                "config": str(config_path) if config_path else "",
+            },
+            returncode=124,
+            stdout=stdout,
+            stderr=stderr,
+            submitted_yaml_path=str(prepared_yaml) if prepared_yaml else "",
+            error=f"sky jobs launch timed out after {timeout}s",
+        )
     except Exception as exc:
         return WorkflowResult(status="FAILED_SUBMIT", returncode=1, error=str(exc))
 
@@ -102,12 +122,12 @@ def workflow_status(
     *,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
     timeout: int = 300,
 ) -> WorkflowResult:
     """Query a SkyPilot managed job status via `sky jobs queue`."""
 
-    cmd = [sky_bin, "jobs", "queue", "--all", "--output", "json"]
+    cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "queue", "--all", "--output", "json"]
     if config_path is not None:
         cmd[3:3] = ["--config", str(config_path)]
     result = subprocess.run(
@@ -177,6 +197,14 @@ def _parse_job_id(output: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def _timeout_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def _status_from_queue_payload(output: str, job_id: str) -> str:

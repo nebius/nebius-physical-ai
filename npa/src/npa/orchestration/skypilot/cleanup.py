@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
+
 
 @dataclass
 class CleanupResult:
@@ -41,12 +43,12 @@ def sky_down(
     *,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
     timeout: int = 900,
 ) -> CleanupResult:
     """Run `sky down --yes` for a cluster or SkyPilot glob pattern."""
 
-    cmd = [sky_bin, "down", "--yes", cluster_name]
+    cmd = [str(resolve_sky_bin(sky_bin)), "down", "--yes", cluster_name]
     result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=timeout)
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
@@ -60,7 +62,7 @@ def cleanup_jobs_controller(
     *,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
 ) -> CleanupResult:
     """Tear down the managed-jobs controller VM in the active SkyPilot state."""
 
@@ -77,7 +79,7 @@ def cleanup_workflow(
     *,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
 ) -> CleanupResult:
     """Cancel a managed job ID or tear down a SkyPilot cluster name."""
 
@@ -101,7 +103,7 @@ def cleanup_all_for_run(
     *,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
 ) -> CleanupResult:
     """Cancel jobs and tear down clusters matching this run's naming pattern."""
 
@@ -167,7 +169,7 @@ def skypilot_workflow(
     run_id: str,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
-    sky_bin: str = "sky",
+    sky_bin: SkyBin = None,
 ) -> Iterator["_SkyPilotWorkflow"]:
     """Context manager that guarantees explicit SkyPilot cleanup."""
 
@@ -188,7 +190,7 @@ class _SkyPilotWorkflow:
     run_id: str
     isolated_config_dir: Path | None = None
     config_path: Path | None = None
-    sky_bin: str = "sky"
+    sky_bin: SkyBin = None
     cleanup_result: CleanupResult | None = None
 
     def submit(self, yaml_path: Path):
@@ -216,9 +218,9 @@ def _matching_jobs(
     *,
     isolated_config_dir: Path | None,
     config_path: Path | None,
-    sky_bin: str,
+    sky_bin: SkyBin,
 ) -> list[dict[str, Any]]:
-    cmd = [sky_bin, "jobs", "queue", "--all", "--output", "json"]
+    cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "queue", "--all", "--output", "json"]
     result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=120)
     if result.returncode != 0:
         return []
@@ -241,9 +243,9 @@ def _cancel_job(
     *,
     isolated_config_dir: Path | None,
     config_path: Path | None,
-    sky_bin: str,
+    sky_bin: SkyBin,
 ) -> CleanupResult:
-    cmd = [sky_bin, "jobs", "cancel", "--yes", job_id]
+    cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "cancel", "--yes", job_id]
     result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=300)
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
