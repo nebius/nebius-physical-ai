@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import importlib
 import json
+import os
+from dataclasses import replace
 from pathlib import Path
 
 import pyarrow as pa
@@ -13,6 +16,7 @@ from typer.testing import CliRunner
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.workbench.lancedb.backfill import (
     BackfillTableNotFoundError,
+    GPUOOMAtMinimumBatchError,
     MissingDependencyError,
     UnknownUDFError,
     backfill_column,
@@ -20,6 +24,8 @@ from npa.workbench.lancedb.backfill import (
 from npa.workbench.lancedb.bdd100k_import import import_bdd100k
 from npa.workbench.lancedb.bdd100k_udfs import (
     BDD100K_UDFS,
+    CLIP_EMBEDDING_DIM,
+    CLIP_OUTPUT_TYPE,
     udf_dhash,
     udf_has_person,
     udf_has_rider,
@@ -30,6 +36,7 @@ from npa.workbench.lancedb.server import create_app
 
 
 runner = CliRunner()
+backfill_module = importlib.import_module("npa.workbench.lancedb.backfill")
 
 
 @pytest.mark.parametrize(
@@ -87,6 +94,158 @@ def test_is_duplicate_respects_threshold() -> None:
 
     assert udf_is_duplicate(batch, hamming_threshold=1).to_pylist() == [False, False, True]
     assert udf_is_duplicate(batch, hamming_threshold=2).to_pylist() == [False, True, True]
+
+
+def test_clip_udf_registered_with_gpu_flag() -> None:
+    spec = BDD100K_UDFS["clip_embedding"]
+
+    assert spec.gpu is True
+    assert spec.input_columns == ("image_bytes",)
+    assert spec.output_column == "clip_embedding"
+    assert spec.output_type == CLIP_OUTPUT_TYPE
+    assert all(BDD100K_UDFS[name].gpu is False for name in ("has_person", "has_rider", "person_bbox_area_pct", "dhash", "is_duplicate"))
+
+
+def test_clip_udf_output_schema_512_float32() -> None:
+    from npa.workbench.lancedb import bdd100k_udfs as udfs
+
+    values = [[0.1] * CLIP_EMBEDDING_DIM, [0.2] * CLIP_EMBEDDING_DIM]
+
+    output = udfs._clip_vectors_to_array(values)
+
+    assert output.type == CLIP_OUTPUT_TYPE
+    assert output.to_pylist()[0] == pytest.approx([0.1] * CLIP_EMBEDDING_DIM)
+
+
+def test_backfill_dispatches_gpu_udf_through_gpu_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    def fake_run_gpu_udf(table_obj, spec, **kwargs):
+        seen.update({"spec": spec.name, **kwargs})
+        return 2, 0
+
+    monkeypatch.setattr(backfill_module, "_run_gpu_udf", fake_run_gpu_udf)
+    import_bdd100k(synthetic=2, synthetic_seed=31, lance_uri=str(tmp_path / "db"), table="bdd")
+
+    result = backfill_column(
+        lance_uri=str(tmp_path / "db"),
+        table="bdd",
+        udf="clip_embedding",
+        batch_size=7,
+        device="cuda:0",
+        precision="float32",
+    )
+
+    assert seen["spec"] == "clip_embedding"
+    assert seen["batch_size"] == 7
+    assert seen["device"] == "cuda:0"
+    assert seen["precision"] == "float32"
+    assert result.rows_updated == 2
+    assert result.gpu_used is True
+
+
+def test_backfill_preserves_cpu_udf_behavior() -> None:
+    expected = {
+        "has_person": (("ann_categories",), "has_person", pa.bool_(), ()),
+        "has_rider": (("ann_categories",), "has_rider", pa.bool_(), ()),
+        "person_bbox_area_pct": (("ann_categories", "ann_bboxes", "width", "height"), "person_bbox_area_pct", pa.float32(), ()),
+        "dhash": (("image_bytes",), "dhash", pa.int64(), ()),
+        "is_duplicate": (("image_id", "dhash"), "is_duplicate", pa.bool_(), ("dhash",)),
+    }
+
+    for name, (input_columns, output_column, output_type, dependencies) in expected.items():
+        spec = BDD100K_UDFS[name]
+        assert spec.input_columns == input_columns
+        assert spec.output_column == output_column
+        assert spec.output_type == output_type
+        assert spec.dependencies == dependencies
+        assert spec.gpu is False
+
+
+def test_gpu_udf_batch_oom_fallback(tmp_path: Path) -> None:
+    import lancedb
+
+    calls: list[int] = []
+
+    def fake_clip(batch: pa.RecordBatch, **kwargs) -> pa.Array:
+        calls.append(batch.num_rows)
+        if batch.num_rows > 2:
+            raise RuntimeError("CUDA out of memory")
+        return _fake_clip_array(batch)
+
+    import_bdd100k(synthetic=4, synthetic_seed=32, lance_uri=str(tmp_path / "db"), table="bdd")
+    table = lancedb.connect(str(tmp_path / "db")).open_table("bdd")
+    spec = replace(BDD100K_UDFS["clip_embedding"], function=fake_clip)
+    table.add_columns([pa.field(spec.output_column, spec.output_type)])
+    batch = next(iter(table.search().select(["image_id", "image_bytes", "clip_embedding"]).to_batches(batch_size=4)))
+
+    rows_updated, rows_skipped = backfill_module._backfill_gpu_batch(
+        table,
+        spec,
+        batch,
+        batch_size=4,
+        force=False,
+        device="cuda:0",
+        precision="float32",
+    )
+
+    assert calls == [4, 2, 2]
+    assert rows_updated == 4
+    assert rows_skipped == 0
+
+
+def test_gpu_udf_oom_at_minimum_batch_raises_halt(tmp_path: Path) -> None:
+    import lancedb
+
+    def fake_clip(batch: pa.RecordBatch, **kwargs) -> pa.Array:
+        raise RuntimeError("CUDA out of memory")
+
+    import_bdd100k(synthetic=1, synthetic_seed=33, lance_uri=str(tmp_path / "db"), table="bdd")
+    table = lancedb.connect(str(tmp_path / "db")).open_table("bdd")
+    spec = replace(BDD100K_UDFS["clip_embedding"], function=fake_clip)
+    table.add_columns([pa.field(spec.output_column, spec.output_type)])
+    batch = next(iter(table.search().select(["image_id", "image_bytes", "clip_embedding"]).to_batches(batch_size=1)))
+
+    with pytest.raises(GPUOOMAtMinimumBatchError, match="HALT_GPU_OOM_AT_MINIMUM_BATCH"):
+        backfill_module._backfill_gpu_batch(
+            table,
+            spec,
+            batch,
+            batch_size=1,
+            force=False,
+            device="cuda:0",
+            precision="float32",
+        )
+
+
+def test_clip_backfill_is_idempotent_and_force_recomputes(tmp_path: Path) -> None:
+    original = BDD100K_UDFS["clip_embedding"]
+    BDD100K_UDFS["clip_embedding"] = replace(original, function=_fake_clip_array)
+    try:
+        import_bdd100k(synthetic=3, synthetic_seed=34, lance_uri=str(tmp_path / "db"), table="bdd")
+
+        first = backfill_column(lance_uri=str(tmp_path / "db"), table="bdd", udf="clip_embedding", batch_size=2, precision="float32")
+        second = backfill_column(lance_uri=str(tmp_path / "db"), table="bdd", udf="clip_embedding", batch_size=2, precision="float32")
+        forced = backfill_column(
+            lance_uri=str(tmp_path / "db"),
+            table="bdd",
+            udf="clip_embedding",
+            batch_size=2,
+            force_recompute=True,
+            precision="float32",
+        )
+    finally:
+        BDD100K_UDFS["clip_embedding"] = original
+
+    assert first.rows_updated == 3
+    assert first.rows_skipped == 0
+    assert first.gpu_used is True
+    assert second.rows_updated == 0
+    assert second.rows_skipped == 3
+    assert second.manifest_sha256 == first.manifest_sha256
+    assert forced.rows_updated == 3
+    assert forced.rows_skipped == 0
+    assert forced.manifest_sha256 == first.manifest_sha256
 
 
 def test_backfill_is_idempotent_and_force_recomputes(tmp_path: Path) -> None:
@@ -262,6 +421,93 @@ def test_api_cli_sdk_manifest_parity(tmp_path: Path) -> None:
     assert len(set(manifests)) == 1
 
 
+def test_clip_api_cli_sdk_manifest_parity_with_mocked_udf(tmp_path: Path) -> None:
+    from npa.workbench.lancedb import backfill as sdk_backfill
+
+    original = BDD100K_UDFS["clip_embedding"]
+    BDD100K_UDFS["clip_embedding"] = replace(original, function=_fake_clip_array)
+    try:
+        app = create_app(storage_path=str(tmp_path / "service-root"), auth_mode="none")
+        client = TestClient(app)
+        manifests: list[str] = []
+        gpu_flags: list[bool] = []
+        for mode in ("api", "cli", "sdk"):
+            table = f"bdd_clip_{mode}"
+            lance_uri = str(tmp_path / f"clip-{mode}")
+            imported = client.post(
+                "/import-bdd100k",
+                json={"synthetic": 4, "synthetic_seed": 45, "lance_uri": lance_uri, "table": table},
+            )
+            assert imported.status_code == 200
+            if mode == "api":
+                response = client.post(
+                    "/backfill",
+                    json={"lance_uri": lance_uri, "table": table, "udf": "clip_embedding", "precision": "float32"},
+                )
+                assert response.status_code == 200
+                payload = response.json()
+                manifests.append(payload["manifest_sha256"])
+                gpu_flags.append(payload["gpu_used"])
+            elif mode == "cli":
+                result = runner.invoke(
+                    lancedb_app,
+                    ["backfill", "--udf", "clip_embedding", "--table", table, "--lance-uri", lance_uri],
+                )
+                assert result.exit_code == 0
+                payload = json.loads(result.output)
+                manifests.append(payload["manifest_sha256"])
+                gpu_flags.append(payload["gpu_used"])
+            else:
+                result = sdk_backfill(lance_uri=lance_uri, table=table, udf="clip_embedding", precision="float32")
+                manifests.append(result.manifest_sha256)
+                gpu_flags.append(result.gpu_used)
+    finally:
+        BDD100K_UDFS["clip_embedding"] = original
+
+    assert len(set(manifests)) == 1
+    assert gpu_flags == [True, True, True]
+
+
+@pytest.mark.e2e
+def test_clip_embedding_deployed_service_e2e() -> None:
+    if os.environ.get("NPA_INTEGRATION_E2E") != "1":
+        pytest.skip("set NPA_INTEGRATION_E2E=1 to run deployed CLIP embedding validation")
+    endpoint = os.environ.get("NPA_LANCEDB_ENDPOINT", "")
+    if not endpoint:
+        pytest.skip("NPA_LANCEDB_ENDPOINT is required for deployed CLIP embedding validation")
+
+    from npa.workbench.lancedb import backfill as sdk_backfill
+    from npa.workbench.lancedb import import_bdd100k as sdk_import_bdd100k
+    from npa.workbench.lancedb import query_table as sdk_query_table
+
+    run_id = os.environ.get("NPA_TEST_RUN_ID", "manual")
+    lance_uri = os.environ.get(
+        "NPA_TEST_LANCEDB_URI",
+        f"s3://YOUR_S3_BUCKET/lancedb/_validation/clip-embedding-{run_id}/",
+    )
+    table = f"bdd_clip_{run_id.replace('-', '_')}"
+
+    sdk_import_bdd100k(synthetic=100, synthetic_seed=51, lance_uri=lance_uri, table=table, service=True, endpoint=endpoint)
+    cpu_result = sdk_backfill(lance_uri=lance_uri, table=table, udf="has_person", service=True, endpoint=endpoint)
+    clip_result = sdk_backfill(lance_uri=lance_uri, table=table, udf="clip_embedding", batch_size=32, service=True, endpoint=endpoint)
+    query = sdk_query_table(
+        lance_uri=lance_uri,
+        table=table,
+        select=["image_id", "clip_embedding"],
+        limit=10,
+        service=True,
+        endpoint=endpoint,
+    )
+
+    embeddings = [row["clip_embedding"] for row in query.rows]
+    assert cpu_result.rows_updated == 100
+    assert clip_result.rows_updated == 100
+    assert clip_result.gpu_used is True
+    assert len(embeddings) == 10
+    assert all(len(value) == CLIP_EMBEDDING_DIM for value in embeddings)
+    assert len({tuple(value) for value in embeddings}) > 1
+
+
 def test_endpoint_maps_backfill_errors_to_status_codes(tmp_path: Path) -> None:
     app = create_app(storage_path=str(tmp_path / "service-root"), auth_mode="none")
     client = TestClient(app)
@@ -307,3 +553,12 @@ def _jpeg_bytes() -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG")
     return buffer.getvalue()
+
+
+def _fake_clip_array(batch: pa.RecordBatch, **kwargs) -> pa.Array:
+    image_ids = batch.column("image_id").to_pylist()
+    rows: list[list[float]] = []
+    for image_id in image_ids:
+        seed = sum(ord(char) for char in str(image_id)) % 997
+        rows.append([float((seed + index) % 251) / 251.0 for index in range(CLIP_EMBEDDING_DIM)])
+    return pa.array(rows, type=CLIP_OUTPUT_TYPE)
