@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from typing import Any
 
 import httpx
@@ -26,6 +26,18 @@ from npa.workbench.lancedb.bdd100k_import import (
     BDD100KValidationError,
     import_bdd100k as _import_bdd100k_local,
 )
+from npa.workbench.lancedb.views import (
+    DEFAULT_QUERY_LIMIT,
+    MVError,
+    MVResult,
+    MVValidationError,
+    QueryResult,
+    create_bdd100k_failure_mode_views as _create_bdd100k_failure_mode_views_local,
+    create_mv as _create_mv_local,
+    query_table as _query_table_local,
+    refresh_mv as _refresh_mv_local,
+)
+
 DEFAULT_TOKEN_ENV = "LANCEDB_TOKEN"
 
 
@@ -35,6 +47,10 @@ class BDD100KServiceError(BDD100KImportError):
 
 class BackfillServiceError(BackfillError):
     """Raised when a service-mode backfill request fails."""
+
+
+class MVServiceError(MVError):
+    """Raised when a service-mode materialized-view request fails."""
 
 
 def import_bdd100k(
@@ -137,6 +153,170 @@ def backfill(
     return _backfill_column_local(**payload)
 
 
+def create_mv(
+    *,
+    name: str,
+    source_table: str = DEFAULT_TABLE,
+    filter_sql: str,
+    lance_uri: str = DEFAULT_LANCE_URI,
+    force: bool = False,
+    mode: str | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 600.0,
+) -> MVResult:
+    """Create a LanceDB materialized view.
+
+    Example:
+        from npa.sdk.workbench.lancedb import create_mv
+
+        result = create_mv(
+            name="my_view",
+            source_table="bdd100k",
+            filter_sql="weather = 'rainy' AND split = 'train'",
+        )
+        print(f"Created {result.view_name} with {result.row_count} rows")
+    """
+    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    payload = {
+        "name": name,
+        "source_table": source_table,
+        "filter_sql": filter_sql,
+        "lance_uri": lance_uri,
+        "force": force,
+    }
+    if service_mode:
+        return _mv_result_from_payload(
+            _post_json(
+                endpoint=endpoint or os.environ.get("NPA_LANCEDB_ENDPOINT", ""),
+                token_env=token_env,
+                payload=payload,
+                timeout=timeout,
+                path="/create-mv",
+                error_cls=MVServiceError,
+                validation_cls=MVValidationError,
+            )
+        )
+    return _create_mv_local(**payload)
+
+
+def refresh_mv(
+    *,
+    name: str,
+    lance_uri: str = DEFAULT_LANCE_URI,
+    mode: str | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 600.0,
+) -> MVResult:
+    """Refresh a registered LanceDB materialized view."""
+    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    payload = {"name": name, "lance_uri": lance_uri}
+    if service_mode:
+        return _mv_result_from_payload(
+            _post_json(
+                endpoint=endpoint or os.environ.get("NPA_LANCEDB_ENDPOINT", ""),
+                token_env=token_env,
+                payload=payload,
+                timeout=timeout,
+                path="/refresh-mv",
+                error_cls=MVServiceError,
+                validation_cls=MVValidationError,
+            )
+        )
+    return _refresh_mv_local(**payload)
+
+
+def query_table(
+    *,
+    table: str,
+    lance_uri: str = DEFAULT_LANCE_URI,
+    filter_sql: str | None = None,
+    select: Iterable[str] | None = None,
+    limit: int = DEFAULT_QUERY_LIMIT,
+    mode: str | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 120.0,
+) -> QueryResult:
+    """Run a bounded SQL-filtered LanceDB table query."""
+    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    payload = {
+        "table": table,
+        "lance_uri": lance_uri,
+        "filter_sql": filter_sql,
+        "select": list(select) if select is not None else None,
+        "limit": limit,
+    }
+    if service_mode:
+        return _query_result_from_payload(
+            _post_json(
+                endpoint=endpoint or os.environ.get("NPA_LANCEDB_ENDPOINT", ""),
+                token_env=token_env,
+                payload=payload,
+                timeout=timeout,
+                path="/query-table",
+                error_cls=MVServiceError,
+                validation_cls=MVValidationError,
+            )
+        )
+    return _query_table_local(**payload)
+
+
+def create_bdd100k_failure_mode_views(
+    lance_uri: str = DEFAULT_LANCE_URI,
+    source_table: str = DEFAULT_TABLE,
+    *,
+    distant_person_threshold: float = 0.01,
+    mode: str | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 600.0,
+) -> list[MVResult]:
+    """Create the three BDD100K failure-mode training subsets.
+
+    Example:
+        from npa.sdk.workbench.lancedb import create_bdd100k_failure_mode_views
+
+        results = create_bdd100k_failure_mode_views(source_table="bdd100k")
+        for result in results:
+            print(f"{result.view_name}: {result.row_count} rows")
+    """
+    service_mode = _resolve_mode_as(mode=mode, service=service, validation_cls=MVValidationError)
+    if service_mode:
+        threshold = format(float(distant_person_threshold), ".12g")
+        specs = [
+            ("bdd100k_rider_train", "has_rider = true AND split = 'train'"),
+            ("bdd100k_nighttime_person_train", "timeofday = 'night' AND has_person = true AND split = 'train'"),
+            (
+                "bdd100k_distant_person_train",
+                f"has_person = true AND person_bbox_area_pct < {threshold} AND split = 'train'",
+            ),
+        ]
+        return [
+            create_mv(
+                name=view_name,
+                source_table=source_table,
+                filter_sql=filter_sql,
+                lance_uri=lance_uri,
+                service=True,
+                endpoint=endpoint,
+                token_env=token_env,
+                timeout=timeout,
+            )
+            for view_name, filter_sql in specs
+        ]
+    return _create_bdd100k_failure_mode_views_local(
+        lance_uri=lance_uri,
+        source_table=source_table,
+        distant_person_threshold=distant_person_threshold,
+    )
+
+
 def _resolve_mode(*, mode: str | None, service: bool) -> bool:
     if mode is None:
         return service
@@ -146,6 +326,17 @@ def _resolve_mode(*, mode: str | None, service: bool) -> bool:
     if value == "service":
         return True
     raise BDD100KValidationError("mode must be either 'local' or 'service'")
+
+
+def _resolve_mode_as(*, mode: str | None, service: bool, validation_cls: type[Exception]) -> bool:
+    if mode is None:
+        return service
+    value = mode.strip().lower()
+    if value == "local":
+        return False
+    if value == "service":
+        return True
+    raise validation_cls("mode must be either 'local' or 'service'")
 
 
 def _post_json(
@@ -200,6 +391,28 @@ def _backfill_result_from_payload(payload: dict[str, Any]) -> BackfillResult:
     return BackfillResult(**{name: payload[name] for name in names})
 
 
+def _mv_result_from_payload(payload: dict[str, Any]) -> MVResult:
+    return MVResult(**_dataclass_payload(payload, MVResult, MVServiceError))
+
+
+def _query_result_from_payload(payload: dict[str, Any]) -> QueryResult:
+    return QueryResult(**_dataclass_payload(payload, QueryResult, MVServiceError))
+
+
+def _dataclass_payload(payload: dict[str, Any], result_cls: type[Any], error_cls: type[Exception]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    missing: list[str] = []
+    for field in fields(result_cls):
+        if field.name in payload:
+            values[field.name] = payload[field.name]
+        elif field.default is MISSING and field.default_factory is MISSING:
+            missing.append(field.name)
+    if missing:
+        joined = ", ".join(missing)
+        raise error_cls(f"LanceDB service response is missing: {joined}")
+    return values
+
+
 __all__ = [
     "BDD100KImportError",
     "BDD100KImportResult",
@@ -209,6 +422,15 @@ __all__ = [
     "BackfillResult",
     "BackfillServiceError",
     "BackfillValidationError",
+    "MVError",
+    "MVResult",
+    "MVServiceError",
+    "MVValidationError",
+    "QueryResult",
     "backfill",
+    "create_bdd100k_failure_mode_views",
+    "create_mv",
     "import_bdd100k",
+    "query_table",
+    "refresh_mv",
 ]

@@ -28,6 +28,16 @@ try:
         BDD100KValidationError,
         import_bdd100k,
     )
+    from .views import (
+        DEFAULT_QUERY_LIMIT,
+        MVConflictError,
+        MVError,
+        MVTableNotFoundError,
+        MVValidationError,
+        create_mv,
+        query_table as query_lance_table,
+        refresh_mv,
+    )
 except ImportError:  # pragma: no cover - used by the copied Docker module.
     from npa_lancedb_backfill import (
         DEFAULT_BATCH_SIZE,
@@ -45,6 +55,16 @@ except ImportError:  # pragma: no cover - used by the copied Docker module.
         BDD100KImportError,
         BDD100KValidationError,
         import_bdd100k,
+    )
+    from npa_lancedb_views import (
+        DEFAULT_QUERY_LIMIT,
+        MVConflictError,
+        MVError,
+        MVTableNotFoundError,
+        MVValidationError,
+        create_mv,
+        query_table as query_lance_table,
+        refresh_mv,
     )
 
 
@@ -82,6 +102,27 @@ class BackfillRequest(BaseModel):
     batch_size: int = DEFAULT_BATCH_SIZE
     force: bool = False
     dhash_hamming_threshold: int = DEFAULT_DHASH_HAMMING_THRESHOLD
+
+
+class CreateMVRequest(BaseModel):
+    name: str
+    source_table: str
+    filter_sql: str
+    lance_uri: str = DEFAULT_LANCE_URI
+    force: bool = False
+
+
+class RefreshMVRequest(BaseModel):
+    name: str
+    lance_uri: str = DEFAULT_LANCE_URI
+
+
+class QueryTableRequest(BaseModel):
+    table: str
+    lance_uri: str = DEFAULT_LANCE_URI
+    filter_sql: str | None = None
+    select: list[str] | None = None
+    limit: int = DEFAULT_QUERY_LIMIT
 
 
 def _list_tables(db: Any) -> list[str]:
@@ -233,6 +274,73 @@ def create_app(
         except BackfillError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         known_tables.add(result.table)
+        return result.to_dict()
+
+    @app.post("/create-mv")
+    async def create_mv_endpoint(
+        body: CreateMVRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        await require_auth(request, authorization)
+        try:
+            result = create_mv(
+                name=body.name,
+                source_table=body.source_table,
+                filter_sql=body.filter_sql,
+                lance_uri=body.lance_uri,
+                force=body.force,
+            )
+        except MVConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except MVValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MVTableNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MVError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        known_tables.add(result.view_name)
+        return result.to_dict()
+
+    @app.post("/refresh-mv")
+    async def refresh_mv_endpoint(
+        body: RefreshMVRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        await require_auth(request, authorization)
+        try:
+            result = refresh_mv(name=body.name, lance_uri=body.lance_uri)
+        except MVValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MVTableNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MVError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        known_tables.add(result.view_name)
+        return result.to_dict()
+
+    @app.post("/query-table")
+    async def query_table_endpoint(
+        body: QueryTableRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        await require_auth(request, authorization)
+        try:
+            result = query_lance_table(
+                table=body.table,
+                lance_uri=body.lance_uri,
+                filter_sql=body.filter_sql,
+                select=body.select,
+                limit=body.limit,
+            )
+        except MVValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MVTableNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MVError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return result.to_dict()
 
     return app
