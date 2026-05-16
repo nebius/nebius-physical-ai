@@ -32,7 +32,7 @@ pytestmark = pytest.mark.e2e_skypilot
 
 CLUSTER_NAME = "npa-workbench-eu-north1"
 BUCKET = "YOUR_S3_BUCKET"
-S3_PREFIX_ROOT = "skypilot-bootstrap-converge"
+S3_PREFIX_ROOT = os.environ.get("NPA_SKYPILOT_S3_PREFIX_ROOT", "skypilot-bootstrap-converge")
 S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud:443"
 POLL_INTERVAL_SECONDS = 30
 MAX_WAIT_SECONDS = 1800
@@ -108,6 +108,19 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
     assert result.status == "SUBMITTED", result.error or result.stderr
     assert result.job_id
 
+    _capture_command(
+        ["kubectl", "get", "pods", "-A", "-o", "wide"],
+        evidence_dir / "k8s-pods-after-submit.txt",
+        env=os.environ.copy(),
+        timeout=180,
+    )
+    _capture_command(
+        ["kubectl", "get", "nodes", "--show-labels"],
+        evidence_dir / "k8s-nodes-labels-after-submit.txt",
+        env=os.environ.copy(),
+        timeout=180,
+    )
+
     config_path = Path(result.log_paths["config"])
     final = _wait_for_job(
         result.job_id,
@@ -117,6 +130,19 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
         evidence_dir=evidence_dir,
     )
     assert final.status == "SUCCEEDED", final.stderr or final.stdout
+
+    _capture_command(
+        ["kubectl", "get", "pods", "-A", "-o", "wide"],
+        evidence_dir / "k8s-pods-before-cleanup.txt",
+        env=os.environ.copy(),
+        timeout=180,
+    )
+    _capture_command(
+        ["kubectl", "get", "pods", "-A", "-o", "json"],
+        evidence_dir / "k8s-pods-before-cleanup.json",
+        env=os.environ.copy(),
+        timeout=180,
+    )
 
     for stage in ("stage-1", "stage-2", "stage-3"):
         _capture_command(

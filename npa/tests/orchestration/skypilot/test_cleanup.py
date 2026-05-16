@@ -130,6 +130,65 @@ def test_cleanup_jobs_controller_discovers_exact_name_and_confirms_delete(
     assert result.errors == []
 
 
+def test_cleanup_jobs_controller_verifies_kubernetes_controller_pod_removed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == str(sky_bin) and cmd[1] == "status":
+            stdout = '[{"name": "sky-jobs-controller-k8s", "status": "UP", "infra": "Kubernetes"}]'
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        if cmd[0] == str(sky_bin):
+            return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
+        if cmd[:4] == ["kubectl", "get", "pods", "--all-namespaces"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.shutil, "which", lambda name: "/usr/bin/kubectl" if name == "kubectl" else None)
+
+    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+
+    assert ["kubectl", "get", "pods", "--all-namespaces", "-o", "json"] in calls
+    assert result.resources_removed == ["sky-jobs-controller-k8s"]
+    assert result.errors == []
+
+
+def test_cleanup_jobs_controller_deletes_lingering_kubernetes_controller_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == str(sky_bin) and cmd[1] == "status":
+            stdout = '[{"name": "sky-jobs-controller-k8s", "status": "UP", "infra": "Kubernetes"}]'
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        if cmd[0] == str(sky_bin):
+            return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
+        if cmd[:4] == ["kubectl", "get", "pods", "--all-namespaces"]:
+            stdout = (
+                '{"items": [{"metadata": {"namespace": "default", '
+                '"name": "sky-jobs-controller-k8s-ray-head", '
+                '"labels": {"ray.io/cluster": "sky-jobs-controller-k8s"}}}]}'
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        if cmd[:4] == ["kubectl", "delete", "pod", "-n"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="deleted\n", stderr="")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cleanup_module.shutil, "which", lambda name: "/usr/bin/kubectl" if name == "kubectl" else None)
+
+    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+
+    assert "sky-jobs-controller-k8s" in result.resources_removed
+    assert "k8s-pod:default/sky-jobs-controller-k8s-ray-head" in result.resources_removed
+    assert result.errors == []
+
+
 def test_no_code_path_sets_autostop_down_true() -> None:
     sources = "\n".join(
         [

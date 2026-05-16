@@ -3,12 +3,25 @@ from __future__ import annotations
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_INSTANCE_TYPE,
     apply_controller_override,
+    controller_resources_kubernetes,
+    controller_resources_nebius_vm,
     default_controller_resources,
 )
 
 
-def test_default_controller_resources_returns_documented_default() -> None:
+def test_default_controller_resources_returns_kubernetes_default() -> None:
     resources = default_controller_resources()
+
+    assert resources == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": 16,
+    }
+    assert "disk_size" not in resources
+
+
+def test_nebius_vm_controller_resources_remain_available() -> None:
+    resources = controller_resources_nebius_vm()
 
     assert resources == {
         "cloud": "nebius",
@@ -26,10 +39,52 @@ def test_apply_controller_override_injects_idempotently() -> None:
     second = apply_controller_override(first)
 
     assert first == second
-    assert first["jobs"]["controller"]["resources"] == default_controller_resources()
+    assert first["jobs"]["controller"]["resources"] == controller_resources_kubernetes()
+    assert "disk_size" not in first["jobs"]["controller"]["resources"]
 
 
-def test_apply_controller_override_preserves_explicitly_larger_controller() -> None:
+def test_apply_controller_override_can_emit_nebius_vm_fallback() -> None:
+    config = apply_controller_override({"name": "dag"}, controller_backend="nebius")
+
+    assert config["jobs"]["controller"]["resources"] == controller_resources_nebius_vm()
+
+
+def test_apply_controller_override_preserves_explicitly_larger_kubernetes_controller() -> None:
+    existing = {
+        "jobs": {
+            "controller": {
+                "resources": {
+                    "cloud": "kubernetes",
+                    "cpus": 8,
+                    "memory": 32,
+                }
+            }
+        }
+    }
+
+    assert apply_controller_override(existing) == existing
+
+
+def test_apply_controller_override_drops_kubernetes_disk_size() -> None:
+    config = apply_controller_override(
+        {
+            "jobs": {
+                "controller": {
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "cpus": 4,
+                        "memory": 16,
+                        "disk_size": 50,
+                    }
+                }
+            }
+        }
+    )
+
+    assert config["jobs"]["controller"]["resources"] == controller_resources_kubernetes()
+
+
+def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> None:
     existing = {
         "jobs": {
             "controller": {
@@ -46,4 +101,4 @@ def test_apply_controller_override_preserves_explicitly_larger_controller() -> N
         }
     }
 
-    assert apply_controller_override(existing) == existing
+    assert apply_controller_override(existing, controller_backend="nebius") == existing

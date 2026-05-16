@@ -41,8 +41,11 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
     assert kwargs["env"]["HOME"] == str(tmp_path / "sky-state" / "home")
     assert kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"] == result.log_paths["config"]
     config = yaml.safe_load((tmp_path / "sky-state" / "submissions" / "run-abc" / "skypilot-config.yaml").read_text())
-    assert config["jobs"]["controller"]["resources"]["instance_type"] == "cpu-e2_2vcpu-8gb"
-    assert config["jobs"]["controller"]["resources"]["autostop"]["down"] is False
+    assert config["jobs"]["controller"]["resources"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": 16,
+    }
 
 
 def test_submit_workflow_failure_returns_workflow_result(monkeypatch, tmp_path) -> None:
@@ -60,6 +63,31 @@ def test_submit_workflow_failure_returns_workflow_result(monkeypatch, tmp_path) 
     assert result.status == "FAILED_SUBMIT"
     assert result.returncode == 2
     assert result.error == "failed"
+
+
+def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 12\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path,
+        "run-nebius",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        controller_backend="nebius",
+    )
+
+    config = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    resources = config["jobs"]["controller"]["resources"]
+    assert resources["cloud"] == "nebius"
+    assert resources["instance_type"] == "cpu-e2_2vcpu-8gb"
+    assert resources["autostop"]["down"] is False
 
 
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
