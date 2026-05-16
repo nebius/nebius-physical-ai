@@ -16,7 +16,11 @@ import yaml
 
 from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
 from npa.orchestration.skypilot.cleanup import sky_environment
-from npa.orchestration.skypilot.controller import apply_controller_override
+from npa.orchestration.skypilot.controller import (
+    DEFAULT_CONTROLLER_BACKEND,
+    ControllerBackend,
+    apply_controller_override,
+)
 
 
 @dataclass
@@ -43,6 +47,7 @@ def submit_workflow(
     *,
     isolated_config_dir: Path | None = None,
     sky_bin: SkyBin = None,
+    controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
@@ -59,7 +64,10 @@ def submit_workflow(
         submission_dir = _submission_dir(run_id, isolated_config_dir)
         prepared_yaml = submission_dir / "workflow.yaml"
         shutil.copy2(yaml_path, prepared_yaml)
-        global_config = apply_controller_override(_load_base_config())
+        global_config = apply_controller_override(
+            _load_base_config(),
+            controller_backend=controller_backend,
+        )
         config_path = submission_dir / "skypilot-config.yaml"
         config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
 
@@ -123,10 +131,12 @@ def workflow_status(
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
+    controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     timeout: int = 300,
 ) -> WorkflowResult:
     """Query a SkyPilot managed job status via `sky jobs queue`."""
 
+    del controller_backend
     cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "queue", "--all", "--output", "json"]
     if config_path is not None:
         cmd[3:3] = ["--config", str(config_path)]

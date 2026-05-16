@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
+from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
 
 
 @dataclass
@@ -64,10 +66,10 @@ def cleanup_jobs_controller(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
 ) -> CleanupResult:
-    """Tear down the managed-jobs controller VM in the active SkyPilot state."""
+    """Tear down the managed-jobs controller in the active SkyPilot state."""
 
     cleanup = CleanupResult()
-    controller_names, status_error = _jobs_controller_names(
+    controller_clusters, status_error = _jobs_controller_clusters(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
@@ -75,15 +77,19 @@ def cleanup_jobs_controller(
     if status_error:
         cleanup.errors.append(status_error)
         return cleanup
-    for controller_name in controller_names:
-        cleanup.extend(
-            _down_jobs_controller(
-                controller_name,
-                isolated_config_dir=isolated_config_dir,
-                config_path=config_path,
-                sky_bin=sky_bin,
-            )
+    for controller_cluster in controller_clusters:
+        controller_name = _cluster_name(controller_cluster)
+        down_result = _down_jobs_controller(
+            controller_name,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
         )
+        cleanup.extend(down_result)
+        if down_result.ok and _is_kubernetes_controller(controller_cluster):
+            cleanup.extend(
+                _cleanup_lingering_kubernetes_controller_pods(controller_name)
+            )
     return cleanup
 
 
@@ -183,6 +189,7 @@ def skypilot_workflow(
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
+    controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
 ) -> Iterator["_SkyPilotWorkflow"]:
     """Context manager that guarantees explicit SkyPilot cleanup."""
 
@@ -191,6 +198,7 @@ def skypilot_workflow(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
+        controller_backend=controller_backend,
     )
     try:
         yield workflow
@@ -204,6 +212,7 @@ class _SkyPilotWorkflow:
     isolated_config_dir: Path | None = None
     config_path: Path | None = None
     sky_bin: SkyBin = None
+    controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND
     cleanup_result: CleanupResult | None = None
 
     def submit(self, yaml_path: Path):
@@ -214,6 +223,7 @@ class _SkyPilotWorkflow:
             self.run_id,
             isolated_config_dir=self.isolated_config_dir,
             sky_bin=self.sky_bin,
+            controller_backend=self.controller_backend,
         )
 
     def cleanup(self) -> CleanupResult:
@@ -274,6 +284,22 @@ def _jobs_controller_names(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> tuple[list[str], str]:
+    controller_clusters, status_error = _jobs_controller_clusters(
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+    )
+    if status_error:
+        return [], status_error
+    return [_cluster_name(cluster) for cluster in controller_clusters], ""
+
+
+def _jobs_controller_clusters(
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> tuple[list[dict[str, Any]], str]:
     cmd = [str(resolve_sky_bin(sky_bin)), "status", "--refresh", "--output", "json"]
     result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=300)
     if result.returncode != 0:
@@ -283,14 +309,21 @@ def _jobs_controller_names(
     except json.JSONDecodeError:
         return [], f"{' '.join(cmd)} returned non-json output"
     clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
-    names = []
+    controllers = []
     for cluster in clusters or []:
         if not isinstance(cluster, dict):
             continue
-        name = str(cluster.get("name") or cluster.get("cluster") or "")
+        name = _cluster_name(cluster)
         if name.startswith("sky-jobs-controller-"):
-            names.append(name)
-    return list(dict.fromkeys(names)), ""
+            controllers.append(cluster)
+    deduped: dict[str, dict[str, Any]] = {}
+    for controller in controllers:
+        deduped.setdefault(_cluster_name(controller), controller)
+    return list(deduped.values()), ""
+
+
+def _cluster_name(cluster: dict[str, Any]) -> str:
+    return str(cluster.get("name") or cluster.get("cluster") or "")
 
 
 def _down_jobs_controller(
@@ -314,6 +347,82 @@ def _down_jobs_controller(
     else:
         cleanup.errors.append(_format_command_error(cmd, result))
     return cleanup
+
+
+def _is_kubernetes_controller(cluster: dict[str, Any]) -> bool:
+    return "kubernetes" in json.dumps(cluster, sort_keys=True).lower()
+
+
+def _cleanup_lingering_kubernetes_controller_pods(controller_name: str) -> CleanupResult:
+    cleanup = CleanupResult()
+    pods, error = _matching_kubernetes_controller_pods(controller_name)
+    if error:
+        cleanup.errors.append(f"NOVEL_ISSUE: unable to verify Kubernetes controller pod cleanup: {error}")
+        return cleanup
+    for namespace, pod_name in pods:
+        cmd = ["kubectl", "delete", "pod", "-n", namespace, pod_name, "--ignore-not-found=true"]
+        result = subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+            check=False,
+        )
+        cleanup.commands.append(cmd)
+        if result.returncode == 0:
+            cleanup.resources_removed.append(f"k8s-pod:{namespace}/{pod_name}")
+        else:
+            cleanup.errors.append(
+                "NOVEL_ISSUE: lingering Kubernetes controller pod deletion failed: "
+                + _format_command_error(cmd, result)
+            )
+    return cleanup
+
+
+def _matching_kubernetes_controller_pods(controller_name: str) -> tuple[list[tuple[str, str]], str]:
+    if shutil.which("kubectl") is None:
+        return [], "kubectl not found"
+    cmd = ["kubectl", "get", "pods", "--all-namespaces", "-o", "json"]
+    try:
+        result = subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [], "kubectl get pods timed out"
+    if result.returncode != 0:
+        return [], _format_command_error(cmd, result)
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return [], "kubectl get pods returned non-json output"
+    matches: list[tuple[str, str]] = []
+    for item in payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            continue
+        namespace = str(metadata.get("namespace") or "default")
+        pod_name = str(metadata.get("name") or "")
+        labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+        searchable = " ".join(
+            [
+                pod_name,
+                str(labels.get("skypilot-cluster", "")),
+                str(labels.get("ray.io/cluster", "")),
+                str(labels.get("app.kubernetes.io/name", "")),
+                str(labels.get("component", "")),
+            ]
+        )
+        if controller_name in searchable:
+            matches.append((namespace, pod_name))
+    return matches, ""
 
 
 def _run(
