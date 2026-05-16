@@ -213,8 +213,21 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     except json.JSONDecodeError:
         return ""
     jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+    statuses = []
     for job in jobs or []:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id == str(job_id):
-            return str(job.get("status", "")).upper()
-    return ""
+            status = str(job.get("status", "")).upper()
+            if status:
+                statuses.append(status)
+    if not statuses:
+        return ""
+    for status in statuses:
+        if status.startswith("FAILED") or status == "CANCELLED":
+            return status
+    if all(status == "SUCCEEDED" for status in statuses):
+        return "SUCCEEDED"
+    for status in ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"):
+        if status in statuses:
+            return status
+    return statuses[0]

@@ -66,12 +66,25 @@ def cleanup_jobs_controller(
 ) -> CleanupResult:
     """Tear down the managed-jobs controller VM in the active SkyPilot state."""
 
-    return sky_down(
-        JOBS_CONTROLLER_PATTERN,
+    cleanup = CleanupResult()
+    controller_names, status_error = _jobs_controller_names(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
     )
+    if status_error:
+        cleanup.errors.append(status_error)
+        return cleanup
+    for controller_name in controller_names:
+        cleanup.extend(
+            _down_jobs_controller(
+                controller_name,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+            )
+        )
+    return cleanup
 
 
 def cleanup_workflow(
@@ -255,12 +268,61 @@ def _cancel_job(
     return cleanup
 
 
+def _jobs_controller_names(
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> tuple[list[str], str]:
+    cmd = [str(resolve_sky_bin(sky_bin)), "status", "--refresh", "--output", "json"]
+    result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=300)
+    if result.returncode != 0:
+        return [], _format_command_error(cmd, result)
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return [], f"{' '.join(cmd)} returned non-json output"
+    clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
+    names = []
+    for cluster in clusters or []:
+        if not isinstance(cluster, dict):
+            continue
+        name = str(cluster.get("name") or cluster.get("cluster") or "")
+        if name.startswith("sky-jobs-controller-"):
+            names.append(name)
+    return list(dict.fromkeys(names)), ""
+
+
+def _down_jobs_controller(
+    controller_name: str,
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> CleanupResult:
+    cmd = [str(resolve_sky_bin(sky_bin)), "down", "--yes", controller_name]
+    result = _run(
+        cmd,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        timeout=900,
+        input_text="delete\n",
+    )
+    cleanup = CleanupResult(commands=[cmd])
+    if result.returncode == 0:
+        cleanup.resources_removed.append(controller_name)
+    else:
+        cleanup.errors.append(_format_command_error(cmd, result))
+    return cleanup
+
+
 def _run(
     cmd: list[str],
     *,
     isolated_config_dir: Path | None,
     config_path: Path | None,
     timeout: int,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     effective_cmd = list(cmd)
     if config_path is not None and "--config" not in effective_cmd:
@@ -270,6 +332,7 @@ def _run(
         effective_cmd,
         env=sky_environment(isolated_config_dir),
         text=True,
+        input=input_text,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,

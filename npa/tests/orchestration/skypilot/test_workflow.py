@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import yaml
 
-from npa.orchestration.skypilot.workflow import submit_workflow, workflow_status
+from npa.orchestration.skypilot.workflow import _status_from_queue_payload, submit_workflow, workflow_status
 
 
 def _fake_sky(tmp_path: Path) -> Path:
@@ -92,3 +93,33 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
 
     assert result.status == "SUCCEEDED"
     assert result.job_id == "42"
+
+
+def test_status_from_queue_payload_waits_for_all_dag_tasks() -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 1, "status": "STARTING"},
+        {"job_id": 1, "task_id": 2, "status": "PENDING"},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "STARTING"
+
+
+def test_status_from_queue_payload_reports_success_after_all_dag_tasks() -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 1, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 2, "status": "SUCCEEDED"},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "SUCCEEDED"
+
+
+def test_status_from_queue_payload_failure_wins() -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 1, "status": "FAILED"},
+        {"job_id": 1, "task_id": 2, "status": "PENDING"},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
