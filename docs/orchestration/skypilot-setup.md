@@ -44,6 +44,39 @@ test -x "$NPA_SKYPILOT_BIN"
 "$NPA_SKYPILOT_BIN" check nebius kubernetes
 ```
 
+## Managed-Jobs Controller
+
+NPA defaults SkyPilot managed jobs to a Kubernetes controller:
+
+```yaml
+jobs:
+  controller:
+    resources:
+      cloud: kubernetes
+      cpus: 4
+      memory: 16
+```
+
+Do not set `disk_size` for this controller mode. SkyPilot 0.12.2's Kubernetes
+backend does not apply custom controller disk sizing; it uses the cluster's
+pod storage behavior.
+
+The Kubernetes controller requires an MK8s node that can fit a 4 vCPU, 16 GiB
+pod. The validated `npa-workbench-eu-north1` pattern uses a dedicated CPU node
+group such as `cpu-e2/8vcpu-32gb` so the controller does not compete with GPU
+workloads.
+
+The previous Nebius VM controller remains available as a fallback from Python
+callers:
+
+```python
+submit_workflow(yaml_path, run_id, controller_backend="nebius")
+```
+
+Use VM controller mode only if the Kubernetes cluster cannot host the
+controller pod. It is not the default and should not be required for
+properly-sized clusters.
+
 ## Upgrade
 
 The validated version is SkyPilot `0.12.2` with the `nebius` and `kubernetes`
