@@ -12,6 +12,7 @@ from .import_lerobot import import_lerobot_cmd
 from .list import list_cmd
 from .query import query_cmd
 from .status import status_cmd
+from .views import create_mv_cmd, query_table_cmd, refresh_mv_cmd
 
 app = typer.Typer(
     name="lancedb",
@@ -27,3 +28,6 @@ app.command("query")(query_cmd)
 app.command("import-lerobot")(import_lerobot_cmd)
 app.command("import-bdd100k")(import_bdd100k_cmd)
 app.command("backfill")(backfill_cmd)
+app.command("create-mv")(create_mv_cmd)
+app.command("refresh-mv")(refresh_mv_cmd)
+app.command("query-table")(query_table_cmd)
