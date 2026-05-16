@@ -25,9 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-orchestration = [
-    "skypilot[nebius,kubernetes]==0.12.2",
-]
+# SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
+orchestration = []
 server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",

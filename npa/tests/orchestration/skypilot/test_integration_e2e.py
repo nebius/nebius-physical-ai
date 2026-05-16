@@ -23,6 +23,7 @@ import yaml
 from botocore.exceptions import ClientError, ProfileNotFound
 
 from npa.cluster.api import MK8sClient
+from npa.orchestration.skypilot._bin import resolve_sky_bin
 from npa.orchestration.skypilot import cleanup_all_for_run, submit_workflow, workflow_status
 from npa.orchestration.skypilot.cleanup import run_tag, sky_environment
 
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.e2e_skypilot
 
 CLUSTER_NAME = "npa-workbench-eu-north1"
 BUCKET = "YOUR_S3_BUCKET"
-S3_PREFIX_ROOT = "skypilot-bootstrap-validation"
+S3_PREFIX_ROOT = "skypilot-bootstrap-converge"
 S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud:443"
 POLL_INTERVAL_SECONDS = 30
 MAX_WAIT_SECONDS = 1800
@@ -55,9 +56,10 @@ def _require_skypilot_e2e() -> None:
 
 
 def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run_id = os.environ.get("NPA_SKYPILOT_TEST_RUN_ID") or f"w9skypilot-bootstrap-{uuid.uuid4().hex[:8]}"
+    run_id = os.environ.get("NPA_SKYPILOT_TEST_RUN_ID") or f"w9skypilot-bootstrap-converge-{uuid.uuid4().hex[:8]}"
     tag = run_tag(run_id)
-    sky_bin = os.environ.get("NPA_SKYPILOT_SKY_BIN", "sky")
+    sky_bin = str(resolve_sky_bin(os.environ.get("NPA_SKYPILOT_SKY_BIN") or os.environ.get("NPA_SKYPILOT_BIN")))
+    submit_timeout = int(os.environ.get("NPA_SKYPILOT_SUBMIT_TIMEOUT_SECONDS", "7200"))
     evidence_dir = Path(os.environ.get("NPA_SKYPILOT_EVIDENCE_DIR", str(tmp_path / "evidence")))
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
@@ -95,7 +97,13 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
     s3_client = _s3_client()
     _delete_s3_prefix(s3_client, s3_prefix)
 
-    result = submit_workflow(yaml_path, run_id, isolated_config_dir=isolated_root, sky_bin=sky_bin)
+    result = submit_workflow(
+        yaml_path,
+        run_id,
+        isolated_config_dir=isolated_root,
+        sky_bin=sky_bin,
+        timeout=submit_timeout,
+    )
     (evidence_dir / "submit-result.json").write_text(json.dumps(result.__dict__, indent=2, sort_keys=True) + "\n")
     assert result.status == "SUBMITTED", result.error or result.stderr
     assert result.job_id

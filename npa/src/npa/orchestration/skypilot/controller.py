@@ -1,4 +1,9 @@
-"""Managed-jobs controller convention for NPA SkyPilot submissions."""
+"""Managed-jobs controller convention for NPA SkyPilot submissions.
+
+The default Nebius CPU controller resources are intentionally aligned with the
+W9 SkyPilot validation baseline in
+`/tmp/w9skypilot-validate-20260515T235012Z/phase-d/sky-config-managed-nebius-controller.yaml`.
+"""
 
 from __future__ import annotations
 
