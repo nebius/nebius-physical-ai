@@ -1,0 +1,84 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      NPA_PROJECT_ID: project-test-00000000
+      NPA_S3_BUCKET: test-bucket-00000000
+      NPA_E2E_PROJECT_ID: project-test-00000000
+      NPA_E2E_GROOT_BUCKET: test-bucket-00000000
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e ".[server]" && pip install pytest pytest-cov pytest-mock
+
+      - name: Install adapter test dependencies
+        run: cd npa && pip install -e ".[adapter]"
+
+      - name: Verify checked-out CLI flags
+        run: |
+          cd npa
+          git rev-parse HEAD
+          python - <<'PY'
+          from pathlib import Path
+
+          from click.utils import strip_ansi
+          import npa
+          from npa.cli.main import app
+          from typer.testing import CliRunner
+
+          module_path = Path(npa.__file__).resolve()
+          print(f"npa module: {module_path}")
+
+          runner = CliRunner()
+          checks = [
+              (["workbench", "fiftyone", "load-dataset", "--help"], "--format"),
+              (["workbench", "lerobot", "deploy", "--help"], "--disk-size"),
+              (["workbench", "genesis", "deploy", "--help"], "--disk-size"),
+              (["workbench", "isaac-lab", "deploy", "--help"], "--disk-size"),
+              (["workbench", "cosmos", "deploy", "--help"], "--disk-size"),
+              (["workbench", "fiftyone", "deploy", "--help"], "--disk-size"),
+          ]
+          for args, flag in checks:
+              result = runner.invoke(app, args)
+              output = strip_ansi(result.output)
+              if result.exit_code != 0:
+                  raise SystemExit(
+                      f"{' '.join(args)} failed with exit code {result.exit_code}\n{output}"
+                  )
+              if flag not in output:
+                  raise SystemExit(
+                      f"{flag} missing from {' '.join(args)} help output\n{output}"
+                  )
+          PY
+
+      - name: Run pytest with coverage
+        run: cd npa && python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing
+
+      - name: Run CLI install test
+        run: cd npa && bash tests/integration/test_cli_install.sh
+
+      - name: Check e2e shell scripts
+        run: |
+          cd npa
+          bash -n tests/e2e/test_lerobot_e2e.sh
+          bash -n tests/e2e/test_genesis_e2e.sh
+          bash -n tests/e2e/test_groot_e2e.sh
+          bash -n tests/e2e/test_groot_composition_e2e.sh
+
+      - name: Warn on source drift
+        if: always()
+        run: ./scripts/check-source-drift.sh
