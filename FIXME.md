@@ -13,26 +13,26 @@ Resolve Terraform template fixture paths relative to the package root or the tes
 
 ## BYOVM live commands do not SSH-fallback when public endpoints are blocked
 **Symptom:**
-On the 2026-05-09 8x H200 validation target `185.82.71.252`, deploy-time health checks for Cosmos, GR00T, and FiftyOne succeeded by falling back from blocked public ports to SSH-local checks. Subsequent live commands still used the stored public endpoints directly and failed:
+On the 2026-05-09 8x H200 validation target `203.0.113.10`, deploy-time health checks for Cosmos, GR00T, and FiftyOne succeeded by falling back from blocked public ports to SSH-local checks. Subsequent live commands still used the stored public endpoints directly and failed:
 
 ```bash
 npa/.venv/bin/npa workbench cosmos -p eu-north1 -n demo-cosmos-8gpu-h200-20260509 serve --port 8081
-# Error: Cosmos serve request failed: Failed to reach http://185.82.71.252:8081/serve after 1 attempts: [Errno 60] Operation timed out
+# Error: Cosmos serve request failed: Failed to reach http://203.0.113.10:8081/serve after 1 attempts: [Errno 60] Operation timed out
 
 npa/.venv/bin/npa workbench groot -p eu-north1 -n demo-groot-8gpu-h200-20260509 serve --model nvidia/GR00T-N1.7-3B --robot-embodiment REAL_G1 --port 8082
-# Error: Model load failed: Failed to reach http://185.82.71.252:8082/serve after 1 attempts: [Errno 60] Operation timed out
+# Error: Model load failed: Failed to reach http://203.0.113.10:8082/serve after 1 attempts: [Errno 60] Operation timed out
 
 npa/.venv/bin/npa workbench cosmos -p eu-north1 -n demo-cosmos-8gpu-h200-20260509 status
 # app_status: unreachable
-# Error: Cannot reach Cosmos endpoint at http://185.82.71.252:8081/health: timed out
+# Error: Cannot reach Cosmos endpoint at http://203.0.113.10:8081/health: timed out
 
 npa/.venv/bin/npa workbench groot -p eu-north1 -n demo-groot-8gpu-h200-20260509 status
 # app_status: unreachable
-# Error: Cannot reach GR00T endpoint at http://185.82.71.252:8082/health: timed out
+# Error: Cannot reach GR00T endpoint at http://203.0.113.10:8082/health: timed out
 
 npa/.venv/bin/npa workbench fiftyone -p eu-north1 -n demo-fiftyone-8gpu-h200-20260509 status --port 5151
 # app_status: unreachable
-# Error: Cannot reach FiftyOne app at http://185.82.71.252:5151: timed out
+# Error: Cannot reach FiftyOne app at http://203.0.113.10:5151: timed out
 ```
 
 Cosmos inference also failed at submit for the same reason, so progress reporting and 8x H200 generation timing were not exercised.
@@ -46,7 +46,7 @@ For BYOVM workbenches, live commands such as `status`, `serve`, and `infer` shou
 
 ## GR00T BYOVM env omits inherited S3 credentials
 **Symptom:**
-The GR00T BYOVM alias inherited S3 bucket and endpoint settings in `~/.npa/config.yaml`, but `/etc/npa-groot-server/env` on `185.82.71.252` contained only HF/GPU-related values and did not contain `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `NEBIUS_S3_ENDPOINT`, or `NEBIUS_S3_BUCKET`. Cosmos and FiftyOne env files on the same run contained those values.
+The GR00T BYOVM alias inherited S3 bucket and endpoint settings in `~/.npa/config.yaml`, but `/etc/npa-groot-server/env` on `203.0.113.10` contained only HF/GPU-related values and did not contain `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `NEBIUS_S3_ENDPOINT`, or `NEBIUS_S3_BUCKET`. Cosmos and FiftyOne env files on the same run contained those values.
 
 **Workaround:**
 No manual env edits were applied during validation.
@@ -57,7 +57,7 @@ Write the merged project storage credentials into the GR00T service env the same
 
 ## FiftyOne BYOVM auto health fallback waits too long
 **Symptom:**
-`npa workbench fiftyone deploy --runtime byovm --health-check-mode auto` found the app healthy through SSH, but only after exhausting a long public HTTP retry window. The app was reachable on VM localhost while the deploy remained in `HTTP check on http://185.82.71.252:5151...`; the deploy took `real 908.65`.
+`npa workbench fiftyone deploy --runtime byovm --health-check-mode auto` found the app healthy through SSH, but only after exhausting a long public HTTP retry window. The app was reachable on VM localhost while the deploy remained in `HTTP check on http://203.0.113.10:5151...`; the deploy took `real 908.65`.
 
 **Workaround:**
 Passing `--health-check-mode ssh` would avoid the delay, but the validation intentionally used default auto mode.

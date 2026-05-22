@@ -12,3 +12,14 @@
 - Implemented demo pre-staging CLI fixes for shared credential injection, shell-safe and Docker-safe env files, BYOVM project storage inheritance, Hugging Face gated-model validation, BYOVM SSH health fallback, live status/readiness reporting, Cosmos progress output, GR00T gated-model fail-fast handling, FiftyOne video ingestion, deploy dry-runs, credential env audits, and cross-tool smoke-test scaffolding.
 - Preserved Genesis BYOVM staging fixes with tests: EGL fallback for multi-GPU demo generation, Docker group/device access for Genesis containers, and BYOVM storage credential reuse.
 - Added structured implementation prompts for the 14 NPA CLI demo pre-staging fixes.
+
+## W9-W10 - Workbench maturity sequence
+
+- fix(sonic): default serverless training to H100, not L40S (commit 2811f12)
+- feat(skypilot): `npa skypilot bootstrap/status/verify` with isolated venv
+  pattern (commit 99570b7)
+- Isaac Lab SkyPilot orchestration validated end-to-end via BYOF runs
+  (commits 73a86c7, 5fec55a; see `docs/cookbooks/byof-isaac-lab/`)
+- BYOF mechanism validated: image override and command override surfaces;
+  worked example with verified S3 artifacts (run IDs in cookbook)
+- Removed SONIC routing entry from `CONTRIBUTING.md` Known Deviations

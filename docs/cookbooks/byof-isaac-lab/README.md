@@ -35,35 +35,30 @@ That keeps the validation focused on the mechanism, not on a particular fork.
 
 ## Prerequisites
 
-You need:
-
-- a local clone of this repository;
-- Docker with access to the Nebius container registry;
-- `NPA_REGISTRY_ID` set to the registry namespace only;
-- `NPA_S3_BUCKET` set to the bucket name only;
-- the NPA-managed SkyPilot 0.12.2 binary in `NPA_SKYPILOT_BIN`;
-- Kubernetes credentials for the target MK8s cluster;
-- Nebius IAM credentials accepted by SkyPilot and S3;
-- an RT-core GPU capacity class.
+Before using this cookbook, complete
+[../../getting-started.md](../../getting-started.md). That guide is the
+canonical setup path for the local NPA install, Nebius credentials, AWS profile,
+S3 endpoint, workbench environment variables, Kubernetes context, registry pull
+secret, and isolated SkyPilot runtime.
 
 Isaac Lab requires RT cores. Use L40S for this eu-north1 workflow validation.
 RTX Pro 6000 is the expected US Central target when capacity is available.
 Do not route Isaac Lab training to H100 or H200.
 
-Set SkyPilot explicitly:
+Before you start, verify the three live dependencies:
 
 ```bash
-export NPA_SKYPILOT_BIN=/path/to/npa-managed/sky
-"${NPA_SKYPILOT_BIN}" --version
+aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
+"${NPA_SKYPILOT_BIN}" check
+npa skypilot status
 ```
 
-The version must be `0.12.2` for this validation lineage.
+The SkyPilot version must be `0.12.2` for this validation lineage.
 
-For general repo setup and contribution rules, read:
-
-```bash
-CONTRIBUTING.md
-```
+SkyPilot 0.12.2 does not interpolate environment variables inside YAML `envs`
+blocks at submission time. Use the runner script
+(`npa/scripts/run_isaac_lab_rl.py`), which materializes endpoint values before
+submission, or substitute the literal endpoint value in your YAML.
 
 ## Files In This Example
 

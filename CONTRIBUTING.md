@@ -603,6 +603,8 @@ behavior with code, tests, or run artifacts.
 ## Where To Start
 For setup, start with `docs/getting-started.md`,
 `docs/credentials.yaml.example`, and `docs/orchestration/skypilot-setup.md`.
+For known operational failure modes, read
+`docs/troubleshooting/known-footguns.md`.
 For the main full-tool reference, read `npa/src/npa/cli/workbench/lerobot.py`,
 `npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/lerobot/Dockerfile`,
 and `.agents/skills/lerobot/SKILL.md`.
@@ -642,15 +644,6 @@ LanceDB. Most named tools expose Python-callable wrappers through
 
 New tools should add a wrapper in `npa/src/npa/workbench/` and use the
 compatibility SDK namespace when they have stable request and response schemas.
-### SONIC routing conflicts between code and skills
-`.agents/skills/sonic/SKILL.md` and `.agents/skills/nebius-infra/SKILL.md` say
-SONIC should route to H100 because L40S on-demand availability is effectively
-zero. Current code defaults SONIC serverless training to L40S in
-`npa/src/npa/cli/workbench/sonic/train.py` and warns when a non-RT-core platform
-is used.
-
-Until this is resolved in code, do not use SONIC as the canonical routing
-example for new tools.
 ### SONIC is not registered in the workbench Python namespace
 SONIC is registered in the CLI parent through
 `npa/src/npa/cli/workbench/__init__.py`, and it has Docker and skill files.

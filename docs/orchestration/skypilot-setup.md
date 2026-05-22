@@ -6,24 +6,28 @@ Python environment.
 
 ## Install SkyPilot
 
-Create a dedicated virtualenv and install the validated SkyPilot pin:
+Create or reuse the dedicated virtualenv with the validated SkyPilot pin:
 
 ```bash
-python -m venv /opt/npa/skypilot
-/opt/npa/skypilot/bin/pip install 'skypilot[nebius,kubernetes]==0.12.2'
+npa skypilot bootstrap
 ```
+
+By default this installs `skypilot[nebius,kubernetes]==0.12.2` into
+`~/.npa/skypilot-venv`. Use `--path` or `NPA_SKYPILOT_VENV_PATH` when an
+operator-managed location is required.
 
 ## Point NPA At It
 
 Set `NPA_SKYPILOT_BIN` to the venv's `sky` executable:
 
 ```bash
-export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
+export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 ```
 
 Python callers can also pass `sky_bin=` directly to
-`npa.orchestration.skypilot` wrapper functions. If neither is set, NPA falls
-back to discovering `sky` on `PATH`.
+`npa.orchestration.skypilot` wrapper functions. If neither is set, NPA exits
+with setup guidance rather than importing SkyPilot into NPA's Python
+environment.
 
 ## PATH Alternative
 
@@ -31,17 +35,14 @@ You can put the isolated venv on `PATH` instead of setting
 `NPA_SKYPILOT_BIN`:
 
 ```bash
-export PATH=/opt/npa/skypilot/bin:$PATH
+export PATH="$(dirname "$(npa skypilot status --bin-path)"):$PATH"
 ```
 
 ## Verify
 
-The CLI helper `npa workflow check-skypilot` is reserved for the follow-up
-CLI/SDK surface work. Until it lands, verify the same contract directly:
-
 ```bash
 test -x "$NPA_SKYPILOT_BIN"
-"$NPA_SKYPILOT_BIN" check nebius kubernetes
+npa skypilot verify
 ```
 
 ## Managed-Jobs Controller
@@ -80,6 +81,6 @@ properly-sized clusters.
 ## Upgrade
 
 The validated version is SkyPilot `0.12.2` with the `nebius` and `kubernetes`
-extras. To upgrade, create a new venv, install the candidate SkyPilot version,
-run `sky check nebius kubernetes`, and replay the NPA SkyPilot e2e before
+extras. To upgrade, create a new venv at a separate path, install the candidate
+SkyPilot version, run `sky check`, and replay the NPA SkyPilot e2e before
 switching `NPA_SKYPILOT_BIN`.
