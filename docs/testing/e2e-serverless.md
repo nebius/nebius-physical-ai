@@ -107,6 +107,29 @@ Requires `NPA_INTEGRATION_E2E=1` and
 overridden via `NPA_E2E_NER_PLATFORM`; related resource knobs are
 `NPA_E2E_NER_PRESET` and `NPA_E2E_NER_GPU_COUNT`.
 
+W13 validated the public CLI-to-S3 artifact path as the matrix-closing Cosmos
+e2e:
+
+- Command: `npa workbench cosmos train --runtime serverless --smoke`.
+- Run ID: `w13-cosmos-e2e-20260521T233523Z`.
+- Job ID: `aijob-e00fpqrtvx873z7b89`.
+- GPU: `gpu-h100-sxm`, preset `1gpu-16vcpu-200gb`.
+- Output:
+  `s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/w13-cosmos-e2e-20260521T233523Z/checkpoint.json`.
+- Verification: the S3 object exists, is non-empty, and contains
+  `{"status": "succeeded", "smoke": true, "job": "w13-cosmos-e2e-20260521T233523Z"}`.
+- Matrix impact: 7/8 -> 8/8 named Workbench tools have at least one
+  artifact-bearing e2e validation on Nebius.
+
+Current Cosmos constraints:
+
+- NIM and Triton are accepted CLI enum values but exit as not implemented.
+- `finetune` and `optimize` are roadmap placeholders.
+- Basic serverless endpoint inference can validate endpoint health and job
+  completion, but the public CLI does not yet provide a serverless-side S3
+  export contract for generated endpoint outputs.
+- EGL/DRI-dependent visual-generation/rendering paths remain deferred.
+
 ## NER E2E Deferral
 
 The Cosmos Jobs NER e2e test (`ner_handling`) is currently marked as not
@@ -161,18 +184,21 @@ findings.
 
 ## Cosmos Serverless Jobs E2E
 
-Smoke command used by W7-parallel-tools:
+Smoke command used by W13:
 
 ```bash
-npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
+npa workbench cosmos -p eu-north1 -n w13-cosmos train \
   --runtime serverless \
   --project-id <YOUR_PROJECT_ID> \
-  --gpu-type l40s \
+  --image cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-cosmos:1.0.9 \
+  --gpu-type h100 \
   --gpu-count 1 \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/cosmos-smoke/ \
-  --job-name cosmos-smoke2-<run-id> \
+  --gpu-preset 1gpu-16vcpu-200gb \
+  --output-path s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/<run-id>/ \
+  --job-name <run-id> \
   --smoke \
-  --smoke-seconds 5
+  --smoke-seconds 5 \
+  --poll-interval 15
 ```
 
 Expected artifact: `checkpoint.json`.

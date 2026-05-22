@@ -6,7 +6,7 @@ The Workbench supports `--runtime serverless` on these non-LeRobot tools, each b
 
 | Tool | Command | Serverless Status | Smoke GPU | Smoke Result |
 |------|---------|-------------------|-----------|--------------|
-| Cosmos | `train` | available | L40S | PASS |
+| Cosmos | `train` | available | H100 (W13), L40S historical | PASS (`w13-cosmos-e2e-20260521T233523Z`) |
 | Isaac Lab | `train` | available | L40S | PASS |
 | FiftyOne | `load-dataset` | available | L40S | PASS |
 | Genesis | `train-teacher` | available | L40S | PASS |
@@ -42,13 +42,15 @@ The serverless Job commands use the same option shape:
 ### Cosmos
 
 ```bash
-npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
+npa workbench cosmos -p eu-north1 -n w13-cosmos train \
   --runtime serverless \
   --project-id <YOUR_PROJECT_ID> \
-  --gpu-type l40s \
+  --image cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-cosmos:1.0.9 \
+  --gpu-type h100 \
   --gpu-count 1 \
-  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/cosmos-smoke/ \
-  --job-name cosmos-smoke2-<run-id> \
+  --gpu-preset 1gpu-16vcpu-200gb \
+  --output-path s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/<run-id>/ \
+  --job-name <run-id> \
   --smoke \
   --smoke-seconds 5 \
   --timeout 3600 \

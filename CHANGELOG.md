@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Cosmos e2e
+
+- Validated Cosmos end-to-end on Nebius via serverless `train --smoke`.
+  Run ID: `w13-cosmos-e2e-20260521T233523Z`. Output artifact:
+  `s3://${NPA_S3_BUCKET}/w13-cosmos-e2e/w13-cosmos-e2e-20260521T233523Z/checkpoint.json`.
+- Closes the 7/8 -> 8/8 Workbench tool verification matrix gap for the
+  artifact-bearing Cosmos CLI workflow.
+- Known constraints remain documented in `docs/testing/e2e-serverless.md`:
+  NIM/Triton are not implemented, `finetune` is a placeholder, and deferred
+  visual-generation/rendering paths still depend on the container EGL/DRI gap.
+
 - Validated Isaac Lab bring-your-own-fork path: image override (Run ID:
   `w10-byof-image-only-20260520T232650Z`) and image+command override (Run ID:
   `w10-byof-image-and-cmd-20260520T233113Z`). Worked example at

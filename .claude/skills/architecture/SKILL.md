@@ -18,7 +18,10 @@ The current phase is Workbench, the Tools layer: marketplace model, pay per use,
 
 There are 8 tools: LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, and SONIC.
 
-Tool validation state: 7/8 validated end-to-end. Isaac Lab is pending a training command fix. Cosmos is EGL/DRI-blocked for rendering.
+Tool validation state: 8/8 named Workbench tools have at least one
+artifact-bearing e2e validation on Nebius. Cosmos closed the last gap in W13
+through `cosmos train --runtime serverless --smoke`; Cosmos visual-generation
+rendering paths remain constrained by the EGL/DRI container gap.
 
 SkyPilot is the sole orchestrator. Argo is deprecated.
 
