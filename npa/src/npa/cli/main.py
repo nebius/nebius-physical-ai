@@ -16,6 +16,7 @@ from npa.cli.convert import app as convert_app
 from npa.cli.demo import app as demo_app
 from npa.cli.network import app as network_app
 from npa.cli.rerun import app as rerun_app
+from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow import app as workflow_app
 from npa.clients.serverless import ServerlessClientError
@@ -32,6 +33,7 @@ app.add_typer(convert_app, name="convert")
 app.add_typer(demo_app, name="demo")
 app.add_typer(network_app, name="network")
 app.add_typer(rerun_app, name="rerun")
+app.add_typer(skypilot_app, name="skypilot")
 app.add_typer(viz_app, name="viz")
 app.add_typer(workflow_app, name="workflow")
 

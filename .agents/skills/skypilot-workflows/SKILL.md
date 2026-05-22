@@ -11,6 +11,9 @@ SkyPilot is the sole workflow orchestrator in this repo. Argo is deprecated; do 
 
 SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. Invoke it through `NPA_SKYPILOT_BIN`; never rely on `sky` from `PATH`.
 
+Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`
+venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
+
 The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). The VM controller exists only as a fallback.
 
 ## Known SkyPilot 0.12.2 Limits

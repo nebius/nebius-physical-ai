@@ -30,7 +30,6 @@ from npa.clients.config import (
     WorkbenchConfig,
 )
 from npa.clients.serverless import EndpointNotFoundError
-from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
@@ -1540,11 +1539,11 @@ def test_fiftyone_status_self_heals_legacy_byovm_alias(
             "proj": {
                 "workbenches": {
                     "curate": {
-                        "endpoint": "http://66.201.4.1:5151",
+                        "endpoint": "http://203.0.113.42:5151",
                         "runtime": "byovm",
                         "app_port": 5151,
                         "ssh": {
-                            "host": "66.201.4.1",
+                            "host": "203.0.113.42",
                             "user": "ubuntu",
                             "key_path": "~/.ssh/h200",
                         },

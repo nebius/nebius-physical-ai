@@ -41,6 +41,15 @@ and keep the real credentials file out of git. Non-secret resource identifiers
 such as `NEBIUS_PROJECT_ID`, `NEBIUS_TENANT_ID`, `NPA_REGISTRY`, and
 `NPA_S3_BUCKET` are documented in `docs/getting-started.md`.
 
+Do not commit live infrastructure identifiers. Parameterize or redact:
+
+- Nebius project and tenant IDs
+- Nebius compute instance, managed Kubernetes node group, and container
+  registry IDs
+- Concrete `cr.eu-north1.nebius.cloud/<registry-id>/...` image references
+- Concrete S3 bucket names and `s3://<bucket>/...` paths from validation runs
+- Public VM IP addresses or endpoints from live Nebius workloads
+
 ## Learning More About Security in Nebius
 
 To learn more about security in Nebius, please see the [Nebius Security Documentation](https://nebius.ai/docs/security).
