@@ -77,6 +77,11 @@ from npa.deploy.cleanup import (
 from npa.deploy.configurator import docker_exec_cmd, write_manifest
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
+from npa.deploy.safety import (
+    PlanDecision,
+    analyze_terraform_plan,
+    format_replacement_required_error,
+)
 from npa.serverless_common import (
     SubnetResolutionError,
     build_serverless_job_env,
@@ -1772,11 +1777,31 @@ def deploy_cmd(
             }
         else:
             try:
-                tf_outputs = provisioner.apply(
+                plan_output = provisioner.plan(
                     tf_dir=resolved_tf_dir or None, tf_vars=all_vars
                 )
+                plan_analysis = analyze_terraform_plan(
+                    plan_output, existing_state=existing_managed_alias
+                )
+                if plan_analysis.decision == PlanDecision.REPLACEMENT_REQUIRED:
+                    if not replace:
+                        _fail(format_replacement_required_error(plan_analysis))
+                        return
+                    console.print(
+                        "    Replacement allowed by --replace: "
+                        + ", ".join(
+                            item.address for item in plan_analysis.replacement_resources
+                        )
+                    )
+                if plan_analysis.decision == PlanDecision.NO_CHANGES:
+                    console.print("    Terraform plan has no changes; deploy is a no-op.")
+                    tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir or None)
+                else:
+                    tf_outputs = provisioner.apply(
+                        tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                    )
             except ProvisionerError as exc:
-                _fail(f"Terraform apply failed: {exc}")
+                _fail(f"Terraform plan/apply failed: {exc}")
                 return
         console.print(f"    VM IP: {tf_outputs.get('vm_ip', 'unknown')}")
     else:

@@ -1,0 +1,17 @@
+Terraform will perform the following actions:
+
+  # nebius_compute_v1_disk.boot must be replaced
+-/+ resource "nebius_compute_v1_disk" "boot" {
+      ~ source_image_family = {
+          ~ image_family = "ubuntu-2204" -> "ubuntu-2404"
+        } # forces replacement
+    }
+
+  # nebius_compute_v1_instance.workbench must be replaced
+-/+ resource "nebius_compute_v1_instance" "workbench" {
+      ~ resources = {
+          ~ platform = "gpu-h100-sxm" -> "gpu-h200-sxm"
+        } # forces replacement
+    }
+
+Plan: 2 to add, 0 to change, 2 to destroy.

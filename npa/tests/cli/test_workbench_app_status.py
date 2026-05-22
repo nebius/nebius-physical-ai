@@ -13,6 +13,7 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
+TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
 
 
 @pytest.fixture()
@@ -79,6 +80,10 @@ def test_cosmos_registers_after_terraform_before_app_install_and_marks_failure(
         return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
     )
     mocker.patch("npa.cli.cosmos.provisioner.init")
+    mocker.patch(
+        "npa.cli.cosmos.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
     mocker.patch(
         "npa.cli.cosmos.provisioner.apply",
         return_value={

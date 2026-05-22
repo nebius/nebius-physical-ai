@@ -188,8 +188,8 @@ def _require(value: str | None, name: str, env_var: str) -> str:
 
 
 def _normalize_endpoint_strategy(value: str | None) -> str:
-    normalized = str(value or "").strip().lower()
-    return "ssh" if normalized == "ssh" else "public"
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return "ssh_fallback" if normalized in {"ssh", "ssh_fallback"} else "public"
 
 
 def _endpoint_port(endpoint: str) -> int:

@@ -53,6 +53,12 @@ The runner exposes `--image` directly. It does not expose a `--run-cmd` flag, so
 custom entrypoints should use a customer-owned YAML variant that preserves the
 runtime contract, checkpoint discovery, manifest creation, and S3 upload block.
 
+## Operational Safety
+
+Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
+plans that would destroy or replace critical infrastructure are blocked unless
+the operator passes `--replace` and confirms with `--yes` for automation.
+
 ## Workflows
 
 - Single RL job: `npa/workflows/skypilot/isaac-lab-rl-train.yaml`.

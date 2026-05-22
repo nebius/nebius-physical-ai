@@ -15,6 +15,15 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
+TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+
+
+@pytest.fixture(autouse=True)
+def _terraform_plan_allows_apply(mocker):
+    mocker.patch(
+        "npa.cli.isaac_lab.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
 
 
 def _ssh_cfg() -> WorkbenchConfig:
@@ -303,6 +312,43 @@ def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp
     assert result.exit_code == 0
     confirm.assert_not_called()
     apply.assert_called_once()
+
+
+def test_isaac_lab_deploy_replacement_plan_without_replace_aborts(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.isaac_lab.provisioner.init")
+    mocker.patch(
+        "npa.cli.isaac_lab.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt").read_text(),
+    )
+    apply = mocker.patch("npa.cli.isaac_lab.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--gpu-type",
+            "gpu-l40s-a",
+            "--gpu-preset",
+            "1gpu-40vcpu-160gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "would replace or destroy managed infrastructure" in result.output
+    assert "nebius_compute_v1_instance.workbench" in result.output
+    apply.assert_not_called()
 
 
 def test_isaac_lab_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:

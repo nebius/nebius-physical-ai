@@ -246,7 +246,7 @@ def test_resolve_config_uses_default_project_and_workbench(
     resolved = config.resolve_config()
 
     assert resolved.endpoint == "http://vm-a:8080"
-    assert resolved.endpoint_strategy == "ssh"
+    assert resolved.endpoint_strategy == "ssh_fallback"
     assert resolved.service_port == 8080
     assert resolved.endpoint_strategy_configured is True
     assert resolved.service_port_configured is True

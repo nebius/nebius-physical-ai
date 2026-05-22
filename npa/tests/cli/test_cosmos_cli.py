@@ -53,6 +53,15 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
+TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+
+
+@pytest.fixture(autouse=True)
+def _terraform_plan_allows_apply(mocker):
+    mocker.patch(
+        "npa.cli.cosmos.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
 
 
 def _cfg(
@@ -684,6 +693,43 @@ def test_cosmos_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp_pa
     assert result.exit_code == 0
     confirm.assert_not_called()
     apply.assert_called_once()
+
+
+def test_cosmos_deploy_replacement_plan_without_replace_aborts(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.cosmos.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.cosmos.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.cosmos.provisioner.init")
+    mocker.patch(
+        "npa.cli.cosmos.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt").read_text(),
+    )
+    apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            "proj",
+            "-n",
+            "cosmos",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--gpu-type",
+            "gpu-h100-sxm",
+            "--gpu-preset",
+            "1gpu-16vcpu-200gb",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "would replace or destroy managed infrastructure" in result.output
+    assert "nebius_compute_v1_instance.workbench" in result.output
+    apply.assert_not_called()
 
 
 def test_cosmos_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
@@ -1907,7 +1953,7 @@ def test_cosmos_status_json_includes_queue_state_classification(mocker) -> None:
 
 def test_cosmos_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
     cfg = _cfg()
-    cfg.endpoint_strategy = "ssh"
+    cfg.endpoint_strategy = "ssh_fallback"
     cfg.service_port = 8081
     http = mocker.MagicMock()
     http.health.return_value = {"status": "ok", "model": "nvidia/Cosmos-Test"}
@@ -1991,7 +2037,7 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
 
     assert deploy.exit_code == 0
     resolved = config_module.resolve_config(project="proj", name="cosmos")
-    assert resolved.endpoint_strategy == "ssh"
+    assert resolved.endpoint_strategy == "ssh_fallback"
     assert resolved.service_port == 8081
 
     http = mocker.MagicMock()
@@ -2006,7 +2052,7 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
 
     assert status.exit_code == 0
     endpoint.assert_called_once()
-    assert endpoint.call_args.args[0].endpoint_strategy == "ssh"
+    assert endpoint.call_args.args[0].endpoint_strategy == "ssh_fallback"
     http_cls.assert_called_once_with("http://127.0.0.1:19081", timeout=10.0, retries=1)
 
 

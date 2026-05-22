@@ -71,3 +71,32 @@ kube context, and verify access with
 `kubectl auth can-i create pods -n default`.
 
 Category for follow-up: docs.
+
+## Deploy Reports Replacement Required
+
+Symptom: `npa workbench <tool> deploy` stops after Terraform planning and
+reports that critical resources would be replaced or destroyed.
+
+Root cause: the requested change affects infrastructure that cannot be updated
+in place, such as the VM, boot disk, network, subnet, or security group.
+
+Current workaround: if replacement is intentional, rerun with `--replace` and
+use `--yes` for non-interactive automation. For environment-only updates, use
+the tool's in-place deploy or `reload-env` path instead of replacing the VM.
+
+Category for follow-up: deploy safety.
+
+## BYOVM Live Commands Use SSH Fallback
+
+Symptom: BYOVM deploy succeeds through SSH-local health checks, but a later
+`status`, `serve`, `infer`, or FiftyOne app command would historically time out
+against the public endpoint when public ports were blocked.
+
+Root cause: public endpoint reachability can differ from SSH reachability on
+partner BYOVM hosts.
+
+Current behavior: BYOVM aliases record `endpoint_strategy: ssh_fallback` when
+deploy health checks use SSH. Live commands honor the saved strategy and can
+self-heal legacy aliases by falling back through a transient SSH-local route.
+
+Category for follow-up: BYOVM networking.
