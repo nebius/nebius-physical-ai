@@ -232,6 +232,16 @@ storage:
   bucket: s3://<YOUR_BUCKET>/<PREFIX>/
 ```
 
+For eu-north1 workbench clusters, the storage endpoint is:
+
+```bash
+export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
+```
+
+`NPA_STORAGE_ENDPOINT` is accepted as a convenience alias and is forwarded as
+`AWS_ENDPOINT_URL` and `NEBIUS_S3_ENDPOINT` when shared storage credentials are
+injected into workbench services.
+
 Omit keys you do not have yet. Do not leave placeholder token values in a file
 you plan to use for model downloads.
 
@@ -347,6 +357,7 @@ data without a local Rerun install.
 ## 8. Where to next
 
 - [Repository overview](../README.md)
+- [Getting started](getting-started.md)
 - [CLI and package overview](../npa/README.md)
 - [Source sample config](../npa/src/npa/config/sample_config.yaml)
 - [Known onboarding and runtime gotchas](../FIXME.md)

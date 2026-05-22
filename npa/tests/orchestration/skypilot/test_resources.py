@@ -55,6 +55,11 @@ def test_invalid_gpu_type_raises_typed_error() -> None:
         resources_for_npa_spec({"gpu": "not-a-gpu"})
 
 
+def test_unknown_resource_spec_key_raises_typed_error() -> None:
+    with pytest.raises(InvalidResourceSpecError, match="unknown_key.*Valid keys"):
+        resources_for_npa_spec({"backend": "nebius", "unknown_key": "ignored-before"})
+
+
 @pytest.mark.parametrize("count", [0, -1])
 def test_non_positive_counts_raise_typed_error(count: int) -> None:
     with pytest.raises(InvalidResourceSpecError):

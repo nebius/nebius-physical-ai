@@ -136,7 +136,8 @@ artifacts:
 
 
 def test_default_demo_manifest_parses() -> None:
-    manifest = load_manifest(Path("npa/manifests/demo-8gpu-h200.yaml"))
+    manifest_path = Path(__file__).resolve().parents[1] / "manifests/demo-8gpu-h200.yaml"
+    manifest = load_manifest(manifest_path)
 
     assert manifest.version == 1
     assert len(manifest.artifacts) >= 10

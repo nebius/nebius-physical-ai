@@ -7,14 +7,13 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
+from npa.orchestration.skypilot._bin import SkyBin, ensure_skypilot_version, resolve_config
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
 
 
@@ -56,8 +55,18 @@ def sky_down(
 ) -> CleanupResult:
     """Run `sky down --yes` for a cluster or SkyPilot glob pattern."""
 
-    cmd = [str(resolve_sky_bin(sky_bin)), "down", "--yes", cluster_name]
-    result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=timeout)
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "down", "--yes", cluster_name]
+    result = _run(
+        cmd,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
+        timeout=timeout,
+    )
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
         cleanup.resources_removed.append(cluster_name)
@@ -261,8 +270,18 @@ def _matching_jobs(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> list[dict[str, Any]]:
-    cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "queue", "--all", "--output", "json"]
-    result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=120)
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "queue", "--all", "--output", "json"]
+    result = _run(
+        cmd,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
+        timeout=120,
+    )
     if result.returncode != 0:
         return []
     try:
@@ -301,8 +320,18 @@ def _cancel_job(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> CleanupResult:
-    cmd = [str(resolve_sky_bin(sky_bin)), "jobs", "cancel", "--yes", job_id]
-    result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=300)
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "cancel", "--yes", job_id]
+    result = _run(
+        cmd,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
+        timeout=300,
+    )
     cleanup = CleanupResult(commands=[cmd])
     if result.returncode == 0:
         cleanup.resources_removed.append(f"job:{job_id}")
@@ -333,8 +362,18 @@ def _jobs_controller_clusters(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> tuple[list[dict[str, Any]], str]:
-    cmd = [str(resolve_sky_bin(sky_bin)), "status", "--refresh", "--output", "json"]
-    result = _run(cmd, isolated_config_dir=isolated_config_dir, config_path=config_path, timeout=300)
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "status", "--refresh", "--output", "json"]
+    result = _run(
+        cmd,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
+        timeout=300,
+    )
     if result.returncode != 0:
         return [], _format_command_error(cmd, result)
     try:
@@ -366,11 +405,16 @@ def _down_jobs_controller(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> CleanupResult:
-    cmd = [str(resolve_sky_bin(sky_bin)), "down", "--yes", controller_name]
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "down", "--yes", controller_name]
     result = _run(
         cmd,
-        isolated_config_dir=isolated_config_dir,
-        config_path=config_path,
+        isolated_config_dir=runtime_config.isolated_config_dir,
+        config_path=runtime_config.global_config_path,
         timeout=900,
         input_text="delete\n",
     )

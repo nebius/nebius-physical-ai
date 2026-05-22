@@ -22,15 +22,27 @@ credentials.yaml
 credentials.yml
 .npa/credentials.yaml
 .npa/credentials.yml
+**/credentials/
+**/credentials.yaml
+**/credentials.yml
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 *.pem
 *.key
+**/*.pem
+**/*.key
+*.kubeconfig
+**/*.kubeconfig
 id_rsa
 id_ed25519
 secrets.yaml
 secrets.yml
+**/secrets/
+**/secrets.yaml
+**/secrets.yml
 
 # Python caches, environments, and build artifacts
 __pycache__/

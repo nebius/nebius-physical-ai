@@ -1,6 +1,11 @@
 """NPA SkyPilot orchestration layer."""
 
-from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
+from npa.orchestration.skypilot._bin import (
+    REQUIRED_SKYPILOT_VERSION,
+    SkyPilotConfigError,
+    SkyPilotNotInstalledError,
+    SkyPilotVersionError,
+)
 from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
     InvalidRunIdError,
@@ -18,7 +23,12 @@ from npa.orchestration.skypilot.resources import (
     resources_for_npa_spec,
     validate_npa_spec,
 )
-from npa.orchestration.skypilot.workflow import WorkflowResult, submit_workflow, workflow_status
+from npa.orchestration.skypilot.workflow import (
+    SkyPilotSubmitError,
+    WorkflowResult,
+    submit_workflow,
+    workflow_status,
+)
 
 __all__ = [
     "SKYPILOT_VERSION",
@@ -26,8 +36,12 @@ __all__ = [
     "InvalidResourceSpecError",
     "InvalidRunIdError",
     "NPASpec",
+    "REQUIRED_SKYPILOT_VERSION",
+    "SkyPilotConfigError",
     "SkyPilotNotInstalledError",
     "SkyPilotResourceError",
+    "SkyPilotSubmitError",
+    "SkyPilotVersionError",
     "WorkflowResult",
     "cleanup_all_for_run",
     "cleanup_jobs_controller",

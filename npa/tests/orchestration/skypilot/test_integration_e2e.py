@@ -31,7 +31,7 @@ from npa.orchestration.skypilot.cleanup import run_tag, sky_environment
 pytestmark = pytest.mark.e2e_skypilot
 
 CLUSTER_NAME = "npa-workbench-eu-north1"
-BUCKET = "YOUR_S3_BUCKET"
+BUCKET = "your-bucket-name"
 S3_PREFIX_ROOT = os.environ.get("NPA_SKYPILOT_S3_PREFIX_ROOT", "skypilot-bootstrap-converge")
 S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud:443"
 POLL_INTERVAL_SECONDS = 30

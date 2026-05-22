@@ -8,6 +8,8 @@ from typing import Any
 
 import typer
 
+from npa.clients.credentials import storage_endpoint_url, storage_endpoint_warning
+
 from .helpers import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_CONTAINER_NAME,
@@ -48,6 +50,7 @@ def _run_container(
     storage_path: str,
     auth_mode: str,
     token_env: str,
+    storage_endpoint: str,
     detach: bool,
     replace: bool,
     dry_run: bool,
@@ -59,6 +62,10 @@ def _run_container(
         "LANCEDB_AUTH_MODE": auth_mode,
         "LANCEDB_TOKEN": os.environ.get(token_env, ""),
     }
+    if storage_endpoint:
+        endpoint_url = storage_endpoint_url(storage_endpoint)
+        env["AWS_ENDPOINT_URL"] = endpoint_url
+        env["NEBIUS_S3_ENDPOINT"] = endpoint_url
     if auth_mode == "token" and not env["LANCEDB_TOKEN"]:
         fail(f"{token_env} is required when --auth-mode token")
 
@@ -141,6 +148,14 @@ def deploy_cmd(
     region: str = typer.Option("", "--region", help="Nebius region."),
     tf_dir: str = typer.Option("", "--tf-dir", help="Terraform directory override."),
     tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra Terraform variable key=value."),
+    storage_endpoint: str = typer.Option(
+        "",
+        "--storage-endpoint",
+        help=(
+            "Nebius S3-compatible endpoint override, for example "
+            "storage.eu-north1.nebius.cloud. Also settable with NPA_STORAGE_ENDPOINT."
+        ),
+    ),
     skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip infrastructure provisioning."),
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip application deploy."),
     destroy: bool = typer.Option(False, "--destroy", help="Tear down or unregister the service."),
@@ -154,6 +169,16 @@ def deploy_cmd(
 ) -> None:
     """Deploy or register a LanceDB service."""
     validate_port(port)
+    storage_endpoint_override = storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
+    endpoint_warning = storage_endpoint_warning(
+        storage_endpoint_override
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("AWS_ENDPOINT_URL", "")
+    )
+    if endpoint_warning:
+        typer.echo(endpoint_warning)
+    # TODO: infer the storage endpoint from the selected Nebius region once the
+    # VM/BYOVM LanceDB deploy path is backed by shared Workbench registration.
     if runtime == LanceDBRuntime.serverless:
         fail("LanceDB deploy does not support --runtime serverless; use container, vm, byovm, or cloud.")
 
@@ -193,6 +218,7 @@ def deploy_cmd(
             storage_path=resolved_storage,
             auth_mode=resolved_auth,
             token_env=token_env,
+            storage_endpoint=storage_endpoint_override,
             detach=detach,
             replace=replace,
             dry_run=dry_run,

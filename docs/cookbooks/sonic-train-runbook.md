@@ -26,12 +26,12 @@ the training entry path, not convergence.
 SMOKE_TS=$(date -u +%Y%m%dT%H%M%SZ)
 npa workbench sonic -p eu-north1 -n w7sonic train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --gpu-type l40s \
   --gpu-count 1 \
   --embodiment unitree-g1 \
   --steps 10 \
-  --output-path s3://YOUR_S3_BUCKET/w7sonic-smoke/$SMOKE_TS/ \
+  --output-path s3://${NPA_S3_BUCKET}/w7sonic-smoke/$SMOKE_TS/ \
   --job-name sonic-smoke-$SMOKE_TS \
   --timeout 3600 \
   --poll-interval 15

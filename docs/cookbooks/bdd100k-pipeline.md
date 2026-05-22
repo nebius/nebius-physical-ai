@@ -26,9 +26,11 @@ Use the wrapper's mock-endpoint path to validate the curl requests without
 submitting GPU work:
 
 ```bash
-PYTHONPATH=npa/src npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
+python npa/scripts/run_bdd100k_pipeline.py \
+  --yaml npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --synthetic 5000 \
   --mock-endpoints \
-  --run-id bdd100k-pipeline-dryrun
+  --run-id <your-run-id>
 ```
 
 ## Full Submission
@@ -37,7 +39,9 @@ Full submission requires a working SkyPilot 0.12.2 binary:
 
 ```bash
 export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
-PYTHONPATH=npa/src npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
+python npa/scripts/run_bdd100k_pipeline.py \
+  --yaml npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --synthetic 5000 \
   --run-id bdd100k-pipeline-$(date -u +%Y%m%dT%H%M%SZ) \
   --cleanup
 ```
@@ -56,22 +60,24 @@ service names differ:
 ```
 
 The default input source is
-`s3://YOUR_S3_BUCKET/raw-bdd100k/subset-demo/`. Full submission requires the
+`s3://${NPA_S3_BUCKET}/raw-bdd100k/subset-demo/`. Full submission requires the
 configured S3 credentials to list and read this prefix.
 
 ## Images
 
-The YAML pins the validated images:
+The YAML uses placeholder image tags because SkyPilot 0.12.2 does not expand
+same-block environment variables inside `image_id`. Replace them before live
+submission:
 
-- `cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z`
-- `cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z`
+- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>`
+- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>`
 
 ## Output Layout
 
 For `run_id=<run-id>`, outputs are rooted at:
 
 ```text
-s3://YOUR_S3_BUCKET/bdd100k-pipeline/<run-id>/
+s3://${NPA_S3_BUCKET}/bdd100k-pipeline/<run-id>/
 ```
 
 The LanceDB URI is `<root>/lancedb/`. Training outputs are under

@@ -122,6 +122,59 @@ def test_lance_detection_dataset_yields_expected_shapes(monkeypatch: pytest.Monk
     assert target["labels"].shape == (1,)
 
 
+def test_lance_detection_dataset_maps_string_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_torch(monkeypatch)
+    from npa.workbench.detection_training.dataloader import LanceDetectionDataset
+
+    dataset = LanceDetectionDataset(
+        rows=[
+            _synthetic_row(
+                ann_bboxes=[[1.0, 1.0, 5.0, 6.0], [2.0, 2.0, 6.0, 7.0]],
+                ann_categories=["person", "rider"],
+            )
+        ],
+        label_map={"person": 0, "rider": 1},
+    )
+    _image, target = dataset[0]
+
+    assert target["labels"].array.tolist() == [0, 1]
+    assert target["boxes"].array.tolist() == [[1.0, 1.0, 5.0, 6.0], [2.0, 2.0, 6.0, 7.0]]
+
+
+def test_lance_detection_dataset_filters_unknown_string_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_fake_torch(monkeypatch)
+    from npa.workbench.detection_training.dataloader import LanceDetectionDataset
+
+    dataset = LanceDetectionDataset(
+        rows=[
+            _synthetic_row(
+                ann_bboxes=[[1.0, 1.0, 5.0, 6.0], [2.0, 2.0, 6.0, 7.0]],
+                ann_categories=["person", "unknown"],
+            )
+        ],
+        label_map={"person": 0},
+    )
+    with caplog.at_level("WARNING", logger="npa.workbench.detection_training.dataloader"):
+        _image, target = dataset[0]
+
+    assert target["labels"].array.tolist() == [0]
+    assert target["boxes"].array.tolist() == [[1.0, 1.0, 5.0, 6.0]]
+    assert "unknown label(s): unknown" in caplog.text
+
+
+def test_lance_detection_dataset_numeric_labels_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_torch(monkeypatch)
+    from npa.workbench.detection_training.dataloader import LanceDetectionDataset
+
+    dataset = LanceDetectionDataset(rows=[_synthetic_row(ann_categories=[2])])
+    _image, target = dataset[0]
+
+    assert target["labels"].array.tolist() == [2]
+
+
 def test_training_loop_with_mock_model_has_finite_loss() -> None:
     from npa.workbench.detection_training.training import train_one_epoch
 
@@ -207,14 +260,121 @@ def test_evaluation_returns_expected_schema(monkeypatch: pytest.MonkeyPatch, tmp
     assert result.manifest_sha256
 
 
+def test_evaluation_passes_label_map_to_dataloader(monkeypatch: pytest.MonkeyPatch) -> None:
+    from npa.workbench.detection_training import evaluation
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    fake_torch.device = lambda value: value
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(evaluation, "_load_checkpoint", lambda _uri: {"num_classes": 3, "model_state_dict": {}})
+
+    class FakeModel:
+        def load_state_dict(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        def to(self, _device: Any) -> None:
+            return None
+
+        def eval(self) -> None:
+            return None
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(evaluation, "build_fasterrcnn_resnet50_fpn_v2", lambda **_kwargs: FakeModel())
+
+    def fake_make_dataloader(**kwargs: Any) -> list[Any]:
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(evaluation, "make_dataloader", fake_make_dataloader)
+    monkeypatch.setattr(
+        evaluation,
+        "_compute_map_metrics",
+        lambda *_args, **_kwargs: {"mAP": 0.0, "mAP_50": 0.0, "mAP_75": 0.0, "per_category_AP": {}},
+    )
+
+    evaluation._evaluate_with_model(
+        EvalRequest(
+            checkpoint_uri="s3://bucket/checkpoint.pt",
+            eval_view="mv",
+            output_uri="s3://bucket/eval",
+            label_map={"pedestrian": 0, "rider": 1},
+        )
+    )
+
+    assert seen["label_map"] == {"pedestrian": 0, "rider": 1}
+
+
 def test_request_response_validation() -> None:
+    from npa.workbench.detection_training.training import resolve_num_classes
+
     request = TrainRequest(view="bdd100k_rider_train", output_uri="s3://bucket/out")
 
-    assert request.num_classes == 10
+    assert request.num_classes is None
+    assert resolve_num_classes(request) == 10
+    assert resolve_num_classes(
+        TrainRequest(view="bdd100k_rider_train", output_uri="s3://bucket/out", label_map={"person": 0, "rider": 1})
+    ) == 3
     with pytest.raises(ValueError):
         TrainRequest(view="", output_uri="s3://bucket/out")
     with pytest.raises(ValueError):
         TrainRequest(view="mv", output_uri="s3://bucket/out", batch_size=0)
+    with pytest.raises(ValueError):
+        TrainRequest(view="mv", output_uri="s3://bucket/out", label_map={"": 1})
+    assert EvalRequest(
+        checkpoint_uri="s3://bucket/ckpt.pt",
+        eval_view="mv",
+        output_uri="s3://bucket/eval",
+        label_map={"pedestrian": 0},
+    ).label_map == {"pedestrian": 0}
+    with pytest.raises(ValueError):
+        EvalRequest(checkpoint_uri="s3://bucket/ckpt.pt", eval_view="mv", output_uri="s3://bucket/eval", label_map={"": 1})
+
+
+def test_train_endpoint_accepts_label_map_without_num_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    import npa.workbench.detection_training.service as service_module
+    from npa.workbench.detection_training.service import create_app
+    from npa.workbench.detection_training.training import resolve_num_classes
+
+    seen: dict[str, Any] = {}
+
+    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None):
+        from npa.workbench.detection_training.schemas import TrainResponse
+        from npa.workbench.detection_training.training import checkpoint_uri_pattern, compute_manifest_sha256, metrics_uri
+
+        seen["num_classes"] = resolve_num_classes(request)
+        seen["label_map"] = request.label_map
+        manifest = compute_manifest_sha256("train", request.model_dump(mode="json"))
+        resolved_run = run_id or "run-test"
+        if status_callback:
+            status_callback("completed", request.epochs, {"train_loss": 1.0}, None)
+        return TrainResponse(
+            run_id=resolved_run,
+            status="completed",
+            checkpoint_uri_pattern=checkpoint_uri_pattern(request.output_uri, resolved_run),
+            metrics_uri=metrics_uri(request.output_uri, resolved_run),
+            total_epochs=request.epochs,
+            manifest_sha256=manifest,
+        )
+
+    monkeypatch.setattr(service_module, "train_detector", fake_train)
+    client = TestClient(create_app(auth_mode="none"))
+    response = client.post(
+        "/train",
+        json={
+            "view": "bdd100k_rider_train",
+            "lance_uri": "s3://bucket/db/",
+            "output_uri": "s3://bucket/out",
+            "label_map": {"person": 0, "rider": 1},
+            "epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 0.005,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen["num_classes"] == 3
+    assert seen["label_map"] == {"person": 0, "rider": 1}
 
 
 def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,8 +462,9 @@ def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatc
 
 
 def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> None:
-    cli_source = Path("npa/src/npa/cli/workbench/detection_training.py").read_text()
-    sdk_source = Path("npa/src/npa/sdk/workbench/detection_training.py").read_text()
+    npa_root = Path(__file__).resolve().parents[2]
+    cli_source = (npa_root / "src/npa/cli/workbench/detection_training.py").read_text()
+    sdk_source = (npa_root / "src/npa/sdk/workbench/detection_training.py").read_text()
 
     assert "import torch" not in cli_source
     assert "import torchvision" not in cli_source
@@ -376,14 +537,18 @@ def _install_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
 
-def _synthetic_row() -> dict[str, Any]:
+def _synthetic_row(
+    *,
+    ann_bboxes: list[list[float]] | None = None,
+    ann_categories: list[Any] | None = None,
+) -> dict[str, Any]:
     image = Image.new("RGB", (8, 8), color=(20, 40, 60))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return {
         "image_bytes": buffer.getvalue(),
-        "ann_bboxes": [[1.0, 1.0, 5.0, 6.0]],
-        "ann_categories": [1],
+        "ann_bboxes": ann_bboxes if ann_bboxes is not None else [[1.0, 1.0, 5.0, 6.0]],
+        "ann_categories": ann_categories if ann_categories is not None else [1],
     }
 
 

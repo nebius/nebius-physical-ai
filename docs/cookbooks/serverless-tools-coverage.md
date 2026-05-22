@@ -44,11 +44,11 @@ The serverless Job commands use the same option shape:
 ```bash
 npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/cosmos-smoke/ \
-  --job-name cosmos-smoke2-20260513T225839Z \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/cosmos-smoke/ \
+  --job-name cosmos-smoke2-<run-id> \
   --smoke \
   --smoke-seconds 5 \
   --timeout 3600 \
@@ -60,14 +60,14 @@ npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
 ```bash
 npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --task Isaac-Reach-Franka-v0 \
   --num-envs 1 \
   --steps 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/isaac-lab-smoke/ \
-  --job-name isaac-lab-smoke3-20260513T225839Z \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/isaac-lab-smoke/ \
+  --job-name isaac-lab-smoke3-<run-id> \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -77,13 +77,13 @@ npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
 ```bash
 npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --name w7p-curated \
   --input-path Voxel51/VisDrone2019-DET \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/fiftyone-smoke/ \
-  --job-name fiftyone-smoke-20260513T225839Z \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/fiftyone-smoke/ \
+  --job-name fiftyone-smoke-<run-id> \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -93,13 +93,13 @@ npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
 ```bash
 npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --n-envs 1 \
   --max-iterations 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/genesis-smoke/ \
-  --job-name genesis-smoke-20260513T225839Z \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/genesis-smoke/ \
+  --job-name genesis-smoke-<run-id> \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -109,23 +109,23 @@ npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
 ```bash
 npa workbench groot -p uk-south1 -n w7p-groot infer \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
-  --input-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/checkpoint/ \
-  --dataset-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/dataset/ \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-smoke/ \
+  --project-id <YOUR_PROJECT_ID> \
+  --input-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/checkpoint/ \
+  --dataset-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/dataset/ \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-smoke/ \
   --gpu-type h200 \
   --gpu-count 1 \
   --model-variant nvidia/GR00T-N1.7-3B \
   --steps 1 \
   --action-horizon 1 \
-  --job-name groot-smoke-20260513T225839Z \
+  --job-name groot-smoke-<run-id> \
   --timeout 3600 \
   --poll-interval 15
 ```
 
 Current status: `SMOKE_FAILED`. W7p-groot-debug fixed the missing-image-tag
 issue and proved the corrected submission uses
-`cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-groot:0.1.0`; the post-fix
+`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-groot:0.1.0`; the post-fix
 retry stalled in `STARTING` with no logs and was deleted.
 
 ## Shared Infrastructure

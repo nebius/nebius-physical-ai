@@ -1,8 +1,8 @@
-ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z
+ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-base:cuda13-b300-tag
 FROM ${BASE_IMAGE}
 
-ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z
-ARG BUILD_TS=20260514T214550Z
+ARG BASE_IMAGE=cr.eu-north1.nebius.cloud/your-registry-id/npa-base:cuda13-b300-tag
+ARG BUILD_TS=unknown
 ARG LEROBOT_VERSION=0.4.4
 ARG LEROBOT_COMMIT=8fff0fde7c79f23a93d845d1a50e985de01f8b8a
 ARG BASE_IMAGE_DIGEST=unknown

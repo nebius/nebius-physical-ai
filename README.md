@@ -16,7 +16,12 @@ This repository is organized to support both Nebius and community-created physic
 
 ## Getting Started
 
-To get started with the `npa` workbench CLI, follow the [npa quickstart](docs/quickstart.md). For other Nebius Physical AI Solutions, explore the solutions directory and review the documentation for your specific use case. Each solution includes its own README with setup instructions and usage examples.
+To get from a fresh clone to the first validated `npa` workbench and BDD100K
+pipeline commands, follow [Getting Started](docs/getting-started.md). For a
+deeper `npa` CLI walkthrough, see the [npa quickstart](docs/quickstart.md). For
+other Nebius Physical AI Solutions, explore the solutions directory and review
+the documentation for your specific use case. Each solution includes its own
+README with setup instructions and usage examples.
 
 ## Reproducing the Demo
 

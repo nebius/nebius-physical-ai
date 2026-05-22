@@ -20,11 +20,11 @@ def test_build_serverless_job_env_basic() -> None:
 
 
 def test_build_serverless_job_env_with_hf_token() -> None:
-    env = build_serverless_job_env(output_path="s3://bucket/prefix", hf_token="hf_secret")
+    env = build_serverless_job_env(output_path="s3://bucket/prefix", hf_token="PLACEHOLDER_HF_TOKEN")
 
-    assert env["HF_TOKEN"] == "hf_secret"
-    assert env["HUGGING_FACE_HUB_TOKEN"] == "hf_secret"
-    assert env["HUGGINGFACE_HUB_TOKEN"] == "hf_secret"
+    assert env["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
+    assert env["HUGGING_FACE_HUB_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
+    assert env["HUGGINGFACE_HUB_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
 
 
 def test_build_serverless_job_env_with_s3_creds() -> None:
@@ -47,7 +47,7 @@ def test_split_serverless_env_separates_secrets() -> None:
     safe, secret = split_serverless_env(
         {
             "PYTHONUNBUFFERED": "1",
-            "HF_TOKEN": "hf_secret",
+            "HF_TOKEN": "PLACEHOLDER_HF_TOKEN",
             "AWS_ACCESS_KEY_ID": "key",
             "AWS_SECRET_ACCESS_KEY": "secret",
             "PASSWORD_FILE": "pw",
@@ -55,7 +55,7 @@ def test_split_serverless_env_separates_secrets() -> None:
     )
 
     assert safe == {"PYTHONUNBUFFERED": "1"}
-    assert secret["HF_TOKEN"] == "hf_secret"
+    assert secret["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     assert secret["AWS_ACCESS_KEY_ID"] == "key"
     assert secret["AWS_SECRET_ACCESS_KEY"] == "secret"
     assert secret["PASSWORD_FILE"] == "pw"

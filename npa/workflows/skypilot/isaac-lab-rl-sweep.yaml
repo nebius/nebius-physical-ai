@@ -1,0 +1,245 @@
+# Isaac Lab RSL-RL parameter sweep.
+# SkyPilot 0.12.2 supports all-parallel job groups; each task below is an
+# independent training job with different Hydra overrides.
+name: isaac-lab-rl-sweep
+execution: parallel
+---
+name: isaac-lab-rsl-rl-lr-1e-3
+resources:
+  cloud: kubernetes
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
+  RUN_VARIANT: "lr-1e-3"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "64"
+  ISAAC_LAB_ITERATIONS: "10"
+  ISAAC_LAB_EXPERIMENT_NAME: "npa_isaac_lab_sweep"
+  ISAAC_LAB_RUN_NAME: "${NPA_ISAAC_LAB_RUN_ID}-lr-1e-3"
+  ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1 agent.algorithm.learning_rate=1.0e-3"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/lr-1e-3/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/workspace/isaaclab/npa-runs/${NPA_ISAAC_LAB_RUN_ID}/${RUN_VARIANT}"
+  mkdir -p "${OUTPUT_DIR}" && cd "${OUTPUT_DIR}"
+  read -r -a HYDRA_ARGS <<< "${ISAAC_LAB_HYDRA_OVERRIDES}"
+  "${PYTHON_BIN}" "${TRAIN_SCRIPT}" --task "${ISAAC_LAB_TASK}" --num_envs "${ISAAC_LAB_NUM_ENVS}" --max_iterations "${ISAAC_LAB_ITERATIONS}" --headless --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" --run_name "${ISAAC_LAB_RUN_NAME}" "${HYDRA_ARGS[@]}" 2>&1 | tee isaac_lab_train.log
+  checkpoint="$(find logs/rsl_rl -name 'model_*.pt' -type f | sort | tail -1)"
+  test -n "${checkpoint}"
+  cp "${checkpoint}" npa_isaac_lab_checkpoint.pt
+  export NPA_ISAAC_LAB_CHECKPOINT="${checkpoint}"
+  "${PYTHON_BIN}" <<'PY'
+  import json, os, pathlib, time
+  from urllib.parse import urlparse
+  import boto3
+  root = pathlib.Path.cwd()
+  summary = {
+      "status": "success", "tool": "isaac_lab", "framework": "rsl_rl",
+      "task": os.environ["ISAAC_LAB_TASK"], "num_envs": int(os.environ["ISAAC_LAB_NUM_ENVS"]),
+      "steps": int(os.environ["ISAAC_LAB_ITERATIONS"]), "max_iterations": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "run_id": os.environ["NPA_ISAAC_LAB_RUN_ID"], "variant": os.environ["RUN_VARIANT"],
+      "run_name": os.environ["ISAAC_LAB_RUN_NAME"], "hydra_overrides": os.environ["ISAAC_LAB_HYDRA_OVERRIDES"],
+      "checkpoint_path": os.environ["NPA_ISAAC_LAB_CHECKPOINT"], "stable_checkpoint_path": str(root / "npa_isaac_lab_checkpoint.pt"),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+  (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps({"format": "npa_isaac_lab_rsl_rl_checkpoint_v1", **summary}, indent=2))
+  parsed = urlparse(os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/")
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+  for path in root.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, parsed.path.lstrip("/") + str(path.relative_to(root)))
+  PY
+---
+name: isaac-lab-rsl-rl-lr-3e-4
+resources:
+  cloud: kubernetes
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
+  RUN_VARIANT: "lr-3e-4"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "64"
+  ISAAC_LAB_ITERATIONS: "10"
+  ISAAC_LAB_EXPERIMENT_NAME: "npa_isaac_lab_sweep"
+  ISAAC_LAB_RUN_NAME: "${NPA_ISAAC_LAB_RUN_ID}-lr-3e-4"
+  ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1 agent.algorithm.learning_rate=3.0e-4"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/lr-3e-4/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/workspace/isaaclab/npa-runs/${NPA_ISAAC_LAB_RUN_ID}/${RUN_VARIANT}"
+  mkdir -p "${OUTPUT_DIR}" && cd "${OUTPUT_DIR}"
+  read -r -a HYDRA_ARGS <<< "${ISAAC_LAB_HYDRA_OVERRIDES}"
+  "${PYTHON_BIN}" "${TRAIN_SCRIPT}" --task "${ISAAC_LAB_TASK}" --num_envs "${ISAAC_LAB_NUM_ENVS}" --max_iterations "${ISAAC_LAB_ITERATIONS}" --headless --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" --run_name "${ISAAC_LAB_RUN_NAME}" "${HYDRA_ARGS[@]}" 2>&1 | tee isaac_lab_train.log
+  checkpoint="$(find logs/rsl_rl -name 'model_*.pt' -type f | sort | tail -1)"
+  test -n "${checkpoint}"
+  cp "${checkpoint}" npa_isaac_lab_checkpoint.pt
+  export NPA_ISAAC_LAB_CHECKPOINT="${checkpoint}"
+  "${PYTHON_BIN}" <<'PY'
+  import json, os, pathlib, time
+  from urllib.parse import urlparse
+  import boto3
+  root = pathlib.Path.cwd()
+  summary = {
+      "status": "success", "tool": "isaac_lab", "framework": "rsl_rl",
+      "task": os.environ["ISAAC_LAB_TASK"], "num_envs": int(os.environ["ISAAC_LAB_NUM_ENVS"]),
+      "steps": int(os.environ["ISAAC_LAB_ITERATIONS"]), "max_iterations": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "run_id": os.environ["NPA_ISAAC_LAB_RUN_ID"], "variant": os.environ["RUN_VARIANT"],
+      "run_name": os.environ["ISAAC_LAB_RUN_NAME"], "hydra_overrides": os.environ["ISAAC_LAB_HYDRA_OVERRIDES"],
+      "checkpoint_path": os.environ["NPA_ISAAC_LAB_CHECKPOINT"], "stable_checkpoint_path": str(root / "npa_isaac_lab_checkpoint.pt"),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+  (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps({"format": "npa_isaac_lab_rsl_rl_checkpoint_v1", **summary}, indent=2))
+  parsed = urlparse(os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/")
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+  for path in root.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, parsed.path.lstrip("/") + str(path.relative_to(root)))
+  PY
+---
+name: isaac-lab-rsl-rl-entropy-0
+resources:
+  cloud: kubernetes
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
+  RUN_VARIANT: "entropy-0"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "64"
+  ISAAC_LAB_ITERATIONS: "10"
+  ISAAC_LAB_EXPERIMENT_NAME: "npa_isaac_lab_sweep"
+  ISAAC_LAB_RUN_NAME: "${NPA_ISAAC_LAB_RUN_ID}-entropy-0"
+  ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1 agent.algorithm.entropy_coef=0.0"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/entropy-0/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/workspace/isaaclab/npa-runs/${NPA_ISAAC_LAB_RUN_ID}/${RUN_VARIANT}"
+  mkdir -p "${OUTPUT_DIR}" && cd "${OUTPUT_DIR}"
+  read -r -a HYDRA_ARGS <<< "${ISAAC_LAB_HYDRA_OVERRIDES}"
+  "${PYTHON_BIN}" "${TRAIN_SCRIPT}" --task "${ISAAC_LAB_TASK}" --num_envs "${ISAAC_LAB_NUM_ENVS}" --max_iterations "${ISAAC_LAB_ITERATIONS}" --headless --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" --run_name "${ISAAC_LAB_RUN_NAME}" "${HYDRA_ARGS[@]}" 2>&1 | tee isaac_lab_train.log
+  checkpoint="$(find logs/rsl_rl -name 'model_*.pt' -type f | sort | tail -1)"
+  test -n "${checkpoint}"
+  cp "${checkpoint}" npa_isaac_lab_checkpoint.pt
+  export NPA_ISAAC_LAB_CHECKPOINT="${checkpoint}"
+  "${PYTHON_BIN}" <<'PY'
+  import json, os, pathlib, time
+  from urllib.parse import urlparse
+  import boto3
+  root = pathlib.Path.cwd()
+  summary = {
+      "status": "success", "tool": "isaac_lab", "framework": "rsl_rl",
+      "task": os.environ["ISAAC_LAB_TASK"], "num_envs": int(os.environ["ISAAC_LAB_NUM_ENVS"]),
+      "steps": int(os.environ["ISAAC_LAB_ITERATIONS"]), "max_iterations": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "run_id": os.environ["NPA_ISAAC_LAB_RUN_ID"], "variant": os.environ["RUN_VARIANT"],
+      "run_name": os.environ["ISAAC_LAB_RUN_NAME"], "hydra_overrides": os.environ["ISAAC_LAB_HYDRA_OVERRIDES"],
+      "checkpoint_path": os.environ["NPA_ISAAC_LAB_CHECKPOINT"], "stable_checkpoint_path": str(root / "npa_isaac_lab_checkpoint.pt"),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+  (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps({"format": "npa_isaac_lab_rsl_rl_checkpoint_v1", **summary}, indent=2))
+  parsed = urlparse(os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/")
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+  for path in root.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, parsed.path.lstrip("/") + str(path.relative_to(root)))
+  PY
+---
+name: isaac-lab-rsl-rl-entropy-0-01
+resources:
+  cloud: kubernetes
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
+  RUN_VARIANT: "entropy-0-01"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "64"
+  ISAAC_LAB_ITERATIONS: "10"
+  ISAAC_LAB_EXPERIMENT_NAME: "npa_isaac_lab_sweep"
+  ISAAC_LAB_RUN_NAME: "${NPA_ISAAC_LAB_RUN_ID}-entropy-0-01"
+  ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1 agent.algorithm.entropy_coef=0.01"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/entropy-0-01/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then PYTHON_BIN="$(command -v python3 || command -v python)"; fi
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/workspace/isaaclab/npa-runs/${NPA_ISAAC_LAB_RUN_ID}/${RUN_VARIANT}"
+  mkdir -p "${OUTPUT_DIR}" && cd "${OUTPUT_DIR}"
+  read -r -a HYDRA_ARGS <<< "${ISAAC_LAB_HYDRA_OVERRIDES}"
+  "${PYTHON_BIN}" "${TRAIN_SCRIPT}" --task "${ISAAC_LAB_TASK}" --num_envs "${ISAAC_LAB_NUM_ENVS}" --max_iterations "${ISAAC_LAB_ITERATIONS}" --headless --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}" --run_name "${ISAAC_LAB_RUN_NAME}" "${HYDRA_ARGS[@]}" 2>&1 | tee isaac_lab_train.log
+  checkpoint="$(find logs/rsl_rl -name 'model_*.pt' -type f | sort | tail -1)"
+  test -n "${checkpoint}"
+  cp "${checkpoint}" npa_isaac_lab_checkpoint.pt
+  export NPA_ISAAC_LAB_CHECKPOINT="${checkpoint}"
+  "${PYTHON_BIN}" <<'PY'
+  import json, os, pathlib, time
+  from urllib.parse import urlparse
+  import boto3
+  root = pathlib.Path.cwd()
+  summary = {
+      "status": "success", "tool": "isaac_lab", "framework": "rsl_rl",
+      "task": os.environ["ISAAC_LAB_TASK"], "num_envs": int(os.environ["ISAAC_LAB_NUM_ENVS"]),
+      "steps": int(os.environ["ISAAC_LAB_ITERATIONS"]), "max_iterations": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "run_id": os.environ["NPA_ISAAC_LAB_RUN_ID"], "variant": os.environ["RUN_VARIANT"],
+      "run_name": os.environ["ISAAC_LAB_RUN_NAME"], "hydra_overrides": os.environ["ISAAC_LAB_HYDRA_OVERRIDES"],
+      "checkpoint_path": os.environ["NPA_ISAAC_LAB_CHECKPOINT"], "stable_checkpoint_path": str(root / "npa_isaac_lab_checkpoint.pt"),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+  (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps({"format": "npa_isaac_lab_rsl_rl_checkpoint_v1", **summary}, indent=2))
+  parsed = urlparse(os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/")
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+  for path in root.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, parsed.path.lstrip("/") + str(path.relative_to(root)))
+  PY

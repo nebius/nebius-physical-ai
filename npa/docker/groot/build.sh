@@ -13,7 +13,7 @@ Usage: build.sh [--registry REGISTRY] [--push]
 
 Builds the GR00T runtime image as npa-groot:<gr00t-runtime-version>.
 When --registry is provided, also tags REGISTRY/npa-groot:<version>.
-Use --registry cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID --push to publish.
+Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
 EOF
 }
 

@@ -22,6 +22,7 @@ from PIL import Image
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
 CLIP_EMBEDDING_DIM = 512
 CLIP_OUTPUT_TYPE = pa.list_(pa.float32(), list_size=CLIP_EMBEDDING_DIM)
+PERSON_CATEGORIES = frozenset({"person", "pedestrian"})
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class UDFSpec:
 
 def udf_has_person(batch: pa.RecordBatch) -> pa.Array:
     """Return whether each row has a person annotation."""
-    return _contains_category(batch, "person")
+    return _contains_any_category(batch, PERSON_CATEGORIES)
 
 
 def udf_has_rider(batch: pa.RecordBatch) -> pa.Array:
@@ -60,10 +61,15 @@ def udf_person_bbox_area_pct(batch: pa.RecordBatch) -> pa.Array:
             values.append(0.0)
             continue
         area = 0.0
+        seen_boxes: set[tuple[float, float, float, float]] = set()
         for category, bbox in zip(row_categories or [], row_bboxes or [], strict=False):
-            if category != "person" or not bbox or len(bbox) < 4:
+            if category not in PERSON_CATEGORIES or not bbox or len(bbox) < 4:
                 continue
             x1, y1, x2, y2 = (float(value) for value in bbox[:4])
+            box_key = (x1, y1, x2, y2)
+            if box_key in seen_boxes:
+                continue
+            seen_boxes.add(box_key)
             area += max(0.0, x2 - x1) * max(0.0, y2 - y1)
         values.append(float(area / image_area))
     return pa.array(values, type=pa.float32())
@@ -182,6 +188,14 @@ def _contains_category(batch: pa.RecordBatch, category: str) -> pa.Array:
     return pa.array(values, type=pa.bool_())
 
 
+def _contains_any_category(batch: pa.RecordBatch, categories: frozenset[str]) -> pa.Array:
+    values = [
+        any(category in categories for category in (row_categories or []))
+        for row_categories in _column(batch, "ann_categories").to_pylist()
+    ]
+    return pa.array(values, type=pa.bool_())
+
+
 def _column(batch: pa.RecordBatch, name: str) -> pa.Array:
     try:
         return batch.column(name)
@@ -286,6 +300,7 @@ __all__ = [
     "CLIP_EMBEDDING_DIM",
     "CLIP_MODEL_NAME",
     "CLIP_OUTPUT_TYPE",
+    "PERSON_CATEGORIES",
     "UDFSpec",
     "udf_clip_embedding",
     "udf_dhash",

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot import cleanup as cleanup_module
 from npa.orchestration.skypilot.cleanup import (
     CleanupResult,
@@ -28,6 +29,15 @@ def _fake_sky(tmp_path: Path) -> Path:
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
     sky.chmod(0o755)
     return sky
+
+
+@pytest.fixture(autouse=True)
+def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(cleanup_module, "ensure_skypilot_version", lambda sky_bin: Path(sky_bin))
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", tmp_path / "missing-config.yaml")
+    monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
 
 
 def test_sky_down_constructs_expected_subprocess_invocation(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -203,6 +213,80 @@ def test_cleanup_all_for_run_does_not_touch_controller_by_default(monkeypatch: p
     cleanup_all_for_run("w9skypilot-controller-default-20260516T151040Z")
 
     assert controller_calls == []
+
+
+def test_cleanup_all_for_run_with_no_matching_jobs_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancel_calls: list[str] = []
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", lambda run_id, **kwargs: [])
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **kwargs: cancel_calls.append(job_id) or CleanupResult(errors=["unexpected"]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster_name, **kwargs: CleanupResult(resources_removed=[cluster_name]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "cleanup_jobs_controller",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("controller cleanup should not run")),
+    )
+
+    result = cleanup_all_for_run("w9skypilot-no-jobs-20260516T151040Z")
+
+    assert result.ok
+    assert cancel_calls == []
+    assert result.resources_removed
+
+
+def test_cleanup_all_for_run_logs_cancel_failure_and_continues(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    sky_bin = _fake_sky(tmp_path)
+
+    monkeypatch.setattr(
+        cleanup_module,
+        "_matching_jobs",
+        lambda run_id, **kwargs: [{"job_id": "99", "name": f"{run_id}-task", "status": "RUNNING"}],
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster_name, **kwargs: CleanupResult(resources_removed=[cluster_name]),
+    )
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="cancel refused")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = cleanup_all_for_run("w9skypilot-cancel-fail-20260516T151040Z", sky_bin=sky_bin)
+
+    assert any("cancel refused" in error for error in result.errors)
+    assert result.resources_removed
+
+
+def test_cleanup_all_for_run_controller_opt_out_does_not_status_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(cleanup_module, "_matching_jobs", lambda run_id, **kwargs: [])
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd[1] != "status"
+        return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = cleanup_all_for_run("w9skypilot-controller-optout-20260516T151040Z", sky_bin=sky_bin)
+
+    assert result.errors == []
+    assert calls
+    assert all(cmd[1] == "down" for cmd in calls)
 
 
 def test_cleanup_all_for_run_touches_controller_when_explicitly_asked(monkeypatch: pytest.MonkeyPatch) -> None:

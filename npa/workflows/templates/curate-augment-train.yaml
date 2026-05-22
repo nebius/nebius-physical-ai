@@ -13,7 +13,7 @@ spec:
   arguments:
     parameters:
       - name: dataset-uri
-        value: s3://YOUR_S3_BUCKET/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt
+        value: s3://${NPA_S3_BUCKET}/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt
       - name: output-prefix
         value: argo-artifacts/{{workflow.name}}/
       - name: gpu-type
@@ -43,8 +43,8 @@ spec:
                 - name: input
                   s3:
                     endpoint: storage.eu-north1.nebius.cloud
-                    bucket: YOUR_S3_BUCKET
-                    key: '{{=sprig.trimPrefix("s3://YOUR_S3_BUCKET/", inputs.parameters["dataset-uri"])}}'
+                    bucket: your-bucket-name
+                    key: '{{=sprig.trimPrefix("s3://${NPA_S3_BUCKET}/", inputs.parameters["dataset-uri"])}}'
                     region: eu-north1
                     insecure: false
                     accessKeySecret:

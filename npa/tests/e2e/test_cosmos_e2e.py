@@ -16,10 +16,10 @@ import npa.clients.serverless as serverless_mod
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
 
-PROJECT_ID = "YOUR_PROJECT_ID"
-BUCKET = "YOUR_S3_BUCKET"
+PROJECT_ID = "project-test-00000000000"
+BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
-IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-cosmos:1.0.9"
+IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-cosmos:1.0.9"
 MODEL_ID = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
 PIPELINE_CLASS = "CosmosTextToWorldPipeline"
 PROMPT = "A robot arm picks up a red cube on a wooden table"

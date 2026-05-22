@@ -6,6 +6,8 @@ This directory contains documentation for the `npa` Workbench CLI and SDK.
 
 | Path | Purpose |
 | --- | --- |
+| [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, first deploy, and BDD100K pipeline validation |
+| [quickstart.md](quickstart.md) | Full `npa` workbench CLI quickstart |
 | [cli/README.md](cli/README.md) | CLI command reference index |
 | [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, JSON error output |
 | [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
@@ -18,7 +20,7 @@ This directory contains documentation for the `npa` Workbench CLI and SDK.
 
 | Reader | Start with |
 | --- | --- |
-| Customer running their first workload | A relevant cookbook |
+| Customer running their first workload | [getting-started.md](getting-started.md) |
 | SDK integrator or agent author | [sdk/errors.md](sdk/errors.md) |
 | Internal engineer triaging a failure | [cli-errors.md](cli-errors.md) |
 | Operator running e2e tests | [testing/e2e-serverless.md](testing/e2e-serverless.md) |

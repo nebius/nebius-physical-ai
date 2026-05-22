@@ -6,9 +6,13 @@ import json
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import time
+import webbrowser
 from enum import Enum
 from importlib import resources
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -51,7 +55,13 @@ from npa.clients.config import (
     workbench_is_byovm,
     write_config,
 )
-from npa.clients.credentials import apply_shared_credential_env, load_credentials, shared_credential_env
+from npa.clients.credentials import (
+    apply_shared_credential_env,
+    load_credentials,
+    shared_credential_env,
+    storage_endpoint_url,
+    storage_endpoint_warning,
+)
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError
@@ -118,6 +128,12 @@ FIFTYONE_HOME = "/opt/fiftyone"
 FIFTYONE_CONTAINER_DB_DIR = f"{FIFTYONE_HOME}/container-db"
 FIFTYONE_VENV = f"{FIFTYONE_HOME}/venv"
 FIFTYONE_SERVICE = "npa-fiftyone-app"
+FIFTYONE_K8S_DEFAULT_CLUSTER = "npa-workbench-eu-north1"
+FIFTYONE_K8S_DEFAULT_NAME = "npa-fiftyone"
+FIFTYONE_K8S_DEFAULT_NAMESPACE = "workbench"
+FIFTYONE_K8S_PUBLIC_URL_ANNOTATION = "npa.nebius.com/public-url"
+FIFTYONE_K8S_SERVICE_TYPE_ANNOTATION = "npa.nebius.com/service-type"
+FIFTYONE_K8S_EXTERNAL_IP_TIMEOUT_SEC = 300
 DEFAULT_APP_PORT = 5151
 DEFAULT_CPU_PLATFORM = "cpu-d3"
 DEFAULT_CPU_PRESET = "4vcpu-16gb"
@@ -152,6 +168,7 @@ class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
     byovm = "byovm"
+    kubernetes = "kubernetes"
     serverless = "serverless"
 
 
@@ -226,6 +243,17 @@ def _get_ssh_config(**overrides: str):
         )
     except ConfigError as exc:
         _fail(str(exc))
+
+
+def _try_get_ssh_config(**overrides: str):
+    try:
+        return resolve_ssh_config(
+            project=_project_alias or None,
+            name=_workbench_name or None,
+            **{k: v for k, v in overrides.items() if v is not None},
+        )
+    except ConfigError:
+        return None
 
 
 def _remote_bash(script: str) -> str:
@@ -2141,6 +2169,467 @@ def cleanup_partial_cmd(
     typer.echo(f"Cleanup complete for {proj_alias}/{wb_name}.")
 
 
+def _kubectl_command(args: list[str], *, kubeconfig: str = "") -> list[str]:
+    cmd = ["kubectl"]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    cmd.extend(args)
+    return cmd
+
+
+def _kubectl(
+    args: list[str],
+    *,
+    stdin: str | None = None,
+    dry_run: bool = False,
+    capture: bool = False,
+    kubeconfig: str = "",
+) -> str:
+    cmd = _kubectl_command(args, kubeconfig=kubeconfig)
+    if dry_run:
+        typer.echo(" ".join(cmd))
+        return ""
+    if shutil.which("kubectl") is None:
+        _fail("kubectl is not installed or not on PATH")
+    try:
+        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        _fail(f"kubectl command failed: {detail}")
+    if not capture and result.stdout.strip():
+        typer.echo(result.stdout.strip())
+    return result.stdout
+
+
+def _resolve_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
+    if kubeconfig.strip():
+        return kubeconfig.strip()
+    if not cluster_name.strip():
+        return ""
+    path = Path.home() / ".npa" / "clusters" / cluster_name.strip() / "kubeconfig"
+    return str(path) if path.exists() else ""
+
+
+def _resolve_required_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
+    resolved = _resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    if not resolved:
+        _fail(
+            "No FiftyOne workbench config or NPA-managed Kubernetes profile was found.\n"
+            "  Deploy/register a workbench first, or pass --kubeconfig for an existing cluster.\n"
+            f"  Expected ~/.npa/clusters/{cluster_name}/kubeconfig for cluster profile '{cluster_name}'."
+        )
+    return resolved
+
+
+def _k8s_get_json(kind: str, name: str, *, namespace: str, kubeconfig: str) -> dict[str, Any] | None:
+    if shutil.which("kubectl") is None:
+        return None
+    cmd = _kubectl_command(["get", kind, name, "-n", namespace, "-o", "json"], kubeconfig=kubeconfig)
+    result = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _k8s_app_command(port: int) -> str:
+    return f"""\
+source {FIFTYONE_VENV}/bin/activate
+export FIFTYONE_DATABASE_DIR="${{FIFTYONE_DATABASE_DIR:-{FIFTYONE_HOME}/db}}"
+export FIFTYONE_DEFAULT_DATASET_DIR="${{FIFTYONE_DEFAULT_DATASET_DIR:-{FIFTYONE_HOME}/datasets}}"
+export FIFTYONE_DATASET_ZOO_DIR="${{FIFTYONE_DATASET_ZOO_DIR:-{FIFTYONE_HOME}/zoo/datasets}}"
+export FIFTYONE_MODEL_ZOO_DIR="${{FIFTYONE_MODEL_ZOO_DIR:-{FIFTYONE_HOME}/zoo/models}}"
+mkdir -p "$FIFTYONE_DATABASE_DIR" "$FIFTYONE_DEFAULT_DATASET_DIR" "$FIFTYONE_DATASET_ZOO_DIR" "$FIFTYONE_MODEL_ZOO_DIR"
+python - <<'PY'
+import os
+import signal
+import time
+
+import fiftyone as fo
+
+stop = False
+
+
+def handle_stop(signum, frame):
+    global stop
+    stop = True
+
+
+signal.signal(signal.SIGINT, handle_stop)
+signal.signal(signal.SIGTERM, handle_stop)
+
+address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "{port}"))
+dataset_name = os.environ.get("FIFTYONE_DATASET_NAME", "").strip()
+dataset = fo.load_dataset(dataset_name) if dataset_name and dataset_name in fo.list_datasets() else None
+session = fo.launch_app(dataset, remote=True, address=address, port=port, auto=False)
+print(f"NPA_FIFTYONE_APP_READY http://{{address}}:{{port}}", flush=True)
+try:
+    while not stop:
+        time.sleep(1)
+finally:
+    session.close()
+PY
+"""
+
+
+def _kubernetes_manifest(
+    *,
+    image: str,
+    name: str,
+    namespace: str,
+    port: int,
+    service_type: str,
+    image_pull_secret: str,
+) -> dict[str, Any]:
+    labels = {
+        "app": name,
+        "app.kubernetes.io/name": name,
+        "app.kubernetes.io/instance": name,
+    }
+    return {
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": name, "namespace": namespace, "labels": labels},
+                "spec": {
+                    "replicas": 1,
+                    "strategy": {"type": "Recreate"},
+                    "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
+                    "template": {
+                        "metadata": {"labels": labels},
+                        "spec": {
+                            **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
+                            "containers": [
+                                {
+                                    "name": "app",
+                                    "image": image,
+                                    "imagePullPolicy": "IfNotPresent",
+                                    "command": ["/bin/bash", "-lc", _k8s_app_command(port)],
+                                    "ports": [{"name": "http", "containerPort": port}],
+                                    "env": [
+                                        {"name": "FIFTYONE_DEFAULT_APP_ADDRESS", "value": "0.0.0.0"},
+                                        {"name": "FIFTYONE_DEFAULT_APP_PORT", "value": str(port)},
+                                        {"name": "FIFTYONE_DATABASE_DIR", "value": f"{FIFTYONE_HOME}/db"},
+                                        {"name": "FIFTYONE_DEFAULT_DATASET_DIR", "value": f"{FIFTYONE_HOME}/datasets"},
+                                        {"name": "FIFTYONE_DATASET_ZOO_DIR", "value": f"{FIFTYONE_HOME}/zoo/datasets"},
+                                        {"name": "FIFTYONE_MODEL_ZOO_DIR", "value": f"{FIFTYONE_HOME}/zoo/models"},
+                                        {"name": "FIFTYONE_DO_NOT_TRACK", "value": "true"},
+                                    ],
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/", "port": "http"},
+                                        "initialDelaySeconds": 20,
+                                        "periodSeconds": 15,
+                                        "timeoutSeconds": 5,
+                                    },
+                                    "resources": {
+                                        "requests": {"cpu": "2", "memory": "8Gi"},
+                                        "limits": {"cpu": "4", "memory": "16Gi"},
+                                    },
+                                    "volumeMounts": [
+                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/datasets", "subPath": "datasets"},
+                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/db", "subPath": "db"},
+                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/zoo", "subPath": "zoo"},
+                                    ],
+                                }
+                            ],
+                            "volumes": [{"name": "fiftyone-data", "emptyDir": {}}],
+                        },
+                    },
+                },
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {
+                    "name": name,
+                    "namespace": namespace,
+                    "labels": labels,
+                    "annotations": {FIFTYONE_K8S_SERVICE_TYPE_ANNOTATION: service_type},
+                },
+                "spec": {
+                    "type": service_type,
+                    "selector": {"app.kubernetes.io/instance": name},
+                    "ports": [{"name": "http", "port": port, "targetPort": "http"}],
+                },
+            },
+        ],
+    }
+
+
+def _service_external_host(service: dict[str, Any]) -> str:
+    for item in service.get("status", {}).get("loadBalancer", {}).get("ingress", []) or []:
+        host = str(item.get("ip") or item.get("hostname") or "").strip()
+        if host:
+            return host
+    external_ips = service.get("spec", {}).get("externalIPs", []) or []
+    return str(external_ips[0]).strip() if external_ips else ""
+
+
+def _k8s_public_url(service: dict[str, Any], *, port: int) -> str:
+    annotations = service.get("metadata", {}).get("annotations", {}) or {}
+    annotated = str(annotations.get(FIFTYONE_K8S_PUBLIC_URL_ANNOTATION, "")).strip()
+    if annotated:
+        return annotated
+    host = _service_external_host(service)
+    return f"http://{host}:{port}" if host else ""
+
+
+def _wait_for_external_ip(
+    *,
+    name: str,
+    namespace: str,
+    kubeconfig: str,
+    port: int,
+    timeout_sec: int = FIFTYONE_K8S_EXTERNAL_IP_TIMEOUT_SEC,
+) -> tuple[str, str]:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        service = _k8s_get_json("service", name, namespace=namespace, kubeconfig=kubeconfig)
+        if service:
+            host = _service_external_host(service)
+            if host:
+                return host, f"http://{host}:{port}"
+        time.sleep(5)
+    _fail(f"External IP for service/{name} did not become available within {timeout_sec} seconds")
+
+
+def _patch_k8s_service_type(
+    *,
+    name: str,
+    namespace: str,
+    service_type: str,
+    kubeconfig: str,
+    public_url: str = "",
+) -> None:
+    annotations = {FIFTYONE_K8S_SERVICE_TYPE_ANNOTATION: service_type}
+    if public_url:
+        annotations[FIFTYONE_K8S_PUBLIC_URL_ANNOTATION] = public_url
+    patch = {
+        "metadata": {"annotations": annotations},
+        "spec": {"type": service_type},
+    }
+    _kubectl(
+        ["patch", "service", name, "-n", namespace, "--type=merge", "-p", json.dumps(patch)],
+        kubeconfig=kubeconfig,
+    )
+
+
+def _save_k8s_workbench_state(
+    *,
+    cluster_name: str,
+    kubeconfig: str,
+    name: str,
+    namespace: str,
+    port: int,
+    service_type: str,
+    public_url: str,
+) -> None:
+    project = _project_alias or cluster_name
+    workbench = _workbench_name or "fiftyone"
+    endpoint = public_url or f"http://{name}.{namespace}.svc.cluster.local:{port}"
+    write_config(
+        {
+            "default_project": project,
+            "default_workbench": workbench,
+            "projects": {
+                project: {
+                    "workbenches": {
+                        workbench: {
+                            "workbench_type": "fiftyone",
+                            "runtime": WorkbenchRuntime.kubernetes.value,
+                            "endpoint": endpoint,
+                            "endpoint_strategy": "public" if public_url else "cluster",
+                            "service_port": port,
+                            "app_port": port,
+                            "app_status": APP_STATUS_HEALTHY,
+                            "kubernetes": {
+                                "cluster_name": cluster_name,
+                                "kubeconfig": kubeconfig,
+                                "namespace": namespace,
+                                "service_name": name,
+                                "service_type": service_type,
+                                "public_url": public_url,
+                            },
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+
+def _deploy_kubernetes_fiftyone(
+    *,
+    cluster_name: str,
+    kubeconfig: str,
+    image: str,
+    name: str,
+    namespace: str,
+    port: int,
+    image_pull_secret: str,
+    public_ip: bool,
+    destroy: bool,
+    dry_run: bool,
+    output: OutputFormat,
+) -> None:
+    service_type = "LoadBalancer" if public_ip else "ClusterIP"
+    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    if destroy:
+        _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
+        _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
+        _output({"status": "deleted", "runtime": "kubernetes", "name": name, "namespace": namespace}, output)
+        return
+
+    manifest = _kubernetes_manifest(
+        image=image,
+        name=name,
+        namespace=namespace,
+        port=port,
+        service_type=service_type,
+        image_pull_secret=image_pull_secret,
+    )
+    if dry_run:
+        typer.echo(json.dumps(manifest, indent=2, sort_keys=True))
+        return
+
+    service_exists = _k8s_get_json("service", name, namespace=namespace, kubeconfig=resolved_kubeconfig) is not None
+    deployment_exists = _k8s_get_json("deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig) is not None
+    if not service_exists or not deployment_exists:
+        _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
+    else:
+        _patch_k8s_service_type(
+            name=name,
+            namespace=namespace,
+            service_type=service_type,
+            kubeconfig=resolved_kubeconfig,
+        )
+    _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
+
+    public_url = ""
+    if public_ip:
+        _, public_url = _wait_for_external_ip(
+            name=name,
+            namespace=namespace,
+            kubeconfig=resolved_kubeconfig,
+            port=port,
+        )
+        _patch_k8s_service_type(
+            name=name,
+            namespace=namespace,
+            service_type=service_type,
+            kubeconfig=resolved_kubeconfig,
+            public_url=public_url,
+        )
+
+    _save_k8s_workbench_state(
+        cluster_name=cluster_name,
+        kubeconfig=resolved_kubeconfig,
+        name=name,
+        namespace=namespace,
+        port=port,
+        service_type=service_type,
+        public_url=public_url,
+    )
+    payload = {
+        "status": "deployed",
+        "runtime": "kubernetes",
+        "name": name,
+        "namespace": namespace,
+        "service_type": service_type,
+        "cluster_url": f"http://{name}.{namespace}.svc.cluster.local:{port}",
+        "public_url": public_url,
+    }
+    _output(payload, output)
+
+
+def _k8s_status_payload(
+    *,
+    cluster_name: str,
+    kubeconfig: str,
+    name: str,
+    namespace: str,
+    port: int,
+) -> dict[str, Any] | None:
+    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    service = _k8s_get_json("service", name, namespace=namespace, kubeconfig=resolved_kubeconfig)
+    if service is None:
+        return None
+    deployment = _k8s_get_json("deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig)
+    service_type = str(service.get("spec", {}).get("type") or "ClusterIP")
+    public_url = _k8s_public_url(service, port=port) if service_type == "LoadBalancer" else ""
+    ready_replicas = int((deployment or {}).get("status", {}).get("readyReplicas") or 0)
+    desired_replicas = int((deployment or {}).get("spec", {}).get("replicas") or 0)
+    status = "RUNNING" if ready_replicas > 0 and (desired_replicas == 0 or ready_replicas >= desired_replicas) else "PENDING"
+    return {
+        "status": status,
+        "runtime": "kubernetes",
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "service_type": service_type,
+        "public_url": public_url,
+        "local_access": f"npa workbench fiftyone open --local-port {port}",
+        "ready_replicas": ready_replicas,
+        "desired_replicas": desired_replicas,
+        "kubeconfig": resolved_kubeconfig,
+    }
+
+
+def _k8s_workbench_config() -> dict[str, Any]:
+    project = _project_alias or default_project_name()
+    workbench = _workbench_name or default_workbench_name()
+    projects = list_projects()
+    wb = (
+        projects.get(project, {})
+        .get("workbenches", {})
+        .get(workbench, {})
+    )
+    return wb if isinstance(wb, dict) and wb.get("runtime") == WorkbenchRuntime.kubernetes.value else {}
+
+
+def _k8s_options_from_config(
+    *,
+    cluster_name: str,
+    kubeconfig: str,
+    namespace: str,
+    service_name: str,
+    port: int,
+) -> tuple[str, str, str, str, int]:
+    wb = _k8s_workbench_config()
+    k8s = wb.get("kubernetes", {}) if isinstance(wb.get("kubernetes"), dict) else {}
+    resolved_cluster = str(k8s.get("cluster_name") or cluster_name)
+    resolved_kubeconfig = str(k8s.get("kubeconfig") or kubeconfig)
+    resolved_namespace = str(k8s.get("namespace") or namespace)
+    resolved_service = str(k8s.get("service_name") or service_name)
+    raw_port = k8s.get("port") or wb.get("service_port") or wb.get("app_port") or port
+    try:
+        resolved_port = int(raw_port)
+    except (TypeError, ValueError):
+        resolved_port = port
+    return resolved_cluster, resolved_kubeconfig, resolved_namespace, resolved_service, resolved_port
+
+
+def _emit_k8s_status(payload: dict[str, Any], *, output: OutputFormat) -> None:
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    service_type = payload["service_type"]
+    if service_type == "LoadBalancer":
+        typer.echo("Service type:  LoadBalancer")
+        typer.echo(f"Public URL:    {payload.get('public_url') or '<pending>'}")
+    else:
+        typer.echo("Service type:  ClusterIP (internal only)")
+        typer.echo("Local access:  run `npa workbench fiftyone open`")
+    typer.echo(f"Status:        {payload['status']}")
+
+
 @app.command("deploy")
 def deploy_cmd(
     gpu_type: str = typer.Option("", "--gpu-type", help="Optional Nebius GPU platform."),
@@ -2152,6 +2641,14 @@ def deploy_cmd(
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
     tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
     tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
+    storage_endpoint: str = typer.Option(
+        "",
+        "--storage-endpoint",
+        help=(
+            "Nebius S3-compatible endpoint override, for example "
+            "storage.eu-north1.nebius.cloud. Also settable with NPA_STORAGE_ENDPOINT."
+        ),
+    ),
     skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only deploy the app."),
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
@@ -2179,19 +2676,57 @@ def deploy_cmd(
     verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help=f"{RUNTIME_HELP} Use kubernetes for an existing MK8s workbench service.",
+    ),
+    public_ip: bool = typer.Option(
+        False,
+        "--public-ip/--no-public-ip",
+        help="Expose the FiftyOne App via a LoadBalancer Service with a public IP.",
+    ),
+    cluster_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_CLUSTER,
+        "--cluster-name",
+        help="NPA cluster profile name for cached kubeconfig when using Kubernetes.",
+    ),
+    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override when using Kubernetes."),
+    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes deployment/service name."),
+    image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name."),
     host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
     ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
     ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
     gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
     disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
     default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
+    image: str = typer.Option("", "--image", help="Container image reference."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Deploy or destroy a FiftyOne dataset curation VM."""
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
         _fail("FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`.")
+    if public_ip or runtime == WorkbenchRuntime.kubernetes:
+        image_ref = image.strip() or container_image_for_tool(
+            "fiftyone",
+            registry=resolve_container_registry(_project_alias or None),
+        )
+        _deploy_kubernetes_fiftyone(
+            cluster_name=cluster_name,
+            kubeconfig=kubeconfig,
+            image=image_ref,
+            name=service_name,
+            namespace=namespace,
+            port=port,
+            image_pull_secret=image_pull_secret,
+            public_ip=public_ip,
+            destroy=destroy,
+            dry_run=dry_run,
+            output=output,
+        )
+        return
     platform, preset, uses_gpu = _compute_selection(gpu_type, gpu_preset, cpu_type, cpu_preset)
     if byovm:
         uses_gpu = True
@@ -2208,6 +2743,19 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var format: {item} (expected key=value)")
         k, v = item.split("=", 1)
         extra_vars[k] = v
+    storage_endpoint_override = storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
+    if storage_endpoint_override and "s3_endpoint" not in extra_vars:
+        extra_vars["s3_endpoint"] = storage_endpoint_url(storage_endpoint_override)
+    endpoint_warning = storage_endpoint_warning(
+        storage_endpoint_override
+        or extra_vars.get("s3_endpoint", "")
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("AWS_ENDPOINT_URL", "")
+    )
+    if endpoint_warning:
+        typer.echo(endpoint_warning)
+    # TODO: infer the storage endpoint from the selected Nebius region once all
+    # deploy runtimes share a single region-aware storage resolver.
 
     saved_env = resolve_environment(
         proj_alias,
@@ -3187,7 +3735,7 @@ def restart_cmd(
             result["stderr_tail"] = err.strip()[-1000:]
         typer.echo(json.dumps(result, indent=2))
     else:
-        typer.echo(f"  status: restarted")
+        typer.echo("  status: restarted")
         typer.echo(f"  FiftyOne URL: {browser_url}")
 
 
@@ -3254,13 +3802,85 @@ def datasets_list_cmd(
         )
 
 
+@app.command("open")
+def open_app_cmd(
+    local_port: int = typer.Option(DEFAULT_APP_PORT, "--local-port", help="Local port to forward to."),
+    cluster_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_CLUSTER, "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
+    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
+    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."),
+) -> None:
+    """Port-forward the FiftyOne App to localhost and open it in the browser."""
+    if local_port < 1024 or local_port > 65535:
+        _fail("--local-port must be between 1024 and 65535")
+    cluster_name, kubeconfig, namespace, service_name, _ = _k8s_options_from_config(
+        cluster_name=cluster_name,
+        kubeconfig=kubeconfig,
+        namespace=namespace,
+        service_name=service_name,
+        port=DEFAULT_APP_PORT,
+    )
+    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    url = f"http://localhost:{local_port}"
+    cmd = _kubectl_command(
+        ["port-forward", "-n", namespace, f"svc/{service_name}", f"{local_port}:{DEFAULT_APP_PORT}"],
+        kubeconfig=resolved_kubeconfig,
+    )
+    typer.echo(f"FiftyOne App: {url}")
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+    try:
+        proc = subprocess.Popen(cmd)
+    except FileNotFoundError:
+        _fail("kubectl is not installed or not on PATH")
+    try:
+        while proc.poll() is None:
+            time.sleep(0.25)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
 @app.command("status")
 def status_cmd(
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
+    cluster_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_CLUSTER, "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
+    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
+    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Check whether the FiftyOne app responds on its web port."""
-    cfg = _get_ssh_config()
+    cfg = _try_get_ssh_config()
+    if cfg is None:
+        cluster_name, kubeconfig, namespace, service_name, port = _k8s_options_from_config(
+            cluster_name=cluster_name,
+            kubeconfig=kubeconfig,
+            namespace=namespace,
+            service_name=service_name,
+            port=port,
+        )
+        payload = _k8s_status_payload(
+            cluster_name=cluster_name,
+            kubeconfig=kubeconfig,
+            name=service_name,
+            namespace=namespace,
+            port=port,
+        )
+        if payload is None:
+            _fail(f"FiftyOne Kubernetes service {namespace}/{service_name} was not found")
+        _emit_k8s_status(payload, output=output)
+        return
+
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
 
     try:

@@ -55,6 +55,7 @@ def _evaluate_with_model(request: EvalRequest) -> dict[str, Any]:
         view=request.eval_view,
         batch_size=1,
         shuffle=False,
+        label_map=request.label_map,
     )
     return _compute_map_metrics(model, dataloader, device=device)
 
@@ -138,4 +139,3 @@ def _finite_float(value: Any) -> float:
         value = value.item()
     number = float(value)
     return number if math.isfinite(number) and number >= 0.0 else 0.0
-

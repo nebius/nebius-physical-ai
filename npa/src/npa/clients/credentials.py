@@ -22,6 +22,14 @@ PERMISSIONS_WARNING = (
     "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
 )
 _TOKEN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+UK_SOUTH1_STORAGE_ENDPOINT = "storage.uk-south1.nebius.cloud"
+EU_NORTH1_STORAGE_ENDPOINT = "storage.eu-north1.nebius.cloud"
+UK_SOUTH1_STORAGE_WARNING = (
+    "Warning: using default storage endpoint storage.uk-south1.nebius.cloud.\n"
+    "If your cluster is in eu-north1, pass --storage-endpoint "
+    "storage.eu-north1.nebius.cloud\n"
+    "or set NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud in your environment."
+)
 
 
 @dataclass
@@ -238,10 +246,36 @@ def load_credentials(
         s3_endpoint=(
             env.get("AWS_ENDPOINT_URL")
             or env.get("NEBIUS_S3_ENDPOINT")
+            or env.get("NPA_STORAGE_ENDPOINT")
             or file_storage.get("endpoint", "")
         ),
         s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
     )
+
+
+def storage_endpoint_url(endpoint: str) -> str:
+    """Return a URL form for a Nebius S3-compatible endpoint."""
+    value = endpoint.strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        return value.rstrip("/")
+    return f"https://{value.rstrip('/')}"
+
+
+def storage_endpoint_host(endpoint: str) -> str:
+    """Return the host part used for endpoint comparisons."""
+    value = endpoint.strip().rstrip("/")
+    if "://" in value:
+        value = value.split("://", 1)[1]
+    return value.split("/", 1)[0].lower()
+
+
+def storage_endpoint_warning(endpoint: str) -> str:
+    """Return an onboarding warning for the historical uk-south1 endpoint."""
+    if storage_endpoint_host(endpoint) != UK_SOUTH1_STORAGE_ENDPOINT:
+        return ""
+    return UK_SOUTH1_STORAGE_WARNING
 
 
 def shared_credential_env(credentials: CredentialsConfig) -> dict[str, str]:

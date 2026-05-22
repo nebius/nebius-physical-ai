@@ -16,11 +16,11 @@ from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
 
 PROJECT_ALIAS = "eu-north1"
-PROJECT_ID = "YOUR_PROJECT_ID"
-BUCKET = "YOUR_S3_BUCKET"
+PROJECT_ID = "project-test-00000000000"
+BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "h200"
-IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-genesis:0.4.6"
+IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-genesis:0.4.6"
 GPU_TYPE = "h200"
 GPU_PRESET = "1gpu-16vcpu-200gb"
 GPU_COUNT = 1

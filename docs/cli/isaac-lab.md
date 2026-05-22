@@ -13,6 +13,7 @@ Options
 --help  Show this message and exit.
 Commands
 list  List configured Isaac Lab workbenches.
+cleanup-partial  Clean up orphaned Terraform resources from an interrupted Isaac Lab deploy.
 deploy  Deploy or destroy an Isaac Lab workbench.
 status  Check Isaac Lab VM status via SSH.
 system-info  Collect and display system hardware information from the Isaac Lab VM.
@@ -34,6 +35,7 @@ export-lerobot  Generate Isaac Lab G1 rollouts and export them as a standard LeR
 | Command | Description |
 | --- | --- |
 | `list` | List configured Isaac Lab workbenches. |
+| `cleanup-partial` | Clean up orphaned Terraform resources from an interrupted Isaac Lab deploy. |
 | `deploy` | Deploy or destroy an Isaac Lab workbench. |
 | `status` | Check Isaac Lab VM status via SSH. |
 | `system-info` | Collect and display system hardware information from the Isaac Lab VM. |

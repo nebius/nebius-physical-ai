@@ -79,6 +79,24 @@ def test_person_bbox_area_pct_sums_multiple_person_boxes() -> None:
     assert udf_person_bbox_area_pct(batch).to_pylist() == pytest.approx([0.03])
 
 
+def test_person_udfs_treat_pedestrian_as_person_without_double_counting_aliases() -> None:
+    batch = pa.table(
+        {
+            "image_id": ["real-bdd"],
+            "width": pa.array([100], type=pa.int32()),
+            "height": pa.array([100], type=pa.int32()),
+            "ann_categories": pa.array([["pedestrian", "person", "car"]], type=pa.list_(pa.string())),
+            "ann_bboxes": pa.array(
+                [[[0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 100.0, 100.0]]],
+                type=pa.list_(pa.list_(pa.float32())),
+            ),
+        }
+    ).to_batches()[0]
+
+    assert udf_has_person(batch).to_pylist() == [True]
+    assert udf_person_bbox_area_pct(batch).to_pylist() == pytest.approx([0.01])
+
+
 def test_dhash_is_deterministic_for_same_image() -> None:
     batch = pa.table({"image_bytes": pa.array([_jpeg_bytes(), _jpeg_bytes()], type=pa.large_binary())}).to_batches()[0]
 
@@ -483,7 +501,7 @@ def test_clip_embedding_deployed_service_e2e() -> None:
     run_id = os.environ.get("NPA_TEST_RUN_ID", "manual")
     lance_uri = os.environ.get(
         "NPA_TEST_LANCEDB_URI",
-        f"s3://YOUR_S3_BUCKET/lancedb/_validation/clip-embedding-{run_id}/",
+        f"s3://your-bucket-name/lancedb/_validation/clip-embedding-{run_id}/",
     )
     table = f"bdd_clip_{run_id.replace('-', '_')}"
 

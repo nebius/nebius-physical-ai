@@ -23,8 +23,7 @@ deploy  Deploy or update LeRobot infrastructure and application.
 system-info  Collect and display system hardware information from the VM.
 benchmark  Run a benchmark suite: collect system info, train each model at each num_workers value, upload
 results to S3.
-profile-train  Profile training on the VM. Modes: wallclock (throughput, no overhead), profiler (torch.profiler
-stage breakdown), or inference (forward-only latency at batch_size=1).
+profile-train  Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference.
 train-student  Train a vision-only student policy via LeRobot imitation learning.
 ```
 
@@ -50,7 +49,7 @@ train-student  Train a vision-only student policy via LeRobot imitation learning
 | `deploy` | Deploy or update LeRobot infrastructure and application. |
 | `system-info` | Collect and display system hardware information from the VM. |
 | `benchmark` | Run a benchmark suite: collect system info, train each model at each num_workers value, upload |
-| `profile-train` | Profile training on the VM. Modes: wallclock (throughput, no overhead), profiler (torch.profiler |
+| `profile-train` | Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference. |
 | `train-student` | Train a vision-only student policy via LeRobot imitation learning. |
 
 ## Examples

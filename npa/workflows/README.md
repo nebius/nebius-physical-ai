@@ -27,7 +27,7 @@ Submit a Workflow from a WorkflowTemplate:
 ```bash
 argo submit -n argo \
   --from workflowtemplate/curate-augment-train \
-  -p dataset-uri=s3://YOUR_S3_BUCKET/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt \
+  -p dataset-uri=s3://${NPA_S3_BUCKET}/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt \
   --watch
 ```
 

@@ -1,65 +1,65 @@
 version: 1
 artifacts:
   - name: hook-video
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/hooks/demo-hook-isaac-g1-groot-20260510T033541Z.mp4
+    source_uri: s3://your-bucket-name/demo-prestage/hooks/demo-hook-isaac-g1-groot-20260510T033541Z.mp4
     target_path: hooks/demo-hook-isaac-g1-groot-20260510T033541Z.mp4
     sha256: 9b5a969308fd31473b3f147b6883ee7d61c00317bb4754ae48e02dd8f2bce29d
     size_bytes: 249511
   - name: cosmos-prompt-05
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/cosmos/prompt-05-humanoid-obstacle-carry.mp4
+    source_uri: s3://your-bucket-name/demo-prestage/cosmos/prompt-05-humanoid-obstacle-carry.mp4
     target_path: cosmos/prompt-05-humanoid-obstacle-carry.mp4
     sha256: 49cd20f0ea19e6b53c36f8a132428449b736c56bcd7cd4c4eb222c905b5dda8b
     size_bytes: 544703
   - name: isaac-lab-trajectory-mp4
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/visuals/isaac-lab-trajectory.mp4
+    source_uri: s3://your-bucket-name/demo-prestage/visuals/isaac-lab-trajectory.mp4
     target_path: visuals/isaac-lab-trajectory.mp4
     sha256: ee6e831b53ad0d5866221c11313124c3c45f8aa553fc154535c07660f8d31eb2
     size_bytes: 861140
   - name: isaac-lab-trajectory-rrd
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/visuals/isaac-lab-trajectory.rrd
+    source_uri: s3://your-bucket-name/demo-prestage/visuals/isaac-lab-trajectory.rrd
     target_path: visuals/isaac-lab-trajectory.rrd
     sha256: 9c78019340ca73def0be3f0cf112dcfd3c63889ceb6872f913e502c1ea0d9eb8
     size_bytes: 495472
   - name: groot-predictions-overlay-mp4
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/visuals/groot-predictions-overlay.mp4
+    source_uri: s3://your-bucket-name/demo-prestage/visuals/groot-predictions-overlay.mp4
     target_path: visuals/groot-predictions-overlay.mp4
     sha256: 268f72d9f13aa82dd46a6b1781013d8adbd1d7d168eadef447434e67c046e51b
     size_bytes: 888717
   - name: groot-predictions-overlay-rrd
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/visuals/groot-predictions-overlay.rrd
+    source_uri: s3://your-bucket-name/demo-prestage/visuals/groot-predictions-overlay.rrd
     target_path: visuals/groot-predictions-overlay.rrd
     sha256: 2bbebf4315c4959cd18f9d99f3c65370873908bc56788617ee8e106f11c9eb39
     size_bytes: 566693
   - name: groot-predictions-overlay-filtered-rrd
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/visuals/groot-predictions-overlay-filtered.rrd
+    source_uri: s3://your-bucket-name/demo-prestage/visuals/groot-predictions-overlay-filtered.rrd
     target_path: visuals/groot-predictions-overlay-filtered.rrd
     sha256: eca59c03445474aff846a5217370afbc3ee589d9a670e2e1a2da2c0cda8932c0
     size_bytes: 644031
   - name: groot-predicted-actions
-    source_uri: s3://YOUR_S3_BUCKET/demo-live/groot-predictions/phase5-isaac-g1-20260510T040335Z/predicted_actions.npz
+    source_uri: s3://your-bucket-name/demo-live/groot-predictions/phase5-isaac-g1-20260510T040335Z/predicted_actions.npz
     target_path: groot-predictions/phase5-isaac-g1-20260510T040335Z/predicted_actions.npz
     sha256: 2382d2bc9ac5aad2c19bcbec298a13f0fbfeb6f4f6f9c8613a4181750d1beadf
     size_bytes: 3135
   - name: isaac-lab-lerobot-export
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/isaac-lab/Isaac-Velocity-Flat-G1-v0/
+    source_uri: s3://your-bucket-name/demo-prestage/isaac-lab/Isaac-Velocity-Flat-G1-v0/
     target_path: isaac-lab/Isaac-Velocity-Flat-G1-v0/
     is_prefix: true
     expected_count: 15
     total_size_bytes: 202712
   - name: groot-lerobot-dataset
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/groot-lerobot/Isaac-Velocity-Flat-G1-v0/
+    source_uri: s3://your-bucket-name/demo-prestage/groot-lerobot/Isaac-Velocity-Flat-G1-v0/
     target_path: groot-lerobot/Isaac-Velocity-Flat-G1-v0/
     is_prefix: true
     expected_count: 26
     total_size_bytes: 251725
   - name: groot-predictions-fallback
-    source_uri: s3://YOUR_S3_BUCKET/demo-live/groot-predictions/phase5-isaac-g1-20260510T040335Z/
+    source_uri: s3://your-bucket-name/demo-live/groot-predictions/phase5-isaac-g1-20260510T040335Z/
     target_path: groot-predictions/phase5-isaac-g1-20260510T040335Z/
     is_prefix: true
     expected_count: 4
     total_size_bytes: 1290743
   - name: fiftyone-ranked-source
-    source_uri: s3://YOUR_S3_BUCKET/demo-prestage/cosmos/fiftyone-ranked/
+    source_uri: s3://your-bucket-name/demo-prestage/cosmos/fiftyone-ranked/
     target_path: cosmos/fiftyone-ranked/
     is_prefix: true
     expected_count: 5

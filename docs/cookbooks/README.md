@@ -7,3 +7,6 @@ workflows with Nebius Physical AI Workbench.
 
 - [LeRobot GPU Benchmarks](lerobot-gpu-benchmarks.md): reproduce the May 2026
   LeRobot GPU benchmark research across L40S, H200, B300, and RTX PRO 6000.
+- [LeRobot GPU Benchmarks Runbook](lerobot-gpu-benchmarks-runbook.md): exact
+  terminal steps for serverless Jobs, seconds/step measurements, artifact
+  checks, validation, and cleanup.

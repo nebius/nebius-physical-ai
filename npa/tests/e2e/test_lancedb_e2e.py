@@ -23,8 +23,8 @@ pytestmark = pytest.mark.e2e_serverless
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMAGE = os.environ.get("NPA_E2E_LANCEDB_IMAGE", "npa-lancedb:0.30.2")
 PROJECT_ALIAS = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ALIAS", "eu-north1")
-PROJECT_ID = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ID", "YOUR_PROJECT_ID")
-BUCKET = os.environ.get("NPA_E2E_LANCEDB_BUCKET", "YOUR_S3_BUCKET")
+PROJECT_ID = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ID", "project-test-00000000000")
+BUCKET = os.environ.get("NPA_E2E_LANCEDB_BUCKET", "your-bucket-name")
 POLL_INTERVAL = 5.0
 MAX_WAIT = float(os.environ.get("NPA_E2E_LANCEDB_MAX_WAIT", "300"))
 

@@ -27,6 +27,9 @@ class InvalidResourceSpecError(SkyPilotResourceError):
     """Raised when an NPA resource spec cannot be mapped to SkyPilot."""
 
 
+_NPA_SPEC_KEYS = frozenset({"backend", "gpu", "count", "cpus", "memory_gb", "region"})
+
+
 @dataclass(frozen=True)
 class NPASpec:
     """Validated NPA resource request."""
@@ -134,6 +137,11 @@ def _normalize_spec(spec: Mapping[str, Any] | NPASpec) -> NPASpec:
         return spec
     if not isinstance(spec, Mapping):
         raise InvalidResourceSpecError("spec must be a mapping or NPASpec")
+    unknown = sorted(set(spec) - _NPA_SPEC_KEYS)
+    if unknown:
+        keys = ", ".join(unknown)
+        valid = ", ".join(sorted(_NPA_SPEC_KEYS))
+        raise InvalidResourceSpecError(f"unrecognized NPA SkyPilot resource key(s): {keys}. Valid keys: {valid}")
 
     gpu_raw = spec.get("gpu")
     gpu = str(gpu_raw).lower().strip() if gpu_raw not in {None, ""} else None
