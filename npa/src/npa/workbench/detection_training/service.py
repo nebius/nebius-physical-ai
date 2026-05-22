@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 from typing import Any
@@ -10,9 +11,18 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 
 from .evaluation import DetectionEvaluationError, evaluate_detector
 from .schemas import EvalRequest, EvalResponse, RunListResponse, StatusResponse, TrainRequest, TrainResponse
-from .training import DetectionTrainingError, checkpoint_uri_pattern, compute_manifest_sha256, make_run_id, metrics_uri, train_detector
+from .training import (
+    DetectionTrainingError,
+    checkpoint_uri_pattern,
+    compute_manifest_sha256,
+    make_run_id,
+    metrics_uri,
+    resolve_num_classes,
+    train_detector,
+)
 
 RUNS: dict[str, StatusResponse] = {}
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(*, auth_mode: str | None = None, token: str | None = None) -> FastAPI:
@@ -141,6 +151,13 @@ def _run_training(body: TrainRequest, run_id: str) -> None:
         )
 
     try:
+        LOGGER.info(
+            "starting detection training run_id=%s view=%s num_classes=%s label_map=%s",
+            run_id,
+            body.view,
+            resolve_num_classes(body),
+            "provided" if body.label_map is not None else "absent",
+        )
         result = train_detector(body, run_id=run_id, status_callback=update)
         current = RUNS[run_id]
         RUNS[run_id] = current.model_copy(
@@ -157,4 +174,3 @@ def _run_training(body: TrainRequest, run_id: str) -> None:
 
 
 app = create_app()
-

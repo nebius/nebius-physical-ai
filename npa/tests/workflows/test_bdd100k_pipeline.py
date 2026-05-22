@@ -26,7 +26,31 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-nighttime",
     "bdd100k-eval-distant",
 ]
-EXPECTED_YAML_SHA256 = "3697c7c3fff80973d2f3068960d456b0d6e4f1b5e51429dab7a0fa9686d69b26"
+EXPECTED_YAML_SHA256 = "d3019a472c96105e6e11eb76cd27dcd58065ac5c6da906ad0288775a81d204b4"
+SYNTHETIC_BDD100K_LABEL_MAP = {
+    "person": 0,
+    "rider": 1,
+    "car": 2,
+    "truck": 3,
+    "bus": 4,
+    "train": 5,
+    "motor": 6,
+    "bike": 7,
+    "traffic light": 8,
+    "traffic sign": 9,
+}
+REAL_BDD100K_LABEL_MAP = {
+    "pedestrian": 0,
+    "rider": 1,
+    "car": 2,
+    "truck": 3,
+    "bus": 4,
+    "train": 5,
+    "motorcycle": 6,
+    "bicycle": 7,
+    "traffic light": 8,
+    "traffic sign": 9,
+}
 
 
 def _docs() -> list[dict]:
@@ -70,7 +94,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         "accelerators": "H100:1",
         "cpus": 8,
         "memory": 32,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z",
+        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>",
     }
 
     for name in ("bdd100k-train-rider", "bdd100k-train-nighttime", "bdd100k-train-distant"):
@@ -109,10 +133,12 @@ def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatc
 
     rc = wrapper.main(
         [
-            "--yaml-path",
+            "--yaml",
             str(YAML_PATH),
             "--run-id",
             "bdd100k-test-run",
+            "--synthetic",
+            "5000",
             "--sky-bin",
             str(sky_bin),
             "--poll-interval",
@@ -128,7 +154,9 @@ def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatc
         envs = doc["envs"]
         assert envs["NPA_PIPELINE_RUN_ID"] == "bdd100k-test-run"
         assert envs["S3_PREFIX"] == "bdd100k-pipeline/bdd100k-test-run"
-        assert envs["LANCE_URI"] == "s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-test-run/lancedb/"
+        assert envs["LANCE_URI"] == f"s3://{wrapper.DEFAULT_BUCKET}/bdd100k-pipeline/bdd100k-test-run/lancedb/"
+        if "BDD100K_SYNTHETIC_ROWS" in envs:
+            assert envs["BDD100K_SYNTHETIC_ROWS"] == "5000"
 
 
 def test_bdd100k_pipeline_mock_endpoint_validation(capsys, tmp_path) -> None:
@@ -170,6 +198,22 @@ def test_bdd100k_pipeline_mock_endpoint_validation(capsys, tmp_path) -> None:
         "/eval",
         "/eval",
     ]
+    train_payloads = [item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"]
+    assert len(train_payloads) == 3
+    for payload in train_payloads:
+        assert "num_classes" not in payload
+        assert payload["label_map"] == SYNTHETIC_BDD100K_LABEL_MAP
+
+
+def test_bdd100k_pipeline_documents_synthetic_and_real_label_maps() -> None:
+    text = YAML_PATH.read_text(encoding="utf-8")
+    synthetic_line = f"  BDD100K_LABEL_MAP: '{json.dumps(SYNTHETIC_BDD100K_LABEL_MAP, separators=(',', ':'))}'"
+    real_line = f"  # BDD100K_LABEL_MAP: '{json.dumps(REAL_BDD100K_LABEL_MAP, separators=(',', ':'))}'"
+
+    assert text.count("# Synthetic BDD100K data - category names match the synthetic data generator.") == 3
+    assert text.count(synthetic_line) == 3
+    assert text.count("# Real BDD100K data - uncomment the line below and comment the line above.") == 3
+    assert text.count(real_line) == 3
 
 
 def test_bdd100k_pipeline_yaml_snapshot_hash() -> None:

@@ -25,18 +25,9 @@ from npa.workbench.lancedb import (
 )
 
 __all__ = [
-    "BDD100KImportError",
     "BDD100KImportResult",
-    "BDD100KServiceError",
-    "BDD100KValidationError",
-    "BackfillError",
     "BackfillResult",
-    "BackfillServiceError",
-    "BackfillValidationError",
-    "MVError",
     "MVResult",
-    "MVServiceError",
-    "MVValidationError",
     "QueryResult",
     "backfill",
     "create_bdd100k_failure_mode_views",

@@ -15,6 +15,7 @@ Commands
 ensure-ingress  Ensure public ingress for the saved GR00T BYOVM alias.
 register-byovm  Register an existing VM as a GR00T BYOVM alias and ensure ingress.
 list  List configured GR00T workbenches.
+cleanup-partial  Clean up orphaned Terraform resources from an interrupted GR00T deploy.
 deploy  Deploy or destroy a GR00T runtime VM with Isaac Lab available for sim evaluation.
 download  Download GR00T model weights to the workbench VM or shared S3 storage.
 reload-env  Propagate local shared credentials into the running GR00T service env without redeploying.
@@ -42,6 +43,7 @@ system-info  Collect system information and GR00T runtime status from the VM.
 | `ensure-ingress` | Ensure public ingress for the saved GR00T BYOVM alias. |
 | `register-byovm` | Register an existing VM as a GR00T BYOVM alias and ensure ingress. |
 | `list` | List configured GR00T workbenches. |
+| `cleanup-partial` | Clean up orphaned Terraform resources from an interrupted GR00T deploy. |
 | `deploy` | Deploy or destroy a GR00T runtime VM with Isaac Lab available for sim evaluation. |
 | `download` | Download GR00T model weights to the workbench VM or shared S3 storage. |
 | `reload-env` | Propagate local shared credentials into the running GR00T service env without redeploying. |

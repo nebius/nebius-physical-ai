@@ -1,0 +1,125 @@
+# Isaac Lab RSL-RL single training job.
+name: isaac-lab-rl-train
+execution: serial
+---
+name: isaac-lab-rsl-rl-train
+resources:
+  cloud: kubernetes
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  # Replace <your-registry-id> with your Nebius container registry ID.
+  # Keep this image on an RT-core-capable Isaac Lab build.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+envs:
+  NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "64"
+  ISAAC_LAB_ITERATIONS: "10"
+  ISAAC_LAB_EXPERIMENT_NAME: "npa_isaac_lab"
+  ISAAC_LAB_RUN_NAME: "${NPA_ISAAC_LAB_RUN_ID}"
+  ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+  fi
+  test -f /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+  fi
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/workspace/isaaclab/npa-runs/${NPA_ISAAC_LAB_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  cd "${OUTPUT_DIR}"
+
+  read -r -a HYDRA_ARGS <<< "${ISAAC_LAB_HYDRA_OVERRIDES:-agent.save_interval=1}"
+  cmd=(
+    "${PYTHON_BIN}"
+    "${TRAIN_SCRIPT}"
+    --task "${ISAAC_LAB_TASK}"
+    --num_envs "${ISAAC_LAB_NUM_ENVS}"
+    --max_iterations "${ISAAC_LAB_ITERATIONS}"
+    --headless
+    --experiment_name "${ISAAC_LAB_EXPERIMENT_NAME}"
+    --run_name "${ISAAC_LAB_RUN_NAME}"
+    "${HYDRA_ARGS[@]}"
+  )
+  printf 'ISAAC_LAB_RSL_RL_COMMAND'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+
+  set +e
+  "${cmd[@]}" 2>&1 | tee "${OUTPUT_DIR}/isaac_lab_train.log"
+  train_rc=${PIPESTATUS[0]}
+  set -e
+
+  export NPA_ISAAC_LAB_TRAIN_RC="${train_rc}"
+  export NPA_ISAAC_LAB_OUTPUT_DIR="${OUTPUT_DIR}"
+  "${PYTHON_BIN}" <<'PY'
+  import json
+  import os
+  import shutil
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+  
+  import boto3
+  
+  root = Path(os.environ["NPA_ISAAC_LAB_OUTPUT_DIR"])
+  train_rc = int(os.environ.get("NPA_ISAAC_LAB_TRAIN_RC", "1"))
+  log_root = root / "logs" / "rsl_rl"
+  checkpoints = sorted(log_root.rglob("model_*.pt"), key=lambda path: (path.stat().st_mtime, str(path)))
+  latest = checkpoints[-1] if checkpoints else None
+  stable_checkpoint = root / "npa_isaac_lab_checkpoint.pt"
+  if latest is not None:
+      shutil.copy2(latest, stable_checkpoint)
+  
+  summary = {
+      "status": "success" if train_rc == 0 and latest is not None else "failed",
+      "exit_code": train_rc,
+      "tool": "isaac_lab",
+      "framework": "rsl_rl",
+      "task": os.environ["ISAAC_LAB_TASK"],
+      "num_envs": int(os.environ["ISAAC_LAB_NUM_ENVS"]),
+      "steps": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "max_iterations": int(os.environ["ISAAC_LAB_ITERATIONS"]),
+      "run_id": os.environ["NPA_ISAAC_LAB_RUN_ID"],
+      "run_name": os.environ["ISAAC_LAB_RUN_NAME"],
+      "experiment_name": os.environ["ISAAC_LAB_EXPERIMENT_NAME"],
+      "train_script": "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py",
+      "checkpoint_path": str(latest) if latest is not None else "",
+      "stable_checkpoint_path": str(stable_checkpoint) if latest is not None else "",
+      "checkpoint_count": len(checkpoints),
+      "created_unix": round(time.time(), 3),
+  }
+  manifest = {
+      "format": "npa_isaac_lab_rsl_rl_checkpoint_v1",
+      **summary,
+  }
+  (root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+  (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps(manifest, indent=2))
+  
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme != "s3" or not parsed.netloc:
+      raise SystemExit(f"invalid S3_OUTPUT_PREFIX: {output}")
+  prefix = parsed.path.lstrip("/")
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+  for path in root.rglob("*"):
+      if path.is_file():
+          key = prefix + str(path.relative_to(root))
+          s3.upload_file(str(path), parsed.netloc, key)
+          print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+  print(json.dumps({"checkpoint_s3": output + "npa_isaac_lab_checkpoint.pt", "summary_s3": output + "npa_isaac_lab_train_summary.json"}, indent=2), flush=True)
+  if summary["status"] != "success":
+      raise SystemExit(train_rc or 3)
+  PY

@@ -20,11 +20,21 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from npa.orchestration.skypilot import WorkflowResult, cleanup_all_for_run, submit_workflow, workflow_status
-from npa.orchestration.skypilot._bin import resolve_sky_bin
+from npa.orchestration.skypilot import (
+    WorkflowResult,  # noqa: F401 - kept for tests and downstream wrapper imports.
+    cleanup_all_for_run,
+    submit_workflow,
+    workflow_status,
+)
+from npa.orchestration.skypilot._bin import (
+    SkyPilotConfigError,
+    SkyPilotNotInstalledError,
+    SkyPilotVersionError,
+    resolve_sky_bin,
+)
 
 DEFAULT_YAML = Path(__file__).resolve().parents[1] / "workflows" / "skypilot" / "bdd100k-pipeline.yaml"
-DEFAULT_BUCKET = "YOUR_S3_BUCKET"
+DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_SOURCE = f"s3://{DEFAULT_BUCKET}/raw-bdd100k/subset-demo/"
 DEFAULT_LANCEDB_ENDPOINT = "http://npa-lancedb.workbench.svc.cluster.local:8686"
 DEFAULT_DETECTION_ENDPOINT = "http://npa-detection-training.workbench.svc.cluster.local:8790"
@@ -41,9 +51,18 @@ TERMINAL_STATUSES = {
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    if args.mock_endpoints:
-        return _run_mock_endpoint_validation(args)
-    return _submit_and_wait(args)
+    try:
+        if args.mock_endpoints:
+            return _run_mock_endpoint_validation(args)
+        return _submit_and_wait(args)
+    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print(
+            "For a no-infrastructure validation, add --mock-endpoints. "
+            "For live submission, configure SkyPilot with NPA_SKYPILOT_BIN.",
+            file=sys.stderr,
+        )
+        return 2
 
 
 def render_pipeline(
@@ -115,7 +134,6 @@ def output_paths(run_id: str, *, bucket: str = DEFAULT_BUCKET) -> dict[str, Any]
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
-    sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
     lancedb_token = args.lancedb_token or os.environ.get("LANCEDB_TOKEN", "")
     detection_token = args.detection_token or os.environ.get("DETECTION_TRAINING_TOKEN", "")
     docs = render_pipeline(
@@ -138,6 +156,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             print(json.dumps({"run_id": run_id, "rendered_yaml": str(rendered_yaml), "outputs": output_paths(run_id, bucket=args.bucket)}, indent=2))
             return 0
 
+        sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
         result = submit_workflow(
             rendered_yaml,
             run_id,
@@ -473,12 +492,12 @@ def _default_run_id() -> str:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--yaml-path", type=Path, default=DEFAULT_YAML)
+    parser.add_argument("--yaml-path", "--yaml", dest="yaml_path", type=Path, default=DEFAULT_YAML)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--source-uri", default=DEFAULT_SOURCE)
     parser.add_argument("--bdd100k-limit", type=int, default=10000)
-    parser.add_argument("--synthetic-rows", type=int, default=0)
+    parser.add_argument("--synthetic-rows", "--synthetic", dest="synthetic_rows", type=int, default=0)
     parser.add_argument("--lancedb-endpoint", default=DEFAULT_LANCEDB_ENDPOINT)
     parser.add_argument("--detection-endpoint", default=DEFAULT_DETECTION_ENDPOINT)
     parser.add_argument("--lancedb-token", default="")

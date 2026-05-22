@@ -22,11 +22,11 @@ from npa.serverless_common import build_serverless_output_upload_cmd, resolve_su
 
 
 PROJECT_ALIAS = "eu-north1"
-PROJECT_ID = "YOUR_PROJECT_ID"
-BUCKET = "YOUR_S3_BUCKET"
+PROJECT_ID = "project-test-00000000000"
+BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
-GENESIS_IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-genesis:0.4.6"
-LEROBOT_IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lerobot:0.5.1"
+GENESIS_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-genesis:0.4.6"
+LEROBOT_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-lerobot:0.5.1"
 GENESIS_GPU_TYPE = "gpu-h200-sxm"
 GENESIS_GPU_PRESET = "1gpu-16vcpu-200gb"
 LEROBOT_GPU_TYPE = "h200"

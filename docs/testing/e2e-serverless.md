@@ -166,11 +166,11 @@ Smoke command used by W7-parallel-tools:
 ```bash
 npa workbench cosmos -p uk-south1 -n w7p-cosmos train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/cosmos-smoke/ \
-  --job-name cosmos-smoke2-20260513T225839Z \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/cosmos-smoke/ \
+  --job-name cosmos-smoke2-<run-id> \
   --smoke \
   --smoke-seconds 5
 ```
@@ -182,30 +182,30 @@ Expected artifact: `checkpoint.json`.
 ```bash
 npa workbench isaac-lab -p uk-south1 -n w7p-isaac train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --task Isaac-Reach-Franka-v0 \
   --num-envs 1 \
   --steps 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/isaac-lab-smoke/ \
-  --job-name isaac-lab-smoke3-20260513T225839Z
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/isaac-lab-smoke/ \
+  --job-name isaac-lab-smoke3-<run-id>
 ```
 
-Expected artifacts: `npa_isaac_lab_train_summary.json`, `npa_isaac_lab_random_policy_checkpoint.json`.
+Expected artifacts: `npa_isaac_lab_train_summary.json`, `npa_isaac_lab_checkpoint.pt`, `npa_isaac_lab_checkpoint_manifest.json`.
 
 ## FiftyOne Serverless Jobs E2E
 
 ```bash
 npa workbench fiftyone -p uk-south1 -n w7p-fiftyone load-dataset \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --name w7p-curated \
   --input-path Voxel51/VisDrone2019-DET \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/fiftyone-smoke/ \
-  --job-name fiftyone-smoke-20260513T225839Z
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/fiftyone-smoke/ \
+  --job-name fiftyone-smoke-<run-id>
 ```
 
 Expected artifact: `npa_fiftyone_dataset_summary.json`.
@@ -215,13 +215,13 @@ Expected artifact: `npa_fiftyone_dataset_summary.json`.
 ```bash
 npa workbench genesis -p uk-south1 -n w7p-genesis train-teacher \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --n-envs 1 \
   --max-iterations 1 \
   --gpu-type l40s \
   --gpu-count 1 \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/genesis-smoke/ \
-  --job-name genesis-smoke-20260513T225839Z
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/genesis-smoke/ \
+  --job-name genesis-smoke-<run-id>
 ```
 
 Expected artifacts: `train_teacher_summary.json`, `model.pt`.
@@ -231,16 +231,16 @@ Expected artifacts: `train_teacher_summary.json`, `model.pt`.
 ```bash
 npa workbench groot -p uk-south1 -n w7p-groot infer \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
-  --input-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/checkpoint/ \
-  --dataset-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/dataset/ \
-  --output-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-smoke/ \
+  --project-id <YOUR_PROJECT_ID> \
+  --input-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/checkpoint/ \
+  --dataset-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/dataset/ \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-smoke/ \
   --gpu-type h200 \
   --gpu-count 1 \
   --model-variant nvidia/GR00T-N1.7-3B \
   --steps 1 \
   --action-horizon 1 \
-  --job-name groot-smoke-20260513T225839Z
+  --job-name groot-smoke-<run-id>
 ```
 
 W7-parallel-tools result: code path and unit coverage are present, but three
@@ -254,16 +254,16 @@ W7p-groot-debug fixed the default serverless image tag and retried once on
 ```bash
 npa workbench groot -p uk-south1 -n w7pgd-groot infer \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
-  --input-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/checkpoint/ \
-  --dataset-path s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/groot-input/dataset/ \
-  --output-path s3://YOUR_S3_BUCKET_2/w7pgd-fresh/20260514T001748Z/groot-smoke/ \
+  --project-id <YOUR_PROJECT_ID> \
+  --input-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/checkpoint/ \
+  --dataset-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-input/dataset/ \
+  --output-path s3://${NPA_S3_BUCKET}/<run-prefix>/groot-smoke/ \
   --gpu-type h200 \
   --gpu-count 1 \
   --model-variant nvidia/GR00T-N1.7-3B \
   --steps 1 \
   --action-horizon 1 \
-  --job-name groot-smoke-retry-20260514T001748Z \
+  --job-name groot-smoke-retry-<run-id> \
   --timeout 3600 \
   --poll-interval 15
 ```
@@ -271,7 +271,7 @@ npa workbench groot -p uk-south1 -n w7pgd-groot infer \
 Retry result: `FAIL_DIFFERENT`. The job submitted image `npa-groot:0.1.0`,
 advanced to `STARTING`, and allocated a running compute instance, but produced
 no logs before cleanup. Treat GR00T as `SMOKE_FAILED` until Nebius investigates
-`aijob-e00tygb9eej5d174n7` or a later retry reaches terminal success and uploads
+`aijob-test-00000000000` or a later retry reaches terminal success and uploads
 artifacts.
 
 ## LanceDB
@@ -319,12 +319,12 @@ is a short Unitree G1 run that validates the self-contained SONIC image,
 SMOKE_TS=$(date -u +%Y%m%dT%H%M%SZ)
 npa workbench sonic -p uk-south1 -n w7sonic train \
   --runtime serverless \
-  --project-id YOUR_PROJECT_ID \
+  --project-id <YOUR_PROJECT_ID> \
   --gpu-type l40s \
   --gpu-count 1 \
   --embodiment unitree-g1 \
   --steps 10 \
-  --output-path s3://YOUR_S3_BUCKET/w7sonic-smoke/$SMOKE_TS/ \
+  --output-path s3://${NPA_S3_BUCKET}/w7sonic-smoke/$SMOKE_TS/ \
   --job-name sonic-smoke-$SMOKE_TS \
   --timeout 3600 \
   --poll-interval 15
@@ -355,7 +355,7 @@ Run:
 
 ```bash
 export NPA_INTEGRATION_E2E=1
-export NPA_E2E_SERVERLESS_PROJECT=YOUR_PROJECT_ID
+export NPA_E2E_SERVERLESS_PROJECT=<YOUR_PROJECT_ID>
 export NPA_E2E_PROJECT=eu-north1
 
 npa/.venv/bin/pytest npa/tests/e2e/test_lancedb_e2e.py -m e2e_serverless -k lancedb -v
@@ -363,10 +363,10 @@ npa/.venv/bin/pytest npa/tests/e2e/test_lancedb_e2e.py -m e2e_serverless -k lanc
 
 Resources used:
 
-- Project: `YOUR_PROJECT_ID` (`eu-north1`)
+- Project: `<YOUR_PROJECT_ID>` (`eu-north1`)
 - Runtime: local Docker container, image `npa-lancedb:0.30.2`
-- S3 bucket: `YOUR_S3_BUCKET`
-- Storage prefix: `s3://YOUR_S3_BUCKET/w7lancedb-e2e-<timestamp>-<id>/db/`
+- S3 bucket: `<your-bucket>`
+- Storage prefix: `s3://${NPA_S3_BUCKET}/w7lancedb-e2e-<timestamp>-<id>/db/`
 - Test duration: about 20 seconds when the image is already built
 - Nebius compute cost: $0 for this downgraded path; S3 writes are a few small
   Lance files

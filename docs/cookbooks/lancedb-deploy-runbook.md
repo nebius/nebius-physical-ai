@@ -134,10 +134,8 @@ archiving data.
 
 ## Known Limitation In This Build Run
 
-The LanceDB subapp was implemented under
-`npa/src/npa/cli/workbench/lancedb/`. Registering it under the parent
-`npa workbench` Typer app requires a one-line edit to
-`npa/src/npa/cli/workbench/__init__.py`, which was outside the W7-lancedb
-write allowlist. Until that follow-up lands, tests and smoke can invoke the
-subapp directly, but the public `npa workbench lancedb` command is not wired
-into the parent CLI in this commit set.
+`npa workbench lancedb` is wired into the parent CLI. The remaining live-service
+gap is managed VM registration: the `container` and `cloud` paths are usable for
+local smoke and existing endpoints, while the `vm`/`byovm` app deploy path still
+requires Workbench parent registration work before it is a one-command
+production service deploy.

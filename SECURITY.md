@@ -28,6 +28,19 @@ When working with Nebius Physical AI Solutions:
 - Review security advisories regularly
 - Report vulnerabilities responsibly without public disclosure until a patch is available
 
+## Credential Handling
+
+This repository does not contain real credentials. If you find any hardcoded
+credentials, tokens, passwords, private keys, or live infrastructure IDs that
+should not be public, please report them immediately through the advisory flow
+above.
+
+Required secrets are configured outside the repository in
+`~/.npa/credentials.yaml`. Use `docs/credentials.yaml.example` as the template
+and keep the real credentials file out of git. Non-secret resource identifiers
+such as `NEBIUS_PROJECT_ID`, `NEBIUS_TENANT_ID`, `NPA_REGISTRY`, and
+`NPA_S3_BUCKET` are documented in `docs/getting-started.md`.
+
 ## Learning More About Security in Nebius
 
 To learn more about security in Nebius, please see the [Nebius Security Documentation](https://nebius.ai/docs/security).

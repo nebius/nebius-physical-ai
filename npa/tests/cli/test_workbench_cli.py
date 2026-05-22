@@ -28,7 +28,7 @@ def _cfg(*, storage: bool = False) -> WorkbenchConfig:
             aws_access_key_id="key",
             aws_secret_access_key="secret",
         ),
-        hf_token="hf-token",
+        hf_token="PLACEHOLDER_HF_TOKEN",
     )
 
 

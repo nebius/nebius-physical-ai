@@ -48,7 +48,6 @@ from npa.clients.serverless import (
     EndpointStatus,
     JobInfo,
     NotEnoughResourcesError,
-    ServerlessClientError,
 )
 from npa.clients.ssh import SSHError
 
@@ -150,7 +149,7 @@ def _mock_train_env(mocker):
     )
     mocker.patch("npa.cli.cosmos.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.cosmos.container_image_for_tool", return_value="registry.example/npa-cosmos:smoke")
-    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
+    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"})
     return mocker.patch("npa.cli.cosmos.resolve_subnet", return_value="vpcsubnet-auto")
 
 
@@ -180,7 +179,7 @@ def test_cosmos_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["env"]["COSMOS_TRAIN_SMOKE"] == "1"
     assert kwargs["env"]["NPA_OUTPUT_PATH"] == "s3://bucket/checkpoints/jobs/npa-e2e-jobs-test/"
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
-    assert kwargs["extra_env"]["HF_TOKEN"] == "hf_secret"
+    assert kwargs["extra_env"]["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in kwargs["command"]
@@ -221,7 +220,7 @@ def test_cosmos_serverless_job_env_uses_shared_builder(mocker) -> None:
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "hf_secret"})
+    mocker.patch("npa.cli.cosmos._serverless_hf_env", return_value={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"})
 
     env, extra_env = _serverless_job_env("proj", require_hf=True, output_path="s3://bucket/out/")
 
@@ -229,7 +228,7 @@ def test_cosmos_serverless_job_env_uses_shared_builder(mocker) -> None:
     assert env["NPA_REQUIRE_HF"] == "1"
     assert env["HF_HOME"] == "/tmp/hf_home"
     assert env["AWS_ENDPOINT_URL"] == "https://s3.example"
-    assert extra_env["HF_TOKEN"] == "hf_secret"
+    assert extra_env["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     assert extra_env["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert extra_env["AWS_SECRET_ACCESS_KEY"] == "SECRET"
 
@@ -779,11 +778,11 @@ def test_cosmos_reload_env_command_updates_credentials_without_embedding_secret(
     assert "AWS_ACCESS_KEY_ID=\"${AWS_ACCESS_KEY_ID:-}\"" in cmd
     assert "npa-cosmos-server" in cmd
     assert "NPA_COSMOS_RELOAD_ENV_COMPLETE" in cmd
-    assert "hf-token" not in cmd
+    assert "PLACEHOLDER_HF_TOKEN" not in cmd
 
 
 def test_cosmos_reload_env_writes_env_via_ssh(mocker) -> None:
-    cfg = _cfg(hf_token="hf-token")
+    cfg = _cfg(hf_token="PLACEHOLDER_HF_TOKEN")
     cfg.service_port = 8081
     cfg.storage = StorageConfig(
         checkpoint_bucket="s3://bucket/checkpoints/",
@@ -801,7 +800,7 @@ def test_cosmos_reload_env_writes_env_via_ssh(mocker) -> None:
     mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.cosmos.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     ssh_cls = mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
 
@@ -816,9 +815,9 @@ def test_cosmos_reload_env_writes_env_via_ssh(mocker) -> None:
     assert "HF_TOKEN" in payload["updated_keys"]
     cmd = ssh.run_or_raise.call_args.args[0]
     assert "HF_TOKEN=\"${HF_TOKEN:-}\"" in cmd
-    assert "hf-token" not in cmd
+    assert "PLACEHOLDER_HF_TOKEN" not in cmd
     ssh_tokens = ssh_cls.call_args.args[0].tokens
-    assert ssh_tokens["HF_TOKEN"] == "hf-token"
+    assert ssh_tokens["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     assert ssh_tokens["AWS_ACCESS_KEY_ID"] == "key"
 
 
@@ -835,11 +834,11 @@ def test_cosmos_reload_env_fails_clean_on_missing_credentials(mocker) -> None:
 
 
 def test_cosmos_reload_env_propagates_ssh_failure(mocker) -> None:
-    cfg = _cfg(hf_token="hf-token")
+    cfg = _cfg(hf_token="PLACEHOLDER_HF_TOKEN")
     mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.cosmos.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     ssh = mocker.MagicMock()
     ssh.run_or_raise.side_effect = SSHError("transport down")
@@ -852,7 +851,7 @@ def test_cosmos_reload_env_propagates_ssh_failure(mocker) -> None:
 
 
 def test_cosmos_reload_env_dry_run_does_not_apply(mocker) -> None:
-    cfg = _cfg(hf_token="hf-token")
+    cfg = _cfg(hf_token="PLACEHOLDER_HF_TOKEN")
     cfg.service_port = 8081
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (
@@ -864,7 +863,7 @@ def test_cosmos_reload_env_dry_run_does_not_apply(mocker) -> None:
     mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.cosmos.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
 
@@ -879,7 +878,7 @@ def test_cosmos_reload_env_dry_run_does_not_apply(mocker) -> None:
 
 
 def test_cosmos_reload_env_dry_run_shows_changes(mocker) -> None:
-    cfg = _cfg(hf_token="hf-token")
+    cfg = _cfg(hf_token="PLACEHOLDER_HF_TOKEN")
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (
         0,
@@ -890,7 +889,7 @@ def test_cosmos_reload_env_dry_run_shows_changes(mocker) -> None:
     mocker.patch("npa.cli.cosmos.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.cosmos.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
 
@@ -900,7 +899,7 @@ def test_cosmos_reload_env_dry_run_shows_changes(mocker) -> None:
     assert "--- current" in result.output
     assert "+++ proposed" in result.output
     assert "-HF_TOKEN=old-" in result.output
-    assert "+HF_TOKEN=hf-t" in result.output
+    assert "+HF_TOKEN=PLAC" in result.output
 
 
 def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
@@ -921,7 +920,7 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     )
     mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
     mocker.patch("npa.cli.cosmos.resolve_environment", return_value=None)
-    mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=SimpleNamespace(hf_token="hf-token", tokens={}))
+    mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=SimpleNamespace(hf_token="PLACEHOLDER_HF_TOKEN", tokens={}))
     mocker.patch("npa.cli.cosmos.list_projects", return_value={})
     write_config = mocker.patch("npa.cli.cosmos.write_config")
     update_status = mocker.patch("npa.cli.cosmos.update_workbench_app_status")
@@ -1949,7 +1948,7 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
     mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
     mocker.patch(
         "npa.cli.cosmos.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.deploy.configurator.deploy_workbench_container")
     mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
@@ -2018,7 +2017,7 @@ def test_cosmos_status_reports_degraded_when_model_not_loaded(mocker) -> None:
         "model": "nvidia/Cosmos-Test",
         "loaded": False,
     }
-    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg(hf_token="hf-token"))
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"))
     mocker.patch("npa.cli.cosmos.HTTPClient", return_value=http)
 
     result = runner.invoke(app, ["workbench", "cosmos", "status", "--output", "json"])

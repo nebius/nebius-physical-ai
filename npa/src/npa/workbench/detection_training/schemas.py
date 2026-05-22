@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DEFAULT_LANCE_URI = "s3://YOUR_S3_BUCKET/lancedb/bdd100k/"
+DEFAULT_LANCE_URI = "s3://<your-bucket>/lancedb/bdd100k/"
 DEFAULT_NUM_CLASSES = 10
 DEFAULT_EPOCHS = 10
 DEFAULT_BATCH_SIZE = 8
@@ -24,7 +24,8 @@ class TrainRequest(BaseModel):
     view: str = Field(..., min_length=1)
     lance_uri: str = DEFAULT_LANCE_URI
     output_uri: str = Field(..., min_length=1)
-    num_classes: int = Field(DEFAULT_NUM_CLASSES, ge=2)
+    num_classes: int | None = Field(None, ge=2)
+    label_map: dict[str, int] | None = None
     epochs: int = Field(DEFAULT_EPOCHS, ge=1)
     batch_size: int = Field(DEFAULT_BATCH_SIZE, ge=1)
     learning_rate: float = Field(DEFAULT_LEARNING_RATE, gt=0.0)
@@ -45,6 +46,24 @@ class TrainRequest(BaseModel):
             return None
         resolved = value.strip()
         return resolved or None
+
+    @field_validator("label_map")
+    @classmethod
+    def _validate_label_map(cls, value: dict[str, int] | None) -> dict[str, int] | None:
+        if value is None:
+            return None
+        resolved: dict[str, int] = {}
+        for label, raw_id in value.items():
+            name = label.strip()
+            if not name:
+                raise ValueError("label_map keys must not be empty")
+            label_id = int(raw_id)
+            if label_id < 0:
+                raise ValueError("label_map values must be non-negative")
+            resolved[name] = label_id
+        if not resolved:
+            raise ValueError("label_map must not be empty when provided")
+        return resolved
 
 
 class TrainResponse(BaseModel):
@@ -69,6 +88,7 @@ class EvalRequest(BaseModel):
     eval_view: str = Field(..., min_length=1)
     lance_uri: str = DEFAULT_LANCE_URI
     output_uri: str = Field(..., min_length=1)
+    label_map: dict[str, int] | None = None
 
     @field_validator("checkpoint_uri", "eval_view", "lance_uri", "output_uri")
     @classmethod
@@ -76,6 +96,24 @@ class EvalRequest(BaseModel):
         resolved = value.strip()
         if not resolved:
             raise ValueError("value must not be empty")
+        return resolved
+
+    @field_validator("label_map")
+    @classmethod
+    def _validate_label_map(cls, value: dict[str, int] | None) -> dict[str, int] | None:
+        if value is None:
+            return None
+        resolved: dict[str, int] = {}
+        for label, raw_id in value.items():
+            name = label.strip()
+            if not name:
+                raise ValueError("label_map keys must not be empty")
+            label_id = int(raw_id)
+            if label_id < 0:
+                raise ValueError("label_map values must be non-negative")
+            resolved[name] = label_id
+        if not resolved:
+            raise ValueError("label_map must not be empty when provided")
         return resolved
 
 
@@ -112,4 +150,3 @@ class RunListResponse(BaseModel):
     """List response for service-managed run records."""
 
     runs: list[StatusResponse] = Field(default_factory=list)
-

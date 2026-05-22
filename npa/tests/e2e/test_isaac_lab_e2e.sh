@@ -246,7 +246,7 @@ python -m npa.smoke.test_isaac_lab_functional" || exit 1
 
 RUN_SLUG="$(slugify "$NAME")"
 RUN_ROOT="/tmp/npa-e2e-isaac-lab-${RUN_SLUG}-$(date +%Y%m%d%H%M%S)"
-CHECKPOINT_PATH="$RUN_ROOT/npa_isaac_lab_random_policy_checkpoint.json"
+CHECKPOINT_PATH="$RUN_ROOT/npa_isaac_lab_checkpoint.pt"
 
 run_npa_step "run short Isaac Lab training job" train --task Isaac-Reach-Franka-v0 --num-envs 64 --steps 1 --output-dir "$RUN_ROOT" || exit 1
 run_npa_step "run Isaac Lab eval job" eval --task Isaac-Reach-Franka-v0 --checkpoint "$CHECKPOINT_PATH" --num-episodes 1 --output-dir "$RUN_ROOT/eval" || exit 1

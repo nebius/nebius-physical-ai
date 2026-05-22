@@ -18,7 +18,7 @@ from npa.cli.workbench import lerobot
 from npa.clients.config import ServerlessJobConfig, StorageConfig
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, NotEnoughResourcesError
 
-from .test_workbench_cli import _cfg, runner
+from .test_workbench_cli import _cfg, app, runner
 from .test_workbench_cli import *  # noqa: F401,F403
 
 
@@ -54,7 +54,7 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_credentials",
         return_value=SimpleNamespace(
-            hf_token="hf-token",
+            hf_token="PLACEHOLDER_HF_TOKEN",
             s3_access_key_id="",
             s3_secret_access_key="",
             s3_endpoint="",
@@ -101,7 +101,7 @@ def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_st
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_credentials",
         return_value=SimpleNamespace(
-            hf_token="hf-token",
+            hf_token="PLACEHOLDER_HF_TOKEN",
             s3_access_key_id="",
             s3_secret_access_key="",
             s3_endpoint="",
@@ -250,7 +250,7 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_cross_bucket() -
     assert lerobot._serverless_storage_env_values(
         storage,
         credentials,
-        "s3://YOUR_S3_BUCKET_2/w7-fresh/run/",
+        "s3://your-bucket-name/w7-fresh/run/",
     ) == (
         "shared-key",
         "shared-secret",
@@ -399,7 +399,7 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["subnet_id"] == "vpcsubnet-1"
     assert kwargs["output_path"] == "s3://bucket/out/"
     assert kwargs["env"]["NPA_JOB_NAME"] == "train-1"
-    assert kwargs["extra_env"]["HF_TOKEN"] == "hf-token"
+    assert kwargs["extra_env"]["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
     client.poll_job.assert_not_called()
     update.assert_called_once()

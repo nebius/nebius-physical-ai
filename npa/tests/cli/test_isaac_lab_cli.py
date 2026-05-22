@@ -84,6 +84,7 @@ def test_isaac_lab_deploy_requires_gpu_selection(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "GPU selection is required" in result.output
     assert "L40S" in result.output
+    assert "RTX Pro 6000" in result.output
     assert "H100/H200" in result.output
 
 
@@ -129,9 +130,9 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
             "--tf-dir",
             str(tmp_path),
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
         ],
     )
 
@@ -140,8 +141,8 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     init.assert_called_once_with(tf_dir=str(tmp_path), backend_config=None)
     apply.assert_called_once()
     tf_vars = apply.call_args.kwargs["tf_vars"]
-    assert tf_vars["gpu_platform"] == "gpu-h100-sxm"
-    assert tf_vars["gpu_preset"] == "1gpu-16vcpu-200gb"
+    assert tf_vars["gpu_platform"] == "gpu-l40s-a"
+    assert tf_vars["gpu_preset"] == "1gpu-40vcpu-160gb"
     assert "boot_disk_size_gb" not in tf_vars
 
     install_cmd = ssh.run_or_raise.call_args.args[0]
@@ -213,9 +214,9 @@ def test_isaac_lab_deploy_existing_alias_no_replace_skips_terraform(mocker) -> N
             "isaac",
             "deploy",
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
             "--skip-app",
         ],
     )
@@ -245,9 +246,9 @@ def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(mocke
             "isaac",
             "deploy",
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
             "--replace",
         ],
     )
@@ -292,9 +293,9 @@ def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp
             "--tf-dir",
             str(tmp_path),
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
             "--skip-app",
         ],
     )
@@ -335,9 +336,9 @@ def test_isaac_lab_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> 
             "--tf-dir",
             str(tmp_path),
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
             "--skip-app",
         ],
     )
@@ -367,9 +368,9 @@ def test_isaac_lab_deploy_byovm_alias_skips_terraform(mocker) -> None:
             "byovm",
             "deploy",
             "--gpu-type",
-            "gpu-h100-sxm",
+            "gpu-l40s-a",
             "--gpu-preset",
-            "1gpu-16vcpu-200gb",
+            "1gpu-40vcpu-160gb",
             "--skip-app",
         ],
     )
@@ -471,18 +472,99 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
     assert "source /opt/isaac-lab/venv/bin/activate" in cmd
     assert "ISAACLAB_PKG=/opt/isaac-lab/venv/lib/python3.11/site-packages/isaaclab" in cmd
     assert "$ISAACLAB_PKG/source/isaaclab_tasks" in cmd
-    assert "from isaaclab.app import AppLauncher" in cmd
-    assert "import isaaclab_tasks" in cmd
-    assert "parse_env_cfg" in cmd
+    assert "scripts/reinforcement_learning/rsl_rl/train.py" in cmd
+    assert "--task \"$TASK\"" in cmd
+    assert "--num_envs \"$NUM_ENVS\"" in cmd
+    assert "--max_iterations \"$MAX_ITERATIONS\"" in cmd
+    assert "--headless" in cmd
+    assert "agent.save_interval=1" in cmd
     assert "Isaac-Reach-Franka-v0" in cmd
-    assert "num_envs = 64" in cmd
-    assert "steps = 25" in cmd
+    assert "NUM_ENVS=64" in cmd
+    assert "MAX_ITERATIONS=25" in cmd
     assert "/tmp/isaac-out" in cmd
-    assert "ISAAC_LAB_ENV_CREATE_COMPLETE" in cmd
-    assert "ISAAC_LAB_ENV_RESET_COMPLETE" in cmd
-    assert "npa_isaac_lab_random_policy_checkpoint.json" in cmd
+    assert "ISAAC_LAB_RSL_RL_COMMAND" in cmd
+    assert "npa_isaac_lab_checkpoint.pt" in cmd
+    assert "npa_isaac_lab_checkpoint_manifest.json" in cmd
     assert "checkpoint_path" in cmd
     assert "ISAAC_LAB_TRAIN_COMPLETE" in cmd
+
+
+def test_isaac_lab_train_accepts_success_summary_with_nonzero_ssh_status(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        1,
+        'ISAAC_LAB_TRAIN_COMPLETE\n{"status": "success", "checkpoint_count": 1}\n',
+        "",
+    )
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Cartpole-v0",
+            "--steps",
+            "1",
+            "--output-dir",
+            "/tmp/isaac-out",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["exit_code"] == 0
+    assert payload["ssh_exit_code"] == 1
+
+
+def test_isaac_lab_train_falls_back_to_remote_env_upload(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        1,
+        'ISAAC_LAB_TRAIN_COMPLETE\n{"status": "success", "checkpoint_count": 1}\n',
+        "",
+    )
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+    local_upload = mocker.patch(
+        "npa.cli.isaac_lab._upload_remote_directory_to_s3",
+        side_effect=RuntimeError("AccessDenied"),
+    )
+    remote_upload = mocker.patch(
+        "npa.cli.isaac_lab._upload_existing_remote_directory_via_remote_env",
+        return_value="s3://bucket/isaac/",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Cartpole-v0",
+            "--steps",
+            "1",
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["upload_mode"] == "remote-env"
+    assert payload["local_upload_error"] == "AccessDenied"
+    local_upload.assert_called_once()
+    remote_upload.assert_called_once()
 
 
 def _mock_isaac_serverless_env(mocker):
@@ -539,7 +621,7 @@ def test_isaac_lab_serverless_requires_rt_cores_gpu_type(mocker) -> None:
     assert kwargs["preset"] == "1gpu-40vcpu-160gb"
 
 
-def test_isaac_lab_serverless_warns_non_rt_gpu_type(mocker) -> None:
+def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
@@ -556,8 +638,9 @@ def test_isaac_lab_serverless_warns_non_rt_gpu_type(mocker) -> None:
         ],
     )
 
-    assert result.exit_code == 0
-    assert "RT-core GPUs" in result.output
+    assert result.exit_code == 1
+    assert "requires RT-core GPUs" in result.output
+    client.create_job.assert_not_called()
 
 
 def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:
@@ -608,7 +691,11 @@ def test_isaac_lab_serverless_uploads_output_dir(mocker) -> None:
     assert result.exit_code == 0
     command = client.create_job.call_args.kwargs["command"]
     assert "PYUPLOAD" in command
+    assert "scripts/reinforcement_learning/rsl_rl/train.py" in command
+    assert "--max_iterations \"$MAX_ITERATIONS\"" in command
+    assert "agent.save_interval=1" in command
     assert "npa_isaac_lab_train_summary.json" in command
+    assert "npa_isaac_lab_checkpoint_manifest.json" in command
 
 
 def test_isaac_lab_train_container_uses_docker_exec(mocker) -> None:
@@ -638,7 +725,8 @@ def test_isaac_lab_train_container_uses_docker_exec(mocker) -> None:
     cmd = ssh.run.call_args.args[0]
     assert "sudo docker exec npa-isaac-lab" in cmd
     assert "/isaac-sim/python.sh" in cmd
-    assert "import json\nimport time" in cmd
+    assert "scripts/reinforcement_learning/rsl_rl/train.py" in cmd
+    assert "--max_iterations \"$MAX_ITERATIONS\"" in cmd
     assert "/opt/isaac-lab/runs/container-test" in cmd
 
 

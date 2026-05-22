@@ -45,6 +45,7 @@ ENV_MAP = {
     "endpoint": "NPA_WORKBENCH_ENDPOINT",
     "endpoint_strategy": "NPA_ENDPOINT_STRATEGY",
     "service_port": "NPA_SERVICE_PORT",
+    "container_registry": "NPA_REGISTRY",
     "ssh_host": "NPA_SSH_HOST",
     "ssh_user": "NPA_SSH_USER",
     "ssh_key": "NPA_SSH_KEY",
@@ -390,6 +391,8 @@ def resolve_container_registry(project: str | None = None) -> str:
     if isinstance(proj, dict):
         value = str(proj.get("container_registry", "") or "")
     if not value:
+        value = os.environ.get("NPA_REGISTRY", "")
+    if not value:
         value = str(yml.get("container_registry", "") or "")
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
 
@@ -699,7 +702,11 @@ def resolve_config(
     s_user = pick(ssh_user, "NPA_SSH_USER", "ssh", "user")
     s_key = pick(ssh_key, "NPA_SSH_KEY", "ssh", "key_path")
     cb = pick(checkpoint_bucket, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket")
-    se = pick(storage_endpoint_url, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
+    se = (
+        pick(storage_endpoint_url, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+    )
     ht = hf_token or credentials.hf_token
     ak = pick(None, "AWS_ACCESS_KEY_ID", "storage", "aws_access_key_id")
     sk = pick(None, "AWS_SECRET_ACCESS_KEY", "storage", "aws_secret_access_key")
@@ -803,7 +810,11 @@ def resolve_ssh_config(
     s_user = pick(ssh_user, "NPA_SSH_USER", "ssh", "user")
     s_key = pick(ssh_key, "NPA_SSH_KEY", "ssh", "key_path")
     cb = pick(None, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket")
-    se = pick(None, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
+    se = (
+        pick(None, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+    )
     ht = credentials.hf_token
     ak = pick(None, "AWS_ACCESS_KEY_ID", "storage", "aws_access_key_id")
     sk = pick(None, "AWS_SECRET_ACCESS_KEY", "storage", "aws_secret_access_key")

@@ -16,14 +16,14 @@ from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
 
 PROJECT_ALIAS = "eu-north1"
-PROJECT_ID = "YOUR_PROJECT_ID"
-BUCKET = "YOUR_S3_BUCKET"
+PROJECT_ID = "project-test-00000000000"
+BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "h200"
-GROOT_IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-groot:0.1.0"
+GROOT_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-groot:0.1.0"
 GROOT_MODEL_VARIANT = "nvidia/GR00T-N1.7-3B"
-INPUT_PATH = "s3://YOUR_S3_BUCKET/w7all-staging/20260514T161525Z/checkpoint/"
-DATASET_PATH = "s3://YOUR_S3_BUCKET/w7all-staging/20260514T161525Z/dataset/"
+INPUT_PATH = "s3://your-bucket-name/w7all-staging/20260514T161525Z/checkpoint/"
+DATASET_PATH = "s3://your-bucket-name/w7all-staging/20260514T161525Z/dataset/"
 EMBODIMENT_TAG = "NEW_EMBODIMENT"
 INFERENCE_MODE = "pytorch"
 GPU_TYPE = "h200"
@@ -61,11 +61,11 @@ def test_groot_e2e_config_shape() -> None:
         job_name=f"{JOB_PREFIX}-{test_id}",
     )
 
-    assert GROOT_IMAGE == "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-groot:0.1.0"
+    assert GROOT_IMAGE == "cr.eu-north1.nebius.cloud/your-registry-id/npa-groot:0.1.0"
     assert GROOT_MODEL_VARIANT == "nvidia/GR00T-N1.7-3B"
     assert WORKBENCH_NAME == "h200"
-    assert INPUT_PATH == "s3://YOUR_S3_BUCKET/w7all-staging/20260514T161525Z/checkpoint/"
-    assert DATASET_PATH == "s3://YOUR_S3_BUCKET/w7all-staging/20260514T161525Z/dataset/"
+    assert INPUT_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/checkpoint/"
+    assert DATASET_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/dataset/"
     assert "--subnet-id" not in command
     assert command[:7] == ["workbench", "groot", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "infer"]
     for flag in (

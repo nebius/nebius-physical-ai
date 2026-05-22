@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .dataloader import make_dataloader
 from .models import build_fasterrcnn_resnet50_fpn_v2
-from .schemas import TrainRequest, TrainResponse
+from .schemas import DEFAULT_NUM_CLASSES, TrainRequest, TrainResponse
 from .storage import uri_join, write_bytes_uri, write_json_uri
 
 StatusCallback = Callable[[str, int, dict[str, Any], str | None], None]
@@ -64,13 +64,15 @@ def train_detector(
         raise DetectionTrainingError("torch is required for detection training") from exc
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_classes = resolve_num_classes(request)
     dataloader = make_dataloader(
         lance_uri=request.lance_uri,
         view=request.view,
         batch_size=request.batch_size,
         shuffle=True,
+        label_map=request.label_map,
     )
-    model = build_fasterrcnn_resnet50_fpn_v2(num_classes=request.num_classes)
+    model = build_fasterrcnn_resnet50_fpn_v2(num_classes=num_classes)
     model.to(device)
     optimizer = torch.optim.SGD(
         [param for param in model.parameters() if getattr(param, "requires_grad", True)],
@@ -97,7 +99,7 @@ def train_detector(
             optimizer=optimizer,
             epoch=epoch,
             manifest_sha256=manifest,
-            num_classes=request.num_classes,
+            num_classes=num_classes,
             request=request.model_dump(mode="json"),
         )
         write_json_uri(
@@ -120,6 +122,15 @@ def train_detector(
         total_epochs=request.epochs,
         manifest_sha256=manifest,
     )
+
+
+def resolve_num_classes(request: TrainRequest) -> int:
+    """Resolve detector classes, adding the background class for mapped labels."""
+    if request.num_classes is not None:
+        return request.num_classes
+    if request.label_map is not None:
+        return len(request.label_map) + 1
+    return DEFAULT_NUM_CLASSES
 
 
 def train_one_epoch(model: Any, dataloader: Any, optimizer: Any | None, *, device: Any) -> float:
@@ -194,4 +205,3 @@ def _loss_value(loss: Any) -> float:
     if hasattr(value, "item"):
         value = value.item()
     return float(value)
-

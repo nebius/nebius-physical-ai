@@ -12,16 +12,18 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <lancedb-image-tag> with the output of: npa workbench lancedb system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  BDD100K_SOURCE_URI: s3://YOUR_S3_BUCKET/raw-bdd100k/subset-demo/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  BDD100K_SOURCE_URI: "s3://${NPA_S3_BUCKET}/raw-bdd100k/subset-demo/"
   BDD100K_LIMIT: "10000"
   BDD100K_SYNTHETIC_ROWS: "0"
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   LANCE_TABLE: bdd100k
   LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
   LANCEDB_TOKEN: ""
@@ -91,13 +93,15 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <lancedb-image-tag> with the output of: npa workbench lancedb system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   LANCE_TABLE: bdd100k
   CPU_BACKFILL_BATCH_SIZE: "512"
   LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
@@ -163,13 +167,15 @@ resources:
   accelerators: H100:1
   cpus: 8
   memory: 32
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <lancedb-image-tag> with the output of: npa workbench lancedb system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   LANCE_TABLE: bdd100k
   CLIP_BATCH_SIZE: "32"
   CLIP_DEVICE: cuda:0
@@ -233,13 +239,15 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lancedb:bdd100k-clip-w9bdd100k-clip-embedding-20260516T174407Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <lancedb-image-tag> with the output of: npa workbench lancedb system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   LANCE_TABLE: bdd100k
   LANCEDB_ENDPOINT: http://npa-lancedb.workbench.svc.cluster.local:8686
   LANCEDB_TOKEN: ""
@@ -312,19 +320,24 @@ resources:
   accelerators: H100:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_rider_train
   VIEW_SLUG: bdd100k_rider_train
-  TRAIN_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/training/bdd100k_rider_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_rider_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
-  TRAIN_NUM_CLASSES: "10"
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
   TRAIN_EPOCHS: "10"
   TRAIN_BATCH_SIZE: "8"
   TRAIN_LEARNING_RATE: "0.005"
@@ -390,11 +403,11 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
-    --argjson num_classes "${TRAIN_NUM_CLASSES}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, num_classes: $num_classes, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
@@ -424,19 +437,24 @@ resources:
   accelerators: H100:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_nighttime_person_train
   VIEW_SLUG: bdd100k_nighttime_person_train
-  TRAIN_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/training/bdd100k_nighttime_person_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_nighttime_person_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
-  TRAIN_NUM_CLASSES: "10"
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
   TRAIN_EPOCHS: "10"
   TRAIN_BATCH_SIZE: "8"
   TRAIN_LEARNING_RATE: "0.005"
@@ -502,11 +520,11 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
-    --argjson num_classes "${TRAIN_NUM_CLASSES}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, num_classes: $num_classes, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
@@ -536,19 +554,24 @@ resources:
   accelerators: H100:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_distant_person_train
   VIEW_SLUG: bdd100k_distant_person_train
-  TRAIN_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/training/bdd100k_distant_person_train
+  TRAIN_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/training/bdd100k_distant_person_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
-  TRAIN_NUM_CLASSES: "10"
+  # Synthetic BDD100K data - category names match the synthetic data generator.
+  BDD100K_LABEL_MAP: '{"person":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motor":6,"bike":7,"traffic light":8,"traffic sign":9}'
+  # Real BDD100K data - uncomment the line below and comment the line above.
+  # BDD100K_LABEL_MAP: '{"pedestrian":0,"rider":1,"car":2,"truck":3,"bus":4,"train":5,"motorcycle":6,"bicycle":7,"traffic light":8,"traffic sign":9}'
   TRAIN_EPOCHS: "10"
   TRAIN_BATCH_SIZE: "8"
   TRAIN_LEARNING_RATE: "0.005"
@@ -614,11 +637,11 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
-    --argjson num_classes "${TRAIN_NUM_CLASSES}" \
+    --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, num_classes: $num_classes, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
@@ -648,16 +671,18 @@ resources:
   accelerators: H100:1
   cpus: 8
   memory: 32
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_rider_train
   VIEW_SLUG: bdd100k_rider_train
-  EVAL_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/eval/bdd100k_rider_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_rider_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
   NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud
@@ -746,16 +771,18 @@ resources:
   accelerators: H100:1
   cpus: 8
   memory: 32
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_nighttime_person_train
   VIEW_SLUG: bdd100k_nighttime_person_train
-  EVAL_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/eval/bdd100k_nighttime_person_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_nighttime_person_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
   NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud
@@ -844,16 +871,18 @@ resources:
   accelerators: H100:1
   cpus: 8
   memory: 32
-  image_id: "docker:cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-detection-training:bdd100k-w9-detection-training-tool-20260516T173720Z"
+  # Replace <your-registry-id> with your Nebius container registry ID
+  # Replace <detection-training-image-tag> with the output of: npa workbench detection-training system-info
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>"
 envs:
-  NPA_PIPELINE_RUN_ID: bdd100k-pipeline-dryrun
-  S3_BUCKET: YOUR_S3_BUCKET
-  S3_PREFIX: bdd100k-pipeline/bdd100k-pipeline-dryrun
-  PIPELINE_ROOT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun
-  LANCE_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/lancedb/
+  NPA_PIPELINE_RUN_ID: "<your-run-id>"
+  S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name
+  S3_PREFIX: "bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}"
+  LANCE_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/lancedb/"
   VIEW_NAME: bdd100k_distant_person_train
   VIEW_SLUG: bdd100k_distant_person_train
-  EVAL_OUTPUT_URI: s3://YOUR_S3_BUCKET/bdd100k-pipeline/bdd100k-pipeline-dryrun/eval/bdd100k_distant_person_train
+  EVAL_OUTPUT_URI: "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/${NPA_PIPELINE_RUN_ID}/eval/bdd100k_distant_person_train"
   DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   DETECTION_TRAINING_TOKEN: ""
   NEBIUS_S3_ENDPOINT: https://storage.eu-north1.nebius.cloud

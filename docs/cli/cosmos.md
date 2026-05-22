@@ -21,6 +21,7 @@ teardown  Delete a Cosmos serverless endpoint and remove its local alias.
 reload-env  Propagate local shared credentials into the running Cosmos service env without redeploying.
 serve  Start or pre-warm the saved Cosmos model server.
 finetune  Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets.
+train  Submit a Cosmos training job.
 optimize  Roadmap placeholder for TensorRT compilation and quantization of Cosmos models.
 infer  Submit a Cosmos inference job, poll until completion, then download the output.
 status  Check the Cosmos endpoint health.
@@ -48,6 +49,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | `reload-env` | Propagate local shared credentials into the running Cosmos service env without redeploying. |
 | `serve` | Start or pre-warm the saved Cosmos model server. |
 | `finetune` | Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets. |
+| `train` | Submit a Cosmos training job. |
 | `optimize` | Roadmap placeholder for TensorRT compilation and quantization of Cosmos models. |
 | `infer` | Submit a Cosmos inference job, poll until completion, then download the output. |
 | `status` | Check the Cosmos endpoint health. |
@@ -57,25 +59,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 
 ```bash
 npa workbench cosmos --help
-npa workbench cosmos deploy --help
-npa workbench cosmos teardown --help
-npa workbench cosmos -p eu-north1 -n cosmos-sl deploy \
-  --runtime serverless \
-  --project-id project-... \
-  --image cr.eu-north1.nebius.cloud/npa/cosmos:cuda12 \
-  --platform gpu-h200-sxm \
-  --preset 1gpu-16vcpu-200gb \
-  --server-port 8080 \
-  --subnet-id vpcsubnet-... \
-  --wait
-npa workbench cosmos -p eu-north1 -n cosmos-sl serve
-npa workbench cosmos -p eu-north1 -n cosmos-sl infer --prompt "A robot arm stacks colored cubes"
-npa workbench cosmos -p eu-north1 -n cosmos-sl teardown --yes
+npa workbench cosmos ensure-ingress --help
 ```
-
-For `--runtime serverless`, `deploy` creates the Nebius Serverless AI Endpoint.
-`serve` is an optional pre-warm/health call against the saved endpoint URL;
-changing the model, image, platform, preset, env, or volumes requires a redeploy.
-When the Nebius project has multiple subnets, include `--subnet-id`.
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos`.

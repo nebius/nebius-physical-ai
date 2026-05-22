@@ -12,7 +12,18 @@ import pytest
 import yaml
 
 
-pytestmark = pytest.mark.smoke
+COSMOS_SERVERLESS_SMOKE_ENV = "NPA_COSMOS_SERVERLESS_SMOKE"
+
+pytestmark = [
+    pytest.mark.smoke,
+    pytest.mark.skipif(
+        os.environ.get(COSMOS_SERVERLESS_SMOKE_ENV) != "1",
+        reason=(
+            f"set {COSMOS_SERVERLESS_SMOKE_ENV}=1 to run Cosmos serverless "
+            "smoke tests; see docs/testing/smoke-tests.md"
+        ),
+    ),
+]
 
 
 class _CosmosHandler(BaseHTTPRequestHandler):

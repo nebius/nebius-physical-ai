@@ -16,11 +16,11 @@ from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
 
 PROJECT_ALIAS = "eu-north1"
-PROJECT_ID = "YOUR_PROJECT_ID"
-BUCKET = "YOUR_S3_BUCKET"
+PROJECT_ID = "project-test-00000000000"
+BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "l40s-isaac-lab"
-ISAAC_LAB_IMAGE = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-isaac-lab:2.3.2.post1"
+ISAAC_LAB_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-isaac-lab:2.3.2.post1"
 GPU_TYPE = "gpu-l40s-d"
 GPU_PRESET = "1gpu-16vcpu-96gb"
 TASK = "Isaac-Reach-Franka-v0"
@@ -64,7 +64,8 @@ def test_isaac_lab_e2e_config_shape() -> None:
     ):
         assert flag in command
     assert _expected_artifact_names() == {
-        "npa_isaac_lab_random_policy_checkpoint.json",
+        "npa_isaac_lab_checkpoint.pt",
+        "npa_isaac_lab_checkpoint_manifest.json",
         "npa_isaac_lab_train_summary.json",
     }
 
@@ -129,13 +130,12 @@ def test_isaac_lab_serverless_smoke(tmp_path: Path) -> None:
         assert {path.name for path in local_dir.iterdir() if path.is_file()} >= _expected_artifact_names()
 
         summary = json.loads((local_dir / "npa_isaac_lab_train_summary.json").read_text(encoding="utf-8"))
-        checkpoint = json.loads(
-            (local_dir / "npa_isaac_lab_random_policy_checkpoint.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((local_dir / "npa_isaac_lab_checkpoint_manifest.json").read_text(encoding="utf-8"))
         _assert_summary(summary, job_name=job_name)
-        assert checkpoint["format"] == "npa_isaac_lab_serverless_smoke_v1"
-        for key, value in summary.items():
-            assert checkpoint[key] == value
+        assert manifest["format"] == "npa_isaac_lab_rsl_rl_checkpoint_v1"
+        assert manifest["task"] == summary["task"]
+        assert manifest["max_iterations"] == summary["max_iterations"]
+        assert (local_dir / "npa_isaac_lab_checkpoint.pt").stat().st_size > 0
     finally:
         if job_id or job_name:
             _cleanup_job(project_id, job_id or job_name, artifacts_dir)
@@ -341,13 +341,14 @@ def _download_s3_prefix(
 def _assert_summary(summary: dict[str, object], *, job_name: str) -> None:
     assert summary["status"] == "success"
     assert summary["tool"] == "isaac_lab"
+    assert summary["framework"] == "rsl_rl"
     assert summary["task"] == TASK
     assert summary["num_envs"] == NUM_ENVS
     assert summary["steps"] == STEPS
-    assert summary["isaaclab_import"] == "available"
-    assert summary["job"] == job_name
-    assert isinstance(summary["duration_seconds"], int | float)
-    assert summary["duration_seconds"] >= 0
+    assert summary["max_iterations"] == STEPS
+    assert summary["run_name"] == job_name
+    assert str(summary["train_script"]).endswith("scripts/reinforcement_learning/rsl_rl/train.py")
+    assert int(summary["checkpoint_count"]) >= 1
 
 
 def _submitted_subnet_id(raw: dict[str, object]) -> str:
@@ -359,7 +360,8 @@ def _submitted_subnet_id(raw: dict[str, object]) -> str:
 
 def _expected_artifact_names() -> set[str]:
     return {
-        "npa_isaac_lab_random_policy_checkpoint.json",
+        "npa_isaac_lab_checkpoint.pt",
+        "npa_isaac_lab_checkpoint_manifest.json",
         "npa_isaac_lab_train_summary.json",
     }
 

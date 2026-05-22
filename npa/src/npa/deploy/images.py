@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-DEFAULT_CONTAINER_REGISTRY = "cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID"
+DEFAULT_CONTAINER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -35,10 +36,11 @@ def supported_tool_version(tool: str) -> str:
 def container_image_for_tool(
     tool: str,
     *,
-    registry: str = DEFAULT_CONTAINER_REGISTRY,
+    registry: str | None = None,
     tag: str | None = None,
 ) -> str:
     """Return the fully qualified image ref for a Workbench tool."""
     image_name = CONTAINER_IMAGE_NAMES[tool]
     resolved_tag = tag or supported_tool_version(tool)
-    return f"{registry.rstrip('/')}/{image_name}:{resolved_tag}"
+    resolved_registry = registry or os.environ.get("NPA_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
+    return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"

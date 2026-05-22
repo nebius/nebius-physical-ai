@@ -45,6 +45,11 @@ groot = [
     "nvidia-gr00t-sdk==0.1.0",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.4.0",
+]
+
 [project.scripts]
 npa = "npa.cli.main:app_entry"
 

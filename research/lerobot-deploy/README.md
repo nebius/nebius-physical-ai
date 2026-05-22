@@ -213,7 +213,7 @@ terraform destroy -auto-approve
 
 # Get IDs from env vars (if still exported) or from .env
 source ../.env 2>/dev/null || true
-BUCKET_NAME="${NEBIUS_S3_BUCKET:-YOUR_S3_BUCKET_3}"  # From terraform output
+BUCKET_NAME="${NEBIUS_S3_BUCKET:-your-bucket-name}"  # From terraform output
 SA_ID="${NEBIUS_SA_ID:-...}"                         # Check nebius iam service-account list
 
 # Delete S3 bucket (contents must be empty)

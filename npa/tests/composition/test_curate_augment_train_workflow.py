@@ -18,10 +18,10 @@ import pytest
 NAMESPACE = "argo"
 TEMPLATE_NAME = "curate-augment-train"
 FIXTURE_URI = (
-    "s3://YOUR_S3_BUCKET/"
+    "s3://your-bucket-name/"
     "argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt"
 )
-BUCKET = "YOUR_S3_BUCKET"
+BUCKET = "your-bucket-name"
 S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 S3_PREFIX = "argo-artifacts"
 POLL_INTERVAL_SECONDS = 10

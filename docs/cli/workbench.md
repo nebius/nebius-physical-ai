@@ -16,6 +16,9 @@ fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
 isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
+sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
+lancedb  Deploy and query LanceDB vector-search workbenches.
+detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 ```
 
 ## Options
@@ -34,6 +37,9 @@ isaac-lab  Isaac Lab simulation workbench deployment, training, and evaluation.
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
 | `isaac-lab` | Isaac Lab simulation workbench deployment, training, and evaluation. |
+| `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
+| `lancedb` | Deploy and query LanceDB vector-search workbenches. |
+| `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 
 ## Examples
 

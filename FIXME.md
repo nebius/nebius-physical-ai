@@ -79,7 +79,7 @@ Print a non-secret access result for each checked gated repository during normal
 
 ## FiftyOne load-dataset prints curl failures on successful load
 **Symptom:**
-The 2026-05-09 validation run successfully loaded `s3://YOUR_S3_BUCKET/demo-prestage/cosmos/fiftyone-ranked/` with `--format auto` and reported 5 samples, but the command also printed repeated stderr lines like:
+The 2026-05-09 validation run successfully loaded `s3://your-bucket-name/demo-prestage/cosmos/fiftyone-ranked/` with `--format auto` and reported 5 samples, but the command also printed repeated stderr lines like:
 
 ```text
 curl: (7) Failed to connect to 127.0.0.1 port 5151 after 0 ms: Couldn't connect to server
@@ -101,7 +101,7 @@ The 2026-05-09 8x H200 rerun completed Cosmos generation successfully in `448.1s
 ```bash
 npa/.venv/bin/npa workbench cosmos -p eu-north1 -n demo-cosmos-8gpu-h200-20260509 infer \
   --prompt "A robot arm gently stacks colored cubes on a lab table." \
-  --output-path s3://YOUR_S3_BUCKET/demo-8gpu-h200/cosmos/test-8gpu-timing.mp4
+  --output-path s3://your-bucket-name/demo-8gpu-h200/cosmos/test-8gpu-timing.mp4
 ```
 
 The generated VM-local file existed at `/opt/cosmos-data/outputs/cosmos-0d62b401962849ac87d7372ae6bcfea9.mp4`, but the local storage client raised `AccessDenied` on `PutObject`. The CLI printed a Python traceback instead of a concise command error.
@@ -240,14 +240,226 @@ No supported CLI-only workaround. Do not fake the Isaac Lab -> LeRobot -> GR00T 
 **Proper fix:**
 Add `--export-trajectory / --no-export-trajectory` to `npa workbench isaac-lab train` defaulting off. When enabled, write one episode folder per exported episode under `--output-path` using the numpy contract above, with synced observations, actions, and states. Add `npa workbench isaac-lab list-tasks` to print registered Isaac Lab gym task names, one per line. Add unit coverage for exported folder structure/array shapes and for a non-empty task listing in the test environment. If the Isaac Lab gym registry cannot be accessed without the Isaac Lab container/runtime, document that limitation explicitly in CLI help and tests.
 
+# FIXME entries from CC code review of 4 Codex commits — 2026-05-10
+
+These entries come from the Sunday code review of commits 13264a6,
+2956b72, c7cb3cb, 1acfddc. Items here are non-blocking for Monday demo
+but should be addressed before any of this code lands on a stable
+branch / customer-facing version.
+
+Priority: H = High (security or architectural debt with near-term cost),
+M = Medium (cleanup that compounds), L = Low (nice-to-have)
+
 ---
 
-## [L] SDK_V1_STABILIZATION
+## [H] Parameterize Isaac Lab → LeRobot formatter (2956b72)
 
-The public SDK surface now exists as v0:
-`from npa import convert, demo, rerun, workbench, network, workflow, errors`.
-Before declaring v1 stability, add type stubs or stronger typing coverage,
-settle semver policy, and bake the wrapper signatures with customer usage.
+**Source:** CC review, "Architecture quality / Extract / format separation"
+
+**Symptom:** `isaac_lab_lerobot.py` is fully G1-bound: hardcodes
+`G1_STATE_NAMES_43`, `G1_STATE_DIM`, schema list size, `unitree_g1` robot
+type. Future Genesis/MuJoCo/CARLA adapters cannot reuse the formatter
+half without forking the whole module.
+
+**Fix:** parameterize `convert()` over a `FeatureSpec` dataclass:
+
+```python
+@dataclass
+class LeRobotFeatureSpec:
+    state_names: list[str]
+    action_names: list[str]
+    robot_type: str
+    state_dim: int
+    action_dim: int
+```
+
+Sim-specific extractors (Isaac Lab, Genesis, MuJoCo) stay separate.
+Format half (parquet writing, schema generation, episode metadata)
+becomes shared and parameterized.
+
+**Site:** `npa/src/npa/adapter/isaac_lab_lerobot.py` (or wherever the
+G1 constants live)
+
+**Priority:** H — every new sim adapter blocks on this. Today the
+abstraction is fine because there's only one sim adapter; ships gracefully
+to two; collapses at three.
+
+**Recommended pairing:** do this work alongside the LeRobot library
+validation test below (single coherent refactor session).
+
+---
+
+## [M] Add standalone LeRobot library validation test (2956b72 follow-up)
+
+**Source:** CC review, "LeRobot output validates standalone: no"
+
+**Symptom:** Current adapter tests in `test_groot_adapter.py` validate
+parquet output via `pq.read_table` directly — this is circular validation
+because both writer and reader are pyarrow. The c7cb3cb sidecar parquet
+bug demonstrated that real-world `groot convert` runs catch failures
+that the test suite doesn't.
+
+**Fix:** add a smoke test that loads the produced LeRobotDataset via the
+LeRobot library directly:
+
+```python
+def test_isaac_lab_export_loads_via_lerobot_library(tmp_path):
+    pytest.importorskip("lerobot")
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+    
+    # ... run isaac-lab export to tmp_path ...
+    
+    dataset = LeRobotDataset.load(tmp_path)
+    assert len(dataset) > 0
+    # validate at least one sample structure
+```
+
+**Site:** `npa/tests/test_groot_adapter.py` or new `test_lerobot_library_compat.py`
+
+**Priority:** M — paired with the formatter refactor above. Catches a
+class of failures the current test suite cannot.
+
+---
+
+## [M] Cosmos and Isaac Lab share remote-env upload pattern — lift to shared module
+
+**Source:** CC review, "Duplication"
+
+**Symptom:** `_upload_local_file_via_remote_env` (cosmos) and
+`_upload_local_directory_via_remote_env` (isaac_lab) share the same
+shape: `set -a; . env_file; python3 - <<PY`. As more tools need
+remote-env upload (groot? fiftyone? future tools?), this gets more
+copies.
+
+**Fix:** lift to `npa.clients.storage` as `upload_via_remote_env(host,
+local_path, s3_uri, env_file_path)`. Both cosmos and isaac_lab call
+into it.
+
+**Priority:** M — refactor when adding the third caller. Don't
+preemptively refactor before there's pressure.
+
+---
+
+## [L] Add `--dry-run` to `groot reload-env`
+
+**Source:** CC review, "Specific concerns" on 13264a6
+
+**Symptom:** `groot reload-env` immediately applies env changes,
+restarts the systemd service, and waits for `/health`. There's no way
+to preview what would change without committing. Useful for incident
+response or operator confidence-building.
+
+**Fix:** add `--dry-run` flag that:
+- Reads credentials.yaml
+- Diffs against current `/etc/npa-groot-server/env`
+- Prints the diff and the would-execute commands
+- Exits without applying
+
+**Site:** `npa/src/npa/cli/groot/__init__.py` near `_build_reload_env_command`
+
+**Priority:** L — operational nice-to-have, not blocking.
+
+---
+
+## [L] Untested edge cases in `groot reload-env` (13264a6)
+
+**Source:** CC review, "Specific concerns" on 13264a6
+
+**Symptom:** Tests cover happy path, missing-credentials, and
+command-construction. Untested edge cases: SSH transport failure,
+sudo failure, restart-then-health-timeout (service restarts but
+`/health` stays down).
+
+**Fix:** add tests for the three SSH/systemd failure paths above.
+Mock SSH client to raise transport errors; mock systemctl to fail;
+mock /health to time out. Each should produce a clean error message
+not a stack trace.
+
+**Site:** `npa/tests/cli/test_groot_cli.py`
+
+**Priority:** L — current behavior is "raise raw exception which user
+sees as a stack trace." Not pretty but not dangerous.
+
+---
+
+## [L] Isaac Lab placeholder ego-view defaults to True (2956b72)
+
+**Source:** CC review, "Architectural Notes / placeholder ego-view default-on"
+
+**Symptom:** `--placeholder-video=True` is the default on `isaac-lab
+export-lerobot`. This writes synthetic frames as
+`observation.images.ego_view`. A downstream visual policy reading
+`observation.images.ego_view` and assuming real video would train on
+garbage.
+
+**Fix options:**
+1. Default `--placeholder-video=False`. Operator opts in explicitly.
+2. Rename modality to `observation.images.placeholder_ego_view` so
+   downstream consumers can't conflate it with real ego-view data.
+3. Add a `metadata.json` flag indicating placeholder data is present.
+
+Pick one (probably option 2 — most explicit, lowest behavior change risk).
+
+**Site:** `npa/src/npa/adapter/isaac_lab_lerobot.py`
+
+**Priority:** L — no current user is reading this field as real video.
+Bites if/when one appears.
+
+---
+
+## [L] Cosmos fallback test missing both-paths-fail case (1acfddc)
+
+**Source:** CC review, "Tests meaningful? partial" on 1acfddc
+
+**Symptom:** Existing test covers single fallback (local fails, remote
+succeeds). Missing: a test where BOTH local and remote upload fail.
+Currently this propagates raw SSHError to the operator, which is
+neither the cleanest UX nor the most informative.
+
+**Fix:** add a test that mocks both local and remote upload to fail.
+Wrap the resulting error in a clean exception type
+(`UploadFailedAllPaths` or similar) with a message naming both
+attempts and their failure modes.
+
+**Site:** `npa/tests/cli/test_cosmos_cli.py`
+
+**Priority:** L — error case, but not silently wrong.
+
+---
+
+## [L] Unused `temp_dirs` parameter in `_upload_local_file_via_remote_env` (1acfddc)
+
+**Source:** CC review, "Minor"
+
+**Symptom:** `_upload_local_file_via_remote_env` accepts a `temp_dirs`
+parameter that isn't used inside the function.
+
+**Fix:** remove the parameter and update callers.
+
+**Site:** `npa/src/npa/cli/cosmos/__init__.py`
+
+**Priority:** L — dead code. Five-minute cleanup whenever the file
+is next touched.
+
+---
+## Claude code review
+CC review pending on network primitive commits (1bc5bb3, 01e449b, 
+  12ac80f, 2724160, plus Phase 1 commit). Inner loop discipline applied,
+  Phase 5 verification passed, but no independent code review. Run CC 
+  review before merging to stable branch / customer-facing version.
+  Pattern: same as cosmos review on 2026-05-10 morning that caught
+  silent IAM scope expansion in upload fallback.
+
+---
+[L] Repo-wide ruff check/format fails on pre-existing unrelated lint debt. New code passes targeted checks. Bulk lint cleanup deferred — should be done as a single focused commit ("apply ruff format/check to entire codebase") to avoid muddying functional commits.
+
+## [M] SDK_PUBLIC_SURFACE
+
+Wire up `npa/__init__.py` to expose a clean public SDK surface, such as
+`from npa import convert, demo, rerun` with stable public methods. The
+architecture doc now states this SDK surface is roadmap, not current behavior.
+Likely scope: decide what is public versus internal, build re-exports, document
+the API, and add import/behavior tests.
 
 ## [L] ADAPTER_NAMESPACE_CONSOLIDATION
 
@@ -288,31 +500,6 @@ privates through this path. Cleaner migration: update test imports to point at
 
 `npa init` is a literal alias for `npa configure`. Either drop the alias or add
 a one-line help distinction.
-
----
-
-## CLOSED 2026-05-12 (deploy lifecycle safety run)
-
-- `<tool> deploy against existing alias provisions replacement infrastructure` — CLOSED
-  Added existing-alias detection for groot, cosmos, isaac-lab, and fiftyone.
-  Re-running deploy against a saved alias now avoids Terraform by default;
-  replacement provisioning requires explicit `--replace` and confirmation
-  unless `--yes` is set.
-
-- `No reload-env command for env updates without model unload` — CLOSED FOR COSMOS
-  Added `npa workbench cosmos reload-env`; groot already had reload-env.
-  isaac-lab and fiftyone remain lower-priority future candidates.
-
-- `Add --dry-run to groot reload-env` — CLOSED
-  Added `--dry-run` to both groot and cosmos reload-env. Dry-run reads the
-  remote env file, prints a redacted unified diff, and shows the commands that
-  would run without applying changes.
-
-- `No cleanup path for partial deploys` — CLOSED
-  Added `npa workbench <tool> cleanup-partial` for cosmos, groot, isaac-lab,
-  and fiftyone. The command classifies alias state and only runs Terraform
-  destroy for `partial`; fully deployed aliases are refused and BYOVM aliases
-  are skipped. Confirmation is required unless `--yes` is passed.
 
 ---
 
@@ -462,7 +649,7 @@ Outstanding (deferred):
   `train`, FiftyOne `load-dataset`, Genesis `train-teacher`, and GR00T `infer`.
 - Nebius Serverless smoke results: 4/5 PASS. Cosmos, Isaac Lab, FiftyOne, and
   Genesis uploaded real artifacts to
-  `s3://YOUR_S3_BUCKET_2/w7p-fresh/20260513T225839Z/`.
+  `s3://your-bucket-name/w7p-fresh/20260513T225839Z/`.
 - GR00T code and unit tests landed, but smoke attempts failed before container
   logs with Nebius internal Job errors on H200 and L40S.
 - Cross-tool docs landed at `docs/cookbooks/serverless-tools-coverage.md`.
@@ -496,6 +683,7 @@ Outstanding (deferred):
   deferred to a separate run.
 - `lancedb`: Backup and restore commands are deferred to v2; use storage-level
   snapshot or prefix replication for now.
+- groot: smoke validation pending Nebius support investigation; W7pgdvr-20260514T011023Z confirmed pre-delete retry logs were captured and empty; see /tmp/w7pgd-20260514T001207Z/NEBIUS-SUPPORT-HANDOFF.md
 
 ---
 
@@ -514,3 +702,63 @@ Outstanding (deferred):
   state pins linux/amd64 for Nebius L40S, but the image still needs an amd64
   rebuild, C++ deploy dependency validation, and registry push before serverless
   smoke can run.
+
+---
+
+## W7-lancedb-e2e deferred follow-ups
+
+- `lancedb`: Full Nebius VM-mode e2e remains blocked. `deploy --runtime vm
+  --dry-run` accepts the plan, but the non-dry-run path currently exits with
+  "VM/BYOVM app deploy needs Workbench parent registration outside this run
+  allowlist" before provisioning. The W7-lancedb-e2e fallback validated the
+  public CLI through container deploy, table creation, basic and filtered
+  query, S3-backed Lance files, and container teardown against
+  `eu-north1`/`your-bucket-name`. Implement managed CPU VM provisioning and
+  teardown in `npa.cli.workbench.lancedb.deploy` before claiming full VM
+  infrastructure validation.
+
+---
+
+## W7-sonic-build-fix deferred follow-ups
+
+- `sonic`: Dockerfile build now succeeds locally as a self-contained
+  `linux/amd64` image with `isaaclab==2.3.2.post1`, and the pushed fix image
+  passes local import/entrypoint smoke. The older W7-sonic "Dockerfile build is
+  blocked" note is superseded by this follow-up status.
+- `sonic`: Nebius L40S serverless smoke using the pushed fix image reached Job
+  `ERROR` before `started_at` and produced no container logs; classify this as
+  `FAIL_PLATFORM` and hand off the job ID/report artifacts to Nebius support if
+  it recurs.
+- `sonic`: `BUILD_SONIC_DEPLOY=1` still needs a separate deploy-image
+  validation pass for TensorRT and ONNX Runtime discovery before claiming the
+  C++ deploy stack is production-ready.
+
+---
+
+## Added by W7-all-fixes (20260514T160548Z)
+
+### SONIC orphan Job submission race
+- **Surfaced by:** W7-platform-pattern-investigation (20260514T160548Z)
+- **Symptom:** Job `aijob-test-00000000000` was run-owned but unexpected in one run, then appeared again as a fresh retry submission in a later W7-platform-pattern run.
+- **Hypothesis:** CLI submission idempotency bug, polling collision, stale handle reuse, or Nebius-side ID collision.
+- **Priority:** Investigate near-term; could affect future SONIC submissions.
+- **Investigation:** Trace `npa workbench sonic train` submission and polling paths for hidden retries, stale handles, and idempotency gaps.
+
+### Workbench tool image manifest hygiene rule
+- **Surfaced by:** W7-platform-pattern-investigation + W7-all-fixes (20260514T160548Z)
+- **Rule:** Workbench tool images should be pushed as single `linux/amd64` manifests where practical, not OCI image indexes with `unknown/unknown` attestation children.
+- **Status:** Defensive best practice, not a proven fix. W7-platform-pattern `20260514T143718Z` refuted the universal manifest-failure hypothesis: GR00T completed with the OCI-index shape, while SONIC failed on L40S with a single `linux/amd64` image.
+- **Current state:** SONIC `-amd64` tag fixed; GR00T repush skipped as `SKIPPED_LOW_PRIORITY`; LeRobot, FiftyOne, Genesis, Isaac Lab, and Cosmos were already verified compliant in W7-platform-pattern.
+- **TODO:** Add a CI/build check that asserts new serverless image pushes are single-platform unless an explicit exception is documented.
+
+### GR00T subnet resolution defect
+- **Surfaced by:** W7-platform-pattern-investigation (20260514T160548Z)
+- **Status:** Fixed in commit `aee8484` (`groot: honor configured GPU workbench subnet`).
+- **Symptom:** GR00T serverless retries without `--subnet-id` resolved a discovered subnet instead of the configured subnet at `projects.eu-north1.workbenches.h200.serverless_job.subnet_id`.
+- **Validated workaround:** Explicit `--subnet-id vpcsubnet-test-00000000000` completed in W7-platform-pattern job `aijob-test-00000000000`.
+- **Validation:** W7-all-fixes job `aijob-test-00000000000` passed without `--subnet-id`; live spec contained `vpcsubnet-test-00000000000` and GR00T artifacts were uploaded.
+
+### SONIC L40S Nebius platform issue
+- **Surfaced by:** W7-platform-pattern-investigation (20260514T160548Z)
+- **Status:** Workaround in place (route SONIC to H100); awaiting Nebius support response.
+- **Ticket draft:** `/tmp/w7all-20260514T160548Z/nebius-support-ticket-sonic-l40s-draft.md`

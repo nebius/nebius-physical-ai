@@ -32,7 +32,6 @@ from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
 from npa.clients.serverless import EndpointNotFoundError
-from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
@@ -530,7 +529,7 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
     mocker.patch(
         "npa.cli.groot.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.cli.groot.list_projects", return_value={})
     mocker.patch("npa.cli.groot.write_config")
@@ -576,7 +575,7 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
         for call in ssh.run_or_raise.call_args_list
         if "/etc/npa-groot-server/env" in call.args[0]
     )
-    assert "HF_TOKEN=hf-token" in install_cmd
+    assert "HF_TOKEN=PLACEHOLDER_HF_TOKEN" in install_cmd
     assert "AWS_ACCESS_KEY_ID=key" in install_cmd
     assert "AWS_SECRET_ACCESS_KEY=secret" in install_cmd
     assert "AWS_ENDPOINT_URL=https://storage.example" in install_cmd
@@ -613,7 +612,7 @@ def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
         "npa.cli.groot.resolve_credentials",
         return_value=CredentialsConfig(
             tokens={
-                "HF_TOKEN": "hf-token",
+                "HF_TOKEN": "PLACEHOLDER_HF_TOKEN",
                 "NGC_API_KEY": "nvapi-file",
                 "NGC_ORG": "org-file",
                 "NGC_TEAM": "team-file",
@@ -796,7 +795,7 @@ def test_groot_reload_env_command_updates_credentials_without_embedding_secret()
 
 
 def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mocker) -> None:
-    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg = _cfg(runtime="vm", hf_token="PLACEHOLDER_HF_TOKEN")
     cfg.service_port = 8082
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (
@@ -818,7 +817,7 @@ def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mo
         "npa.cli.groot.resolve_credentials",
         return_value=CredentialsConfig(
             tokens={
-                "HF_TOKEN": "hf-token",
+                "HF_TOKEN": "PLACEHOLDER_HF_TOKEN",
                 "NGC_API_KEY": "nvapi-file",
             }
         ),
@@ -846,7 +845,7 @@ def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mo
     assert "nvapi-file" not in cmd
     ssh_tokens = ssh_cls.call_args.args[0].tokens
     assert ssh_tokens["NGC_API_KEY"] == "nvapi-file"
-    assert ssh_tokens["HUGGING_FACE_HUB_TOKEN"] == "hf-token"
+    assert ssh_tokens["HUGGING_FACE_HUB_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     http._request.assert_called_once_with(
         "POST",
         "/serve",
@@ -856,7 +855,7 @@ def test_groot_reload_env_syncs_shared_credentials_and_preserves_loaded_model(mo
 
 
 def test_groot_apply_env_update_helper_used_by_deploy_and_reload_env(mocker) -> None:
-    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg = _cfg(runtime="vm", hf_token="PLACEHOLDER_HF_TOKEN")
     cfg.service_port = 8082
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
     mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=True)
@@ -864,7 +863,7 @@ def test_groot_apply_env_update_helper_used_by_deploy_and_reload_env(mocker) -> 
     mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.groot.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     apply_env_update = mocker.patch(
         "npa.cli.groot._apply_env_update",
@@ -898,7 +897,7 @@ def test_groot_apply_env_update_helper_used_by_deploy_and_reload_env(mocker) -> 
 
 
 def test_groot_reload_env_dry_run_does_not_apply(mocker) -> None:
-    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg = _cfg(runtime="vm", hf_token="PLACEHOLDER_HF_TOKEN")
     cfg.service_port = 8082
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (
@@ -910,7 +909,7 @@ def test_groot_reload_env_dry_run_does_not_apply(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.groot.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
 
@@ -925,7 +924,7 @@ def test_groot_reload_env_dry_run_does_not_apply(mocker) -> None:
 
 
 def test_groot_reload_env_dry_run_shows_changes(mocker) -> None:
-    cfg = _cfg(runtime="vm", hf_token="hf-token")
+    cfg = _cfg(runtime="vm", hf_token="PLACEHOLDER_HF_TOKEN")
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (
         0,
@@ -936,7 +935,7 @@ def test_groot_reload_env_dry_run_shows_changes(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
     mocker.patch(
         "npa.cli.groot.resolve_credentials",
-        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-token"}),
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
     )
     mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
 
@@ -946,7 +945,7 @@ def test_groot_reload_env_dry_run_shows_changes(mocker) -> None:
     assert "--- current" in result.output
     assert "+++ proposed" in result.output
     assert "-HF_TOKEN=old-" in result.output
-    assert "+HF_TOKEN=hf-t" in result.output
+    assert "+HF_TOKEN=PLAC" in result.output
 
 
 def test_groot_reload_env_requires_shared_credentials(mocker) -> None:
@@ -1453,7 +1452,7 @@ def _mock_groot_serverless_env(mocker):
 
 
 def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
-    mocker.patch("npa.cli.groot.resolve_environment", return_value=SimpleNamespace(project_id="YOUR_PROJECT_ID"))
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=SimpleNamespace(project_id="project-test-00000000000"))
     mocker.patch(
         "npa.cli.groot.resolve_project_storage",
         return_value=SimpleNamespace(
@@ -1465,7 +1464,7 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
     )
     mocker.patch("npa.cli.groot.resolve_container_registry", return_value="registry.example")
     mocker.patch("npa.cli.groot.container_image_for_tool", return_value="registry.example/npa-groot:smoke")
-    resolver = mocker.patch("npa.cli.groot.resolve_subnet", return_value="vpcsubnet-e00h9xcpssv53b3y3n")
+    resolver = mocker.patch("npa.cli.groot.resolve_subnet", return_value="vpcsubnet-test-00000000000")
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
     client.create_job.return_value = SimpleNamespace(id="job-1", name="groot-job", status="running", output_uris=())
@@ -1476,7 +1475,7 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
         [
             "workbench", "groot", "-p", "eu-north1", "-n", "w7all-retry1", "infer",
             "--runtime", "serverless",
-            "--project-id", "YOUR_PROJECT_ID",
+            "--project-id", "project-test-00000000000",
             "--input-path", "s3://bucket/checkpoint/",
             "--dataset-path", "s3://bucket/dataset/",
             "--output-path", "s3://bucket/groot/",
@@ -1486,9 +1485,9 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    assert client.create_job.call_args.kwargs["subnet_id"] == "vpcsubnet-e00h9xcpssv53b3y3n"
+    assert client.create_job.call_args.kwargs["subnet_id"] == "vpcsubnet-test-00000000000"
     resolver.assert_called_once_with(
-        project_id="YOUR_PROJECT_ID",
+        project_id="project-test-00000000000",
         explicit_subnet_id="",
     )
 
@@ -1753,7 +1752,7 @@ def test_groot_status_reports_readiness_blockers(mocker) -> None:
         "loaded": False,
         "ngc_credentials_configured": False,
     }
-    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg(hf_token="hf-token"))
+    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"))
     mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
 
     result = runner.invoke(app, ["workbench", "groot", "status", "--output", "json"])

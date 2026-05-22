@@ -17,7 +17,7 @@ import pyarrow as pa
 from PIL import Image, ImageDraw
 
 DEFAULT_TABLE = "bdd100k"
-DEFAULT_LANCE_URI = "s3://YOUR_S3_BUCKET/lancedb/bdd100k/"
+DEFAULT_LANCE_URI = "s3://<your-bucket>/lancedb/bdd100k/"
 DEFAULT_SPLITS = ("train", "val")
 VALID_SPLITS = ("train", "val", "test")
 BATCH_SIZE = 200

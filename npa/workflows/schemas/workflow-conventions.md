@@ -25,7 +25,7 @@ Argo's controller and wait container handle S3 download and upload through the c
 The installed artifact repository stores workflow artifacts under:
 
 ```text
-s3://YOUR_S3_BUCKET/argo-artifacts/<workflow-name>/<pod-name>/
+s3://${NPA_S3_BUCKET}/argo-artifacts/<workflow-name>/<pod-name>/
 ```
 
 The first step of a reference architecture may source its `input` from an arbitrary S3 URI by using Argo's `s3:` artifact source syntax. Later steps pass artifacts by referencing previous step outputs.
@@ -41,7 +41,7 @@ python:3.11-slim@sha256:9a7765b36773a37061455b332f18e265e7f58f6fea9c419a550d2a8b
 Nebius registry images use:
 
 ```text
-cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/<tool>:<version>
+cr.eu-north1.nebius.cloud/<your-registry-id>/<tool>:<version>
 ```
 
 Those private images rely on the `cr-credentials` pull secret installed on the `argo-workflow` service account. Real tool steps land in `W8-tool-pod-runtime`; this bootstrap uses placeholders only.

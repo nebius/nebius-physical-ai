@@ -27,14 +27,14 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 
 | Tool | Image | Validation | B300 result | Baseline comparison | Date |
 |---|---|---|---|---|---|
-| Base CUDA 13 B300 | `cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z` | PyTorch 2.9.0+cu130 import, device capability `(10, 3)`, flash-attn-4 forward pass, NCCL init | PASS on 8x B300, driver 580.126.09 | No H200/H100 comparison; functional base smoke | 2026-05-14 |
-| LeRobot | `cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lerobot:cuda13-b300-20260514T214550Z` | ACT, `lerobot/pusht_image`, batch size 8, 100 steps | PASS; 71 s wall time, 39 s training loop, 2.51 step/s end-to-end progress line, 27.19 step/s warm step-100 sample | No exact H200 wall-clock baseline found. Reference H200 profiler run used LeRobot v0.5.1 on `lerobot/pusht` at 34.56 step/s, so it is not a like-for-like speedup claim. | 2026-05-14 |
+| Base CUDA 13 B300 | `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag>` | PyTorch 2.9.0+cu130 import, device capability `(10, 3)`, flash-attn-4 forward pass, NCCL init | PASS on 8x B300, driver 580.126.09 | No H200/H100 comparison; functional base smoke | 2026-05-14 |
+| LeRobot | `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag>` | ACT, `lerobot/pusht_image`, batch size 8, 100 steps | PASS; 71 s wall time, 39 s training loop, 2.51 step/s end-to-end progress line, 27.19 step/s warm step-100 sample | No exact H200 wall-clock baseline found. Reference H200 profiler run used LeRobot v0.5.1 on `lerobot/pusht` at 34.56 step/s, so it is not a like-for-like speedup claim. | 2026-05-14 |
 
 ## Tier 1 Not Yet Validated
 
 | Tool | Intended image | Status | Blocking evidence | Next action |
 |---|---|---|---|---|
-| SONIC | `workbench-sonic:cuda13-b300-20260514T214550Z` | Vendor-paced (Isaac Lab 2.3.2 dependency); no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | ETA tied to NVIDIA Isaac Sim x86_64 CUDA 13 alignment; rerun SONIC validation after that package matrix exists. |
+| SONIC | `workbench-sonic:<cuda13-b300-tag>` | Vendor-paced (Isaac Lab 2.3.2 dependency); no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | ETA tied to NVIDIA Isaac Sim x86_64 CUDA 13 alignment; rerun SONIC validation after that package matrix exists. |
 
 ## Vendor-Paced Workloads
 
@@ -63,20 +63,20 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 Pull and smoke the base image on a B300 host with NVIDIA driver 580 or newer:
 
 ```bash
-docker pull cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z
+docker pull cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag>
 docker run --gpus all --rm \
-  cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-base:cuda13-b300-20260514T214550Z \
+  cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag> \
   python -c "import torch; print(torch.cuda.get_device_capability(0)); import flash_attn; print(flash_attn.__version__)"
 ```
 
 Run the validated LeRobot workload:
 
 ```bash
-docker pull cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lerobot:cuda13-b300-20260514T214550Z
+docker pull cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag>
 docker run --gpus all --rm \
   -e WANDB_MODE=disabled \
   -v /tmp/lerobot-b300:/output \
-  cr.eu-north1.nebius.cloud/YOUR_REGISTRY_ID/npa-lerobot:cuda13-b300-20260514T214550Z \
+  cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag> \
   lerobot-train \
     --policy.type=act \
     --policy.push_to_hub=false \

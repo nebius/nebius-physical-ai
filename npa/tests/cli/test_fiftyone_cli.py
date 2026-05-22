@@ -59,6 +59,7 @@ def _active_endpoint(url: str):
         "eval",
         "load-dataset",
         "restart",
+        "open",
         "status",
         "system-info",
         "datasets",
@@ -1377,6 +1378,125 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     assert "server: up" in result.output
     assert "http://fiftyone.example:6161" in result.output
     get.assert_called_once_with("http://fiftyone.example:6161", timeout=5.0)
+
+
+def _service_type_from_manifest(output: str) -> str:
+    payload = json.loads(output)
+    service = next(item for item in payload["items"] if item["kind"] == "Service")
+    return service["spec"]["type"]
+
+
+def test_fiftyone_kubernetes_deploy_public_ip_manifest_is_loadbalancer() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--public-ip",
+            "--dry-run",
+            "--kubeconfig",
+            "/tmp/kubeconfig",
+            "--image",
+            "registry.example/npa-fiftyone:test",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert _service_type_from_manifest(result.output) == "LoadBalancer"
+
+
+def test_fiftyone_kubernetes_deploy_default_manifest_is_clusterip() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--dry-run",
+            "--kubeconfig",
+            "/tmp/kubeconfig",
+            "--image",
+            "registry.example/npa-fiftyone:test",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert _service_type_from_manifest(result.output) == "ClusterIP"
+
+
+def test_fiftyone_status_shows_public_url_for_loadbalancer(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
+    mocker.patch(
+        "npa.cli.fiftyone._k8s_status_payload",
+        return_value={
+            "status": "RUNNING",
+            "service_type": "LoadBalancer",
+            "public_url": "http://203.0.113.42:5151",
+        },
+    )
+
+    result = runner.invoke(app, ["workbench", "fiftyone", "status"])
+
+    assert result.exit_code == 0
+    assert "Service type:  LoadBalancer" in result.output
+    assert "Public URL:    http://203.0.113.42:5151" in result.output
+    assert "Status:        RUNNING" in result.output
+
+
+def test_fiftyone_status_suggests_open_for_clusterip(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
+    mocker.patch(
+        "npa.cli.fiftyone._k8s_status_payload",
+        return_value={
+            "status": "RUNNING",
+            "service_type": "ClusterIP",
+            "public_url": "",
+        },
+    )
+
+    result = runner.invoke(app, ["workbench", "fiftyone", "status"])
+
+    assert result.exit_code == 0
+    assert "Service type:  ClusterIP (internal only)" in result.output
+    assert "Local access:  run `npa workbench fiftyone open`" in result.output
+    assert "Status:        RUNNING" in result.output
+
+
+def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone._resolve_required_kubeconfig", return_value="/tmp/kubeconfig")
+    browser = mocker.patch("npa.cli.fiftyone.webbrowser.open")
+    process = mocker.MagicMock()
+    process.poll.return_value = None
+    popen = mocker.patch("npa.cli.fiftyone.subprocess.Popen", return_value=process)
+    mocker.patch("npa.cli.fiftyone.time.sleep", side_effect=KeyboardInterrupt)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "open", "--local-port", "6161"],
+    )
+
+    assert result.exit_code == 0
+    assert "FiftyOne App: http://localhost:6161" in result.output
+    browser.assert_called_once_with("http://localhost:6161")
+    popen.assert_called_once_with(
+        [
+            "kubectl",
+            "--kubeconfig",
+            "/tmp/kubeconfig",
+            "port-forward",
+            "-n",
+            "workbench",
+            "svc/npa-fiftyone",
+            "6161:5151",
+        ]
+    )
+    process.terminate.assert_called_once()
+    process.wait.assert_called()
 
 
 def test_fiftyone_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:

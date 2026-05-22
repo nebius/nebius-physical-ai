@@ -59,6 +59,11 @@ RUN groupadd -g 44 video 2>/dev/null || true; \
     usermod -aG video,render ubuntu
 
 USER ubuntu
+# Force NVIDIA EGL device extension for headless EGL rendering on GPU.
+# Required by Genesis demo generation; combined with the video/render group
+# additions above, enables the full /dev/dri + EGL stack.
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
+ENV EGL_PLATFORM=device
 WORKDIR /opt/genesis
 
 RUN python3 -m venv /opt/genesis/venv \

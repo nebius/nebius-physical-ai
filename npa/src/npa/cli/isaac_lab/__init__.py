@@ -104,6 +104,7 @@ ISAAC_LAB_HOME = "/opt/isaac-lab"
 ISAAC_LAB_VENV = f"{ISAAC_LAB_HOME}/venv"
 ISAAC_LAB_SITE_PACKAGES = f"{ISAAC_LAB_VENV}/lib/python3.11/site-packages"
 ISAAC_LAB_PKG = f"{ISAAC_LAB_SITE_PACKAGES}/isaaclab"
+ISAAC_LAB_RSL_RL_TRAIN_REL = "scripts/reinforcement_learning/rsl_rl/train.py"
 PIP_EXTRA_INDEX_URL = "https://pypi.nvidia.com"
 
 
@@ -206,48 +207,40 @@ def _serverless_job_env(
     return split_serverless_env(env)
 
 
-def _isaac_lab_warn_if_non_rt_gpu(platform: str) -> None:
-    if platform not in {"gpu-l40s-a", "gpu-l40s-d", "gpu-rtx6000"}:
-        console.print(
-            "[yellow]Warning:[/yellow] Isaac Lab simulation workloads usually need RT-core GPUs; "
-            "prefer --gpu-type l40s or --gpu-type gpu-rtx-pro-6000."
+ISAAC_LAB_RT_CORE_PLATFORMS = {"gpu-l40s-a", "gpu-l40s-d", "gpu-rtx6000"}
+
+
+def _isaac_lab_require_rt_gpu(platform: str) -> None:
+    if platform not in ISAAC_LAB_RT_CORE_PLATFORMS:
+        _fail(
+            "Isaac Lab requires RT-core GPUs. Use --gpu-type l40s or "
+            "--gpu-type gpu-rtx-pro-6000; do not use H100/H200."
         )
 
 
-def _isaac_lab_serverless_train_command(task: str, num_envs: int, steps: int) -> str:
+def _isaac_lab_serverless_train_command(
+    task: str,
+    num_envs: int,
+    steps: int,
+    *,
+    run_name: str = "npa-serverless",
+) -> str:
     local_dir = "/tmp/npa-isaac-lab-train"
-    script = f"""
-import json, os, pathlib, time
-
-out = pathlib.Path("{local_dir}")
-out.mkdir(parents=True, exist_ok=True)
-started = time.time()
-try:
-    import isaaclab  # noqa: F401
-    import_status = "available"
-except Exception as exc:
-    import_status = f"unavailable: {{type(exc).__name__}}: {{exc}}"
-summary = {{
-    "status": "success",
-    "tool": "isaac_lab",
-    "task": {task!r},
-    "num_envs": {num_envs},
-    "steps": {steps},
-    "isaaclab_import": import_status,
-    "job": os.environ.get("NPA_JOB_NAME", ""),
-    "duration_seconds": round(time.time() - started, 3),
-}}
-(out / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
-(out / "npa_isaac_lab_random_policy_checkpoint.json").write_text(json.dumps({{"format": "npa_isaac_lab_serverless_smoke_v1", **summary}}, indent=2))
-print("NPA_ISAAC_LAB_SERVERLESS_TRAIN_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
-""".strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
         'if [ -x /isaac-sim/python.sh ]; then NPA_PYTHON_BIN=/isaac-sim/python.sh; '
         'elif [ -x /opt/isaac-lab/venv/bin/python ]; then NPA_PYTHON_BIN=/opt/isaac-lab/venv/bin/python; '
         'else NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"; fi\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        + _build_rsl_rl_train_shell(
+            task,
+            num_envs,
+            steps,
+            local_dir,
+            run_name=run_name,
+            python_bin="${NPA_PYTHON_BIN}",
+        )
+        + f'\necho "NPA_ISAAC_LAB_SERVERLESS_TRAIN_DONE ${{NPA_OUTPUT_PATH:-}}"\n{upload}'
     )
     return _remote_bash(body)
 
@@ -279,7 +272,7 @@ def _isaac_lab_serverless_train(
         _fail(str(exc))
     if gpu_preset:
         preset = gpu_preset
-    _isaac_lab_warn_if_non_rt_gpu(platform)
+    _isaac_lab_require_rt_gpu(platform)
 
     proj_alias = _project_alias or default_project_name()
     wb_name = _workbench_name or default_workbench_name()
@@ -319,7 +312,12 @@ def _isaac_lab_serverless_train(
             project_id=resolved_project_id,
             name=name,
             image=image or container_image_for_tool("isaac-lab", registry=resolve_container_registry(proj_alias)),
-            command=_isaac_lab_serverless_train_command(task, num_envs, steps),
+            command=_isaac_lab_serverless_train_command(
+                task,
+                num_envs,
+                steps,
+                run_name=name,
+            ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
@@ -363,10 +361,11 @@ def _storage_client(
 
     if project:
         return storage_client_for_project(project, allow_host_creds=allow_host_creds)
+    credentials = load_credentials()
     return StorageClient.from_environment(
-        endpoint_url=cfg.storage.endpoint_url,
-        aws_access_key_id=cfg.storage.aws_access_key_id,
-        aws_secret_access_key=cfg.storage.aws_secret_access_key,
+        endpoint_url=cfg.storage.endpoint_url or credentials.s3_endpoint,
+        aws_access_key_id=cfg.storage.aws_access_key_id or credentials.s3_access_key_id,
+        aws_secret_access_key=cfg.storage.aws_secret_access_key or credentials.s3_secret_access_key,
     )
 
 
@@ -486,6 +485,64 @@ PY
     return f"s3://{bucket}/{prefix}"
 
 
+def _upload_existing_remote_directory_via_remote_env(
+    ssh: SSHClient,
+    remote_dir: str,
+    output_path: str,
+    *,
+    env_file: str = "/etc/npa-isaac-lab/env",
+) -> str:
+    parsed = urlparse(output_path)
+    bucket = parsed.netloc
+    prefix = parsed.path.lstrip("/").rstrip("/") + "/"
+    if parsed.scheme != "s3" or not bucket or not prefix.strip("/"):
+        raise SSHError(f"Remote upload expects an s3:// output path: {output_path}")
+
+    script = f"""\
+set -euo pipefail
+if [ ! -f {shlex.quote(env_file)} ]; then
+  echo "missing env file: {shlex.quote(env_file)}" >&2
+  exit 1
+fi
+set -a
+. {shlex.quote(env_file)}
+set +a
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+import boto3
+
+base = Path({remote_dir!r})
+bucket = {bucket!r}
+prefix = {prefix!r}
+endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
+access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+if not base.is_dir():
+    raise RuntimeError(f"remote output directory does not exist: {{base}}")
+if not endpoint:
+    raise RuntimeError("AWS_ENDPOINT_URL/NEBIUS_S3_ENDPOINT is not configured")
+if not access_key or not secret_key:
+    raise RuntimeError("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are not configured")
+s3 = boto3.client(
+    "s3",
+    endpoint_url=endpoint,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+)
+count = 0
+for path in base.rglob("*"):
+    if path.is_file():
+        s3.upload_file(str(path), bucket, prefix + str(path.relative_to(base)))
+        count += 1
+print(f"npa_remote_s3_upload_done files={{count}}")
+PY
+"""
+    ssh.run_or_raise(f"sudo bash -lc {shlex.quote(script)}")
+    return f"s3://{bucket}/{prefix}"
+
+
 def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
     if not _is_s3_uri(input_path):
         return input_path
@@ -519,7 +576,8 @@ def _gpu_selection_error() -> str:
         "GPU selection is required for Isaac Lab deploy. Provide --gpu-type and --gpu-preset.\n"
         "  Suggested starting points:\n"
         "    Simulation workloads (L40S): --gpu-type gpu-l40s-a --gpu-preset 1gpu-40vcpu-160gb\n"
-        "    Heavier Isaac Lab training: use H100/H200, e.g. gpu-h100-sxm or gpu-h200-sxm with a matching Nebius GPU preset."
+        "    RTX Pro 6000 fallback: --gpu-type gpu-rtx-pro-6000 --gpu-preset 1gpu-24vcpu-218gb\n"
+        "  Do not use H100/H200; Isaac Lab requires RT cores."
     )
 
 
@@ -534,6 +592,11 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
         _fail(
             "Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type."
         )
+    try:
+        platform, _, _ = resolve_gpu_platform(gpu_type, 1)
+    except ValueError as exc:
+        _fail(str(exc))
+    _isaac_lab_require_rt_gpu(platform)
 
 
 def _build_install_command() -> str:
@@ -611,89 +674,352 @@ def _container_prefix() -> str:
     )
 
 
-def _build_train_script(task: str, num_envs: int, steps: int, output_dir: str) -> str:
-    return f"""\
-import json
-import time
+def _build_rsl_rl_train_shell(
+    task: str,
+    num_envs: int,
+    iterations: int,
+    output_dir: str,
+    *,
+    run_name: str,
+    python_bin: str,
+) -> str:
+    task_q = shlex.quote(task)
+    num_envs_q = shlex.quote(str(num_envs))
+    iterations_q = shlex.quote(str(iterations))
+    output_dir_q = shlex.quote(output_dir)
+    run_name_q = shlex.quote(run_name)
+    python_bin_q = shlex.quote(python_bin)
+    train_rel_q = shlex.quote(ISAAC_LAB_RSL_RL_TRAIN_REL)
+    return (
+        f"""\
+export PYTHONUNBUFFERED=1
+TASK={task_q}
+NUM_ENVS={num_envs_q}
+MAX_ITERATIONS={iterations_q}
+OUTPUT_DIR={output_dir_q}
+RUN_NAME={run_name_q}
+EXPERIMENT_NAME=npa_isaac_lab
+PYTHON_BIN={python_bin_q}
+TRAIN_REL={train_rel_q}
+"""
+        + """\
+if [ "$PYTHON_BIN" = '${NPA_PYTHON_BIN}' ]; then
+  PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"
+fi
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -x "$PYTHON_BIN" ]; then
+  echo "Python interpreter not found: $PYTHON_BIN" >&2
+  exit 127
+fi
+
+mkdir -p "$OUTPUT_DIR"
+if [ -z "${ISAACLAB_PKG:-}" ]; then
+  ISAACLAB_PKG=$("$PYTHON_BIN" <<'PY' 2>/dev/null || true
 from pathlib import Path
+
+try:
+    import isaaclab
+except Exception:
+    raise SystemExit(0)
+
+print(Path(isaaclab.__file__).resolve().parent)
+PY
+)
+fi
+if [ -n "${ISAACLAB_PKG:-}" ] && [ -d "$ISAACLAB_PKG/source" ]; then
+  export ISAACLAB_PKG
+  export PYTHONPATH="$ISAACLAB_PKG/source/isaaclab:$ISAACLAB_PKG/source/isaaclab_tasks:$ISAACLAB_PKG/source/isaaclab_rl:$ISAACLAB_PKG/source/isaaclab_assets:$ISAACLAB_PKG/source/isaaclab_mimic:$ISAACLAB_PKG/source/isaaclab_contrib:${PYTHONPATH:-}"
+fi
+
+TRAIN_SCRIPT=""
+TRAIN_ROOT=""
+for root in "${ISAACLAB_PATH:-}" /workspace/isaaclab /opt/isaac-lab "${ISAAC_LAB_HOME:-}" "${ISAACLAB_PKG:-}"; do
+  [ -n "$root" ] || continue
+  if [ -f "$root/$TRAIN_REL" ]; then
+    TRAIN_ROOT="$root"
+    TRAIN_SCRIPT="$root/$TRAIN_REL"
+    break
+  fi
+done
+if [ -z "$TRAIN_SCRIPT" ]; then
+  found=$(
+    find /workspace /opt -path "*/$TRAIN_REL" -type f \
+      ! -path "*/runs/*" \
+      ! -path "*/npa_isaac_lab_generated/*" \
+      -print -quit 2>/dev/null || true
+  )
+  if [ -n "$found" ]; then
+    TRAIN_SCRIPT="$found"
+    TRAIN_ROOT="${found%/$TRAIN_REL}"
+  fi
+fi
+if [ -z "$TRAIN_SCRIPT" ]; then
+  TRAIN_ROOT="$OUTPUT_DIR/npa_isaac_lab_generated"
+  TRAIN_SCRIPT="$TRAIN_ROOT/$TRAIN_REL"
+  mkdir -p "$(dirname "$TRAIN_SCRIPT")"
+  cat > "$TRAIN_SCRIPT" <<'PYTRAIN'
+# Generated Isaac Lab RSL-RL trainer fallback.
+#
+# This mirrors the Isaac Lab 2.3 RSL-RL training entrypoint for installations
+# that ship the Python packages but omit scripts/reinforcement_learning.
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import random
+import sys
+import time
+from datetime import datetime
 
 from isaaclab.app import AppLauncher
 
-app_launcher = AppLauncher(headless=True)
+
+def add_rsl_rl_args(parser: argparse.ArgumentParser) -> None:
+    arg_group = parser.add_argument_group("rsl_rl", description="Arguments for RSL-RL agent.")
+    arg_group.add_argument("--experiment_name", type=str, default=None)
+    arg_group.add_argument("--run_name", type=str, default=None)
+    arg_group.add_argument("--resume", action="store_true", default=False)
+    arg_group.add_argument("--load_run", type=str, default=None)
+    arg_group.add_argument("--checkpoint", type=str, default=None)
+    arg_group.add_argument("--logger", type=str, default=None, choices={"wandb", "tensorboard", "neptune"})
+    arg_group.add_argument("--log_project_name", type=str, default=None)
+
+
+def update_rsl_rl_cfg(agent_cfg, args_cli):
+    if hasattr(args_cli, "seed") and args_cli.seed is not None:
+        if args_cli.seed == -1:
+            args_cli.seed = random.randint(0, 10000)
+        agent_cfg.seed = args_cli.seed
+    if args_cli.resume is not None:
+        agent_cfg.resume = args_cli.resume
+    if args_cli.load_run is not None:
+        agent_cfg.load_run = args_cli.load_run
+    if args_cli.checkpoint is not None:
+        agent_cfg.load_checkpoint = args_cli.checkpoint
+    if args_cli.run_name is not None:
+        agent_cfg.run_name = args_cli.run_name
+    if args_cli.logger is not None:
+        agent_cfg.logger = args_cli.logger
+    if args_cli.experiment_name is not None:
+        agent_cfg.experiment_name = args_cli.experiment_name
+    if agent_cfg.logger in {"wandb", "neptune"} and args_cli.log_project_name:
+        agent_cfg.wandb_project = args_cli.log_project_name
+        agent_cfg.neptune_project = args_cli.log_project_name
+    return agent_cfg
+
+
+parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
+parser.add_argument("--num_envs", type=int, default=None)
+parser.add_argument("--task", type=str, default=None)
+parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point")
+parser.add_argument("--seed", type=int, default=None)
+parser.add_argument("--max_iterations", type=int, default=None)
+parser.add_argument("--distributed", action="store_true", default=False)
+parser.add_argument("--export_io_descriptors", action="store_true", default=False)
+add_rsl_rl_args(parser)
+AppLauncher.add_app_launcher_args(parser)
+args_cli, hydra_args = parser.parse_known_args()
+sys.argv = [sys.argv[0]] + hydra_args
+
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym
-import math
 import torch
+from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+
+from isaaclab.envs import (
+    DirectMARLEnv,
+    DirectMARLEnvCfg,
+    DirectRLEnvCfg,
+    ManagerBasedRLEnvCfg,
+    multi_agent_to_single_agent,
+)
+from isaaclab.utils.io import dump_yaml
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
+from isaaclab_tasks.utils import get_checkpoint_path
+from isaaclab_tasks.utils.hydra import hydra_task_config
 
-task = {task!r}
-num_envs = {num_envs}
-steps = {steps}
-output_dir = Path({output_dir!r})
-output_dir.mkdir(parents=True, exist_ok=True)
-gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-devices = [f"cuda:{{idx}}" for idx in range(gpu_count)] or ["cpu"]
-device = devices[0]
-envs_per_device = {{
-    dev: math.ceil(num_envs / max(1, gpu_count)) if idx < (num_envs % max(1, gpu_count) or max(1, gpu_count)) else num_envs // max(1, gpu_count)
-    for idx, dev in enumerate(devices)
-}}
-started = time.time()
-env = None
+logger = logging.getLogger(__name__)
 
-try:
-    print(f"ISAAC_LAB_TRAIN_START task={{task}} num_envs={{num_envs}} steps={{steps}} device={{device}}", flush=True)
-    print(f"ISAAC_LAB_MULTI_GPU_DEVICES devices={{devices}} envs_per_device={{envs_per_device}}", flush=True)
-    env_cfg = parse_env_cfg(task, device=device, num_envs=num_envs)
-    print("ISAAC_LAB_ENV_CREATE_START", flush=True)
-    env = gym.make(task, cfg=env_cfg)
-    print("ISAAC_LAB_ENV_CREATE_COMPLETE", flush=True)
-    print("ISAAC_LAB_ENV_RESET_START", flush=True)
-    env.reset()
-    print("ISAAC_LAB_ENV_RESET_COMPLETE", flush=True)
-    reward_total = 0.0
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False
 
-    for step in range(steps):
-        actions = torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
-        _, rewards, _, _, _ = env.step(actions)
-        reward_total += float(torch.as_tensor(rewards).mean().item())
-        if (step + 1) == steps or (step + 1) % max(1, min(10, steps)) == 0:
-            print(f"ISAAC_LAB_TRAIN_STEP step={{step + 1}}/{{steps}}", flush=True)
 
-    summary = {{
-        "status": "success",
-        "task": task,
-        "num_envs": num_envs,
-        "steps": steps,
-        "device": device,
-        "devices": devices,
-        "envs_per_device": envs_per_device,
-        "mean_reward": reward_total / steps,
-        "checkpoint_path": str(output_dir / "npa_isaac_lab_random_policy_checkpoint.json"),
-        "duration_seconds": round(time.time() - started, 3),
-    }}
-    checkpoint = {{
-        "format": "npa_isaac_lab_random_policy_v1",
-        "task": task,
-        "policy": "action_space_sample",
-        "num_envs": num_envs,
-        "steps": steps,
-        "device": device,
-        "created_unix": round(time.time(), 3),
-    }}
-    (output_dir / "npa_isaac_lab_random_policy_checkpoint.json").write_text(json.dumps(checkpoint, indent=2))
-    (output_dir / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
-    print("ISAAC_LAB_TRAIN_COMPLETE")
-    print(json.dumps(summary, indent=2), flush=True)
-finally:
-    if env is not None:
-        env.close()
-    simulation_app.close()
+@hydra_task_config(args_cli.task, args_cli.agent)
+def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg) -> None:
+    agent_cfg = update_rsl_rl_cfg(agent_cfg, args_cli)
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    agent_cfg.max_iterations = (
+        args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
+    )
+    env_cfg.seed = agent_cfg.seed
+    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    if args_cli.distributed and args_cli.device is not None and "cpu" in args_cli.device:
+        raise ValueError("Distributed training is not supported when using CPU device.")
+    if args_cli.distributed:
+        env_cfg.sim.device = f"cuda:{app_launcher.local_rank}"
+        agent_cfg.device = f"cuda:{app_launcher.local_rank}"
+        seed = agent_cfg.seed + app_launcher.local_rank
+        env_cfg.seed = seed
+        agent_cfg.seed = seed
+
+    log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
+    print(f"[INFO] Logging experiment in directory: {log_root_path}")
+    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    print(f"Exact experiment name requested from command line: {log_dir}")
+    if agent_cfg.run_name:
+        log_dir += f"_{agent_cfg.run_name}"
+    log_dir = os.path.join(log_root_path, log_dir)
+
+    if isinstance(env_cfg, ManagerBasedRLEnvCfg):
+        env_cfg.export_io_descriptors = args_cli.export_io_descriptors
+    else:
+        logger.warning("IO descriptors are only supported for manager based RL environments.")
+    env_cfg.log_dir = log_dir
+
+    env = gym.make(args_cli.task, cfg=env_cfg)
+    if isinstance(env.unwrapped, DirectMARLEnv):
+        env = multi_agent_to_single_agent(env)
+
+    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+
+    start_time = time.time()
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    if agent_cfg.class_name == "OnPolicyRunner":
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    elif agent_cfg.class_name == "DistillationRunner":
+        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    else:
+        raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+
+    try:
+        runner.add_git_repo_to_log(__file__)
+    except Exception as exc:
+        print(f"[WARN] Could not add git repo to log: {exc}", flush=True)
+    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+        runner.load(resume_path)
+
+    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    print(f"Training time: {round(time.time() - start_time, 2)} seconds")
+    env.close()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        simulation_app.close()
+PYTRAIN
+  echo "Generated Isaac Lab RSL-RL train script: $TRAIN_SCRIPT" >&2
+fi
+
+cd "$OUTPUT_DIR"
+export NPA_ISAAC_LAB_RUN_DIR="$OUTPUT_DIR"
+export NPA_ISAAC_LAB_TASK="$TASK"
+export NPA_ISAAC_LAB_NUM_ENVS="$NUM_ENVS"
+export NPA_ISAAC_LAB_MAX_ITERATIONS="$MAX_ITERATIONS"
+export NPA_ISAAC_LAB_RUN_NAME="$RUN_NAME"
+export NPA_ISAAC_LAB_EXPERIMENT_NAME="$EXPERIMENT_NAME"
+export NPA_ISAAC_LAB_TRAIN_SCRIPT="$TRAIN_SCRIPT"
+export NPA_ISAAC_LAB_TRAIN_ROOT="$TRAIN_ROOT"
+
+cmd=(
+  "$PYTHON_BIN"
+  "$TRAIN_SCRIPT"
+  --task "$TASK"
+  --num_envs "$NUM_ENVS"
+  --max_iterations "$MAX_ITERATIONS"
+  --headless
+  --experiment_name "$EXPERIMENT_NAME"
+  --run_name "$RUN_NAME"
+  agent.save_interval=1
+)
+printf 'ISAAC_LAB_RSL_RL_COMMAND'
+printf ' %q' "${cmd[@]}"
+printf '\\n'
+echo "ISAAC_LAB_RSL_RL_TRAIN_START task=$TASK num_envs=$NUM_ENVS max_iterations=$MAX_ITERATIONS output_dir=$OUTPUT_DIR"
+
+set +e
+"${cmd[@]}" 2>&1 | tee "$OUTPUT_DIR/isaac_lab_train.log"
+train_rc=${PIPESTATUS[0]}
+export NPA_ISAAC_LAB_TRAIN_RC="$train_rc"
+"$PYTHON_BIN" <<'PY'
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+root = Path(os.environ["NPA_ISAAC_LAB_RUN_DIR"])
+train_rc = int(os.environ.get("NPA_ISAAC_LAB_TRAIN_RC", "1"))
+log_root = root / "logs" / "rsl_rl"
+checkpoints = sorted(
+    log_root.rglob("model_*.pt"),
+    key=lambda path: (path.stat().st_mtime, str(path)),
+)
+latest = checkpoints[-1] if checkpoints else None
+stable_checkpoint = root / "npa_isaac_lab_checkpoint.pt"
+if latest is not None:
+    shutil.copy2(latest, stable_checkpoint)
+manifest = {
+    "format": "npa_isaac_lab_rsl_rl_checkpoint_v1",
+    "tool": "isaac_lab",
+    "framework": "rsl_rl",
+    "task": os.environ["NPA_ISAAC_LAB_TASK"],
+    "num_envs": int(os.environ["NPA_ISAAC_LAB_NUM_ENVS"]),
+    "max_iterations": int(os.environ["NPA_ISAAC_LAB_MAX_ITERATIONS"]),
+    "run_name": os.environ["NPA_ISAAC_LAB_RUN_NAME"],
+    "experiment_name": os.environ["NPA_ISAAC_LAB_EXPERIMENT_NAME"],
+    "train_script": os.environ["NPA_ISAAC_LAB_TRAIN_SCRIPT"],
+    "train_root": os.environ["NPA_ISAAC_LAB_TRAIN_ROOT"],
+    "checkpoint_path": str(latest) if latest is not None else "",
+    "stable_checkpoint_path": str(stable_checkpoint) if latest is not None else "",
+    "checkpoint_count": len(checkpoints),
+    "created_unix": round(time.time(), 3),
+}
+summary = {
+    "status": "success" if train_rc == 0 and latest is not None else "failed",
+    "exit_code": train_rc,
+    "tool": "isaac_lab",
+    "framework": "rsl_rl",
+    "task": manifest["task"],
+    "num_envs": manifest["num_envs"],
+    "steps": manifest["max_iterations"],
+    "max_iterations": manifest["max_iterations"],
+    "run_name": manifest["run_name"],
+    "experiment_name": manifest["experiment_name"],
+    "train_script": manifest["train_script"],
+    "log_root": str(log_root),
+    "checkpoint_path": manifest["checkpoint_path"],
+    "stable_checkpoint_path": manifest["stable_checkpoint_path"],
+    "checkpoint_count": manifest["checkpoint_count"],
+}
+(root / "npa_isaac_lab_checkpoint_manifest.json").write_text(json.dumps(manifest, indent=2))
+(root / "npa_isaac_lab_train_summary.json").write_text(json.dumps(summary, indent=2))
+print("ISAAC_LAB_TRAIN_COMPLETE" if summary["status"] == "success" else "ISAAC_LAB_TRAIN_FAILED", flush=True)
+print(json.dumps(summary, indent=2), flush=True)
+if train_rc == 0 and latest is None:
+    sys.exit(3)
+PY
+summary_rc=$?
+set -e
+if [ "$train_rc" -ne 0 ]; then
+  exit "$train_rc"
+fi
+exit "$summary_rc"
 """
-
+    )
 
 def _build_eval_script(
     task: str, checkpoint: str, num_episodes: int, output_dir: str
@@ -730,7 +1056,7 @@ try:
 
     try:
         checkpoint_info = json.loads(checkpoint_path.read_text())
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         checkpoint_info = {{"format": "unknown"}}
 
     print(
@@ -1962,12 +2288,19 @@ def train_cmd(
     )
     prefix = _container_prefix() if _is_container_runtime(cfg) else _activate_prefix()
     python_bin = "/isaac-sim/python.sh" if _is_container_runtime(cfg) else "python"
+    run_name = f"npa-train-{int(time.time())}"
 
     cmd = _runtime_bash(
         cfg,
         prefix
-        + f"mkdir -p {shlex.quote(remote_output_dir)}\n"
-        + f"{python_bin} - <<'PY'\n{_build_train_script(task, num_envs, steps, remote_output_dir)}PY\n",
+        + _build_rsl_rl_train_shell(
+            task,
+            num_envs,
+            steps,
+            remote_output_dir,
+            run_name=run_name,
+            python_bin=python_bin,
+        ),
     )
     stream_logs = output_format != OutputFormat.json
 
@@ -1981,9 +2314,14 @@ def train_cmd(
         _fail(f"SSH error: {exc}")
         return
 
+    ssh_exit_code = exit_code
+    if exit_code != 0 and "ISAAC_LAB_TRAIN_COMPLETE" in stdout and '"status": "success"' in stdout:
+        exit_code = 0
+
     result = {
         "status": "success" if exit_code == 0 else "failed",
         "exit_code": exit_code,
+        "ssh_exit_code": ssh_exit_code,
         "task": task,
         "num_envs": num_envs,
         "steps": steps,
@@ -1996,9 +2334,17 @@ def train_cmd(
     else:
         if output_is_s3:
             try:
-                result["output_path"] = _upload_remote_directory_to_s3(
-                    ssh, cfg, remote_output_dir, target_output
-                )
+                try:
+                    result["output_path"] = _upload_remote_directory_to_s3(
+                        ssh, cfg, remote_output_dir, target_output
+                    )
+                    result["upload_mode"] = "local"
+                except Exception as local_exc:
+                    result["local_upload_error"] = str(local_exc)
+                    result["output_path"] = _upload_existing_remote_directory_via_remote_env(
+                        ssh, remote_output_dir, target_output
+                    )
+                    result["upload_mode"] = "remote-env"
             except Exception as exc:
                 result["status"] = "failed"
                 result["exit_code"] = 1
