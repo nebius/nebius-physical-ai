@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import traceback
+from importlib.metadata import version as package_version
 
 import typer
 
@@ -60,6 +61,27 @@ chmod 600 ~/.npa/credentials.yaml
 Deploy commands create and update ~/.npa/config.yaml for projects, workbenches,
 SSH targets, container registry settings, and Terraform state.
 """
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(f"npa {package_version('npa')}")
+    raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show the installed npa version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """Nebius Physical AI workbench CLI."""
 
 
 @app.command("configure", help="Show credential and config setup guidance.")

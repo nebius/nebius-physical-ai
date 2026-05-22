@@ -50,6 +50,22 @@ Do not commit live infrastructure identifiers. Parameterize or redact:
 - Concrete S3 bucket names and `s3://<bucket>/...` paths from validation runs
 - Public VM IP addresses or endpoints from live Nebius workloads
 
+## Historical leak handling
+
+Earlier validation runs in W10-W11 introduced operational identifiers
+(public VM IPs and working bucket names) into commits that have since
+been removed via the W14 history condensation (2026-05-21). The current
+tree contains no real Nebius identifiers; placeholders and RFC 5737
+test IPs are used throughout.
+
+Future commits are gated by `.github/workflows/gitleaks.yml` against
+the patterns in `.gitleaks.toml`. The gitleaks workflow scans PR diffs
+and main pushes; historical commits prior to W14 are no longer
+reachable from `main`.
+
+If pre-W14 history needs to be referenced for any reason, it is
+preserved out-of-band at the local archive tag created during W14.
+
 ## Learning More About Security in Nebius
 
 To learn more about security in Nebius, please see the [Nebius Security Documentation](https://nebius.ai/docs/security).

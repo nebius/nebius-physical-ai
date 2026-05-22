@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from importlib.metadata import version
 
 import pytest
 from typer.testing import CliRunner
@@ -53,6 +55,14 @@ def test_no_args_shows_top_level_help() -> None:
     assert "workflow" in result.output
     assert "configure" in result.output
     assert "init" in result.output
+
+
+def test_version_flag_reports_package_version() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert re.match(r"^npa \d+\.\d+(\.\d+)?", result.stdout)
+    assert result.stdout.strip() == f"npa {version('npa')}"
 
 
 @pytest.mark.parametrize("command", ["configure", "init"])

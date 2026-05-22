@@ -133,12 +133,13 @@ def _run_serverless_train(
     if gpu_preset:
         preset = gpu_preset
 
-    if platform not in {"gpu-l40s-a", "gpu-l40s-d", "gpu-rtx6000"}:
+    if platform in {"gpu-l40s-a", "gpu-l40s-d"}:
         from npa.cli.workbench.sonic.helpers import console
 
         console.print(
-            "[yellow]Warning:[/yellow] SONIC Isaac Lab training usually needs RT-core GPUs; "
-            "prefer --gpu-type l40s or --gpu-type gpu-rtx-pro-6000."
+            "[yellow]Warning:[/yellow] L40S on-demand availability is effectively zero for "
+            "the SONIC serverless training preset; prefer --gpu-type h100 unless you have "
+            "reserved L40S capacity."
         )
 
     ctx = context()
@@ -241,7 +242,7 @@ def train_cmd(
     output_path: str = typer.Option("", "--output-path", "-o", help="S3 URI where artifacts are written."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
     image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
+    gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type for serverless Jobs."),
     gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
     gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
     subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),

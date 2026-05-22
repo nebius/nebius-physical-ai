@@ -126,7 +126,71 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert payload["embodiment"] == "UNITREE_G1_SONIC"
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-h100-sxm"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
     client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
+
+
+def test_sonic_train_explicit_h100_has_no_availability_warning(mocker) -> None:
+    client = _mock_sonic_serverless(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--submit-only",
+            "--gpu-type",
+            "h100",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "L40S on-demand availability" not in result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-h100-sxm"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
+
+
+def test_sonic_train_explicit_l40s_warns_about_availability(mocker) -> None:
+    client = _mock_sonic_serverless(mocker)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--submit-only",
+            "--gpu-type",
+            "l40s",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "L40S on-demand availability is effectively zero" in result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
 
 
 def test_sonic_train_validates_gpu_type() -> None:

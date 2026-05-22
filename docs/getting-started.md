@@ -84,13 +84,14 @@ export PATH="$PWD/npa/.venv/bin:$PATH"
 Verify the CLI:
 
 ```bash
+npa --version
 npa --help
 npa configure
 ```
 
-Gate: `npa --help` prints the command list and does not require Nebius, NGC,
-Hugging Face, Kubernetes, or S3 credentials. The current CLI does not expose a
-`npa --version` flag.
+Gate: `npa --version` prints `npa <version>`, and `npa --help` prints the
+command list without requiring Nebius, NGC, Hugging Face, Kubernetes, or S3
+credentials.
 
 ## Configure Nebius Credentials
 
