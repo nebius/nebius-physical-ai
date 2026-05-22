@@ -33,6 +33,15 @@ from npa.clients.serverless import EndpointNotFoundError
 
 
 runner = CliRunner()
+TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+
+
+@pytest.fixture(autouse=True)
+def _terraform_plan_allows_apply(mocker):
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
 
 
 def _cfg(app_status: str = "") -> WorkbenchConfig:
@@ -237,6 +246,39 @@ def test_fiftyone_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp_
     assert result.exit_code == 0
     confirm.assert_not_called()
     apply.assert_called_once()
+
+
+def test_fiftyone_deploy_replacement_plan_without_replace_aborts(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt").read_text(),
+    )
+    apply = mocker.patch("npa.cli.fiftyone.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "would replace or destroy managed infrastructure" in result.output
+    assert "nebius_compute_v1_instance.workbench" in result.output
+    apply.assert_not_called()
 
 
 def test_fiftyone_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
@@ -559,7 +601,7 @@ def test_fiftyone_byovm_skip_infra_reuses_saved_config_and_preserves_status(mock
     ]
     saved_cfg = _cfg(app_status="healthy")
     saved_cfg.runtime = "byovm"
-    saved_cfg.endpoint_strategy = "ssh"
+    saved_cfg.endpoint_strategy = "ssh_fallback"
     saved_cfg.service_port = 5151
     saved_cfg.storage = StorageConfig(
         checkpoint_bucket="s3://saved-bucket/checkpoints/",
@@ -617,7 +659,7 @@ def test_fiftyone_byovm_skip_infra_reuses_saved_config_and_preserves_status(mock
         "key_path": "~/.ssh/id",
     }
     assert wb_cfg["storage"]["checkpoint_bucket"] == "s3://saved-bucket/checkpoints/"
-    assert wb_cfg["endpoint_strategy"] == "ssh"
+    assert wb_cfg["endpoint_strategy"] == "ssh_fallback"
     assert wb_cfg["app_status"] == "healthy"
 
 
@@ -863,7 +905,7 @@ def test_fiftyone_launch_adds_polling_for_ssh_endpoint_strategy(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "NPA_FIFTYONE_APP_READY", "")
     cfg = _cfg()
-    cfg.endpoint_strategy = "ssh"
+    cfg.endpoint_strategy = "ssh_fallback"
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
     mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
 
@@ -1500,7 +1542,7 @@ def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
 
 def test_fiftyone_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
     cfg = _cfg()
-    cfg.endpoint_strategy = "ssh"
+    cfg.endpoint_strategy = "ssh_fallback"
     cfg.service_port = 5151
     response = mocker.MagicMock(status_code=200)
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=cfg)
@@ -1575,7 +1617,7 @@ def test_fiftyone_status_self_heals_legacy_byovm_alias(
     get.assert_called_with("http://127.0.0.1:15151", timeout=5.0)
     saved = yaml.safe_load(cfg_path.read_text())
     wb = saved["projects"]["proj"]["workbenches"]["curate"]
-    assert wb["endpoint_strategy"] == "ssh"
+    assert wb["endpoint_strategy"] == "ssh_fallback"
     assert wb["service_port"] == 5151
 
     public_probe = mocker.patch("npa.clients.endpoint._public_endpoint_open")

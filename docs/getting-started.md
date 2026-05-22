@@ -97,6 +97,8 @@ credentials.
 
 `npa` reads user-authored secrets from `~/.npa/credentials.yaml`. Deploy
 commands write machine-managed metadata to `~/.npa/config.yaml`.
+For existing managed VM aliases, deploy defaults to in-place updates and blocks
+Terraform plans that would replace infrastructure unless `--replace` is passed.
 
 Create the credentials file:
 

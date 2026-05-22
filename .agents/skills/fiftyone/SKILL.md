@@ -34,6 +34,15 @@ The deploy `--public-ip` flag creates a LoadBalancer Service for external access
 
 Stock FiftyOne App has no `/health` endpoint: `GET /` returns 200 and `GET /health` returns 307.
 
+Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
+plans that would destroy or replace critical infrastructure are blocked unless
+the operator passes `--replace` and confirms with `--yes` for automation.
+
+BYOVM deploys record `endpoint_strategy: public` or `endpoint_strategy:
+ssh_fallback` in `~/.npa/config.yaml`. Live `status`, `launch`, and
+`load-dataset` commands honor that strategy and self-heal blocked public
+endpoints through a transient SSH-local route.
+
 ## Data Patterns
 
 FiftyOne Brain uses `fob.compute_visualization` for CLIP UMAP embeddings.

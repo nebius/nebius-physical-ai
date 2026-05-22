@@ -1,0 +1,8 @@
+Terraform will perform the following actions:
+
+  # random_id.workbench_suffix will be destroyed
+  - resource "random_id" "workbench_suffix" {
+      - id = "abc123" -> null
+    }
+
+Plan: 0 to add, 0 to change, 1 to destroy.

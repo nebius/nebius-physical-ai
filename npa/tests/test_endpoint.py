@@ -37,7 +37,7 @@ def test_service_endpoint_defaults_to_public() -> None:
 
 
 def test_service_endpoint_serverless_uses_saved_public_url(mocker) -> None:
-    cfg = _cfg(strategy="ssh", endpoint="https://cosmos.example", runtime="serverless")
+    cfg = _cfg(strategy="ssh_fallback", endpoint="https://cosmos.example", runtime="serverless")
     popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
 
     with service_endpoint(cfg) as active:
@@ -48,15 +48,15 @@ def test_service_endpoint_serverless_uses_saved_public_url(mocker) -> None:
 
 
 def test_service_endpoint_keeps_existing_loopback_tunnel() -> None:
-    cfg = _cfg(strategy="ssh", endpoint="http://127.0.0.1:18081")
+    cfg = _cfg(strategy="ssh_fallback", endpoint="http://127.0.0.1:18081")
 
     with service_endpoint(cfg) as active:
         assert active.url == "http://127.0.0.1:18081"
-        assert active.strategy == "ssh"
+        assert active.strategy == "ssh_fallback"
 
 
 def test_service_endpoint_opens_transient_ssh_forward(mocker) -> None:
-    cfg = _cfg(strategy="ssh")
+    cfg = _cfg(strategy="ssh_fallback")
     popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
     process = SimpleNamespace(
         poll=lambda: None,
@@ -77,6 +77,17 @@ def test_service_endpoint_opens_transient_ssh_forward(mocker) -> None:
     process.terminate.assert_called_once()
     popen.assert_called_once()
     assert "127.0.0.1:19090:127.0.0.1:8080" in popen.call_args.args[0]
+
+
+def test_service_endpoint_accepts_legacy_ssh_strategy_name(mocker) -> None:
+    cfg = _cfg(strategy="ssh", strategy_configured=True, runtime="byovm")
+    mocker.patch("npa.clients.endpoint._tcp_open", return_value=True)
+    public_probe = mocker.patch("npa.clients.endpoint._public_endpoint_open")
+
+    with service_endpoint(cfg) as active:
+        assert active.strategy == "ssh_fallback"
+
+    public_probe.assert_not_called()
 
 
 @pytest.mark.parametrize("strategy_configured", [False, True])
@@ -108,10 +119,10 @@ def test_service_endpoint_self_heals_blocked_byovm_public_alias_to_ssh(
 
     with service_endpoint(cfg, default_port=5151) as active:
         assert active.url == "http://127.0.0.1:15151"
-        assert active.strategy == "ssh"
+        assert active.strategy == "ssh_fallback"
 
-    persist.assert_called_once_with("proj", "fiftyone", "ssh", 5151)
-    assert cfg.endpoint_strategy == "ssh"
+    persist.assert_called_once_with("proj", "fiftyone", "ssh_fallback", 5151)
+    assert cfg.endpoint_strategy == "ssh_fallback"
     assert cfg.service_port == 5151
     assert "127.0.0.1:15151:127.0.0.1:5151" in popen.call_args.args[0]
 
@@ -163,24 +174,24 @@ def test_service_endpoint_persists_self_healed_strategy_to_config(
 
     saved = yaml.safe_load(cfg_path.read_text())
     wb = saved["projects"]["proj"]["workbenches"]["fiftyone"]
-    assert wb["endpoint_strategy"] == "ssh"
+    assert wb["endpoint_strategy"] == "ssh_fallback"
     assert wb["service_port"] == 5151
 
 
 def test_service_endpoint_stored_strategy_skips_legacy_probe(mocker) -> None:
-    cfg = _cfg(strategy="ssh", strategy_configured=True, runtime="byovm")
+    cfg = _cfg(strategy="ssh_fallback", strategy_configured=True, runtime="byovm")
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=True)
     public_probe = mocker.patch("npa.clients.endpoint._public_endpoint_open")
 
     with service_endpoint(cfg) as active:
         assert active.url == "http://127.0.0.1:8080"
-        assert active.strategy == "ssh"
+        assert active.strategy == "ssh_fallback"
 
     public_probe.assert_not_called()
 
 
 def test_service_endpoint_stored_ssh_strategy_persists_missing_service_port(mocker) -> None:
-    cfg = _cfg(strategy="ssh", strategy_configured=True, runtime="byovm")
+    cfg = _cfg(strategy="ssh_fallback", strategy_configured=True, runtime="byovm")
     cfg.service_port_configured = False
     cfg.project = "proj"
     cfg.name = "cosmos"
@@ -192,4 +203,4 @@ def test_service_endpoint_stored_ssh_strategy_persists_missing_service_port(mock
         assert active.url == "http://127.0.0.1:8080"
 
     public_probe.assert_not_called()
-    persist.assert_called_once_with("proj", "cosmos", "ssh", 8080)
+    persist.assert_called_once_with("proj", "cosmos", "ssh_fallback", 8080)

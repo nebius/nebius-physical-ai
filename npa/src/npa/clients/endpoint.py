@@ -116,6 +116,10 @@ def _is_serverless_config(cfg: Any) -> bool:
     return str(getattr(cfg, "runtime", "") or "").lower() == "serverless"
 
 
+def _is_ssh_strategy(strategy: str) -> bool:
+    return strategy.replace("-", "_") in {"ssh", "ssh_fallback"}
+
+
 def _public_endpoint_open(base_url: str, *, default_port: int = 0) -> bool:
     parsed = urlparse(base_url)
     host = parsed.hostname
@@ -132,8 +136,8 @@ def _persist_ssh_strategy(cfg: Any, remote_port: int) -> None:
     name = str(getattr(cfg, "name", "") or "")
     if not project or not name:
         return
-    update_workbench_endpoint_strategy(project, name, "ssh", remote_port)
-    setattr(cfg, "endpoint_strategy", "ssh")
+    update_workbench_endpoint_strategy(project, name, "ssh_fallback", remote_port)
+    setattr(cfg, "endpoint_strategy", "ssh_fallback")
     setattr(cfg, "service_port", remote_port)
     setattr(cfg, "endpoint_strategy_configured", True)
     setattr(cfg, "service_port_configured", True)
@@ -159,13 +163,17 @@ def _ssh_service_endpoint(
         raise EndpointError("SSH endpoint strategy requires a service port")
 
     if _is_loopback_host(parsed.hostname):
-        yield ActiveEndpoint(url=base_url, strategy="ssh", local_port=_port_from_url(base_url) or remote_port)
+        yield ActiveEndpoint(
+            url=base_url,
+            strategy="ssh_fallback",
+            local_port=_port_from_url(base_url) or remote_port,
+        )
         return
 
     if allow_existing_local_port and _tcp_open("127.0.0.1", remote_port):
         yield ActiveEndpoint(
             url=_replace_host_port(base_url, "127.0.0.1", remote_port),
-            strategy="ssh",
+            strategy="ssh_fallback",
             local_port=remote_port,
         )
         return
@@ -187,7 +195,7 @@ def _ssh_service_endpoint(
         _wait_for_local_port(local_port)
         yield ActiveEndpoint(
             url=_replace_host_port(base_url, "127.0.0.1", local_port),
-            strategy="ssh",
+            strategy="ssh_fallback",
             local_port=local_port,
         )
     finally:
@@ -205,7 +213,7 @@ def service_endpoint(
     """Yield the HTTP endpoint that should be used for a live command.
 
     Older configs default to the public endpoint. BYOVM configs that recorded
-    ``endpoint_strategy: ssh`` get a transient local SSH forward unless the
+    ``endpoint_strategy: ssh_fallback`` get a transient local SSH forward unless the
     configured endpoint already points at localhost or the service port is
     already reachable locally. Legacy BYOVM aliases that did not record an
     endpoint strategy, or that still record the public BYOVM route, get a
@@ -221,16 +229,17 @@ def service_endpoint(
         yield ActiveEndpoint(url=base_url, strategy="serverless")
         return
 
+    ssh_strategy = _is_ssh_strategy(strategy)
     byovm_public = _is_byovm_config(cfg) and strategy == "public"
     legacy_byovm = _is_byovm_config(cfg) and (not strategy_configured or byovm_public)
     persist_missing_ssh_port = (
         _is_byovm_config(cfg)
-        and strategy == "ssh"
+        and ssh_strategy
         and strategy_configured
         and not service_port_configured
     )
 
-    if strategy != "ssh" and not legacy_byovm:
+    if not ssh_strategy and not legacy_byovm:
         yield ActiveEndpoint(url=base_url, strategy="public")
         return
 

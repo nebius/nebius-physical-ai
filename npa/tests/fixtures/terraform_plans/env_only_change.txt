@@ -1,0 +1,13 @@
+Terraform will perform the following actions:
+
+  # nebius_vpc_v1_security_rule.allow_server will be updated in-place
+  ~ resource "nebius_vpc_v1_security_rule" "allow_server" {
+      ~ ingress = {
+          ~ destination_ports = [
+              - 8081,
+              + 8082,
+            ]
+        }
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.

@@ -1,0 +1,18 @@
+Terraform will perform the following actions:
+
+  # nebius_vpc_v1_network.workbench will be created
+  + resource "nebius_vpc_v1_network" "workbench" {
+      + name = "cosmos-proj-demo-network"
+    }
+
+  # nebius_compute_v1_disk.boot will be created
+  + resource "nebius_compute_v1_disk" "boot" {
+      + name = "cosmos-proj-demo-boot"
+    }
+
+  # nebius_compute_v1_instance.workbench will be created
+  + resource "nebius_compute_v1_instance" "workbench" {
+      + name = "cosmos-proj-demo"
+    }
+
+Plan: 9 to add, 0 to change, 0 to destroy.

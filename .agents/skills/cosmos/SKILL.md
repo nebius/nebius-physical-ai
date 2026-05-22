@@ -69,3 +69,14 @@ Known constraints:
   generated endpoint outputs do not yet have a public CLI serverless-side S3
   export contract.
 - EGL/DRI-dependent visual-generation/rendering paths remain deferred.
+
+## Operational Safety
+
+Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
+plans that would destroy or replace critical infrastructure are blocked unless
+the operator passes `--replace` and confirms with `--yes` for automation.
+
+BYOVM deploys record `endpoint_strategy: public` or `endpoint_strategy:
+ssh_fallback` in `~/.npa/config.yaml`. Live `status`, `serve`, and `infer`
+commands honor that strategy and self-heal blocked public endpoints through a
+transient SSH-local route.

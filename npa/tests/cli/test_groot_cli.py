@@ -36,6 +36,15 @@ from npa.clients.serverless import EndpointNotFoundError
 
 runner = CliRunner()
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+TERRAFORM_PLAN_FIXTURES = PACKAGE_ROOT / "tests" / "fixtures" / "terraform_plans"
+
+
+@pytest.fixture(autouse=True)
+def _terraform_plan_allows_apply(mocker):
+    mocker.patch(
+        "npa.cli.groot.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
 
 
 def _cfg(app_status: str = "", *, runtime: str = "vm", hf_token: str = "") -> WorkbenchConfig:
@@ -334,6 +343,39 @@ def test_groot_deploy_existing_alias_with_replace_and_yes_skips_prompt(tmp_path:
     assert result.exit_code == 0
     confirm.assert_not_called()
     apply.assert_called_once()
+
+
+def test_groot_deploy_replacement_plan_without_replace_aborts(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.provisioner.init")
+    mocker.patch(
+        "npa.cli.groot.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt").read_text(),
+    )
+    apply = mocker.patch("npa.cli.groot.provisioner.apply")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "would replace or destroy managed infrastructure" in result.output
+    assert "nebius_compute_v1_instance.workbench" in result.output
+    apply.assert_not_called()
 
 
 def test_groot_deploy_fresh_alias_runs_terraform(tmp_path: Path, mocker) -> None:
@@ -1726,7 +1768,7 @@ def test_groot_status_checks_health_endpoint(mocker) -> None:
 
 def test_groot_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
     cfg = _cfg("healthy")
-    cfg.endpoint_strategy = "ssh"
+    cfg.endpoint_strategy = "ssh_fallback"
     cfg.service_port = 8082
     http = mocker.MagicMock()
     http.health.return_value = {"status": "ok", "groot_version": "0.1.0"}

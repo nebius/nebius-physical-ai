@@ -13,6 +13,7 @@ from npa.clients.network import EnsureIngressResult, NetworkIngressError
 
 
 runner = CliRunner()
+TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,10 @@ def _patch_successful_deploy(mocker, case: DeployIngressCase, *, instance_id: st
     ssh.run_or_raise.return_value = (0, "", "")
 
     mocker.patch(f"{module}.provisioner.init")
+    mocker.patch(
+        f"{module}.provisioner.plan",
+        return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
     mocker.patch(f"{module}.provisioner.apply", return_value=tf_outputs)
     mocker.patch(f"{module}.resolve_environment", return_value=None)
     mocker.patch(f"{module}.list_projects", return_value={})
