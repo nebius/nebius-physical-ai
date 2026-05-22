@@ -36,6 +36,20 @@ Customers can bring their own Isaac Lab fork through an `image_id` override in t
 
 The replacement image must preserve the expected Isaac Lab entry point or runner contract.
 
+Cookbook: `docs/cookbooks/byof-isaac-lab/README.md`.
+
+Validated BYOF surfaces:
+
+- image override through `npa/scripts/run_isaac_lab_rl.py --image`
+  (`w10-byof-image-only-20260520T232650Z`);
+- command override through a SkyPilot YAML `run:` block variant passed with
+  `--yaml`, invoking `/opt/byof/custom_train.py`
+  (`w10-byof-image-and-cmd-20260520T233113Z`).
+
+The runner exposes `--image` directly. It does not expose a `--run-cmd` flag, so
+custom entrypoints should use a customer-owned YAML variant that preserves the
+runtime contract, checkpoint discovery, manifest creation, and S3 upload block.
+
 ## Workflows
 
 - Single RL job: `npa/workflows/skypilot/isaac-lab-rl-train.yaml`.

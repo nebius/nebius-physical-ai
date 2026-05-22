@@ -10,3 +10,6 @@ workflows with Nebius Physical AI Workbench.
 - [LeRobot GPU Benchmarks Runbook](lerobot-gpu-benchmarks-runbook.md): exact
   terminal steps for serverless Jobs, seconds/step measurements, artifact
   checks, validation, and cleanup.
+- [Isaac Lab BYOF](byof-isaac-lab/README.md): layer a custom Isaac Lab image
+  over the digest-pinned Workbench base and run it through the SkyPilot image
+  override surface.
