@@ -133,3 +133,66 @@ The `.agents/skills/` and `.claude/skills/` directories contain structured knowl
 - Add to `.claude/skills/architecture/SKILL.md` if the tool changes the platform architecture
 
 These files are documentation for agents, not for humans. Write them as instructions, not prose.
+
+---
+
+## Updates Since May 2026 Snapshot
+
+This section records architectural decisions that landed after the
+original Appendix A snapshot. Each subsection names the W14 condensed
+milestone that anchors it. The original snapshot above is preserved as
+historical baseline.
+
+### SONIC Routing Reconciled (W12 condensed commit)
+
+The prior code-vs-skill conflict where SONIC's CLI defaulted to L40S
+while skills documented H100 has been resolved. Code now defaults to
+H100; explicit L40S requests emit an availability warning rather than
+silently routing to a starved capacity class. The corresponding entry
+in `CONTRIBUTING.md` Known Deviations was removed.
+
+### SkyPilot Bootstrap As CLI Capability (W11 condensed commit)
+
+The SkyPilot install pattern — isolated venv outside the NPA Python
+environment, version pinned to 0.12.2, invoked via `NPA_SKYPILOT_BIN` —
+was prior operator tribal knowledge. It is now a permanent CLI
+capability: `npa skypilot bootstrap` installs idempotently,
+`npa skypilot status` reports state, `npa skypilot verify` runs
+`sky check`. The bootstrap is the canonical setup step referenced in
+`docs/getting-started.md`.
+
+### BYOF Mechanism For Workbench Tools (W10 condensed commit)
+
+Partners with custom forks of a Workbench tool — exemplified by
+Flexion's forked Isaac Lab plus custom rsl_rl framework — can run on
+Workbench without sharing their code by overriding two surfaces:
+
+- **Image override**: `--image` on the runner (or `image_id` in the
+  SkyPilot YAML) points at a partner-pushed image in the Nebius
+  registry. The Workbench provides the orchestration; the partner
+  provides the container.
+- **Command override**: a YAML `run:` block variant invokes a partner's
+  custom training entrypoint inside the partner's image. Validated
+  end-to-end via a sentinel file pattern; see
+  `docs/cookbooks/byof-isaac-lab/`.
+
+Both surfaces are validated with worked example. The cookbook's
+"Platform Guarantees And Image Responsibilities" section codifies the
+contract between Workbench and the partner's image.
+
+### Onboarding Doctrine (W11 condensed commit)
+
+`docs/getting-started.md` is the canonical day-zero entry point for
+contributors and partners. Cookbooks, skill files, and tool READMEs
+reference it rather than duplicating setup steps. Verification gates
+(`aws s3 ls`, `sky check`, `npa skypilot status`) appear in the doc as
+copy-pasteable commands so a partner can confirm their environment
+before attempting their first run.
+
+### Troubleshooting Framework (W11 condensed commit)
+
+`docs/troubleshooting/known-footguns.md` captures operational rough
+edges surfaced during validation work with: symptom, root cause,
+current workaround, and category for follow-up (capacity / platform /
+security / docs). The intent is that partners read footguns before
+encountering them rather than after.

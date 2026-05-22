@@ -1,0 +1,39 @@
+title = "NPA Workbench gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "nebius-generic-id"
+description = "Nebius account/resource identifier (e0x format)"
+regex = '''\be0[0-9][a-z0-9]{12,}\b'''
+tags = ["nebius", "identifier"]
+
+[[rules]]
+id = "nebius-prefixed-id"
+description = "Prefixed Nebius identifier (project/tenant/computeinstance/mk8snodegroup/cr)"
+regex = '''\b(project|tenant|computeinstance|mk8snodegroup|cr)-e0[0-9][a-z0-9]+\b'''
+tags = ["nebius", "identifier"]
+
+[[rules]]
+id = "lerobot-bucket-pattern"
+description = "lerobot-* working buckets used during validation runs"
+regex = '''\blerobot-[a-f0-9]{8}\b'''
+tags = ["bucket", "operational"]
+
+[allowlist]
+description = "Allow placeholders and known-safe values"
+regexes = [
+    '''<your-[a-z-]+>''',
+    '''\$\{NPA_[A-Z_]+\}''',
+    '''\$\{NEBIUS_[A-Z_]+\}''',
+    '''example\.com''',
+    '''203\.0\.113\.''',
+    '''198\.51\.100\.''',
+    '''192\.0\.2\.''',
+]
+paths = [
+    '''SECURITY\.md''',
+    '''\.gitleaks\.toml''',
+    '''docs/architecture/contributor-context\.md''',
+]

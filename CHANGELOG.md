@@ -15,11 +15,11 @@
 
 ## W9-W10 - Workbench maturity sequence
 
-- fix(sonic): default serverless training to H100, not L40S (commit 2811f12)
+- fix(sonic): default serverless training to H100, not L40S (W12 condensed commit)
 - feat(skypilot): `npa skypilot bootstrap/status/verify` with isolated venv
-  pattern (commit 99570b7)
+  pattern (W11 condensed commit)
 - Isaac Lab SkyPilot orchestration validated end-to-end via BYOF runs
-  (commits 73a86c7, 5fec55a; see `docs/cookbooks/byof-isaac-lab/`)
+  (W10 condensed commit; see `docs/cookbooks/byof-isaac-lab/`)
 - BYOF mechanism validated: image override and command override surfaces;
   worked example with verified S3 artifacts (run IDs in cookbook)
 - Removed SONIC routing entry from `CONTRIBUTING.md` Known Deviations

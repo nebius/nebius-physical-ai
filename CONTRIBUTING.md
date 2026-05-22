@@ -435,14 +435,14 @@ Committed examples should use placeholders such as:
 Secrets belong in the user credentials file described by
 `docs/credentials.yaml.example`, not in source, docs, tests, or workflow YAMLs.
 
-CI currently verifies tests and image security through:
+CI currently verifies tests, image security, and secret regression through:
 
 - `.github/workflows/test.yml`
 - `.github/workflows/image-security-scan.yml`
+- `.github/workflows/gitleaks.yml`
 
-The Appendix A context mentions gitleaks, but no gitleaks workflow is visible in
-the repo. Do not claim that gate is active until it is wired into CI. See
-`Known Deviations`.
+Gitleaks runs the custom Nebius-pattern rules in `.gitleaks.toml` on pull
+requests and pushes to `main`.
 ## Testing Requirements
 Use the repo virtualenv for validation:
 
@@ -657,13 +657,6 @@ Most named tools expose `system-info`. LanceDB's modular CLI registration in
 registration in `npa/src/npa/cli/workbench/sonic/cli.py` does not include it.
 
 New tools should include `system-info`.
-### Gitleaks is not wired in visible CI
-Appendix A says the repo runs gitleaks or secret scanning. The visible CI files
-are `.github/workflows/test.yml`, `.github/workflows/e2e.yml`, and
-`.github/workflows/image-security-scan.yml`. No gitleaks workflow was found.
-
-Continue to follow `SECURITY.md` and avoid hardcoded secrets, but do not present
-gitleaks as an active repo gate until a workflow exists.
 ### Registry variable naming is split
 The infra skill uses `${NPA_REGISTRY_ID}` to describe the registry ID. Current
 code uses `NPA_REGISTRY` as the full registry prefix in

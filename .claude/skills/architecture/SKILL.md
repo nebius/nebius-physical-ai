@@ -5,6 +5,9 @@ description: Use for Claude Code architectural review of the Nebius Physical AI 
 
 # Architecture Context
 
+Detailed rationale and the preserved May 2026 architecture snapshot live in
+`docs/architecture/contributor-context.md`.
+
 The platform progression is:
 
 1. Tools: Workbench.
