@@ -1,0 +1,11 @@
+ARG NPA_REGISTRY_ID=your-registry-id
+ARG NPA_ISAAC_LAB_BASE_DIGEST=sha256:dc1dd94e64c1e970ec74dccf152180f739cfd457125996100069f688b7911fca
+
+FROM cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-isaac-lab@${NPA_ISAAC_LAB_BASE_DIGEST}
+
+ARG BYOF_RUN_ID=placeholder
+
+LABEL byof.test="true" \
+      byof.test.run_id="${BYOF_RUN_ID}"
+
+COPY custom_train.py /opt/byof/custom_train.py
