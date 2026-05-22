@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from npa.workbench import lancedb
+from npa.solutions.workbench import lancedb
 
 from . import detection_training
 

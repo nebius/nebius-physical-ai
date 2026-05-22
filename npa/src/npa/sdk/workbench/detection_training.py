@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from npa.workbench.detection_training.schemas import (
+from npa.solutions.workbench.detection_training.schemas import (
     DEFAULT_LANCE_URI,
     DEFAULT_TOKEN_ENV,
     EvalRequest,
@@ -64,7 +64,7 @@ def train(
                 timeout=timeout,
             )
         )
-    from npa.workbench.detection_training.training import train_detector
+    from npa.solutions.workbench.detection_training.training import train_detector
 
     return train_detector(request)
 
@@ -99,7 +99,7 @@ def eval(
                 timeout=timeout,
             )
         )
-    from npa.workbench.detection_training.evaluation import evaluate_detector
+    from npa.solutions.workbench.detection_training.evaluation import evaluate_detector
 
     return evaluate_detector(request)
 
@@ -125,7 +125,7 @@ def status(
                 timeout=timeout,
             )
         )
-    from npa.workbench.detection_training.service import status_for_run
+    from npa.solutions.workbench.detection_training.service import status_for_run
 
     return status_for_run(run_id)
 
@@ -174,13 +174,19 @@ def _request_json(
             f"Detection-training service request failed ({exc.response.status_code}): {detail}"
         ) from exc
     except httpx.HTTPError as exc:
-        raise DetectionTrainingServiceError(f"Cannot reach detection-training service {resolved}: {exc}") from exc
+        raise DetectionTrainingServiceError(
+            f"Cannot reach detection-training service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise DetectionTrainingServiceError("Detection-training service returned non-JSON response") from exc
+        raise DetectionTrainingServiceError(
+            "Detection-training service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
-        raise DetectionTrainingServiceError("Detection-training service returned an unexpected response")
+        raise DetectionTrainingServiceError(
+            "Detection-training service returned an unexpected response"
+        )
     return data
 
 
@@ -196,4 +202,3 @@ __all__ = [
     "status",
     "train",
 ]
-

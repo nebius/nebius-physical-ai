@@ -1,7 +1,13 @@
-"""npa.workbench - deployable Physical AI workbench tools."""
+"""Deprecated compatibility namespace for npa.solutions.workbench."""
 
 from __future__ import annotations
 
-from npa.workbench import cosmos, detection_training, fiftyone, genesis, groot, isaac_lab, lancedb, lerobot
+import warnings
 
-__all__ = ["cosmos", "detection_training", "fiftyone", "genesis", "groot", "isaac_lab", "lancedb", "lerobot"]
+warnings.warn(
+    "npa.workbench is deprecated, use npa.solutions.workbench",
+    DeprecationWarning,
+    stacklevel=2,
+)
+from npa.solutions.workbench import *  # noqa: E402,F403
+from npa.solutions.workbench import __all__ as __all__  # noqa: E402

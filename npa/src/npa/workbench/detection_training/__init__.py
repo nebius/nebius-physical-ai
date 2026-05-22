@@ -1,14 +1,7 @@
-"""npa.workbench.detection_training - Faster R-CNN detection training tool."""
+"""Deprecated compatibility shim for npa.solutions.workbench.detection_training."""
 
 from __future__ import annotations
 
-from .schemas import EvalRequest, EvalResponse, StatusResponse, TrainRequest, TrainResponse
+from npa.workbench._compat import install_shim
 
-__all__ = [
-    "EvalRequest",
-    "EvalResponse",
-    "StatusResponse",
-    "TrainRequest",
-    "TrainResponse",
-]
-
+install_shim(__name__, "npa.solutions.workbench.detection_training", globals())

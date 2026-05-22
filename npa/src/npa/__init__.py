@@ -7,7 +7,17 @@ the public API reaches v1 stability.
 
 from __future__ import annotations
 
-from npa import convert, demo, errors, network, rerun, workflow, workbench
+import importlib
+from typing import Any
+
+from npa import convert, demo, errors, network, rerun, solutions, workflow
+
+
+def __getattr__(name: str) -> Any:
+    if name == "workbench":
+        return importlib.import_module(".workbench", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "convert",
@@ -15,6 +25,7 @@ __all__ = [
     "errors",
     "network",
     "rerun",
+    "solutions",
     "workflow",
     "workbench",
 ]

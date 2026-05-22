@@ -15,7 +15,7 @@ import httpx
 import typer
 
 from npa.clients.credentials import load_credentials
-from npa.workbench.detection_training.schemas import (
+from npa.solutions.workbench.detection_training.schemas import (
     DEFAULT_LANCE_URI,
     DEFAULT_PORT,
     DEFAULT_TOKEN_ENV,
@@ -48,31 +48,75 @@ def fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = None) -> None:
+def emit(
+    payload: dict[str, Any], *, output: OutputFormat, text: str | None = None
+) -> None:
     if output == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(text if text is not None else "\n".join(f"{key}: {value}" for key, value in payload.items()))
+        typer.echo(
+            text
+            if text is not None
+            else "\n".join(f"{key}: {value}" for key, value in payload.items())
+        )
 
 
 def deploy_cmd(
-    cluster_name: str = typer.Option("npa-workbench-eu-north1", "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    image: str = typer.Option(DEFAULT_IMAGE, "--image", help="Container image to deploy."),
-    name: str = typer.Option(DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    cluster_name: str = typer.Option(
+        "npa-workbench-eu-north1",
+        "--cluster-name",
+        help="NPA cluster profile name for cached kubeconfig.",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    image: str = typer.Option(
+        DEFAULT_IMAGE, "--image", help="Container image to deploy."
+    ),
+    name: str = typer.Option(
+        DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
-    input_path: str = typer.Option(DEFAULT_LANCE_URI, "--input-path", help="Default LanceDB input URI."),
+    input_path: str = typer.Option(
+        DEFAULT_LANCE_URI, "--input-path", help="Default LanceDB input URI."
+    ),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
     gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type: h100 or l40s."),
-    node_selector_key: str = typer.Option("node.kubernetes.io/instance-type", "--node-selector-key", help="GPU node selector label key."),
-    node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
-    image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name for private registries."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    auth_mode: str = typer.Option("none", "--auth-mode", help="Auth mode: none or token."),
-    destroy: bool = typer.Option(False, "--destroy", help="Delete the Kubernetes service, deployment, and secret."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print Kubernetes manifest without applying it."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    node_selector_key: str = typer.Option(
+        "node.kubernetes.io/instance-type",
+        "--node-selector-key",
+        help="GPU node selector label key.",
+    ),
+    node_selector_value: str = typer.Option(
+        "", "--node-selector-value", help="GPU node selector label value override."
+    ),
+    image_pull_secret: str = typer.Option(
+        "npa-nebius-registry",
+        "--image-pull-secret",
+        help="Kubernetes imagePullSecret name for private registries.",
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    auth_mode: str = typer.Option(
+        "none", "--auth-mode", help="Auth mode: none or token."
+    ),
+    destroy: bool = typer.Option(
+        False,
+        "--destroy",
+        help="Delete the Kubernetes service, deployment, and secret.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print Kubernetes manifest without applying it."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy the detection-training service to an NPA Workbench Kubernetes cluster."""
     if port < 1024 or port > 65535:
@@ -81,15 +125,38 @@ def deploy_cmd(
         fail("--auth-mode must be none or token")
     if not output_path and not destroy:
         fail("--output-path is required")
-    resolved_kubeconfig = _resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    resolved_kubeconfig = _resolve_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     if destroy:
-        _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "secret", f"{name}-env", "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
+        _kubectl(
+            ["delete", "service", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            ["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            [
+                "delete",
+                "secret",
+                f"{name}-env",
+                "-n",
+                namespace,
+                "--ignore-not-found=true",
+            ],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
         emit({"status": "deleted", "name": name, "namespace": namespace}, output=output)
         return
 
-    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
+    selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(
+        gpu_type.strip().lower()
+    )
     if not selector_value:
         fail("--gpu-type must be h100 or l40s unless --node-selector-value is provided")
     manifest = _kubernetes_manifest(
@@ -115,8 +182,13 @@ def deploy_cmd(
             namespace=namespace,
             kubeconfig=resolved_kubeconfig,
         )
-    _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
-    _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
+    _kubectl(
+        ["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig
+    )
+    _kubectl(
+        ["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"],
+        kubeconfig=resolved_kubeconfig,
+    )
     endpoint = f"http://{name}.{namespace}.svc.cluster.local:{port}"
     emit(
         {
@@ -134,17 +206,35 @@ def deploy_cmd(
 
 def train_cmd(
     view: str = typer.Option(..., "--view", help="Lance materialized view name."),
-    output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
-    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", "--output-path", help="S3/local output URI."
+    ),
+    lance_uri: str = typer.Option(
+        DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."
+    ),
     num_classes: int = typer.Option(10, "--num-classes", help="Detector class count."),
     epochs: int = typer.Option(10, "--epochs", help="Training epochs."),
     batch_size: int = typer.Option(8, "--batch-size", help="Training batch size."),
-    learning_rate: float = typer.Option(0.005, "--learning-rate", help="SGD learning rate."),
-    validation_filter_sql: str = typer.Option("", "--validation-filter-sql", help="Optional validation filter SQL."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    learning_rate: float = typer.Option(
+        0.005, "--learning-rate", help="SGD learning rate."
+    ),
+    validation_filter_sql: str = typer.Option(
+        "", "--validation-filter-sql", help="Optional validation filter SQL."
+    ),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Start a detection-training run."""
     payload = TrainRequest(
@@ -158,23 +248,52 @@ def train_cmd(
         validation_filter_sql=validation_filter_sql or None,
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolve_endpoint(endpoint), "/train", payload=payload, token_env=token_env, timeout=60.0)
+        result = request_json(
+            "POST",
+            resolve_endpoint(endpoint),
+            "/train",
+            payload=payload,
+            token_env=token_env,
+            timeout=60.0,
+        )
     else:
         from npa.sdk.workbench.detection_training import train
 
         result = train(**payload).model_dump(mode="json")
-    emit(result, output=output, text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}")
+    emit(
+        result,
+        output=output,
+        text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}",
+    )
 
 
 def eval_cmd(
-    checkpoint_uri: str = typer.Option(..., "--checkpoint-uri", help="Checkpoint S3/local URI."),
-    eval_view: str = typer.Option(..., "--eval-view", help="Lance materialized view to evaluate."),
-    output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
-    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    checkpoint_uri: str = typer.Option(
+        ..., "--checkpoint-uri", help="Checkpoint S3/local URI."
+    ),
+    eval_view: str = typer.Option(
+        ..., "--eval-view", help="Lance materialized view to evaluate."
+    ),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", "--output-path", help="S3/local output URI."
+    ),
+    lance_uri: str = typer.Option(
+        DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."
+    ),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Evaluate a detection-training checkpoint."""
     payload = EvalRequest(
@@ -184,20 +303,41 @@ def eval_cmd(
         output_uri=output_uri,
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolve_endpoint(endpoint), "/eval", payload=payload, token_env=token_env, timeout=900.0)
+        result = request_json(
+            "POST",
+            resolve_endpoint(endpoint),
+            "/eval",
+            payload=payload,
+            token_env=token_env,
+            timeout=900.0,
+        )
     else:
         from npa.sdk.workbench.detection_training import eval as sdk_eval
 
         result = sdk_eval(**payload).model_dump(mode="json")
-    emit(result, output=output, text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}")
+    emit(
+        result,
+        output=output,
+        text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}",
+    )
 
 
 def status_cmd(
     run_id: str = typer.Option(..., "--run-id", help="Training run ID."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Fetch training run status."""
     if service:
@@ -213,38 +353,89 @@ def status_cmd(
         from npa.sdk.workbench.detection_training import status
 
         result = status(run_id=run_id).model_dump(mode="json")
-    emit(result, output=output, text=f"status: {result.get('status')}\nepochs_completed: {result.get('epochs_completed')}")
+    emit(
+        result,
+        output=output,
+        text=f"status: {result.get('status')}\nepochs_completed: {result.get('epochs_completed')}",
+    )
 
 
 def system_info_cmd(
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show detection-training runtime information."""
     if service:
-        result = request_json("GET", resolve_endpoint(endpoint), "/system-info", token_env=token_env, timeout=30.0)
+        result = request_json(
+            "GET",
+            resolve_endpoint(endpoint),
+            "/system-info",
+            token_env=token_env,
+            timeout=30.0,
+        )
     else:
-        from npa.workbench.detection_training.service import system_info_payload
+        from npa.solutions.workbench.detection_training.service import (
+            system_info_payload,
+        )
 
         result = system_info_payload()
     emit(result, output=output)
 
 
 def list_cmd(
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
-    endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    cluster_name: str = typer.Option("npa-workbench-eu-north1", "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace for local listing."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Detection-training service endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    cluster_name: str = typer.Option(
+        "npa-workbench-eu-north1",
+        "--cluster-name",
+        help="NPA cluster profile name for cached kubeconfig.",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace for local listing."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List service-managed runs or Kubernetes resources."""
     if service:
-        result = request_json("GET", resolve_endpoint(endpoint), "/runs", token_env=token_env, timeout=30.0)
-        emit(result, output=output, text="\n".join(run["run_id"] for run in result.get("runs", [])) or "No runs found.")
+        result = request_json(
+            "GET",
+            resolve_endpoint(endpoint),
+            "/runs",
+            token_env=token_env,
+            timeout=30.0,
+        )
+        emit(
+            result,
+            output=output,
+            text="\n".join(run["run_id"] for run in result.get("runs", []))
+            or "No runs found.",
+        )
         return
     stdout = _kubectl(
         [
@@ -258,12 +449,18 @@ def list_cmd(
             "json",
         ],
         capture=True,
-        kubeconfig=_resolve_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig),
+        kubeconfig=_resolve_kubeconfig(
+            cluster_name=cluster_name, kubeconfig=kubeconfig
+        ),
     )
     data = json.loads(stdout or "{}")
     names = [item.get("metadata", {}).get("name", "") for item in data.get("items", [])]
     result = {"namespace": namespace, "resources": names, "count": len(names)}
-    emit(result, output=output, text="\n".join(names) or "No detection-training resources found.")
+    emit(
+        result,
+        output=output,
+        text="\n".join(names) or "No detection-training resources found.",
+    )
 
 
 def resolve_endpoint(endpoint: str) -> str:
@@ -300,7 +497,9 @@ def request_json(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        fail(f"Detection-training request failed ({exc.response.status_code}): {exc.response.text.strip()}")
+        fail(
+            f"Detection-training request failed ({exc.response.status_code}): {exc.response.text.strip()}"
+        )
     except httpx.HTTPError as exc:
         fail(f"Cannot reach detection-training endpoint {endpoint}: {exc}")
     try:
@@ -326,7 +525,13 @@ def _kubernetes_manifest(
     auth_mode: str,
     token_env: str,
 ) -> dict[str, Any]:
-    env = _service_env(input_path=input_path, output_path=output_path, auth_mode=auth_mode, token_env=token_env, port=port)
+    env = _service_env(
+        input_path=input_path,
+        output_path=output_path,
+        auth_mode=auth_mode,
+        token_env=token_env,
+        port=port,
+    )
     return {
         "apiVersion": "v1",
         "kind": "List",
@@ -336,7 +541,10 @@ def _kubernetes_manifest(
                 "kind": "Secret",
                 "metadata": {"name": f"{name}-env", "namespace": namespace},
                 "type": "Opaque",
-                "data": {key: base64.b64encode(value.encode("utf-8")).decode("ascii") for key, value in env.items()},
+                "data": {
+                    key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+                    for key, value in env.items()
+                },
             },
             {
                 "apiVersion": "apps/v1",
@@ -344,18 +552,36 @@ def _kubernetes_manifest(
                 "metadata": {
                     "name": name,
                     "namespace": namespace,
-                    "labels": {"app.kubernetes.io/name": "npa-detection-training", "app.kubernetes.io/instance": name},
+                    "labels": {
+                        "app.kubernetes.io/name": "npa-detection-training",
+                        "app.kubernetes.io/instance": name,
+                    },
                 },
                 "spec": {
                     "replicas": 1,
                     "strategy": {"type": "Recreate"},
                     "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
                     "template": {
-                        "metadata": {"labels": {"app.kubernetes.io/name": "npa-detection-training", "app.kubernetes.io/instance": name}},
+                        "metadata": {
+                            "labels": {
+                                "app.kubernetes.io/name": "npa-detection-training",
+                                "app.kubernetes.io/instance": name,
+                            }
+                        },
                         "spec": {
                             "nodeSelector": {node_selector_key: node_selector_value},
-                            **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
-                            "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+                            **(
+                                {"imagePullSecrets": [{"name": image_pull_secret}]}
+                                if image_pull_secret
+                                else {}
+                            ),
+                            "tolerations": [
+                                {
+                                    "key": "nvidia.com/gpu",
+                                    "operator": "Exists",
+                                    "effect": "NoSchedule",
+                                }
+                            ],
                             "containers": [
                                 {
                                     "name": "service",
@@ -367,7 +593,11 @@ def _kubernetes_manifest(
                                         "limits": {"nvidia.com/gpu": "1"},
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
-                                    "readinessProbe": {"httpGet": {"path": "/health", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/health", "port": "http"},
+                                        "initialDelaySeconds": 10,
+                                        "periodSeconds": 10,
+                                    },
                                 }
                             ],
                         },
@@ -387,7 +617,9 @@ def _kubernetes_manifest(
     }
 
 
-def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env: str, port: int) -> dict[str, str]:
+def _service_env(
+    *, input_path: str, output_path: str, auth_mode: str, token_env: str, port: int
+) -> dict[str, str]:
     creds = load_credentials()
     env = {
         "DETECTION_TRAINING_AUTH_MODE": auth_mode,
@@ -415,7 +647,9 @@ def _service_env(*, input_path: str, output_path: str, auth_mode: str, token_env
     return {key: value for key, value in env.items() if value}
 
 
-def _ensure_image_pull_secret(*, image: str, secret_name: str, namespace: str, kubeconfig: str) -> None:
+def _ensure_image_pull_secret(
+    *, image: str, secret_name: str, namespace: str, kubeconfig: str
+) -> None:
     registry = _image_registry(image)
     if not registry:
         return
@@ -426,7 +660,9 @@ def _ensure_image_pull_secret(*, image: str, secret_name: str, namespace: str, k
         "metadata": {"name": secret_name, "namespace": namespace},
         "type": "kubernetes.io/dockerconfigjson",
         "data": {
-            ".dockerconfigjson": base64.b64encode(json.dumps(docker_config).encode("utf-8")).decode("ascii"),
+            ".dockerconfigjson": base64.b64encode(
+                json.dumps(docker_config).encode("utf-8")
+            ).decode("ascii"),
         },
     }
     _kubectl(["apply", "-f", "-"], stdin=json.dumps(payload), kubeconfig=kubeconfig)
@@ -444,7 +680,9 @@ def _image_registry(image: str) -> str:
 def _docker_auth_config(registry: str) -> dict[str, Any]:
     config_path = Path.home() / ".docker" / "config.json"
     if not config_path.exists():
-        fail(f"Cannot create image pull secret for {registry}: {config_path} does not exist")
+        fail(
+            f"Cannot create image pull secret for {registry}: {config_path} does not exist"
+        )
     try:
         config = json.loads(config_path.read_text())
     except json.JSONDecodeError as exc:
@@ -495,13 +733,17 @@ def _docker_auth_from_helper(helper: str, registry: str) -> dict[str, str]:
         payload = json.loads(result.stdout)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
-        fail(f"Docker credential helper {executable} cannot read credentials for {registry}: {detail}")
+        fail(
+            f"Docker credential helper {executable} cannot read credentials for {registry}: {detail}"
+        )
     except json.JSONDecodeError as exc:
         fail(f"Docker credential helper {executable} returned invalid JSON: {exc}")
     username = str(payload.get("Username") or payload.get("username") or "")
     secret = str(payload.get("Secret") or payload.get("secret") or "")
     if not username or not secret:
-        fail(f"Docker credential helper {executable} returned incomplete credentials for {registry}")
+        fail(
+            f"Docker credential helper {executable} returned incomplete credentials for {registry}"
+        )
     auth = base64.b64encode(f"{username}:{secret}".encode("utf-8")).decode("ascii")
     return {"username": username, "password": secret, "auth": auth}
 
@@ -522,7 +764,9 @@ def _kubectl(
         typer.echo(" ".join(cmd))
         return ""
     try:
-        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+        result = subprocess.run(
+            cmd, input=stdin, text=True, capture_output=True, check=True
+        )
     except FileNotFoundError:
         fail("kubectl is not installed or not on PATH")
     except subprocess.CalledProcessError as exc:
