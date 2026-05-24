@@ -350,5 +350,5 @@ nebius ai job cancel --id <JOB_ID>
 ## Related Docs
 
 - [LeRobot GPU Benchmarks Cookbook](lerobot-gpu-benchmarks.md)
-- [npa quickstart](../quickstart.md)
-- [npa LeRobot CLI reference](../cli/lerobot.md)
+- [npa quickstart](../../quickstart.md)
+- [npa LeRobot CLI reference](../../cli/lerobot.md)

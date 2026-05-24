@@ -327,7 +327,7 @@ storage.eu-north1.nebius.cloud
 The historical `storage.uk-south1.nebius.cloud` default is wrong for the
 primary cluster. Deploy commands that support endpoint overrides should accept
 `NPA_STORAGE_ENDPOINT` and pass the resolved URL through as `AWS_ENDPOINT_URL`
-or `NEBIUS_S3_ENDPOINT`. See `docs/getting-started.md`,
+or `NEBIUS_S3_ENDPOINT`. See `docs/workbench/getting-started.md`,
 `npa/src/npa/clients/credentials.py`, and
 `npa/src/npa/cli/workbench/lancedb/deploy.py`.
 
@@ -407,7 +407,7 @@ References:
 
 - `SECURITY.md`
 - `docs/credentials.yaml.example`
-- `docs/getting-started.md`
+- `docs/workbench/getting-started.md`
 - `npa/src/npa/clients/credentials.py`
 - `npa/src/npa/clients/config.py`
 
@@ -535,12 +535,12 @@ routing, image build path, credentials, input and output formats, S3 handoff
 paths, CLI examples, Python wrapper examples, workflow YAML usage, known
 limitations, and evidence required before promotion.
 
-Put operator runbooks under `docs/cookbooks/`. Existing examples include
-`docs/cookbooks/bdd100k-pipeline.md`,
-`docs/cookbooks/lancedb-deploy-runbook.md`,
-`docs/cookbooks/lancedb-vector-search.md`,
-`docs/cookbooks/serverless-tools-coverage.md`, and
-`docs/cookbooks/sonic-whole-body-control.md`. Put architecture rationale under
+Put operator runbooks under `docs/workbench/cookbooks/`. Existing examples include
+`docs/workbench/cookbooks/bdd100k-pipeline.md`,
+`docs/workbench/cookbooks/lancedb-deploy-runbook.md`,
+`docs/workbench/cookbooks/lancedb-vector-search.md`,
+`docs/workbench/cookbooks/serverless-tools-coverage.md`, and
+`docs/workbench/cookbooks/sonic-whole-body-control.md`. Put architecture rationale under
 `docs/architecture/` only when it applies beyond one tool.
 
 Do not create a templates directory for a new tool. Point contributors at a
@@ -601,10 +601,10 @@ the practical path, using the `image_id` override pattern in
 `docs/workbench-yaml-guide.md` and `npa/scripts/run_isaac_lab_rl.py`. Prove
 behavior with code, tests, or run artifacts.
 ## Where To Start
-For setup, start with `docs/getting-started.md`,
+For setup, start with `docs/workbench/getting-started.md`,
 `docs/credentials.yaml.example`, and `docs/orchestration/skypilot-setup.md`.
 For known operational failure modes, read
-`docs/troubleshooting/known-footguns.md`.
+`docs/workbench/troubleshooting/known-footguns.md`.
 For the main full-tool reference, read `npa/src/npa/cli/workbench/lerobot.py`,
 `npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/lerobot/Dockerfile`,
 and `.agents/skills/lerobot/SKILL.md`.
