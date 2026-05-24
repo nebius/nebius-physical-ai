@@ -1,59 +1,115 @@
-# Nebius Physical AI Solutions
+# Nebius Physical AI
 
-Welcome to the Nebius Physical AI repository. This project hosts a collection of solutions for physical artificial intelligence, providing both Nebius-created and community-contributed implementations that enable developers to build, deploy, and integrate physical AI systems.
+Nebius Physical AI is a multi-solution platform for physical AI workloads on
+Nebius infrastructure. The repository provides a shared `npa` command model,
+platform architecture guidance, and solution-specific implementations for
+robotics, simulation, perception, and synthetic-data workflows.
 
-Nebius Physical AI Solutions brings together best practices, tools, and libraries for developing advanced physical AI applications. Whether you're working with robotics, computer vision, autonomous systems, or other physical AI domains, this repository provides comprehensive resources and reference implementations. Our goal is to foster a collaborative community where developers can share innovations, contribute improvements, and accelerate the adoption of physical AI technologies across industries.
+The current solution is Workbench. Workbench packages containerized tools,
+SkyPilot workflows, CLI commands, SDK entry points, and operator documentation
+for running physical AI workloads on Nebius.
 
-This repository contains production-ready solutions, experimental prototypes, and documentation that support the full lifecycle of physical AI development. From initial prototyping and model training to deployment and monitoring, you'll find everything needed to successfully implement physical AI systems using Nebius services and infrastructure. The project welcomes contributions from the community and encourages collaboration between Nebius and external developers.
+## Solutions
 
-## Repository Structure
+| Solution | CLI namespace | Purpose | Documentation |
+| --- | --- | --- | --- |
+| Workbench | `npa workbench <tool> <verb>` | Containerized tools and workflows for robotics, simulation, perception, dataset curation, and model training. | [docs/workbench/](docs/workbench/) |
 
-This repository is organized to support both Nebius and community-created physical AI solutions:
+New solutions should follow the platform model in
+[docs/architecture/solutions-model.md](docs/architecture/solutions-model.md)
+before adding a new CLI namespace, docs area, tool contract, or packaging
+surface.
 
-- **Solutions**: Complete implementations and reference architectures for physical AI applications
-- **Documentation**: Guides, tutorials, and best practices for building with Nebius physical AI
-- **Community Contributions**: Community-maintained projects and extensions
+## CLI Model
+
+The platform CLI is organized as:
+
+```bash
+npa <solution> <tool> <verb> [options]
+```
+
+For Workbench, `<solution>` is `workbench`, `<tool>` is a capability such as
+`isaac-lab`, `fiftyone`, `lerobot`, or `lancedb`, and `<verb>` is an operation
+such as `deploy`, `status`, `list`, `system-info`, `train`, or `run`.
+
+Examples:
+
+```bash
+npa workbench --help
+npa workbench isaac-lab --help
+npa workbench fiftyone list
+npa workbench lancedb status
+```
+
+Solutions may add tool-specific verbs, but shared verbs should keep the same
+meaning across tools:
+
+| Verb | Expected meaning |
+| --- | --- |
+| `deploy` | Create or update the service, job runner, or managed runtime for a tool. |
+| `status` | Report health, endpoint, job, or deployment state. |
+| `list` | Enumerate configured projects, deployments, runs, datasets, or artifacts. |
+| `system-info` | Report runtime, image, dependency, accelerator, and environment details. |
 
 ## Getting Started
 
-To get from a fresh clone to the first validated `npa` workbench and BDD100K
-pipeline commands, follow [Getting Started](docs/getting-started.md). For a
-deeper `npa` CLI walkthrough, see the [npa quickstart](docs/quickstart.md). For
-other Nebius Physical AI Solutions, explore the solutions directory and review
-the documentation for your specific use case. Each solution includes its own
-README with setup instructions and usage examples.
+For the first Workbench install, credential setup, deployment validation, and
+BDD100K pipeline path, follow
+[Workbench Getting Started](docs/workbench/getting-started.md). For a broader
+CLI walkthrough, see the [npa quickstart](docs/quickstart.md).
 
-## Reproducing the Demo
-
-To reproduce the Cosmos, Isaac Lab, GR00T, and FiftyOne workbench demo in your
+To reproduce the Cosmos, Isaac Lab, GR00T, and FiftyOne Workbench demo in your
 own Nebius project, follow the [8-GPU H200 demo runbook](docs/demo/8gpu-h200.md).
 
-## API Reference
+## Repository Layout
 
-CLI reference pages are generated from the Typer help output in
-[docs/cli](docs/cli/README.md).
+```text
+.
+|-- README.md                         # Platform overview and solution index
+|-- docs/
+|   |-- README.md                     # Documentation index
+|   |-- architecture/                 # Platform architecture and solution model
+|   |-- workbench/                    # Workbench-specific guides, cookbooks, and troubleshooting
+|   |-- cli/                          # Generated and curated CLI reference pages
+|   |-- demo/                         # Demo runbooks
+|   |-- demos/                        # Demo walkthroughs and visual assets
+|   |-- orchestration/                # SkyPilot and runtime setup docs
+|   |-- sdk/                          # SDK-facing docs
+|   |-- security/                     # Security and reproducibility docs
+|   `-- testing/                      # Test and validation docs
+`-- npa/                              # Shared CLI, SDK, workflows, and tool implementations
+```
 
-For browser-based Rerun review workflows, `npa rerun host` and
-`npa rerun share` publish `.rrd` recordings through Nebius S3 presigned URLs
-for viewing in `app.rerun.io`.
+Workbench-specific content lives under
+[docs/workbench/](docs/workbench/). Platform-level architecture stays under
+[docs/architecture/](docs/architecture/), including the
+[solutions model](docs/architecture/solutions-model.md) and
+[CLI namespace conventions](docs/architecture/cli-namespaces.md).
 
-## Architecture
-
-CLI namespace conventions are documented in
-[docs/architecture/cli-namespaces.md](docs/architecture/cli-namespaces.md).
+CLI reference pages are generated from Typer help output in
+[docs/cli](docs/cli/README.md). Browser-based Rerun review workflows are
+covered by the `npa rerun host` and `npa rerun share` CLI references.
 
 ## Contributing
 
-We welcome contributions from the community! Whether you're adding new solutions, improving documentation, or reporting issues, your contributions help make Nebius Physical AI better for everyone.
+We welcome contributions from the community. Whether you are adding a solution,
+improving Workbench documentation, or reporting issues, align new work with the
+solution model and keep platform concerns separate from solution-specific
+behavior.
 
 ## License
 
-Copyright © 2026 Nebius BV
+Copyright (c) 2026 Nebius BV
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
 
-```
+```text
 http://www.apache.org/licenses/LICENSE-2.0
 ```
 
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.

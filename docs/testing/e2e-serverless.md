@@ -228,7 +228,7 @@ Expected artifacts: `npa_isaac_lab_train_summary.json`, `npa_isaac_lab_checkpoin
 | BYOF image override | VALIDATED | Synthetic BYOF image digest differed from the vanilla Workbench image digest, and Run ID `w10-byof-image-only-20260520T232650Z` completed with the BYOF image override. | Use `--image` for routine customer image swaps. |
 | BYOF command override | VALIDATED-VIA-YAML | Run ID `w10-byof-image-and-cmd-20260520T233113Z` invoked `/opt/byof/custom_train.py`, uploaded `byof_sentinel.json`, and produced a normal checkpoint. | Use a customer-owned YAML `run:` block variant; the runner does not expose `--run-cmd`. |
 
-Cookbook: `docs/cookbooks/byof-isaac-lab/README.md`.
+Cookbook: `docs/workbench/cookbooks/byof-isaac-lab/README.md`.
 
 ## FiftyOne Serverless Jobs E2E
 

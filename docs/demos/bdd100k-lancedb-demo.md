@@ -146,7 +146,7 @@ npa workbench detection-training deploy \
 ```
 
 The OSS LanceDB VM path is still operator-owned in this build. For local smoke,
-use the container runbook in `docs/cookbooks/lancedb-deploy-runbook.md`; for the
+use the container runbook in `docs/workbench/cookbooks/lancedb-deploy-runbook.md`; for the
 live BDD100K pipeline, the operator must provide the in-cluster LanceDB service
 or a compatible endpoint override.
 

@@ -39,7 +39,7 @@ Required secrets are configured outside the repository in
 `~/.npa/credentials.yaml`. Use `docs/credentials.yaml.example` as the template
 and keep the real credentials file out of git. Non-secret resource identifiers
 such as `NEBIUS_PROJECT_ID`, `NEBIUS_TENANT_ID`, `NPA_REGISTRY`, and
-`NPA_S3_BUCKET` are documented in `docs/getting-started.md`.
+`NPA_S3_BUCKET` are documented in `docs/workbench/getting-started.md`.
 
 Do not commit live infrastructure identifiers. Parameterize or redact:
 

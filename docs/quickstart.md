@@ -357,7 +357,7 @@ data without a local Rerun install.
 ## 8. Where to next
 
 - [Repository overview](../README.md)
-- [Getting started](getting-started.md)
+- [Getting started](workbench/getting-started.md)
 - [CLI and package overview](../npa/README.md)
 - [Source sample config](../npa/src/npa/config/sample_config.yaml)
 - [Known onboarding and runtime gotchas](../FIXME.md)
