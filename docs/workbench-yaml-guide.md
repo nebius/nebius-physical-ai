@@ -252,9 +252,9 @@ The BDD100K pipeline is the canonical reference implementation:
 
 Related docs:
 
-- `docs/getting-started.md`
+- `docs/workbench/getting-started.md`
 - `docs/demos/bdd100k-lancedb-demo.md`
-- `docs/cookbooks/bdd100k-pipeline.md`
+- `docs/workbench/cookbooks/bdd100k-pipeline.md`
 - `npa/workflows/skypilot/bdd100k-pipeline.yaml`
 
 ## Isaac Lab RL Training

@@ -101,9 +101,9 @@ docker build \
   --platform linux/amd64 \
   --build-arg NPA_REGISTRY_ID="${NPA_REGISTRY_ID}" \
   --build-arg BYOF_RUN_ID="${BYOF_BUILD_ID}" \
-  -f docs/cookbooks/byof-isaac-lab/Dockerfile.example \
+  -f docs/workbench/cookbooks/byof-isaac-lab/Dockerfile.example \
   -t "${BYOF_IMAGE}" \
-  docs/cookbooks/byof-isaac-lab
+  docs/workbench/cookbooks/byof-isaac-lab
 ```
 
 The example base image digest is

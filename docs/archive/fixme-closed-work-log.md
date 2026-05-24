@@ -547,7 +547,7 @@ a one-line help distinction.
 
 ## CLOSED 2026-05-13 (LeRobot GPU benchmark reproducibility cookbook published)
 
-- New cookbook at `docs/cookbooks/lerobot-gpu-benchmarks.md` documents
+- New cookbook at `docs/workbench/cookbooks/lerobot-gpu-benchmarks.md` documents
   reproduction of the May 2026 LeRobot GPU benchmark research via Nebius
   Workbench.
 - Covers all four policy architectures (VQ-BeT 38M, ACT 52M, Diffusion 263M,
@@ -662,7 +662,7 @@ Outstanding (deferred):
   `s3://your-bucket-name/w7p-fresh/20260513T225839Z/`.
 - GR00T code and unit tests landed, but smoke attempts failed before container
   logs with Nebius internal Job errors on H200 and L40S.
-- Cross-tool docs landed at `docs/cookbooks/serverless-tools-coverage.md`.
+- Cross-tool docs landed at `docs/workbench/cookbooks/serverless-tools-coverage.md`.
 - LeRobot serverless integration remained owned by W7-full-reproduction; this
   run did not edit LeRobot CLI/tests/cookbook files.
 - Did not touch `npa/src/npa/clients/serverless.py` to avoid W7 collision.

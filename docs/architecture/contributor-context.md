@@ -51,7 +51,7 @@ Never duplicate logic across layers. If you add a new capability, it goes in the
 
 ## Development setup
 
-Reference: `docs/getting-started.md` for the full setup guide. Key points:
+Reference: `docs/workbench/getting-started.md` for the full setup guide. Key points:
 
 - Python 3.10+
 - Install: `pip install -e npa/[dev]` from repo root
@@ -159,7 +159,7 @@ was prior operator tribal knowledge. It is now a permanent CLI
 capability: `npa skypilot bootstrap` installs idempotently,
 `npa skypilot status` reports state, `npa skypilot verify` runs
 `sky check`. The bootstrap is the canonical setup step referenced in
-`docs/getting-started.md`.
+`docs/workbench/getting-started.md`.
 
 ### BYOF Mechanism For Workbench Tools (W10 condensed commit)
 
@@ -174,7 +174,7 @@ Workbench without sharing their code by overriding two surfaces:
 - **Command override**: a YAML `run:` block variant invokes a partner's
   custom training entrypoint inside the partner's image. Validated
   end-to-end via a sentinel file pattern; see
-  `docs/cookbooks/byof-isaac-lab/`.
+  `docs/workbench/cookbooks/byof-isaac-lab/`.
 
 Both surfaces are validated with worked example. The cookbook's
 "Platform Guarantees And Image Responsibilities" section codifies the
@@ -182,7 +182,7 @@ contract between Workbench and the partner's image.
 
 ### Onboarding Doctrine (W11 condensed commit)
 
-`docs/getting-started.md` is the canonical day-zero entry point for
+`docs/workbench/getting-started.md` is the canonical day-zero entry point for
 contributors and partners. Cookbooks, skill files, and tool READMEs
 reference it rather than duplicating setup steps. Verification gates
 (`aws s3 ls`, `sky check`, `npa skypilot status`) appear in the doc as
@@ -191,7 +191,7 @@ before attempting their first run.
 
 ### Troubleshooting Framework (W11 condensed commit)
 
-`docs/troubleshooting/known-footguns.md` captures operational rough
+`docs/workbench/troubleshooting/known-footguns.md` captures operational rough
 edges surfaced during validation work with: symptom, root cause,
 current workaround, and category for follow-up (capacity / platform /
 security / docs). The intent is that partners read footguns before

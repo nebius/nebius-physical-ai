@@ -3,11 +3,11 @@
 This guide takes a first-time partner from a fresh clone to a machine that can
 run the Isaac Lab BYOF cookbook and write the first checkpoint to Nebius S3.
 
-For a deeper CLI walkthrough, see [quickstart.md](quickstart.md). For the
+For a deeper CLI walkthrough, see [quickstart.md](../quickstart.md). For the
 BYOF training path, see
 [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md).
 For the SkyPilot runtime details, see
-[orchestration/skypilot-setup.md](orchestration/skypilot-setup.md).
+[orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md).
 
 ## Day Zero Preconditions
 
@@ -288,7 +288,8 @@ manifest from S3.
 
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
-- [orchestration/skypilot-setup.md](orchestration/skypilot-setup.md): isolated
+- [orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md): isolated
   SkyPilot runtime details.
-- [quickstart.md](quickstart.md): broader `npa` CLI walkthrough.
-- [workbench-yaml-guide.md](workbench-yaml-guide.md): pipeline YAML structure.
+- [quickstart.md](../quickstart.md): broader `npa` CLI walkthrough.
+- [workbench-yaml-guide.md](../workbench-yaml-guide.md): pipeline YAML
+  structure.

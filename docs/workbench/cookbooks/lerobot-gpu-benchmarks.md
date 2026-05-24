@@ -52,7 +52,7 @@ to 40%.
 
 - A Nebius AI Cloud account with quota for at least one of the benchmark GPUs.
 - The Nebius CLI installed and authenticated. See the
-  [npa quickstart](../quickstart.md) for setup.
+  [npa quickstart](../../quickstart.md) for setup.
 - Terraform on `PATH` for VM or container workbench deploys.
 - `npa` installed from this repository.
 - A Hugging Face token in `~/.npa/credentials.yaml` or `HF_TOKEN` for datasets
@@ -570,7 +570,7 @@ trials under your exact workload.
 
 - Original LeRobot GPU benchmark research document, May 2026: publication URL
   pending.
-- [npa quickstart](../quickstart.md)
-- [npa LeRobot CLI reference](../cli/lerobot.md)
+- [npa quickstart](../../quickstart.md)
+- [npa LeRobot CLI reference](../../cli/lerobot.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)
 - [Hugging Face tokens](https://huggingface.co/settings/tokens)
