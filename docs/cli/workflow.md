@@ -1,9 +1,9 @@
-# `npa workflow`
+# `npa workbench workflow`
 
 ## Command Tree
 
 ```text
-Usage: npa workflow [OPTIONS] COMMAND [ARGS]...
+Usage: npa workbench workflow [OPTIONS] COMMAND [ARGS]...
 
 Multi-stage training workflow orchestration.
 
@@ -36,8 +36,9 @@ distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 ## Examples
 
 ```bash
-npa workflow --help
-npa workflow run --help
+npa workbench workflow --help
+npa workbench workflow run --help
 ```
 
-Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.
+Regenerate this page with `bash scripts/build_docs.sh` after changing
+`workbench workflow`.

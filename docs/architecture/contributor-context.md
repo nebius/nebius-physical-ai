@@ -6,7 +6,7 @@
 
 ## What this repo is
 
-Nebius Physical AI Workbench (`nebius-physical-ai`) is an open-source platform layer for building Physical AI pipelines — robotics, autonomous vehicles, and industrial AI. It provides a curated marketplace of pre-validated tools (LanceDB, FiftyOne, LeRobot, Genesis, Isaac Lab, Cosmos, GR00T, SONIC), a shared S3 data layer, a CLI/SDK, and SkyPilot-orchestrated YAML workflows. Everything runs on Nebius GPU infrastructure but is designed to be usable by any contributor with their own Nebius account.
+Nebius Physical AI (`nebius-physical-ai`) is an open-source platform layer for building Physical AI pipelines — robotics, autonomous vehicles, and industrial AI. The platform provides a shared `npa` CLI/SDK, solution namespace conventions, a shared S3 data layer, and SkyPilot-orchestrated YAML workflows. Workbench is the first solution on the platform and provides a curated marketplace of pre-validated tools (LanceDB, FiftyOne, LeRobot, Genesis, Isaac Lab, Cosmos, GR00T, SONIC). Everything runs on Nebius GPU infrastructure but is designed to be usable by any contributor with their own Nebius account.
 
 The repo is in active development. It was open-sourced in May 2026. Contributors range from Nebius engineers to design partners and external robotics/AV teams.
 
@@ -16,9 +16,9 @@ The repo is in active development. It was open-sourced in May 2026. Contributors
 nebius-physical-ai/
 ├── npa/                          # Main Python package
 │   ├── src/npa/
-│   │   ├── cli/                  # Typer CLI (npa workbench <tool>)
-│   │   ├── sdk/                  # Python SDK (npa.sdk.workbench.<tool>)
-│   │   ├── workbench/            # Per-tool FastAPI services
+│   │   ├── cli/                  # Typer CLI (npa <solution> ...)
+│   │   ├── sdk/                  # Python SDK namespaces
+│   │   ├── workbench/            # Workbench FastAPI services
 │   │   ├── orchestration/        # SkyPilot orchestration wrapper
 │   │   └── clients/              # Nebius API clients, credentials
 │   ├── tests/                    # pytest test suite
@@ -38,12 +38,12 @@ nebius-physical-ai/
 
 ## Core architectural pattern (every contributor must understand)
 
-**Three-access pattern**: every workbench tool exposes exactly one capability through three equivalent access modes:
+**Three-access pattern**: every Workbench tool exposes exactly one capability through three equivalent access modes:
 - HTTP API (`POST /train`, etc.) — the source of truth
 - CLI (`npa workbench <tool> train`) — a client of the API
 - Python SDK (`npa.sdk.workbench.<tool>.train()`) — a client of the API
 
-Never duplicate logic across layers. If you add a new capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
+Never duplicate logic across layers. If you add a new Workbench capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
 
 **SkyPilot = sole orchestrator**: workflow orchestration uses SkyPilot managed jobs. Argo is deprecated. New pipeline YAMLs live in `npa/workflows/skypilot/`. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
 
