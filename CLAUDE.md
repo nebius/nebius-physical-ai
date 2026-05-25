@@ -6,9 +6,9 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 
 ## Claude Skills
 
-- `.claude/skills/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
-- `.claude/skills/review-checklist/SKILL.md`: load for code reviews and risk classification.
-- `.claude/skills/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
+- `.claude/skills/platform/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
+- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews and risk classification.
+- `.claude/skills/workbench/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
 
 ## Project Instructions
 

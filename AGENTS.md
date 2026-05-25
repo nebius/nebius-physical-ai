@@ -10,17 +10,17 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 
 ## Codex Skills
 
-- `.agents/skills/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
-- `.agents/skills/skypilot-workflows/SKILL.md`: SkyPilot workflow authoring, runner scripts, limitations, and cleanup.
-- `.agents/skills/nebius-infra/SKILL.md`: cluster, storage, registry, credential, GPU routing, and namespace facts.
-- `.agents/skills/testing-conventions/SKILL.md`: pytest, ruff, gates, expected baseline, and known failures.
-- `.agents/skills/super-prompt-patterns/SKILL.md`: repo super-prompt phase, dirty-tree, NOVEL_ISSUE, and commit-lock conventions.
-- `.agents/skills/lerobot/SKILL.md`: LeRobot policy training, serving, inference, datasets, and validation.
-- `.agents/skills/fiftyone/SKILL.md`: FiftyOne curation, visualization, public access, and app behavior.
-- `.agents/skills/genesis/SKILL.md`: Genesis simulation, RL teacher training, and EGL/DRI rendering limits.
-- `.agents/skills/isaac-lab/SKILL.md`: Isaac Lab RT-core routing, headless training, workflows, and custom forks.
-- `.agents/skills/cosmos/SKILL.md`: Cosmos world-model serving, backend selection, downloads, and rendering limits.
-- `.agents/skills/lancedb/SKILL.md`: LanceDB vector store, BDD100K UDFs, materialized views, and CLIP embeddings.
-- `.agents/skills/groot/SKILL.md`: GR00T deployment, status, routing, validation, and CUDA 13 alignment.
-- `.agents/skills/sonic/SKILL.md`: SONIC training, H100 routing, validation, and known job ID issue.
-- `.agents/skills/workflows/SKILL.md`: reference SkyPilot YAMLs, runners, S3 outputs, and cookbooks.
+- `.agents/skills/workbench/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
+- `.agents/skills/platform/skypilot-workflows/SKILL.md`: SkyPilot workflow authoring, runner scripts, limitations, and cleanup.
+- `.agents/skills/platform/nebius-infra/SKILL.md`: cluster, storage, registry, credential, GPU routing, and namespace facts.
+- `.agents/skills/platform/testing-conventions/SKILL.md`: pytest, ruff, gates, expected baseline, and known failures.
+- `.agents/skills/platform/super-prompt-patterns/SKILL.md`: repo super-prompt phase, dirty-tree, NOVEL_ISSUE, and commit-lock conventions.
+- `.agents/skills/workbench/lerobot/SKILL.md`: LeRobot policy training, serving, inference, datasets, and validation.
+- `.agents/skills/workbench/fiftyone/SKILL.md`: FiftyOne curation, visualization, public access, and app behavior.
+- `.agents/skills/workbench/genesis/SKILL.md`: Genesis simulation, RL teacher training, and EGL/DRI rendering limits.
+- `.agents/skills/workbench/isaac-lab/SKILL.md`: Isaac Lab RT-core routing, headless training, workflows, and custom forks.
+- `.agents/skills/workbench/cosmos/SKILL.md`: Cosmos world-model serving, backend selection, downloads, and rendering limits.
+- `.agents/skills/workbench/lancedb/SKILL.md`: LanceDB vector store, BDD100K UDFs, materialized views, and CLIP embeddings.
+- `.agents/skills/workbench/groot/SKILL.md`: GR00T deployment, status, routing, validation, and CUDA 13 alignment.
+- `.agents/skills/workbench/sonic/SKILL.md`: SONIC training, H100 routing, validation, and known job ID issue.
+- `.agents/skills/workbench/workflows/SKILL.md`: reference SkyPilot YAMLs, runners, S3 outputs, and cookbooks.

@@ -13,14 +13,14 @@ It is about the tool layer:
 It does not define platform orchestration internals, the agentic layer, or new
 cross-tool composition systems. Those are separate layers. The current repo
 architecture is indexed in `docs/architecture/contributor-context.md` and
-`.claude/skills/architecture/SKILL.md`.
+`.claude/skills/platform/architecture/SKILL.md`.
 
 The strongest full-tool reference is LeRobot:
 
 - `npa/src/npa/cli/workbench/lerobot.py`
 - `npa/src/npa/workbench/lerobot/__init__.py`
-- `npa/docker/lerobot/Dockerfile`
-- `.agents/skills/lerobot/SKILL.md`
+- `npa/docker/workbench/lerobot/Dockerfile`
+- `.agents/skills/workbench/lerobot/SKILL.md`
 - `npa/tests/cli/test_lerobot_cli.py`
 
 The cleanest service, CLI, and compatibility SDK reference is detection
@@ -71,7 +71,7 @@ flowchart LR
 
 For new tools, keep the container as the deployment unit and the service
 endpoint as the invocation unit. The Workbench tool pattern is documented in
-`.agents/skills/workbench-tool/SKILL.md`.
+`.agents/skills/workbench/workbench-tool/SKILL.md`.
 ## Required Interfaces
 Every new Workbench tool needs a coherent HTTP, CLI, and Python-callable
 surface. The exact workload verbs are tool-specific, but the management verbs
@@ -179,16 +179,16 @@ and LanceDB.
 The SDK surface should not contain a second implementation of the workload. It
 should call the service or shared implementation layer.
 ## Containerization
-Every Workbench tool needs a container image under `npa/docker/`. Use the
+Every Workbench tool needs a container image under `npa/docker/workbench/`. Use the
 existing Dockerfiles as the reference set, especially
-`npa/docker/lerobot/Dockerfile`, `npa/docker/fiftyone/Dockerfile`,
-`npa/docker/lancedb/Dockerfile`, and
-`npa/docker/detection-training/Dockerfile`.
+`npa/docker/workbench/lerobot/Dockerfile`, `npa/docker/workbench/fiftyone/Dockerfile`,
+`npa/docker/workbench/lancedb/Dockerfile`, and
+`npa/docker/workbench/detection-training/Dockerfile`.
 
 Base image and tag conventions are backed by:
 
-- `npa/docker/tags.yaml`
-- `npa/docker/check_tag_consistency.py`
+- `npa/docker/workbench/tags.yaml`
+- `npa/docker/workbench/check_tag_consistency.py`
 - `docs/security/image-reproducibility.md`
 - `.github/workflows/image-security-scan.yml`
 
@@ -198,12 +198,12 @@ or vendor-paced for much of the stack.
 
 LeRobot has both a CUDA 12 image and a B300-specific Dockerfile:
 
-- `npa/docker/lerobot/Dockerfile`
-- `npa/docker/lerobot/Dockerfile.b300`
+- `npa/docker/workbench/lerobot/Dockerfile`
+- `npa/docker/workbench/lerobot/Dockerfile.b300`
 
 Do not invent a third tag family in a new contribution. If a tool genuinely
-needs a new family, update `npa/docker/tags.yaml`,
-`npa/docker/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
+needs a new family, update `npa/docker/workbench/tags.yaml`,
+`npa/docker/workbench/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
 in a separate design change.
 
 Use a Nebius registry prefix supplied by configuration. Current code uses
@@ -217,9 +217,9 @@ cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-tool:${TAG}
 
 Build scripts should follow the `--registry` and `--push` shape used by:
 
-- `npa/docker/lerobot/build.sh`
-- `npa/docker/groot/build.sh`
-- `npa/docker/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/lerobot/build.sh`
+- `npa/docker/workbench/groot/build.sh`
+- `npa/docker/workbench/base/cuda13-b300/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
@@ -257,7 +257,7 @@ Examples are detection training deploy in
 `npa/src/npa/cli/workbench/detection_training.py`, LanceDB deploy in
 `npa/src/npa/cli/workbench/lancedb/deploy.py`, and FiftyOne Kubernetes deploy in
 `npa/src/npa/cli/fiftyone/__init__.py`. Use the `workbench` namespace for
-deployed services, as documented in `.agents/skills/nebius-infra/SKILL.md`.
+deployed services, as documented in `.agents/skills/platform/nebius-infra/SKILL.md`.
 ### Serverless
 Serverless Jobs and Endpoints are the target for batch and serving workloads
 when the tool can run without hard host assumptions.
@@ -299,7 +299,7 @@ Use these references:
 - `npa/src/npa/clients/storage.py`
 - `npa/src/npa/serverless_common/output.py`
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/skypilot/bdd100k-pipeline.yaml`
+- `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`
 
 The public handoff flags are:
 
@@ -333,7 +333,7 @@ or `NEBIUS_S3_ENDPOINT`. See `docs/workbench/getting-started.md`,
 
 Backing services are encapsulated. A pipeline stage should receive an S3 URI,
 call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
-`npa/workflows/skypilot/bdd100k-pipeline.yaml` is the worked example.
+`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the worked example.
 ## Workflow YAML Conventions
 Add a SkyPilot YAML only when a tool needs a repeatable pipeline or reference
 workflow. Do not add Argo workflows.
@@ -341,9 +341,9 @@ workflow. Do not add Argo workflows.
 References:
 
 - `docs/workbench-yaml-guide.md`
-- `npa/workflows/skypilot/bdd100k-pipeline.yaml`
-- `npa/workflows/skypilot/isaac-lab-rl-train.yaml`
-- `npa/workflows/skypilot/isaac-lab-rl-sweep.yaml`
+- `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`
+- `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`
+- `npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml`
 - `npa/scripts/run_bdd100k_pipeline.py`
 - `npa/scripts/run_isaac_lab_rl.py`
 
@@ -361,10 +361,10 @@ Current YAML rules:
 
 SkyPilot 0.12.2 does not support self-referencing interpolation inside the same
 `envs` block. The BDD100K label-map block in `docs/workbench-yaml-guide.md` and
-`npa/workflows/skypilot/bdd100k-pipeline.yaml` is the current pattern.
+`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the current pattern.
 
 Training workflows must run headless. Isaac Lab shows the required `--headless`
-flag in `npa/workflows/skypilot/isaac-lab-rl-train.yaml`.
+flag in `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`.
 
 Use `image_id` overrides for customer containers when the tool contract is
 preserved. Isaac Lab documents this pattern in `docs/workbench-yaml-guide.md`
@@ -376,7 +376,7 @@ Current verified routing:
 
 - H100 is the default choice for general training, CLIP embedding, and
   detection-training workflow stages. The BDD100K workflow requests H100 in
-  `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+  `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 - H200 is used by several serving or training defaults, including LeRobot and
   Cosmos serverless paths in their CLI files.
 - L40S or RTX Pro 6000 is required for Isaac Lab simulation paths that need RT
@@ -386,8 +386,8 @@ Current verified routing:
   H100 or RTX6000 and intentionally exclude L40S in
   `npa/src/npa/cli/fiftyone/__init__.py`.
 - LanceDB CLIP backfill routes to H100 in the BDD100K workflow and
-  `.agents/skills/lancedb/SKILL.md`.
-- B300 support is not a general default. `npa/docker/tags.yaml`,
+  `.agents/skills/workbench/lancedb/SKILL.md`.
+- B300 support is not a general default. `npa/docker/workbench/tags.yaml`,
   `docs/security/image-reproducibility.md`, and `docs/b300-validation-matrix.md`
   show B300 as validated for the base image and LeRobot ACT smoke training, with
   broader support still blocked or vendor-paced.
@@ -501,7 +501,7 @@ smoke tests must skip unless their environment variable is set. See
 `docs/testing/smoke-tests.md`.
 
 The current expected non-e2e baseline from
-`.agents/skills/testing-conventions/SKILL.md` is:
+`.agents/skills/platform/testing-conventions/SKILL.md` is:
 
 ```text
 1242+ passed, 21 skipped, 1 xpassed, 0 failures
@@ -523,9 +523,9 @@ Use `npa/src/npa/cli/workbench/lerobot.py` for a rich CLI reference,
 service, and `npa/src/npa/sdk/workbench/detection_training.py` for compatibility
 SDK request handling.
 
-Add an agent skill as a new sibling in `.agents/skills/`; examples are
-`.agents/skills/lerobot/SKILL.md`, `.agents/skills/fiftyone/SKILL.md`, and
-`.agents/skills/isaac-lab/SKILL.md`. Update `.claude/skills/architecture/SKILL.md`
+Add an agent skill under `.agents/skills/workbench/`; examples are
+`.agents/skills/workbench/lerobot/SKILL.md`, `.agents/skills/workbench/fiftyone/SKILL.md`, and
+`.agents/skills/workbench/isaac-lab/SKILL.md`. Update `.claude/skills/platform/architecture/SKILL.md`
 only when the platform architecture changes.
 ## Documentation Requirements
 A new tool needs human docs and agent docs.
@@ -548,11 +548,11 @@ worked implementation instead.
 ## Agent Skill Files
 Agent skill files are instructions for coding agents, not marketing docs.
 
-Existing examples are `.agents/skills/lerobot/SKILL.md`,
-`.agents/skills/fiftyone/SKILL.md`, `.agents/skills/genesis/SKILL.md`,
-`.agents/skills/isaac-lab/SKILL.md`, `.agents/skills/cosmos/SKILL.md`,
-`.agents/skills/lancedb/SKILL.md`, `.agents/skills/groot/SKILL.md`, and
-`.agents/skills/sonic/SKILL.md`.
+Existing examples are `.agents/skills/workbench/lerobot/SKILL.md`,
+`.agents/skills/workbench/fiftyone/SKILL.md`, `.agents/skills/workbench/genesis/SKILL.md`,
+`.agents/skills/workbench/isaac-lab/SKILL.md`, `.agents/skills/workbench/cosmos/SKILL.md`,
+`.agents/skills/workbench/lancedb/SKILL.md`, `.agents/skills/workbench/groot/SKILL.md`, and
+`.agents/skills/workbench/sonic/SKILL.md`.
 
 The skill should include when to use it, the tool role, CLI and API contract,
 input and output data contract, GPU routing, runtime modes, known issues,
@@ -587,7 +587,7 @@ runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
 When 3 or more commits land from an agent run, trigger the Claude Code review
-pattern described in `.agents/skills/super-prompt-patterns/SKILL.md`. A
+pattern described in `.agents/skills/platform/super-prompt-patterns/SKILL.md`. A
 two-commit documentation run does not trigger that review rule.
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke
@@ -606,8 +606,8 @@ For setup, start with `docs/workbench/getting-started.md`,
 For known operational failure modes, read
 `docs/workbench/troubleshooting/known-footguns.md`.
 For the main full-tool reference, read `npa/src/npa/cli/workbench/lerobot.py`,
-`npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/lerobot/Dockerfile`,
-and `.agents/skills/lerobot/SKILL.md`.
+`npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/workbench/lerobot/Dockerfile`,
+and `.agents/skills/workbench/lerobot/SKILL.md`.
 
 For the clean HTTP service, CLI, and SDK pattern, read
 `npa/src/npa/workbench/detection_training/service.py`,
@@ -616,15 +616,24 @@ For the clean HTTP service, CLI, and SDK pattern, read
 `npa/src/npa/sdk/workbench/detection_training.py`.
 
 For workflow composition, read `docs/workbench-yaml-guide.md`,
-`npa/workflows/skypilot/bdd100k-pipeline.yaml`,
-`npa/workflows/skypilot/isaac-lab-rl-train.yaml`,
+`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`,
+`npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`,
 `npa/tests/workflows/test_bdd100k_pipeline.py`, and
 `npa/tests/workflows/test_isaac_lab_rl.py`. For deeper rationale, read
 `docs/architecture/contributor-context.md` and
-`.claude/skills/architecture/SKILL.md`.
+`.claude/skills/platform/architecture/SKILL.md`.
 ## Known Deviations
 The repo is in active development. These are real current divergences, not new
 patterns to copy.
+### Top-level CLI registrations mix namespaces and platform utilities
+FIXME(solutions): `npa/src/npa/cli/main.py` currently registers both the
+`workbench` solution namespace and legacy platform-level utility commands
+(`adapter`, `cluster`, `convert`, `demo`, `network`, `rerun`, `skypilot`, and
+`viz`). These utilities predate the solutions model and remain top-level for
+compatibility until a future migration moves them to appropriate namespaces.
+
+New commands should be registered under a solution namespace, not as additional
+top-level entries.
 ### First-party HTTP APIs are incomplete across the 8 tools
 Appendix A says every validated tool exposes `/health`, `/status`,
 `/system-info`, and `/list` as HTTP endpoints. Current code does not.
@@ -667,7 +676,7 @@ Committed examples may use either a full `NPA_REGISTRY` prefix or a
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in
-`.claude/skills/architecture/SKILL.md` or `docs/architecture/contributor-context.md`.
+`.claude/skills/platform/architecture/SKILL.md` or `docs/architecture/contributor-context.md`.
 
 Use it to understand implementation mechanics. Use LeRobot or FiftyOne for
 validated Workbench tool shape.

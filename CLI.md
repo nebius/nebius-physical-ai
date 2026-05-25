@@ -7,15 +7,14 @@ Complete reference for the `npa` command-line tool. Use this to generate correct
 ```
 npa
 ├── workbench
-│   ├── lerobot    # GPU policy training, eval, serving on remote VMs
-│   └── genesis    # Genesis simulation: teacher RL, demo gen, diagnosis
+│   ├── lerobot     # GPU policy training, eval, serving on remote VMs
+│   ├── genesis     # Genesis simulation: teacher RL, demo gen, diagnosis
+│   └── workflow    # Workbench multi-stage workflow orchestration
 ├── adapter
 │   └── convert    # Sim data → LeRobotDataset v3
-└── workflow
-    ├── distill    # Turnkey: provision L40S + H100, run pipeline, S3 handoff
-    ├── run        # Run workflow on existing infrastructure
-    ├── status     # Check workflow run status
-    └── logs       # Show stage logs
+├── convert
+├── rerun
+└── demo
 ```
 
 ---
@@ -519,7 +518,11 @@ npa adapter convert \
 
 ---
 
-## npa workflow
+## npa workbench workflow
+
+`npa workbench workflow` is the canonical Workbench workflow namespace. The
+legacy `npa workflow` shim is hidden from top-level help and prints a visible
+deprecation warning when invoked.
 
 ### distill
 
@@ -528,7 +531,7 @@ H100 VM for LeRobot training, installs runtimes, runs the 5-stage pipeline via
 SSH, and transfers artifacts between VMs via S3.
 
 ```bash
-npa workflow distill [OPTIONS]
+npa workbench workflow distill [OPTIONS]
 ```
 
 | Option | Type | Default | Description |
@@ -567,19 +570,19 @@ custom reward/friction settings, use individual `npa workbench genesis` commands
 
 ```bash
 # Full pipeline with teardown
-npa workflow distill \
+npa workbench workflow distill \
   --teacher-max-iterations 3000 \
   --student-policy act --student-epochs 100 \
   --action-space cartesian \
   --teardown
 
 # Reuse existing VMs from a prior run
-npa workflow distill \
+npa workbench workflow distill \
   --skip-infra --skip-setup \
   --teacher-max-iterations 500
 
 # Provision + run, keep VMs alive for debugging
-npa workflow distill \
+npa workbench workflow distill \
   --teacher-max-iterations 500
 ```
 
@@ -591,7 +594,7 @@ Run a named workflow on existing infrastructure. Unlike `distill`, this does not
 provision VMs — you manage infrastructure separately via `npa workbench lerobot deploy`.
 
 ```bash
-npa workflow run <WORKFLOW> [OPTIONS]
+npa workbench workflow run <WORKFLOW> [OPTIONS]
 ```
 
 | Argument/Option | Type | Default | Description |
@@ -612,10 +615,10 @@ npa workflow run <WORKFLOW> [OPTIONS]
 
 ```bash
 # Local distillation (single GPU machine)
-npa workflow run distill --n-envs 4096
+npa workbench workflow run distill --n-envs 4096
 
 # Remote distillation on pre-provisioned workbenches
-npa workflow run distill \
+npa workbench workflow run distill \
   -p eu-west1 --remote \
   --s3-bucket s3://my-bucket/workflows \
   --sim-workbench l40s --train-workbench h200
@@ -628,7 +631,7 @@ npa workflow run distill \
 Check workflow run status.
 
 ```bash
-npa workflow status <RUN_ID> [--output-format text|json]
+npa workbench workflow status <RUN_ID> [--output-format text|json]
 ```
 
 ### logs
@@ -636,7 +639,7 @@ npa workflow status <RUN_ID> [--output-format text|json]
 Show logs for a workflow stage.
 
 ```bash
-npa workflow logs <RUN_ID> <STAGE>
+npa workbench workflow logs <RUN_ID> <STAGE>
 ```
 
 Stages: `train_teacher`, `generate_demos`, `convert`, `train_student`, `eval_student`
@@ -687,7 +690,7 @@ default_workbench: h200
 
 ```bash
 # Turnkey distillation: provisions L40S + H100, runs full pipeline, tears down
-npa workflow distill \
+npa workbench workflow distill \
   --teacher-max-iterations 3000 \
   --student-policy act --student-epochs 100 \
   --action-space cartesian --teardown

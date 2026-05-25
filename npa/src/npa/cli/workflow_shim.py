@@ -1,0 +1,54 @@
+"""Deprecated top-level workflow CLI shim."""
+
+from __future__ import annotations
+
+import click
+import typer
+from typer.core import TyperGroup
+
+from npa.cli.workbench.workflow import app as workflow_app
+
+_DEPRECATION_WARNING = """Warning: npa workflow is deprecated. workflow belongs
+to the Workbench solution. Use:
+  npa workbench workflow <command>"""
+
+
+class _DeprecatedWorkflowGroup(TyperGroup):
+    def get_help(self, ctx: click.Context) -> str:
+        typer.echo(_DEPRECATION_WARNING, err=True)
+        return super().get_help(ctx)
+
+
+workflow_shim_app = typer.Typer(
+    name="workflow",
+    cls=_DeprecatedWorkflowGroup,
+    help="Multi-stage training workflow orchestration.",
+    no_args_is_help=True,
+)
+app = workflow_shim_app
+
+
+@workflow_shim_app.callback(invoke_without_command=True)
+def workflow_shim_callback() -> None:
+    """Warn callers to use the canonical workbench workflow namespace."""
+    # SHIM-REMOVE: delete this shim after the next major release migration.
+    typer.echo(_DEPRECATION_WARNING, err=True)
+
+
+for command in workflow_app.registered_commands:
+    if command.callback is None:
+        continue
+    workflow_shim_app.command(
+        name=command.name,
+        cls=command.cls,
+        context_settings=command.context_settings,
+        help=command.help,
+        epilog=command.epilog,
+        short_help=command.short_help,
+        options_metavar=command.options_metavar,
+        add_help_option=command.add_help_option,
+        no_args_is_help=command.no_args_is_help,
+        hidden=command.hidden,
+        deprecated=command.deprecated,
+        rich_help_panel=command.rich_help_panel,
+    )(command.callback)

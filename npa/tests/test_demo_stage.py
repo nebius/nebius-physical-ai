@@ -136,7 +136,12 @@ artifacts:
 
 
 def test_default_demo_manifest_parses() -> None:
-    manifest_path = Path(__file__).resolve().parents[1] / "manifests/demo-8gpu-h200.yaml"
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "manifests"
+        / "workbench"
+        / "demo-8gpu-h200.yaml"
+    )
     manifest = load_manifest(manifest_path)
 
     assert manifest.version == 1

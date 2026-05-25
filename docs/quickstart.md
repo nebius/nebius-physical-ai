@@ -1,15 +1,17 @@
 # npa Quickstart
 
-This guide takes a new developer from a fresh clone to a working `npa workbench`
-command. It is written for macOS and Linux. Windows is not currently tested.
+This guide takes a new developer from a fresh clone to the platform `npa`
+command and the current Workbench solution namespace. It is written for macOS
+and Linux. Windows is not currently tested.
 
 ## 1. What is npa?
 
-`npa` is the Nebius Physical AI Workbench CLI. It orchestrates physical AI
-workloads across Nebius infrastructure, including Cosmos, Isaac Lab, GR00T,
-FiftyOne, LeRobot, and Genesis. The CLI can provision Nebius workbench VMs,
-install tool runtimes, pass shared credentials into remote services, and run
-training, evaluation, serving, inference, visualization, and dataset commands.
+`npa` is the Nebius Physical AI platform CLI/SDK. Workbench is the first
+solution on the platform; it orchestrates physical AI workloads across Nebius
+infrastructure, including Cosmos, Isaac Lab, GR00T, FiftyOne, LeRobot, and
+Genesis. The CLI can provision Nebius workbench VMs, install tool runtimes,
+pass shared credentials into remote services, and run training, evaluation,
+serving, inference, visualization, and dataset commands.
 For a broader architecture map, see the repository README and `npa/README.md`.
 
 ## 2. Prerequisites

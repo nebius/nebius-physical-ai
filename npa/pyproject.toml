@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "npa"
 version = "0.1.0"
-description = "Nebius Physical AI workbench CLI"
+description = "Nebius Physical AI platform CLI/SDK"
 requires-python = ">=3.10"
 dependencies = [
     "typer~=0.24.1",
@@ -67,6 +67,9 @@ terraform-cli = "1.13.3"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/npa"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

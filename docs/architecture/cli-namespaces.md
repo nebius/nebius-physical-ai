@@ -1,8 +1,8 @@
 # CLI Namespace Conventions
 
-The `npa` CLI organizes commands into two top-level shapes. New commands
-should match one of these shapes; commands that do not fit cleanly are usually
-misclassified and should be reconsidered.
+The `npa` CLI is the platform entry point. Product behavior lives behind
+solution namespaces such as `npa workbench`, while shared platform utilities
+remain at top level only when they are genuinely cross-solution.
 
 ## `npa workbench <tool> <action>`
 
@@ -25,24 +25,39 @@ A command belongs under `workbench` when it:
 - Manages the lifecycle of a long-running service
 - Has a corresponding Nebius VM, container, or managed endpoint
 
+## `npa workbench workflow <command>`
+
+For Workbench-owned multi-stage workflow orchestration. Workflows compose
+Workbench tools and infrastructure, so they live under the Workbench solution
+namespace rather than as first-class platform commands.
+
+Current workflow commands include:
+
+- `run` - Run a named workflow on existing infrastructure
+- `status` - Check workflow run status
+- `logs` - Show workflow stage logs
+- `teardown` - Destroy distill workflow VMs
+- `distill` - Turnkey expert distillation
+
+The legacy `npa workflow ...` shim remains callable for compatibility, prints a
+visible deprecation warning, and is hidden from top-level help.
+
 ## `npa <verb> <subcommand>`
 
 For stateless actions that operate on data or infrastructure. No lifecycle;
-invoked, performs action, exits.
+invoked, performs action, exits. These verbs must be platform-level utilities,
+not Workbench internals.
 
 Current verbs include:
 
 - `convert` - Format conversion (`lerobot-to-rrd`, `lerobot-to-mp4`)
 - `rerun` - Stateless Rerun sharing (`host`, `share`, `list-shares`, `revoke`)
 - `demo` - Demo orchestration (`stage`, `verify`)
-- `workflow` - Multi-stage workflow orchestration (`run`, `status`, `logs`,
-  `teardown`, `distill`)
-
 A command belongs at top level when it:
 
 - Has no Nebius service lifecycle to manage
 - Operates on files, S3 objects, or existing infrastructure
-- Composes outputs of workbench tools without being a service
+- Provides cross-solution utility behavior
 
 ## Current Top-Level Surface
 
@@ -52,7 +67,6 @@ A command belongs at top level when it:
 | `convert` | Verb | `lerobot-to-rrd`, `lerobot-to-mp4` |
 | `rerun` | Verb | `host`, `share`, `list-shares`, `revoke` |
 | `demo` | Verb | `stage`, `verify` |
-| `workflow` | Verb | `run`, `status`, `logs`, `teardown`, `distill` |
 | `viz` | Deprecated namespace | `lerobot`; use `npa convert lerobot-to-mp4` |
 | `adapter` | Transitional one-entry namespace | `convert`; consolidation tracked by `ADAPTER_NAMESPACE_CONSOLIDATION` |
 | `network` | Transitional one-entry namespace | `ensure-ingress`; consolidation tracked by `NETWORK_NAMESPACE_CONSOLIDATION` |
