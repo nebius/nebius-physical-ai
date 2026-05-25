@@ -37,7 +37,7 @@ def test_register_solution_lists_registered_solution() -> None:
     assert registry.list_solutions() == [
         {
             "name": "workbench",
-            "description": "Foundation workflow platform",
+            "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
             "cli_command": "npa workbench",
         },
         {"name": "demo", "description": "Demo solution", "cli_command": "npa demo"},
@@ -81,7 +81,7 @@ def test_list_solutions_lazily_loads_workbench_solution(mocker) -> None:
     assert first == [
         {
             "name": "workbench",
-            "description": "Foundation workflow platform",
+            "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
             "cli_command": "npa workbench",
         }
     ]

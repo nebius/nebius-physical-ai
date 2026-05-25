@@ -1,4 +1,5 @@
+# Each entry defines a top-level solution namespace.
 [[solutions]]
 name = "workbench"
-description = "Foundation workflow platform"
+description = "First solution: physical AI robotics workflows built on Nebius infrastructure"
 cli_command = "npa workbench"
