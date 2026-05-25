@@ -1,6 +1,8 @@
 # npa
 
-`npa` is the Nebius Physical AI CLI/SDK for running a sim-to-real training loop on Nebius workbenches.
+`npa` is the Nebius Physical AI platform CLI/SDK. Workbench is the first
+solution namespace and covers the current sim-to-real training loop on Nebius
+workbenches.
 
 In practice it does four things:
 
@@ -36,7 +38,7 @@ npa workbench lerobot ...
 npa workbench genesis ...
 npa adapter convert ...
 npa convert lerobot-to-mp4 ...
-npa workflow ...
+npa workbench workflow ...
 ```
 
 Common examples:
@@ -63,8 +65,8 @@ npa workbench genesis eval-student --checkpoint ./checkpoints/student/checkpoint
 npa adapter convert --input ./runs/demos --output ./runs/dataset
 
 # Run the full distillation workflow
-npa workflow run distill --local
-npa workflow run distill --remote --project eu-north1 --s3-bucket s3://my-bucket/checkpoints/
+npa workbench workflow run distill --local
+npa workbench workflow run distill --remote --project eu-north1 --s3-bucket s3://my-bucket/checkpoints/
 ```
 
 ## Workbench Runtimes

@@ -19,7 +19,7 @@ from npa.cli.network import app as network_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
-from npa.cli.workflow import app as workflow_app
+from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
 
 app = typer.Typer(
@@ -28,6 +28,12 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(workbench_app, name="workbench")
+
+# FIXME(solutions): These platform-level command groups predate the solution
+# namespace model. They remain top-level for compatibility in this PR and should
+# migrate to appropriate namespaces in a future change. New commands should be
+# registered under a solution namespace, such as `npa workbench ...`, instead of
+# adding more top-level registrations here.
 app.add_typer(adapter_app, name="adapter")
 app.add_typer(cluster_app, name="cluster")
 app.add_typer(convert_app, name="convert")
@@ -36,7 +42,7 @@ app.add_typer(network_app, name="network")
 app.add_typer(rerun_app, name="rerun")
 app.add_typer(skypilot_app, name="skypilot")
 app.add_typer(viz_app, name="viz")
-app.add_typer(workflow_app, name="workflow")
+app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
 _SETUP_GUIDANCE = """Credential setup

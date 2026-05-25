@@ -5,7 +5,7 @@
 ### Option A: One command (default teacher)
 
 ```bash
-npa workflow distill \
+npa workbench workflow distill \
   --teacher-max-iterations 3000 \
   --student-policy act \
   --student-epochs 100 \
@@ -60,7 +60,7 @@ Also have the side-by-side rollout video ready (teacher vs student).
 "Training a robot policy usually takes weeks of simulator setup, data pipeline wiring, and reward debugging. We did it in one command."
 
 ```bash
-echo '$ npa workflow distill --teacher-max-iterations 3000 --student-policy act --action-space cartesian'
+echo '$ npa workbench workflow distill --teacher-max-iterations 3000 --student-policy act --action-space cartesian'
 ```
 
 "This provisions an L40S for simulation and an H100 for training, installs everything, runs five stages, and hands off artifacts via S3."
@@ -173,7 +173,7 @@ EOF
 
 | Layer | How | Status |
 |---|---|---|
-| CLI | Engineer types `npa workflow distill` | Working today |
+| CLI | Engineer types `npa workbench workflow distill` | Working today |
 | Agent | Claude Code runs the CLI autonomously | Used to build this demo |
 | Multi-agent | Claude Code executes, Codex reviews | Codex found 5 issues |
 
@@ -219,7 +219,7 @@ npa workbench lerobot train-student --dataset ./data/dataset/ --policy act --epo
 npa workbench genesis eval-student --checkpoint ./checkpoints/student/ --n-envs 64 --seed 7777
 
 # Or one command (L40S sim + H100 train, S3 handoff)
-npa workflow distill \
+npa workbench workflow distill \
   --teacher-max-iterations 3000 --student-policy act \
   --student-epochs 100 --action-space cartesian --teardown
 ```

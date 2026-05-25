@@ -18,7 +18,7 @@ Artifact flow (S3):
 Demos (Stage 2) stay on the sim VM — only the converted dataset is uploaded.
 
 Usage:
-    npa workflow distill [--teardown] [--skip-infra]
+    npa workbench workflow distill [--teardown] [--skip-infra]
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -623,7 +623,6 @@ def _deploy_http_server(
 
     # 5. Health check — poll until the server responds.
     logger.info("[%s] Waiting for server health check on port %d ...", label, server_port)
-    vm_ip = ssh._config.host
     for attempt in range(1, 16):
         try:
             code, stdout, _ = ssh.run(

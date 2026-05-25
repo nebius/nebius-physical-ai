@@ -31,7 +31,10 @@ app = typer.Typer(
 )
 
 DEFAULT_MANIFEST = (
-    Path(__file__).resolve().parents[3] / "manifests" / "demo-8gpu-h200.yaml"
+    Path(__file__).resolve().parents[3]
+    / "manifests"
+    / "workbench"
+    / "demo-8gpu-h200.yaml"
 )
 logger = logging.getLogger(__name__)
 

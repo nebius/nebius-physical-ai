@@ -21,4 +21,4 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench sonic](sonic.md)
 - [npa viz](viz.md)
 - [npa workbench](workbench.md)
-- [npa workflow](workflow.md)
+- [npa workbench workflow](workflow.md)

@@ -6,7 +6,7 @@
 
 ## What this repo is
 
-Nebius Physical AI Workbench (`nebius-physical-ai`) is an open-source platform layer for building Physical AI pipelines — robotics, autonomous vehicles, and industrial AI. It provides a curated marketplace of pre-validated tools (LanceDB, FiftyOne, LeRobot, Genesis, Isaac Lab, Cosmos, GR00T, SONIC), a shared S3 data layer, a CLI/SDK, and SkyPilot-orchestrated YAML workflows. Everything runs on Nebius GPU infrastructure but is designed to be usable by any contributor with their own Nebius account.
+Nebius Physical AI (`nebius-physical-ai`) is an open-source platform layer for building Physical AI pipelines — robotics, autonomous vehicles, and industrial AI. The platform provides a shared `npa` CLI/SDK, solution namespace conventions, a shared S3 data layer, and SkyPilot-orchestrated YAML workflows. Workbench is the first solution on the platform and provides a curated marketplace of pre-validated tools (LanceDB, FiftyOne, LeRobot, Genesis, Isaac Lab, Cosmos, GR00T, SONIC). Everything runs on Nebius GPU infrastructure but is designed to be usable by any contributor with their own Nebius account.
 
 The repo is in active development. It was open-sourced in May 2026. Contributors range from Nebius engineers to design partners and external robotics/AV teams.
 
@@ -16,18 +16,18 @@ The repo is in active development. It was open-sourced in May 2026. Contributors
 nebius-physical-ai/
 ├── npa/                          # Main Python package
 │   ├── src/npa/
-│   │   ├── cli/                  # Typer CLI (npa workbench <tool>)
-│   │   ├── sdk/                  # Python SDK (npa.sdk.workbench.<tool>)
-│   │   ├── workbench/            # Per-tool FastAPI services
+│   │   ├── cli/                  # Typer CLI (npa <solution> ...)
+│   │   ├── sdk/                  # Python SDK namespaces
+│   │   ├── workbench/            # Workbench FastAPI services
 │   │   ├── orchestration/        # SkyPilot orchestration wrapper
 │   │   └── clients/              # Nebius API clients, credentials
 │   ├── tests/                    # pytest test suite
 │   └── docker/                   # Per-tool Dockerfiles
 ├── docs/
-│   ├── getting-started.md        # First-time setup guide
+│   ├── workbench/                # Workbench onboarding, cookbooks, troubleshooting
 │   ├── workbench-yaml-guide.md   # SkyPilot YAML pipeline guide (living doc)
 │   └── demos/                    # Demo runbooks and assets
-├── npa/workflows/skypilot/        # Reference pipeline YAMLs
+├── npa/workflows/workbench/skypilot/        # Reference pipeline YAMLs
 ├── npa/scripts/                  # Pipeline runner scripts
 ├── .agents/skills/               # Codex agent skill files (per tool + infrastructure)
 ├── .claude/skills/               # Claude Code agent skill files
@@ -38,14 +38,14 @@ nebius-physical-ai/
 
 ## Core architectural pattern (every contributor must understand)
 
-**Three-access pattern**: every workbench tool exposes exactly one capability through three equivalent access modes:
+**Three-access pattern**: every Workbench tool exposes exactly one capability through three equivalent access modes:
 - HTTP API (`POST /train`, etc.) — the source of truth
 - CLI (`npa workbench <tool> train`) — a client of the API
 - Python SDK (`npa.sdk.workbench.<tool>.train()`) — a client of the API
 
-Never duplicate logic across layers. If you add a new capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
+Never duplicate logic across layers. If you add a new Workbench capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
 
-**SkyPilot = sole orchestrator**: workflow orchestration uses SkyPilot managed jobs. Argo is deprecated. New pipeline YAMLs live in `npa/workflows/skypilot/`. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
+**SkyPilot = sole orchestrator**: workflow orchestration uses SkyPilot managed jobs. Argo is deprecated. New pipeline YAMLs live in `npa/workflows/workbench/skypilot/`. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
 
 **S3 as the data bus**: tools communicate via S3 object storage, never directly. Every tool accepts `--input-path` and `--output-path` pointing to S3 URIs.
 
@@ -67,10 +67,10 @@ A new tool follows the established pattern exactly. Use an existing tool (e.g. `
 1. Create `npa/src/npa/workbench/<tool>/` with `service.py` (FastAPI), `schemas.py`, and supporting modules
 2. Create `npa/src/npa/cli/workbench/<tool>.py` (Typer CLI subcommand)
 3. Create `npa/src/npa/sdk/workbench/<tool>.py` (SDK client)
-4. Create `npa/docker/<tool>/Dockerfile`
+4. Create `npa/docker/workbench/<tool>/Dockerfile`
 5. Register in `npa/src/npa/workbench/__init__.py`, `npa/src/npa/cli/workbench/__init__.py`, `npa/src/npa/sdk/workbench/__init__.py`
 6. Add tests in `npa/tests/workbench/test_<tool>.py` and `npa/tests/cli/test_<tool>_cli.py`
-7. Add an agent skill file at `.agents/skills/<tool>/SKILL.md`
+7. Add an agent skill file at `.agents/skills/workbench/<tool>/SKILL.md`
 
 The tool must expose at minimum: `/health`, `/status`, `/system-info`, `/list`.
 
@@ -84,7 +84,7 @@ Not all tools run on all GPU types. Document in your tool's SKILL.md:
 
 ## Workflow YAML conventions
 
-Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
 Key rules:
 - SkyPilot 0.12.2 `envs` block does NOT support self-referencing variable interpolation
@@ -116,7 +116,7 @@ Expected passing baseline before any PR: **1242+ passed, 0 failures** (excluding
 - One logical change per commit — don't mix tool additions with infrastructure changes
 - PRs must pass the full non-e2e test suite before review
 - New tools: include a brief description of the tool's role and a link to upstream docs in the PR description
-- Agent skill files (`.agents/skills/<tool>/SKILL.md`) are required for new tools — reviewers will ask for them if missing
+- Agent skill files (`.agents/skills/workbench/<tool>/SKILL.md`) are required for new tools — reviewers will ask for them if missing
 
 ## Design partner and customer context
 
@@ -129,8 +129,8 @@ The workbench is being co-developed with robotics and AV design partners. Key pa
 
 The `.agents/skills/` and `.claude/skills/` directories contain structured knowledge that AI agents (Codex, Claude Code) read when working on this repo. When you add a new tool or workflow:
 
-- Add `.agents/skills/<tool>/SKILL.md` — covers API contract, GPU routing, known issues, integration patterns
-- Add to `.claude/skills/architecture/SKILL.md` if the tool changes the platform architecture
+- Add `.agents/skills/workbench/<tool>/SKILL.md` — covers API contract, GPU routing, known issues, integration patterns
+- Add to `.claude/skills/platform/architecture/SKILL.md` if the tool changes the platform architecture
 
 These files are documentation for agents, not for humans. Write them as instructions, not prose.
 

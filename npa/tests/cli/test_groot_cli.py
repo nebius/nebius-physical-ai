@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from contextlib import contextmanager
 from pathlib import Path
@@ -136,6 +137,10 @@ def test_groot_list_filters_to_groot_workbenches(mocker) -> None:
     assert "train" not in result.output
 
 
+@pytest.mark.skipif(
+    not os.environ.get("HF_TOKEN"),
+    reason="requires HF_TOKEN",
+)
 def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
     mocker.patch("npa.cli.groot.list_projects", return_value={})
@@ -738,8 +743,8 @@ def test_groot_install_command_installs_gr00t_and_isaac_lab() -> None:
 
 
 def test_groot_container_dockerfile_pins_runtime_versions() -> None:
-    dockerfile = (PACKAGE_ROOT / "docker/groot/Dockerfile").read_text()
-    build_script = (PACKAGE_ROOT / "docker/groot/build.sh").read_text()
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/groot/Dockerfile").read_text()
+    build_script = (PACKAGE_ROOT / "docker/workbench/groot/build.sh").read_text()
 
     assert f"ARG GROOT_RUNTIME_VERSION={GROOT_RUNTIME_VERSION}" in dockerfile
     assert "ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6" in dockerfile

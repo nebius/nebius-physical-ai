@@ -1,7 +1,7 @@
 # BDD100K SkyPilot Pipeline
 
 This cookbook describes the SkyPilot workflow at
-`npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
 The workflow composes the six BDD100K reproduction stages:
 
@@ -27,7 +27,7 @@ submitting GPU work:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints \
   --run-id <your-run-id>
@@ -40,7 +40,7 @@ Full submission requires a working SkyPilot 0.12.2 binary:
 ```bash
 export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
 python npa/scripts/run_bdd100k_pipeline.py \
-  --yaml npa/workflows/skypilot/bdd100k-pipeline.yaml \
+  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --run-id bdd100k-pipeline-$(date -u +%Y%m%dT%H%M%SZ) \
   --cleanup

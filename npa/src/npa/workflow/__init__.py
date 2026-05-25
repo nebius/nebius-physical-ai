@@ -38,28 +38,28 @@ def run(
 
 def status(run_id: str, *, output_format: str = "text") -> None:
     """Check the status of a workflow run."""
-    from npa.cli.workflow import status_cmd
+    from npa.cli.workbench.workflow import status_cmd
 
     return call_cli_callback(status_cmd, run_id=run_id, output_format=output_format)
 
 
 def logs(run_id: str, stage: str) -> None:
     """Show logs for a specific stage of a workflow run."""
-    from npa.cli.workflow import logs_cmd
+    from npa.cli.workbench.workflow import logs_cmd
 
     return call_cli_callback(logs_cmd, run_id=run_id, stage=stage)
 
 
 def teardown(*, output_format: str = "text") -> None:
     """Destroy both VMs from a distill workflow run."""
-    from npa.cli.workflow import teardown_cmd
+    from npa.cli.workbench.workflow import teardown_cmd
 
     return call_cli_callback(teardown_cmd, output_format=output_format)
 
 
 def distill(**kwargs):
     """Run expert distillation with the existing two-VM workflow."""
-    from npa.cli.workflow import distill_cmd
+    from npa.cli.workbench.workflow import distill_cmd
 
     return call_cli_callback(distill_cmd, **kwargs)
 
