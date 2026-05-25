@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from contextlib import contextmanager
 from pathlib import Path
@@ -136,6 +137,10 @@ def test_groot_list_filters_to_groot_workbenches(mocker) -> None:
     assert "train" not in result.output
 
 
+@pytest.mark.skipif(
+    not os.environ.get("HF_TOKEN"),
+    reason="requires HF_TOKEN",
+)
 def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
     mocker.patch("npa.cli.groot.list_projects", return_value={})
