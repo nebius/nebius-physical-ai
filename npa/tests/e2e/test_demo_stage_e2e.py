@@ -12,7 +12,7 @@ import yaml
 
 NPA_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = NPA_ROOT.parent
-MANIFEST_PATH = NPA_ROOT / "manifests" / "demo-8gpu-h200.yaml"
+MANIFEST_PATH = NPA_ROOT / "manifests" / "workbench" / "demo-8gpu-h200.yaml"
 
 
 @pytest.fixture(scope="module")
