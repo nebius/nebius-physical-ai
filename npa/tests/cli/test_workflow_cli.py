@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.orchestration.skypilot.workflow import WorkflowResult
 from npa.workflows.distill import DistillationError
 from npa.workflows.distill_two_vm import TwoVMDistillError
 
@@ -14,10 +15,10 @@ runner = CliRunner()
 
 @pytest.mark.parametrize(
     "command",
-    ["run", "status", "logs", "teardown", "distill"],
+    ["submit", "run", "status", "logs", "teardown", "distill"],
 )
 def test_workflow_command_help(command: str) -> None:
-    result = runner.invoke(app, ["workflow", command, "--help"])
+    result = runner.invoke(app, ["workbench", "workflow", command, "--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
@@ -32,6 +33,7 @@ def test_workflow_run_dispatches(mocker) -> None:
     result = runner.invoke(
         app,
         [
+            "workbench",
             "workflow",
             "run",
             "distill",
@@ -49,15 +51,45 @@ def test_workflow_run_dispatches(mocker) -> None:
     assert run_mock.call_args.kwargs["action_space"] == "joint"
 
 
+def test_workbench_workflow_submit_dispatches_skypilot(mocker, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    submit_mock = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "run-1",
+            "--submit-timeout",
+            "30",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "SUBMITTED" in result.output
+    assert "42" in result.output
+    submit_mock.assert_called_once()
+    assert submit_mock.call_args.args == (yaml_path, "run-1")
+    assert submit_mock.call_args.kwargs["timeout"] == 30
+
+
 def test_workflow_run_unknown_workflow_errors() -> None:
-    result = runner.invoke(app, ["workflow", "run", "unknown"])
+    result = runner.invoke(app, ["workbench", "workflow", "run", "unknown"])
 
     assert result.exit_code == 1
     assert "Unknown workflow" in result.output
 
 
 def test_workflow_run_remote_requires_s3_bucket() -> None:
-    result = runner.invoke(app, ["workflow", "run", "distill", "--remote"])
+    result = runner.invoke(app, ["workbench", "workflow", "run", "distill", "--remote"])
 
     assert result.exit_code == 1
     assert "--remote requires --s3-bucket" in result.output
@@ -69,7 +101,7 @@ def test_workflow_status_prints_status(mocker) -> None:
         return_value={"run_id": "run-1", "status": "success", "stages": {}},
     )
 
-    result = runner.invoke(app, ["workflow", "status", "run-1"])
+    result = runner.invoke(app, ["workbench", "workflow", "status", "run-1"])
 
     assert result.exit_code == 0
     assert "run-1" in result.output
@@ -82,7 +114,7 @@ def test_workflow_status_maps_distillation_error(mocker) -> None:
         side_effect=DistillationError("not found"),
     )
 
-    result = runner.invoke(app, ["workflow", "status", "missing"])
+    result = runner.invoke(app, ["workbench", "workflow", "status", "missing"])
 
     assert result.exit_code == 1
     assert "not found" in result.output
@@ -94,7 +126,7 @@ def test_workflow_logs_prints_stage_logs(mocker) -> None:
         return_value="stage log text",
     )
 
-    result = runner.invoke(app, ["workflow", "logs", "run-1", "convert"])
+    result = runner.invoke(app, ["workbench", "workflow", "logs", "run-1", "convert"])
 
     assert result.exit_code == 0
     assert "stage log text" in result.output
@@ -106,7 +138,7 @@ def test_workflow_logs_maps_distillation_error(mocker) -> None:
         side_effect=DistillationError("no logs"),
     )
 
-    result = runner.invoke(app, ["workflow", "logs", "run-1", "bad"])
+    result = runner.invoke(app, ["workbench", "workflow", "logs", "run-1", "bad"])
 
     assert result.exit_code == 1
     assert "no logs" in result.output
@@ -126,6 +158,7 @@ def test_workflow_distill_dispatches_two_vm_workflow(mocker) -> None:
     result = runner.invoke(
         app,
         [
+            "workbench",
             "workflow",
             "distill",
             "--skip-infra",
@@ -146,7 +179,7 @@ def test_workflow_distill_dispatches_two_vm_workflow(mocker) -> None:
 def test_workflow_distill_validates_student_policy() -> None:
     result = runner.invoke(
         app,
-        ["workflow", "distill", "--student-policy", "bad"],
+        ["workbench", "workflow", "distill", "--student-policy", "bad"],
     )
 
     assert result.exit_code == 1
@@ -159,7 +192,7 @@ def test_workflow_distill_maps_two_vm_error(mocker) -> None:
         side_effect=TwoVMDistillError("infra failed"),
     )
 
-    result = runner.invoke(app, ["workflow", "distill"])
+    result = runner.invoke(app, ["workbench", "workflow", "distill"])
 
     assert result.exit_code == 1
     assert "infra failed" in result.output
@@ -188,7 +221,7 @@ def test_workflow_teardown_destroys_registered_vms(mocker) -> None:
         },
     )
 
-    result = runner.invoke(app, ["workflow", "teardown"])
+    result = runner.invoke(app, ["workbench", "workflow", "teardown"])
 
     assert result.exit_code == 0
     assert destroy_mock.call_count == 2
@@ -203,7 +236,7 @@ def test_workflow_teardown_errors_when_no_vms_registered(mocker) -> None:
         side_effect=ConfigError("missing"),
     )
 
-    result = runner.invoke(app, ["workflow", "teardown"])
+    result = runner.invoke(app, ["workbench", "workflow", "teardown"])
 
     assert result.exit_code == 1
     assert "No distill VMs found" in result.output

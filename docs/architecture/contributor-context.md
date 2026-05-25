@@ -24,7 +24,7 @@ nebius-physical-ai/
 │   ├── tests/                    # pytest test suite
 │   └── docker/                   # Per-tool Dockerfiles
 ├── docs/
-│   ├── getting-started.md        # First-time setup guide
+│   ├── workbench/                # Workbench onboarding, cookbooks, troubleshooting
 │   ├── workbench-yaml-guide.md   # SkyPilot YAML pipeline guide (living doc)
 │   └── demos/                    # Demo runbooks and assets
 ├── npa/workflows/skypilot/        # Reference pipeline YAMLs

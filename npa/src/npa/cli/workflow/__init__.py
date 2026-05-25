@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import Enum
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -27,9 +29,87 @@ class ActionSpace(str, Enum):
     joint = "joint"
 
 
+class ControllerBackendOption(str, Enum):
+    kubernetes = "kubernetes"
+    nebius = "nebius"
+
+
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}")
     raise typer.Exit(code)
+
+
+@app.command("submit")
+def submit_cmd(
+    yaml_path: Path = typer.Argument(help="SkyPilot workflow YAML path."),
+    run_id: str = typer.Option(
+        "",
+        "--run-id",
+        help="SkyPilot managed job name. Defaults to the YAML filename stem.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.",
+    ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Directory for isolated SkyPilot state.",
+    ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help="SkyPilot global config path.",
+    ),
+    controller_backend: ControllerBackendOption = typer.Option(
+        ControllerBackendOption.kubernetes,
+        "--controller-backend",
+        help="Managed-jobs controller backend.",
+    ),
+    submit_timeout: int = typer.Option(
+        1800,
+        "--submit-timeout",
+        help="Submission timeout in seconds.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output-format",
+        help="Output format.",
+    ),
+) -> None:
+    """Submit a SkyPilot workflow YAML through the NPA controller convention."""
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, submit_workflow
+
+    if submit_timeout <= 0:
+        _fail(f"--submit-timeout must be positive, got {submit_timeout}")
+
+    try:
+        result = submit_workflow(
+            yaml_path,
+            run_id or _default_submit_run_id(yaml_path),
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin or None,
+            controller_backend=controller_backend.value,
+            timeout=submit_timeout,
+        )
+    except SkyPilotSubmitError as exc:
+        _fail(str(exc))
+        return
+
+    if output_format == OutputFormat.json:
+        typer.echo(json.dumps(result.__dict__, indent=2, sort_keys=True))
+        return
+
+    typer.echo(f"status: {result.status}")
+    if result.job_id:
+        typer.echo(f"job_id: {result.job_id}")
+
+
+def _default_submit_run_id(yaml_path: Path) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(yaml_path).stem).strip("-")
+    return stem or "workflow"
 
 
 @app.command("run")
@@ -101,7 +181,7 @@ def run_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        console.print(f"[green]Workflow complete.[/green]")
+        console.print("[green]Workflow complete.[/green]")
         console.print(f"  run_id: {result.get('run_id')}")
         for stage, info in result.get("stages", {}).items():
             status = info.get("status", "unknown")
@@ -168,7 +248,7 @@ def teardown_cmd(
         TRAIN_VM, TwoVMDistillError, _destroy_vm,
     )
     from npa.clients.config import (
-        ConfigError, resolve_environment, resolve_ssh_config,
+        ConfigError, resolve_ssh_config,
         remove_workbench_config,
     )
 

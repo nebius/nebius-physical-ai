@@ -1,0 +1,1 @@
+"""Solution registry unit tests."""

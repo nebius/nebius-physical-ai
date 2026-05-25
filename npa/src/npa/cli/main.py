@@ -20,6 +20,7 @@ from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow import app as workflow_app
+from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
 
 app = typer.Typer(
@@ -27,6 +28,7 @@ app = typer.Typer(
     help="Nebius Physical AI workbench CLI.",
     no_args_is_help=True,
 )
+workbench_app.add_typer(workflow_app, name="workflow")
 app.add_typer(workbench_app, name="workbench")
 app.add_typer(adapter_app, name="adapter")
 app.add_typer(cluster_app, name="cluster")
@@ -36,7 +38,7 @@ app.add_typer(network_app, name="network")
 app.add_typer(rerun_app, name="rerun")
 app.add_typer(skypilot_app, name="skypilot")
 app.add_typer(viz_app, name="viz")
-app.add_typer(workflow_app, name="workflow")
+app.add_typer(workflow_shim_app, name="workflow")
 
 
 _SETUP_GUIDANCE = """Credential setup
