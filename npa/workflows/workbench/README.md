@@ -14,8 +14,8 @@ Use the target cluster kubeconfig for every command:
 
 ```bash
 export KUBECONFIG=/tmp/<run-id>/kubeconfig
-argo template create -n argo npa/workflows/steps/placeholder-step.yaml
-argo template create -n argo npa/workflows/templates/curate-augment-train.yaml
+argo template create -n argo npa/workflows/workbench/steps/placeholder-step.yaml
+argo template create -n argo npa/workflows/workbench/templates/curate-augment-train.yaml
 ```
 
 For an existing template, use `argo template update -n argo <file>`.

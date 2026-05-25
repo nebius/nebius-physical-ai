@@ -11,7 +11,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-YAML_PATH = ROOT / "npa" / "workflows" / "skypilot" / "bdd100k-pipeline.yaml"
+YAML_PATH = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "bdd100k-pipeline.yaml"
+)
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_bdd100k_pipeline.py"
 
 EXPECTED_TASK_ORDER = [

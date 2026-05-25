@@ -28,7 +28,13 @@ from npa.orchestration.skypilot._bin import (
     resolve_sky_bin,
 )
 
-DEFAULT_YAML = Path(__file__).resolve().parents[1] / "workflows" / "skypilot" / "isaac-lab-rl-train.yaml"
+DEFAULT_YAML = (
+    Path(__file__).resolve().parents[1]
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "isaac-lab-rl-train.yaml"
+)
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/isaac-lab-rl"
 TERMINAL_STATUSES = {

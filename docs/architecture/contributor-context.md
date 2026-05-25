@@ -27,7 +27,7 @@ nebius-physical-ai/
 │   ├── workbench/                # Workbench onboarding, cookbooks, troubleshooting
 │   ├── workbench-yaml-guide.md   # SkyPilot YAML pipeline guide (living doc)
 │   └── demos/                    # Demo runbooks and assets
-├── npa/workflows/skypilot/        # Reference pipeline YAMLs
+├── npa/workflows/workbench/skypilot/        # Reference pipeline YAMLs
 ├── npa/scripts/                  # Pipeline runner scripts
 ├── .agents/skills/               # Codex agent skill files (per tool + infrastructure)
 ├── .claude/skills/               # Claude Code agent skill files
@@ -45,7 +45,7 @@ nebius-physical-ai/
 
 Never duplicate logic across layers. If you add a new Workbench capability, it goes in the FastAPI service; the CLI and SDK call it. This is enforced in code review.
 
-**SkyPilot = sole orchestrator**: workflow orchestration uses SkyPilot managed jobs. Argo is deprecated. New pipeline YAMLs live in `npa/workflows/skypilot/`. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
+**SkyPilot = sole orchestrator**: workflow orchestration uses SkyPilot managed jobs. Argo is deprecated. New pipeline YAMLs live in `npa/workflows/workbench/skypilot/`. SkyPilot runs in an isolated venv (not the NPA venv) accessed via `NPA_SKYPILOT_BIN`.
 
 **S3 as the data bus**: tools communicate via S3 object storage, never directly. Every tool accepts `--input-path` and `--output-path` pointing to S3 URIs.
 
@@ -84,7 +84,7 @@ Not all tools run on all GPU types. Document in your tool's SKILL.md:
 
 ## Workflow YAML conventions
 
-Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+Reference: `docs/workbench-yaml-guide.md` and `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
 Key rules:
 - SkyPilot 0.12.2 `envs` block does NOT support self-referencing variable interpolation

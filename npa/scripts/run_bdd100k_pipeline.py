@@ -33,7 +33,13 @@ from npa.orchestration.skypilot._bin import (
     resolve_sky_bin,
 )
 
-DEFAULT_YAML = Path(__file__).resolve().parents[1] / "workflows" / "skypilot" / "bdd100k-pipeline.yaml"
+DEFAULT_YAML = (
+    Path(__file__).resolve().parents[1]
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "bdd100k-pipeline.yaml"
+)
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_SOURCE = f"s3://{DEFAULT_BUCKET}/raw-bdd100k/subset-demo/"
 DEFAULT_LANCEDB_ENDPOINT = "http://npa-lancedb.workbench.svc.cluster.local:8686"

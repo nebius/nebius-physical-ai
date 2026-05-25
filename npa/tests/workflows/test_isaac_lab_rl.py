@@ -10,8 +10,12 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SINGLE_YAML = ROOT / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-train.yaml"
-SWEEP_YAML = ROOT / "npa" / "workflows" / "skypilot" / "isaac-lab-rl-sweep.yaml"
+SINGLE_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train.yaml"
+)
+SWEEP_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-sweep.yaml"
+)
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_rl.py"
 
 

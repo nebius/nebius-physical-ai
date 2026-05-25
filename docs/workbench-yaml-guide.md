@@ -10,7 +10,7 @@ one task: the compute it needs, the environment it runs in, and the command it
 executes. Tasks call workbench tool HTTP endpoints via `curl`. SkyPilot
 orchestrates dependencies and schedules tasks on the Nebius MK8s cluster.
 
-The reference pipeline is `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+The reference pipeline is `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
 ## Pipeline Structure
 
@@ -255,15 +255,15 @@ Related docs:
 - `docs/workbench/getting-started.md`
 - `docs/demos/bdd100k-lancedb-demo.md`
 - `docs/workbench/cookbooks/bdd100k-pipeline.md`
-- `npa/workflows/skypilot/bdd100k-pipeline.yaml`
+- `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`
 
 ## Isaac Lab RL Training
 
 Isaac Lab RL jobs are batch training workloads, not persistent service calls.
 Use the committed SkyPilot consumers:
 
-- `npa/workflows/skypilot/isaac-lab-rl-train.yaml` for one RSL-RL training job.
-- `npa/workflows/skypilot/isaac-lab-rl-sweep.yaml` for an all-parallel sweep.
+- `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml` for one RSL-RL training job.
+- `npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml` for an all-parallel sweep.
 - `npa/scripts/run_isaac_lab_rl.py` to render per-run values and submit.
 
 Single run:
@@ -271,7 +271,7 @@ Single run:
 ```bash
 export NPA_S3_BUCKET=your-bucket-name
 python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/workflows/skypilot/isaac-lab-rl-train.yaml \
+  --yaml npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml \
   --task Isaac-Cartpole-v0 \
   --iterations 10 \
   --run-id isaac-cartpole-smoke
@@ -294,7 +294,7 @@ Parameter sweep:
 
 ```bash
 python npa/scripts/run_isaac_lab_rl.py \
-  --yaml npa/workflows/skypilot/isaac-lab-rl-sweep.yaml \
+  --yaml npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml \
   --task Isaac-Cartpole-v0 \
   --iterations 10 \
   --run-id isaac-cartpole-sweep
