@@ -28,6 +28,12 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(workbench_app, name="workbench")
+
+# FIXME(solutions): These platform-level command groups predate the solution
+# namespace model. They remain top-level for compatibility in this PR and should
+# migrate to appropriate namespaces in a future change. New commands should be
+# registered under a solution namespace, such as `npa workbench ...`, instead of
+# adding more top-level registrations here.
 app.add_typer(adapter_app, name="adapter")
 app.add_typer(cluster_app, name="cluster")
 app.add_typer(convert_app, name="convert")

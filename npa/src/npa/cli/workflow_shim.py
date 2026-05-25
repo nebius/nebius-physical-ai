@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import click
 import typer
+from typer.core import TyperGroup
 
 from npa.cli.workbench.workflow import app as workflow_app
 
@@ -10,8 +12,16 @@ _DEPRECATION_WARNING = """Warning: npa workflow is deprecated. workflow belongs
 to the Workbench solution. Use:
   npa workbench workflow <command>"""
 
+
+class _DeprecatedWorkflowGroup(TyperGroup):
+    def get_help(self, ctx: click.Context) -> str:
+        typer.echo(_DEPRECATION_WARNING, err=True)
+        return super().get_help(ctx)
+
+
 workflow_shim_app = typer.Typer(
     name="workflow",
+    cls=_DeprecatedWorkflowGroup,
     help="Multi-stage training workflow orchestration.",
     no_args_is_help=True,
 )

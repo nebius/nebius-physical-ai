@@ -70,7 +70,7 @@ A new tool follows the established pattern exactly. Use an existing tool (e.g. `
 4. Create `npa/docker/workbench/<tool>/Dockerfile`
 5. Register in `npa/src/npa/workbench/__init__.py`, `npa/src/npa/cli/workbench/__init__.py`, `npa/src/npa/sdk/workbench/__init__.py`
 6. Add tests in `npa/tests/workbench/test_<tool>.py` and `npa/tests/cli/test_<tool>_cli.py`
-7. Add an agent skill file at `.agents/skills/<tool>/SKILL.md`
+7. Add an agent skill file at `.agents/skills/workbench/<tool>/SKILL.md`
 
 The tool must expose at minimum: `/health`, `/status`, `/system-info`, `/list`.
 
@@ -116,7 +116,7 @@ Expected passing baseline before any PR: **1242+ passed, 0 failures** (excluding
 - One logical change per commit — don't mix tool additions with infrastructure changes
 - PRs must pass the full non-e2e test suite before review
 - New tools: include a brief description of the tool's role and a link to upstream docs in the PR description
-- Agent skill files (`.agents/skills/<tool>/SKILL.md`) are required for new tools — reviewers will ask for them if missing
+- Agent skill files (`.agents/skills/workbench/<tool>/SKILL.md`) are required for new tools — reviewers will ask for them if missing
 
 ## Design partner and customer context
 

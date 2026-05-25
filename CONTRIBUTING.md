@@ -625,6 +625,15 @@ For workflow composition, read `docs/workbench-yaml-guide.md`,
 ## Known Deviations
 The repo is in active development. These are real current divergences, not new
 patterns to copy.
+### Top-level CLI registrations mix namespaces and platform utilities
+FIXME(solutions): `npa/src/npa/cli/main.py` currently registers both the
+`workbench` solution namespace and legacy platform-level utility commands
+(`adapter`, `cluster`, `convert`, `demo`, `network`, `rerun`, `skypilot`, and
+`viz`). These utilities predate the solutions model and remain top-level for
+compatibility until a future migration moves them to appropriate namespaces.
+
+New commands should be registered under a solution namespace, not as additional
+top-level entries.
 ### First-party HTTP APIs are incomplete across the 8 tools
 Appendix A says every validated tool exposes `/health`, `/status`,
 `/system-info`, and `/list` as HTTP endpoints. Current code does not.

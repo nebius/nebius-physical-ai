@@ -47,3 +47,11 @@ def test_workflow_shim_is_hidden_from_top_level_help() -> None:
 
     assert result.exit_code == 0
     assert " workflow " not in result.output
+
+
+def test_workflow_shim_help_prints_deprecation_warning() -> None:
+    result = runner.invoke(app, ["workflow", "--help"])
+
+    assert result.exit_code == 0
+    assert "Warning: npa workflow is deprecated" in result.stderr
+    assert "Usage: npa workflow" in result.stdout
