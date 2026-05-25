@@ -129,8 +129,8 @@ The workbench is being co-developed with robotics and AV design partners. Key pa
 
 The `.agents/skills/` and `.claude/skills/` directories contain structured knowledge that AI agents (Codex, Claude Code) read when working on this repo. When you add a new tool or workflow:
 
-- Add `.agents/skills/<tool>/SKILL.md` — covers API contract, GPU routing, known issues, integration patterns
-- Add to `.claude/skills/architecture/SKILL.md` if the tool changes the platform architecture
+- Add `.agents/skills/workbench/<tool>/SKILL.md` — covers API contract, GPU routing, known issues, integration patterns
+- Add to `.claude/skills/platform/architecture/SKILL.md` if the tool changes the platform architecture
 
 These files are documentation for agents, not for humans. Write them as instructions, not prose.
 

@@ -21,6 +21,6 @@ LeRobot is Tier 1 validated on B300. SONIC, GR00T, Isaac Lab, and Cosmos are ven
 
 Route SONIC to H100; L40S on-demand capacity is effectively zero for the required preset.
 
-The BDD100K demo pipeline is the reference end-to-end workflow. `npa/workflows/skypilot/bdd100k-pipeline.yaml` is the canonical YAML.
+The BDD100K demo pipeline is the reference end-to-end workflow. `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the canonical YAML.
 
 Key claim: one YAML file describes a full Physical AI pipeline; SkyPilot orchestrates it on Nebius; results complete in about 30 minutes on a single H100.

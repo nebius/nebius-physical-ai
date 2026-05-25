@@ -9,9 +9,9 @@ Reference workflows follow one pattern: SkyPilot YAML plus a thin Python runner 
 
 ## Reference Implementations
 
-- BDD100K pipeline: `npa/workflows/skypilot/bdd100k-pipeline.yaml`. It has 10 tasks across 6 logical stages: ingest, CPU backfill, CLIP embedding, materialized views, training x3, eval x3.
-- Isaac Lab RL training: `npa/workflows/skypilot/isaac-lab-rl-train.yaml`. It is a single RL job and requires L40S.
-- Isaac Lab RL sweep: `npa/workflows/skypilot/isaac-lab-rl-sweep.yaml`. It runs N parallel jobs with different hyperparameters.
+- BDD100K pipeline: `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`. It has 10 tasks across 6 logical stages: ingest, CPU backfill, CLIP embedding, materialized views, training x3, eval x3.
+- Isaac Lab RL training: `npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml`. It is a single RL job and requires L40S.
+- Isaac Lab RL sweep: `npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml`. It runs N parallel jobs with different hyperparameters.
 
 ## Runner Scripts
 

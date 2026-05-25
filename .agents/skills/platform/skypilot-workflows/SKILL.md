@@ -18,13 +18,13 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
 
 ## Known SkyPilot 0.12.2 Limits
 
-- `envs` does not support self-referencing variable interpolation. Use explicit comment blocks for alternatives, following the `BDD100K_LABEL_MAP` pattern in `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+- `envs` does not support self-referencing variable interpolation. Use explicit comment blocks for alternatives, following the `BDD100K_LABEL_MAP` pattern in `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 - `sky jobs launch` has no dry-run flag. Use mock-endpoint mode for validation before live submission.
 - Mixed serial/parallel task groups in one YAML are not fully supported. Serialize the workflow if needed.
 
 ## Reference Pattern
 
-- Canonical YAML: `npa/workflows/skypilot/bdd100k-pipeline.yaml`.
+- Canonical YAML: `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 - Runner script pattern: `npa/scripts/run_bdd100k_pipeline.py`, a thin wrapper around `npa.orchestration.skypilot.submit_workflow`.
 - Isaac Lab runners follow the same shape through `npa/scripts/run_isaac_lab_rl.py`.
 
