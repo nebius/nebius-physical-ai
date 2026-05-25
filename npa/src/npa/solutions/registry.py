@@ -1,4 +1,9 @@
-"""Lightweight registry for NPA solutions."""
+"""Introspection-only registry for NPA solution metadata.
+
+This registry advertises solution namespaces for discovery and status surfaces.
+It is not used for CLI routing; top-level CLI namespaces are mounted explicitly
+in npa.cli.main.
+"""
 
 from __future__ import annotations
 
@@ -24,8 +29,7 @@ def register_solution(name: str, description: str, cli_command: str) -> None:
         description=description,
         cli_command=cli_command,
     )
-    if any(solution["name"] == entry["name"] for solution in _registered_solutions):
-        raise ValueError(f"solution already registered: {entry['name']}")
+    _raise_for_duplicate_names([*_load_configured_solutions(), *_registered_solutions, entry])
     _registered_solutions.append(entry)
 
 
@@ -64,7 +68,9 @@ def _read_solutions_toml() -> list[SolutionEntry]:
     if not isinstance(entries, list):
         raise ValueError("solutions.toml must define solution entries")
 
-    return [_solution_entry_from_config(entry) for entry in entries]
+    solutions = [_solution_entry_from_config(entry) for entry in entries]
+    _raise_for_duplicate_names(solutions)
+    return solutions
 
 
 def _solution_entry_from_config(entry: Any) -> SolutionEntry:
@@ -83,3 +89,12 @@ def _solution_entry(name: str, description: str, cli_command: str) -> SolutionEn
         "description": description,
         "cli_command": cli_command,
     }
+
+
+def _raise_for_duplicate_names(solutions: list[SolutionEntry]) -> None:
+    seen: set[str] = set()
+    for solution in solutions:
+        name = solution["name"]
+        if name in seen:
+            raise ValueError(f"duplicate solution name: {name}")
+        seen.add(name)

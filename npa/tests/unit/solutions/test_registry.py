@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,16 @@ def reset_registry() -> None:
     yield
     registry._reset()
     importlib.reload(solutions)
+
+
+@pytest.fixture
+def solutions_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def write_solutions_toml(contents: str) -> None:
+        (tmp_path / "solutions.toml").write_text(contents, encoding="utf-8")
+        monkeypatch.setattr(registry.resources, "files", lambda _package: tmp_path)
+        registry._reset()
+
+    return write_solutions_toml
 
 
 def test_register_solution_lists_registered_solution() -> None:
@@ -35,7 +46,7 @@ def test_register_solution_lists_registered_solution() -> None:
 
 def test_register_solution_rejects_duplicate_name() -> None:
     registry.register_solution("demo", "Demo solution", "npa demo")
-    with pytest.raises(ValueError, match="solution already registered: demo"):
+    with pytest.raises(ValueError, match="duplicate solution name: demo"):
         registry.register_solution("demo", "Duplicate demo", "npa demo")
 
 
@@ -76,3 +87,60 @@ def test_list_solutions_lazily_loads_workbench_solution(mocker) -> None:
     ]
     assert second == first
     assert load_spy.call_count == 1
+
+
+def test_list_solutions_loads_multiple_configured_solutions(solutions_toml) -> None:
+    solutions_toml(
+        """
+[[solutions]]
+name = "workbench"
+description = "Workbench solution"
+cli_command = "npa workbench"
+
+[[solutions]]
+name = "datalake"
+description = "Datalake solution"
+cli_command = "npa datalake"
+"""
+    )
+
+    assert registry.list_solutions() == [
+        {
+            "name": "workbench",
+            "description": "Workbench solution",
+            "cli_command": "npa workbench",
+        },
+        {
+            "name": "datalake",
+            "description": "Datalake solution",
+            "cli_command": "npa datalake",
+        },
+    ]
+
+
+def test_configured_solution_names_must_be_unique(solutions_toml) -> None:
+    solutions_toml(
+        """
+[[solutions]]
+name = "workbench"
+description = "Workbench solution"
+cli_command = "npa workbench"
+
+[[solutions]]
+name = "workbench"
+description = "Duplicate workbench solution"
+cli_command = "npa workbench-duplicate"
+"""
+    )
+
+    with pytest.raises(ValueError, match="duplicate solution name: workbench"):
+        registry.list_solutions()
+
+
+def test_registered_solution_cannot_duplicate_configured_solution() -> None:
+    with pytest.raises(ValueError, match="duplicate solution name: workbench"):
+        registry.register_solution(
+            "workbench",
+            "Duplicate workbench solution",
+            "npa workbench",
+        )
