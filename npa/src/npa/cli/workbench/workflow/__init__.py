@@ -1,4 +1,4 @@
-"""npa workflow — orchestrate multi-stage training workflows."""
+"""npa workbench workflow — orchestrate multi-stage training workflows."""
 
 from __future__ import annotations
 

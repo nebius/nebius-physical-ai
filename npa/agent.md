@@ -14,12 +14,12 @@ nebius-physical-ai/
 │   ├── pyproject.toml          # package def, deps: typer httpx paramiko pyyaml rich boto3 jinja2
 │   ├── src/npa/
 │   │   ├── cli/
-│   │   │   ├── main.py         # Typer app, subcommands: workbench, adapter, workflow
+│   │   │   ├── main.py         # Typer app, subcommands: workbench, adapter
 │   │   │   ├── adapter/        # `npa adapter convert`
-│   │   │   ├── workbench/      # `npa workbench lerobot ...`, `npa workbench genesis ...`
+│   │   │   ├── workbench/      # `npa workbench <tool> ...`, `npa workbench workflow ...`
 │   │   │   │   ├── lerobot.py
 │   │   │   │   └── (genesis commands)
-│   │   │   ├── workflow/       # `npa workflow run|status|logs|teardown|distill`
+│   │   │   ├── workflow/       # deprecated import shim for Workbench workflow
 │   │   │   └── genesis/        # `npa workbench genesis train-teacher|generate-demos|...`
 │   │   ├── adapter/            # data format conversion logic (SimToLeRobot etc.)
 │   │   ├── clients/            # httpx/paramiko/boto3 wrappers for remote calls

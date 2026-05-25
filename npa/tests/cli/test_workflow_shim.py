@@ -3,7 +3,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.cli.workflow import app as workflow_app
+from npa.cli.workbench.workflow import app as workflow_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.orchestration.skypilot.workflow import WorkflowResult
 

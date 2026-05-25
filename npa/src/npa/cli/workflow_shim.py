@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from npa.cli.workflow import app as workflow_app
+from npa.cli.workbench.workflow import app as workflow_app
 
 _DEPRECATION_WARNING = """Warning: npa workflow is deprecated. workflow belongs
 to the Workbench solution. Use:

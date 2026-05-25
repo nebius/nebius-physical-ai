@@ -18,7 +18,7 @@ Artifact flow (S3):
 Demos (Stage 2) stay on the sim VM — only the converted dataset is uploaded.
 
 Usage:
-    npa workflow distill [--teardown] [--skip-infra]
+    npa workbench workflow distill [--teardown] [--skip-infra]
 """
 
 from __future__ import annotations
