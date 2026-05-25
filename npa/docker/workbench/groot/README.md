@@ -3,13 +3,13 @@
 Build locally for the Linux x86_64 Nebius runtime:
 
 ```bash
-docker/groot/build.sh
+docker/workbench/groot/build.sh
 ```
 
 Build and push to the default Nebius Container Registry:
 
 ```bash
-docker/groot/build.sh --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push
+docker/workbench/groot/build.sh --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push
 ```
 
 The image bakes Isaac-GR00T at commit `3df8b3825d67f755e69141446f4315f281b9b7e6`,

@@ -49,7 +49,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/genesis \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
-      /opt/npa/docker/genesis
+      /opt/npa/docker/workbench/genesis
 
 # Permissions fix for /dev/dri access on serverless runtimes.
 # /dev/dri/card0 is owned by root:video (GID 44), while the render node is
@@ -91,8 +91,8 @@ ENV PATH=/opt/genesis/venv/bin:$PATH \
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
-COPY --chown=ubuntu:ubuntu docker/genesis/smoke_env.py /opt/npa/docker/genesis/smoke_env.py
-COPY --chown=ubuntu:ubuntu docker/genesis/smoke_functional.py /opt/npa/docker/genesis/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_env.py /opt/npa/docker/workbench/genesis/smoke_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_functional.py /opt/npa/docker/workbench/genesis/smoke_functional.py
 
 RUN python -m pip install --no-deps -e /opt/npa \
     && python - <<'PY'

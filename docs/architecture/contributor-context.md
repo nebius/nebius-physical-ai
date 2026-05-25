@@ -67,7 +67,7 @@ A new tool follows the established pattern exactly. Use an existing tool (e.g. `
 1. Create `npa/src/npa/workbench/<tool>/` with `service.py` (FastAPI), `schemas.py`, and supporting modules
 2. Create `npa/src/npa/cli/workbench/<tool>.py` (Typer CLI subcommand)
 3. Create `npa/src/npa/sdk/workbench/<tool>.py` (SDK client)
-4. Create `npa/docker/<tool>/Dockerfile`
+4. Create `npa/docker/workbench/<tool>/Dockerfile`
 5. Register in `npa/src/npa/workbench/__init__.py`, `npa/src/npa/cli/workbench/__init__.py`, `npa/src/npa/sdk/workbench/__init__.py`
 6. Add tests in `npa/tests/workbench/test_<tool>.py` and `npa/tests/cli/test_<tool>_cli.py`
 7. Add an agent skill file at `.agents/skills/<tool>/SKILL.md`

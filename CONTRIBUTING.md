@@ -19,7 +19,7 @@ The strongest full-tool reference is LeRobot:
 
 - `npa/src/npa/cli/workbench/lerobot.py`
 - `npa/src/npa/workbench/lerobot/__init__.py`
-- `npa/docker/lerobot/Dockerfile`
+- `npa/docker/workbench/lerobot/Dockerfile`
 - `.agents/skills/lerobot/SKILL.md`
 - `npa/tests/cli/test_lerobot_cli.py`
 
@@ -179,16 +179,16 @@ and LanceDB.
 The SDK surface should not contain a second implementation of the workload. It
 should call the service or shared implementation layer.
 ## Containerization
-Every Workbench tool needs a container image under `npa/docker/`. Use the
+Every Workbench tool needs a container image under `npa/docker/workbench/`. Use the
 existing Dockerfiles as the reference set, especially
-`npa/docker/lerobot/Dockerfile`, `npa/docker/fiftyone/Dockerfile`,
-`npa/docker/lancedb/Dockerfile`, and
-`npa/docker/detection-training/Dockerfile`.
+`npa/docker/workbench/lerobot/Dockerfile`, `npa/docker/workbench/fiftyone/Dockerfile`,
+`npa/docker/workbench/lancedb/Dockerfile`, and
+`npa/docker/workbench/detection-training/Dockerfile`.
 
 Base image and tag conventions are backed by:
 
-- `npa/docker/tags.yaml`
-- `npa/docker/check_tag_consistency.py`
+- `npa/docker/workbench/tags.yaml`
+- `npa/docker/workbench/check_tag_consistency.py`
 - `docs/security/image-reproducibility.md`
 - `.github/workflows/image-security-scan.yml`
 
@@ -198,12 +198,12 @@ or vendor-paced for much of the stack.
 
 LeRobot has both a CUDA 12 image and a B300-specific Dockerfile:
 
-- `npa/docker/lerobot/Dockerfile`
-- `npa/docker/lerobot/Dockerfile.b300`
+- `npa/docker/workbench/lerobot/Dockerfile`
+- `npa/docker/workbench/lerobot/Dockerfile.b300`
 
 Do not invent a third tag family in a new contribution. If a tool genuinely
-needs a new family, update `npa/docker/tags.yaml`,
-`npa/docker/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
+needs a new family, update `npa/docker/workbench/tags.yaml`,
+`npa/docker/workbench/check_tag_consistency.py`, and `docs/security/image-reproducibility.md`
 in a separate design change.
 
 Use a Nebius registry prefix supplied by configuration. Current code uses
@@ -217,9 +217,9 @@ cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-tool:${TAG}
 
 Build scripts should follow the `--registry` and `--push` shape used by:
 
-- `npa/docker/lerobot/build.sh`
-- `npa/docker/groot/build.sh`
-- `npa/docker/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/lerobot/build.sh`
+- `npa/docker/workbench/groot/build.sh`
+- `npa/docker/workbench/base/cuda13-b300/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
@@ -387,7 +387,7 @@ Current verified routing:
   `npa/src/npa/cli/fiftyone/__init__.py`.
 - LanceDB CLIP backfill routes to H100 in the BDD100K workflow and
   `.agents/skills/lancedb/SKILL.md`.
-- B300 support is not a general default. `npa/docker/tags.yaml`,
+- B300 support is not a general default. `npa/docker/workbench/tags.yaml`,
   `docs/security/image-reproducibility.md`, and `docs/b300-validation-matrix.md`
   show B300 as validated for the base image and LeRobot ACT smoke training, with
   broader support still blocked or vendor-paced.
@@ -606,7 +606,7 @@ For setup, start with `docs/workbench/getting-started.md`,
 For known operational failure modes, read
 `docs/workbench/troubleshooting/known-footguns.md`.
 For the main full-tool reference, read `npa/src/npa/cli/workbench/lerobot.py`,
-`npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/lerobot/Dockerfile`,
+`npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/workbench/lerobot/Dockerfile`,
 and `.agents/skills/lerobot/SKILL.md`.
 
 For the clean HTTP service, CLI, and SDK pattern, read

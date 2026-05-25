@@ -24,10 +24,10 @@ SHELL ["/bin/bash", "-lc"]
 
 USER root
 
-RUN mkdir -p /opt/npa/docker/isaac-lab /workspace/isaaclab/npa-runs
+RUN mkdir -p /opt/npa/docker/workbench/isaac-lab /workspace/isaaclab/npa-runs
 
-COPY docker/isaac-lab/smoke_env.py /opt/npa/docker/isaac-lab/smoke_env.py
-COPY docker/isaac-lab/smoke_functional.py /opt/npa/docker/isaac-lab/smoke_functional.py
+COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
+COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir --no-deps --ignore-installed \
       "isaaclab==${ISAAC_LAB_VERSION}" \
@@ -35,8 +35,8 @@ RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir --no-deps --ignore-insta
 
 RUN "${ISAAC_LAB_PYTHON}" - <<'PY' \
     && "${ISAAC_LAB_PYTHON}" -m py_compile \
-      /opt/npa/docker/isaac-lab/smoke_env.py \
-      /opt/npa/docker/isaac-lab/smoke_functional.py
+      /opt/npa/docker/workbench/isaac-lab/smoke_env.py \
+      /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
 import os
 from importlib import metadata
 from pathlib import Path

@@ -1,7 +1,7 @@
 # Two-tag strategy for npa workbench images.
 #
 # Documented in docs/security/image-reproducibility.md.
-# CI validates references with npa/docker/check_tag_consistency.py.
+# CI validates references with npa/docker/workbench/check_tag_consistency.py.
 tag_families:
   cuda12:
     description: CUDA 12.x runtime for H200, L40S, A100, and earlier supported GPUs

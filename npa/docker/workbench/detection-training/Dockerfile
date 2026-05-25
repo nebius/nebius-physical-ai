@@ -10,7 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY docker/detection-training/requirements.txt /app/requirements.txt
+COPY docker/workbench/detection-training/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN mkdir -p /app/npa/workbench

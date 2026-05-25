@@ -738,8 +738,8 @@ def test_groot_install_command_installs_gr00t_and_isaac_lab() -> None:
 
 
 def test_groot_container_dockerfile_pins_runtime_versions() -> None:
-    dockerfile = (PACKAGE_ROOT / "docker/groot/Dockerfile").read_text()
-    build_script = (PACKAGE_ROOT / "docker/groot/build.sh").read_text()
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/groot/Dockerfile").read_text()
+    build_script = (PACKAGE_ROOT / "docker/workbench/groot/build.sh").read_text()
 
     assert f"ARG GROOT_RUNTIME_VERSION={GROOT_RUNTIME_VERSION}" in dockerfile
     assert "ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6" in dockerfile

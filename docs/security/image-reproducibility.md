@@ -43,14 +43,14 @@ Customers should select the tag family by target GPU:
 - H200 / L40S: `cuda12`
 - Future B300: `cuda13-b300` when that path is declared stable
 
-The canonical mapping is maintained in `npa/docker/tags.yaml`, and CI runs
-`npa/docker/check_tag_consistency.py` to reject tag-family drift.
+The canonical mapping is maintained in `npa/docker/workbench/tags.yaml`, and CI runs
+`npa/docker/workbench/check_tag_consistency.py` to reject tag-family drift.
 
 ## CVE Scanning
 
 CI runs Trivy in `.github/workflows/image-security-scan.yml`:
 
-- Pull requests that modify Dockerfiles, `npa/docker/**`, or the scan workflow
+- Pull requests that modify Dockerfiles, `npa/docker/workbench/**`, or the scan workflow
 - Pushes to `main`
 - A weekly scheduled scan to catch newly disclosed CVEs in already-pinned bases
 
@@ -101,7 +101,7 @@ metadata against the Dockerfile source used for the build:
 
 ```bash
 docker inspect <image>:<tag> --format='{{json .RootFS.Layers}}'
-grep '^FROM ' npa/docker/<tool>/Dockerfile
+grep '^FROM ' npa/docker/workbench/<tool>/Dockerfile
 ```
 
 For published images, also capture the repository digest:

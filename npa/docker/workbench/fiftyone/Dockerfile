@@ -43,7 +43,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/fiftyone/datasets \
       /opt/fiftyone/smoke \
       /opt/fiftyone/venv \
-      /opt/npa/docker/fiftyone \
+      /opt/npa/docker/workbench/fiftyone \
     && printf '%s\n' \
       'export FIFTYONE_VENV=/opt/fiftyone/venv' \
       'export PATH=/opt/fiftyone/venv/bin:$PATH' \
@@ -62,10 +62,10 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pyarrow==${PYARROW_VERSION}" \
       "pillow==${PILLOW_VERSION}"
 
-COPY --chown=ubuntu:ubuntu docker/fiftyone/smoke_env.py /opt/npa/docker/fiftyone/smoke_env.py
-COPY --chown=ubuntu:ubuntu docker/fiftyone/smoke_functional.py /opt/npa/docker/fiftyone/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_functional.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py
 
-RUN python -m py_compile /opt/npa/docker/fiftyone/smoke_env.py /opt/npa/docker/fiftyone/smoke_functional.py \
+RUN python -m py_compile /opt/npa/docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py \
     && python - <<'PY'
 from importlib import metadata
 import os

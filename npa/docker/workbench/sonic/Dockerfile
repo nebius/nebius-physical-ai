@@ -42,15 +42,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install --system
 
-RUN mkdir -p /opt/npa/docker/sonic /tmp/npa-sonic-output
-COPY requirements.txt /opt/npa/docker/sonic/requirements.txt
+RUN mkdir -p /opt/npa/docker/workbench/sonic /tmp/npa-sonic-output
+COPY requirements.txt /opt/npa/docker/workbench/sonic/requirements.txt
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir --no-deps --ignore-installed \
       "isaaclab==${ISAAC_LAB_VERSION}" \
       --extra-index-url https://pypi.nvidia.com
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir \
-      -r /opt/npa/docker/sonic/requirements.txt
+      -r /opt/npa/docker/workbench/sonic/requirements.txt
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv \
     && curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin

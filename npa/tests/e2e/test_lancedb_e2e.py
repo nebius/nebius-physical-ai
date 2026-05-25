@@ -619,7 +619,7 @@ def _ensure_image(env: dict[str, str]) -> None:
     if inspect.returncode == 0 and os.environ.get("NPA_E2E_LANCEDB_REBUILD_IMAGE") != "1":
         return
     build = _run(
-        ["docker", "build", "-f", "npa/docker/lancedb/Dockerfile", "-t", IMAGE, "npa/"],
+        ["docker", "build", "-f", "npa/docker/workbench/lancedb/Dockerfile", "-t", IMAGE, "npa/"],
         env=env,
         timeout=600,
     )

@@ -31,7 +31,7 @@ CUDA_TOKEN_RE = re.compile(
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def _load_valid_tags(tags_yaml: Path) -> set[str]:
@@ -50,7 +50,7 @@ def _load_valid_tags(tags_yaml: Path) -> set[str]:
 
 def _iter_scan_files(repo_root: Path) -> list[Path]:
     roots = [
-        repo_root / "npa" / "docker",
+        repo_root / "npa" / "docker" / "workbench",
         repo_root / ".github" / "workflows",
         repo_root / "docs" / "security",
         repo_root / "docs" / "images",
@@ -73,14 +73,16 @@ def _line_violations(path: Path, valid_tags: set[str], repo_root: Path) -> list[
     for line_no, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
         for match in IMAGE_REF_RE.finditer(line):
             tag = match.group(1)
-            if _looks_like_gpu_tag(tag) and tag not in valid_tags:
+            if _looks_like_gpu_tag(tag) and not _uses_valid_tag_family(tag, valid_tags):
                 violations.append(
                     f"{rel}:{line_no}: image tag '{tag}' is not one of {sorted(valid_tags)}"
                 )
         for match in CUDA_TOKEN_RE.finditer(line):
             token = match.group(1)
             normalized = token.lower()
-            if normalized not in valid_tags and _looks_like_gpu_tag(normalized):
+            if not _uses_valid_tag_family(normalized, valid_tags) and _looks_like_gpu_tag(
+                normalized
+            ):
                 violations.append(
                     f"{rel}:{line_no}: CUDA tag token '{token}' is not one of {sorted(valid_tags)}"
                 )
@@ -92,9 +94,18 @@ def _looks_like_gpu_tag(tag: str) -> bool:
     return lowered.startswith("cuda") or "b300" in lowered or lowered.startswith("sm_")
 
 
+def _uses_valid_tag_family(tag: str, valid_tags: set[str]) -> bool:
+    lowered = tag.lower()
+    return any(
+        lowered == valid_tag
+        or any(lowered.startswith(f"{valid_tag}{separator}") for separator in ("-", ".", "_"))
+        for valid_tag in valid_tags
+    )
+
+
 def main() -> int:
     repo_root = _repo_root()
-    tags_yaml = repo_root / "npa" / "docker" / "tags.yaml"
+    tags_yaml = repo_root / "npa" / "docker" / "workbench" / "tags.yaml"
     if not tags_yaml.exists():
         print(f"ERROR: {tags_yaml} not found. Two-tag strategy needs a canonical source.")
         return 1

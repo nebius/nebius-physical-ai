@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY docker/lancedb/requirements.txt /app/requirements.txt
+COPY docker/workbench/lancedb/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
@@ -14,7 +14,7 @@ COPY src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py
 COPY src/npa/workbench/lancedb/backfill.py /app/npa_lancedb_backfill.py
 COPY src/npa/workbench/lancedb/views.py /app/npa_lancedb_views.py
 COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
-COPY docker/lancedb/entrypoint.sh /entrypoint.sh
+COPY docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8686

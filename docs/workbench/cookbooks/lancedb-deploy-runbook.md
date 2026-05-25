@@ -20,7 +20,7 @@ persistent service, not a batch Job.
 Build:
 
 ```bash
-docker build -f npa/docker/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
+docker build -f npa/docker/workbench/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
 ```
 
 Deploy:

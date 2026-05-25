@@ -86,7 +86,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/groot-data/config_cache \
       /opt/isaac-lab \
       /opt/npa/src/npa \
-      /opt/npa/docker/groot
+      /opt/npa/docker/workbench/groot
 
 USER ubuntu
 WORKDIR /opt/groot
@@ -202,8 +202,8 @@ RUN python3.11 -m venv /opt/isaac-lab/venv \
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
-COPY --chown=ubuntu:ubuntu docker/groot/smoke_env.py /opt/npa/docker/groot/smoke_env.py
-COPY --chown=ubuntu:ubuntu docker/groot/smoke_functional.py /opt/npa/docker/groot/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_env.py /opt/npa/docker/workbench/groot/smoke_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_functional.py /opt/npa/docker/workbench/groot/smoke_functional.py
 
 RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
     && "${GROOT_VENV}/bin/python" - <<'PY'
@@ -224,8 +224,8 @@ PY
 RUN /opt/isaac-lab/venv/bin/python - <<'PY' \
     && "${GROOT_VENV}/bin/python" -m py_compile \
       /opt/groot/server.py \
-      /opt/npa/docker/groot/smoke_env.py \
-      /opt/npa/docker/groot/smoke_functional.py
+      /opt/npa/docker/workbench/groot/smoke_env.py \
+      /opt/npa/docker/workbench/groot/smoke_functional.py
 import os
 from importlib import metadata
 

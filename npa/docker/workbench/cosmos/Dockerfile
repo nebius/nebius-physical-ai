@@ -50,7 +50,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/cosmos-data/hf_cache \
       /opt/cosmos-data/outputs \
       /opt/npa/src/npa \
-      /opt/npa/docker/cosmos
+      /opt/npa/docker/workbench/cosmos
 
 USER ubuntu
 WORKDIR /opt/cosmos
@@ -97,8 +97,8 @@ ENV PATH=/opt/cosmos/venv/bin:$PATH \
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
-COPY --chown=ubuntu:ubuntu docker/cosmos/smoke_env.py /opt/npa/docker/cosmos/smoke_env.py
-COPY --chown=ubuntu:ubuntu docker/cosmos/smoke_functional.py /opt/npa/docker/cosmos/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
 RUN python -m pip install --no-deps -e /opt/npa \
     && python - <<'PY'
@@ -118,7 +118,7 @@ server_py.write_text(_build_server_py(DEFAULT_MODEL))
 print(f"COSMOS_BUILD_IMPORT_OK {actual}")
 PY
 
-RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/cosmos/smoke_env.py /opt/npa/docker/cosmos/smoke_functional.py
+RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
 WORKDIR /opt/cosmos
 EXPOSE 8080
