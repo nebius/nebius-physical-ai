@@ -19,7 +19,6 @@ from npa.cli.network import app as network_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
-from npa.cli.workflow import app as workflow_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
 
@@ -28,7 +27,6 @@ app = typer.Typer(
     help="Nebius Physical AI workbench CLI.",
     no_args_is_help=True,
 )
-workbench_app.add_typer(workflow_app, name="workflow")
 app.add_typer(workbench_app, name="workbench")
 app.add_typer(adapter_app, name="adapter")
 app.add_typer(cluster_app, name="cluster")
