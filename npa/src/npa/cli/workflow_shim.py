@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import warnings
-
 import typer
 
 from npa.cli.workflow import app as workflow_app
+
+_DEPRECATION_WARNING = """Warning: npa workflow is deprecated. workflow belongs
+to the Workbench solution. Use:
+  npa workbench workflow <command>"""
 
 workflow_shim_app = typer.Typer(
     name="workflow",
@@ -20,11 +22,7 @@ app = workflow_shim_app
 def workflow_shim_callback() -> None:
     """Warn callers to use the canonical workbench workflow namespace."""
     # SHIM-REMOVE: delete this shim after the next major release migration.
-    warnings.warn(
-        "npa workflow is deprecated; use npa workbench workflow instead",
-        DeprecationWarning,
-        stacklevel=1,
-    )
+    typer.echo(_DEPRECATION_WARNING, err=True)
 
 
 for command in workflow_app.registered_commands:

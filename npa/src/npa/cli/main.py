@@ -36,7 +36,7 @@ app.add_typer(network_app, name="network")
 app.add_typer(rerun_app, name="rerun")
 app.add_typer(skypilot_app, name="skypilot")
 app.add_typer(viz_app, name="viz")
-app.add_typer(workflow_shim_app, name="workflow")
+app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
 _SETUP_GUIDANCE = """Credential setup

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import warnings
-
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -25,21 +23,16 @@ def test_workflow_shim_submit_matches_workbench_workflow(mocker, tmp_path) -> No
         app,
         ["workbench", "workflow", "submit", str(yaml_path), "--run-id", "run-1"],
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        shim_result = runner.invoke(
-            app,
-            ["workflow", "submit", str(yaml_path), "--run-id", "run-1"],
-        )
+    shim_result = runner.invoke(
+        app,
+        ["workflow", "submit", str(yaml_path), "--run-id", "run-1"],
+    )
 
     assert workbench_result.exit_code == 0
     assert shim_result.exit_code == 0
-    assert shim_result.output == workbench_result.output
-    assert any(
-        item.category is DeprecationWarning
-        and "npa workbench workflow" in str(item.message)
-        for item in caught
-    )
+    assert "Warning: npa workflow is deprecated" in shim_result.output
+    assert "npa workbench workflow <command>" in shim_result.output
+    assert workbench_result.output in shim_result.output
 
 
 def test_workflow_shim_command_parity() -> None:
@@ -47,3 +40,10 @@ def test_workflow_shim_command_parity() -> None:
     shimmed = {command.name for command in workflow_shim_app.registered_commands}
 
     assert shimmed == canonical
+
+
+def test_workflow_shim_is_hidden_from_top_level_help() -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert " workflow " not in result.output
