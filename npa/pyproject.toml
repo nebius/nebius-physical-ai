@@ -68,6 +68,9 @@ terraform-cli = "1.13.3"
 [tool.hatch.build.targets.wheel]
 packages = ["src/npa"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

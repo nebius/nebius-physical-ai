@@ -1,15 +1,4 @@
 [[solutions]]
 name = "workbench"
-description = "Containerized physical AI workbench tools and SkyPilot workflows."
-version = "0.1.0"
-cli_namespace = "workbench"
-tools = [
-  "lerobot",
-  "fiftyone",
-  "genesis",
-  "isaac-lab",
-  "cosmos",
-  "lancedb",
-  "groot",
-  "sonic",
-]
+description = "Foundation workflow platform"
+cli_command = "npa workbench"

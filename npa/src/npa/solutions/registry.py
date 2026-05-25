@@ -1,44 +1,85 @@
-"""Registry primitives for NPA solutions."""
+"""Lightweight registry for NPA solutions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from importlib import resources
+from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
+    import tomli as tomllib
 
 
-@dataclass(frozen=True)
-class Solution:
-    name: str
-    description: str
-    version: str
-    cli_namespace: str
-    tools: list[str]
+SolutionEntry = dict[str, str]
+
+_configured_solutions: list[SolutionEntry] | None = None
+_registered_solutions: list[SolutionEntry] = []
 
 
-_registry: dict[str, Solution] = {}
+def register_solution(name: str, description: str, cli_command: str) -> None:
+    """Register an in-memory solution entry."""
+    entry = _solution_entry(
+        name=name,
+        description=description,
+        cli_command=cli_command,
+    )
+    if any(solution["name"] == entry["name"] for solution in _registered_solutions):
+        raise ValueError(f"solution already registered: {entry['name']}")
+    _registered_solutions.append(entry)
 
 
-def register_solution(solution: Solution) -> None:
-    """Register a solution by unique name."""
-    if solution.name in _registry:
-        raise ValueError(f"solution already registered: {solution.name}")
-    _registry[solution.name] = _copy_solution(solution)
-
-
-def list_solutions() -> list[Solution]:
-    """Return registered solutions in registration order."""
-    return [_copy_solution(solution) for solution in _registry.values()]
+def list_solutions() -> list[SolutionEntry]:
+    """Return configured and in-memory solution entries."""
+    return [
+        dict(solution)
+        for solution in [*_load_configured_solutions(), *_registered_solutions]
+    ]
 
 
 def _reset() -> None:
     """Clear registry state for unit tests."""
-    _registry.clear()
+    global _configured_solutions
+
+    _configured_solutions = None
+    _registered_solutions.clear()
 
 
-def _copy_solution(solution: Solution) -> Solution:
-    return Solution(
-        name=solution.name,
-        description=solution.description,
-        version=solution.version,
-        cli_namespace=solution.cli_namespace,
-        tools=list(solution.tools),
+def _load_configured_solutions() -> list[SolutionEntry]:
+    global _configured_solutions
+
+    if _configured_solutions is None:
+        _configured_solutions = _read_solutions_toml()
+    return _configured_solutions
+
+
+def _read_solutions_toml() -> list[SolutionEntry]:
+    solutions_file = resources.files("npa.solutions").joinpath("solutions.toml")
+    with solutions_file.open("rb") as handle:
+        data = tomllib.load(handle)
+
+    entries = data.get("solutions")
+    if entries is None:
+        entries = [data]
+    if not isinstance(entries, list):
+        raise ValueError("solutions.toml must define solution entries")
+
+    return [_solution_entry_from_config(entry) for entry in entries]
+
+
+def _solution_entry_from_config(entry: Any) -> SolutionEntry:
+    if not isinstance(entry, dict):
+        raise ValueError("solutions.toml entries must be tables")
+    return _solution_entry(
+        name=str(entry["name"]),
+        description=str(entry["description"]),
+        cli_command=str(entry["cli_command"]),
     )
+
+
+def _solution_entry(name: str, description: str, cli_command: str) -> SolutionEntry:
+    return {
+        "name": name,
+        "description": description,
+        "cli_command": cli_command,
+    }

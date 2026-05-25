@@ -6,7 +6,6 @@ import pytest
 
 import npa.solutions as solutions
 from npa.solutions import registry
-from npa.solutions.registry import Solution
 
 
 @pytest.fixture(autouse=True)
@@ -18,64 +17,62 @@ def reset_registry() -> None:
 
 
 def test_register_solution_lists_registered_solution() -> None:
-    solution = Solution(
-        name="demo",
-        description="Demo solution",
-        version="1.0.0",
-        cli_namespace="demo",
-        tools=["tool-a"],
+    registry.register_solution(
+        "demo",
+        "Demo solution",
+        "npa demo",
     )
 
-    registry.register_solution(solution)
-
-    assert registry.list_solutions() == [solution]
+    assert registry.list_solutions() == [
+        {
+            "name": "workbench",
+            "description": "Foundation workflow platform",
+            "cli_command": "npa workbench",
+        },
+        {"name": "demo", "description": "Demo solution", "cli_command": "npa demo"},
+    ]
 
 
 def test_register_solution_rejects_duplicate_name() -> None:
-    solution = Solution(
-        name="demo",
-        description="Demo solution",
-        version="1.0.0",
-        cli_namespace="demo",
-        tools=["tool-a"],
-    )
-
-    registry.register_solution(solution)
+    registry.register_solution("demo", "Demo solution", "npa demo")
     with pytest.raises(ValueError, match="solution already registered: demo"):
-        registry.register_solution(solution)
+        registry.register_solution("demo", "Duplicate demo", "npa demo")
 
 
-def test_list_solutions_returns_tool_list_copy() -> None:
-    registry.register_solution(
-        Solution(
-            name="demo",
-            description="Demo solution",
-            version="1.0.0",
-            cli_namespace="demo",
-            tools=["tool-a"],
-        )
-    )
+def test_list_solutions_returns_entry_copies() -> None:
+    registry.register_solution("demo", "Demo solution", "npa demo")
 
     listed = registry.list_solutions()
-    listed[0].tools.append("mutated")
+    listed[1]["description"] = "mutated"
 
-    assert registry.list_solutions()[0].tools == ["tool-a"]
+    assert registry.list_solutions()[1]["description"] == "Demo solution"
 
 
-def test_solutions_toml_bootstrap_registers_workbench_solution() -> None:
+def test_solutions_package_import_does_not_load_toml(mocker) -> None:
+    registry._reset()
+    load_mock = mocker.patch(
+        "npa.solutions.registry._read_solutions_toml",
+        side_effect=AssertionError("solutions.toml loaded during import"),
+    )
+
     importlib.reload(solutions)
 
-    registered = {solution.name: solution for solution in registry.list_solutions()}
+    load_mock.assert_not_called()
 
-    assert "workbench" in registered
-    assert registered["workbench"].cli_namespace == "workbench"
-    assert registered["workbench"].tools == [
-        "lerobot",
-        "fiftyone",
-        "genesis",
-        "isaac-lab",
-        "cosmos",
-        "lancedb",
-        "groot",
-        "sonic",
+
+def test_list_solutions_lazily_loads_workbench_solution(mocker) -> None:
+    registry._reset()
+    load_spy = mocker.spy(registry, "_read_solutions_toml")
+
+    first = registry.list_solutions()
+    second = registry.list_solutions()
+
+    assert first == [
+        {
+            "name": "workbench",
+            "description": "Foundation workflow platform",
+            "cli_command": "npa workbench",
+        }
     ]
+    assert second == first
+    assert load_spy.call_count == 1
