@@ -155,6 +155,9 @@ refresh your registry credentials before building BYOF images.
 
 ## Verify Kubernetes Access
 
+> Required only if using managed Kubernetes compute.
+> Skip for serverless or VM-based workbench runs.
+
 Select the Nebius managed Kubernetes context provided by your operator:
 
 ```bash
@@ -176,6 +179,9 @@ nodes, and the registry secret exists. If SkyPilot later reports HTTP 403 as an
 anonymous user, the kube context is not authenticated for the cluster.
 
 ## Bootstrap SkyPilot
+
+> Required only if using managed Kubernetes compute.
+> Skip for serverless or VM-based workbench runs.
 
 Install the pinned isolated SkyPilot runtime:
 
