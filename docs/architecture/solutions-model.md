@@ -1,5 +1,7 @@
 # Solutions Model
 
+> Last updated: 2026-05-26
+
 Nebius Physical AI is organized as a platform with one or more solutions. The
 platform owns the shared command model, repository conventions, architecture
 docs, and integration boundaries. Each solution owns a coherent user-facing
