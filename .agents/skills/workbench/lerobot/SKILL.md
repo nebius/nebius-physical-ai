@@ -1,6 +1,9 @@
 ---
 name: lerobot
 description: Use when working on LeRobot workbench training, evaluation, serving, inference, dataset conversion, or robot policy workflows.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # LeRobot
@@ -40,3 +43,7 @@ Output is a policy checkpoint on S3.
 
 - 9/9 E2E serverless tests pass on Nebius.
 - Tier 1 validated on B300.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

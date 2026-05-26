@@ -6,9 +6,15 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 
 ## Claude Skills
 
+- `.claude/skills/platform/skill-authoring/SKILL.md`: load when creating or editing any SKILL.md; defines the frontmatter contract and required sections.
+- `.claude/skills/platform/skill-curation/SKILL.md`: load during reviews to triage `/tmp/<run-id>/novel-issues.md` and `skill-deltas.md` into permanent skill updates.
 - `.claude/skills/platform/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
-- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews and risk classification.
+- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews, risk classification, and the curation duty performed during review passes.
 - `.claude/skills/workbench/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
+
+## Self-Improvement Loop
+
+Claude Code is the curator side of the loop. After 3+ commits, any blocker NOVEL_ISSUE, or any skill staler than 30 days, walk `/tmp/<run-id>/skill-deltas.md` and `novel-issues.md` and promote / drop / escalate each entry per `skill-curation`. Record drops in `.agents/curation-log.md`. Flag "missing skill delta" in PRs whose diff drifts from a skill without filing one (`review-checklist`).
 
 ## Project Instructions
 

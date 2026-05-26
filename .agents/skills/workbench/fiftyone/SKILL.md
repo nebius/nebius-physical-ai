@@ -1,6 +1,9 @@
 ---
 name: fiftyone
 description: Use when deploying, launching, loading data into, or reviewing the FiftyOne workbench dataset curation and visualization tool.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # FiftyOne
@@ -50,3 +53,7 @@ FiftyOne Brain uses `fob.compute_visualization` for CLIP UMAP embeddings.
 FiftyOne supports custom field schemas. Do not assume generic auto-extracted fields are required.
 
 BDD100K demo dataset: `bdd100k-real-data-demo`, live at the public IP.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

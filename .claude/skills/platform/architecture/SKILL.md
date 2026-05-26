@@ -1,6 +1,9 @@
 ---
 name: architecture
 description: Use for Claude Code architectural review of the Nebius Physical AI platform, workbench layer, orchestrator choices, and partner model.
+last_verified: 2026-05-26
+owner: platform
+version: 1.0.0
 ---
 
 # Architecture Context
@@ -32,3 +35,7 @@ OSMO is available for existing announced relationships but is not the foundation
 LeRobot connects data generation to robot policy training and is the default training framework for robot policy workflows.
 
 The sim-to-real gap is the most important and least-tooled layer. Existing approaches are either deeply custom or unproductized.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

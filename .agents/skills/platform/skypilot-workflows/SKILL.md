@@ -1,6 +1,9 @@
 ---
 name: skypilot-workflows
 description: Use when authoring, reviewing, running, or debugging NPA SkyPilot workflows and runner scripts.
+last_verified: 2026-05-26
+owner: platform
+version: 1.0.0
 ---
 
 # SkyPilot Workflows
@@ -33,3 +36,7 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
 Acquire `/tmp/npa-commit-lock/workflows-skypilot` before committing workflow files in parallel-run contexts.
 
 Cleanup is best-effort and must not raise. `also_teardown_controller=False` is the safe default; only opt into controller teardown when no other run can be using it.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

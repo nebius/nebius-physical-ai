@@ -1,6 +1,9 @@
 ---
 name: genesis
 description: Use when working on Genesis simulation, RL teacher training, visual demo generation, or related serverless/EGL behavior.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # Genesis
@@ -24,3 +27,7 @@ BatchRenderer/Madrona is deferred; do not prioritize it. There is no platform es
 ## Validation
 
 E2E: 8/8 passing except visual demo generation.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

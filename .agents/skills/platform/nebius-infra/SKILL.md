@@ -1,6 +1,9 @@
 ---
 name: nebius-infra
 description: Use for Nebius cluster, registry, storage, GPU routing, and credential assumptions that affect NPA runs.
+last_verified: 2026-05-26
+owner: platform
+version: 1.0.0
 ---
 
 # Nebius Infrastructure
@@ -30,3 +33,7 @@ Always use storage endpoint `storage.eu-north1.nebius.cloud`. The CLI default `s
 ## Registry Pull Secrets
 
 Nebius IAM tokens expire. If SkyPilot task pods fail image pulls with `401 Unauthorized`, regenerate the token and recreate the `npa-nebius-registry` image pull secret in the `default` namespace.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

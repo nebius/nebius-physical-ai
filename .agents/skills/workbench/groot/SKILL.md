@@ -1,6 +1,9 @@
 ---
 name: groot
 description: Use when working on NVIDIA GR00T deployment, status checks, validation, routing, or CUDA 13 alignment.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # GR00T
@@ -39,3 +42,7 @@ BYOVM deploys record `endpoint_strategy: public` or `endpoint_strategy:
 ssh_fallback` in `~/.npa/config.yaml`. Live `status`, `serve`, and `infer`
 commands honor that strategy and self-heal blocked public endpoints through a
 transient SSH-local route.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.
