@@ -1,5 +1,8 @@
 # NPA Solutions
 
+Validation context: [docs/workbench/solutions-validation.md](../../../../docs/workbench/solutions-validation.md)
+documents the current solutions framework validation state.
+
 A solution is a top-level product namespace on the NPA platform. It groups a
 related CLI surface, optional SDK namespace, workflows, containers, manifests,
 and agent skills around one implementation domain.
