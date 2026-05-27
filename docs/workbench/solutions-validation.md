@@ -61,6 +61,8 @@ with the solution docs.
 
 ## Validation Status
 
+<!-- Simplified 4-agent pipeline is operational. -->
+
 The solutions framework was validated as part of PR 6. That validation confirmed
 the current platform-versus-solution split, with Workbench as the reference
 solution, is the supported model for the current repository state.
