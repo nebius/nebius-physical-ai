@@ -1447,6 +1447,107 @@ def _deploy_serverless_endpoint(
     _output(result, output)
 
 
+@app.command("autoscale")
+def autoscale_cmd(
+    min_replicas: int = typer.Option(
+        1,
+        "--min-replicas",
+        help="Minimum serverless endpoint replicas.",
+    ),
+    max_replicas: int = typer.Option(
+        4,
+        "--max-replicas",
+        help="Maximum serverless endpoint replicas for parallel Cosmos inference.",
+    ),
+    target_concurrency: int = typer.Option(
+        0,
+        "--target-concurrency",
+        help="Optional target concurrent requests per replica.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the autoscale plan only."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Configure Cosmos serverless endpoint autoscaling."""
+    if min_replicas < 0:
+        _fail(f"--min-replicas must be non-negative, got {min_replicas}")
+    if max_replicas < 1:
+        _fail(f"--max-replicas must be positive, got {max_replicas}")
+    if max_replicas < min_replicas:
+        _fail("--max-replicas must be greater than or equal to --min-replicas")
+    if target_concurrency < 0:
+        _fail(f"--target-concurrency must be non-negative, got {target_concurrency}")
+
+    cfg = _get_config()
+    if not is_serverless_runtime(getattr(cfg, "runtime", "")):
+        _fail("Cosmos autoscale requires a --runtime serverless endpoint alias.")
+    project_id = _serverless_project_id(cfg)
+    endpoint_ref = _serverless_endpoint_ref(cfg)
+    if not project_id or not endpoint_ref:
+        _fail("Cosmos autoscale requires saved serverless project and endpoint metadata.")
+
+    plan = {
+        "project": getattr(cfg, "project", ""),
+        "name": getattr(cfg, "name", ""),
+        "runtime": "serverless",
+        "serverless_project_id": project_id,
+        "endpoint": endpoint_ref,
+        "min_replicas": min_replicas,
+        "max_replicas": max_replicas,
+        "target_concurrency": target_concurrency,
+    }
+    if dry_run or _env_dry_run():
+        _output({"status": "dry_run", **plan}, output)
+        return
+
+    try:
+        info = ServerlessClient().set_endpoint_autoscale(
+            project_id,
+            endpoint_ref,
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            target_concurrency=target_concurrency,
+        )
+    except ServerlessClientError as exc:
+        _fail_serverless(exc, output)
+        return
+
+    write_config(
+        {
+            "projects": {
+                getattr(cfg, "project", ""): {
+                    "workbenches": {
+                        getattr(cfg, "name", ""): {
+                            "serverless": {
+                                "autoscale": {
+                                    "min_replicas": min_replicas,
+                                    "max_replicas": max_replicas,
+                                    "target_concurrency": target_concurrency,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+    _output(
+        {
+            "status": "configured",
+            **plan,
+            "endpoint_id": info.id,
+            "endpoint_name": info.name,
+            "serverless_status": info.status.value,
+        },
+        output,
+    )
+
+
+def _env_dry_run() -> bool:
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
+        "DRY_RUN", ""
+    ).lower() in {"1", "true", "yes"}
+
+
 def _read_existing_outputs(
     proj_alias: str,
     wb_name: str,

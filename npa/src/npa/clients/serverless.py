@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from enum import Enum
 import json
 import logging
-import os
 import re
 import shutil
 import shlex
@@ -675,6 +674,40 @@ class ServerlessClient:
         if result.returncode != 0:
             self._raise_for_error(result, f"start_endpoint failed for {endpoint}")
         return self._parse_endpoint_info(result.stdout, project_id=project_id)
+
+    def set_endpoint_autoscale(
+        self,
+        project_id: str,
+        endpoint: str,
+        *,
+        min_replicas: int,
+        max_replicas: int,
+        target_concurrency: int = 0,
+    ) -> EndpointInfo:
+        """Update endpoint replica bounds for serverless autoscaling."""
+        info = self.get_endpoint(project_id, endpoint)
+        args = [
+            "ai",
+            "endpoint",
+            "update",
+            "--id",
+            info.id,
+            "--min-replicas",
+            str(min_replicas),
+            "--max-replicas",
+            str(max_replicas),
+        ]
+        if target_concurrency:
+            args.extend(["--target-concurrency", str(target_concurrency)])
+        args.extend(["--format", "json"])
+        result = self._run(args)
+        if result.returncode != 0:
+            self._raise_for_error(result, f"set_endpoint_autoscale failed for {endpoint}")
+        try:
+            parsed = self._parse_endpoint_info(result.stdout, project_id=project_id)
+        except json.JSONDecodeError:
+            parsed = EndpointInfo(id="", name="", project_id=project_id)
+        return parsed if parsed.id or parsed.name else self.get_endpoint(project_id, info.id)
 
     def get_endpoint_logs(
         self,

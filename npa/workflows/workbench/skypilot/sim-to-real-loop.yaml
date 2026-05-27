@@ -1,0 +1,27 @@
+name: sereact-sim-to-real-loop
+execution: serial
+---
+name: sereact-controller-loop
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 32
+envs:
+  NPA_PIPELINE_RUN_ID: sereact-sim2real-dev
+  S3_BUCKET: your-bucket-name
+  PIPELINE_ROOT_URI: s3://your-bucket-name/sereact-sim-to-real/dev
+  SEREACT_SOURCE_URI: s3://your-bucket-name/sereact/raw/
+  SEREACT_OUTPUT_URI: s3://your-bucket-name/sereact-sim-to-real/dev/
+  SEREACT_MAX_ITERATIONS: '3'
+  SEREACT_SUCCESS_THRESHOLD: '0.8'
+  NPA_DRY_RUN: '0'
+setup: |
+  python3 -m pip install -e /opt/nebius-physical-ai/npa
+run: |
+  set -euo pipefail
+  python3 -m npa.workflows.sereact_sim_to_real \
+    --run-id "${NPA_PIPELINE_RUN_ID}" \
+    --input-path "${SEREACT_SOURCE_URI}" \
+    --output-path "${SEREACT_OUTPUT_URI}" \
+    --max-iterations "${SEREACT_MAX_ITERATIONS}" \
+    --success-threshold "${SEREACT_SUCCESS_THRESHOLD}"
