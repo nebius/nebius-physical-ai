@@ -90,6 +90,31 @@ CLI reference pages are generated from Typer help output in
 [docs/cli](docs/cli/README.md). Browser-based Rerun review workflows are
 covered by the `npa rerun host` and `npa rerun share` CLI references.
 
+## Working With AI Agents
+
+This repo is designed to be navigated by AI coding agents (Codex and Claude
+Code) as well as humans. Agent behavior is configured by a small, structured
+set of files rather than embedded in prompts:
+
+- [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) are lightweight indices
+  loaded automatically by Codex and Claude Code respectively. They point at
+  the relevant skill for any given task.
+- Skills live under [.agents/skills/](.agents/skills/) (Codex) and
+  [.claude/skills/](.claude/skills/) (Claude). Each `SKILL.md` is a focused,
+  versioned reference for one topic — e.g. workbench tools, SkyPilot
+  workflows, Nebius infrastructure, testing conventions, or review checks.
+- Skills are living documents. Every run captures lessons to
+  `.agents/runs/<run-id>/` (durable, repo-visible). A reviewer different
+  from the builder triages those logs and promotes them into the affected
+  skills, drops them with a reason in
+  [.agents/curation-log.md](.agents/curation-log.md), or escalates them as
+  Open Questions. See `super-prompt-patterns` and `skill-curation` for the
+  full loop.
+
+Contributors editing code under a skill's `applies_to` paths should read the
+skill first, note the self-review outcome in the PR description, and bump the
+skill's `last_verified` / `version` / `## Changelog` when reality drifts.
+
 ## Contributing
 
 We welcome contributions from the community. Whether you are adding a solution,
