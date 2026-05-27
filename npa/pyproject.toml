@@ -71,6 +71,31 @@ packages = ["src/npa"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 
+[tool.coverage.run]
+# Smoke modules are standalone runners packaged under npa.smoke; they invoke
+# real CLIs and subprocess paths and are not exercised by unit tests.
+# Genesis runtime scripts and the two-VM distill orchestrator require a real
+# GPU/Terraform stack and are gated behind e2e markers, not unit tests.
+# `fiftyone_lerobot` runs inside the FiftyOne workbench VM virtualenv (copied
+# in by the CLI); `viz.backends.rerun` is the MP4 renderer/HTTP server that
+# requires ffmpeg/rerun binaries — both are integration-tested, not unit-tested.
+omit = [
+    "*/npa/smoke/*",
+    "*/npa/smoke/**",
+    "npa/src/npa/smoke/*",
+    "*/npa/scripts/*",
+    "npa/src/npa/scripts/*",
+    "*/npa/genesis/diagnose.py",
+    "*/npa/genesis/env_pick_place.py",
+    "*/npa/genesis/eval_student.py",
+    "*/npa/genesis/generate_demos.py",
+    "*/npa/genesis/train_teacher.py",
+    "*/npa/genesis/tune.py",
+    "*/npa/workflows/distill_two_vm.py",
+    "*/npa/fiftyone_lerobot.py",
+    "*/npa/viz/backends/rerun.py",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
