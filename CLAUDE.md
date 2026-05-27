@@ -14,7 +14,7 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 
 ## Self-Improvement Loop
 
-Claude Code is the curator side of the loop. After 3+ commits, any blocker NOVEL_ISSUE, or any skill staler than 30 days, walk `/tmp/<run-id>/skill-deltas.md` and `novel-issues.md` and promote / drop / escalate each entry per `skill-curation`. Record drops in `.agents/curation-log.md`. Flag "missing skill delta" in PRs whose diff drifts from a skill without filing one (`review-checklist`).
+Claude Code is the curator side of the loop. After 3+ commits, any blocker NOVEL_ISSUE, or any skill staler than 30 days, walk `.agents/runs/<run-id>/skill-deltas.md` and `novel-issues.md` (the durable handoff persisted by the builder at end of Phase L — do not read from `/tmp`) and promote / drop / escalate each entry per `skill-curation`. Record drops in `.agents/curation-log.md`. Flag "missing skill delta" in PRs whose diff drifts from a skill without filing one, and flag missing `.agents/runs/<run-id>/` logs when a run produced commits (`review-checklist`).
 
 ## Project Instructions
 

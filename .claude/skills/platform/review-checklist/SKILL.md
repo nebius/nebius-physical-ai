@@ -3,7 +3,7 @@ name: review-checklist
 description: Use during Claude Code reviews to classify API, IAM, cleanup, exception, concurrency, config, temp-file, and version-pin risks.
 last_verified: 2026-05-26
 owner: platform
-version: 1.1.0
+version: 1.2.0
 ---
 
 # Review Checklist
@@ -24,9 +24,10 @@ Prioritize findings that can break users, expand permissions, hide failures, or 
 
 ## Curation Duty
 
-Reviews after 3+ commits or any blocker NOVEL_ISSUE also perform skill curation per `skill-curation`. Walk `/tmp/<run-id>/skill-deltas.md` and `novel-issues.md`, then promote / drop / escalate each entry.
+Reviews after 3+ commits or any blocker NOVEL_ISSUE also perform skill curation per `skill-curation`. Walk `.agents/runs/<run-id>/skill-deltas.md` and `.agents/runs/<run-id>/novel-issues.md` (the durable handoff persisted by the builder at end of Phase L), then promote / drop / escalate each entry. If those files are missing for a run that produced commits, flag it as a finding against `super-prompt-patterns`.
 
 ## Changelog
 
+- 2026-05-26: Curation duty reads from `.agents/runs/<run-id>/` (repo-visible) instead of `/tmp/<run-id>/`; missing logs from a committing run is now a finding.
 - 2026-05-26: Added missing-skill-delta and stale-skill findings; documented curation duty during review passes.
 

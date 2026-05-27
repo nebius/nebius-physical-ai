@@ -1,6 +1,7 @@
 # Run output and logs
 results/
 runs/
+!.agents/runs/
 logs/
 *.log
 *.log*

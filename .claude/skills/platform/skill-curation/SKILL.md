@@ -3,10 +3,11 @@ name: skill-curation
 description: Use when triaging novel-issue logs, promoting skill deltas, or running periodic drift checks on SKILL.md files.
 last_verified: 2026-05-26
 owner: platform
-version: 1.0.0
+version: 1.1.0
 applies_to:
   - .agents/skills/**
   - .claude/skills/**
+  - .agents/runs/**
   - .agents/curation-log.md
 ---
 
@@ -26,9 +27,13 @@ The triage agent MUST differ from the agent that built the changes (mirrors the 
 
 ## Inputs
 
-- `/tmp/<run-id>/novel-issues.md` — raw observations from runs.
-- `/tmp/<run-id>/skill-deltas.md` — high-confidence proposed edits with a target skill identified.
+The curator reads only from repo-visible locations; `/tmp/<run-id>/` is local to the building agent and is NOT a valid source for triage.
+
+- `.agents/runs/<run-id>/novel-issues.md` — the building agent's raw observations, persisted at end of Phase L (see `super-prompt-patterns` "Durable Handoff to the Reviewer").
+- `.agents/runs/<run-id>/skill-deltas.md` — high-confidence proposed edits with a target skill identified, also persisted by the builder.
 - Recent commit diffs touching paths covered by any skill's `applies_to`.
+
+If the expected log files are missing for a run that produced commits, that is itself a curation finding: open an Open Question on `super-prompt-patterns` and remind the builder to persist next time.
 
 ## Loop: Triage → Promote → Drop → Escalate
 
@@ -41,13 +46,15 @@ For each candidate delta:
 
 Every candidate MUST land in exactly one of Promote / Drop / Escalate. Nothing is silently dropped.
 
+After all candidates from a `.agents/runs/<run-id>/` directory are resolved, the curator MAY delete the directory in a follow-up commit. The audit trail survives in `.agents/curation-log.md` and the relevant skills' `## Changelog` sections.
+
 ## Self-Review Before PR
 
 Before opening a PR that touches code under any skill's `applies_to` paths, the building agent MUST:
 
 1. Read the relevant skill.
-2. Confirm reality still matches; if not, emit a `skill-deltas.md` entry.
-3. Note the self-review outcome in the PR description ("skill X reviewed, no drift" or "skill X delta filed").
+2. Confirm reality still matches; if not, emit a `skill-deltas.md` entry and persist it under `.agents/runs/<run-id>/` per `super-prompt-patterns`.
+3. Note the self-review outcome in the PR description ("skill X reviewed, no drift" or "skill X delta filed under .agents/runs/<run-id>/").
 
 A missing self-review is itself a `review-checklist` finding.
 
@@ -69,4 +76,5 @@ On any drift, either fix inline (bump version, dated changelog entry) or file an
 
 ## Changelog
 
+- 2026-05-26: Inputs read from `.agents/runs/<run-id>/` (repo-visible) instead of `/tmp/<run-id>/`; documented missing-logs as a curation finding; allowed the curator to delete the run directory after triage.
 - 2026-05-26: Initial version. Defines triage/promote/drop/escalate loop, drift checklist, and curation log conventions.
