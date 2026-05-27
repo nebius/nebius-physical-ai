@@ -29,12 +29,5 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 
 ## Self-Improvement Loop
 
-Skills are living documents. Every run feeds the next:
-
-1. Phase 0 of each run sets a `run-id` (per `super-prompt-patterns`) and exports `NPA_RUN_ID`.
-2. During the run, log surprises to `/tmp/<run-id>/novel-issues.md` using the structured template. High-confidence proposed edits also go to `/tmp/<run-id>/skill-deltas.md`.
-3. At end of Phase L, persist both files into `.agents/runs/<run-id>/` and commit them — this is the durable handoff the reviewer reads. `/tmp` is local and invisible to the reviewer.
-4. Before opening a PR that touches code under a skill's `applies_to` paths, perform the skill self-review described in `skill-curation` and record the outcome in the PR description.
-5. The reviewer (Claude Code, different agent from the builder) triages all deltas from `.agents/runs/<run-id>/` per `skill-curation`: promote, drop (logged in `.agents/curation-log.md`), or escalate to the skill's `## Open Questions`.
-6. Trigger curation after 3+ commits, any blocker NOVEL_ISSUE, or any skill whose `last_verified` is older than 30 days. New or changed skills MUST follow the frontmatter contract in `skill-authoring` and update their `## Changelog`.
+See [docs/agents/loop.md](docs/agents/loop.md) for the full capture → triage → promote/drop/escalate flow, roles, file map, and cadence. The short version: builders log to `/tmp/<run-id>/` during a run, persist to `.agents/runs/<run-id>/` at end of Phase L, and a different reviewer triages those logs into the affected skills per `skill-curation`.
 
