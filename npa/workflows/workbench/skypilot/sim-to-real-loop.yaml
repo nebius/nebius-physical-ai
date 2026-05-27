@@ -1,0 +1,48 @@
+name: sim-to-real-loop
+execution: serial
+---
+name: controller-loop
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 32
+envs:
+  NPA_PIPELINE_RUN_ID: sim-to-real-dev
+  SOURCE_PROJECT_ALIAS: source-project
+  TARGET_PROJECT_ALIAS: target-project
+  S3_BUCKET: your-bucket-name
+  PIPELINE_ROOT_URI: s3://your-bucket-name/sim-to-real/dev
+  SOURCE_DATA_URI: s3://your-bucket-name/sim-to-real/raw/
+  IMPORTED_DATA_URI: s3://your-bucket-name/sim-to-real/dev/imported/
+  VLM_EVAL_OUTPUT_URI: s3://your-bucket-name/sim-to-real/dev/vlm-eval/
+  VLM_EVAL_TASK: sim-to-real
+  DATA_IMPORT_LIMIT: '0'
+  COSMOS_MIN_REPLICAS: '1'
+  COSMOS_MAX_REPLICAS: '4'
+  COSMOS_TARGET_CONCURRENCY: '0'
+  VLM_SUCCESS_THRESHOLD: '0.8'
+  NPA_DRY_RUN: '0'
+setup: |
+  python3 -m pip install -e /opt/nebius-physical-ai/npa
+run: |
+  set -euo pipefail
+  npa workbench data sync \
+    --source-project "${SOURCE_PROJECT_ALIAS}" \
+    --target-project "${TARGET_PROJECT_ALIAS}" \
+    --input-path "${SOURCE_DATA_URI}" \
+    --output-path "${IMPORTED_DATA_URI}" \
+    --limit "${DATA_IMPORT_LIMIT}" \
+    --output json
+
+  npa workbench cosmos autoscale \
+    --min-replicas "${COSMOS_MIN_REPLICAS}" \
+    --max-replicas "${COSMOS_MAX_REPLICAS}" \
+    --target-concurrency "${COSMOS_TARGET_CONCURRENCY}" \
+    --output json
+
+  npa workbench vlm-eval run \
+    --input-path "${IMPORTED_DATA_URI}" \
+    --output-path "${VLM_EVAL_OUTPUT_URI}" \
+    --task "${VLM_EVAL_TASK}" \
+    --success-threshold "${VLM_SUCCESS_THRESHOLD}" \
+    --output json

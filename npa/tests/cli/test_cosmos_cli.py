@@ -128,6 +128,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "status",
         "system-info",
         "list",
+        "autoscale",
         "cleanup-partial",
     ],
 )
@@ -143,6 +144,130 @@ def test_cosmos_registered_under_workbench() -> None:
 
     assert result.exit_code == 0
     assert "cosmos" in result.output
+
+
+def test_cosmos_autoscale_dry_run_uses_saved_serverless_alias(mocker) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_serverless_cfg())
+    client_cls = mocker.patch("npa.cli.cosmos.ServerlessClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "autoscale",
+            "--min-replicas",
+            "1",
+            "--max-replicas",
+            "3",
+            "--target-concurrency",
+            "8",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "dry_run"
+    assert payload["runtime"] == "serverless"
+    assert payload["endpoint"] == "endpoint-1"
+    assert payload["max_replicas"] == 3
+    client_cls.assert_not_called()
+
+
+def test_cosmos_autoscale_respects_env_dry_run(mocker, monkeypatch) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_serverless_cfg())
+    client_cls = mocker.patch("npa.cli.cosmos.ServerlessClient")
+    monkeypatch.setenv("DRY_RUN", "1")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "autoscale",
+            "--min-replicas",
+            "1",
+            "--max-replicas",
+            "3",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["status"] == "dry_run"
+    client_cls.assert_not_called()
+
+
+def test_cosmos_autoscale_updates_endpoint_and_persists_policy(mocker) -> None:
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_serverless_cfg())
+    write_config = mocker.patch("npa.cli.cosmos.write_config")
+    client = mocker.Mock()
+    client.set_endpoint_autoscale.return_value = EndpointInfo(
+        id="endpoint-1",
+        name="npa-cosmos-proj-cosmos",
+        project_id="project-1",
+        status=EndpointStatus.RUNNING,
+        url="https://cosmos.example",
+    )
+    mocker.patch("npa.cli.cosmos.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "autoscale",
+            "--min-replicas",
+            "2",
+            "--max-replicas",
+            "5",
+            "--target-concurrency",
+            "16",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "configured"
+    client.set_endpoint_autoscale.assert_called_once_with(
+        "project-1",
+        "endpoint-1",
+        min_replicas=2,
+        max_replicas=5,
+        target_concurrency=16,
+    )
+    autoscale = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["cosmos"][
+        "serverless"
+    ]["autoscale"]
+    assert autoscale == {
+        "min_replicas": 2,
+        "max_replicas": 5,
+        "target_concurrency": 16,
+    }
+
+
+def test_cosmos_autoscale_requires_valid_bounds() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "autoscale",
+            "--min-replicas",
+            "4",
+            "--max-replicas",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--max-replicas must be greater than or equal" in result.output
 
 
 def _mock_train_env(mocker):

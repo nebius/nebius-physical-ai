@@ -40,6 +40,14 @@ def test_register_solution_lists_registered_solution() -> None:
             "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
             "cli_command": "npa workbench",
         },
+        {
+            "name": "sim-to-real",
+            "description": "Generic sim-to-real pipeline tools within the Workbench solution",
+            "cli_command": (
+                "npa workbench workflow submit "
+                "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
+            ),
+        },
         {"name": "demo", "description": "Demo solution", "cli_command": "npa demo"},
     ]
 
@@ -54,9 +62,9 @@ def test_list_solutions_returns_entry_copies() -> None:
     registry.register_solution("demo", "Demo solution", "npa demo")
 
     listed = registry.list_solutions()
-    listed[1]["description"] = "mutated"
+    listed[2]["description"] = "mutated"
 
-    assert registry.list_solutions()[1]["description"] == "Demo solution"
+    assert registry.list_solutions()[2]["description"] == "Demo solution"
 
 
 def test_solutions_package_import_does_not_load_toml(mocker) -> None:
@@ -83,7 +91,15 @@ def test_list_solutions_lazily_loads_workbench_solution(mocker) -> None:
             "name": "workbench",
             "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
             "cli_command": "npa workbench",
-        }
+        },
+        {
+            "name": "sim-to-real",
+            "description": "Generic sim-to-real pipeline tools within the Workbench solution",
+            "cli_command": (
+                "npa workbench workflow submit "
+                "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
+            ),
+        },
     ]
     assert second == first
     assert load_spy.call_count == 1
