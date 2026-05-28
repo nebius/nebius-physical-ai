@@ -2678,7 +2678,11 @@ def deploy_cmd(
         "--health-check-mode",
         help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
     ),
-    verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
+    verify_env: bool = typer.Option(
+        False,
+        "--verify-env/--no-verify-env",
+        help="Audit deployed shared credentials after app deploy.",
+    ),
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
     runtime: WorkbenchRuntime = typer.Option(

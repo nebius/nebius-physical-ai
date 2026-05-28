@@ -1806,7 +1806,7 @@ def deploy_cmd(
         help="Health check mode: public, ssh, or auto. BYOVM auto tries public briefly, then SSH.",
     ),
     verify_env: bool = typer.Option(
-        bool(os.environ.get("CI")),
+        False,
         "--verify-env/--no-verify-env",
         help="Audit deployed shared credentials after app deploy.",
     ),
