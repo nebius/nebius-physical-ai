@@ -24,6 +24,8 @@ def _public_modules() -> list[ModuleType]:
         workbench.isaac_lab,
         workbench.lancedb,
         workbench.lerobot,
+        workbench.mjlab,
+        workbench.retargeting,
         workbench.vlm_eval,
     ]
 
@@ -76,6 +78,8 @@ def test_workbench_public_surface() -> None:
         "isaac_lab": ["deploy", "train", "eval", "export_lerobot", "status"],
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
+        "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
+        "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
         "vlm_eval": ["evaluate_stub", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():

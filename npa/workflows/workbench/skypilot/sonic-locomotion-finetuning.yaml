@@ -1,0 +1,105 @@
+# SONIC locomotion fine-tuning pipeline.
+#
+# Workflow logic lives in this SkyPilot YAML: retarget source motion, fine-tune
+# or smoke-validate SONIC, then score the resulting checkpoint with MJLab.
+name: sonic-locomotion-finetuning
+execution: serial
+---
+name: sonic-retarget-motion
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
+  # the npa CLI and this repository's Workbench package.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+envs:
+  NPA_PIPELINE_RUN_ID: "<run-id>"
+  INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
+  RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SOURCE_FORMAT: "mocap-json"
+  SONIC_EMBODIMENT: "unitree-g1"
+  RETARGET_MAP_URI: ""
+  RETARGET_FRAME_RATE: "50"
+  RETARGET_MAX_FRAMES: "0"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  npa workbench retargeting run \
+    --input-path "${INPUT_MOTION_URI}" \
+    --output-path "${RETARGETED_MOTION_URI}" \
+    --source-format "${SOURCE_FORMAT}" \
+    --embodiment "${SONIC_EMBODIMENT}" \
+    --retarget-map "${RETARGET_MAP_URI}" \
+    --frame-rate "${RETARGET_FRAME_RATE}" \
+    --max-frames "${RETARGET_MAX_FRAMES}" \
+    --output json
+---
+name: sonic-finetune
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+  # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
+envs:
+  NPA_PIPELINE_RUN_ID: "<run-id>"
+  RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SONIC_TRAIN_OUTPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/"
+  SONIC_EMBODIMENT: "UNITREE_G1_SONIC"
+  SONIC_CHECKPOINT: "nvidia/GEAR-SONIC:sonic_release/last.pt"
+  SONIC_DATA_PATH: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SONIC_SAMPLE_DATA: "0"
+  SONIC_NUM_ENVS: "16"
+  SONIC_HEADLESS: "True"
+  SONIC_MAX_ITERATIONS: "5"
+  SONIC_RUN_REAL_TRAIN: "0"
+  NPA_OUTPUT_PATH: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+run: |
+  set -euo pipefail
+  /entrypoint.sh train
+---
+name: sonic-mjlab-eval
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
+  # the npa CLI and this repository's Workbench package.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+envs:
+  NPA_PIPELINE_RUN_ID: "<run-id>"
+  EVAL_INPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SONIC_CHECKPOINT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/checkpoint_smoke.json"
+  MJLAB_OUTPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/mjlab/"
+  MJLAB_SUITE: "locomotion"
+  SONIC_EMBODIMENT: "unitree-g1"
+  MJLAB_EPISODES: "8"
+  MJLAB_SUCCESS_THRESHOLD: "0.75"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  npa workbench mjlab eval \
+    --input-path "${EVAL_INPUT_URI}" \
+    --checkpoint "${SONIC_CHECKPOINT_URI}" \
+    --output-path "${MJLAB_OUTPUT_URI}" \
+    --suite "${MJLAB_SUITE}" \
+    --embodiment "${SONIC_EMBODIMENT}" \
+    --episodes "${MJLAB_EPISODES}" \
+    --success-threshold "${MJLAB_SUCCESS_THRESHOLD}" \
+    --output json

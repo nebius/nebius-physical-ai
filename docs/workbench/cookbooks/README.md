@@ -13,3 +13,6 @@ workflows with Nebius Physical AI Workbench.
 - [Isaac Lab BYOF](byof-isaac-lab/README.md): layer a custom Isaac Lab image
   over the digest-pinned Workbench base and run it through the SkyPilot image
   override surface.
+- [SONIC Locomotion Fine-Tuning](sonic-locomotion-finetuning.md): retarget
+  motion data, run SONIC fine-tuning, and evaluate with MJLab through SkyPilot
+  YAML.
