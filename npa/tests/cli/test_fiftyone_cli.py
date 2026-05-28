@@ -124,6 +124,8 @@ def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(tmp_path: Path, mocke
             "-n",
             "curate",
             "deploy",
+            "--address",
+            "0.0.0.0",
             "--project-id",
             "project",
             "--tenant-id",
@@ -876,13 +878,14 @@ def test_fiftyone_launch_builds_remote_command_and_url(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "fiftyone", "launch", "--port", "6161"],
+        ["workbench", "fiftyone", "launch", "--port", "6161", "--address", "0.0.0.0"],
     )
 
     assert result.exit_code == 0
     assert "http://fiftyone.example:6161" in result.output
     cmd = ssh.run.call_args.args[0]
     assert "test -x /opt/fiftyone/venv/bin/python" in cmd
+    assert "FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0" in cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=6161" in cmd
     assert "sudo systemctl enable npa-fiftyone-app" in cmd
     assert "http://127.0.0.1:6161/" in cmd

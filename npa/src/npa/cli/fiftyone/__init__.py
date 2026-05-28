@@ -140,6 +140,7 @@ FIFTYONE_K8S_PUBLIC_URL_ANNOTATION = "npa.nebius.com/public-url"
 FIFTYONE_K8S_SERVICE_TYPE_ANNOTATION = "npa.nebius.com/service-type"
 FIFTYONE_K8S_EXTERNAL_IP_TIMEOUT_SEC = 300
 DEFAULT_APP_PORT = 5151
+DEFAULT_APP_ADDRESS = "0.0.0.0"
 DEFAULT_CPU_PLATFORM = "cpu-d3"
 DEFAULT_CPU_PRESET = "4vcpu-16gb"
 DEFAULT_CPU_IMAGE_FAMILY = "ubuntu24.04-driverless"
@@ -223,6 +224,15 @@ app.add_typer(datasets_app, name="datasets")
 def _fail(msg: str, code: int = 1) -> None:
     console.print(f"[red]Error:[/red] {msg}", soft_wrap=True)
     raise typer.Exit(code)
+
+
+def _normalize_app_address(address: str) -> str:
+    normalized = (address or DEFAULT_APP_ADDRESS).strip()
+    if not normalized:
+        _fail("--address must not be empty")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", normalized):
+        _fail("--address must be a single host or IP address")
+    return normalized
 
 
 def _confirm_or_exit(prompt: str) -> None:
@@ -1300,7 +1310,13 @@ fi
 """
 
 
-def _service_setup_script(port: int, dataset_name: str | None = None) -> str:
+def _service_setup_script(
+    port: int,
+    dataset_name: str | None = None,
+    *,
+    address: str = DEFAULT_APP_ADDRESS,
+) -> str:
+    address = _normalize_app_address(address)
     if dataset_name is None:
         dataset_update = (
             'if [ -n "$current_dataset" ]; then\n'
@@ -1318,6 +1334,7 @@ def _service_setup_script(port: int, dataset_name: str | None = None) -> str:
 service_user="$(id -un)"
 was_active="false"
 current_port=""
+current_address=""
 current_dataset=""
 read_env_var() {{
   key="$1"
@@ -1333,6 +1350,7 @@ if systemctl is-active --quiet {FIFTYONE_SERVICE}; then
 fi
 if [ -f /etc/npa-fiftyone/env ]; then
   current_port="$(grep -E '^FIFTYONE_DEFAULT_APP_PORT=' /etc/npa-fiftyone/env | tail -n 1 | cut -d= -f2- || true)"
+  current_address="$(grep -E '^FIFTYONE_DEFAULT_APP_ADDRESS=' /etc/npa-fiftyone/env | tail -n 1 | cut -d= -f2- || true)"
   current_dataset="$(grep -E '^FIFTYONE_DATASET_NAME=' /etc/npa-fiftyone/env | tail -n 1 | cut -d= -f2- || true)"
 fi
 aws_access_key_id="$(read_env_var AWS_ACCESS_KEY_ID)"
@@ -1349,7 +1367,7 @@ if [ -z "$nebius_s3_endpoint" ]; then
 fi
 sudo mkdir -p /etc/npa-fiftyone
 sudo tee /etc/npa-fiftyone/env >/dev/null <<'ENV'
-FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
+FIFTYONE_DEFAULT_APP_ADDRESS={address}
 FIFTYONE_DEFAULT_APP_PORT={port}
 FIFTYONE_DATABASE_DIR={FIFTYONE_HOME}/db
 FIFTYONE_DEFAULT_DATASET_DIR={FIFTYONE_HOME}/datasets
@@ -1389,8 +1407,8 @@ WantedBy=multi-user.target
 UNIT
 sudo systemctl daemon-reload
 sudo systemctl enable {FIFTYONE_SERVICE}
-if [ "$was_active" = "true" ] && [ "$current_port" = "{port}" ]; then
-  echo "FiftyOne already running on port {port}"
+if [ "$was_active" = "true" ] && [ "$current_port" = "{port}" ] && [ "$current_address" = "{address}" ]; then
+  echo "FiftyOne already running on {address}:{port}"
 else
   sudo systemctl reset-failed {FIFTYONE_SERVICE} || true
   sudo systemctl restart {FIFTYONE_SERVICE}
@@ -1408,7 +1426,12 @@ exit 0
 """
 
 
-def _build_install_command(port: int = DEFAULT_APP_PORT) -> str:
+def _build_install_command(
+    port: int = DEFAULT_APP_PORT,
+    *,
+    address: str = DEFAULT_APP_ADDRESS,
+) -> str:
+    address = _normalize_app_address(address)
     app_py = _build_app_py()
     script = f"""\
 set -euo pipefail
@@ -1434,7 +1457,7 @@ PY
 mkdir -p "$HOME/.fiftyone"
 cat > "$HOME/.fiftyone/config.json" <<'JSON'
 {{
-  "default_app_address": "0.0.0.0",
+  "default_app_address": "{address}",
   "default_app_port": {port}
 }}
 JSON
@@ -1446,17 +1469,18 @@ if version != "{FIFTYONE_VERSION}":
     raise RuntimeError(f"expected fiftyone {FIFTYONE_VERSION}, found {{version}}")
 print("FIFTYONE_ENV_SMOKE_OK")
 PY
-{_service_setup_script(port)}
+{_service_setup_script(port, address=address)}
 """
     return _remote_bash(script)
 
 
-def _build_launch_command(port: int) -> str:
+def _build_launch_command(port: int, *, address: str = DEFAULT_APP_ADDRESS) -> str:
+    address = _normalize_app_address(address)
     script = f"""\
 set -euo pipefail
 test -x {FIFTYONE_VENV}/bin/python
 test -f {FIFTYONE_HOME}/app.py
-{_service_setup_script(port)}
+{_service_setup_script(port, address=address)}
 """
     return _remote_bash(script)
 
@@ -2240,7 +2264,8 @@ def _k8s_get_json(kind: str, name: str, *, namespace: str, kubeconfig: str) -> d
     return payload if isinstance(payload, dict) else None
 
 
-def _k8s_app_command(port: int) -> str:
+def _k8s_app_command(port: int, *, address: str = DEFAULT_APP_ADDRESS) -> str:
+    address = _normalize_app_address(address)
     return f"""\
 source {FIFTYONE_VENV}/bin/activate
 export FIFTYONE_DATABASE_DIR="${{FIFTYONE_DATABASE_DIR:-{FIFTYONE_HOME}/db}}"
@@ -2266,7 +2291,7 @@ def handle_stop(signum, frame):
 signal.signal(signal.SIGINT, handle_stop)
 signal.signal(signal.SIGTERM, handle_stop)
 
-address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "0.0.0.0")
+address = os.environ.get("FIFTYONE_DEFAULT_APP_ADDRESS", "{address}")
 port = int(os.environ.get("FIFTYONE_DEFAULT_APP_PORT", "{port}"))
 dataset_name = os.environ.get("FIFTYONE_DATASET_NAME", "").strip()
 dataset = fo.load_dataset(dataset_name) if dataset_name and dataset_name in fo.list_datasets() else None
@@ -2287,9 +2312,11 @@ def _kubernetes_manifest(
     name: str,
     namespace: str,
     port: int,
+    address: str,
     service_type: str,
     image_pull_secret: str,
 ) -> dict[str, Any]:
+    address = _normalize_app_address(address)
     labels = {
         "app": name,
         "app.kubernetes.io/name": name,
@@ -2316,10 +2343,10 @@ def _kubernetes_manifest(
                                     "name": "app",
                                     "image": image,
                                     "imagePullPolicy": "IfNotPresent",
-                                    "command": ["/bin/bash", "-lc", _k8s_app_command(port)],
+                                    "command": ["/bin/bash", "-lc", _k8s_app_command(port, address=address)],
                                     "ports": [{"name": "http", "containerPort": port}],
                                     "env": [
-                                        {"name": "FIFTYONE_DEFAULT_APP_ADDRESS", "value": "0.0.0.0"},
+                                        {"name": "FIFTYONE_DEFAULT_APP_ADDRESS", "value": address},
                                         {"name": "FIFTYONE_DEFAULT_APP_PORT", "value": str(port)},
                                         {"name": "FIFTYONE_DATABASE_DIR", "value": f"{FIFTYONE_HOME}/db"},
                                         {"name": "FIFTYONE_DEFAULT_DATASET_DIR", "value": f"{FIFTYONE_HOME}/datasets"},
@@ -2433,9 +2460,11 @@ def _save_k8s_workbench_state(
     name: str,
     namespace: str,
     port: int,
+    address: str,
     service_type: str,
     public_url: str,
 ) -> None:
+    address = _normalize_app_address(address)
     project = _project_alias or cluster_name
     workbench = _workbench_name or "fiftyone"
     endpoint = public_url or f"http://{name}.{namespace}.svc.cluster.local:{port}"
@@ -2453,6 +2482,7 @@ def _save_k8s_workbench_state(
                             "endpoint_strategy": "public" if public_url else "cluster",
                             "service_port": port,
                             "app_port": port,
+                            "app_address": address,
                             "app_status": APP_STATUS_HEALTHY,
                             "kubernetes": {
                                 "cluster_name": cluster_name,
@@ -2461,6 +2491,7 @@ def _save_k8s_workbench_state(
                                 "service_name": name,
                                 "service_type": service_type,
                                 "public_url": public_url,
+                                "app_address": address,
                             },
                         }
                     }
@@ -2478,12 +2509,14 @@ def _deploy_kubernetes_fiftyone(
     name: str,
     namespace: str,
     port: int,
+    address: str,
     image_pull_secret: str,
     public_ip: bool,
     destroy: bool,
     dry_run: bool,
     output: OutputFormat,
 ) -> None:
+    address = _normalize_app_address(address)
     service_type = "LoadBalancer" if public_ip else "ClusterIP"
     resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if destroy:
@@ -2497,6 +2530,7 @@ def _deploy_kubernetes_fiftyone(
         name=name,
         namespace=namespace,
         port=port,
+        address=address,
         service_type=service_type,
         image_pull_secret=image_pull_secret,
     )
@@ -2539,6 +2573,7 @@ def _deploy_kubernetes_fiftyone(
         name=name,
         namespace=namespace,
         port=port,
+        address=address,
         service_type=service_type,
         public_url=public_url,
     )
@@ -2550,6 +2585,7 @@ def _deploy_kubernetes_fiftyone(
         "service_type": service_type,
         "cluster_url": f"http://{name}.{namespace}.svc.cluster.local:{port}",
         "public_url": public_url,
+        "app_address": address,
     }
     _output(payload, output)
 
@@ -2680,6 +2716,11 @@ def deploy_cmd(
     ),
     verify_env: bool = typer.Option(bool(os.environ.get("CI")), "--verify-env/--no-verify-env", help="Audit deployed shared credentials after app deploy."),
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."),
+    address: str = typer.Option(
+        DEFAULT_APP_ADDRESS,
+        "--address",
+        help="FiftyOne app bind address. Use 0.0.0.0 for a public endpoint.",
+    ),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
     runtime: WorkbenchRuntime = typer.Option(
         WorkbenchRuntime.vm,
@@ -2710,6 +2751,7 @@ def deploy_cmd(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Deploy or destroy a FiftyOne dataset curation VM."""
+    address = _normalize_app_address(address)
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
         _fail("FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`.")
@@ -2725,6 +2767,7 @@ def deploy_cmd(
             name=service_name,
             namespace=namespace,
             port=port,
+            address=address,
             image_pull_secret=image_pull_secret,
             public_ip=public_ip,
             destroy=destroy,
@@ -3152,6 +3195,7 @@ def deploy_cmd(
         "endpoint_strategy": initial_endpoint_strategy,
         "service_port": port,
         "app_port": port,
+        "app_address": address,
         **byovm_fields,
         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
         "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
@@ -3230,7 +3274,7 @@ def deploy_cmd(
 
                 try:
                     service_env = {
-                        "FIFTYONE_DEFAULT_APP_ADDRESS": "0.0.0.0",
+                        "FIFTYONE_DEFAULT_APP_ADDRESS": address,
                         "FIFTYONE_DEFAULT_APP_PORT": str(port),
                         "FIFTYONE_DATABASE_DIR": FIFTYONE_CONTAINER_DB_DIR,
                         "FIFTYONE_DEFAULT_DATASET_DIR": f"{FIFTYONE_HOME}/datasets",
@@ -3318,7 +3362,7 @@ def deploy_cmd(
                 console.print(f"    [dry-run] Would create {FIFTYONE_VENV}, install FiftyOne, and start port {port}")
             else:
                 try:
-                    _run_fiftyone_command(ssh, _build_install_command(port), stream=True)
+                    _run_fiftyone_command(ssh, _build_install_command(port, address=address), stream=True)
                 except SSHError as exc:
                     fail_app(f"FiftyOne installation failed: {exc}")
                     return
@@ -3438,6 +3482,7 @@ def deploy_cmd(
             "uses_gpu": uses_gpu,
             "runtime": runtime.value,
             "app_port": port,
+            "app_address": address,
             "tf_outputs": tf_outputs,
         }, indent=2))
 
@@ -3445,9 +3490,15 @@ def deploy_cmd(
 @app.command("launch")
 def launch_cmd(
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
+    address: str = typer.Option(
+        DEFAULT_APP_ADDRESS,
+        "--address",
+        help="FiftyOne app bind address. Use 0.0.0.0 for a public endpoint.",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Start the FiftyOne app over SSH and print the browser URL."""
+    address = _normalize_app_address(address)
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
@@ -3455,7 +3506,7 @@ def launch_cmd(
     command = (
         _build_container_launch_command(port)
         if _is_container_runtime(cfg)
-        else _build_launch_command(port)
+        else _build_launch_command(port, address=address)
     )
 
     try:
@@ -3469,6 +3520,7 @@ def launch_cmd(
         "url": url,
         "browser_url": browser_url,
         "port": port,
+        "address": address,
     }
     if output == OutputFormat.json and out.strip():
         result["stdout_tail"] = out.strip()[-1000:]
