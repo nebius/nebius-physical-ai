@@ -12,6 +12,8 @@ from npa.workbench import (
     isaac_lab,
     lancedb,
     lerobot,
+    mjlab,
+    retargeting,
     vlm_eval,
 )
 
@@ -25,5 +27,7 @@ __all__ = [
     "isaac_lab",
     "lancedb",
     "lerobot",
+    "mjlab",
+    "retargeting",
     "vlm_eval",
 ]

@@ -1,0 +1,38 @@
+# Retarget source motion artifacts into the SONIC embodiment schema.
+name: retargeting
+execution: serial
+---
+name: retarget-motion
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
+  # the npa CLI and this repository's Workbench package.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+envs:
+  INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
+  RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SOURCE_FORMAT: "mocap-json"
+  SONIC_EMBODIMENT: "unitree-g1"
+  RETARGET_MAP_URI: ""
+  RETARGET_FRAME_RATE: "50"
+  RETARGET_MAX_FRAMES: "0"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  npa workbench retargeting run \
+    --input-path "${INPUT_MOTION_URI}" \
+    --output-path "${RETARGETED_MOTION_URI}" \
+    --source-format "${SOURCE_FORMAT}" \
+    --embodiment "${SONIC_EMBODIMENT}" \
+    --retarget-map "${RETARGET_MAP_URI}" \
+    --frame-rate "${RETARGET_FRAME_RATE}" \
+    --max-frames "${RETARGET_MAX_FRAMES}" \
+    --output json

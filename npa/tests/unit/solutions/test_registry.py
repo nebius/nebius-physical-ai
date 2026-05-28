@@ -8,6 +8,40 @@ import pytest
 import npa.solutions as solutions
 from npa.solutions import registry
 
+CONFIGURED_SOLUTIONS = [
+    {
+        "name": "workbench",
+        "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
+        "cli_command": "npa workbench",
+    },
+    {
+        "name": "sim-to-real",
+        "description": "Generic sim-to-real pipeline tools within the Workbench solution",
+        "cli_command": (
+            "npa workbench workflow submit "
+            "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
+        ),
+    },
+    {
+        "name": "retargeting",
+        "description": "Motion retargeting Workbench tool for SONIC locomotion pipelines",
+        "cli_command": "npa workbench retargeting",
+    },
+    {
+        "name": "mjlab",
+        "description": "MJLab locomotion evaluation Workbench tool",
+        "cli_command": "npa workbench mjlab",
+    },
+    {
+        "name": "sonic-locomotion-finetuning",
+        "description": "SONIC locomotion fine-tuning SkyPilot workflow",
+        "cli_command": (
+            "npa workbench workflow submit "
+            "npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"
+        ),
+    },
+]
+
 
 @pytest.fixture(autouse=True)
 def reset_registry() -> None:
@@ -35,19 +69,7 @@ def test_register_solution_lists_registered_solution() -> None:
     )
 
     assert registry.list_solutions() == [
-        {
-            "name": "workbench",
-            "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
-            "cli_command": "npa workbench",
-        },
-        {
-            "name": "sim-to-real",
-            "description": "Generic sim-to-real pipeline tools within the Workbench solution",
-            "cli_command": (
-                "npa workbench workflow submit "
-                "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
-            ),
-        },
+        *CONFIGURED_SOLUTIONS,
         {"name": "demo", "description": "Demo solution", "cli_command": "npa demo"},
     ]
 
@@ -62,9 +84,9 @@ def test_list_solutions_returns_entry_copies() -> None:
     registry.register_solution("demo", "Demo solution", "npa demo")
 
     listed = registry.list_solutions()
-    listed[2]["description"] = "mutated"
+    listed[-1]["description"] = "mutated"
 
-    assert registry.list_solutions()[2]["description"] == "Demo solution"
+    assert registry.list_solutions()[-1]["description"] == "Demo solution"
 
 
 def test_solutions_package_import_does_not_load_toml(mocker) -> None:
@@ -86,21 +108,7 @@ def test_list_solutions_lazily_loads_workbench_solution(mocker) -> None:
     first = registry.list_solutions()
     second = registry.list_solutions()
 
-    assert first == [
-        {
-            "name": "workbench",
-            "description": "First solution: physical AI robotics workflows built on Nebius infrastructure",
-            "cli_command": "npa workbench",
-        },
-        {
-            "name": "sim-to-real",
-            "description": "Generic sim-to-real pipeline tools within the Workbench solution",
-            "cli_command": (
-                "npa workbench workflow submit "
-                "npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
-            ),
-        },
-    ]
+    assert first == CONFIGURED_SOLUTIONS
     assert second == first
     assert load_spy.call_count == 1
 

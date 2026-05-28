@@ -7,6 +7,8 @@ import typer
 from npa.clients.credentials import load_credentials
 from npa.cli.workbench.data import app as data_app
 from npa.cli.workbench.lerobot import app as lerobot_app
+from npa.cli.workbench.mjlab import app as mjlab_app
+from npa.cli.workbench.retargeting import app as retargeting_app
 from npa.cli.cosmos import app as cosmos_app
 from npa.cli.fiftyone import app as fiftyone_app
 from npa.cli.genesis import app as genesis_app
@@ -42,6 +44,8 @@ app.add_typer(genesis_app, name="genesis")
 app.add_typer(groot_app, name="groot")
 app.add_typer(isaac_lab_app, name="isaac-lab")
 app.add_typer(sonic_app, name="sonic")
+app.add_typer(mjlab_app, name="mjlab")
+app.add_typer(retargeting_app, name="retargeting")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")
