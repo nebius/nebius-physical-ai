@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from enum import Enum
 from pathlib import Path
 
@@ -17,6 +18,7 @@ app = typer.Typer(
 )
 
 console = Console(stderr=True)
+_PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 
 
 class OutputFormat(str, Enum):
@@ -72,6 +74,11 @@ def submit_cmd(
         "--submit-timeout",
         help="Submission timeout in seconds.",
     ),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        help="Variable substitution as KEY=VALUE.",
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output-format",
@@ -84,9 +91,23 @@ def submit_cmd(
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
 
+    substitutions = _parse_submit_vars(var)
+    submitted_yaml_path = yaml_path
+    submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
+    if substitutions:
+        submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
+        submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
+
     try:
+        if substitutions:
+            substituted = _substitute_workflow_vars(yaml_path, substitutions)
+            _warn_unresolved_placeholders(substituted)
+            submitted_yaml_path.write_text(substituted, encoding="utf-8")
+        else:
+            _warn_unresolved_placeholders(yaml_path.read_text(encoding="utf-8"))
+
         result = submit_workflow(
-            yaml_path,
+            submitted_yaml_path,
             run_id or _default_submit_run_id(yaml_path),
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
@@ -94,9 +115,15 @@ def submit_cmd(
             controller_backend=controller_backend.value,
             timeout=submit_timeout,
         )
+    except OSError as exc:
+        _fail(f"SkyPilot workflow submission failed: {exc}")
+        return
     except SkyPilotSubmitError as exc:
         _fail(str(exc))
         return
+    finally:
+        if submitted_yaml_context is not None:
+            submitted_yaml_context.cleanup()
 
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result.__dict__, indent=2, sort_keys=True))
@@ -110,6 +137,34 @@ def submit_cmd(
 def _default_submit_run_id(yaml_path: Path) -> str:
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(yaml_path).stem).strip("-")
     return stem or "workflow"
+
+
+def _parse_submit_vars(var: list[str]) -> dict[str, str]:
+    substitutions: dict[str, str] = {}
+    for item in var:
+        if "=" not in item:
+            _fail("Invalid --var format. Use KEY=VALUE.")
+        key, value = item.split("=", 1)
+        if not key:
+            _fail("Invalid --var format. Use KEY=VALUE.")
+        substitutions[key] = value
+    return substitutions
+
+
+def _substitute_workflow_vars(yaml_path: Path, substitutions: dict[str, str]) -> str:
+    content = yaml_path.read_text(encoding="utf-8")
+    for key, value in substitutions.items():
+        content = content.replace(f"${{{key}}}", value)
+    return content
+
+
+def _warn_unresolved_placeholders(content: str) -> None:
+    unresolved = sorted({f"${{{match}}}" for match in _PLACEHOLDER_RE.findall(content)})
+    if unresolved:
+        typer.echo(
+            f"Warning: unresolved placeholders remain: {', '.join(unresolved)}",
+            err=True,
+        )
 
 
 @app.command("run")
