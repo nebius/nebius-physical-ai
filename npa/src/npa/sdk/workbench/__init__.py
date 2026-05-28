@@ -4,6 +4,6 @@ from __future__ import annotations
 
 from npa.workbench import lancedb
 
-from . import detection_training
+from . import data, detection_training, vlm_eval
 
-__all__ = ["detection_training", "lancedb"]
+__all__ = ["data", "detection_training", "lancedb", "vlm_eval"]

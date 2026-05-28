@@ -2,6 +2,28 @@
 
 from __future__ import annotations
 
-from npa.workbench import cosmos, detection_training, fiftyone, genesis, groot, isaac_lab, lancedb, lerobot
+from npa.workbench import (
+    cosmos,
+    data,
+    detection_training,
+    fiftyone,
+    genesis,
+    groot,
+    isaac_lab,
+    lancedb,
+    lerobot,
+    vlm_eval,
+)
 
-__all__ = ["cosmos", "detection_training", "fiftyone", "genesis", "groot", "isaac_lab", "lancedb", "lerobot"]
+__all__ = [
+    "cosmos",
+    "data",
+    "detection_training",
+    "fiftyone",
+    "genesis",
+    "groot",
+    "isaac_lab",
+    "lancedb",
+    "lerobot",
+    "vlm_eval",
+]

@@ -12,6 +12,9 @@ register_byovm = make_cli_wrapper(
 )
 list = make_cli_wrapper("npa.cli.cosmos", "list_cmd", "List Cosmos workbenches.")
 deploy = make_cli_wrapper("npa.cli.cosmos", "deploy_cmd", "Deploy a Cosmos workbench.")
+autoscale = make_cli_wrapper(
+    "npa.cli.cosmos", "autoscale_cmd", "Configure Cosmos serverless autoscaling."
+)
 serve = make_cli_wrapper("npa.cli.cosmos", "serve_cmd", "Serve a Cosmos model.")
 finetune = make_cli_wrapper("npa.cli.cosmos", "finetune_cmd", "Run Cosmos finetuning.")
 optimize = make_cli_wrapper("npa.cli.cosmos", "optimize_cmd", "Run Cosmos optimization.")
@@ -26,6 +29,7 @@ __all__ = [
     "register_byovm",
     "list",
     "deploy",
+    "autoscale",
     "serve",
     "finetune",
     "optimize",
