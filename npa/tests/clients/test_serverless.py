@@ -597,6 +597,43 @@ def test_start_stop_endpoint(method: str, command: str) -> None:
     assert info.id == "endpoint-1"
 
 
+def test_set_endpoint_autoscale_updates_resolved_endpoint() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "list":
+            return _result(args, 0, '{"items": [' + _endpoint_json() + "]}")
+        return _result(args, 0, _endpoint_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    info = client.set_endpoint_autoscale(
+        "project-1",
+        "cosmos",
+        min_replicas=2,
+        max_replicas=6,
+        target_concurrency=16,
+    )
+
+    assert info.status is EndpointStatus.RUNNING
+    assert calls[-1][1:] == [
+        "ai",
+        "endpoint",
+        "update",
+        "--id",
+        "endpoint-1",
+        "--min-replicas",
+        "2",
+        "--max-replicas",
+        "6",
+        "--target-concurrency",
+        "16",
+        "--format",
+        "json",
+    ]
+
+
 def test_get_endpoint_logs_uses_resolved_id() -> None:
     calls: list[list[str]] = []
 

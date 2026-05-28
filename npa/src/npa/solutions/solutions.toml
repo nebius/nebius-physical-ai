@@ -3,3 +3,8 @@
 name = "workbench"
 description = "First solution: physical AI robotics workflows built on Nebius infrastructure"
 cli_command = "npa workbench"
+
+[[solutions]]
+name = "sim-to-real"
+description = "Generic sim-to-real pipeline tools within the Workbench solution"
+cli_command = "npa workbench workflow submit npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"

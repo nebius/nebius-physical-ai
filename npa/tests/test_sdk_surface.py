@@ -17,12 +17,14 @@ def _public_modules() -> list[ModuleType]:
         network,
         workflow,
         workbench.cosmos,
+        workbench.data,
         workbench.fiftyone,
         workbench.genesis,
         workbench.groot,
         workbench.isaac_lab,
         workbench.lancedb,
         workbench.lerobot,
+        workbench.vlm_eval,
     ]
 
 
@@ -66,13 +68,15 @@ def test_workbench_public_surface() -> None:
     from npa import workbench
 
     expected = {
-        "cosmos": ["deploy", "serve", "infer", "status", "system_info"],
+        "cosmos": ["deploy", "autoscale", "serve", "infer", "status", "system_info"],
+        "data": ["sync_s3_prefix", "status_s3_prefix", "list_s3_objects"],
         "fiftyone": ["deploy", "launch", "load_dataset", "status", "system_info"],
         "genesis": ["train_teacher", "generate_demos", "simulate", "deploy"],
         "groot": ["deploy", "serve", "infer", "convert", "status"],
         "isaac_lab": ["deploy", "train", "eval", "export_lerobot", "status"],
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
+        "vlm_eval": ["evaluate_stub", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
         tool_module = getattr(workbench, tool)
