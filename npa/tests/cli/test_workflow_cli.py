@@ -81,6 +81,82 @@ def test_workbench_workflow_submit_dispatches_skypilot(mocker, tmp_path) -> None
     assert submit_mock.call_args.kwargs["timeout"] == 30
 
 
+def test_workbench_workflow_submit_substitutes_vars(mocker, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: ${RUN_NAME}\nresources:\n  cloud: ${CLOUD}\nrun: echo ${RUN_NAME}\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_submit_workflow(path, run_id, **kwargs):
+        captured["path"] = path
+        captured["run_id"] = run_id
+        captured["content"] = path.read_text(encoding="utf-8")
+        captured["kwargs"] = kwargs
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow", side_effect=fake_submit_workflow)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "run-1",
+            "--var",
+            "RUN_NAME=demo-run",
+            "--var",
+            "CLOUD=nebius",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["path"] != yaml_path
+    assert captured["run_id"] == "run-1"
+    assert captured["content"] == "name: demo-run\nresources:\n  cloud: nebius\nrun: echo demo-run\n"
+
+
+def test_workbench_workflow_submit_rejects_invalid_var(tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["workbench", "workflow", "submit", str(yaml_path), "--var", "missing-equals"])
+
+    assert result.exit_code == 1
+    assert "Invalid --var format. Use KEY=VALUE." in result.output
+
+
+def test_workbench_workflow_submit_warns_on_unresolved_placeholders(mocker, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: ${RUN_NAME}\nrun: echo ${MISSING}\n", encoding="utf-8")
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "run-1",
+            "--var",
+            "RUN_NAME=demo-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Warning: unresolved placeholders remain: ${MISSING}" in result.output + result.stderr
+
+
 def test_workflow_run_unknown_workflow_errors() -> None:
     result = runner.invoke(app, ["workbench", "workflow", "run", "unknown"])
 
