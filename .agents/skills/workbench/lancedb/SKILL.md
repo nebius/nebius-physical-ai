@@ -1,6 +1,9 @@
 ---
 name: lancedb
 description: Use when working on LanceDB vector storage, BDD100K imports, UDFs, materialized views, CLIP embeddings, or AV/perception data flows.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # LanceDB
@@ -56,3 +59,7 @@ s3://${NPA_S3_BUCKET}/bdd100k-pipeline/<run-id>/lancedb/
 ```
 
 Always use storage endpoint `storage.eu-north1.nebius.cloud`; the uk-south1 default is wrong.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

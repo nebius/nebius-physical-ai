@@ -1,6 +1,9 @@
 ---
 name: workbench-tool
 description: Use when adding, changing, deploying, or calling any NPA workbench tool; captures the API/CLI/SDK/container architecture and data-flow contract.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # Workbench Tool Pattern
@@ -37,3 +40,7 @@ Kubernetes namespace split:
 ## Cross-Tool Data Flow
 
 Tools communicate through S3, never by directly calling each other for data transfer. All tool commands must support `--input-path` and `--output-path` so pipelines can pass S3 URIs across stages.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

@@ -1,6 +1,9 @@
 ---
 name: workflows
 description: Use when working on NPA reference workflow YAMLs, runner scripts, cookbooks, or customer-adaptable pipeline implementations.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # Workflows
@@ -25,3 +28,7 @@ Reference workflows follow one pattern: SkyPilot YAML plus a thin Python runner 
 - YAML guide: `docs/workbench-yaml-guide.md`
 
 `docs/workbench-yaml-guide.md` covers label map injection, env var patterns, service endpoints, and S3 paths.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

@@ -1,6 +1,9 @@
 ---
 name: isaac-lab
 description: Use when working on Isaac Lab RL simulation, deployment, SkyPilot workflows, or customer custom-fork support.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # Isaac Lab
@@ -66,3 +69,7 @@ the operator passes `--replace` and confirms with `--yes` for automation.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
 
 E2E is pending the training command fix tracked by `W9-isaac-lab-e2e-fix`.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

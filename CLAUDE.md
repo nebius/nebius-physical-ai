@@ -6,12 +6,18 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 
 ## Claude Skills
 
+- `.claude/skills/platform/skill-authoring/SKILL.md`: load when creating or editing any SKILL.md; defines the frontmatter contract and required sections.
+- `.claude/skills/platform/skill-curation/SKILL.md`: load during reviews to triage `/tmp/<run-id>/novel-issues.md` and `skill-deltas.md` into permanent skill updates.
 - `.claude/skills/platform/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
-- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews and risk classification.
+- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews, risk classification, and the curation duty performed during review passes.
 - `.claude/skills/workbench/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
 - `.claude/skills/workbench/mjlab/SKILL.md`: load for MJLab locomotion evaluation and SONIC checkpoint scoring.
 - `.claude/skills/workbench/retargeting/SKILL.md`: load for motion retargeting in SONIC locomotion workflows.
 - `.agents/skills/workbench/sim-to-real/SKILL.md`: load for generic sim-to-real data import, Cosmos autoscale, VLM evaluation, and controller-loop workflow planning.
+
+## Self-Improvement Loop
+
+See [docs/agents/loop.md](docs/agents/loop.md) for the full flow. Claude Code is the default reviewer/curator: after 3+ commits, any blocker NOVEL_ISSUE, or any skill staler than 30 days, walk `.agents/runs/<run-id>/skill-deltas.md` and `novel-issues.md` and promote / drop / escalate per `skill-curation`. Record drops in `.agents/curation-log.md`. Flag "missing skill delta" or missing `.agents/runs/<run-id>/` logs per `review-checklist`.
 
 ## Project Instructions
 

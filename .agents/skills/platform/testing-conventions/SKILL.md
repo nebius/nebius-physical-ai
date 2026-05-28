@@ -1,6 +1,9 @@
 ---
 name: testing-conventions
 description: Use before running or interpreting NPA tests, lint checks, or validation reports.
+last_verified: 2026-05-26
+owner: platform
+version: 1.0.0
 ---
 
 # Testing Conventions
@@ -39,3 +42,7 @@ Use evidence-based convergence: report numeric pass counts and exact failure mes
 ## Unit Test Rules
 
 Tests must not hit real infrastructure. Mock SSH, S3, Nebius APIs, GPUs, and network calls at the call site. CLI tests use `typer.testing.CliRunner` against `npa.cli.main:app`.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.

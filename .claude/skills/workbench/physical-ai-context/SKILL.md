@@ -1,6 +1,9 @@
 ---
 name: physical-ai-context
 description: Use for Claude Code reviews that need robotics, simulation, GPU-routing, sim-to-real, or BDD100K pipeline domain context.
+last_verified: 2026-05-26
+owner: workbench
+version: 1.0.0
 ---
 
 # Physical AI Context
@@ -24,3 +27,7 @@ Route SONIC to H100; L40S on-demand capacity is effectively zero for the require
 The BDD100K demo pipeline is the reference end-to-end workflow. `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` is the canonical YAML.
 
 Key claim: one YAML file describes a full Physical AI pipeline; SkyPilot orchestrates it on Nebius; results complete in about 30 minutes on a single H100.
+
+## Changelog
+
+- 2026-05-26: Added frontmatter metadata (last_verified, owner, version) and Changelog section per skill-authoring.
