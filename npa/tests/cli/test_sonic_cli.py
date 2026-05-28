@@ -291,3 +291,355 @@ def test_sonic_container_image_name_resolves() -> None:
     assert container_image_for_tool("sonic", registry="registry.example", tag="0.1.0") == (
         "registry.example/npa-sonic:0.1.0"
     )
+
+
+# ── status.py coverage gaps ───────────────────────────────────────────────
+
+
+def test_sonic_status_serverless_requires_job_id_or_name(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.sonic.helpers.default_workbench_name", return_value=""
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "status",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires --job-id or --name" in result.output
+
+
+def test_sonic_status_serverless_reports_running_job(mocker) -> None:
+    client = mocker.Mock()
+    client.get_job.return_value = SimpleNamespace(
+        id="job-1", name="sonic-job", status="running"
+    )
+    mocker.patch(
+        "npa.cli.workbench.sonic.status.ServerlessClient", return_value=client
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--job-id",
+            "job-1",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = _json_output(result.output)
+    assert payload["status"] == "running"
+    assert payload["job_id"] == "job-1"
+    assert payload["runtime"] == "serverless"
+
+
+def test_sonic_status_serverless_returns_not_found(mocker) -> None:
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    mocker.patch(
+        "npa.cli.workbench.sonic.status.ServerlessClient", return_value=client
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--job-id",
+            "ghost-job",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = _json_output(result.output)
+    assert payload["status"] == "not_found"
+    assert payload["job"] == "ghost-job"
+
+
+def test_sonic_status_serverless_surfaces_client_error(mocker) -> None:
+    from npa.clients.serverless import ServerlessClientError
+
+    client = mocker.Mock()
+    client.get_job.side_effect = ServerlessClientError("api down")
+    mocker.patch(
+        "npa.cli.workbench.sonic.status.ServerlessClient", return_value=client
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            "project-1",
+            "--job-id",
+            "job-1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Serverless Job lookup failed" in result.output
+
+
+def test_sonic_status_configured_vm_reports_workbench_state(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.sonic.status.list_projects",
+        return_value={
+            "proj": {
+                "workbenches": {
+                    "sonic-wb": {
+                        "tool": "sonic",
+                        "runtime": "vm",
+                        "mode": "sim",
+                        "checkpoint_source": "hf",
+                        "checkpoint_path": "nvidia/GEAR-SONIC:sonic_release/last.pt",
+                        "zmq_port": 5556,
+                        "port": 5557,
+                        "build_state": "ready",
+                        "last_smoke_status": "passed",
+                        "app_status": "running",
+                    }
+                }
+            }
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic-wb",
+            "status",
+            "--runtime",
+            "vm",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = _json_output(result.output)
+    assert payload["project"] == "proj"
+    assert payload["workbench"] == "sonic-wb"
+    assert payload["runtime"] == "vm"
+    assert payload["mode"] == "sim"
+    assert payload["ports"] == {"zmq": 5556, "debug": 5557}
+    assert payload["build_state"] == "ready"
+    assert payload["app_status"] == "running"
+
+
+def test_sonic_status_configured_rejects_unknown_workbench(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.sonic.status.list_projects",
+        return_value={"proj": {"workbenches": {}}},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "missing",
+            "status",
+            "--runtime",
+            "vm",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must reference a configured SONIC workbench" in result.output
+
+
+# ── sonic deploy: additional coverage for serverless validation + plan ──
+
+
+def test_sonic_deploy_rejects_invalid_output_path() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--output-path",
+            "not-an-s3-uri",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "output" in result.output.lower() or "s3" in result.output.lower()
+
+
+def test_sonic_deploy_vm_emits_plan_dict() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic-wb",
+            "deploy",
+            "--runtime",
+            "vm",
+            "--mode",
+            "sim",
+            "--default",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result.output)
+    assert payload["status"] == "planned"
+    assert payload["runtime"] == "vm"
+    assert payload["mode"] == "sim"
+    assert payload["default"] is True
+    assert payload["next"].startswith("npa workbench sonic serve")
+    assert payload["port"] == 5557
+    assert payload["zmq_port"] == 5556
+
+
+def test_sonic_deploy_serverless_with_valid_output_path() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "-p",
+            "proj",
+            "-n",
+            "sonic-wb",
+            "deploy",
+            "--runtime",
+            "serverless",
+            "--output-path",
+            "s3://bucket/sonic/",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result.output)
+    assert payload["runtime"] == "serverless"
+    assert payload["output_path"] == "s3://bucket/sonic/"
+
+
+# ── sonic serve: additional coverage ─────────────────────────────────────
+
+
+def test_sonic_serve_requires_zmq_host_for_zmq_input() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "serve",
+            "--input-type",
+            "zmq",
+            "--zmq-host",
+            "",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--zmq-host is required" in result.output
+
+
+def test_sonic_serve_serverless_requires_output_path() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "serve",
+            "--runtime",
+            "serverless",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "requires --output-path" in result.output
+
+
+def test_sonic_serve_serverless_rejects_bad_output_path() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "serve",
+            "--runtime",
+            "serverless",
+            "--output-path",
+            "not-s3",
+        ],
+    )
+    assert result.exit_code == 1
+
+
+def test_sonic_serve_emits_endpoint_and_container_command() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "serve",
+            "--runtime",
+            "container",
+            "--mode",
+            "sim",
+            "--zmq-host",
+            "10.0.0.5",
+            "--zmq-port",
+            "5560",
+            "--realtime-debug-port",
+            "5570",
+            "--smoke",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result.output)
+    assert payload["status"] == "smoke-ready"
+    assert payload["endpoint"] == "tcp://10.0.0.5:5560"
+    assert "5560:5560" in payload["container_command"]
+    assert payload["realtime_debug_port"] == 5570
