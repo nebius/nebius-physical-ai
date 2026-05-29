@@ -16,6 +16,11 @@ envs:
   IMPORTED_DATA_URI: s3://your-bucket-name/sim-to-real/dev/imported/
   VLM_EVAL_OUTPUT_URI: s3://your-bucket-name/sim-to-real/dev/vlm-eval/
   VLM_EVAL_TASK: sim-to-real
+  VLM_EVAL_BACKEND: self-hosted
+  VLM_EVAL_MODEL: Qwen/Qwen2-VL-7B-Instruct
+  VLM_EVAL_ENDPOINT_URL: http://npa-vlm-eval.workbench.svc.cluster.local:8000/v1
+  VLM_EVAL_FRAME_SELECTION: keyframes
+  VLM_EVAL_MAX_FRAMES: '4'
   DATA_IMPORT_LIMIT: '0'
   COSMOS_MIN_REPLICAS: '1'
   COSMOS_MAX_REPLICAS: '4'
@@ -44,5 +49,10 @@ run: |
     --input-path "${IMPORTED_DATA_URI}" \
     --output-path "${VLM_EVAL_OUTPUT_URI}" \
     --task "${VLM_EVAL_TASK}" \
+    --backend "${VLM_EVAL_BACKEND}" \
+    --model "${VLM_EVAL_MODEL}" \
+    --endpoint-url "${VLM_EVAL_ENDPOINT_URL}" \
+    --frame-selection "${VLM_EVAL_FRAME_SELECTION}" \
+    --max-frames "${VLM_EVAL_MAX_FRAMES}" \
     --success-threshold "${VLM_SUCCESS_THRESHOLD}" \
     --output json

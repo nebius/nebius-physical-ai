@@ -86,6 +86,8 @@ def test_e2e_data_sync_and_vlm_eval_write_real_s3_artifacts(
             eval_uri,
             "--task",
             "sim-to-real",
+            "--backend",
+            "stub",
             "--score",
             "0.91",
             "--success-threshold",
