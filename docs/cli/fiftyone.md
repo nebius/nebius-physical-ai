@@ -60,6 +60,9 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 ```bash
 npa workbench fiftyone --help
 npa workbench fiftyone ensure-ingress --help
+npa workbench fiftyone launch --address 0.0.0.0 --port 5151
 ```
+
+`--address 0.0.0.0` binds the FiftyOne App for public endpoint use; the app is unauthenticated, so only expose trusted datasets.
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `fiftyone`.
