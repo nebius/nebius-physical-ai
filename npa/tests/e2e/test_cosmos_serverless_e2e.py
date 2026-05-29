@@ -34,6 +34,10 @@ from ._serverless_fallback import FallbackChain
 pytestmark = pytest.mark.e2e_serverless
 COSMOS_E2E_INFER_MAX_WAIT = 2400.0
 COSMOS_E2E_INFER_POLL_INTERVAL = 30.0
+DRY_RUN_ENABLED = os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
+    "DRY_RUN",
+    "",
+).lower() in {"1", "true", "yes"}
 
 
 def _skip_if_not_e2e() -> None:
@@ -396,6 +400,44 @@ def test_e2e_cli_deploy_dry_run_uses_selected_project(cosmos_endpoint: dict[str,
     assert result.returncode == 0, result.stderr + result.stdout
     assert '"status": "dry_run"' in result.stdout
     assert cosmos_endpoint["project_id"] in result.stdout
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(DRY_RUN_ENABLED, reason="Cosmos autoscale e2e configures a live endpoint")
+def test_e2e_cli_autoscale_configures_running_endpoint(cosmos_endpoint: dict[str, str]) -> None:
+    result = _run_npa(
+        [
+            "workbench",
+            "cosmos",
+            "-p",
+            cosmos_endpoint["project_key"],
+            "-n",
+            cosmos_endpoint["name"],
+            "autoscale",
+            "--min-replicas",
+            "0",
+            "--max-replicas",
+            "2",
+            "--target-concurrency",
+            "4",
+            "--output",
+            "json",
+        ],
+        timeout=180,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "configured"
+    assert payload["runtime"] == "serverless"
+    assert payload["serverless_project_id"] == cosmos_endpoint["project_id"]
+    assert payload["endpoint"] in {
+        cosmos_endpoint["endpoint_id"],
+        cosmos_endpoint["endpoint_name"],
+    }
+    assert payload["min_replicas"] == 0
+    assert payload["max_replicas"] == 2
+    assert payload["target_concurrency"] == 4
 
 
 def test_e2e_force_ner_detection() -> None:
