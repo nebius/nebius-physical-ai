@@ -10,6 +10,7 @@ Multi-stage training workflow orchestration.
 Options
 --help  Show this message and exit.
 Commands
+submit  Submit a SkyPilot workflow YAML through the NPA controller convention.
 run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
 logs  Show logs for a specific stage of a workflow run.
@@ -27,6 +28,7 @@ distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 
 | Command | Description |
 | --- | --- |
+| `submit` | Submit a SkyPilot workflow YAML through the NPA controller convention. |
 | `run` | Run a named workflow end-to-end. |
 | `status` | Check the status of a workflow run. |
 | `logs` | Show logs for a specific stage of a workflow run. |
@@ -37,8 +39,7 @@ distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 
 ```bash
 npa workbench workflow --help
-npa workbench workflow run --help
+npa workbench workflow submit --help
 ```
 
-Regenerate this page with `bash scripts/build_docs.sh` after changing
-`workbench workflow`.
+Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.
