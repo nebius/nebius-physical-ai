@@ -44,6 +44,12 @@ adapter = [
 groot = [
     "nvidia-gr00t-sdk==0.1.0",
 ]
+sonic = [
+    "torch>=2.0",
+    "onnx>=1.16",
+    "onnxscript>=0.5",
+    "onnxruntime>=1.18",
+]
 
 [dependency-groups]
 dev = [

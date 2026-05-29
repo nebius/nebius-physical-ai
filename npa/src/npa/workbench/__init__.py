@@ -14,6 +14,7 @@ from npa.workbench import (
     lerobot,
     mjlab,
     retargeting,
+    sonic,
     vlm_eval,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "lerobot",
     "mjlab",
     "retargeting",
+    "sonic",
     "vlm_eval",
 ]
