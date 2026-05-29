@@ -80,7 +80,7 @@ def test_workbench_public_surface() -> None:
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
         "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
-        "vlm_eval": ["evaluate_stub", "write_result", "result_uri_for"],
+        "vlm_eval": ["evaluate_stub", "evaluate_vlm", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
         tool_module = getattr(workbench, tool)
