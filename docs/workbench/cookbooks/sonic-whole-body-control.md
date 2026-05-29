@@ -97,6 +97,35 @@ expects these artifacts:
 
 Training uses `sonic_release/last.pt` by default.
 
+## ONNX Export
+
+`npa workbench sonic export` converts a trained locomotion policy checkpoint to
+a deterministic-action ONNX graph:
+
+```bash
+npa workbench sonic export \
+  --checkpoint sonic_release/last.pt \
+  --output exported/sonic_policy.onnx
+```
+
+The command exports the mean action path. Defaults are `--opset 17`,
+`--axes dynamic`, `--normalize baked`, and `--metadata sidecar`. Use
+`--normalize sidecar` when the consumer will apply observation statistics, or
+`--normalize none` when the input tensor is already in policy space. Use
+`--metadata embedded` to write the same metadata into ONNX `metadata_props`
+instead of a sidecar JSON file.
+
+Provide `--config`, `--obs-spec`, and `--action-spec` when the checkpoint does
+not carry enough layout information. The metadata records observation/action
+ordering, shapes, units when supplied, normalization stats when not baked,
+opset, axis mode, and control dt when available.
+
+The matching SkyPilot template is
+`npa/workflows/workbench/skypilot/sonic-export.yaml` (`name: sonic-export`) and
+uses the same settings through `SONIC_OPSET`, `SONIC_AXES`,
+`SONIC_NORMALIZE`, `SONIC_METADATA`, `SONIC_OBS_SPEC`, `SONIC_ACTION_SPEC`, and
+`SONIC_CONFIG`.
+
 ## Relationship To GR00T
 
 NVIDIA's workflow describes GR00T PolicyServer output feeding SONIC decoder and
