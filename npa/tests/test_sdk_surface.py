@@ -26,6 +26,7 @@ def _public_modules() -> list[ModuleType]:
         workbench.lerobot,
         workbench.mjlab,
         workbench.retargeting,
+        workbench.sonic,
         workbench.vlm_eval,
     ]
 
@@ -80,6 +81,7 @@ def test_workbench_public_surface() -> None:
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
         "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
+        "sonic": ["export_onnx", "validate_onnx_parity", "load_export_metadata"],
         "vlm_eval": ["evaluate_stub", "evaluate_vlm", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
@@ -101,6 +103,12 @@ def test_sdk_compatibility_namespace_exposes_lancedb_import() -> None:
     from npa.sdk.workbench.lancedb import import_bdd100k
 
     assert callable(import_bdd100k)
+
+
+def test_sdk_compatibility_namespace_exposes_sonic_export() -> None:
+    from npa.sdk.workbench.sonic import export_onnx
+
+    assert callable(export_onnx)
 
 
 def test_public_functions_have_docstrings_and_no_typer_signature_leaks() -> None:

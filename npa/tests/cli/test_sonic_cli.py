@@ -46,12 +46,104 @@ def test_sonic_registered_under_workbench() -> None:
     assert "sonic" in result.output
 
 
-@pytest.mark.parametrize("command", ["deploy", "train", "serve", "status", "list"])
+@pytest.mark.parametrize("command", ["deploy", "train", "export", "serve", "status", "list"])
 def test_sonic_command_help(command: str) -> None:
     result = runner.invoke(app, ["workbench", "sonic", command, "--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+def test_sonic_export_help_documents_defaults() -> None:
+    result = runner.invoke(app, ["workbench", "sonic", "export", "--help"])
+
+    assert result.exit_code == 0
+    assert "--checkpoint" in result.output
+    assert "--output" in result.output
+    assert "[default: 17]" in result.output
+    assert "[default: dynamic]" in result.output
+    assert "[default: baked]" in result.output
+    assert "[default: sidecar]" in result.output
+
+
+def test_sonic_export_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
+    from npa.workbench.sonic import SonicExportResult
+
+    checkpoint = tmp_path / "policy.pt"
+    out = tmp_path / "policy.onnx"
+    obs_spec = tmp_path / "obs.yaml"
+    action_spec = tmp_path / "action.yaml"
+    config = tmp_path / "config.yaml"
+    checkpoint.write_bytes(b"checkpoint")
+    obs_spec.write_text("dim: 4\n", encoding="utf-8")
+    action_spec.write_text("dim: 2\n", encoding="utf-8")
+    config.write_text("control_dt: 0.02\n", encoding="utf-8")
+    export = mocker.patch(
+        "npa.cli.workbench.sonic.export.export_onnx",
+        return_value=SonicExportResult(
+            status="exported",
+            checkpoint=str(checkpoint),
+            onnx_path=str(out),
+            metadata_path=str(out.with_suffix(".metadata.json")),
+            opset=18,
+            axes="static",
+            normalize="sidecar",
+            metadata="embedded",
+            input_name="obs",
+            output_name="action",
+            obs_dim=4,
+            action_dim=2,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "export",
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out),
+            "--opset",
+            "18",
+            "--axes",
+            "static",
+            "--normalize",
+            "sidecar",
+            "--metadata",
+            "embedded",
+            "--obs-spec",
+            str(obs_spec),
+            "--action-spec",
+            str(action_spec),
+            "--config",
+            str(config),
+            "--verify",
+            "--parity-atol",
+            "0.0002",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = _json_output(result.output)
+    assert payload["status"] == "exported"
+    export.assert_called_once_with(
+        checkpoint=str(checkpoint),
+        output=str(out),
+        opset=18,
+        axes="static",
+        normalize="sidecar",
+        metadata="embedded",
+        obs_spec=str(obs_spec),
+        action_spec=str(action_spec),
+        config=str(config),
+        verify=True,
+        parity_atol=0.0002,
+    )
 
 
 def test_sonic_deploy_runtime_validation() -> None:

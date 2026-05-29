@@ -11,6 +11,9 @@ PIPELINE_YAML = (
 )
 RETARGETING_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "retargeting.yaml"
 MJLAB_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "mjlab-eval.yaml"
+SONIC_EXPORT_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export.yaml"
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -51,6 +54,7 @@ def test_sonic_locomotion_pipeline_routes_gpu_stages_to_h100() -> None:
 def test_tool_yamls_match_registered_cli_surfaces() -> None:
     retarget_docs = _docs(RETARGETING_YAML)
     mjlab_docs = _docs(MJLAB_YAML)
+    sonic_export_docs = _docs(SONIC_EXPORT_YAML)
 
     assert retarget_docs[0] == {"name": "retargeting", "execution": "serial"}
     assert retarget_docs[1]["name"] == "retarget-motion"
@@ -61,6 +65,15 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
     assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
     assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
+
+    assert sonic_export_docs[0] == {"name": "sonic-export", "execution": "serial"}
+    assert sonic_export_docs[1]["name"] == "sonic-export-onnx"
+    assert "npa workbench sonic export" in sonic_export_docs[1]["run"]
+    assert sonic_export_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sonic_export_docs[1]["envs"]["SONIC_OPSET"] == "17"
+    assert sonic_export_docs[1]["envs"]["SONIC_AXES"] == "dynamic"
+    assert sonic_export_docs[1]["envs"]["SONIC_NORMALIZE"] == "baked"
+    assert sonic_export_docs[1]["envs"]["SONIC_METADATA"] == "sidecar"
 
 
 def test_sonic_locomotion_assets_do_not_add_python_runner() -> None:

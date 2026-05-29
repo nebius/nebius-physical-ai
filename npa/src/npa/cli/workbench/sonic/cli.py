@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import typer
 
-from npa.cli.workbench.sonic import deploy, list as list_mod, serve, status, train
+from npa.cli.workbench.sonic import (
+    deploy,
+    export as export_mod,
+    list as list_mod,
+    serve,
+    status,
+    train,
+)
 from npa.cli.workbench.sonic.helpers import set_context
 
 app = typer.Typer(
@@ -25,6 +32,7 @@ def main(
 
 app.command("deploy")(deploy.deploy_cmd)
 app.command("train")(train.train_cmd)
+app.command("export")(export_mod.export_cmd)
 app.command("serve")(serve.serve_cmd)
 app.command("status")(status.status_cmd)
 app.command("list")(list_mod.list_cmd)
