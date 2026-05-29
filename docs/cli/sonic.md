@@ -14,6 +14,7 @@ Options
 Commands
 deploy  Prepare or plan a SONIC runtime.
 train  Run SONIC Isaac Lab training or smoke validation.
+export  Export a SONIC locomotion policy to deterministic-action ONNX.
 serve  Launch or describe a SONIC serving path.
 status  Inspect SONIC runtime state.
 list  List configured SONIC workbenches and default model artifacts.
@@ -33,6 +34,7 @@ list  List configured SONIC workbenches and default model artifacts.
 | --- | --- |
 | `deploy` | Prepare or plan a SONIC runtime. |
 | `train` | Run SONIC Isaac Lab training or smoke validation. |
+| `export` | Export a SONIC locomotion policy to deterministic-action ONNX. |
 | `serve` | Launch or describe a SONIC serving path. |
 | `status` | Inspect SONIC runtime state. |
 | `list` | List configured SONIC workbenches and default model artifacts. |

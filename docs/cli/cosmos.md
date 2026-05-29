@@ -14,6 +14,7 @@ Options
 Commands
 ensure-ingress  Ensure public ingress for the saved Cosmos BYOVM alias.
 register-byovm  Register an existing VM as a Cosmos BYOVM alias and ensure ingress.
+autoscale  Configure Cosmos serverless endpoint autoscaling.
 list  List configured Cosmos workbenches.
 cleanup-partial  Clean up orphaned Terraform resources from an interrupted Cosmos deploy.
 deploy  Deploy or destroy a Cosmos model serving backend.
@@ -42,6 +43,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | --- | --- |
 | `ensure-ingress` | Ensure public ingress for the saved Cosmos BYOVM alias. |
 | `register-byovm` | Register an existing VM as a Cosmos BYOVM alias and ensure ingress. |
+| `autoscale` | Configure Cosmos serverless endpoint autoscaling. |
 | `list` | List configured Cosmos workbenches. |
 | `cleanup-partial` | Clean up orphaned Terraform resources from an interrupted Cosmos deploy. |
 | `deploy` | Deploy or destroy a Cosmos model serving backend. |

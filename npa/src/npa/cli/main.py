@@ -24,24 +24,32 @@ from npa.clients.serverless import ServerlessClientError
 
 app = typer.Typer(
     name="npa",
-    help="Nebius Physical AI workbench CLI.",
+    help=(
+        "Nebius Physical AI workbench CLI. "
+        "Start with `npa workbench --help` for Workbench tools and workflows."
+    ),
     no_args_is_help=True,
 )
-app.add_typer(workbench_app, name="workbench")
+app.add_typer(
+    workbench_app,
+    name="workbench",
+    short_help="Primary Workbench solution: tools and workflows.",
+    rich_help_panel="Primary solution",
+)
 
 # FIXME(solutions): These platform-level command groups predate the solution
 # namespace model. They remain top-level for compatibility in this PR and should
 # migrate to appropriate namespaces in a future change. New commands should be
 # registered under a solution namespace, such as `npa workbench ...`, instead of
 # adding more top-level registrations here.
-app.add_typer(adapter_app, name="adapter")
-app.add_typer(cluster_app, name="cluster")
-app.add_typer(convert_app, name="convert")
-app.add_typer(demo_app, name="demo")
-app.add_typer(network_app, name="network")
-app.add_typer(rerun_app, name="rerun")
-app.add_typer(skypilot_app, name="skypilot")
-app.add_typer(viz_app, name="viz")
+app.add_typer(adapter_app, name="adapter", rich_help_panel="Platform utilities")
+app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
+app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
+app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
+app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
+app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
+app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
+app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
@@ -90,13 +98,21 @@ def main(
     """Nebius Physical AI workbench CLI."""
 
 
-@app.command("configure", help="Show credential and config setup guidance.")
+@app.command(
+    "configure",
+    help="Show credential and config setup guidance.",
+    rich_help_panel="Setup",
+)
 def configure() -> None:
     """Show credential and config setup guidance."""
     typer.echo(_SETUP_GUIDANCE)
 
 
-@app.command("init", help="Show credential and config setup guidance.")
+@app.command(
+    "init",
+    help="Show credential and config setup guidance.",
+    rich_help_panel="Setup",
+)
 def init() -> None:
     """Show credential and config setup guidance."""
     configure()
