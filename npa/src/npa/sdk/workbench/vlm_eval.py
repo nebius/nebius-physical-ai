@@ -1,11 +1,12 @@
-"""SDK wrappers for the Workbench VLM eval stub CLI."""
+"""SDK wrappers for the Workbench VLM eval CLI."""
 
 from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
 
-run = make_cli_wrapper("npa.cli.workbench.vlm_eval", "run_cmd", "Run stub VLM evaluation.")
+run = make_cli_wrapper("npa.cli.workbench.vlm_eval", "run_cmd", "Run VLM evaluation.")
 status = make_cli_wrapper("npa.cli.workbench.vlm_eval", "status_cmd", "Show VLM eval status.")
 list = make_cli_wrapper("npa.cli.workbench.vlm_eval", "list_cmd", "List VLM eval backends.")
+workflow = make_cli_wrapper("npa.cli.workbench.vlm_eval", "workflow_cmd", "Show VLM eval workflow.")
 
-__all__ = ["list", "run", "status"]
+__all__ = ["list", "run", "status", "workflow"]
