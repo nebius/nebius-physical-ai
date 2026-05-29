@@ -23,4 +23,13 @@ jobs:
       - name: Run gitleaks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gitleaks detect --source . --config .gitleaks.toml --redact --no-banner
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            scan_range="${{ github.event.before }}..HEAD"
+          else
+            scan_range="origin/main..HEAD"
+          fi
+
+          gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="${scan_range}"
