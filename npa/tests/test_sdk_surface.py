@@ -82,7 +82,7 @@ def test_workbench_public_surface() -> None:
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
         "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
         "sonic": ["export_onnx", "validate_onnx_parity", "load_export_metadata"],
-        "vlm_eval": ["evaluate_stub", "write_result", "result_uri_for"],
+        "vlm_eval": ["evaluate_stub", "evaluate_vlm", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
         tool_module = getattr(workbench, tool)
