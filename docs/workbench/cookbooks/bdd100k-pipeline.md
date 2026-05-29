@@ -11,13 +11,14 @@ The workflow composes the six BDD100K reproduction stages:
 4. Create the three failure-mode materialized views with `POST /create-mv`.
 5. Train one detector per failure-mode view with `POST /train`.
 6. Evaluate each trained detector with `POST /eval`.
+7. Launch a FiftyOne App on `--address 0.0.0.0 --port 5151` with the SkyPilot port exposed for public review.
 
 SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but not
 mixed dependency graphs in one YAML. This pipeline therefore serializes the
 three training tasks and three evaluation tasks. The logical DAG is still:
 
 ```text
-ingest -> CPU backfill -> CLIP backfill -> materialized views -> training x3 -> eval x3
+ingest -> CPU backfill -> CLIP backfill -> materialized views -> training x3 -> eval x3 -> FiftyOne app
 ```
 
 ## Dry Validation
@@ -71,6 +72,9 @@ submission:
 
 - `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>`
 - `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>`
+- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>`
+
+The final FiftyOne task exposes port `5151` through SkyPilot. The app does not add authentication; restrict the run inputs to datasets that are safe to show publicly and use `sky status --endpoint 5151 <cluster>` to resolve the public URL.
 
 ## Output Layout
 

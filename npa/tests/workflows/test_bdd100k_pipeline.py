@@ -27,8 +27,9 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-rider",
     "bdd100k-eval-nighttime",
     "bdd100k-eval-distant",
+    "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "d3019a472c96105e6e11eb76cd27dcd58065ac5c6da906ad0288775a81d204b4"
+EXPECTED_YAML_SHA256 = "54909c28411d6ba27dbcc72c8c471c6e47385dc5da2ac8f09a78ee3be1a49cfa"
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
     "rider": 1,
@@ -81,6 +82,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         "materialized_views": 1,
         "training": 3,
         "evaluation": 3,
+        "fiftyone_app": 1,
     }
     assert len(tasks) == sum(logical_stage_counts.values())
 
@@ -112,6 +114,17 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         assert resources["accelerators"] == "H100:1"
         assert resources["cpus"] == 8
         assert resources["memory"] == 32
+
+    fiftyone = by_name["bdd100k-fiftyone-app"]
+    assert fiftyone["resources"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": 16,
+        "ports": 5151,
+        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>",
+    }
+    assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_ADDRESS"] == "0.0.0.0"
+    assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_PORT"] == "5151"
 
 
 def test_bdd100k_pipeline_wrapper_renders_run_id_and_submits_in_order(monkeypatch, tmp_path, capsys) -> None:

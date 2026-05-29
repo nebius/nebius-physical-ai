@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from npa._sdk import make_cli_wrapper
+from typing import Any
+
+from npa._sdk import call_cli_callback, make_cli_wrapper
+
+DEFAULT_APP_ADDRESS = "0.0.0.0"
+DEFAULT_APP_PORT = 5151
 
 ensure_ingress = make_cli_wrapper(
     "npa.cli.fiftyone", "ensure_ingress_cmd", "Ensure ingress for a FiftyOne workbench."
@@ -14,7 +19,25 @@ list = make_cli_wrapper("npa.cli.fiftyone", "list_cmd", "List FiftyOne workbench
 deploy = make_cli_wrapper(
     "npa.cli.fiftyone", "deploy_cmd", "Deploy a FiftyOne workbench."
 )
-launch = make_cli_wrapper("npa.cli.fiftyone", "launch_cmd", "Launch FiftyOne.")
+
+
+def launch(
+    *,
+    port: int = DEFAULT_APP_PORT,
+    address: str = DEFAULT_APP_ADDRESS,
+    output: str = "text",
+) -> Any:
+    """Launch FiftyOne with a configurable bind address and port."""
+    from npa.cli.fiftyone import launch_cmd
+
+    return call_cli_callback(
+        launch_cmd,
+        port=port,
+        address=address,
+        output=output,
+    )
+
+
 curate = make_cli_wrapper(
     "npa.cli.fiftyone", "curate_cmd", "Curate and export a LeRobotDataset with FiftyOne."
 )
