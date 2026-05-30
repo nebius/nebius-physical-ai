@@ -1,0 +1,39 @@
+{
+  "format": "npa_vlm_eval_benchmark_v1",
+  "description": "Illustrative labeled rollout set for validating the vlm-eval benchmark methodology.",
+  "rollout_base_path": "rollouts",
+  "rubrics": {
+    "default": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
+    "strict": "Score only clear, stable task completion as a pass. Penalize near misses, ambiguous end states, unsafe motion, and incomplete placement."
+  },
+  "items": [
+    {
+      "id": "place-block-clear-pass",
+      "rollout": "place-block-clear-pass",
+      "task": "Place the block in the marked target zone.",
+      "expected_label": "pass",
+      "fixture_score": 0.93
+    },
+    {
+      "id": "align-tool-pass",
+      "rollout": "align-tool-pass",
+      "task": "Align the tool with the guide rail.",
+      "expected_label": "pass",
+      "fixture_score": 0.84
+    },
+    {
+      "id": "missed-target-fail",
+      "rollout": "missed-target-fail",
+      "task": "Place the block in the marked target zone.",
+      "expected_label": "fail",
+      "fixture_score": 0.65
+    },
+    {
+      "id": "unstable-end-state-fail",
+      "rollout": "unstable-end-state-fail",
+      "task": "Stabilize the object at the goal pose.",
+      "expected_label": "fail",
+      "fixture_score": 0.22
+    }
+  ]
+}
