@@ -1,0 +1,81 @@
+# Sweep a labeled rollout set through vlm-eval and rank threshold/rubric/model configs.
+name: vlm-eval-benchmark
+execution: serial
+---
+name: vlm-eval-benchmark-self-hosted
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 80
+  # Replace <your-registry-id> and <vlm-image-tag> with an image that includes
+  # the npa CLI plus a CUDA/PyTorch stack suitable for vLLM.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-vlm:<vlm-image-tag>"
+envs:
+  VLM_BENCHMARK_DATASET_URI: "s3://<your-bucket-name>/vlm-eval/benchmark/benchmark.json"
+  VLM_EVAL_BENCHMARK_OUTPUT_URI: "s3://<your-bucket-name>/vlm-eval/benchmark/results/"
+  VLM_BACKEND: "self-hosted"
+  VLM_MODEL: "Qwen/Qwen2-VL-7B-Instruct"
+  VLM_MODELS: "Qwen/Qwen2-VL-7B-Instruct"
+  VLM_RUBRICS: "default,strict"
+  VLM_THRESHOLDS: "0.5,0.8,0.9"
+  VLM_ENDPOINT_URL: "http://127.0.0.1:8000/v1"
+  VLM_FRAME_SELECTION: "keyframes"
+  VLM_MAX_FRAMES: "4"
+  VLM_TRUST_REMOTE_CODE: "1"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+  python3 - <<'PY'
+  import importlib.util
+  import subprocess
+  import sys
+
+  if importlib.util.find_spec("vllm") is None:
+      subprocess.check_call([sys.executable, "-m", "pip", "install", "vllm>=0.8.5"])
+  PY
+run: |
+  set -euo pipefail
+
+  trust_args=()
+  if [[ "${VLM_TRUST_REMOTE_CODE}" == "1" ]]; then
+    trust_args+=(--trust-remote-code)
+  fi
+
+  python3 -m vllm.entrypoints.openai.api_server \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --model "${VLM_MODEL}" \
+    --served-model-name "${VLM_MODEL}" \
+    "${trust_args[@]}" \
+    > vlm-server.log 2>&1 &
+  vlm_pid=$!
+  trap 'kill "${vlm_pid}" 2>/dev/null || true' EXIT
+
+  for _attempt in $(seq 1 120); do
+    if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "${vlm_pid}" 2>/dev/null; then
+      tail -200 vlm-server.log >&2 || true
+      exit 1
+    fi
+    sleep 5
+  done
+  curl -fsS http://127.0.0.1:8000/health >/dev/null
+
+  npa workbench vlm-eval benchmark \
+    --dataset "${VLM_BENCHMARK_DATASET_URI}" \
+    --output "${VLM_EVAL_BENCHMARK_OUTPUT_URI}" \
+    --backend "${VLM_BACKEND}" \
+    --models "${VLM_MODELS}" \
+    --endpoint-url "${VLM_ENDPOINT_URL}" \
+    --frame-selection "${VLM_FRAME_SELECTION}" \
+    --max-frames "${VLM_MAX_FRAMES}" \
+    --rubrics "${VLM_RUBRICS}" \
+    --thresholds "${VLM_THRESHOLDS}" \
+    --format json
