@@ -145,7 +145,9 @@ def export_onnx(
     forward_model.eval()
     with torch.no_grad():
         action_sample = forward_model(sample)
-    action_dim = _resolve_action_dim(action_spec_payload, export_policy_model, action_sample)
+    action_dim = _resolve_action_dim(
+        action_spec_payload, export_policy_model, action_sample
+    )
 
     dynamic_axes = (
         {DEFAULT_INPUT_NAME: {0: "batch"}, DEFAULT_OUTPUT_NAME: {0: "batch"}}
@@ -163,7 +165,11 @@ def export_onnx(
             opset_version=opset,
         )
 
-    control_dt_value = control_dt if control_dt is not None else _control_dt(policy_model, config_payload)
+    control_dt_value = (
+        control_dt
+        if control_dt is not None
+        else _control_dt(policy_model, config_payload)
+    )
     metadata_payload = _build_metadata(
         checkpoint=checkpoint,
         onnx_path=str(output_path),
@@ -246,7 +252,9 @@ def validate_onnx_parity(
         reference = reference_model(sample).detach().cpu().numpy()
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    output = session.run([DEFAULT_OUTPUT_NAME], {DEFAULT_INPUT_NAME: sample.cpu().numpy()})[0]
+    output = session.run(
+        [DEFAULT_OUTPUT_NAME], {DEFAULT_INPUT_NAME: sample.cpu().numpy()}
+    )[0]
     diff = abs(reference - output)
     max_diff = float(diff.max()) if diff.size else 0.0
     mean_diff = float(diff.mean()) if diff.size else 0.0
@@ -381,7 +389,9 @@ def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:
         algo_cfg = config.get("algo")
         if isinstance(algo_cfg, dict):
             algo_config = algo_cfg.get("config")
-            if isinstance(algo_config, dict) and isinstance(algo_config.get("actor"), dict):
+            if isinstance(algo_config, dict) and isinstance(
+                algo_config.get("actor"), dict
+            ):
                 actor_cfg = algo_config["actor"]
         if isinstance(actor_cfg, dict):
             target = actor_cfg.get("_target_")
@@ -395,7 +405,9 @@ def _instantiate_policy_from_config(config: dict[str, Any]) -> Any | None:
     try:
         return cls(**kwargs)
     except TypeError as exc:
-        raise SonicExportError(f"failed to instantiate policy class {target}: {exc}") from exc
+        raise SonicExportError(
+            f"failed to instantiate policy class {target}: {exc}"
+        ) from exc
 
 
 def _import_object(target: str) -> Any:
@@ -405,14 +417,18 @@ def _import_object(target: str) -> Any:
     try:
         module = import_module(module_name)
     except ImportError as exc:
-        raise SonicExportError(f"failed to import policy module {module_name}: {exc}") from exc
+        raise SonicExportError(
+            f"failed to import policy module {module_name}: {exc}"
+        ) from exc
     try:
         return getattr(module, attr_name)
     except AttributeError as exc:
         raise SonicExportError(f"policy class not found: {target}") from exc
 
 
-def _state_dict_from_checkpoint(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+def _state_dict_from_checkpoint(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
     for key in (
         "actor_model_state_dict",
         "policy_state_dict",
@@ -473,7 +489,11 @@ def _coerce_spec(
     attr_names: tuple[str, ...],
     default_name: str,
 ) -> dict[str, Any]:
-    raw = explicit or _first_mapping(config, keys) or _first_attr_mapping(policy, attr_names)
+    raw = (
+        explicit
+        or _first_mapping(config, keys)
+        or _first_attr_mapping(policy, attr_names)
+    )
     if not raw:
         return {"name": default_name}
     if "fields" in raw or "shape" in raw or "dim" in raw:
@@ -682,7 +702,9 @@ def _select_policy_call(policy: Any, sample: Any, torch: Any) -> str:
         try:
             test_policy = copy.deepcopy(policy).to("cpu")
             test_policy.eval()
-            wrapper = _make_policy_forward(test_policy, call_kind=kind, normalization=None)
+            wrapper = _make_policy_forward(
+                test_policy, call_kind=kind, normalization=None
+            )
             with torch.no_grad():
                 output = wrapper(sample)
             if getattr(output, "shape", None) is not None and output.shape[-1] > 0:
@@ -837,9 +859,13 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+from npa.workbench.sonic.eval import evaluate_onnx_policy  # noqa: E402
+
+
 __all__ = [
     "SonicExportResult",
     "SonicParityResult",
+    "evaluate_onnx_policy",
     "export_onnx",
     "load_export_metadata",
     "validate_onnx_parity",

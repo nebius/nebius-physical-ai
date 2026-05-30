@@ -7,17 +7,31 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 PIPELINE_YAML = (
-    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-locomotion-finetuning.yaml"
+    ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "sonic-locomotion-finetuning.yaml"
 )
-RETARGETING_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "retargeting.yaml"
+RETARGETING_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "retargeting.yaml"
+)
 MJLAB_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "mjlab-eval.yaml"
 SONIC_EXPORT_YAML = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export.yaml"
 )
+SONIC_EVAL_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-eval.yaml"
+)
 
 
 def _docs(path: Path) -> list[dict]:
-    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+    return [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
 
 
 def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> None:
@@ -55,6 +69,7 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     retarget_docs = _docs(RETARGETING_YAML)
     mjlab_docs = _docs(MJLAB_YAML)
     sonic_export_docs = _docs(SONIC_EXPORT_YAML)
+    sonic_eval_docs = _docs(SONIC_EVAL_YAML)
 
     assert retarget_docs[0] == {"name": "retargeting", "execution": "serial"}
     assert retarget_docs[1]["name"] == "retarget-motion"
@@ -74,6 +89,16 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert sonic_export_docs[1]["envs"]["SONIC_AXES"] == "dynamic"
     assert sonic_export_docs[1]["envs"]["SONIC_NORMALIZE"] == "baked"
     assert sonic_export_docs[1]["envs"]["SONIC_METADATA"] == "sidecar"
+
+    assert sonic_eval_docs[0] == {"name": "sonic-eval", "execution": "serial"}
+    assert sonic_eval_docs[1]["name"] == "sonic-eval-onnx"
+    assert "npa workbench sonic eval" in sonic_eval_docs[1]["run"]
+    assert sonic_eval_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_OUTPUT_PATH"].endswith(
+        "sonic_eval_results.json"
+    )
 
 
 def test_sonic_locomotion_assets_do_not_add_python_runner() -> None:

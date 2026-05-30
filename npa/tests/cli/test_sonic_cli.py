@@ -24,14 +24,21 @@ def _json_output(raw: str) -> dict:
 def _mock_sonic_serverless(mocker) -> object:
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="sonic-job", status="running")
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="sonic-job", status="running"
+    )
     mocker.patch("npa.cli.workbench.sonic.train.ServerlessClient", return_value=client)
-    mocker.patch("npa.cli.workbench.sonic.train.resolve_project_id", return_value="project-1")
+    mocker.patch(
+        "npa.cli.workbench.sonic.train.resolve_project_id", return_value="project-1"
+    )
     client.subnet_resolver = mocker.patch(
         "npa.cli.workbench.sonic.train.resolve_subnet",
         return_value="vpcsubnet-auto",
     )
-    mocker.patch("npa.cli.workbench.sonic.train.sonic_image", return_value="registry.example/npa-sonic:0.1.0")
+    mocker.patch(
+        "npa.cli.workbench.sonic.train.sonic_image",
+        return_value="registry.example/npa-sonic:0.1.0",
+    )
     mocker.patch(
         "npa.cli.workbench.sonic.train.serverless_job_env",
         return_value=({"NPA_OUTPUT_PATH": "s3://bucket/sonic/"}, {}),
@@ -46,7 +53,9 @@ def test_sonic_registered_under_workbench() -> None:
     assert "sonic" in result.output
 
 
-@pytest.mark.parametrize("command", ["deploy", "train", "export", "serve", "status", "list"])
+@pytest.mark.parametrize(
+    "command", ["deploy", "train", "export", "eval", "serve", "status", "list"]
+)
 def test_sonic_command_help(command: str) -> None:
     result = runner.invoke(app, ["workbench", "sonic", command, "--help"])
 
@@ -64,6 +73,21 @@ def test_sonic_export_help_documents_defaults() -> None:
     assert "[default: dynamic]" in result.output
     assert "[default: baked]" in result.output
     assert "[default: sidecar]" in result.output
+
+
+def test_sonic_eval_help_documents_backend_and_container_contract() -> None:
+    result = runner.invoke(app, ["workbench", "sonic", "eval", "--help"])
+
+    assert result.exit_code == 0
+    assert "--onnx" in result.output
+    assert "--metadata" in result.output
+    assert "--sidecar" in result.output
+    assert "--backend" in result.output
+    assert "[default: reference]" in result.output
+    assert "--container-image" in result.output
+    assert "--container-policy-" in result.output
+    assert "--container-metadat" in result.output
+    assert "--container-output-" in result.output
 
 
 def test_sonic_export_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
@@ -146,22 +170,105 @@ def test_sonic_export_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
     )
 
 
+def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
+    onnx = tmp_path / "policy.onnx"
+    metadata = tmp_path / "policy.metadata.json"
+    output_path = tmp_path / "result.json"
+    onnx.write_bytes(b"onnx")
+    metadata.write_text("{}", encoding="utf-8")
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={
+            "format": "npa_sonic_eval_result_v1",
+            "status": "completed",
+            "backend": "container",
+            "mode": "container",
+            "smoke_level": False,
+            "result_uri": str(output_path),
+            "policy": {},
+            "eval": {},
+            "metrics": {},
+            "episodes": [],
+            "warnings": [],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            str(onnx),
+            "--metadata",
+            str(metadata),
+            "--backend",
+            "container",
+            "--episodes",
+            "4",
+            "--env",
+            "locomotion-smoke",
+            "--container-image",
+            "registry.example/sonic-eval:latest",
+            "--container-runtime",
+            "podman",
+            "--container-policy-path",
+            "/eval/in/policy.onnx",
+            "--container-metadata-path",
+            "/eval/in/policy.metadata.json",
+            "--container-output-path",
+            "/eval/out/result.json",
+            "--container-arg",
+            "--verbose",
+            "--output",
+            str(output_path),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = _json_output(result.output)
+    assert payload["backend"] == "container"
+    evaluate.assert_called_once_with(
+        onnx=str(onnx),
+        metadata=str(metadata),
+        backend="container",
+        episodes=4,
+        env="locomotion-smoke",
+        output=str(output_path),
+        container_image="registry.example/sonic-eval:latest",
+        container_runtime="podman",
+        container_policy_path="/eval/in/policy.onnx",
+        container_metadata_path="/eval/in/policy.metadata.json",
+        container_output_path="/eval/out/result.json",
+        container_args=["--verbose"],
+    )
+
+
 def test_sonic_deploy_runtime_validation() -> None:
-    result = runner.invoke(app, ["workbench", "sonic", "deploy", "--runtime", "invalid"])
+    result = runner.invoke(
+        app, ["workbench", "sonic", "deploy", "--runtime", "invalid"]
+    )
 
     assert result.exit_code != 0
     assert "invalid" in result.output.lower()
 
 
 def test_sonic_deploy_requires_output_path() -> None:
-    result = runner.invoke(app, ["workbench", "sonic", "deploy", "--runtime", "serverless"])
+    result = runner.invoke(
+        app, ["workbench", "sonic", "deploy", "--runtime", "serverless"]
+    )
 
     assert result.exit_code == 1
     assert "requires --output-path" in result.output
 
 
 def test_sonic_train_serverless_requires_project_id(mocker) -> None:
-    mocker.patch("npa.cli.workbench.sonic.helpers.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.workbench.sonic.helpers.resolve_environment", return_value=None
+    )
 
     result = runner.invoke(
         app,
@@ -220,7 +327,9 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert "UNITREE_G1_SONIC" in command
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-h100-sxm"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
-    client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
+    client.subnet_resolver.assert_called_once_with(
+        project_id="project-1", explicit_subnet_id=""
+    )
 
 
 def test_sonic_train_explicit_h100_has_no_availability_warning(mocker) -> None:
@@ -308,7 +417,9 @@ def test_sonic_train_validates_gpu_type() -> None:
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(os.environ.get("NPA_TEST_SONIC_SMOKE") != "1", reason="set NPA_TEST_SONIC_SMOKE=1")
+@pytest.mark.skipif(
+    os.environ.get("NPA_TEST_SONIC_SMOKE") != "1", reason="set NPA_TEST_SONIC_SMOKE=1"
+)
 def test_sonic_train_smoke_marker() -> None:
     result = runner.invoke(
         app,
@@ -353,7 +464,9 @@ def test_sonic_serve_endpoint_format() -> None:
 
 
 def test_sonic_status_endpoint_required() -> None:
-    result = runner.invoke(app, ["workbench", "sonic", "status", "--runtime", "serverless"])
+    result = runner.invoke(
+        app, ["workbench", "sonic", "status", "--runtime", "serverless"]
+    )
 
     assert result.exit_code == 1
     assert "requires --project-id" in result.output
@@ -380,6 +493,6 @@ def test_sonic_hf_artifact_manifest() -> None:
 
 
 def test_sonic_container_image_name_resolves() -> None:
-    assert container_image_for_tool("sonic", registry="registry.example", tag="0.1.0") == (
-        "registry.example/npa-sonic:0.1.0"
-    )
+    assert container_image_for_tool(
+        "sonic", registry="registry.example", tag="0.1.0"
+    ) == ("registry.example/npa-sonic:0.1.0")
