@@ -126,6 +126,18 @@ uses the same settings through `SONIC_OPSET`, `SONIC_AXES`,
 `SONIC_NORMALIZE`, `SONIC_METADATA`, `SONIC_OBS_SPEC`, `SONIC_ACTION_SPEC`, and
 `SONIC_CONFIG`.
 
+## Export Then Eval
+
+`npa/workflows/workbench/skypilot/sonic-export-eval.yaml` chains export and
+eval in one SkyPilot task. It accepts `POLICY_CKPT`, `OUTPUT_DIR`,
+`EVAL_BACKEND`, `EPISODES`, `CONTAINER_IMAGE`, and `GPU` through `envs`.
+
+The default `reference` backend uses `EVAL_ENV=sonic-locomotion-smoke`, which
+runs deterministic locomotion rollouts against the exported ONNX policy and
+writes `sonic_eval_results.json`. Set `EVAL_BACKEND=container` plus
+`CONTAINER_IMAGE` to stage the ONNX and sidecar metadata into an external
+evaluator with a stable file contract.
+
 ## Relationship To GR00T
 
 NVIDIA's workflow describes GR00T PolicyServer output feeding SONIC decoder and

@@ -56,10 +56,13 @@ top-level fields are `format`, `status`, `backend`, `mode`, `smoke_level`,
 `episode_return_mean`, `distance_mean`, `fall_rate`, `termination_rate`,
 `episode_length_mean`, and `valid_action_rate`.
 
-The reference backend runs a configured local simulator when `--env` names one
-that is importable through gymnasium. Without a wireable simulator it emits a
-clearly marked smoke-level result (`mode=smoke`, `smoke_level=true`) after
-feeding representative observations through the ONNX policy.
+The reference backend runs real rollout loops for `locomotion-smoke` and
+`sonic-locomotion-smoke` with the built-in locomotion simulator
+(`mode=sim`, `smoke_level=false`). It can also run a configured local simulator
+when `--env` names one that is importable through gymnasium. Without a wireable
+simulator it emits a clearly marked smoke-level result (`mode=smoke`,
+`smoke_level=true`) after feeding representative observations through the ONNX
+policy.
 
 ## Container Eval Contract
 
