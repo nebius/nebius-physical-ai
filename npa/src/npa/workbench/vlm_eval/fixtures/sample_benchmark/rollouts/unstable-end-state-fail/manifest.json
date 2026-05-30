@@ -1,0 +1,5 @@
+{
+  "format": "npa_vlm_eval_rollout_fixture_v1",
+  "task": "Stabilize the object at the goal pose.",
+  "outcome": "illustrative fail"
+}

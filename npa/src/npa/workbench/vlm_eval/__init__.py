@@ -7,16 +7,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+from itertools import product
 from io import BytesIO
 import json
 import math
 import os
+import posixpath
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import httpx
 import numpy as np
@@ -40,9 +42,15 @@ DEFAULT_RUBRIC = (
     "or ambiguous outcomes."
 )
 RESULT_FILENAME = "vlm_eval_stub.json"
+BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
+BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
+DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
+DEFAULT_SAMPLE_BENCHMARK_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
+)
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
-IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
 
@@ -82,16 +90,259 @@ class SelectedFrame:
     data: bytes
 
 
+@dataclass(frozen=True)
+class VlmBenchmarkItem:
+    id: str
+    rollout: str
+    expected_label: bool
+    task: str
+    fixture_score: float | None = None
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkDataset:
+    path: str
+    format: str
+    items: list[VlmBenchmarkItem]
+    rubrics: dict[str, str]
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkConfig:
+    backend: str
+    model: str
+    rubric_name: str
+    rubric: str
+    success_threshold: float
+    frame_selection: str
+    max_frames: int
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkMetrics:
+    total: int
+    correct: int
+    agreement: float
+    accuracy: float
+    precision: float | None
+    recall: float | None
+    f1: float | None
+    true_positives: int
+    true_negatives: int
+    false_positives: int
+    false_negatives: int
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkCaseResult:
+    item_id: str
+    rollout: str
+    expected_label: bool
+    predicted_label: bool
+    score: float
+    status: str
+    passed: bool
+    task: str
+    rationale: str
+    frame_count: int
+    score_source: str
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkConfigResult:
+    rank: int
+    config: VlmBenchmarkConfig
+    metrics: VlmBenchmarkMetrics
+    results: list[VlmBenchmarkCaseResult]
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkReport:
+    status: str
+    dataset_path: str
+    dataset_format: str
+    item_count: int
+    generated_at: str
+    sweep: dict[str, Any]
+    best_config: VlmBenchmarkConfigResult
+    ranked_configs: list[VlmBenchmarkConfigResult]
+
+
 __all__ = [
+    "VlmBenchmarkCaseResult",
+    "VlmBenchmarkConfig",
+    "VlmBenchmarkConfigResult",
+    "VlmBenchmarkDataset",
+    "VlmBenchmarkItem",
+    "VlmBenchmarkMetrics",
+    "VlmBenchmarkReport",
     "VlmEvalResult",
     "VlmStructuredResponse",
+    "benchmark_result_uri_for",
+    "benchmark_vlm_eval",
     "evaluate_stub",
     "evaluate_vlm",
+    "load_benchmark_dataset",
     "parse_structured_response",
     "result_uri_for",
     "select_rollout_frames",
+    "write_benchmark_report",
     "write_result",
 ]
+
+
+def benchmark_vlm_eval(
+    *,
+    dataset: str = str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+    thresholds: Sequence[float] = DEFAULT_BENCHMARK_THRESHOLDS,
+    rubrics: Sequence[str] = ("default",),
+    models: Sequence[str] = (DEFAULT_MODEL,),
+    backend: str = DEFAULT_BACKEND,
+    task: str = "sim-to-real",
+    frame_selection: str = DEFAULT_FRAME_SELECTION,
+    max_frames: int = DEFAULT_MAX_FRAMES,
+    endpoint_url: str = "",
+    api_key_env: str = DEFAULT_API_KEY_ENV,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    use_fixture_scores: bool = False,
+) -> VlmBenchmarkReport:
+    """Run a labeled VLM-eval sweep and rank configs by label agreement."""
+
+    benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
+    threshold_values = _normalize_thresholds(thresholds)
+    model_values = _normalize_strings(models, label="models")
+    rubric_values = _resolve_benchmark_rubrics(
+        rubrics,
+        dataset_rubrics=benchmark_dataset.rubrics,
+        dataset_path=benchmark_dataset.path,
+    )
+    effective_backend = _normalize_backend(backend)
+    effective_frame_selection = _normalize_frame_selection(frame_selection)
+    if max_frames <= 0:
+        raise VlmEvalError("--max-frames must be positive")
+    if timeout_s <= 0:
+        raise VlmEvalError("--timeout-s must be positive")
+
+    config_results: list[VlmBenchmarkConfigResult] = []
+    for model, (rubric_name, rubric_text), threshold in product(
+        model_values,
+        rubric_values,
+        threshold_values,
+    ):
+        config = VlmBenchmarkConfig(
+            backend=effective_backend,
+            model=model,
+            rubric_name=rubric_name,
+            rubric=rubric_text,
+            success_threshold=threshold,
+            frame_selection=effective_frame_selection,
+            max_frames=max_frames,
+        )
+        case_results = [
+            _run_benchmark_case(
+                item,
+                config=config,
+                endpoint_url=endpoint_url,
+                api_key_env=api_key_env,
+                timeout_s=timeout_s,
+                use_fixture_score=use_fixture_scores or effective_backend == "stub",
+            )
+            for item in benchmark_dataset.items
+        ]
+        config_results.append(
+            VlmBenchmarkConfigResult(
+                rank=0,
+                config=config,
+                metrics=_benchmark_metrics(case_results),
+                results=case_results,
+            )
+        )
+
+    ranked = [
+        VlmBenchmarkConfigResult(
+            rank=index,
+            config=result.config,
+            metrics=result.metrics,
+            results=result.results,
+        )
+        for index, result in enumerate(sorted(config_results, key=_benchmark_rank_key), start=1)
+    ]
+    if not ranked:
+        raise VlmEvalError("benchmark sweep produced no configurations")
+
+    return VlmBenchmarkReport(
+        status="completed",
+        dataset_path=benchmark_dataset.path,
+        dataset_format=benchmark_dataset.format,
+        item_count=len(benchmark_dataset.items),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        sweep={
+            "backend": effective_backend,
+            "models": model_values,
+            "rubrics": [name for name, _text in rubric_values],
+            "thresholds": threshold_values,
+            "frame_selection": effective_frame_selection,
+            "max_frames": max_frames,
+            "fixture_scores": use_fixture_scores or effective_backend == "stub",
+        },
+        best_config=ranked[0],
+        ranked_configs=ranked,
+    )
+
+
+def load_benchmark_dataset(
+    dataset: str = str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+    *,
+    default_task: str = "sim-to-real",
+) -> VlmBenchmarkDataset:
+    """Load a labeled benchmark dataset manifest from a local path or S3 URI."""
+
+    if not dataset:
+        raise VlmEvalError("--dataset is required")
+    with _materialized_benchmark_manifest(dataset) as local_manifest:
+        try:
+            payload = json.loads(local_manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise VlmEvalError(f"benchmark dataset is not valid JSON: {local_manifest}") from exc
+
+    if isinstance(payload, list):
+        raw_items = payload
+        dataset_format = BENCHMARK_DATASET_FORMAT
+        rubrics: dict[str, str] = {}
+        rollout_base_path = ""
+    elif isinstance(payload, dict):
+        raw_items = payload.get("items") or payload.get("rollouts")
+        dataset_format = str(payload.get("format") or BENCHMARK_DATASET_FORMAT)
+        rubrics = _coerce_rubric_map(payload.get("rubrics", {}))
+        rollout_base_path = str(payload.get("rollout_base_path") or payload.get("base_path") or "")
+    else:
+        raise VlmEvalError("benchmark dataset JSON must be an object or an item list")
+
+    if not isinstance(raw_items, list) or not raw_items:
+        raise VlmEvalError("benchmark dataset must include a non-empty items list")
+
+    local_base = local_manifest.parent
+    source_base = _dataset_source_base(dataset)
+    rollout_base = _resolve_rollout_base(
+        rollout_base_path,
+        source_base=source_base,
+        local_base=local_base,
+    )
+    items = [
+        _parse_benchmark_item(
+            raw_item,
+            index=index,
+            rollout_base=rollout_base,
+            default_task=default_task,
+        )
+        for index, raw_item in enumerate(raw_items, start=1)
+    ]
+    return VlmBenchmarkDataset(
+        path=dataset,
+        format=dataset_format,
+        items=items,
+        rubrics=rubrics,
+    )
 
 
 def evaluate_vlm(
@@ -304,6 +555,41 @@ def write_result(
     return str(path)
 
 
+def benchmark_result_uri_for(output_path: str) -> str:
+    """Return the JSON artifact URI for a benchmark report path."""
+
+    if output_path.endswith(".json"):
+        return output_path
+    return output_path.rstrip("/") + f"/{BENCHMARK_RESULT_FILENAME}"
+
+
+def write_benchmark_report(
+    payload: dict[str, Any],
+    *,
+    output_path: str,
+    storage_client: "StorageClient | None" = None,
+) -> str:
+    """Write a benchmark report to local disk or S3."""
+
+    result_uri = benchmark_result_uri_for(output_path)
+    body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if result_uri.startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        client = storage_client or StorageClient.from_environment()
+        with tempfile.TemporaryDirectory(prefix="npa-vlm-eval-benchmark-") as tmp:
+            local_path = Path(tmp) / BENCHMARK_RESULT_FILENAME
+            local_path.write_text(body, encoding="utf-8")
+            return client.upload_file(str(local_path), result_uri)
+
+    path = Path(result_uri)
+    if path.suffix != ".json":
+        path = path / BENCHMARK_RESULT_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return str(path)
+
+
 def _result_from_structured(
     *,
     backend: str,
@@ -334,6 +620,309 @@ def _result_from_structured(
         frame_count=frame_count,
         rationale=structured.rationale,
     )
+
+
+def _run_benchmark_case(
+    item: VlmBenchmarkItem,
+    *,
+    config: VlmBenchmarkConfig,
+    endpoint_url: str,
+    api_key_env: str,
+    timeout_s: float,
+    use_fixture_score: bool,
+) -> VlmBenchmarkCaseResult:
+    score = item.fixture_score if use_fixture_score and item.fixture_score is not None else None
+    try:
+        result = evaluate_vlm(
+            input_path=item.rollout,
+            output_path=f"vlm-eval-benchmark://{item.id}",
+            task=item.task,
+            backend=config.backend,
+            model=config.model,
+            success_threshold=config.success_threshold,
+            frame_selection=config.frame_selection,
+            max_frames=config.max_frames,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            rubric=config.rubric,
+            timeout_s=timeout_s,
+            score=score,
+        )
+    except VlmEvalError as exc:
+        raise VlmEvalError(
+            "benchmark item "
+            f"{item.id!r} failed for model={config.model!r}, "
+            f"rubric={config.rubric_name!r}, threshold={config.success_threshold}: {exc}"
+        ) from exc
+
+    return VlmBenchmarkCaseResult(
+        item_id=item.id,
+        rollout=item.rollout,
+        expected_label=item.expected_label,
+        predicted_label=result.passed,
+        score=result.score,
+        status=result.status,
+        passed=result.passed,
+        task=result.task,
+        rationale=result.rationale,
+        frame_count=result.frame_count,
+        score_source="fixture" if score is not None else result.backend,
+    )
+
+
+def _benchmark_metrics(results: Sequence[VlmBenchmarkCaseResult]) -> VlmBenchmarkMetrics:
+    total = len(results)
+    if total == 0:
+        raise VlmEvalError("benchmark dataset must include at least one item")
+    tp = sum(1 for result in results if result.expected_label and result.predicted_label)
+    tn = sum(1 for result in results if not result.expected_label and not result.predicted_label)
+    fp = sum(1 for result in results if not result.expected_label and result.predicted_label)
+    fn = sum(1 for result in results if result.expected_label and not result.predicted_label)
+    correct = tp + tn
+    precision = _safe_ratio(tp, tp + fp)
+    recall = _safe_ratio(tp, tp + fn)
+    f1 = None
+    if precision is not None and recall is not None and precision + recall > 0:
+        f1 = round((2 * precision * recall) / (precision + recall), 4)
+    accuracy = round(correct / total, 4)
+    return VlmBenchmarkMetrics(
+        total=total,
+        correct=correct,
+        agreement=accuracy,
+        accuracy=accuracy,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        true_positives=tp,
+        true_negatives=tn,
+        false_positives=fp,
+        false_negatives=fn,
+    )
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float | None:
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 4)
+
+
+def _benchmark_rank_key(result: VlmBenchmarkConfigResult) -> tuple[Any, ...]:
+    metrics = result.metrics
+    precision = -1.0 if metrics.precision is None else metrics.precision
+    recall = -1.0 if metrics.recall is None else metrics.recall
+    f1 = -1.0 if metrics.f1 is None else metrics.f1
+    return (
+        -metrics.accuracy,
+        -f1,
+        -precision,
+        -recall,
+        metrics.false_positives,
+        metrics.false_negatives,
+        result.config.success_threshold,
+        result.config.model,
+        result.config.rubric_name,
+    )
+
+
+@contextmanager
+def _materialized_benchmark_manifest(dataset: str) -> Iterator[Path]:
+    if dataset.startswith("s3://"):
+        from npa.clients.storage import StorageClient
+
+        with tempfile.TemporaryDirectory(prefix="npa-vlm-eval-benchmark-dataset-") as tmp:
+            local = Path(StorageClient.from_environment().download_path(dataset, tmp))
+            yield _find_benchmark_manifest(local)
+        return
+
+    yield _find_benchmark_manifest(Path(dataset))
+
+
+def _find_benchmark_manifest(path: Path) -> Path:
+    if path.is_file():
+        return path
+    if path.is_dir():
+        for name in ("benchmark.json", "dataset.json", "manifest.json"):
+            candidate = path / name
+            if candidate.is_file():
+                return candidate
+    raise VlmEvalError(
+        f"benchmark dataset not found: {path}. Expected a JSON file or a directory "
+        "containing benchmark.json, dataset.json, or manifest.json."
+    )
+
+
+def _parse_benchmark_item(
+    raw_item: Any,
+    *,
+    index: int,
+    rollout_base: str,
+    default_task: str,
+) -> VlmBenchmarkItem:
+    if not isinstance(raw_item, dict):
+        raise VlmEvalError(f"benchmark item {index} must be an object")
+    rollout = raw_item.get("rollout") or raw_item.get("rollout_path") or raw_item.get("input_path")
+    if not rollout:
+        raise VlmEvalError(f"benchmark item {index} must include rollout or input_path")
+    if "expected_label" in raw_item:
+        raw_label = raw_item["expected_label"]
+    elif "label" in raw_item:
+        raw_label = raw_item["label"]
+    else:
+        raise VlmEvalError(f"benchmark item {index} must include expected_label")
+
+    fixture_score = None
+    if raw_item.get("fixture_score") is not None:
+        fixture_score = _clamp_score(raw_item["fixture_score"])
+        _validate_score_override(fixture_score)
+
+    item_id = str(raw_item.get("id") or raw_item.get("name") or f"item-{index:03d}").strip()
+    if not item_id:
+        item_id = f"item-{index:03d}"
+
+    return VlmBenchmarkItem(
+        id=item_id,
+        rollout=_resolve_relative_path(str(rollout), rollout_base),
+        expected_label=_coerce_expected_label(raw_label),
+        task=str(raw_item.get("task") or raw_item.get("instruction") or default_task),
+        fixture_score=fixture_score,
+    )
+
+
+def _coerce_expected_label(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value in {0, 1}:
+            return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace("_", "-")
+        if normalized in {"1", "true", "pass", "passed", "success", "positive"}:
+            return True
+        if normalized in {"0", "false", "fail", "failed", "failure", "negative"}:
+            return False
+    raise VlmEvalError(
+        "expected_label must be a boolean or one of pass/fail, success/failure, true/false"
+    )
+
+
+def _coerce_rubric_map(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise VlmEvalError("benchmark dataset rubrics must be an object")
+    rubrics = {str(key).strip(): str(text).strip() for key, text in value.items()}
+    return {key: text for key, text in rubrics.items() if key and text}
+
+
+def _resolve_benchmark_rubrics(
+    rubrics: Sequence[str],
+    *,
+    dataset_rubrics: dict[str, str],
+    dataset_path: str,
+) -> list[tuple[str, str]]:
+    names = _normalize_strings(rubrics, label="rubrics")
+    resolved: list[tuple[str, str]] = []
+    for raw_name in names:
+        if raw_name in dataset_rubrics:
+            resolved.append((raw_name, dataset_rubrics[raw_name]))
+            continue
+        if raw_name == "default":
+            resolved.append(("default", DEFAULT_RUBRIC))
+            continue
+        rubric_from_path = _rubric_from_path(raw_name, dataset_path=dataset_path)
+        if rubric_from_path is not None:
+            resolved.append(rubric_from_path)
+            continue
+        resolved.append((_slugify_rubric_name(raw_name), raw_name))
+    return resolved
+
+
+def _rubric_from_path(raw_name: str, *, dataset_path: str) -> tuple[str, str] | None:
+    candidate = raw_name[1:] if raw_name.startswith("@") else raw_name
+    paths = [Path(candidate)]
+    if not _is_uri(dataset_path):
+        dataset_file = Path(dataset_path)
+        dataset_base = dataset_file.parent if dataset_file.suffix else dataset_file
+        paths.insert(0, dataset_base / candidate)
+    for path in paths:
+        if path.is_file():
+            return (path.stem, path.read_text(encoding="utf-8").strip())
+    if raw_name.startswith("@"):
+        raise VlmEvalError(f"rubric file does not exist: {candidate}")
+    return None
+
+
+def _normalize_thresholds(thresholds: Sequence[float]) -> list[float]:
+    values: list[float] = []
+    for raw_threshold in thresholds:
+        try:
+            threshold = float(raw_threshold)
+        except (TypeError, ValueError) as exc:
+            raise VlmEvalError(f"invalid threshold: {raw_threshold}") from exc
+        if not 0.0 <= threshold <= 1.0:
+            raise VlmEvalError("--thresholds values must be between 0 and 1")
+        if threshold not in values:
+            values.append(threshold)
+    if not values:
+        raise VlmEvalError("--thresholds must include at least one value")
+    return values
+
+
+def _normalize_strings(values: Sequence[str], *, label: str) -> list[str]:
+    normalized = [str(value).strip() for value in values if str(value).strip()]
+    if not normalized:
+        raise VlmEvalError(f"--{label} must include at least one value")
+    return normalized
+
+
+def _dataset_source_base(dataset: str) -> str:
+    if dataset.startswith("s3://"):
+        clean = dataset.rstrip("/")
+        if clean.endswith(".json"):
+            return clean.rsplit("/", 1)[0] + "/"
+        return clean + "/"
+    path = Path(dataset)
+    if path.is_file() or path.suffix:
+        return str(path.parent)
+    return str(path)
+
+
+def _resolve_rollout_base(
+    rollout_base_path: str,
+    *,
+    source_base: str,
+    local_base: Path,
+) -> str:
+    if not rollout_base_path:
+        return source_base
+    if _is_uri(rollout_base_path) or Path(rollout_base_path).is_absolute():
+        return rollout_base_path
+    if source_base.startswith("s3://"):
+        return _join_uri(source_base, rollout_base_path)
+    return str(local_base / rollout_base_path)
+
+
+def _resolve_relative_path(value: str, base: str) -> str:
+    if _is_uri(value) or Path(value).is_absolute():
+        return value
+    if base.startswith("s3://"):
+        return _join_uri(base, value)
+    return str(Path(base) / value)
+
+
+def _join_uri(base: str, *parts: str) -> str:
+    prefix = base.rstrip("/")
+    path = posixpath.join(*(part.strip("/") for part in parts if part))
+    return f"{prefix}/{path}" if path else prefix
+
+
+def _is_uri(value: str) -> bool:
+    return re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value) is not None
+
+
+def _slugify_rubric_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:40].strip("-") or "inline-rubric"
 
 
 def _validate_common(
