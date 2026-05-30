@@ -81,7 +81,12 @@ def test_workbench_public_surface() -> None:
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
         "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
-        "sonic": ["export_onnx", "validate_onnx_parity", "load_export_metadata"],
+        "sonic": [
+            "export_onnx",
+            "evaluate_onnx_policy",
+            "validate_onnx_parity",
+            "load_export_metadata",
+        ],
         "vlm_eval": ["evaluate_stub", "evaluate_vlm", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
@@ -169,7 +174,9 @@ def test_convert_lerobot_to_rrd_delegates_to_adapter(mocker) -> None:
     )
 
     assert result == Path("/tmp/out.rrd")
-    mock_adapter.assert_called_once_with("dataset", Path("/tmp/out.rrd"), duration_s=2.0)
+    mock_adapter.assert_called_once_with(
+        "dataset", Path("/tmp/out.rrd"), duration_s=2.0
+    )
 
 
 def test_demo_stage_delegates_to_stage_artifacts(mocker, tmp_path: Path) -> None:
