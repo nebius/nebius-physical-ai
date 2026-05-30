@@ -76,6 +76,7 @@ packages = ["src/npa"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
+"src/npa/workbench/vlm_eval/fixtures/sample_benchmark" = "npa/workbench/vlm_eval/fixtures/sample_benchmark"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
