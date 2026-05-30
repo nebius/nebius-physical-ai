@@ -61,17 +61,19 @@ namespace.
 | Data curation | `npa workbench data sync`, `npa workbench data status`, `npa workbench data list`; `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list` |
 | Synthetic data | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench genesis generate-demos`; SkyPilot templates such as `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` and `npa/workflows/workbench/templates/curate-augment-train.yaml` |
 | Simulation | `npa workbench isaac-lab train`, `eval`, `export-lerobot`; `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench retargeting run` |
-| Eval | `npa workbench vlm-eval run`, `workflow`, `status`, `list`; `npa workbench mjlab eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student` |
+| Eval | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student` |
 | Observability | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list` |
-| Robot policy | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `status`, `list` |
+| Robot policy | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list` |
 | World models | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `status`, `system-info` |
-| Blueprints | `npa workbench workflow submit`, `run`, `status`, `logs`, `teardown`, `distill`; checked-in YAML under `npa/workflows/workbench/skypilot/` for Isaac Lab, VLM eval, SONIC export, SONIC locomotion fine-tuning, retargeting, MJLab eval, sim-to-real, and BDD100K pipelines |
+| Blueprints | `npa workbench workflow submit`, `run`, `status`, `logs`, `teardown`, `distill`; checked-in YAML under `npa/workflows/workbench/skypilot/` for Isaac Lab, VLM eval, SONIC export, SONIC eval, SONIC locomotion fine-tuning, retargeting, MJLab eval, sim-to-real, and BDD100K pipelines |
 
 ### Eval: VLM Backend
 
 `vlm-eval` is a first-class Eval capability. It scores rollout artifacts with
 self-hosted, API, or stub backends and has a checked-in SkyPilot template at
-`npa/workflows/workbench/skypilot/vlm-eval.yaml`.
+`npa/workflows/workbench/skypilot/vlm-eval.yaml`. The benchmark command sweeps a
+labeled rollout set across thresholds, rubrics, and models, then writes a ranked
+accuracy report with the best config.
 
 ```bash
 npa workbench vlm-eval list
@@ -83,10 +85,18 @@ npa workbench vlm-eval run \
   --backend stub \
   --score 0.9 \
   --dry-run
+npa workbench vlm-eval benchmark \
+  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
+  --output /tmp/vlm-eval-benchmark.json \
+  --backend stub \
+  --thresholds 0.5,0.8,0.9 \
+  --rubrics default,strict \
+  --models Qwen/Qwen2-VL-7B-Instruct
 ```
 
 The self-hosted workflow starts an OpenAI-compatible vLLM server and then calls
-`npa workbench vlm-eval run`.
+`npa workbench vlm-eval run`; the benchmark workflow does the same for
+`npa workbench vlm-eval benchmark`.
 
 ### Robot Policy: GR00T, LeRobot, and SONIC
 
@@ -100,6 +110,7 @@ npa workbench groot finetune --help
 npa workbench groot serve --help
 npa workbench sonic train --help
 npa workbench sonic export --help
+npa workbench sonic eval --help
 ```
 
 `sonic export` is a first-class Robot Policy model-export capability. It
@@ -114,6 +125,10 @@ npa workbench sonic export \
 
 The matching workflow template is
 `npa/workflows/workbench/skypilot/sonic-export.yaml`.
+`npa workbench sonic eval` consumes the exported ONNX and sidecar metadata and
+can run the built-in reference backend or a configured eval container. The
+checked-in SkyPilot template is
+`npa/workflows/workbench/skypilot/sonic-eval.yaml`.
 
 ### Workflows And Routing
 
@@ -122,6 +137,7 @@ Workbench workflow orchestration lives under the Workbench solution:
 ```bash
 npa workbench workflow submit npa/workflows/workbench/skypilot/vlm-eval.yaml --run-id vlm-eval
 npa workbench workflow submit npa/workflows/workbench/skypilot/sonic-export.yaml --run-id sonic-export
+npa workbench workflow submit npa/workflows/workbench/skypilot/sonic-eval.yaml --run-id sonic-eval
 npa workbench workflow run distill --local
 npa workbench workflow status run-1
 npa workbench workflow logs run-1 train_student

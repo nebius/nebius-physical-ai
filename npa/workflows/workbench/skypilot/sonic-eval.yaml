@@ -1,0 +1,103 @@
+# Evaluate an exported SONIC ONNX policy with a pluggable backend.
+name: sonic-eval
+execution: serial
+---
+name: sonic-eval-onnx
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
+  # the npa CLI, npa[sonic], and any simulator/runtime dependencies.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+envs:
+  NPA_PIPELINE_RUN_ID: "<run-id>"
+  SONIC_ONNX: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.onnx"
+  SONIC_METADATA: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.metadata.json"
+  SONIC_EVAL_OUTPUT: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/eval/sonic_eval_results.json"
+  SONIC_EVAL_BACKEND: "reference"
+  SONIC_EVAL_EPISODES: "8"
+  SONIC_EVAL_ENV: "smoke"
+  SONIC_EVAL_CONTAINER_IMAGE: ""
+  SONIC_EVAL_CONTAINER_RUNTIME: "docker"
+  SONIC_EVAL_CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
+  SONIC_EVAL_CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
+  SONIC_EVAL_CONTAINER_OUTPUT_PATH: "/npa/eval/output/sonic_eval_results.json"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${NPA_PYTHON_BIN:-$(command -v python3 || command -v python)}"
+  if ! command -v npa >/dev/null 2>&1; then
+    if [ -n "${NPA_REPO_DIR:-}" ] && [ -d "${NPA_REPO_DIR}/npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e "${NPA_REPO_DIR}/npa"
+    elif [ -d "./npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e ./npa
+    fi
+  fi
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  WORK_DIR="/tmp/npa-sonic-eval-${NPA_PIPELINE_RUN_ID}"
+  mkdir -p "${WORK_DIR}"
+  export NPA_SONIC_EVAL_WORK_DIR="${WORK_DIR}"
+
+  python3 <<'PY'
+  import os
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+
+  work_dir = Path(os.environ["NPA_SONIC_EVAL_WORK_DIR"])
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+
+  def default_sidecar_uri(onnx_uri: str) -> str:
+      parsed = urlparse(onnx_uri)
+      if parsed.scheme != "s3" or not parsed.path.endswith(".onnx"):
+          return ""
+      key = parsed.path.lstrip("/")
+      return f"s3://{parsed.netloc}/{key[:-5]}.metadata.json"
+
+  def fetch(value: str, name: str) -> str:
+      if not value:
+          return ""
+      parsed = urlparse(value)
+      if parsed.scheme != "s3":
+          return value
+      target = work_dir / name
+      s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(target))
+      return str(target)
+
+  onnx_uri = os.environ["SONIC_ONNX"]
+  metadata_uri = os.environ.get("SONIC_METADATA", "") or default_sidecar_uri(onnx_uri)
+  os.environ["NPA_SONIC_ONNX_LOCAL"] = fetch(onnx_uri, "sonic_policy.onnx")
+  os.environ["NPA_SONIC_METADATA_LOCAL"] = fetch(metadata_uri, "sonic_policy.metadata.json")
+  PY
+
+  cmd=(
+    npa workbench sonic eval
+    --onnx "${NPA_SONIC_ONNX_LOCAL}"
+    --backend "${SONIC_EVAL_BACKEND}"
+    --episodes "${SONIC_EVAL_EPISODES}"
+    --env "${SONIC_EVAL_ENV}"
+    --output "${SONIC_EVAL_OUTPUT}"
+    --output-format json
+  )
+  if [ -n "${NPA_SONIC_METADATA_LOCAL}" ]; then
+    cmd+=(--metadata "${NPA_SONIC_METADATA_LOCAL}")
+  fi
+  if [ "${SONIC_EVAL_BACKEND}" = "container" ]; then
+    cmd+=(
+      --container-image "${SONIC_EVAL_CONTAINER_IMAGE}"
+      --container-runtime "${SONIC_EVAL_CONTAINER_RUNTIME}"
+      --container-policy-path "${SONIC_EVAL_CONTAINER_POLICY_PATH}"
+      --container-metadata-path "${SONIC_EVAL_CONTAINER_METADATA_PATH}"
+      --container-output-path "${SONIC_EVAL_CONTAINER_OUTPUT_PATH}"
+    )
+  fi
+
+  printf 'SONIC_EVAL_COMMAND'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+  "${cmd[@]}" | tee "${WORK_DIR}/sonic_eval_result.json"

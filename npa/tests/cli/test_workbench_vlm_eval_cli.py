@@ -5,7 +5,7 @@ import json
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.vlm_eval import VlmEvalResult
+from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_SAMPLE_BENCHMARK_PATH, VlmEvalResult
 
 
 runner = CliRunner()
@@ -184,6 +184,57 @@ def test_workbench_vlm_eval_workflow_path() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["workflow"] == "npa/workflows/workbench/skypilot/vlm-eval.yaml"
+
+
+def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
+    output_path = tmp_path / "benchmark-report.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+            "--output",
+            str(output_path),
+            "--backend",
+            "stub",
+            "--thresholds",
+            "0.5,0.8,0.9",
+            "--rubrics",
+            "default,strict",
+            "--models",
+            DEFAULT_MODEL,
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["best_config"]["config"]["success_threshold"] == 0.8
+    assert payload["best_config"]["metrics"]["accuracy"] == 1.0
+    assert payload["best_config"]["metrics"]["true_positives"] == 2
+    assert payload["best_config"]["metrics"]["true_negatives"] == 2
+    assert payload["written_uri"] == str(output_path)
+    assert json.loads(output_path.read_text(encoding="utf-8"))["item_count"] == 4
+
+
+def test_vlm_eval_sdk_benchmark_returns_report() -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+
+    report = sdk_vlm_eval.benchmark(
+        dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+        backend="stub",
+        thresholds=[0.5, 0.8, 0.9],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert report.best_config.config.success_threshold == 0.8
+    assert report.best_config.metrics.accuracy == 1.0
 
 
 def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:

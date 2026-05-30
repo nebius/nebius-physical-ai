@@ -19,9 +19,12 @@ from PIL import ImageDraw
 from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
+    DEFAULT_SAMPLE_BENCHMARK_PATH,
     VlmStructuredResponse,
+    benchmark_vlm_eval,
     evaluate_stub,
     evaluate_vlm,
+    load_benchmark_dataset,
     parse_structured_response,
     select_rollout_frames,
 )
@@ -244,7 +247,6 @@ def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     assert selected[0].label == "obs_workspace.npy:4"
     assert selected[0].media_type == "image/png"
     assert selected[0].data.startswith(b"\x89PNG")
-
 
 def _structured_eval_payload(result) -> dict[str, object]:
     return {
@@ -510,6 +512,45 @@ def _live_gpu_task_yaml(accelerator: str) -> str:
           exit 1
         """
     )
+
+
+def test_sample_benchmark_fixture_reports_best_threshold() -> None:
+    report = benchmark_vlm_eval(
+        dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+        backend="stub",
+        thresholds=[0.5, 0.8, 0.9],
+        rubrics=["default", "strict"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert report.item_count == 4
+    assert report.best_config.config.success_threshold == 0.8
+    assert report.best_config.metrics.accuracy == 1.0
+    assert report.best_config.metrics.precision == 1.0
+    assert report.best_config.metrics.recall == 1.0
+    assert report.best_config.metrics.true_positives == 2
+    assert report.best_config.metrics.true_negatives == 2
+    assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
+    assert {case.score_source for case in report.best_config.results} == {"fixture"}
+
+
+def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
+    dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
+
+    assert dataset.format == "npa_vlm_eval_benchmark_v1"
+    assert len(dataset.items) == 4
+    assert all(Path(item.rollout).exists() for item in dataset.items)
+    assert {"default", "strict"} <= set(dataset.rubrics)
+
+
+def test_select_rollout_frames_accepts_sample_ppm_fixture() -> None:
+    dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
+
+    selected = select_rollout_frames(dataset.items[0].rollout, frame_selection="keyframes", max_frames=4)
+
+    assert len(selected) == 1
+    assert selected[0].media_type == "image/png"
+    assert selected[0].data.startswith(b"\x89PNG")
 
 
 def _write_image_rollout(root: Path, colors: list[tuple[int, int, int]]) -> Path:
