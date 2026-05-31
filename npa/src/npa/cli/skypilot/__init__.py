@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -27,6 +27,7 @@ app = typer.Typer(
 console = Console(stderr=True)
 
 SKYPILOT_VERSION = REQUIRED_SKYPILOT_VERSION
+UTC = timezone.utc
 SKYPILOT_EXTRAS = ("nebius", "kubernetes")
 SKYPILOT_PACKAGE = f"skypilot[{','.join(SKYPILOT_EXTRAS)}]=={SKYPILOT_VERSION}"
 DEFAULT_VENV_PATH = Path.home() / ".npa" / "skypilot-venv"

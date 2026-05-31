@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import hashlib
 import json
@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # Keep this pinned to the rerun-sdk version used to produce current recordings.
 RERUN_VERSION = "0.31.4"
 MAX_TTL_HOURS = 168
+UTC = timezone.utc
 
 
 class RerunHostError(ValueError):
