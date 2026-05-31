@@ -1,0 +1,82 @@
+# Generic sim-to-real training and evaluation pipeline.
+# Credentials are supplied at launch through environment/secret injection; do
+# not write access keys or tokens into this file.
+name: sim-to-real-pipeline
+execution: serial
+---
+name: s2r-controller-spine
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+envs:
+  NPA_SIM_TO_REAL_RUN_ID: "<your-run-id>"
+  NEBIUS_S3_ENDPOINT: "https://storage.eu-north1.nebius.cloud"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  # Supply AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY at launch time.
+  NPA_S3_BUCKET: "${NPA_S3_BUCKET}"
+  S3_PREFIX: "sim-to-real/<your-run-id>"
+  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/"
+  INPUT_DATA_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/input/"
+  RAW_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/raw-envs/"
+  TRAIN_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/splits/train/"
+  HELDOUT_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/splits/heldout/"
+  POLICY_IMAGE: "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot:<lerobot-image-tag>"
+  CHECKPOINT_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/checkpoints/policy/"
+  RERUN_RRD_PATH: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/viz/sim-to-real.rrd"
+  SIM_BACKEND: "genesis"
+  EVAL_BACKEND: "genesis"
+  FEEDBACK_SOURCE: "vlm"
+  VLM_EVAL_BACKEND: "stub"
+  VLM_EVAL_MODEL: "vlm-eval-stub"
+  VLM_EVAL_ENDPOINT_URL: ""
+  VLM_EVAL_FRAME_SELECTION: "keyframes"
+  VLM_EVAL_MAX_FRAMES: "4"
+  VLM_EVAL_SCORE: ""
+  SPLIT_FRACTION: "0.8"
+  ENV_COUNT: "10"
+  EPISODES: "4"
+  TRAIN_STEPS: "50"
+  EVAL_EPISODES: "2"
+  SUCCESS_THRESHOLD: "0.75"
+  SEED: "42"
+  GPU: "H100:1"
+  CUSTOM_LEROBOT_TRAINER_COMMAND: ""
+setup: |
+  set -e
+  python3 -m pip install -e /opt/nebius-physical-ai/npa
+run: |
+  set -euo pipefail
+
+  report_dir="/tmp/npa-sim-to-real-${NPA_SIM_TO_REAL_RUN_ID}"
+  mkdir -p "${report_dir}"
+
+  python3 -m npa.workflows.sim_to_real local-smoke \
+    --run-id "${NPA_SIM_TO_REAL_RUN_ID}" \
+    --s3-endpoint "${NEBIUS_S3_ENDPOINT}" \
+    --s3-bucket "${NPA_S3_BUCKET}" \
+    --s3-prefix "${S3_PREFIX}" \
+    --input-data-uri "${INPUT_DATA_URI}" \
+    --policy-image "${POLICY_IMAGE}" \
+    --sim-backend "${SIM_BACKEND}" \
+    --eval-backend "${EVAL_BACKEND}" \
+    --feedback-source "${FEEDBACK_SOURCE}" \
+    --vlm-eval-backend "${VLM_EVAL_BACKEND}" \
+    --vlm-eval-model "${VLM_EVAL_MODEL}" \
+    --vlm-eval-endpoint-url "${VLM_EVAL_ENDPOINT_URL}" \
+    --vlm-eval-frame-selection "${VLM_EVAL_FRAME_SELECTION}" \
+    --vlm-eval-max-frames "${VLM_EVAL_MAX_FRAMES}" \
+    --split-fraction "${SPLIT_FRACTION}" \
+    --env-count "${ENV_COUNT}" \
+    --episodes "${EPISODES}" \
+    --train-steps "${TRAIN_STEPS}" \
+    --eval-episodes "${EVAL_EPISODES}" \
+    --threshold "${SUCCESS_THRESHOLD}" \
+    --seed "${SEED}" \
+    --gpu "${GPU}" \
+    --trainer-command "${CUSTOM_LEROBOT_TRAINER_COMMAND}" \
+    --checkpoint-uri "${CHECKPOINT_URI}" \
+    --rrd-path "${RERUN_RRD_PATH}" \
+    --output-dir "${report_dir}" \
+    --attempt-s3-roundtrip
