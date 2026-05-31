@@ -1,0 +1,201 @@
+# Export a trained SONIC locomotion checkpoint to ONNX, then run reference eval.
+name: sonic-export-eval
+execution: serial
+---
+name: sonic-export-eval
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # Default GPU is H100:1. If capacity requires it, update both this field and
+  # GPU below to H200:1 or RTXPRO6000:1 before submission.
+  # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
+envs:
+  # Required input checkpoint. Local paths work when pre-mounted; s3:// is downloaded.
+  POLICY_CKPT: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/last.pt"
+  # Output directory or s3:// prefix for ONNX, sidecar metadata, and metrics JSON.
+  OUTPUT_DIR: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export-eval/"
+  # Default reference eval runs the built-in locomotion simulator rollouts.
+  EVAL_BACKEND: "reference"
+  EVAL_ENV: "sonic-locomotion-smoke"
+  EPISODES: "8"
+  # Required only when EVAL_BACKEND=container.
+  CONTAINER_IMAGE: ""
+  CONTAINER_RUNTIME: "docker"
+  CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
+  CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
+  CONTAINER_OUTPUT_PATH: "/npa/eval/output/sonic_eval_results.json"
+  # Keep this informational knob in sync with resources.accelerators.
+  GPU: "H100:1"
+  # Optional export inputs when checkpoint metadata is incomplete.
+  SONIC_CONFIG: ""
+  SONIC_OBS_SPEC: ""
+  SONIC_ACTION_SPEC: ""
+  SONIC_OPSET: "17"
+  SONIC_AXES: "dynamic"
+  SONIC_NORMALIZE: "baked"
+  SONIC_METADATA: "sidecar"
+  SONIC_VERIFY: "1"
+  SONIC_PARITY_ATOL: "1e-4"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+
+  # Stage 0: ensure the NPA CLI and SONIC export/eval dependencies are present.
+  PYTHON_BIN="${NPA_PYTHON_BIN:-$(command -v python3 || command -v python)}"
+  if ! command -v npa >/dev/null 2>&1; then
+    if [ -n "${NPA_REPO_DIR:-}" ] && [ -d "${NPA_REPO_DIR}/npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e "${NPA_REPO_DIR}/npa[sonic]"
+    elif [ -d "./npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e "./npa[sonic]"
+    fi
+  fi
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+
+  WORK_DIR="/tmp/npa-sonic-export-eval-${SKYPILOT_TASK_ID:-manual}"
+  mkdir -p "${WORK_DIR}"
+  export NPA_SONIC_E2E_WORK_DIR="${WORK_DIR}"
+
+  # Stage 1: download or locate the policy checkpoint and optional specs.
+  PYTHON_BIN="${NPA_PYTHON_BIN:-$(command -v python3 || command -v python)}"
+  export NPA_SONIC_LOCAL_PATHS_ENV="${WORK_DIR}/local_paths.env"
+  "${PYTHON_BIN}" <<'PY'
+  import os
+  import shlex
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+
+  work_dir = Path(os.environ["NPA_SONIC_E2E_WORK_DIR"])
+  s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+
+  def fetch(value: str, name: str) -> str:
+      if not value:
+          return ""
+      parsed = urlparse(value)
+      if parsed.scheme != "s3":
+          return value
+      target = work_dir / name
+      s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(target))
+      return str(target)
+
+  local_paths = {
+      "NPA_POLICY_CKPT_LOCAL": fetch(os.environ["POLICY_CKPT"], "policy.pt"),
+      "NPA_SONIC_CONFIG_LOCAL": fetch(os.environ.get("SONIC_CONFIG", ""), "sonic_config.yaml"),
+      "NPA_SONIC_OBS_SPEC_LOCAL": fetch(os.environ.get("SONIC_OBS_SPEC", ""), "obs_spec.yaml"),
+      "NPA_SONIC_ACTION_SPEC_LOCAL": fetch(os.environ.get("SONIC_ACTION_SPEC", ""), "action_spec.yaml"),
+  }
+  env_file = Path(os.environ["NPA_SONIC_LOCAL_PATHS_ENV"])
+  env_file.write_text(
+      "".join(f"{key}={shlex.quote(value)}\n" for key, value in local_paths.items()),
+      encoding="utf-8",
+  )
+  PY
+  # shellcheck disable=SC1090
+  source "${NPA_SONIC_LOCAL_PATHS_ENV}"
+
+  # Stage 2: export the checkpoint to deterministic-action ONNX plus sidecar.
+  ONNX_PATH="${WORK_DIR}/sonic_policy.onnx"
+  cmd=(
+    npa workbench sonic export
+    --checkpoint "${NPA_POLICY_CKPT_LOCAL}"
+    --output "${ONNX_PATH}"
+    --opset "${SONIC_OPSET}"
+    --axes "${SONIC_AXES}"
+    --normalize "${SONIC_NORMALIZE}"
+    --metadata "${SONIC_METADATA}"
+    --parity-atol "${SONIC_PARITY_ATOL}"
+    --output-format json
+  )
+  if [ -n "${NPA_SONIC_CONFIG_LOCAL}" ]; then
+    cmd+=(--config "${NPA_SONIC_CONFIG_LOCAL}")
+  fi
+  if [ -n "${NPA_SONIC_OBS_SPEC_LOCAL}" ]; then
+    cmd+=(--obs-spec "${NPA_SONIC_OBS_SPEC_LOCAL}")
+  fi
+  if [ -n "${NPA_SONIC_ACTION_SPEC_LOCAL}" ]; then
+    cmd+=(--action-spec "${NPA_SONIC_ACTION_SPEC_LOCAL}")
+  fi
+  if [ "${SONIC_VERIFY}" = "1" ]; then
+    cmd+=(--verify)
+  else
+    cmd+=(--no-verify)
+  fi
+
+  printf 'SONIC_EXPORT_COMMAND'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+  "${cmd[@]}" | tee "${WORK_DIR}/sonic_export_result.json"
+
+  METADATA_PATH="${WORK_DIR}/sonic_policy.metadata.json"
+  if [ ! -f "${METADATA_PATH}" ]; then
+    echo "metadata sidecar missing: ${METADATA_PATH}" >&2
+    exit 1
+  fi
+
+  # Stage 3: run reference eval, or a config-driven external eval container.
+  EVAL_OUTPUT_PATH="${WORK_DIR}/sonic_eval_results.json"
+  eval_cmd=(
+    npa workbench sonic eval
+    --onnx "${ONNX_PATH}"
+    --metadata "${METADATA_PATH}"
+    --backend "${EVAL_BACKEND}"
+    --episodes "${EPISODES}"
+    --env "${EVAL_ENV}"
+    --output "${EVAL_OUTPUT_PATH}"
+    --output-format json
+  )
+  if [ "${EVAL_BACKEND}" = "container" ]; then
+    eval_cmd+=(
+      --container-image "${CONTAINER_IMAGE}"
+      --container-runtime "${CONTAINER_RUNTIME}"
+      --container-policy-path "${CONTAINER_POLICY_PATH}"
+      --container-metadata-path "${CONTAINER_METADATA_PATH}"
+      --container-output-path "${CONTAINER_OUTPUT_PATH}"
+    )
+  fi
+
+  printf 'SONIC_EVAL_COMMAND'
+  printf ' %q' "${eval_cmd[@]}"
+  printf '\n'
+  "${eval_cmd[@]}" | tee "${WORK_DIR}/sonic_eval_stdout.json"
+
+  echo "NPA_SONIC_E2E_EXPORT_JSON_BEGIN"
+  cat "${WORK_DIR}/sonic_export_result.json"
+  echo "NPA_SONIC_E2E_EXPORT_JSON_END"
+  echo "NPA_SONIC_E2E_METRICS_JSON_BEGIN"
+  cat "${EVAL_OUTPUT_PATH}"
+  echo "NPA_SONIC_E2E_METRICS_JSON_END"
+
+  # Stage 4: publish all artifacts to the requested local directory or S3 prefix.
+  export NPA_SONIC_E2E_OUTPUT_DIR="${OUTPUT_DIR}"
+  "${PYTHON_BIN}" <<'PY'
+  import os
+  import shutil
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+
+  work_dir = Path(os.environ["NPA_SONIC_E2E_WORK_DIR"])
+  output = os.environ["NPA_SONIC_E2E_OUTPUT_DIR"].rstrip("/") + "/"
+  parsed = urlparse(output)
+
+  if parsed.scheme == "s3":
+      s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+      prefix = parsed.path.lstrip("/")
+      for path in work_dir.iterdir():
+          if path.is_file():
+              s3.upload_file(str(path), parsed.netloc, prefix + path.name)
+  else:
+      target = Path(output)
+      target.mkdir(parents=True, exist_ok=True)
+      for path in work_dir.iterdir():
+          if path.is_file():
+              shutil.copy2(path, target / path.name)
+  PY

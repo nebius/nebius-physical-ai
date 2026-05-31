@@ -97,6 +97,42 @@ def test_sonic_eval_reference_smoke_writes_schema_result(tmp_path: Path) -> None
     ]
 
 
+def test_sonic_eval_reference_locomotion_rollout_writes_metrics(tmp_path: Path) -> None:
+    output = tmp_path / "policy.onnx"
+    result_path = tmp_path / "locomotion-eval.json"
+    export = export_onnx(
+        checkpoint="in-memory-policy",
+        output=str(output),
+        policy=TinyEvalPolicy().eval(),
+        verify=False,
+    )
+
+    result = evaluate_onnx_policy(
+        onnx=export.onnx_path,
+        metadata=export.metadata_path,
+        backend="reference",
+        episodes=3,
+        env="sonic-locomotion-smoke",
+        output=str(result_path),
+    )
+
+    assert result["format"] == EVAL_RESULT_FORMAT
+    assert result["backend"] == "reference"
+    assert result["mode"] == "sim"
+    assert result["smoke_level"] is False
+    assert result["metrics"]["episodes"] == 3
+    assert result["metrics"]["distance_mean"] > 0.0
+    assert result["metrics"]["fall_rate"] == 0.0
+    assert result["metrics"]["valid_action_rate"] == 1.0
+    assert [episode["episode_length"] for episode in result["episodes"]] == [
+        32,
+        32,
+        32,
+    ]
+    written = json.loads(result_path.read_text(encoding="utf-8"))
+    assert written["metrics"]["distance_mean"] == result["metrics"]["distance_mean"]
+
+
 def test_sonic_eval_reference_applies_sidecar_normalization(tmp_path: Path) -> None:
     output = tmp_path / "sidecar.onnx"
     export = export_onnx(
