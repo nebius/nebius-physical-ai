@@ -12,6 +12,9 @@ VLM_EVAL_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "vlm-eva
 VLM_EVAL_BENCHMARK_YAML = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "vlm-eval-benchmark.yaml"
 )
+SIM_TO_REAL_LOOP_YAML = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-loop.yaml"
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -52,3 +55,25 @@ def test_vlm_eval_benchmark_workflow_serves_open_vlm_and_runs_sweep_cli() -> Non
     assert "npa workbench vlm-eval benchmark" in task["run"]
     for flag in ("--dataset", "--output", "--models", "--rubrics", "--thresholds", "--format json"):
         assert flag in task["run"]
+
+
+def test_sim_to_real_loop_workflow_scores_rollout_set_and_reports() -> None:
+    docs = _docs(SIM_TO_REAL_LOOP_YAML)
+
+    assert docs[0] == {"name": "sim-to-real-loop", "execution": "serial"}
+    task = docs[1]
+    assert task["name"] == "vlm-eval-loop"
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert task["resources"]["accelerators"] == "H100:1"
+    assert task["envs"]["GPU"] == "H100:1"
+    assert task["envs"]["MODEL"] == DEFAULT_MODEL
+    assert task["envs"]["ROLLOUTS"].endswith("/rollouts/")
+    assert task["envs"]["OUTPUT_DIR"].endswith("/vlm-eval-loop/")
+    assert task["envs"]["SUCCESS_THRESHOLD"] == "0.8"
+    assert task["envs"]["FRAME_SELECTION"] == "keyframes"
+    assert "python3 -m vllm.entrypoints.openai.api_server" in task["run"]
+    assert "npa workbench vlm-eval run" in task["run"]
+    assert "per_rollout.jsonl" in task["run"]
+    assert "task_success_report.json" in task["run"]
+    assert "StorageClient.from_environment().download_path" in task["run"]
+    assert "StorageClient.from_environment().upload_file" in task["run"]
