@@ -144,10 +144,9 @@ jobs:
           cluster_pattern='^(sim-to-real-live-|npa-vlm-live-|npa-sonic-e2e-)'
 
           list_live_e2e_clusters() {
-            "${NPA_SKYPILOT_BIN}" status --refresh 2>&1 \
+            "${NPA_SKYPILOT_BIN}" status --refresh 2>/tmp/sky-status-stderr.log \
               | sed -E 's/\x1b\[[0-9;]*[mK]//g' \
-              | awk '{print $1}' \
-              | grep -E "${cluster_pattern}" \
+              | awk -v pattern="${cluster_pattern}" '$1 ~ pattern && $1 !~ /:$/ {print $1}' \
               | sort -u || true
           }
 
@@ -163,6 +162,16 @@ jobs:
               echo "No live e2e SkyPilot clusters remain."
               exit 0
             fi
+            for cluster in "${remaining[@]}"; do
+              echo "Retrying teardown ${cluster}"
+              if ! down_output="$("${NPA_SKYPILOT_BIN}" down --yes "${cluster}" 2>&1)"; then
+                printf '%s\n' "${down_output}"
+                if grep -Eq 'Cluster\(s\) not found|No project found for region' <<< "${down_output}"; then
+                  echo "Purging stale SkyPilot metadata for ${cluster}"
+                  "${NPA_SKYPILOT_BIN}" down --yes --purge "${cluster}" || true
+                fi
+              fi
+            done
             printf 'Waiting for live e2e clusters to disappear: %s\n' "${remaining[*]}"
             sleep 10
           done
