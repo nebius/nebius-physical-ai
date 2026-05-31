@@ -42,7 +42,9 @@ npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
   --policy-image "$POLICY_IMAGE" \
   --vlm-eval-backend stub \
   --vlm-eval-score 0.82 \
-  --gpu H100:1 \
+  --gpu "H100:1,H200:1,A100:1,L40S:1,RTX6000:1" \
+  --task-cloud nebius \
+  --controller-backend nebius \
   --cleanup
 ```
 
@@ -121,7 +123,9 @@ Both should show no in-progress clusters or managed jobs for the run.
 | `POLICY_IMAGE` / `--policy-image` | `cr.eu-north1.nebius.cloud/$NPA_REGISTRY_ID/npa-lerobot-policy:0.1.0` | Custom LeRobot policy image |
 | `--vlm-eval-backend` | `stub` | Live VLM backend |
 | `--feedback-source` | `vlm` | `vla` when configured |
-| `--gpu` | `H100:1` | `H100:1,H200:1,A100:1,L40S:1,RTX6000:1` failover string |
+| `--gpu` | `H100:1,H200:1,A100:1,L40S:1,RTX6000:1` | Customer GPU failover string; H100 is tried first |
+| `--task-cloud` | `nebius` | Task backend for acceptance runs when Kubernetes GPU capacity is occupied |
+| `--controller-backend` | `nebius` | Managed-jobs controller fallback for clusters that cannot validate the Kubernetes controller pod |
 | `--rerun-max-frames-per-episode` | `32` | Lower for smoke, higher for inspection |
 
 ## Tier Semantics

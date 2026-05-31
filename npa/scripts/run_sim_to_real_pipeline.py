@@ -11,10 +11,11 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
+from npa.cluster.config import DEFAULT_REGION
 from npa.orchestration.skypilot import (
     WorkflowResult,  # noqa: F401 - kept for tests and downstream wrapper imports.
     cleanup_all_for_run,
@@ -62,6 +63,7 @@ TERMINAL_STATUSES = {
     "FAILED_NO_RESOURCE",
     "FAILED_CONTROLLER",
 }
+TaskCloud = Literal["kubernetes", "nebius"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,6 +98,7 @@ def render_workflow(
     threshold: float = DEFAULT_THRESHOLD,
     seed: int = 42,
     gpu: str = "H100:1",
+    task_cloud: TaskCloud = "kubernetes",
     vlm_eval_backend: str = DEFAULT_VLM_EVAL_BACKEND,
     vlm_eval_model: str = DEFAULT_VLM_EVAL_MODEL,
     vlm_eval_endpoint_url: str = "",
@@ -185,12 +188,19 @@ def render_workflow(
                     "RERUN_MAX_FRAMES_PER_EPISODE": str(rerun_max_frames_per_episode),
                 }
             )
+        resources = doc.get("resources")
+        if isinstance(resources, dict):
+            _apply_task_cloud(resources, task_cloud)
+            resources["accelerators"] = _render_accelerators(gpu)
         if doc.get("name") == "s2r-policy-feedback-update":
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
-                resources["image_id"] = (
-                    resolved_policy if resolved_policy.startswith("docker:") else f"docker:{resolved_policy}"
-                )
+                if task_cloud == "nebius":
+                    resources.pop("image_id", None)
+                else:
+                    resources["image_id"] = (
+                        resolved_policy if resolved_policy.startswith("docker:") else f"docker:{resolved_policy}"
+                    )
     return docs
 
 
@@ -212,6 +222,43 @@ def output_paths(
         policy_image=policy_image or default_policy_image(),
     )
     return artifact_uris(config)
+
+
+def _render_accelerators(gpu: str) -> str | list[str]:
+    candidates = [candidate.strip() for candidate in gpu.split(",") if candidate.strip()]
+    if not candidates:
+        return "H100:1"
+    if len(candidates) == 1:
+        return candidates[0]
+    return candidates
+
+
+def _apply_task_cloud(resources: dict[str, Any], task_cloud: TaskCloud) -> None:
+    if task_cloud == "kubernetes":
+        return
+    if task_cloud != "nebius":
+        raise ValueError("task_cloud must be 'kubernetes' or 'nebius'")
+    resources["cloud"] = "nebius"
+    resources["region"] = DEFAULT_REGION
+    resources["cpus"] = _plus_spec(resources.get("cpus"), minimum=16)
+    resources["memory"] = _plus_spec(resources.get("memory"), minimum=0)
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _plus_spec(value: Any, *, minimum: int) -> Any:
+    number = _number(value)
+    if number is None:
+        return value
+    number = max(number, float(minimum))
+    if number.is_integer():
+        return f"{int(number)}+"
+    return f"{number}+"
 
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
@@ -237,6 +284,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         seed=args.seed,
         gpu=args.gpu,
+        task_cloud=args.task_cloud,
         vlm_eval_backend=args.vlm_eval_backend,
         vlm_eval_model=args.vlm_eval_model,
         vlm_eval_endpoint_url=args.vlm_eval_endpoint_url,
@@ -270,6 +318,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             run_id,
             isolated_config_dir=args.isolated_config_dir,
             sky_bin=sky_bin,
+            controller_backend=args.controller_backend,
+            secret_envs=_s3_secret_envs(),
             timeout=args.submit_timeout,
         )
         summary: dict[str, Any] = {
@@ -316,6 +366,14 @@ def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     return docs
 
 
+def _s3_secret_envs() -> list[str]:
+    return [
+        key
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+        if os.environ.get(key)
+    ]
+
+
 def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
     path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
 
@@ -346,6 +404,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gpu", default="H100:1")
+    parser.add_argument("--task-cloud", choices=("kubernetes", "nebius"), default="kubernetes")
     parser.add_argument("--vlm-eval-backend", default=DEFAULT_VLM_EVAL_BACKEND)
     parser.add_argument("--vlm-eval-model", default=DEFAULT_VLM_EVAL_MODEL)
     parser.add_argument("--vlm-eval-endpoint-url", default="")
@@ -354,6 +413,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--vlm-eval-score", type=float, default=None)
     parser.add_argument("--trainer-command", default="")
     parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
+    parser.add_argument("--controller-backend", choices=("kubernetes", "nebius"), default="kubernetes")
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)

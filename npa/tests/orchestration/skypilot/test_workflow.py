@@ -154,6 +154,34 @@ def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_pa
     assert resources["autostop"]["down"] is False
 
 
+def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-secrets",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    )
+
+    cmd = calls[0]
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == cmd[-3:-1]
+    assert "test-access-key" not in cmd
+    assert "AWS_SECRET_ACCESS_KEY" not in cmd
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")

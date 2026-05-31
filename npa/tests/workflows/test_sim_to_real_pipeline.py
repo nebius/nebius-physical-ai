@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -153,6 +154,95 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
     assert task_env["VLM_EVAL_BACKEND"] == "stub"
     assert task_env["VLM_EVAL_SCORE"] == "0.9"
     assert docs[2]["resources"]["image_id"] == "docker:cr.example/npa-lerobot:custom"
+
+
+def test_runner_renders_ordered_gpu_failover_resources() -> None:
+    wrapper = _load_wrapper_module()
+    docs = wrapper.render_workflow(
+        YAML_PATH,
+        run_id="s2r-render",
+        bucket="bucket",
+        gpu="H100:1,H200:1,A100:1",
+    )
+
+    assert docs[1]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[2]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+
+
+def test_runner_can_render_nebius_task_cloud_fallback() -> None:
+    wrapper = _load_wrapper_module()
+    docs = wrapper.render_workflow(
+        YAML_PATH,
+        run_id="s2r-render",
+        bucket="bucket",
+        task_cloud="nebius",
+        gpu="H100:1,H200:1,A100:1",
+    )
+
+    assert docs[1]["resources"]["cloud"] == "nebius"
+    assert docs[1]["resources"]["region"] == "eu-north1"
+    assert docs[1]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[2]["resources"]["cloud"] == "nebius"
+    assert docs[2]["resources"]["region"] == "eu-north1"
+    assert docs[2]["resources"]["cpus"] == "16+"
+    assert docs[2]["resources"]["memory"] == "32+"
+    assert "image_id" not in docs[2]["resources"]
+
+
+def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path, capsys) -> None:
+    wrapper = _load_wrapper_module()
+    sky_bin = tmp_path / "sky"
+    sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    sky_bin.chmod(sky_bin.stat().st_mode | stat.S_IXUSR)
+    captured = {}
+
+    def fake_submit_workflow(yaml_path, run_id, **kwargs):
+        captured["run_id"] = run_id
+        captured["kwargs"] = kwargs
+        captured["docs"] = [
+            doc for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8")) if doc is not None
+        ]
+        return wrapper.WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            log_paths={"config": str(tmp_path / "config.yaml")},
+        )
+
+    def fake_workflow_status(job_id, **kwargs):
+        return wrapper.WorkflowResult(status="SUCCEEDED", job_id=job_id, returncode=0)
+
+    monkeypatch.setattr(wrapper, "submit_workflow", fake_submit_workflow)
+    monkeypatch.setattr(wrapper, "workflow_status", fake_workflow_status)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+    rc = wrapper.main(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--run-id",
+            "s2r-submit",
+            "--controller-backend",
+            "nebius",
+            "--task-cloud",
+            "nebius",
+            "--sky-bin",
+            str(sky_bin),
+            "--poll-interval",
+            "0",
+        ]
+    )
+
+    assert rc == 0
+    capsys.readouterr()
+    assert captured["run_id"] == "s2r-submit"
+    assert captured["kwargs"]["controller_backend"] == "nebius"
+    assert captured["kwargs"]["secret_envs"] == ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+    assert captured["docs"][1]["envs"]["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-submit"
+    assert captured["docs"][1]["resources"]["cloud"] == "nebius"
+    assert "image_id" not in captured["docs"][2]["resources"]
 
 
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:

@@ -38,6 +38,14 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/lerobot/venv/bin/pip install --no-cache-dir -r /tmp/npa-lerobot-policy-requirements.txt
 
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
+
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src
 
