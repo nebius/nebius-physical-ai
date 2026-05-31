@@ -30,6 +30,7 @@ from npa.orchestration.skypilot._bin import (
 from npa.workflows.sim_to_real import (
     DEFAULT_EVAL_BACKEND,
     DEFAULT_FEEDBACK_SOURCE,
+    DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
     DEFAULT_SPLIT_FRACTION,
@@ -41,6 +42,7 @@ from npa.workflows.sim_to_real import (
     default_policy_image,
     default_s3_prefix,
 )
+from npa.workflows.lerobot_dataset import DEFAULT_PUBLIC_LEROBOT_REPO, DEFAULT_PUBLIC_LEROBOT_REVISION
 
 
 DEFAULT_YAML = (
@@ -80,6 +82,8 @@ def render_workflow(
     s3_prefix: str = "",
     s3_endpoint: str = DEFAULT_S3_ENDPOINT,
     input_data_uri: str = "",
+    dataset_repo_id: str = DEFAULT_PUBLIC_LEROBOT_REPO,
+    dataset_revision: str = DEFAULT_PUBLIC_LEROBOT_REVISION,
     policy_image: str = "",
     sim_backend: str = DEFAULT_SIM_BACKEND,
     eval_backend: str = DEFAULT_EVAL_BACKEND,
@@ -99,6 +103,7 @@ def render_workflow(
     vlm_eval_max_frames: int = 4,
     vlm_eval_score: float | None = None,
     trainer_command: str = "",
+    rerun_max_frames_per_episode: int = DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
 ) -> list[dict[str, Any]]:
     """Return SkyPilot YAML documents with concrete run settings injected."""
 
@@ -110,6 +115,8 @@ def render_workflow(
         s3_bucket=bucket,
         s3_prefix=resolved_prefix,
         input_data_uri=input_data_uri,
+        dataset_repo_id=dataset_repo_id,
+        dataset_revision=dataset_revision,
         policy_image=resolved_policy,
         sim_backend=sim_backend,
         eval_backend=eval_backend,
@@ -129,6 +136,7 @@ def render_workflow(
         vlm_eval_max_frames=vlm_eval_max_frames,
         vlm_eval_score=vlm_eval_score,
         trainer_command=trainer_command,
+        rerun_max_frames_per_episode=rerun_max_frames_per_episode,
     )
     config.validate()
     paths = artifact_uris(config)
@@ -146,7 +154,10 @@ def render_workflow(
                     "NPA_S3_BUCKET": bucket,
                     "S3_PREFIX": resolved_prefix,
                     "PIPELINE_ROOT_URI": paths.get("root", ""),
-                    "INPUT_DATA_URI": input_data_uri,
+                    "INPUT_DATA_URI": config.input_data_uri,
+                    "LEROBOT_DATASET_URI": config.input_data_uri,
+                    "LEROBOT_DATASET_REPO_ID": dataset_repo_id,
+                    "LEROBOT_DATASET_REVISION": dataset_revision,
                     "RAW_ENVS_URI": paths.get("raw_envs", ""),
                     "TRAIN_ENVS_URI": paths.get("train_envs", ""),
                     "HELDOUT_ENVS_URI": paths.get("heldout_envs", ""),
@@ -171,6 +182,7 @@ def render_workflow(
                     "VLM_EVAL_MAX_FRAMES": str(vlm_eval_max_frames),
                     "VLM_EVAL_SCORE": "" if vlm_eval_score is None else str(vlm_eval_score),
                     "CUSTOM_LEROBOT_TRAINER_COMMAND": trainer_command,
+                    "RERUN_MAX_FRAMES_PER_EPISODE": str(rerun_max_frames_per_episode),
                 }
             )
         if doc.get("name") == "s2r-policy-feedback-update":
@@ -211,6 +223,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         s3_prefix=args.s3_prefix,
         s3_endpoint=args.s3_endpoint,
         input_data_uri=args.input_data_uri,
+        dataset_repo_id=args.dataset_repo_id,
+        dataset_revision=args.dataset_revision,
         policy_image=args.policy_image,
         sim_backend=args.sim_backend,
         eval_backend=args.eval_backend,
@@ -230,6 +244,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         vlm_eval_max_frames=args.vlm_eval_max_frames,
         vlm_eval_score=args.vlm_eval_score,
         trainer_command=args.trainer_command,
+        rerun_max_frames_per_episode=args.rerun_max_frames_per_episode,
     )
     outputs = output_paths(
         run_id,
@@ -317,6 +332,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--s3-prefix", default="")
     parser.add_argument("--s3-endpoint", default=DEFAULT_S3_ENDPOINT)
     parser.add_argument("--input-data-uri", default="")
+    parser.add_argument("--dataset-repo-id", default=DEFAULT_PUBLIC_LEROBOT_REPO)
+    parser.add_argument("--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION)
     parser.add_argument("--policy-image", default="")
     parser.add_argument("--sim-backend", default=DEFAULT_SIM_BACKEND)
     parser.add_argument("--eval-backend", default=DEFAULT_EVAL_BACKEND)
@@ -336,6 +353,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--vlm-eval-max-frames", type=int, default=4)
     parser.add_argument("--vlm-eval-score", type=float, default=None)
     parser.add_argument("--trainer-command", default="")
+    parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)

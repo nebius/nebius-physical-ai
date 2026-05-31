@@ -22,6 +22,23 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
+from npa.viz.adapters.lerobot_to_rerun import RerunAdapterError, lerobot_dataset_logical_to_rerun
+from npa.workbench.lerobot.policy_container import parse_feedback_batch, run_feedback_training_step
+from npa.workflows.lerobot_dataset import (
+    DEFAULT_PUBLIC_LEROBOT_LICENSE,
+    DEFAULT_PUBLIC_LEROBOT_REPO,
+    DEFAULT_PUBLIC_LEROBOT_REVISION,
+    LeRobotDatasetError,
+    default_public_dataset_uri,
+    default_staged_dataset_uri,
+    download_public_lerobot_dataset,
+    materialize_lerobot_dataset,
+    resolve_dataset_source,
+    seeded_episode_split,
+    stage_dataset_to_s3,
+    summarize_lerobot_dataset,
+    write_episode_split_manifest,
+)
 
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
@@ -32,6 +49,7 @@ DEFAULT_VLM_EVAL_BACKEND = "stub"
 DEFAULT_VLM_EVAL_MODEL = "vlm-eval-stub"
 DEFAULT_SPLIT_FRACTION = 0.8
 DEFAULT_THRESHOLD = 0.75
+DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE = 32
 APPLICATION_ID = "npa_sim_to_real_pipeline"
 
 
@@ -90,6 +108,8 @@ class SimToRealConfig:
     s3_bucket: str = ""
     s3_prefix: str = ""
     input_data_uri: str = ""
+    dataset_repo_id: str = DEFAULT_PUBLIC_LEROBOT_REPO
+    dataset_revision: str = DEFAULT_PUBLIC_LEROBOT_REVISION
     policy_image: str = ""
     sim_backend: str = DEFAULT_SIM_BACKEND
     eval_backend: str = DEFAULT_EVAL_BACKEND
@@ -111,6 +131,7 @@ class SimToRealConfig:
     trainer_command: str = ""
     checkpoint_uri: str = ""
     rrd_path: str = ""
+    rerun_max_frames_per_episode: int = DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE
     output_dir: Path | None = None
 
     def validate(self) -> None:
@@ -134,6 +155,10 @@ class SimToRealConfig:
             raise SimToRealError(f"vlm_eval_max_frames must be positive, got {self.vlm_eval_max_frames}")
         if self.vlm_eval_score is not None and not 0.0 <= self.vlm_eval_score <= 1.0:
             raise SimToRealError(f"vlm_eval_score must be in [0, 1], got {self.vlm_eval_score}")
+        if self.rerun_max_frames_per_episode <= 0:
+            raise SimToRealError(
+                f"rerun_max_frames_per_episode must be positive, got {self.rerun_max_frames_per_episode}"
+            )
 
 
 @dataclass
@@ -165,9 +190,9 @@ def new_run_id(prefix: str = "sim-to-real") -> str:
 
 
 def default_policy_image(*, registry: str | None = None) -> str:
-    """Return the default platform LeRobot policy image."""
+    """Return the default BYO-compatible LeRobot policy image."""
 
-    return container_image_for_tool("lerobot", registry=registry)
+    return container_image_for_tool("lerobot-policy", registry=registry)
 
 
 def default_s3_prefix(run_id: str) -> str:
@@ -182,6 +207,25 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     run_id = str(overrides.get("run_id") or os.environ.get("NPA_SIM_TO_REAL_RUN_ID") or new_run_id())
     s3_bucket = str(overrides.get("s3_bucket") or os.environ.get("NPA_S3_BUCKET") or "")
     s3_prefix = str(overrides.get("s3_prefix") or os.environ.get("NPA_S3_PREFIX") or default_s3_prefix(run_id))
+    dataset_repo_id = str(
+        overrides.get("dataset_repo_id")
+        or os.environ.get("LEROBOT_DATASET_REPO_ID")
+        or DEFAULT_PUBLIC_LEROBOT_REPO
+    )
+    dataset_revision = str(
+        overrides.get("dataset_revision")
+        or os.environ.get("LEROBOT_DATASET_REVISION")
+        or DEFAULT_PUBLIC_LEROBOT_REVISION
+    )
+    input_data_uri = resolve_dataset_source(
+        str(
+            overrides.get("input_data_uri")
+            or os.environ.get("LEROBOT_DATASET_URI")
+            or os.environ.get("INPUT_DATA_URI")
+            or ""
+        ),
+        bucket=s3_bucket,
+    )
     policy_image = str(overrides.get("policy_image") or os.environ.get("POLICY_IMAGE") or default_policy_image())
     checkpoint_uri = str(
         overrides.get("checkpoint_uri")
@@ -207,7 +251,9 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         ),
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
-        input_data_uri=str(overrides.get("input_data_uri") or os.environ.get("INPUT_DATA_URI") or ""),
+        input_data_uri=input_data_uri,
+        dataset_repo_id=dataset_repo_id,
+        dataset_revision=dataset_revision,
         policy_image=policy_image,
         sim_backend=str(overrides.get("sim_backend") or os.environ.get("SIM_BACKEND") or DEFAULT_SIM_BACKEND),
         eval_backend=str(overrides.get("eval_backend") or os.environ.get("EVAL_BACKEND") or DEFAULT_EVAL_BACKEND),
@@ -245,6 +291,12 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         trainer_command=str(overrides.get("trainer_command") or os.environ.get("CUSTOM_LEROBOT_TRAINER_COMMAND") or ""),
         checkpoint_uri=checkpoint_uri,
         rrd_path=rrd_path,
+        rerun_max_frames_per_episode=int(
+            overrides.get(
+                "rerun_max_frames_per_episode",
+                os.environ.get("RERUN_MAX_FRAMES_PER_EPISODE", str(DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)),
+            )
+        ),
         output_dir=Path(output_dir) if output_dir else None,
     )
 
@@ -258,6 +310,8 @@ def artifact_uris(config: SimToRealConfig) -> dict[str, str]:
     return {
         "root": f"{root}/",
         "input_data": config.input_data_uri,
+        "example_dataset": default_staged_dataset_uri(config.s3_bucket),
+        "dataset_summary": f"{root}/datasets/lerobot-summary.json",
         "raw_envs": f"{root}/raw-envs/",
         "train_envs": f"{root}/splits/train/",
         "heldout_envs": f"{root}/splits/heldout/",
@@ -279,6 +333,12 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
         "image": config.policy_image or default_policy_image(),
         "input_path": paths.get("train_envs", config.input_data_uri),
         "output_path": paths.get("checkpoint", config.checkpoint_uri),
+        "endpoints": {
+            "health": "GET /health",
+            "infer": "POST /infer",
+            "rollout": "POST /rollout",
+            "feedback_train_step": "POST /feedback/train-step",
+        },
         "env": {
             "POLICY_IMAGE": config.policy_image or default_policy_image(),
             "INPUT_DATA_URI": config.input_data_uri,
@@ -296,6 +356,12 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
         },
         "action_schema": {
             "action": {"dtype": "float32", "shape": ["T", "action_dim"]},
+        },
+        "feedback_schema": {
+            "success": {"dtype": "bool", "required": True},
+            "score": {"dtype": "float32", "range": [0.0, 1.0], "required": True},
+            "rationale": {"dtype": "string", "required": True},
+            "source": {"dtype": "string", "required": False, "examples": ["vlm", "vla"]},
         },
     }
 
@@ -617,28 +683,119 @@ def run_structural_spine(
             )
         )
 
-    raw_envs = generate_raw_envs(count=config.env_count, seed=config.seed, backend=config.sim_backend)
-    train_envs, heldout_envs = seeded_train_heldout_split(
-        raw_envs,
+    staged_example_uri = default_staged_dataset_uri(config.s3_bucket) if config.s3_bucket else ""
+    source_is_default_staged = (
+        bool(staged_example_uri)
+        and config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
+    )
+    dataset_source_used = config.input_data_uri
+    staging_fallback_error = ""
+    try:
+        local_dataset = materialize_lerobot_dataset(
+            config.input_data_uri,
+            local_dir / "datasets",
+            repo_id=config.dataset_repo_id,
+            revision=config.dataset_revision,
+            s3_endpoint=config.s3_endpoint,
+        )
+    except LeRobotDatasetError as exc:
+        if not source_is_default_staged:
+            raise SimToRealError(str(exc)) from exc
+        local_dataset = download_public_lerobot_dataset(
+            local_dir / "datasets",
+            repo_id=config.dataset_repo_id,
+            revision=config.dataset_revision,
+        )
+        dataset_source_used = default_public_dataset_uri()
+        staging_fallback_error = str(exc)
+
+    try:
+        dataset_summary = summarize_lerobot_dataset(
+            local_dataset,
+            source_uri=dataset_source_used,
+            repo_id=config.dataset_repo_id,
+            revision=config.dataset_revision,
+            license=DEFAULT_PUBLIC_LEROBOT_LICENSE,
+        )
+    except LeRobotDatasetError as exc:
+        raise SimToRealError(str(exc)) from exc
+    dataset_summary_path = local_dir / "lerobot-dataset-summary.json"
+    _write_json(dataset_summary_path, dataset_summary.to_dict())
+    dataset_tier = Tier.WORKS if dataset_summary.loaded_with_lerobot_dataset else Tier.PARTIAL
+    components.append(
+        ComponentStatus(
+            name="real_lerobot_dataset",
+            tier=dataset_tier,
+            evidence=(
+                f"Validated {dataset_summary.repo_id}@{dataset_summary.revision} with "
+                f"{dataset_summary.total_episodes} real episodes, {dataset_summary.total_frames} frames, "
+                f"vision={dataset_summary.camera_keys}, state={dataset_summary.state_keys}, "
+                f"action={dataset_summary.action_keys}; "
+                + (
+                    "loaded via LeRobotDataset."
+                    if dataset_summary.loaded_with_lerobot_dataset
+                    else dataset_summary.lerobot_dataset_error
+                )
+            ),
+            artifacts={"summary": str(dataset_summary_path), "source": dataset_source_used},
+        )
+    )
+    if staged_example_uri:
+        try:
+            staged_uri = (
+                config.input_data_uri
+                if config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/") and not staging_fallback_error
+                else stage_dataset_to_s3(local_dataset, staged_example_uri, s3_endpoint=config.s3_endpoint)
+            )
+            components.append(
+                ComponentStatus(
+                    name="lerobot_dataset_staging",
+                    tier=Tier.WORKS,
+                    evidence=(
+                        "Pinned public LeRobot dataset is available at the staged example S3 URI."
+                        if not staging_fallback_error
+                        else "Default staged dataset was missing or unreadable; downloaded the pinned public source and staged it to S3."
+                    ),
+                    artifacts={"staged_uri": staged_uri},
+                )
+            )
+        except LeRobotDatasetError as exc:
+            components.append(
+                ComponentStatus(
+                    name="lerobot_dataset_staging",
+                    tier=Tier.BLOCKED,
+                    evidence=(
+                        f"Default staged dataset unavailable ({staging_fallback_error}); staging failed: {exc}"
+                        if staging_fallback_error
+                        else str(exc)
+                    ),
+                    artifacts={"staged_uri": staged_example_uri, "public_source": dataset_source_used},
+                )
+            )
+
+    train_episodes, heldout_episodes = seeded_episode_split(
+        dataset_summary.episode_indices,
         train_fraction=config.split_fraction,
         seed=config.seed,
     )
-    _write_json(local_dir / "raw-envs.json", [asdict(env) for env in raw_envs])
-    _write_json(
-        local_dir / "split.json",
-        {
-            "train": [env.env_id for env in train_envs],
-            "heldout": [env.env_id for env in heldout_envs],
-            "split_fraction": config.split_fraction,
-            "seed": config.seed,
-        },
+    split_path = local_dir / "split.json"
+    write_episode_split_manifest(
+        split_path,
+        train=train_episodes,
+        heldout=heldout_episodes,
+        split_fraction=config.split_fraction,
+        seed=config.seed,
+        dataset=dataset_summary,
     )
     components.append(
         ComponentStatus(
-            name="genesis_env_split",
-            tier=Tier.PARTIAL,
-            evidence="Generated seeded raw env specs and an 80/20-style held-out split locally; live Genesis was not run.",
-            artifacts={"raw_envs": str(local_dir / "raw-envs.json"), "split": str(local_dir / "split.json")},
+            name="lerobot_episode_split",
+            tier=Tier.WORKS,
+            evidence=(
+                f"Seeded split over real episodes covers all {dataset_summary.total_episodes} episodes: "
+                f"train={len(train_episodes)}, heldout={len(heldout_episodes)}, seed={config.seed}."
+            ),
+            artifacts={"split": str(split_path)},
         )
     )
 
@@ -648,48 +805,69 @@ def run_structural_spine(
         ComponentStatus(
             name="byo_lerobot_policy_container",
             tier=Tier.PARTIAL,
-            evidence="Resolved policy image and VLA-capable observation/action contract; no live policy container was launched.",
+            evidence=(
+                "Resolved BYO policy image, rollout/inference endpoints, VLA-capable observation/action schema, "
+                "and vlm_eval-compatible feedback schema; no live policy container was launched in local smoke."
+            ),
             artifacts={"contract": str(local_dir / "policy-container-contract.json")},
         )
     )
 
-    rollout_dir = _write_rollout_fixture(local_dir / "rollouts", heldout_envs[0])
+    rollout_dir = _write_lerobot_rollout_fixture(local_dir / "rollouts", heldout_episodes[0], dataset_summary)
     vlm_output = local_dir / "feedback" / "vlm-eval"
     feedback_request = {
         "run_id": config.run_id,
-        "heldout_env_id": heldout_envs[0].env_id,
+        "heldout_episode": heldout_episodes[0],
         "rollout_path": str(rollout_dir),
         "feedback_output": str(vlm_output),
         "rubric": {"success": "task completed", "score": "float in [0,1]", "rationale": "brief reason"},
         "observation": {
-            "images": ["workspace", "wrist"],
-            "language": heldout_envs[0].instruction,
-            "state": "redacted-vector-ref",
+            "images": dataset_summary.camera_keys,
+            "language": "Complete the demonstrated manipulation task.",
+            "state": dataset_summary.state_keys,
         },
     }
     feedback, feedback_status = evaluate_feedback(
         config,
         rollout_path=rollout_dir,
         output_path=vlm_output,
-        task=heldout_envs[0].instruction,
+        task="Complete the demonstrated manipulation task.",
     )
     components.append(feedback_status)
     training_signal = feedback_to_training_signal(feedback)
     _write_json(local_dir / "training-signal.json", training_signal)
 
-    inner_tier = Tier.PARTIAL if config.trainer_command else Tier.SEAM
-    components.append(
-        ComponentStatus(
-            name="inner_feedback_training_loop",
-            tier=inner_tier,
-            evidence=(
-                "Training signal was generated and a custom trainer command is configured."
-                if config.trainer_command
-                else "Training signal conversion exists; no custom LeRobot trainer command is configured."
-            ),
-            artifacts={"training_signal": str(local_dir / "training-signal.json")},
+    try:
+        hook_result = run_feedback_training_step(
+            parse_feedback_batch(asdict(feedback)),
+            output_dir=local_dir / "feedback-training",
         )
-    )
+        hook_path = local_dir / "feedback-training" / "feedback-update-result.json"
+        _write_json(hook_path, hook_result.to_dict())
+        components.append(
+            ComponentStatus(
+                name="inner_feedback_training_loop",
+                tier=Tier.SEAM,
+                evidence=(
+                    f"Custom feedback trainer hook ran {hook_result.steps} update step(s) "
+                    f"with backend={hook_result.backend}; calibration/convergence remains research-grade."
+                ),
+                artifacts={
+                    "training_signal": str(local_dir / "training-signal.json"),
+                    "feedback_update": str(hook_path),
+                    "feedback_checkpoint": hook_result.checkpoint_path,
+                },
+            )
+        )
+    except Exception as exc:
+        components.append(
+            ComponentStatus(
+                name="inner_feedback_training_loop",
+                tier=Tier.BLOCKED,
+                evidence=f"Feedback trainer hook failed: {exc}",
+                artifacts={"training_signal": str(local_dir / "training-signal.json")},
+            )
+        )
 
     checkpoint_uri = config.checkpoint_uri or str(local_dir / "checkpoints" / "policy")
     outer = outer_loop_decision(feedback.score, config.threshold, checkpoint_uri)
@@ -746,6 +924,12 @@ def run_structural_spine(
                 "bucket": config.s3_bucket,
                 "prefix": config.s3_prefix,
             },
+            "dataset": dataset_summary.to_dict(),
+            "split": {
+                "train_count": len(train_episodes),
+                "heldout_count": len(heldout_episodes),
+                "seed": config.seed,
+            },
             "policy_container": policy_contract,
             "feedback_request": feedback_request,
         },
@@ -755,7 +939,34 @@ def run_structural_spine(
         training_signal=training_signal,
         outer_loop=outer,
     )
-    rerun_status = write_rerun_summary(report.to_dict(), _local_rrd_path(config, local_dir))
+    rerun_output = _local_rrd_path(config, local_dir)
+    try:
+        logical_rerun = lerobot_dataset_logical_to_rerun(
+            local_dataset,
+            rerun_output,
+            input_episode_indices=train_episodes[:1],
+            rollout_episode_indices=heldout_episodes[:1],
+            feedback_by_episode={int(heldout_episodes[0]): asdict(feedback)},
+            max_frames_per_episode=config.rerun_max_frames_per_episode,
+        )
+        rerun_status = ComponentStatus(
+            name="rerun",
+            tier=Tier.WORKS,
+            evidence="Wrote and verified logical LeRobot/Rerun entities for input demos, policy rollout, and per-episode feedback.",
+            artifacts={
+                "rrd": logical_rerun.output_rrd_path,
+                "entity_counts": json.dumps(logical_rerun.entity_counts, sort_keys=True),
+                "view_command": f"rerun {logical_rerun.output_rrd_path}",
+            },
+        )
+    except RerunAdapterError as exc:
+        rerun_status = write_rerun_summary(report.to_dict(), rerun_output)
+        rerun_status = ComponentStatus(
+            name=rerun_status.name,
+            tier=Tier.PARTIAL if rerun_status.tier != Tier.BLOCKED else Tier.BLOCKED,
+            evidence=f"Logical LeRobot/Rerun adapter failed ({exc}); {rerun_status.evidence}",
+            artifacts=rerun_status.artifacts,
+        )
     report.components.append(rerun_status)
     report.status = _overall_status(report.components)
     report_path = local_dir / "sim-to-real-report.json"
@@ -764,6 +975,8 @@ def run_structural_spine(
         config,
         {
             "training_signal": local_dir / "training-signal.json",
+            "dataset_summary": dataset_summary_path,
+            "split": split_path,
             "checkpoint": checkpoint_marker,
             "report": report_path,
             "rrd": _local_rrd_path(config, local_dir),
@@ -795,6 +1008,8 @@ def main(argv: list[str] | None = None) -> int:
             s3_bucket=args.s3_bucket,
             s3_prefix=args.s3_prefix,
             input_data_uri=args.input_data_uri,
+            dataset_repo_id=args.dataset_repo_id,
+            dataset_revision=args.dataset_revision,
             policy_image=args.policy_image,
             sim_backend=args.sim_backend,
             eval_backend=args.eval_backend,
@@ -816,6 +1031,7 @@ def main(argv: list[str] | None = None) -> int:
             trainer_command=args.trainer_command,
             checkpoint_uri=args.checkpoint_uri,
             rrd_path=args.rrd_path,
+            rerun_max_frames_per_episode=args.rerun_max_frames_per_episode,
             output_dir=args.output_dir,
         )
         try:
@@ -837,6 +1053,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--s3-bucket", default="")
     parser.add_argument("--s3-prefix", default="")
     parser.add_argument("--input-data-uri", default="")
+    parser.add_argument("--dataset-repo-id", default=DEFAULT_PUBLIC_LEROBOT_REPO)
+    parser.add_argument("--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION)
     parser.add_argument("--policy-image", default="")
     parser.add_argument("--sim-backend", default=DEFAULT_SIM_BACKEND)
     parser.add_argument("--eval-backend", default=DEFAULT_EVAL_BACKEND)
@@ -858,7 +1076,49 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--trainer-command", default="")
     parser.add_argument("--checkpoint-uri", default="")
     parser.add_argument("--rrd-path", default="")
+    parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
     parser.add_argument("--output-dir", type=Path, default=None)
+
+
+def _write_lerobot_rollout_fixture(output_dir: Path, episode_index: int, dataset_summary: Any) -> Path:
+    """Write a tiny rollout fixture tied to a real LeRobot episode for vlm-eval."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frame = output_dir / "frame_000.ppm"
+    frame.write_bytes(
+        b"P6\n4 4\n255\n"
+        + bytes(
+            [
+                40,
+                80,
+                160,
+                60,
+                120,
+                200,
+                80,
+                160,
+                220,
+                100,
+                180,
+                240,
+            ]
+            * 4
+        )
+    )
+    _write_json(
+        output_dir / "manifest.json",
+        {
+            "format": "npa_sim_to_real_lerobot_rollout_fixture_v1",
+            "dataset_repo_id": dataset_summary.repo_id,
+            "dataset_revision": dataset_summary.revision,
+            "episode_index": int(episode_index),
+            "frames": [frame.name],
+            "state_keys": dataset_summary.state_keys,
+            "action_keys": dataset_summary.action_keys,
+            "camera_keys": dataset_summary.camera_keys,
+        },
+    )
+    return output_dir
 
 
 def _write_rollout_fixture(output_dir: Path, env: SimEnvSpec) -> Path:
@@ -906,6 +1166,10 @@ def _upload_run_artifacts(config: SimToRealConfig, local_files: dict[str, Path])
     upload_targets: dict[str, str] = {}
     if "training_signal" in local_files and paths.get("training_signal"):
         upload_targets["training_signal"] = paths["training_signal"]
+    if "dataset_summary" in local_files and paths.get("dataset_summary"):
+        upload_targets["dataset_summary"] = paths["dataset_summary"]
+    if "split" in local_files and paths.get("train_envs"):
+        upload_targets["split"] = paths["train_envs"].rstrip("/") + "/episode-split.json"
     if "checkpoint" in local_files and paths.get("checkpoint"):
         checkpoint_uri = paths["checkpoint"]
         if checkpoint_uri.endswith("/"):

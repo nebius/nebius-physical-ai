@@ -1,133 +1,133 @@
 # Sim-To-Real Pipeline Runbook
 
-This runbook describes the generic sim-to-real training and evaluation pipeline.
-It is parameterized for Nebius S3-compatible storage, a custom LeRobot policy
-container, simulator backends, and VLM/VLA feedback.
+This is the customer runbook for the generic sim-to-real workflow. It extends
+the existing cookbook path instead of creating a second overlapping guide.
 
-## One-Command Launch
+The example uses the pinned public LeRobot dataset `lerobot/pusht` at revision
+`7628202a2180972f291ba1bc6723834921e72c19`. The dataset is MIT licensed and has
+vision, state, action, episode, frame, and timestamp fields. The default staged
+copy is:
 
-Render and submit the SkyPilot workflow with the runner:
+```text
+s3://$NPA_S3_BUCKET/datasets/lerobot-pusht/
+```
+
+## Prerequisites
 
 ```bash
 export NPA_SKYPILOT_BIN=/home/ubuntu/.npa/skypilot-venv/bin/sky
-export NPA_S3_BUCKET=your-bucket-name
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export NPA_REGISTRY_ID=your-registry-id
+export NPA_S3_BUCKET=npa-sim2real-d87cf691
+export NPA_REGISTRY_ID=<registry-id>
+export POLICY_IMAGE="cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
+export AWS_ACCESS_KEY_ID=<s3-access-key>
+export AWS_SECRET_ACCESS_KEY=<s3-secret-key>
+export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
+export NEBIUS_S3_ENDPOINT="$AWS_ENDPOINT_URL"
+```
 
+SkyPilot is installed outside the NPA venv. Use `$NPA_SKYPILOT_BIN`; do not rely
+on `sky` being on `PATH`.
+
+## One Command
+
+Run this exact command from the repo root:
+
+```bash
 npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
   --run-id sim-to-real-example \
   --bucket "$NPA_S3_BUCKET" \
-  --input-data-uri "s3://$NPA_S3_BUCKET/sim-to-real/input/" \
-  --policy-image "cr.eu-north1.nebius.cloud/$NPA_REGISTRY_ID/npa-lerobot:0.5.1" \
+  --input-data-uri "s3://$NPA_S3_BUCKET/datasets/lerobot-pusht/" \
+  --dataset-repo-id lerobot/pusht \
+  --dataset-revision 7628202a2180972f291ba1bc6723834921e72c19 \
+  --policy-image "$POLICY_IMAGE" \
   --vlm-eval-backend stub \
+  --vlm-eval-score 0.82 \
+  --gpu H100:1 \
   --cleanup
 ```
 
-For shape validation without launching infrastructure:
+Expected artifacts in the JSON output:
 
-```bash
-npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
-  --run-id sim-to-real-render \
-  --render-only
-```
+- Seeded real-episode split: `train=165`, `heldout=41`, `seed=42`.
+- Feedback object with `{success, score, rationale}`.
+- Checkpoint marker or checkpoint URI under `s3://$NPA_S3_BUCKET/sim-to-real/<run-id>/checkpoints/policy/`.
+- Rerun recording under `s3://$NPA_S3_BUCKET/sim-to-real/<run-id>/viz/<run-id>.rrd`.
+- Per-component tiers. Treat `SEAM` and `BLOCKED` literally.
 
-## Credentials
-
-S3 credentials are supplied at runtime through environment or SkyPilot secret
-injection. Do not write access keys into workflow YAML, source files, logs, or
-Rerun recordings.
-
-Required storage settings:
-
-```bash
-export NEBIUS_S3_ENDPOINT=https://storage.eu-north1.nebius.cloud
-export AWS_ENDPOINT_URL="$NEBIUS_S3_ENDPOINT"
-export NPA_S3_BUCKET=your-bucket-name
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-```
-
-The workflow writes artifacts under:
-
-```text
-s3://$NPA_S3_BUCKET/sim-to-real/<run-id>/
-```
-
-## Policy Image
-
-`POLICY_IMAGE` defaults to the platform LeRobot workbench image resolved by
-`npa.deploy.images.container_image_for_tool("lerobot")`. Override it with any
-custom LeRobot-compatible policy container that preserves the expected input and
-output contract.
-
-The policy container consumes:
-
-- LeRobot-format data or simulator rollout references from `INPUT_DATA_URI`.
-- Vision and language observations: workspace camera, wrist camera, robot state,
-  and instruction text.
-- VLM/VLA feedback as a bounded training signal.
-
-The policy container produces:
-
-- A checkpoint under `CHECKPOINT_URI`.
-- Optional training logs under the run-scoped S3 prefix.
-
-## Inputs And Outputs
-
-Inputs:
-
-- `INPUT_DATA_URI`: source LeRobot data, raw rollout data, or task assets.
-- `POLICY_IMAGE`: custom or platform LeRobot policy container.
-- `SIM_BACKEND`: `genesis`, `lightwheel`, or `isaac`.
-- `FEEDBACK_SOURCE`: `vlm` or `vla`.
-- `SUCCESS_THRESHOLD`: outer-loop promotion threshold.
-
-Outputs:
-
-- Raw environment specs: `raw-envs/`.
-- Seeded train and held-out split manifests: `splits/train/`, `splits/heldout/`.
-- Feedback JSON from `vlm-eval`: `feedback/`.
-- Training signal JSON: `training-signal.json`.
-- Checkpoint marker or promoted checkpoint: `checkpoints/policy/`.
-- Tiered report: `reports/sim-to-real-report.json`.
-- Rerun recording: `viz/<run-id>.rrd`.
-
-View a local Rerun artifact with:
+View a downloaded Rerun artifact with:
 
 ```bash
 rerun /tmp/npa-sim-to-real-<run-id>/<run-id>.rrd
 ```
 
-## Backend Swaps
+The recording uses logical paths for input demonstrations, the policy rollout,
+and per-episode feedback. The report includes verified entity counts for paths
+such as `input_dataset/episodes/.../state/dim_00`,
+`policy_rollout/episodes/.../actions/dim_00`, and
+`eval/episodes/.../score`.
 
-Use the same workflow with different backend flags:
+## Secure Inputs
+
+Pass S3 credentials through environment variables or SkyPilot secret injection.
+Do not write credentials into source files, workflow YAML, logs, image tags, S3
+keys, or `.rrd` recordings.
+
+## Bring Your Own Dataset
+
+Point `--input-data-uri` at a LeRobotDataset directory in S3:
 
 ```bash
---sim-backend genesis
---sim-backend lightwheel
---sim-backend isaac
---feedback-source vlm
---feedback-source vla
---vlm-eval-backend self-hosted
---vlm-eval-backend api
---vlm-eval-backend stub
+--input-data-uri "s3://$NPA_S3_BUCKET/datasets/my-lerobot-dataset/"
 ```
 
-`vlm` feedback uses the existing `npa workbench vlm-eval` implementation. `vla`,
-Lightwheel, Isaac Lab, Cosmos augmentation, and LanceDB cache hooks are reported
-as seams until a configured backend produces live evidence.
+Keep `--dataset-repo-id` and `--dataset-revision` aligned with the source when
+they are known. The adapter visualizes the same camera, state, action, timestamp,
+rollout, and feedback paths.
+
+## Bring Your Own Policy Image
+
+`POLICY_IMAGE` defaults to the platform BYO-compatible LeRobot policy container.
+Override it with any image that keeps the same contract:
+
+- `POST /infer` for observation-to-action inference.
+- `POST /rollout` for batched rollout actions.
+- `POST /feedback/train-step` for `{success, score, rationale}` feedback batches.
+- S3 inputs from `INPUT_DATA_URI`; checkpoint outputs to `CHECKPOINT_URI`.
+
+The feedback hook runs real update steps and writes an adapter checkpoint. It is
+still a `SEAM`: calibration, convergence, and full closed-loop policy improvement
+are separate milestones.
+
+## Teardown
+
+The runner uses SkyPilot cleanup and does not use unsupported `--down` flags.
+After the command exits:
+
+```bash
+"$NPA_SKYPILOT_BIN" status
+"$NPA_SKYPILOT_BIN" jobs queue
+```
+
+Both should show no in-progress clusters or managed jobs for the run.
+
+## Swap Matrix
+
+| Setting | Example default | BYO override |
+| --- | --- | --- |
+| `NPA_S3_BUCKET` | `npa-sim2real-d87cf691` | BYO bucket |
+| `--input-data-uri` / `LEROBOT_DATASET_URI` | `s3://$NPA_S3_BUCKET/datasets/lerobot-pusht/` | Any LeRobotDataset S3 URI |
+| `--dataset-repo-id` | `lerobot/pusht` | Dataset repo ID |
+| `--dataset-revision` | `7628202a2180972f291ba1bc6723834921e72c19` | Dataset revision |
+| `POLICY_IMAGE` / `--policy-image` | `cr.eu-north1.nebius.cloud/$NPA_REGISTRY_ID/npa-lerobot-policy:0.1.0` | Custom LeRobot policy image |
+| `--vlm-eval-backend` | `stub` | Live VLM backend |
+| `--feedback-source` | `vlm` | `vla` when configured |
+| `--gpu` | `H100:1` | `H100:1,H200:1,A100:1,L40S:1,RTX6000:1` failover string |
+| `--rerun-max-frames-per-episode` | `32` | Lower for smoke, higher for inspection |
 
 ## Tier Semantics
 
-Every report labels components:
-
-- `WORKS`: live evidence exists.
-- `PARTIAL`: local or structural validation passed, but live backend evidence is
-  unavailable.
-- `SEAM`: typed extension point exists, but the backend is not implemented or not
-  configured.
+- `WORKS`: live or local evidence exists for that component.
+- `PARTIAL`: structural validation passed, but live backend evidence is missing.
+- `SEAM`: typed extension point exists, but the full backend/calibration is not
+  complete.
 - `BLOCKED`: exact missing credential, tool, or backend failure was observed.
-
-Do not treat a partial report as a live result. A non-draft release requires a
-live Nebius/GPU/S3/VLM run with evidence in the tier table.

@@ -12,6 +12,7 @@ from npa.workflows.sim_to_real import (
     SimToRealConfig,
     Tier,
     artifact_uris,
+    default_policy_image,
     default_s3_prefix,
     feedback_to_training_signal,
     generate_raw_envs,
@@ -20,6 +21,8 @@ from npa.workflows.sim_to_real import (
     run_structural_spine,
     seeded_train_heldout_split,
 )
+from npa.workbench.lerobot.policy_container import parse_feedback_batch, run_feedback_training_step
+from npa.workflows.lerobot_dataset import seeded_episode_split
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -86,9 +89,12 @@ def test_structural_spine_uses_existing_vlm_eval_stub(tmp_path: Path) -> None:
 
     assert report.feedback.score == 0.82
     assert components["vlm_feedback"].tier == Tier.PARTIAL
-    assert components["genesis_env_split"].tier == Tier.PARTIAL
+    assert components["real_lerobot_dataset"].tier in {Tier.WORKS, Tier.PARTIAL}
+    assert components["lerobot_episode_split"].tier == Tier.WORKS
     assert components["inner_feedback_training_loop"].tier == Tier.SEAM
     assert (tmp_path / "feedback" / "vlm-eval" / "vlm_eval_stub.json").exists()
+    assert (tmp_path / "lerobot-dataset-summary.json").exists()
+    assert (tmp_path / "s2r-test.rrd").exists()
     assert (tmp_path / "sim-to-real-report.json").exists()
 
 
@@ -117,9 +123,13 @@ def test_yaml_exposes_parameterized_spine_and_feedback_contract() -> None:
     assert task["resources"]["accelerators"] == "H100:1"
     assert task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
     assert task["envs"]["POLICY_IMAGE"].startswith("cr.eu-north1.nebius.cloud/")
+    assert "npa-lerobot-policy" in task["envs"]["POLICY_IMAGE"]
+    assert task["envs"]["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
     assert task["envs"]["FEEDBACK_SOURCE"] == "vlm"
     assert "npa.workflows.sim_to_real local-smoke" in task["run"]
     assert "--attempt-s3-roundtrip" in task["run"]
+    assert docs[2]["name"] == "s2r-policy-feedback-update"
+    assert "feedback-step" in docs[2]["run"]
 
 
 def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
@@ -137,9 +147,12 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
     assert task_env["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-render"
     assert task_env["NPA_S3_BUCKET"] == "bucket"
     assert task_env["POLICY_IMAGE"] == "cr.example/npa-lerobot:custom"
+    assert task_env["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
+    assert task_env["INPUT_DATA_URI"] == "s3://bucket/datasets/lerobot-pusht/"
     assert task_env["CHECKPOINT_URI"] == "s3://bucket/sim-to-real/s2r-render/checkpoints/policy/"
     assert task_env["VLM_EVAL_BACKEND"] == "stub"
     assert task_env["VLM_EVAL_SCORE"] == "0.9"
+    assert docs[2]["resources"]["image_id"] == "docker:cr.example/npa-lerobot:custom"
 
 
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
@@ -160,3 +173,27 @@ def test_feedback_result_dataclass_is_public() -> None:
     result = FeedbackResult(success=False, score=0.2, rationale="Needs another loop.")
 
     assert result.source == "vlm"
+
+
+def test_default_policy_image_uses_byo_policy_container() -> None:
+    assert default_policy_image(registry="cr.example").endswith("/npa-lerobot-policy:0.1.0")
+
+
+def test_lerobot_episode_split_covers_all_real_episode_ids() -> None:
+    train, heldout = seeded_episode_split(list(range(10)), train_fraction=0.8, seed=7)
+
+    assert len(train) == 8
+    assert len(heldout) == 2
+    assert sorted(train + heldout) == list(range(10))
+
+
+def test_feedback_policy_hook_updates_adapter_checkpoint(tmp_path: Path) -> None:
+    feedback = parse_feedback_batch(
+        {"feedback": [{"success": True, "score": 0.8, "rationale": "Stable rollout."}]}
+    )
+    result = run_feedback_training_step(feedback, output_dir=tmp_path)
+
+    assert result.status == "updated"
+    assert result.steps == 1
+    assert result.weight_after != result.weight_before
+    assert Path(result.checkpoint_path).exists()
