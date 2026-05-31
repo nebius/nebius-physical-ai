@@ -1,0 +1,162 @@
+name: Live GPU e2e
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  live-e2e:
+    name: Live GPU e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'live-e2e') &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    env:
+      NPA_INTEGRATION_E2E: "1"
+      NPA_DRY_RUN: "0"
+      DRY_RUN: "0"
+      NPA_LIVE_GPU_FAILOVER: "H100:1,H200:1,A100:1,L40S:1,RTX6000:1"
+      NPA_SONIC_E2E_GPU: "H100:1"
+      NPA_VLM_EVAL_LIVE_LAUNCH_TIMEOUT_SECONDS: "2400"
+      NPA_VLM_EVAL_LIVE_HEALTH_TIMEOUT_SECONDS: "900"
+      NPA_VLM_EVAL_LIVE_REQUEST_TIMEOUT_SECONDS: "240"
+      NPA_SONIC_E2E_TIMEOUT_SECONDS: "2700"
+      NEBIUS_SA_KEY: ${{ secrets.NEBIUS_SA_KEY }}
+      NEBIUS_S3_ACCESS_KEY_ID: ${{ secrets.NEBIUS_S3_ACCESS_KEY_ID }}
+      NEBIUS_S3_SECRET_ACCESS_KEY: ${{ secrets.NEBIUS_S3_SECRET_ACCESS_KEY }}
+      NEBIUS_S3_ENDPOINT: ${{ secrets.NEBIUS_S3_ENDPOINT }}
+      NPA_S3_BUCKET: ${{ secrets.NPA_S3_BUCKET }}
+      NPA_REGISTRY_ID: ${{ secrets.NPA_REGISTRY_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.NEBIUS_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.NEBIUS_S3_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: ${{ secrets.NEBIUS_S3_ENDPOINT }}
+      NPA_STORAGE_ENDPOINT: ${{ secrets.NEBIUS_S3_ENDPOINT }}
+      NPA_E2E_S3_BUCKET: ${{ secrets.NPA_S3_BUCKET }}
+      NPA_E2E_S3_ENDPOINT: ${{ secrets.NEBIUS_S3_ENDPOINT }}
+      NPA_E2E_S3_ACCESS_KEY_ID: ${{ secrets.NEBIUS_S3_ACCESS_KEY_ID }}
+      NPA_E2E_S3_SECRET_ACCESS_KEY: ${{ secrets.NEBIUS_S3_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install system test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install npa in repo venv
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
+          npa/.venv/bin/python -m pip install -e "npa[server,adapter]" pytest pytest-cov pytest-mock pytest-timeout
+
+      - name: Install SkyPilot 0.12.2
+        run: |
+          npa/.venv/bin/npa skypilot bootstrap
+          sky_bin="$(npa/.venv/bin/npa skypilot status --bin-path)"
+          echo "NPA_SKYPILOT_BIN=${sky_bin}" >> "${GITHUB_ENV}"
+          dirname "${sky_bin}" >> "${GITHUB_PATH}"
+          "${sky_bin}" --version
+
+      - name: Write Nebius credentials and verify SkyPilot
+        run: |
+          missing=()
+          for name in \
+            NEBIUS_SA_KEY \
+            NEBIUS_S3_ACCESS_KEY_ID \
+            NEBIUS_S3_SECRET_ACCESS_KEY \
+            NEBIUS_S3_ENDPOINT \
+            NPA_S3_BUCKET \
+            NPA_REGISTRY_ID
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("${name}")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          install -m 700 -d "${HOME}/.nebius" "${HOME}/.aws"
+          umask 077
+          printf '%s' "${NEBIUS_SA_KEY}" > "${HOME}/.nebius/credentials.json"
+          npa/.venv/bin/python -m json.tool "${HOME}/.nebius/credentials.json" > /dev/null
+
+          {
+            printf '[nebius]\n'
+            printf 'aws_access_key_id=%s\n' "${NEBIUS_S3_ACCESS_KEY_ID}"
+            printf 'aws_secret_access_key=%s\n' "${NEBIUS_S3_SECRET_ACCESS_KEY}"
+          } > "${HOME}/.aws/credentials"
+          {
+            printf '[profile nebius]\n'
+            printf 'region=eu-north1\n'
+            printf 'endpoint_url=%s\n' "${NEBIUS_S3_ENDPOINT}"
+          } > "${HOME}/.aws/config"
+
+          "${NPA_SKYPILOT_BIN}" check nebius
+          "${NPA_SKYPILOT_BIN}" check
+
+      # GitHub-hosted runners only orchestrate SkyPilot. If hosted networking or
+      # auth proves flaky, move this job to a self-hosted runner with SkyPilot
+      # preconfigured and keep the same teardown contract below.
+      - name: Run live GPU e2e tests
+        timeout-minutes: 55
+        run: |
+          npa/.venv/bin/python -m pytest npa/tests/ -m "gpu and e2e" -vv --tb=short
+
+      - name: Tear down live GPU clusters
+        if: always()
+        timeout-minutes: 10
+        run: |
+          if [ -z "${NPA_SKYPILOT_BIN:-}" ] || [ ! -x "${NPA_SKYPILOT_BIN}" ]; then
+            echo "SkyPilot binary is unavailable; no live e2e clusters can be queried."
+            exit 0
+          fi
+
+          cluster_pattern='^(sim-to-real-live-|npa-vlm-live-|npa-sonic-e2e-)'
+
+          list_live_e2e_clusters() {
+            "${NPA_SKYPILOT_BIN}" status --refresh 2>&1 \
+              | sed -E 's/\x1b\[[0-9;]*[mK]//g' \
+              | awk '{print $1}' \
+              | grep -E "${cluster_pattern}" \
+              | sort -u || true
+          }
+
+          mapfile -t clusters < <(list_live_e2e_clusters)
+          for cluster in "${clusters[@]}"; do
+            echo "Tearing down ${cluster}"
+            "${NPA_SKYPILOT_BIN}" down --yes "${cluster}" || true
+          done
+
+          for _attempt in $(seq 1 30); do
+            mapfile -t remaining < <(list_live_e2e_clusters)
+            if [ "${#remaining[@]}" -eq 0 ]; then
+              echo "No live e2e SkyPilot clusters remain."
+              exit 0
+            fi
+            printf 'Waiting for live e2e clusters to disappear: %s\n' "${remaining[*]}"
+            sleep 10
+          done
+
+          printf 'Timed out waiting for live e2e clusters to disappear: %s\n' "${remaining[*]}" >&2
+          exit 1
