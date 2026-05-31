@@ -37,6 +37,7 @@ jobs:
       NEBIUS_S3_ACCESS_KEY_ID: ${{ secrets.NEBIUS_S3_ACCESS_KEY_ID }}
       NEBIUS_S3_SECRET_ACCESS_KEY: ${{ secrets.NEBIUS_S3_SECRET_ACCESS_KEY }}
       NEBIUS_S3_ENDPOINT: ${{ secrets.NEBIUS_S3_ENDPOINT }}
+      NEBIUS_TENANT_ID: ${{ secrets.NEBIUS_TENANT_ID }}
       NPA_S3_BUCKET: ${{ secrets.NPA_S3_BUCKET }}
       NPA_REGISTRY_ID: ${{ secrets.NPA_REGISTRY_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.NEBIUS_S3_ACCESS_KEY_ID }}
@@ -78,12 +79,15 @@ jobs:
 
       - name: Write Nebius credentials and verify SkyPilot
         run: |
+          set -euo pipefail
+
           missing=()
           for name in \
             NEBIUS_SA_KEY \
             NEBIUS_S3_ACCESS_KEY_ID \
             NEBIUS_S3_SECRET_ACCESS_KEY \
             NEBIUS_S3_ENDPOINT \
+            NEBIUS_TENANT_ID \
             NPA_S3_BUCKET \
             NPA_REGISTRY_ID
           do
@@ -99,6 +103,7 @@ jobs:
           install -m 700 -d "${HOME}/.nebius" "${HOME}/.aws"
           umask 077
           printf '%s' "${NEBIUS_SA_KEY}" > "${HOME}/.nebius/credentials.json"
+          printf '%s' "${NEBIUS_TENANT_ID}" > "${HOME}/.nebius/NEBIUS_TENANT_ID.txt"
           npa/.venv/bin/python -m json.tool "${HOME}/.nebius/credentials.json" > /dev/null
 
           {
@@ -112,7 +117,11 @@ jobs:
             printf 'endpoint_url=%s\n' "${NEBIUS_S3_ENDPOINT}"
           } > "${HOME}/.aws/config"
 
-          "${NPA_SKYPILOT_BIN}" check nebius
+          "${NPA_SKYPILOT_BIN}" check nebius 2>&1 | tee /tmp/sky-check-nebius.log
+          if ! grep -Eq 'Nebius: enabled.*compute' /tmp/sky-check-nebius.log; then
+            echo "SkyPilot Nebius compute access is not enabled." >&2
+            exit 1
+          fi
           "${NPA_SKYPILOT_BIN}" check
 
       # GitHub-hosted runners only orchestrate SkyPilot. If hosted networking or
