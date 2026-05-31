@@ -36,6 +36,8 @@ DEFAULT_CONTAINER_OUTPUT_PATH = "/npa/eval/output/sonic_eval_results.json"
 REFERENCE_BACKEND = "reference"
 CONTAINER_BACKEND = "container"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
+BUILTIN_REFERENCE_ENVS = {"locomotion-smoke", "sonic-locomotion-smoke"}
+BUILTIN_REFERENCE_STEPS = 32
 
 EVAL_RESULT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -281,6 +283,13 @@ def _run_reference_backend(
     warnings: list[str] = []
     policy = _OnnxPolicy(bundle)
     env_name = (env or DEFAULT_EVAL_ENV).strip() or DEFAULT_EVAL_ENV
+    if env_name.lower() in BUILTIN_REFERENCE_ENVS:
+        return _run_builtin_locomotion_reference(
+            bundle=bundle,
+            policy=policy,
+            episodes=episodes,
+            env=env_name,
+        )
     if env_name.lower() not in {"smoke", "none"}:
         try:
             return _run_gymnasium_reference(
@@ -304,6 +313,85 @@ def _run_reference_backend(
         episodes=episodes,
         env=env_name,
         warnings=warnings,
+    )
+
+
+def _run_builtin_locomotion_reference(
+    *,
+    bundle: _EvalBundle,
+    policy: _OnnxPolicy,
+    episodes: int,
+    env: str,
+) -> dict[str, Any]:
+    episode_metrics: list[dict[str, Any]] = []
+    dt = float(bundle.control_dt or 0.02)
+    for episode_index in range(episodes):
+        x_position = 0.0
+        velocity = 0.2 + 0.02 * float(episode_index)
+        pitch = 0.0
+        total_reward = 0.0
+        energy = 0.0
+        valid_actions = 0
+        fall = False
+        terminated = False
+        action_norms: list[float] = []
+        length = 0
+
+        for step_index in range(BUILTIN_REFERENCE_STEPS):
+            observation = _locomotion_observation(
+                bundle=bundle,
+                x_position=x_position,
+                velocity=velocity,
+                pitch=pitch,
+                step_index=step_index,
+                episode_index=episode_index,
+            )
+            action = policy.predict(observation)[0]
+            valid_actions += 1
+            length = step_index + 1
+
+            action_norm = float(np.linalg.norm(action))
+            action_norms.append(action_norm)
+            action_mean = float(np.tanh(np.mean(action))) if action.size else 0.0
+            acceleration = 0.15 + 0.2 * action_mean - 0.01 * min(action_norm, 5.0)
+            velocity = float(np.clip(velocity + acceleration * dt, -0.25, 2.0))
+            x_position += velocity * dt
+            pitch = float(0.95 * pitch + 0.01 * action_mean)
+            energy += action_norm * dt
+            fall = abs(pitch) > 0.65 or not np.all(np.isfinite(action))
+            total_reward += velocity * dt - 0.001 * action_norm
+
+            if fall:
+                terminated = True
+                total_reward -= 1.0
+                break
+
+        distance = max(0.0, x_position)
+        episode_metrics.append(
+            {
+                "episode_index": episode_index,
+                "episode_return": total_reward,
+                "distance": distance,
+                "fall": fall,
+                "terminated": terminated,
+                "truncated": False,
+                "episode_length": length,
+                "valid_actions": valid_actions,
+                "steps": length,
+                "action_norm_mean": _mean(action_norms),
+                "energy": energy,
+            }
+        )
+
+    return _result_payload(
+        bundle=bundle,
+        backend=REFERENCE_BACKEND,
+        mode="sim",
+        smoke_level=False,
+        env=env,
+        episodes=episodes,
+        episode_metrics=episode_metrics,
+        warnings=[],
     )
 
 
@@ -746,6 +834,34 @@ def _representative_observation(bundle: _EvalBundle, episode_index: int) -> np.n
     return observation
 
 
+def _locomotion_observation(
+    *,
+    bundle: _EvalBundle,
+    x_position: float,
+    velocity: float,
+    pitch: float,
+    step_index: int,
+    episode_index: int,
+) -> np.ndarray:
+    observation = np.zeros(bundle.obs_dim, dtype=np.float32)
+    values = np.asarray(
+        [
+            velocity,
+            pitch,
+            x_position,
+            float(step_index) * float(bundle.control_dt or 0.02),
+            0.01 * float(episode_index + 1),
+            np.sin(0.1 * float(step_index)),
+            np.cos(0.1 * float(step_index)),
+            1.0,
+        ],
+        dtype=np.float32,
+    )
+    span = min(bundle.obs_dim, values.size)
+    observation[:span] = values[:span]
+    return observation
+
+
 def _observation_vector(
     observation: Any,
     *,
@@ -936,6 +1052,7 @@ def _jsonable(value: Any) -> Any:
 
 __all__ = [
     "BACKENDS",
+    "BUILTIN_REFERENCE_ENVS",
     "CONTAINER_BACKEND",
     "DEFAULT_CONTAINER_METADATA_PATH",
     "DEFAULT_CONTAINER_OUTPUT_PATH",

@@ -24,6 +24,14 @@ SONIC_EXPORT_YAML = (
 SONIC_EVAL_YAML = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-eval.yaml"
 )
+SONIC_EXPORT_EVAL_YAML = (
+    ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "sonic-export-eval.yaml"
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -99,6 +107,33 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_OUTPUT_PATH"].endswith(
         "sonic_eval_results.json"
     )
+
+
+def test_sonic_export_eval_blueprint_chains_real_cli_commands() -> None:
+    docs = _docs(SONIC_EXPORT_EVAL_YAML)
+
+    assert docs[0] == {"name": "sonic-export-eval", "execution": "serial"}
+    assert len(docs) == 2
+
+    task = docs[1]
+    assert task["name"] == "sonic-export-eval"
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert task["resources"]["accelerators"] == "H100:1"
+
+    envs = task["envs"]
+    assert envs["POLICY_CKPT"].startswith("s3://")
+    assert envs["OUTPUT_DIR"].startswith("s3://")
+    assert envs["EVAL_BACKEND"] == "reference"
+    assert envs["EVAL_ENV"] == "sonic-locomotion-smoke"
+    assert envs["EPISODES"] == "8"
+    assert envs["CONTAINER_IMAGE"] == ""
+    assert envs["GPU"] == "H100:1"
+
+    run = task["run"]
+    assert "npa workbench sonic export" in run
+    assert "npa workbench sonic eval" in run
+    assert "NPA_SONIC_E2E_METRICS_JSON_BEGIN" in run
+    assert "--container-image" in run
 
 
 def test_sonic_locomotion_assets_do_not_add_python_runner() -> None:

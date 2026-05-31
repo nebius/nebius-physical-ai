@@ -16,3 +16,6 @@ workflows with Nebius Physical AI Workbench.
 - [SONIC Locomotion Fine-Tuning](sonic-locomotion-finetuning.md): retarget
   motion data, run SONIC fine-tuning, and evaluate with MJLab through SkyPilot
   YAML.
+- [SONIC Export and Eval Runbook](sonic-eval-runbook.md): export a trained
+  SONIC checkpoint to ONNX, run reference locomotion eval, and swap in a
+  config-driven external eval container.
