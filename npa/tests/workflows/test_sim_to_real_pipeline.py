@@ -6,8 +6,10 @@ import stat
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 
+from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM, convert
 from npa.workflows.sim_to_real import (
     FeedbackResult,
     SimToRealConfig,
@@ -44,6 +46,37 @@ def _docs() -> list[dict]:
     return [doc for doc in yaml.safe_load_all(YAML_PATH.read_text(encoding="utf-8")) if doc is not None]
 
 
+def _write_lerobot_fixture(root: Path) -> Path:
+    raw = root / "raw"
+    for episode_index in range(2):
+        episode = raw / f"episode_{episode_index:06d}"
+        episode.mkdir(parents=True)
+        state = np.zeros((3, G1_STATE_DIM), dtype=np.float32)
+        state[:, 0] = np.linspace(0.0, 1.0 + episode_index, 3, dtype=np.float32)
+        actions = state + 0.1
+        np.save(episode / "state.npy", state)
+        np.save(episode / "actions.npy", actions)
+
+    dataset = convert(raw, root / "lerobot", fps=10, task="sim-to-real unit fixture")
+    info_path = dataset / "meta" / "info.json"
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info["features"]["observation.images.ego_view"] = {
+        "dtype": "video",
+        "shape": [4, 4, 3],
+        "names": ["height", "width", "channel"],
+        "video_info": {
+            "video.fps": 10.0,
+            "video.codec": "h264",
+            "video.pix_fmt": "yuv420p",
+            "video.is_depth_map": False,
+            "has_audio": False,
+        },
+    }
+    info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
+    return dataset
+
+
 def test_seeded_raw_env_split_is_deterministic_80_20() -> None:
     envs = generate_raw_envs(count=10, seed=7)
     train, heldout = seeded_train_heldout_split(envs, train_fraction=0.8, seed=7)
@@ -75,9 +108,11 @@ def test_feedback_parse_guard_and_training_signal() -> None:
 
 
 def test_structural_spine_uses_existing_vlm_eval_stub(tmp_path: Path) -> None:
+    dataset = _write_lerobot_fixture(tmp_path / "fixture")
     config = SimToRealConfig(
         run_id="s2r-test",
         output_dir=tmp_path,
+        input_data_uri=str(dataset),
         env_count=10,
         threshold=0.5,
         vlm_eval_backend="stub",
@@ -248,9 +283,11 @@ def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path,
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
     from npa.sdk.workbench import sim_to_real
 
+    dataset = _write_lerobot_fixture(tmp_path / "fixture")
     report = sim_to_real.local_smoke(
         run_id="sdk-s2r",
         output_dir=tmp_path,
+        input_data_uri=str(dataset),
         vlm_eval_backend="stub",
         vlm_eval_score=0.7,
     )

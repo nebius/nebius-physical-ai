@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from io import BytesIO
 import hashlib
 import json
@@ -102,7 +102,7 @@ def test_local_file_uploads_with_sha_metadata_and_generates_versioned_url(
         target_bucket="target",
         s3_client=s3,
         host_s3_client=RerunHostFakeS3(),
-        now=datetime(2026, 5, 11, 22, 30, tzinfo=UTC),
+        now=datetime(2026, 5, 11, 22, 30, tzinfo=timezone.utc),
     )
 
     key = f"rerun-shared/{sha}.rrd"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import numpy as np
@@ -163,7 +164,8 @@ def test_lerobot_to_rerun_uploads_s3_output_after_local_save(tmp_path: Path, moc
         return destination
 
     storage.upload_file.side_effect = upload_file
-    mocker.patch("npa.viz.adapters.lerobot_to_rerun._storage_client", return_value=storage)
+    adapter_module = importlib.import_module("npa.viz.adapters.lerobot_to_rerun")
+    mocker.patch.object(adapter_module, "_storage_client", return_value=storage)
 
     lerobot_to_rerun(dataset, "s3://bucket/visuals/out.rrd")
 
