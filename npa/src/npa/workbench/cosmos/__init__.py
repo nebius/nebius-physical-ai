@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
+from npa.workbench.cosmos.cosmos3 import (
+    DEFAULT_CACHE_DIR,
+    DEFAULT_CACHE_ENV,
+    DEFAULT_GITHUB_TOKEN_ENV,
+    DEFAULT_HF_TOKEN_ENV,
+    DEFAULT_NGC_API_KEY_ENV,
+    DEFAULT_REASONING_PARSER,
+    DEFAULT_TOOL_CALL_PARSER,
+    Cosmos3AccessConfig,
+    Cosmos3AccessError,
+    Cosmos3CheckResult,
+    Cosmos3FetchResult,
+    Cosmos3ServeConfig,
+    check_cosmos3_access,
+    fetch_cosmos3_artifacts,
+)
 
 ensure_ingress = make_cli_wrapper(
     "npa.cli.cosmos", "ensure_ingress_cmd", "Ensure ingress for a Cosmos workbench."
 )
 register_byovm = make_cli_wrapper(
     "npa.cli.cosmos", "register_byovm_cmd", "Register a BYOVM Cosmos workbench."
+)
+check = make_cli_wrapper(
+    "npa.cli.cosmos", "check_cmd", "Check Cosmos3 gated source and HF access."
+)
+fetch = make_cli_wrapper(
+    "npa.cli.cosmos", "fetch_cmd", "Fetch Cosmos3 gated source and HF artifacts."
 )
 list = make_cli_wrapper("npa.cli.cosmos", "list_cmd", "List Cosmos workbenches.")
 deploy = make_cli_wrapper("npa.cli.cosmos", "deploy_cmd", "Deploy a Cosmos workbench.")
@@ -25,8 +47,24 @@ system_info = make_cli_wrapper(
 )
 
 __all__ = [
+    "DEFAULT_CACHE_DIR",
+    "DEFAULT_CACHE_ENV",
+    "DEFAULT_GITHUB_TOKEN_ENV",
+    "DEFAULT_HF_TOKEN_ENV",
+    "DEFAULT_NGC_API_KEY_ENV",
+    "DEFAULT_REASONING_PARSER",
+    "DEFAULT_TOOL_CALL_PARSER",
+    "Cosmos3AccessConfig",
+    "Cosmos3AccessError",
+    "Cosmos3CheckResult",
+    "Cosmos3FetchResult",
+    "Cosmos3ServeConfig",
+    "check_cosmos3_access",
+    "fetch_cosmos3_artifacts",
     "ensure_ingress",
     "register_byovm",
+    "check",
+    "fetch",
     "list",
     "deploy",
     "autoscale",

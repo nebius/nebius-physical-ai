@@ -129,6 +129,16 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.cosmos.cosmos3 import (
+    DEFAULT_GITHUB_TOKEN_ENV,
+    DEFAULT_HF_TOKEN_ENV,
+    DEFAULT_NGC_API_KEY_ENV,
+    DEFAULT_REASONING_PARSER,
+    DEFAULT_TOOL_CALL_PARSER,
+    Cosmos3AccessConfig,
+    check_cosmos3_access,
+    fetch_cosmos3_artifacts,
+)
 
 app = typer.Typer(
     name="cosmos",
@@ -379,6 +389,37 @@ def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
     else:
         for key, val in data.items():
             typer.echo(f"  {key}: {val}")
+
+
+def _cosmos3_access_config(
+    *,
+    model_id: str,
+    source_repo_url: str,
+    cache_dir: Path | None,
+    github_token_env: str,
+    hf_token_env: str,
+    ngc_api_key_env: str,
+    require_ngc: bool,
+    reasoning_parser: str,
+    tool_call_parser: str,
+) -> Cosmos3AccessConfig:
+    return Cosmos3AccessConfig.from_env(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+
+
+def _finish_cosmos3_result(data: dict[str, Any], output: OutputFormat) -> None:
+    _output(data, output)
+    if data.get("status") != "ok":
+        raise typer.Exit(1)
 
 
 def _get_config(**overrides: str):
@@ -656,6 +697,175 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
         _fail(
             "Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type."
         )
+
+
+@app.command("check")
+def check_cmd(
+    model_id: str = typer.Option(
+        "",
+        "--model-id",
+        envvar="NPA_COSMOS3_MODEL_ID",
+        help="HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID.",
+    ),
+    source_repo_url: str = typer.Option(
+        "",
+        "--source-repo-url",
+        envvar="NPA_COSMOS3_SOURCE_REPO",
+        help="Gated source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO.",
+    ),
+    cache_dir: Path | None = typer.Option(
+        None,
+        "--cache-dir",
+        envvar="NPA_COSMOS3_CACHE",
+        help="Ephemeral runtime cache directory.",
+    ),
+    github_token_env: str = typer.Option(
+        DEFAULT_GITHUB_TOKEN_ENV,
+        "--github-token-env",
+        help="Environment variable that holds the GitHub token.",
+    ),
+    hf_token_env: str = typer.Option(
+        DEFAULT_HF_TOKEN_ENV,
+        "--hf-token-env",
+        help="Environment variable that holds the Hugging Face token.",
+    ),
+    ngc_api_key_env: str = typer.Option(
+        DEFAULT_NGC_API_KEY_ENV,
+        "--ngc-api-key-env",
+        help="Environment variable that holds the NGC API key.",
+    ),
+    require_ngc: bool = typer.Option(
+        False,
+        "--require-ngc/--no-require-ngc",
+        help="Require NGC auth for workflows that also need an NGC base container.",
+    ),
+    reasoning_parser: str = typer.Option(
+        DEFAULT_REASONING_PARSER,
+        "--reasoning-parser",
+        help="vLLM reasoning parser setting carried into serve config.",
+    ),
+    tool_call_parser: str = typer.Option(
+        DEFAULT_TOOL_CALL_PARSER,
+        "--tool-call-parser",
+        help="vLLM tool-call parser setting carried into serve config.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """Check gated source and HF checkpoint access without downloading weights."""
+    cfg = _cosmos3_access_config(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+    _finish_cosmos3_result(check_cosmos3_access(cfg).as_dict(), output)
+
+
+@app.command("fetch")
+def fetch_cmd(
+    model_id: str = typer.Option(
+        "",
+        "--model-id",
+        envvar="NPA_COSMOS3_MODEL_ID",
+        help="HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID.",
+    ),
+    source_repo_url: str = typer.Option(
+        "",
+        "--source-repo-url",
+        envvar="NPA_COSMOS3_SOURCE_REPO",
+        help="Gated source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO.",
+    ),
+    cache_dir: Path | None = typer.Option(
+        None,
+        "--cache-dir",
+        envvar="NPA_COSMOS3_CACHE",
+        help="Ephemeral runtime cache directory.",
+    ),
+    github_token_env: str = typer.Option(
+        DEFAULT_GITHUB_TOKEN_ENV,
+        "--github-token-env",
+        help="Environment variable that holds the GitHub token.",
+    ),
+    hf_token_env: str = typer.Option(
+        DEFAULT_HF_TOKEN_ENV,
+        "--hf-token-env",
+        help="Environment variable that holds the Hugging Face token.",
+    ),
+    ngc_api_key_env: str = typer.Option(
+        DEFAULT_NGC_API_KEY_ENV,
+        "--ngc-api-key-env",
+        help="Environment variable that holds the NGC API key.",
+    ),
+    require_ngc: bool = typer.Option(
+        False,
+        "--require-ngc/--no-require-ngc",
+        help="Require NGC auth for workflows that also need an NGC base container.",
+    ),
+    reasoning_parser: str = typer.Option(
+        DEFAULT_REASONING_PARSER,
+        "--reasoning-parser",
+        help="vLLM reasoning parser setting carried into serve config.",
+    ),
+    tool_call_parser: str = typer.Option(
+        DEFAULT_TOOL_CALL_PARSER,
+        "--tool-call-parser",
+        help="vLLM tool-call parser setting carried into serve config.",
+    ),
+    skip_checkpoint: bool = typer.Option(
+        False,
+        "--skip-checkpoint",
+        help="Clone the source repo but do not download the HF checkpoint.",
+    ),
+    hf_include: list[str] = typer.Option(
+        [],
+        "--hf-include",
+        help="Optional Hugging Face download include pattern; repeatable.",
+    ),
+    hf_exclude: list[str] = typer.Option(
+        [],
+        "--hf-exclude",
+        help="Optional Hugging Face download exclude pattern; repeatable.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace existing runtime cache subdirectories before fetching.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """Clone source and download the HF checkpoint into ephemeral runtime cache."""
+    cfg = _cosmos3_access_config(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+    result = fetch_cosmos3_artifacts(
+        cfg,
+        download_checkpoint=not skip_checkpoint,
+        hf_include_patterns=hf_include,
+        hf_exclude_patterns=hf_exclude,
+        force=force,
+    )
+    _finish_cosmos3_result(result.as_dict(), output)
 
 
 @app.command("ensure-ingress")

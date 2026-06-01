@@ -118,6 +118,8 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
 @pytest.mark.parametrize(
     "command",
     [
+        "check",
+        "fetch",
         "deploy",
         "reload-env",
         "serve",
