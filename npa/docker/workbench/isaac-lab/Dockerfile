@@ -50,5 +50,9 @@ if not Path("/isaac-sim/python.sh").is_file():
 print(f"ISAAC_LAB_BUILD_VERSION_OK isaaclab={actual_lab} isaac_sim_python=/isaac-sim/python.sh")
 PY
 
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
+    && chown -R ubuntu:ubuntu /opt/npa/docker/workbench/isaac-lab /workspace/isaaclab/npa-runs
+
 WORKDIR /workspace/isaaclab
+USER ubuntu
 ENTRYPOINT ["/bin/bash"]

@@ -98,6 +98,10 @@ RUN if [ "${BUILD_SONIC_DEPLOY}" = "1" ]; then \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
+    && chown -R ubuntu:ubuntu /opt/sonic /tmp/npa-sonic-output
+
 WORKDIR /opt/sonic
+USER ubuntu
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["smoke"]

@@ -1,0 +1,5 @@
+ignore-unfixed: true
+severity:
+  - CRITICAL
+pkg-types:
+  - os

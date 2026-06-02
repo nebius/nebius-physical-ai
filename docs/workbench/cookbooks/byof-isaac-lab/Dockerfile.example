@@ -9,3 +9,5 @@ LABEL byof.test="true" \
       byof.test.run_id="${BYOF_RUN_ID}"
 
 COPY custom_train.py /opt/byof/custom_train.py
+
+USER 1000

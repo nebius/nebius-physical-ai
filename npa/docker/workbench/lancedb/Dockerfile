@@ -17,6 +17,11 @@ COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
 COPY docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
+    && chown -R ubuntu:ubuntu /app
+
 EXPOSE 8686
+
+USER ubuntu
 
 ENTRYPOINT ["/entrypoint.sh"]

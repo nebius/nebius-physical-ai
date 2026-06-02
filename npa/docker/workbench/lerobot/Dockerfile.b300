@@ -28,6 +28,8 @@ ENV HF_LEROBOT_HOME=/opt/lerobot/hf_cache \
 
 SHELL ["/bin/bash", "-lc"]
 
+USER root
+
 RUN install -d -m 0755 \
       /opt/lerobot \
       /opt/lerobot/checkpoints \
@@ -38,7 +40,8 @@ RUN install -d -m 0755 \
       /opt/lerobot/job_status \
       /opt/lerobot/logs \
       /opt/lerobot/benchmarks \
-      /output
+      /output \
+    && chown -R 1000:1000 /opt/lerobot /output
 
 WORKDIR /opt/lerobot
 
@@ -62,5 +65,7 @@ print("lerobot", metadata.version("lerobot"))
 print("torch", metadata.version("torch"))
 print("flash-attn-4", metadata.version("flash-attn-4"))
 PY
+
+USER 1000
 
 CMD ["lerobot-train", "--help"]
