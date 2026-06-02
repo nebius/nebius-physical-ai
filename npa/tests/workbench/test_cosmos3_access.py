@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import httpx
+import yaml
 
 from npa.workbench.cosmos.cosmos3 import (
     DEFAULT_REASONING_PARSER,
@@ -13,6 +14,10 @@ from npa.workbench.cosmos.cosmos3 import (
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
+
+
+ROOT = Path(__file__).resolve().parents[3]
+INFERENCE_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-text-to-image-inference.yaml"
 
 
 def _runner(returncode: int = 0):
@@ -151,3 +156,22 @@ def test_cosmos3_fetch_can_clone_source_without_checkpoint(mocker, tmp_path: Pat
     assert result.ok is True
     assert result.checkpoint == "skipped"
     assert [call[0][0] for call in calls] == ["git", "git"]
+
+
+def test_cosmos3_inference_yaml_is_embargo_safe_and_on_node_only() -> None:
+    docs = [doc for doc in yaml.safe_load_all(INFERENCE_YAML.read_text(encoding="utf-8")) if doc]
+
+    assert len(docs) == 1
+    doc = docs[0]
+    envs = doc["envs"]
+    rendered = INFERENCE_YAML.read_text(encoding="utf-8")
+    assert doc["name"] == "cosmos3-text-to-image-inference"
+    assert envs["NPA_COSMOS3_SOURCE_REPO"] == "<gated-source-repo-url>"
+    assert envs["NPA_COSMOS3_MODEL_ID"] == "<gated-hf-model-id>"
+    assert envs["NPA_COSMOS3_CACHE"].startswith("/tmp/")
+    assert envs["NPA_COSMOS3_OUTPUT_DIR"].startswith("/tmp/")
+    assert envs["NPA_COSMOS3_OUTPUT_IMAGE"].startswith("/tmp/")
+    assert "aws " not in rendered.lower()
+    assert " s3://" not in rendered.lower()
+    assert "NPA_COSMOS3_SOURCE_REPO" in rendered
+    assert "NPA_COSMOS3_MODEL_ID" in rendered

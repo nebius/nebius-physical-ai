@@ -1,0 +1,116 @@
+# Cosmos3 text-to-image inference smoke.
+#
+# All gated coordinates and credentials are runtime env/secrets only. This
+# workflow never writes model files or generated images to S3, registries, or
+# persistent VM paths.
+name: cosmos3-text-to-image-inference
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 128
+  disk_size: 1024
+envs:
+  # Runtime coordinates. Replace placeholders at launch via SkyPilot secrets.
+  NPA_COSMOS3_SOURCE_REPO: "<gated-source-repo-url>"
+  NPA_COSMOS3_MODEL_ID: "<gated-hf-model-id>"
+  NPA_COSMOS3_CACHE: "/tmp/npa-cosmos3-cache"
+  NPA_COSMOS3_GITHUB_TOKEN_ENV: "GITHUB_TOKEN"
+  NPA_COSMOS3_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS3_NGC_API_KEY_ENV: "NGC_API_KEY"
+  NPA_COSMOS3_REQUIRE_NGC: "0"
+
+  # Inference runtime. The command runs on the GPU node after fetch with:
+  # COSMOS3_SOURCE_DIR, COSMOS3_CHECKPOINT_DIR, COSMOS3_PROMPT, and
+  # COSMOS3_OUTPUT_IMAGE exported.
+  NPA_COSMOS3_INFER_COMMAND: ""
+  NPA_COSMOS3_INFER_PROMPT: "a small robot arm sorting colored blocks on a workbench"
+  NPA_COSMOS3_OUTPUT_DIR: "/tmp/npa-cosmos3-inference"
+  NPA_COSMOS3_OUTPUT_IMAGE: "/tmp/npa-cosmos3-inference/text-to-image.png"
+  NPA_COSMOS3_SUCCESS_JSON: "/tmp/npa-cosmos3-inference/success.json"
+
+  # Serve config carried from the fetch workflow.
+  NPA_COSMOS3_REASONING_PARSER: "qwen3"
+  NPA_COSMOS3_TOOL_CALL_PARSER: "hermes"
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends git curl ca-certificates
+    else
+      echo "git is required for Cosmos3 source checkout" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v npa >/dev/null 2>&1 && [ -d ./npa ]; then
+    python3 -m pip install -e ./npa
+  elif ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+  if ! command -v huggingface-cli >/dev/null 2>&1; then
+    python3 -m pip install "huggingface_hub[cli]>=0.23"
+  fi
+  python3 -m pip install "pillow>=10.0"
+run: |
+  set -euo pipefail
+
+  test -n "${NPA_COSMOS3_SOURCE_REPO}" && test "${NPA_COSMOS3_SOURCE_REPO}" != "<gated-source-repo-url>"
+  test -n "${NPA_COSMOS3_MODEL_ID}" && test "${NPA_COSMOS3_MODEL_ID}" != "<gated-hf-model-id>"
+  test -n "${NPA_COSMOS3_INFER_COMMAND}"
+
+  hf_token_value="${!NPA_COSMOS3_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+  if [ "${NPA_COSMOS3_REQUIRE_NGC}" = "1" ]; then
+    ngc_token_value="${!NPA_COSMOS3_NGC_API_KEY_ENV-}"
+    test -n "${ngc_token_value}"
+  fi
+
+  rm -rf "${NPA_COSMOS3_CACHE}" "${NPA_COSMOS3_OUTPUT_DIR}"
+  mkdir -p "${NPA_COSMOS3_OUTPUT_DIR}"
+
+  npa workbench cosmos fetch \
+    --source-repo-url "${NPA_COSMOS3_SOURCE_REPO}" \
+    --model-id "${NPA_COSMOS3_MODEL_ID}" \
+    --cache-dir "${NPA_COSMOS3_CACHE}" \
+    --github-token-env "${NPA_COSMOS3_GITHUB_TOKEN_ENV}" \
+    --hf-token-env "${NPA_COSMOS3_HF_TOKEN_ENV}" \
+    --ngc-api-key-env "${NPA_COSMOS3_NGC_API_KEY_ENV}" \
+    --reasoning-parser "${NPA_COSMOS3_REASONING_PARSER}" \
+    --tool-call-parser "${NPA_COSMOS3_TOOL_CALL_PARSER}" \
+    --force \
+    --output json
+
+  export COSMOS3_SOURCE_DIR="${NPA_COSMOS3_CACHE}/source"
+  export COSMOS3_CHECKPOINT_DIR="${NPA_COSMOS3_CACHE}/checkpoint"
+  export COSMOS3_PROMPT="${NPA_COSMOS3_INFER_PROMPT}"
+  export COSMOS3_OUTPUT_IMAGE="${NPA_COSMOS3_OUTPUT_IMAGE}"
+  bash -lc "${NPA_COSMOS3_INFER_COMMAND}"
+
+  python3 - <<'PY'
+  import json
+  import os
+  from pathlib import Path
+
+  from PIL import Image
+
+  output = Path(os.environ["NPA_COSMOS3_OUTPUT_IMAGE"])
+  success_path = Path(os.environ["NPA_COSMOS3_SUCCESS_JSON"])
+  if not output.exists() or output.stat().st_size <= 0:
+      raise SystemExit(f"missing or empty output image: {output}")
+  with Image.open(output) as image:
+      width, height = image.size
+      if width <= 0 or height <= 0:
+          raise SystemExit("output image has invalid dimensions")
+  payload = {
+      "status": "ok",
+      "output_image": str(output),
+      "bytes": output.stat().st_size,
+      "width": width,
+      "height": height,
+      "cache_dir": os.environ["NPA_COSMOS3_CACHE"],
+  }
+  success_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+  print(json.dumps(payload, sort_keys=True))
+  PY
