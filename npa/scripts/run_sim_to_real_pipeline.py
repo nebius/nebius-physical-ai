@@ -152,8 +152,10 @@ def render_workflow(
             envs.update(
                 {
                     "NPA_SIM_TO_REAL_RUN_ID": run_id,
+                    "S3_ENDPOINT_URL": s3_endpoint,
                     "NEBIUS_S3_ENDPOINT": s3_endpoint,
                     "AWS_ENDPOINT_URL": s3_endpoint,
+                    "S3_BUCKET": bucket,
                     "NPA_S3_BUCKET": bucket,
                     "S3_PREFIX": resolved_prefix,
                     "PIPELINE_ROOT_URI": paths.get("root", ""),

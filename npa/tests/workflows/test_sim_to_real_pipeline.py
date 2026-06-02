@@ -153,19 +153,19 @@ def test_artifact_layout_is_run_scoped_and_generic() -> None:
 def test_yaml_exposes_parameterized_spine_and_feedback_contract() -> None:
     docs = _docs()
 
-    assert docs[0] == {"name": "sim-to-real-pipeline", "execution": "serial"}
-    task = docs[1]
-    assert task["name"] == "s2r-controller-spine"
+    assert len(docs) == 1
+    task = docs[0]
+    assert task["name"] == "sim-to-real-pipeline"
     assert task["resources"]["accelerators"] == "H100:1"
+    assert task["envs"]["S3_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     assert task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
-    assert task["envs"]["POLICY_IMAGE"].startswith("cr.eu-north1.nebius.cloud/")
-    assert "npa-lerobot-policy" in task["envs"]["POLICY_IMAGE"]
+    assert task["envs"]["S3_BUCKET"] == "${S3_BUCKET}"
+    assert task["envs"]["NPA_S3_BUCKET"] == "${S3_BUCKET}"
+    assert task["envs"]["POLICY_IMAGE"] == "npa-lerobot-policy:0.1.0"
     assert task["envs"]["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
     assert task["envs"]["FEEDBACK_SOURCE"] == "vlm"
     assert "npa.workflows.sim_to_real local-smoke" in task["run"]
     assert "--attempt-s3-roundtrip" in task["run"]
-    assert docs[2]["name"] == "s2r-policy-feedback-update"
-    assert "feedback-step" in docs[2]["run"]
 
 
 def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
@@ -178,9 +178,11 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
         vlm_eval_backend="stub",
         vlm_eval_score=0.9,
     )
-    task_env = docs[1]["envs"]
+    task_env = docs[0]["envs"]
 
     assert task_env["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-render"
+    assert task_env["S3_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+    assert task_env["S3_BUCKET"] == "bucket"
     assert task_env["NPA_S3_BUCKET"] == "bucket"
     assert task_env["POLICY_IMAGE"] == "cr.example/npa-lerobot:custom"
     assert task_env["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
@@ -188,7 +190,7 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
     assert task_env["CHECKPOINT_URI"] == "s3://bucket/sim-to-real/s2r-render/checkpoints/policy/"
     assert task_env["VLM_EVAL_BACKEND"] == "stub"
     assert task_env["VLM_EVAL_SCORE"] == "0.9"
-    assert docs[2]["resources"]["image_id"] == "docker:cr.example/npa-lerobot:custom"
+    assert "image_id" not in docs[0]["resources"]
 
 
 def test_runner_renders_ordered_gpu_failover_resources() -> None:
@@ -200,8 +202,7 @@ def test_runner_renders_ordered_gpu_failover_resources() -> None:
         gpu="H100:1,H200:1,A100:1",
     )
 
-    assert docs[1]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
-    assert docs[2]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
 
 
 def test_runner_can_render_nebius_task_cloud_fallback() -> None:
@@ -214,14 +215,12 @@ def test_runner_can_render_nebius_task_cloud_fallback() -> None:
         gpu="H100:1,H200:1,A100:1",
     )
 
-    assert docs[1]["resources"]["cloud"] == "nebius"
-    assert docs[1]["resources"]["region"] == "eu-north1"
-    assert docs[1]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
-    assert docs[2]["resources"]["cloud"] == "nebius"
-    assert docs[2]["resources"]["region"] == "eu-north1"
-    assert docs[2]["resources"]["cpus"] == "16+"
-    assert docs[2]["resources"]["memory"] == "32+"
-    assert "image_id" not in docs[2]["resources"]
+    assert docs[0]["resources"]["cloud"] == "nebius"
+    assert docs[0]["resources"]["region"] == "eu-north1"
+    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[0]["resources"]["cpus"] == "16+"
+    assert docs[0]["resources"]["memory"] == "64+"
+    assert "image_id" not in docs[0]["resources"]
 
 
 def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -275,9 +274,9 @@ def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path,
     assert captured["run_id"] == "s2r-submit"
     assert captured["kwargs"]["controller_backend"] == "nebius"
     assert captured["kwargs"]["secret_envs"] == ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
-    assert captured["docs"][1]["envs"]["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-submit"
-    assert captured["docs"][1]["resources"]["cloud"] == "nebius"
-    assert "image_id" not in captured["docs"][2]["resources"]
+    assert captured["docs"][0]["envs"]["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-submit"
+    assert captured["docs"][0]["resources"]["cloud"] == "nebius"
+    assert "image_id" not in captured["docs"][0]["resources"]
 
 
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
@@ -303,6 +302,7 @@ def test_feedback_result_dataclass_is_public() -> None:
 
 
 def test_default_policy_image_uses_byo_policy_container() -> None:
+    assert default_policy_image() == "npa-lerobot-policy:0.1.0"
     assert default_policy_image(registry="cr.example").endswith("/npa-lerobot-policy:0.1.0")
 
 

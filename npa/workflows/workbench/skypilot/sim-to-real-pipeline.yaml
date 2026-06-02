@@ -2,9 +2,6 @@
 # Credentials are supplied at launch through environment/secret injection; do
 # not write access keys or tokens into this file.
 name: sim-to-real-pipeline
-execution: serial
----
-name: s2r-controller-spine
 resources:
   cloud: kubernetes
   accelerators: H100:1
@@ -12,22 +9,24 @@ resources:
   memory: 64
 envs:
   NPA_SIM_TO_REAL_RUN_ID: "<your-run-id>"
+  S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   NEBIUS_S3_ENDPOINT: "https://storage.eu-north1.nebius.cloud"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   # Supply AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY at launch time.
-  NPA_S3_BUCKET: "${NPA_S3_BUCKET}"
+  S3_BUCKET: "${S3_BUCKET}"
+  NPA_S3_BUCKET: "${S3_BUCKET}"
   S3_PREFIX: "sim-to-real/<your-run-id>"
-  PIPELINE_ROOT_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/"
-  INPUT_DATA_URI: "s3://${NPA_S3_BUCKET}/datasets/lerobot-pusht/"
-  LEROBOT_DATASET_URI: "s3://${NPA_S3_BUCKET}/datasets/lerobot-pusht/"
+  PIPELINE_ROOT_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/"
+  INPUT_DATA_URI: "s3://${S3_BUCKET}/datasets/lerobot-pusht/"
+  LEROBOT_DATASET_URI: "s3://${S3_BUCKET}/datasets/lerobot-pusht/"
   LEROBOT_DATASET_REPO_ID: "lerobot/pusht"
   LEROBOT_DATASET_REVISION: "7628202a2180972f291ba1bc6723834921e72c19"
-  RAW_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/raw-envs/"
-  TRAIN_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/splits/train/"
-  HELDOUT_ENVS_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/splits/heldout/"
-  POLICY_IMAGE: "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
-  CHECKPOINT_URI: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/checkpoints/policy/"
-  RERUN_RRD_PATH: "s3://${NPA_S3_BUCKET}/sim-to-real/<your-run-id>/viz/sim-to-real.rrd"
+  RAW_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/raw-envs/"
+  TRAIN_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/splits/train/"
+  HELDOUT_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/splits/heldout/"
+  POLICY_IMAGE: "npa-lerobot-policy:0.1.0"
+  CHECKPOINT_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/checkpoints/policy/"
+  RERUN_RRD_PATH: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/viz/sim-to-real.rrd"
   SIM_BACKEND: "genesis"
   EVAL_BACKEND: "genesis"
   FEEDBACK_SOURCE: "vlm"
@@ -74,8 +73,8 @@ run: |
 
   python3 -m npa.workflows.sim_to_real local-smoke \
     --run-id "${NPA_SIM_TO_REAL_RUN_ID}" \
-    --s3-endpoint "${NEBIUS_S3_ENDPOINT}" \
-    --s3-bucket "${NPA_S3_BUCKET}" \
+    --s3-endpoint "${S3_ENDPOINT_URL}" \
+    --s3-bucket "${S3_BUCKET}" \
     --s3-prefix "${S3_PREFIX}" \
     --input-data-uri "${INPUT_DATA_URI}" \
     --dataset-repo-id "${LEROBOT_DATASET_REPO_ID}" \
@@ -103,58 +102,3 @@ run: |
     --rerun-max-frames-per-episode "${RERUN_MAX_FRAMES_PER_EPISODE}" \
     --output-dir "${report_dir}" \
     --attempt-s3-roundtrip
----
-name: s2r-policy-feedback-update
-resources:
-  cloud: kubernetes
-  accelerators: H100:1
-  cpus: 8
-  memory: 32
-  image_id: "docker:cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
-envs:
-  NPA_SIM_TO_REAL_RUN_ID: "<your-run-id>"
-  NEBIUS_S3_ENDPOINT: "https://storage.eu-north1.nebius.cloud"
-  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
-  # Supply AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY at launch time.
-  NPA_S3_BUCKET: "${NPA_S3_BUCKET}"
-  S3_PREFIX: "sim-to-real/<your-run-id>"
-  FEEDBACK_JSON: "/tmp/npa-feedback.json"
-  FEEDBACK_UPDATE_DIR: "/tmp/npa-feedback-update"
-setup: |
-  set -e
-  if [ -d ./npa ]; then
-    python3 -m pip install -e ./npa
-  elif [ -d /opt/nebius-physical-ai/npa ]; then
-    python3 -m pip install -e /opt/nebius-physical-ai/npa
-  else
-    if ! command -v git >/dev/null 2>&1; then
-      if command -v apt-get >/dev/null 2>&1; then
-        apt-get update && apt-get install -y --no-install-recommends git ca-certificates
-      elif command -v apk >/dev/null 2>&1; then
-        apk add --no-cache git ca-certificates
-      fi
-    fi
-    rm -rf /tmp/nebius-physical-ai-pr28
-    git clone --depth 1 --branch dev-add-sim-to-real-pipeline https://github.com/nebius/nebius-physical-ai.git /tmp/nebius-physical-ai-pr28
-    python3 -m pip install -e /tmp/nebius-physical-ai-pr28/npa
-  fi
-run: |
-  set -euo pipefail
-
-  cat > "${FEEDBACK_JSON}" <<'JSON'
-  {
-    "feedback": [
-      {
-        "success": true,
-        "score": 0.82,
-        "rationale": "The rollout satisfies the example task rubric.",
-        "source": "vlm"
-      }
-    ]
-  }
-  JSON
-
-  python3 -m npa.workbench.lerobot.policy_container feedback-step \
-    --feedback-json "${FEEDBACK_JSON}" \
-    --output-dir "${FEEDBACK_UPDATE_DIR}" \
-    --learning-rate 0.1

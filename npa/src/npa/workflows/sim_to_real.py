@@ -21,7 +21,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.viz.adapters.lerobot_to_rerun import RerunAdapterError, lerobot_dataset_logical_to_rerun
 from npa.workbench.lerobot.policy_container import parse_feedback_batch, run_feedback_training_step
 from npa.workflows.lerobot_dataset import (
@@ -192,7 +192,9 @@ def new_run_id(prefix: str = "sim-to-real") -> str:
 def default_policy_image(*, registry: str | None = None) -> str:
     """Return the default BYO-compatible LeRobot policy image."""
 
-    return container_image_for_tool("lerobot-policy", registry=registry)
+    if registry or os.environ.get("NPA_REGISTRY"):
+        return container_image_for_tool("lerobot-policy", registry=registry)
+    return f"npa-lerobot-policy:{supported_tool_version('lerobot-policy')}"
 
 
 def default_s3_prefix(run_id: str) -> str:
@@ -205,7 +207,7 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     """Build a config from explicit overrides and environment fallbacks."""
 
     run_id = str(overrides.get("run_id") or os.environ.get("NPA_SIM_TO_REAL_RUN_ID") or new_run_id())
-    s3_bucket = str(overrides.get("s3_bucket") or os.environ.get("NPA_S3_BUCKET") or "")
+    s3_bucket = str(overrides.get("s3_bucket") or os.environ.get("S3_BUCKET") or os.environ.get("NPA_S3_BUCKET") or "")
     s3_prefix = str(overrides.get("s3_prefix") or os.environ.get("NPA_S3_PREFIX") or default_s3_prefix(run_id))
     dataset_repo_id = str(
         overrides.get("dataset_repo_id")
@@ -245,6 +247,7 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         run_id=run_id,
         s3_endpoint=str(
             overrides.get("s3_endpoint")
+            or os.environ.get("S3_ENDPOINT_URL")
             or os.environ.get("NEBIUS_S3_ENDPOINT")
             or os.environ.get("AWS_ENDPOINT_URL")
             or DEFAULT_S3_ENDPOINT
