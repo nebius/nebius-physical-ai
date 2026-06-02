@@ -227,9 +227,14 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
 
     assert sim_docs[0] == {"name": "sim-to-real-loop", "execution": "serial"}
     sim_run = sim_docs[1]["run"]
-    assert "npa workbench data sync" in sim_run
-    assert "npa workbench cosmos autoscale" in sim_run
+    assert sim_docs[1]["name"] == "vlm-eval-loop"
+    assert sim_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sim_docs[1]["envs"]["MODEL"] == "Qwen/Qwen2-VL-7B-Instruct"
+    assert sim_docs[1]["envs"]["ROLLOUTS"].endswith("/rollouts/")
+    assert sim_docs[1]["envs"]["OUTPUT_DIR"].endswith("/vlm-eval-loop/")
+    assert "python3 -m vllm.entrypoints.openai.api_server" in sim_run
     assert "npa workbench vlm-eval run" in sim_run
+    assert "task_success_report.json" in sim_run
     assert sim_docs[1]["envs"]["NPA_DRY_RUN"] == "0"
 
     assert sonic_docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}

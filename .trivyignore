@@ -1,0 +1,3 @@
+# Accepted Trivy vulnerability exceptions.
+# Keep this file empty unless a finding is explicitly accepted.
+# Each entry must include the vulnerability ID plus a short owner/rationale line.
