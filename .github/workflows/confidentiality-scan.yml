@@ -1,0 +1,51 @@
+name: confidentiality scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install npa guardrail module
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e npa
+
+      - name: Run confidentiality scan
+        run: |
+          set -euo pipefail
+          if [ -z "${CUSTOMER_DENYLIST:-}" ]; then
+            echo "::error::confidentiality scan is not configured; populate the CUSTOMER_DENYLIST secret"
+            exit 2
+          fi
+
+          scan_range=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            scan_range="${{ github.event.before }}..HEAD"
+          fi
+
+          args=(--repo-root . --tree)
+          if [ -n "${scan_range}" ]; then
+            args+=(--diff-range "${scan_range}")
+          fi
+          npa/.venv/bin/python -m npa.guardrails.confidentiality "${args[@]}"
