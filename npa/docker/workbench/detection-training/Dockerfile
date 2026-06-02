@@ -17,6 +17,11 @@ RUN mkdir -p /app/npa/workbench
 RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
 COPY src/npa/workbench/detection_training /app/npa/workbench/detection_training
 
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
+    && chown -R ubuntu:ubuntu /app
+
 EXPOSE 8790
+
+USER ubuntu
 
 CMD ["uvicorn", "npa.workbench.detection_training.service:app", "--host", "0.0.0.0", "--port", "8790"]

@@ -1,6 +1,6 @@
-# Digest pinned 2026-05-12. Tag: python:3.11-slim-bookworm
+# Digest pinned 2026-06-02. Tag: python:3.11-slim-trixie
 # To update: re-resolve via registry API and update digest below.
-FROM python:3.11-slim-bookworm@sha256:cd67330292a51e2963156f74ff340455d66b2172e9190e99f40dff9357471177
+FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
 ARG FIFTYONE_VERSION=1.15.0
 ARG BOTO3_VERSION=1.43.6
