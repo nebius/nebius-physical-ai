@@ -147,14 +147,6 @@ post_github_status() {
   fi
 
   local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-  if [[ -z "$token" ]]; then
-    log "GitHub token not configured; skipping commit status"
-    return 0
-  fi
-  if ! command -v curl >/dev/null 2>&1; then
-    log "curl not found; skipping GitHub commit status"
-    return 0
-  fi
 
   local repo="${GITHUB_REPOSITORY:-${NPA_LIVE_E2E_GITHUB_REPO:-nebius/nebius-physical-ai}}"
   local sha="${NPA_LIVE_E2E_COMMIT_SHA:-}"
@@ -164,7 +156,7 @@ post_github_status() {
 
   local payload
   payload="$(github_status_payload "$state" "$description" "$target_url")"
-  if curl -fsS \
+  if [[ -n "$token" ]] && command -v curl >/dev/null 2>&1 && curl -fsS \
     -X POST \
     -H "Accept: application/vnd.github+json" \
     -H "Authorization: Bearer ${token}" \
@@ -175,18 +167,38 @@ post_github_status() {
   fi
 
   if command -v gh >/dev/null 2>&1; then
-    log "GitHub commit status curl post failed for ${repo}@${sha}; retrying with gh api"
-    if printf '%s' "$payload" | GH_TOKEN="$token" gh api \
-      --method POST \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      "/repos/${repo}/statuses/${sha}" \
-      --input - >/dev/null; then
+    if [[ -n "$token" ]]; then
+      log "GitHub commit status curl post failed for ${repo}@${sha}; retrying with gh api"
+    else
+      log "GitHub token env not configured; trying authenticated gh api for ${repo}@${sha}"
+    fi
+    if post_github_status_with_gh "$payload" "$repo" "$sha" "$token"; then
       return 0
     fi
   fi
 
   log "GitHub commit status post failed for ${repo}@${sha}"
+}
+
+post_github_status_with_gh() {
+  local payload="$1"
+  local repo="$2"
+  local sha="$3"
+  local token="${4:-}"
+  local cmd=(
+    gh api
+    --method POST
+    -H "Accept: application/vnd.github+json"
+    -H "X-GitHub-Api-Version: 2022-11-28"
+    "/repos/${repo}/statuses/${sha}"
+    --input -
+  )
+
+  if [[ -n "$token" ]]; then
+    printf '%s' "$payload" | GH_TOKEN="$token" "${cmd[@]}" >/dev/null
+  else
+    printf '%s' "$payload" | "${cmd[@]}" >/dev/null
+  fi
 }
 
 sky_status_output() {
