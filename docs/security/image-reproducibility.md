@@ -55,9 +55,18 @@ CI runs Trivy in `.github/workflows/image-security-scan.yml`:
 - A weekly scheduled scan to catch newly disclosed CVEs in already-pinned bases
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-images. HIGH and CRITICAL findings fail CI by default. Accepted-risk CVEs should
-be documented in a suppression file with the CVE, rationale, owner, and planned
-remediation before being ignored.
+images. Dockerfile/config misconfigurations fail on HIGH and CRITICAL findings.
+Base-image CVE jobs are intentionally OS-package only, use `--ignore-unfixed`,
+and fail on fixed CRITICAL vulnerabilities. HIGH base-image CVEs stay visible in
+SARIF and scheduled scan output, but they are advisory while the repo is not
+shipping those upstream bases as final runtime images.
+
+The repository-level `trivy.yaml` mirrors the base-image CVE policy for local
+operator scans: fixed CRITICAL OS-package vulnerabilities are the blocking gate,
+and unfixed findings are not shown. The root `.trivyignore` is reserved for
+explicit accepted-risk exceptions. Keep it empty unless a finding has an owner,
+a short rationale, and a planned remediation or review date. Do not use it to
+blanket-suppress fixable criticals.
 
 To investigate a CI scan failure:
 
@@ -66,7 +75,10 @@ To investigate a CI scan failure:
    component.
 3. Prefer updating the base image to a patched tag and re-pinning the digest.
 4. If a fix is unavailable or the finding is not exploitable, document the
-   accepted risk before adding a suppression.
+   accepted risk before adding a `.trivyignore` entry.
+5. If a fixed CRITICAL CVE remains in a vendor image after checking newer
+   compatible tags, keep the PR red or update the affected base; do not suppress
+   it without an explicit accepted-risk decision.
 
 The workflow uses `aquasecurity/trivy-action@v0.36.0`. That version is
 intentional: Aqua's March 2026 incident notes identify older Trivy action tags
