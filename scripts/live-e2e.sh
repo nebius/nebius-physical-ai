@@ -26,11 +26,8 @@ if [[ -n "${NPA_LIVE_E2E_ENV_FILE:-}" ]]; then
   fi
 else
   for env_file in \
-    "/home/ubuntu/codex-runner/env" \
-    "/home/ubuntu/codex-runner/.env" \
-    "${HOME}/.codex-runner/env" \
-    "${HOME}/.codex-runner/.env" \
-    "${HOME}/.npa/live-e2e.env"; do
+    "${NPA_CONFIG_HOME:-${HOME}/.npa}/live-e2e.env" \
+    "${XDG_CONFIG_HOME:-${HOME}/.config}/npa/live-e2e.env"; do
     source_env_file "$env_file" || true
   done
 fi
@@ -42,7 +39,7 @@ mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 PYTHON_BIN="${NPA_LIVE_E2E_PYTHON_BIN:-${REPO_ROOT}/npa/.venv/bin/python}"
-export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-/home/ubuntu/.npa/skypilot-venv/bin/sky}"
+export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-${HOME}/.npa/skypilot-venv/bin/sky}"
 export NPA_INTEGRATION_E2E="${NPA_INTEGRATION_E2E:-1}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
@@ -53,7 +50,7 @@ KILL_AFTER_SECONDS="${NPA_LIVE_E2E_KILL_AFTER_SECONDS:-900}"
 TEARDOWN_TIMEOUT_SECONDS="${NPA_LIVE_E2E_TEARDOWN_TIMEOUT_SECONDS:-1200}"
 TEARDOWN_POLL_SECONDS="${NPA_LIVE_E2E_TEARDOWN_POLL_SECONDS:-30}"
 CLUSTER_PREFIXES="${NPA_LIVE_E2E_CLUSTER_PREFIXES:-npa-vlm-live npa-sonic-e2e npa-spine-e2e npa-live-e2e}"
-GITHUB_STATUS_CONTEXT="${NPA_LIVE_E2E_GITHUB_CONTEXT:-live-e2e/dev-vm}"
+GITHUB_STATUS_CONTEXT="${NPA_LIVE_E2E_GITHUB_CONTEXT:-live-e2e}"
 
 log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -64,47 +61,31 @@ die() {
   exit 2
 }
 
-ntfy_url() {
-  if [[ -n "${NPA_NTFY_URL:-}" ]]; then
-    printf '%s\n' "$NPA_NTFY_URL"
+notification_url() {
+  if [[ -n "${NPA_LIVE_E2E_NOTIFY_URL:-}" ]]; then
+    printf '%s\n' "$NPA_LIVE_E2E_NOTIFY_URL"
     return
   fi
-  if [[ -n "${NPA_NTFY_TOPIC_URL:-}" ]]; then
-    printf '%s\n' "$NPA_NTFY_TOPIC_URL"
+  if [[ -n "${NPA_NOTIFY_URL:-}" ]]; then
+    printf '%s\n' "$NPA_NOTIFY_URL"
     return
   fi
-  if [[ -n "${NTFY_TOPIC_URL:-}" ]]; then
-    printf '%s\n' "$NTFY_TOPIC_URL"
-    return
-  fi
-  if [[ -n "${NPA_NTFY_TOPIC:-}" ]]; then
-    if [[ "$NPA_NTFY_TOPIC" == http://* || "$NPA_NTFY_TOPIC" == https://* ]]; then
-      printf '%s\n' "$NPA_NTFY_TOPIC"
-    else
-      printf 'https://ntfy.sh/%s\n' "$NPA_NTFY_TOPIC"
-    fi
-    return
-  fi
-  if [[ -n "${NTFY_TOPIC:-}" ]]; then
-    if [[ "$NTFY_TOPIC" == http://* || "$NTFY_TOPIC" == https://* ]]; then
-      printf '%s\n' "$NTFY_TOPIC"
-    else
-      printf 'https://ntfy.sh/%s\n' "$NTFY_TOPIC"
-    fi
+  if [[ -n "${NOTIFY_URL:-}" ]]; then
+    printf '%s\n' "$NOTIFY_URL"
   fi
 }
 
-notify_ntfy() {
+notify_webhook() {
   local state="$1"
   local body="$2"
   local url
-  url="$(ntfy_url || true)"
+  url="$(notification_url || true)"
   if [[ -z "$url" ]]; then
-    log "ntfy not configured; skipping notification"
+    log "notification endpoint not configured; skipping notification"
     return 0
   fi
   if ! command -v curl >/dev/null 2>&1; then
-    log "curl not found; skipping ntfy notification"
+    log "curl not found; skipping notification"
     return 0
   fi
 
@@ -113,7 +94,7 @@ notify_ntfy() {
     -H "Priority: default" \
     --data-binary "$body" \
     "$url" >/dev/null; then
-    log "ntfy notification failed"
+    log "notification post failed"
   fi
 }
 
@@ -339,14 +320,14 @@ finish() {
 
   if [[ "$rc" -eq 0 ]]; then
     state="success"
-    description="Dev-VM live GPU e2e passed"
+    description="Live GPU e2e passed"
   else
     state="failure"
-    description="Dev-VM live GPU e2e failed"
+    description="Live GPU e2e failed"
   fi
 
   post_github_status "$state" "$description"
-  notify_ntfy "$state" "${description}. Log: ${LOG_FILE}"
+  notify_webhook "$state" "${description}. Log: ${LOG_FILE}"
   log "${description}. Log: ${LOG_FILE}"
   exit "$rc"
 }
@@ -357,7 +338,7 @@ trap 'exit 143' TERM
 
 cd "$REPO_ROOT"
 
-log "Starting on-demand Dev-VM live GPU e2e"
+log "Starting on-demand live GPU e2e"
 log "Repository: ${REPO_ROOT}"
 log "Log file: ${LOG_FILE}"
 if [[ "${#SOURCED_ENV_FILES[@]}" -gt 0 ]]; then
@@ -369,8 +350,8 @@ fi
 [[ -x "$PYTHON_BIN" ]] || die "Python executable is missing or not executable: ${PYTHON_BIN}"
 [[ -x "$NPA_SKYPILOT_BIN" ]] || die "SkyPilot executable is missing or not executable: ${NPA_SKYPILOT_BIN}"
 
-post_github_status "pending" "Dev-VM live GPU e2e running"
-notify_ntfy "running" "Dev-VM live GPU e2e started. Log: ${LOG_FILE}"
+post_github_status "pending" "Live GPU e2e running"
+notify_webhook "running" "Live GPU e2e started. Log: ${LOG_FILE}"
 
 log "Clearing pre-existing live-e2e SkyPilot clusters before pytest"
 down_matching_clusters || true

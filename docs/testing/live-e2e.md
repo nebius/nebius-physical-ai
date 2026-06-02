@@ -1,65 +1,63 @@
-# Live GPU E2E On The Dev VM
+# Live GPU E2E On An Operator Host
 
-Live GPU e2e runs execute from the Nebius Dev VM, on demand, by a human
-operator. They do not run in GitHub Actions and there is no cron, systemd timer,
-nightly workflow, or other scheduled execution.
+Live GPU e2e runs execute from a SkyPilot-capable operator host, on demand.
+They do not run in GitHub Actions and there is no cron, systemd timer, nightly
+workflow, or other scheduled execution.
 
 Use this path for the `gpu and e2e` pytest subset, including the VLM live GPU
 tests, SONIC live SkyPilot test, and the spine e2e once its marker lands.
 
 ## Why Not GitHub Actions
 
-GitHub-hosted runners are outside Nebius. The VMs launched during these tests
-are reachable from the Nebius-connected Dev VM, but they are not reliably
-reachable over SSH from GitHub-hosted runners. A hosted workflow can therefore
-start infrastructure and still fail to validate or tear it down correctly.
+GitHub-hosted runners are outside the operator's configured Nebius environment.
+The VMs launched during these tests may be reachable from the operator host, but
+they are not reliably reachable over SSH from GitHub-hosted runners. A hosted
+workflow can therefore start infrastructure and still fail to validate or tear it
+down correctly.
 
-Do not reintroduce a hosted `live-e2e.yml` workflow for this path. The Dev VM is
-the runner location for live GPU validation.
+Do not reintroduce a hosted `live-e2e.yml` workflow for this path. Use an
+operator-controlled host for live GPU validation.
 
 ## Why There Is No Nightly Job
 
 Live GPU e2e tests provision real GPU resources. A scheduled unattended run can
 spend money overnight and can leave a leaked cluster when nobody is watching.
 
-Runs stay manual and on demand. Do not install a cron entry, systemd timer, PM2
-job, GitHub Actions schedule, or any other automatic trigger for
+Runs stay manual and on demand. Do not install a cron entry, systemd timer,
+background process job, GitHub Actions schedule, or any other automatic trigger for
 `scripts/live-e2e.sh`.
 
 ## Prerequisites
 
-Run from the Nebius-connected Dev VM checkout after installing the normal NPA
-development environment:
+Run from a SkyPilot-capable checkout after installing the normal NPA development
+environment:
 
 ```bash
-cd /opt/nebius-physical-ai
+cd ~/repos/nebius-physical-ai
 npa/.venv/bin/python -m pip install -e npa
 ```
 
-The runner uses credentials from the VM process environment and local VM config
+The runner uses credentials from the host process environment and local config
 files only. It does not read GitHub Actions secrets.
 
 By default the script looks for local env files at:
 
-- `/home/ubuntu/codex-runner/env`
-- `/home/ubuntu/codex-runner/.env`
-- `~/.codex-runner/env`
-- `~/.codex-runner/.env`
 - `~/.npa/live-e2e.env`
+- `~/.config/npa/live-e2e.env`
 
 To use a specific file:
 
 ```bash
-export NPA_LIVE_E2E_ENV_FILE=/path/to/dev-vm-live-e2e.env
+export NPA_LIVE_E2E_ENV_FILE=/path/to/live-e2e.env
 ```
 
 The SkyPilot executable defaults to:
 
 ```bash
-export NPA_SKYPILOT_BIN=/home/ubuntu/.npa/skypilot-venv/bin/sky
+export NPA_SKYPILOT_BIN="$HOME/.npa/skypilot-venv/bin/sky"
 ```
 
-Override it only when the Dev VM has a different SkyPilot venv:
+Override it when the operator host uses a different SkyPilot install:
 
 ```bash
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
@@ -102,18 +100,15 @@ Each run writes a timestamped log under:
 
 Override the log directory with `NPA_LIVE_E2E_LOG_DIR`.
 
-ntfy is optional but expected on the Dev VM. Configure either a full URL or a
-topic name:
+An optional notification webhook can receive run status messages:
 
 ```bash
-export NPA_NTFY_TOPIC_URL=https://ntfy.sh/<topic>
-# or
-export NPA_NTFY_TOPIC=<topic>
+export NPA_LIVE_E2E_NOTIFY_URL=https://example.invalid/live-e2e-hook
 ```
 
-When `GITHUB_TOKEN` or `GH_TOKEN` is available in the Dev VM environment, the
+When `GITHUB_TOKEN` or `GH_TOKEN` is available in the host environment, the
 script posts a GitHub commit status to the current commit with context
-`live-e2e/dev-vm`. Disable that for a local dry run:
+`live-e2e`. Disable that for a local dry run:
 
 ```bash
 export NPA_LIVE_E2E_POST_GITHUB_STATUS=0
@@ -135,10 +130,11 @@ script trap and the tests' own `finally` fixtures.
 
 If the process is interrupted, the trap still runs teardown. If teardown cannot
 verify an empty status before the timeout, the script exits non-zero and reports
-the failure in ntfy and the commit status when those are configured.
+the failure through the configured notification endpoint and commit status.
 
 ## Post-Merge Validation
 
 After this runner lands and the spine e2e marker fix merges, run
-`bash scripts/live-e2e.sh` once on the Dev VM to validate the full selected live
-set. Do not add a timer after that validation; keep future runs manual.
+`bash scripts/live-e2e.sh` once on a SkyPilot-capable operator host to validate
+the full selected live set. Do not add a timer after that validation; keep future
+runs manual.
