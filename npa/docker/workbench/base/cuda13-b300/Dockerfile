@@ -145,3 +145,5 @@ print("flash_attn_func", flash_attn_func)
 PY
 
 WORKDIR /workspace
+
+USER ubuntu
