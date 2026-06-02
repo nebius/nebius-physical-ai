@@ -164,15 +164,29 @@ post_github_status() {
 
   local payload
   payload="$(github_status_payload "$state" "$description" "$target_url")"
-  if ! curl -fsS \
+  if curl -fsS \
     -X POST \
     -H "Accept: application/vnd.github+json" \
     -H "Authorization: Bearer ${token}" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     --data "$payload" \
     "https://api.github.com/repos/${repo}/statuses/${sha}" >/dev/null; then
-    log "GitHub commit status post failed for ${repo}@${sha}"
+    return 0
   fi
+
+  if command -v gh >/dev/null 2>&1; then
+    log "GitHub commit status curl post failed for ${repo}@${sha}; retrying with gh api"
+    if printf '%s' "$payload" | GH_TOKEN="$token" gh api \
+      --method POST \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "/repos/${repo}/statuses/${sha}" \
+      --input - >/dev/null; then
+      return 0
+    fi
+  fi
+
+  log "GitHub commit status post failed for ${repo}@${sha}"
 }
 
 sky_status_output() {
