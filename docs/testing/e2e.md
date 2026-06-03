@@ -23,6 +23,10 @@ NPA_E2E_PROJECT=eu-north1 NPA_INTEGRATION_E2E=1 pytest npa/tests/e2e/ -v
 The harness also auto-selects `eu-north1` when that project has storage
 credentials configured, matching the current operator demo environment.
 
+Live GPU tests marked `gpu and e2e` run manually from a SkyPilot-capable
+operator host, not from GitHub Actions. See
+[Live GPU E2E On An Operator Host](live-e2e.md).
+
 ## What E2E Tests Cover
 
 Current Python e2e tests cover:
