@@ -9,7 +9,7 @@ Recommended branch-protection policy is an admin decision. The confidentiality s
 
 ## Local Registry Image Check
 
-GitHub-hosted runners cannot reach Nebius resources. Image existence checks therefore stay out of GitHub CI and can be run from a host with access to the container registry:
+Registry image reachability is environment-dependent, so image existence checks stay out of GitHub CI and can be run from a host with access to the container registry:
 
 ```bash
 npa/.venv/bin/python npa/scripts/check_workflow_images.py --registry-id "$NPA_REGISTRY_ID"

@@ -13,7 +13,7 @@ from npa.guardrails.skypilot import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _workflow_and_runner_paths() -> list[Path]:
+def _workflow_and_script_paths() -> list[Path]:
     workflow_dir = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
     script_dir = REPO_ROOT / "npa" / "scripts"
     return sorted(workflow_dir.glob("*.yaml")) + sorted(script_dir.glob("*.py"))
@@ -25,7 +25,7 @@ def _test_paths() -> list[Path]:
 
 
 def test_no_unsupported_skypilot_down_or_autodown() -> None:
-    hits = scan_for_forbidden_teardown(_workflow_and_runner_paths())
+    hits = scan_for_forbidden_teardown(_workflow_and_script_paths())
     assert not hits, "\n".join(f"{hit.path}:{hit.line_number}: {hit.line}" for hit in hits)
 
 

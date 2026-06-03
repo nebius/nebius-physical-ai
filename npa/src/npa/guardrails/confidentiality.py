@@ -22,12 +22,18 @@ class ScanHit:
     line_number: int
 
 
-def compile_denylist(pattern: str, *, source: str = "denylist") -> re.Pattern[str]:
+def compile_denylist(
+    pattern: str,
+    *,
+    source: str = "denylist",
+    ignore_case: bool = False,
+) -> re.Pattern[str]:
     """Compile the operator-provided denylist regex."""
 
     if not pattern.strip():
         raise ValueError(f"{source} is empty")
-    return re.compile(pattern)
+    flags = re.IGNORECASE if ignore_case else 0
+    return re.compile(pattern, flags=flags)
 
 
 def scan_text(text: str, denylist: re.Pattern[str], *, source: str) -> list[ScanHit]:
@@ -91,10 +97,19 @@ def main(argv: list[str] | None = None) -> int:
         default="CUSTOMER_DENYLIST",
         help="Environment variable containing the denylist regex.",
     )
+    parser.add_argument(
+        "--ignore-case",
+        action="store_true",
+        help="Match denylist regexes case-insensitively.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        denylist = compile_denylist(os.environ.get(args.pattern_env, ""), source=args.pattern_env)
+        denylist = compile_denylist(
+            os.environ.get(args.pattern_env, ""),
+            source=args.pattern_env,
+            ignore_case=args.ignore_case,
+        )
     except ValueError as exc:
         print(f"confidentiality scan not configured: {exc}", file=sys.stderr)
         return 2

@@ -29,6 +29,14 @@ def test_confidentiality_matcher_reports_redacted_locations_only() -> None:
     assert not hasattr(hits[0], "line")
 
 
+def test_confidentiality_matcher_can_ignore_case() -> None:
+    denylist = compile_denylist(r"synthetic-secret", ignore_case=True)
+
+    hits = scan_text("contains SYNTHETIC-SECRET here\n", denylist, source="fixture.txt")
+
+    assert [(hit.source, hit.line_number) for hit in hits] == [("fixture.txt", 1)]
+
+
 def test_tree_scan_skips_binary_files_but_keeps_text_hits(tmp_path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.PIPE)
     (tmp_path / "public.txt").write_text("contains synthetic-secret\n", encoding="utf-8")

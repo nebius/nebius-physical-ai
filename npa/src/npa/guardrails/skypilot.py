@@ -1,4 +1,4 @@
-"""Static guardrails for SkyPilot workflows and runner scripts."""
+"""Static guardrails for SkyPilot workflows and helper scripts."""
 
 from __future__ import annotations
 
