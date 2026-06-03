@@ -20,6 +20,7 @@ envs:
   NPA_COSMOS3_REQUIRE_NGC: "0"
   NPA_COSMOS3_UV_GROUP: "cu130-train"
   NPA_RUNTIME_VENV: "/tmp/npa-runtime-venv"
+  NPA_COSMOS3_NO_GUARDRAILS: ""
 
   # Inference runtime. The command runs on the GPU node after fetch with:
   # COSMOS3_SOURCE_DIR, COSMOS3_CHECKPOINT_DIR, COSMOS3_PROMPT, and
@@ -52,7 +53,7 @@ envs:
       -i "${input_json}" \
       -o "${NPA_COSMOS3_OUTPUT_DIR}" \
       --checkpoint-path Cosmos3-Nano \
-      --no-guardrails \
+      ${NPA_COSMOS3_NO_GUARDRAILS:+--no-guardrails} \
       --seed=0
     cp "${NPA_COSMOS3_OUTPUT_DIR}/npa-t2i/vision.jpg" "${COSMOS3_OUTPUT_IMAGE}"
   NPA_COSMOS3_INFER_PROMPT: "a small robot arm sorting colored blocks on a workbench"
@@ -84,11 +85,6 @@ setup: |
   if [ ! -x "${NPA_RUNTIME_VENV}/bin/python" ]; then
     uv venv --python 3.11 --seed "${NPA_RUNTIME_VENV}"
   fi
-  if [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d ./npa ]; then
-    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e ./npa
-  elif [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d /opt/nebius-physical-ai/npa ]; then
-    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e /opt/nebius-physical-ai/npa
-  fi
   "${NPA_RUNTIME_VENV}/bin/python" -m pip install "huggingface_hub[cli]>=0.23,<1.0" "pillow>=10.0"
 run: |
   set -euo pipefail
@@ -106,19 +102,27 @@ run: |
   fi
 
   rm -rf "${NPA_COSMOS3_CACHE}" "${NPA_COSMOS3_OUTPUT_DIR}"
-  mkdir -p "${NPA_COSMOS3_OUTPUT_DIR}"
+  mkdir -p "${NPA_COSMOS3_CACHE}" "${NPA_COSMOS3_OUTPUT_DIR}"
 
-  npa workbench cosmos fetch \
-    --source-repo-url "${NPA_COSMOS3_SOURCE_REPO}" \
-    --model-id "${NPA_COSMOS3_MODEL_ID}" \
-    --cache-dir "${NPA_COSMOS3_CACHE}" \
-    --github-token-env "${NPA_COSMOS3_GITHUB_TOKEN_ENV}" \
-    --hf-token-env "${NPA_COSMOS3_HF_TOKEN_ENV}" \
-    --ngc-api-key-env "${NPA_COSMOS3_NGC_API_KEY_ENV}" \
-    --reasoning-parser "${NPA_COSMOS3_REASONING_PARSER}" \
-    --tool-call-parser "${NPA_COSMOS3_TOOL_CALL_PARSER}" \
-    --force \
-    --output json
+  github_token_value="${!NPA_COSMOS3_GITHUB_TOKEN_ENV-}"
+  if [ -n "${github_token_value}" ]; then
+    repo_host="$(python - <<'PY'
+  import os
+  from urllib.parse import urlparse
+
+  print(urlparse(os.environ["NPA_COSMOS3_SOURCE_REPO"]).hostname or "github.com")
+  PY
+  )"
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="http.https://${repo_host}/.extraheader"
+    export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${github_token_value}"
+  fi
+  git clone --depth 1 "${NPA_COSMOS3_SOURCE_REPO}" "${NPA_COSMOS3_CACHE}/source"
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+  huggingface-cli download "${NPA_COSMOS3_MODEL_ID}" --local-dir "${NPA_COSMOS3_CACHE}/checkpoint"
 
   export COSMOS3_SOURCE_DIR="${NPA_COSMOS3_CACHE}/source"
   export COSMOS3_CHECKPOINT_DIR="${NPA_COSMOS3_CACHE}/checkpoint"

@@ -91,3 +91,46 @@ def test_cosmos3_fetch_cli_exits_nonzero_on_failed_result(mocker) -> None:
     payload = json.loads(result.output)
     assert payload["status"] == "failed"
     assert payload["checkpoint"] == "skipped"
+
+
+def test_cosmos3_skills_cli_lists_integrated_nvidia_skills() -> None:
+    result = runner.invoke(
+        app,
+        ["workbench", "cosmos", "skills", "--output", "json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert [skill["name"] for skill in payload["skills"]] == [
+        "cosmos3-setup",
+        "cosmos3-codebase-nav",
+        "cosmos3-env-troubleshoot",
+        "cosmos3-inference",
+        "cosmos3-post-training",
+    ]
+    assert payload["integration_form"] == "npa-authored-by-reference"
+
+
+def test_cosmos3_skill_cli_maps_no_guardrails_to_yaml_env() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "skill",
+            "cosmos3-inference",
+            "--prompt",
+            "robot sorting blocks",
+            "--no-guardrails",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["guardrails_default"] == "on"
+    assert payload["env"]["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
+    assert payload["env"]["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"

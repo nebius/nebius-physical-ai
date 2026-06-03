@@ -13,8 +13,11 @@ from npa.workbench.cosmos.cosmos3 import (
     DEFAULT_REASONING_PARSER,
     DEFAULT_TOOL_CALL_PARSER,
     Cosmos3AccessConfig,
+    build_cosmos3_inference_args,
+    build_cosmos3_skill_env,
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
+    list_cosmos3_skills,
 )
 
 
@@ -205,10 +208,73 @@ def test_cosmos3_inference_yaml_defaults_to_public_cosmos3_and_allows_s3() -> No
         in envs["NPA_COSMOS3_INFER_COMMAND"]
     )
     assert "--checkpoint-path Cosmos3-Nano" in envs["NPA_COSMOS3_INFER_COMMAND"]
-    assert "--no-guardrails" in envs["NPA_COSMOS3_INFER_COMMAND"]
+    assert envs["NPA_COSMOS3_NO_GUARDRAILS"] == ""
+    assert (
+        "${NPA_COSMOS3_NO_GUARDRAILS:+--no-guardrails}"
+        in envs["NPA_COSMOS3_INFER_COMMAND"]
+    )
+    assert "--no-guardrails \\" not in envs["NPA_COSMOS3_INFER_COMMAND"]
+    assert "npa workbench cosmos fetch" not in doc["run"]
+    assert "git clone --depth 1" in doc["run"]
+    assert "huggingface-cli download" in doc["run"]
     assert envs["NPA_COSMOS3_CACHE"].startswith("/tmp/")
     assert envs["NPA_COSMOS3_OUTPUT_DIR"].startswith("/tmp/")
     assert envs["NPA_COSMOS3_OUTPUT_IMAGE"].startswith("/tmp/")
     assert "NPA_COSMOS3_OUTPUT_S3_URI" in rendered
     assert "NPA_COSMOS3_SOURCE_REPO" in rendered
     assert "NPA_COSMOS3_MODEL_ID" in rendered
+
+
+def test_cosmos3_skill_inventory_covers_nvidia_agent_skills() -> None:
+    specs = list_cosmos3_skills()
+
+    assert [spec.name for spec in specs] == [
+        "cosmos3-setup",
+        "cosmos3-codebase-nav",
+        "cosmos3-env-troubleshoot",
+        "cosmos3-inference",
+        "cosmos3-post-training",
+    ]
+    assert all(spec.integration_form.startswith("npa-authored-by-reference") for spec in specs)
+    assert {spec.image for spec in specs} == {"source-based"}
+    assert {spec.name for spec in specs if spec.generative} == {"cosmos3-inference"}
+    for spec in specs:
+        workflow = ROOT / spec.workflow
+        assert workflow.exists(), spec.name
+        docs = [doc for doc in yaml.safe_load_all(workflow.read_text(encoding="utf-8")) if doc]
+        assert docs[0]["name"] in {spec.name, "cosmos3-text-to-image-inference"}
+
+
+def test_cosmos3_inference_args_keep_guardrails_on_by_default() -> None:
+    args = build_cosmos3_inference_args(input_json="input.json", output_dir="out")
+
+    assert "--no-guardrails" not in args
+    assert args == [
+        "--parallelism-preset",
+        "latency",
+        "-i",
+        "input.json",
+        "-o",
+        "out",
+        "--checkpoint-path",
+        "Cosmos3-Nano",
+        "--seed=0",
+    ]
+    assert "--no-guardrails" in build_cosmos3_inference_args(
+        input_json="input.json",
+        output_dir="out",
+        no_guardrails=True,
+    )
+
+
+def test_cosmos3_skill_env_aligns_cli_sdk_yaml_guardrails() -> None:
+    default_env = build_cosmos3_skill_env("cosmos3-inference")
+    opt_out_env = build_cosmos3_skill_env(
+        "cosmos3-inference",
+        prompt="robot sorting blocks",
+        no_guardrails=True,
+    )
+
+    assert default_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == ""
+    assert opt_out_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
+    assert opt_out_env.env["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"

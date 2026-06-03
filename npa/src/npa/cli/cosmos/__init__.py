@@ -138,8 +138,12 @@ from npa.workbench.cosmos.cosmos3 import (
     DEFAULT_REASONING_PARSER,
     DEFAULT_TOOL_CALL_PARSER,
     Cosmos3AccessConfig,
+    Cosmos3AccessError,
+    build_cosmos3_skill_env,
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
+    get_cosmos3_skill,
+    list_cosmos3_skills,
 )
 
 app = typer.Typer(
@@ -240,13 +244,14 @@ def _cosmos_service_env(
     byovm_effective_gpu_count: int,
     byovm_visible_devices: str,
     include_shared_creds: bool,
+    no_guardrails: bool = False,
 ) -> dict[str, str]:
     env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
         "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
         "COSMOS_SERVER_PORT": str(server_port),
-        "COSMOS_DISABLE_SAFETY": "1",
+        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
         "HF_HOME": COSMOS_HF_CACHE,
         "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
         "HF_TOKEN": credentials.hf_token,
@@ -870,6 +875,119 @@ def fetch_cmd(
     _finish_cosmos3_result(result.as_dict(), output)
 
 
+@app.command("skills")
+def skills_cmd(
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """List NVIDIA Cosmos3 skills surfaced through NPA-authored workflows."""
+
+    specs = [spec.as_dict() for spec in list_cosmos3_skills()]
+    payload = {
+        "status": "ok",
+        "integration_form": "npa-authored-by-reference",
+        "skills": specs,
+    }
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    for spec in specs:
+        typer.echo(
+            f"{spec['name']}: {spec['tier']} ({spec['capability']}) -> {spec['workflow']}"
+        )
+
+
+@app.command("skill")
+def skill_cmd(
+    skill_name: str = typer.Argument(help="Cosmos3 skill name."),
+    source_repo_url: str = typer.Option(
+        "",
+        "--source-repo-url",
+        envvar="NPA_COSMOS3_SOURCE_REPO",
+        help="Override NPA_COSMOS3_SOURCE_REPO for the workflow.",
+    ),
+    model_id: str = typer.Option(
+        "",
+        "--model-id",
+        envvar="NPA_COSMOS3_MODEL_ID",
+        help="Override NPA_COSMOS3_MODEL_ID for the workflow.",
+    ),
+    cache_dir: str = typer.Option(
+        "",
+        "--cache-dir",
+        envvar="NPA_COSMOS3_CACHE",
+        help="Override NPA_COSMOS3_CACHE for the workflow.",
+    ),
+    output_s3_uri: str = typer.Option(
+        "",
+        "--output-s3-uri",
+        envvar="NPA_COSMOS3_OUTPUT_S3_URI",
+        help="Override NPA_COSMOS3_OUTPUT_S3_URI for workflows that upload artifacts.",
+    ),
+    prompt: str = typer.Option(
+        "",
+        "--prompt",
+        envvar="NPA_COSMOS3_INFER_PROMPT",
+        help="Inference prompt override for cosmos3-inference.",
+    ),
+    uv_group: str = typer.Option(
+        "",
+        "--uv-group",
+        envvar="NPA_COSMOS3_UV_GROUP",
+        help="Override the Cosmos3 uv extras group.",
+    ),
+    no_guardrails: bool = typer.Option(
+        False,
+        "--no-guardrails",
+        help="Opt out of Cosmos3 guardrails for generative workflows.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """Show one Cosmos3 skill workflow and CLI/SDK/YAML env alignment."""
+
+    try:
+        spec = get_cosmos3_skill(skill_name)
+        skill_env = build_cosmos3_skill_env(
+            spec.name,
+            source_repo_url=source_repo_url,
+            model_id=model_id,
+            cache_dir=cache_dir,
+            output_s3_uri=output_s3_uri,
+            prompt=prompt,
+            uv_group=uv_group,
+            no_guardrails=no_guardrails,
+        )
+    except Cosmos3AccessError as exc:
+        _fail(str(exc))
+        return
+    payload = {
+        "status": "ok",
+        "skill": spec.as_dict(),
+        "workflow": str(skill_env.workflow),
+        "env": skill_env.env,
+        "guardrails_default": "on" if spec.generative else "not_applicable",
+        "no_guardrails": skill_env.no_guardrails,
+    }
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"skill: {spec.name}")
+    typer.echo(f"tier: {spec.tier}")
+    typer.echo(f"workflow: {skill_env.workflow}")
+    typer.echo(f"source: {spec.source_url}")
+    if skill_env.env:
+        typer.echo("env:")
+        for key, value in skill_env.env.items():
+            typer.echo(f"  {key}={value}")
+
+
 @app.command("ensure-ingress")
 def ensure_ingress_cmd(
     name: str = typer.Option(
@@ -969,7 +1087,7 @@ from diffusers.utils import export_to_video
 MODEL_DIR = Path(os.environ.get("COSMOS_MODEL_DIR", "{COSMOS_MODEL_DIR}"))
 OUTPUT_DIR = Path(os.environ.get("COSMOS_OUTPUT_DIR", "{COSMOS_HOME}/outputs"))
 DEFAULT_MODEL = "{default_model}"
-DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "1").strip().lower() not in {{"0", "false", "no"}}
+DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "0").strip().lower() in {{"1", "true", "yes", "on"}}
 
 app = FastAPI(title="NPA Cosmos Server")
 _pipe: Any | None = None
@@ -1157,9 +1275,10 @@ def _run_inference(req: InferRequest) -> dict[str, Any]:
 '''
 
 
-def _build_install_command(model: str, port: int) -> str:
+def _build_install_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
     model_slug = _model_slug(model)
+    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1208,7 +1327,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY=1
+COSMOS_DISABLE_SAFETY={disable_safety}
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1247,8 +1366,9 @@ PY
     return _remote_bash(script)
 
 
-def _build_serve_command(model: str, port: int) -> str:
+def _build_serve_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
+    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 cat > {COSMOS_HOME}/server.py <<'PY'
@@ -1260,7 +1380,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY=1
+COSMOS_DISABLE_SAFETY={disable_safety}
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1506,6 +1626,7 @@ def _deploy_serverless_endpoint(
     subnet_id: str,
     env_vars: dict[str, str],
     volumes: list[str],
+    no_guardrails: bool,
     replace: bool,
     default: bool,
     wait: bool,
@@ -1527,6 +1648,7 @@ def _deploy_serverless_endpoint(
     serverless_env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_SERVER_PORT": str(container_port),
+        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
         **env_vars,
     }
     extra_env = _serverless_hf_env()
@@ -2012,6 +2134,11 @@ def deploy_cmd(
         "--skip-model-check",
         help="Skip Hugging Face gated-model access validation.",
     ),
+    no_guardrails: bool = typer.Option(
+        False,
+        "--no-guardrails",
+        help="Opt out of Cosmos safety guardrails for generated outputs.",
+    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -2138,6 +2265,7 @@ def deploy_cmd(
             subnet_id=subnet_id,
             env_vars=serverless_env,
             volumes=volume,
+            no_guardrails=no_guardrails,
             replace=replace,
             default=default,
             wait=wait,
@@ -2600,6 +2728,7 @@ def deploy_cmd(
                 byovm_effective_gpu_count=byovm_effective_gpu_count,
                 byovm_visible_devices=byovm_visible_devices,
                 include_shared_creds=not no_shared_creds,
+                no_guardrails=no_guardrails,
             )
             if dry_run:
                 console.print(
@@ -2694,7 +2823,10 @@ def deploy_cmd(
             else:
                 try:
                     ssh.run_or_raise(
-                        _build_install_command(model, server_port), stream=True
+                        _build_install_command(
+                            model, server_port, no_guardrails=no_guardrails
+                        ),
+                        stream=True,
                     )
                 except SSHError as exc:
                     fail_app(f"Cosmos installation failed: {exc}")
@@ -2930,6 +3062,11 @@ def serve_cmd(
         ),
     ),
     port: int = typer.Option(8080, "--port", help="Server port."),
+    no_guardrails: bool = typer.Option(
+        False,
+        "--no-guardrails",
+        help="Opt out of Cosmos safety guardrails for generated outputs.",
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -2981,7 +3118,9 @@ def serve_cmd(
     else:
         ssh = SSHClient(cfg.ssh)
         try:
-            _, out, err = ssh.run_or_raise(_build_serve_command(model, port))
+            _, out, err = ssh.run_or_raise(
+                _build_serve_command(model, port, no_guardrails=no_guardrails)
+            )
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return
@@ -2991,6 +3130,7 @@ def serve_cmd(
         "model": model,
         "port": port,
         "endpoint": cfg.endpoint,
+        "guardrails": "off" if no_guardrails else "on",
     }
     if output == OutputFormat.json and out.strip():
         result["stdout_tail"] = out.strip()[-1000:]

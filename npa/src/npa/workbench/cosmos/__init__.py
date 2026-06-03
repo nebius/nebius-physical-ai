@@ -9,8 +9,14 @@ from npa.workbench.cosmos.cosmos3 import (
     Cosmos3CheckResult as Cosmos3CheckResult,
     Cosmos3FetchResult as Cosmos3FetchResult,
     Cosmos3ServeConfig as Cosmos3ServeConfig,
+    Cosmos3SkillEnv,
+    Cosmos3SkillSpec,
+    build_cosmos3_inference_args,
+    build_cosmos3_skill_env,
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
+    get_cosmos3_skill,
+    list_cosmos3_skills,
 )
 
 ensure_ingress = make_cli_wrapper(
@@ -25,6 +31,8 @@ check = make_cli_wrapper(
 fetch = make_cli_wrapper(
     "npa.cli.cosmos", "fetch_cmd", "Fetch Cosmos3 source and HF artifacts."
 )
+skills = make_cli_wrapper("npa.cli.cosmos", "skills_cmd", "List Cosmos3 skills.")
+skill = make_cli_wrapper("npa.cli.cosmos", "skill_cmd", "Show a Cosmos3 skill workflow.")
 list = make_cli_wrapper("npa.cli.cosmos", "list_cmd", "List Cosmos workbenches.")
 deploy = make_cli_wrapper("npa.cli.cosmos", "deploy_cmd", "Deploy a Cosmos workbench.")
 autoscale = make_cli_wrapper(
@@ -44,10 +52,18 @@ system_info = make_cli_wrapper(
 __all__ = [
     "check_cosmos3_access",
     "fetch_cosmos3_artifacts",
+    "list_cosmos3_skills",
+    "get_cosmos3_skill",
+    "build_cosmos3_inference_args",
+    "build_cosmos3_skill_env",
+    "Cosmos3SkillSpec",
+    "Cosmos3SkillEnv",
     "ensure_ingress",
     "register_byovm",
     "check",
     "fetch",
+    "skills",
+    "skill",
     "list",
     "deploy",
     "autoscale",

@@ -113,7 +113,7 @@ def check_start_server(state: SmokeState) -> CheckResult:
         "COSMOS_MODEL_ID": os.environ.get("COSMOS_MODEL_ID", DEFAULT_MODEL),
         "COSMOS_MODEL_DIR": os.environ.get("COSMOS_MODEL_DIR", str(DEFAULT_MODEL_DIR)),
         "COSMOS_OUTPUT_DIR": str(state.output_dir),
-        "COSMOS_DISABLE_SAFETY": os.environ.get("COSMOS_DISABLE_SAFETY", "1"),
+        "COSMOS_DISABLE_SAFETY": os.environ.get("COSMOS_DISABLE_SAFETY", "0"),
         "HF_HOME": os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"),
         "HUGGINGFACE_HUB_CACHE": os.environ.get("HUGGINGFACE_HUB_CACHE", "/opt/cosmos-data/hf_cache"),
     }

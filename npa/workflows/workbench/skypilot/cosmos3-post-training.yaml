@@ -1,0 +1,124 @@
+# Cosmos3 SFT post-training staging workflow.
+#
+# NPA-authored by reference to NVIDIA cosmos-framework
+# .agents/skills/cosmos3-post-training/SKILL.md.
+name: cosmos3-post-training
+resources:
+  cloud: kubernetes
+  accelerators: H100:8
+  cpus: 64+
+  memory: 512+
+  disk_size: 2048
+envs:
+  NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"
+  NPA_COSMOS3_MODEL_ID: "nvidia/Cosmos3-Nano"
+  NPA_COSMOS3_CACHE: "/tmp/npa-cosmos3-sft"
+  NPA_COSMOS3_GITHUB_TOKEN_ENV: "GITHUB_TOKEN"
+  NPA_COSMOS3_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS3_UV_GROUP: "cu130-train"
+  NPA_COSMOS3_SFT_RECIPE: "vision_nano"
+  NPA_COSMOS3_SFT_ACTION: "plan"
+  NPA_COSMOS3_SFT_VALIDATE_ONLY: "0"
+  NPA_COSMOS3_SFT_DATASET_PATH: ""
+  NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH: ""
+  NPA_COSMOS3_SFT_WAN_VAE_PATH: ""
+  IMAGINAIRE_OUTPUT_ROOT: "/tmp/npa-cosmos3-sft/output"
+  NPA_COSMOS3_SFT_RESULT_JSON: "/tmp/npa-cosmos3-sft/sft-plan.json"
+  NPA_COSMOS3_OUTPUT_S3_URI: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends curl ffmpeg git git-lfs libx11-dev tree wget ca-certificates
+    else
+      echo "git is required for Cosmos3 source checkout" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="${HOME}/.local/bin:${PATH}"
+run: |
+  set -euo pipefail
+  export PATH="${HOME}/.local/bin:${PATH}"
+  test -n "${NPA_COSMOS3_SOURCE_REPO}"
+  test -n "${NPA_COSMOS3_SFT_RECIPE}"
+  hf_token_value="${!NPA_COSMOS3_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+
+  rm -rf "${NPA_COSMOS3_CACHE}"
+  mkdir -p "${NPA_COSMOS3_CACHE}"
+  github_token_value="${!NPA_COSMOS3_GITHUB_TOKEN_ENV-}"
+  if [ -n "${github_token_value}" ]; then
+    repo_host="$(python3 - <<'PY'
+  import os
+  from urllib.parse import urlparse
+
+  print(urlparse(os.environ["NPA_COSMOS3_SOURCE_REPO"]).hostname or "github.com")
+  PY
+  )"
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="http.https://${repo_host}/.extraheader"
+    export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${github_token_value}"
+  fi
+  git clone --depth 1 "${NPA_COSMOS3_SOURCE_REPO}" "${NPA_COSMOS3_CACHE}/source"
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+  cd "${NPA_COSMOS3_CACHE}/source"
+  uv sync --all-extras --group="${NPA_COSMOS3_UV_GROUP}"
+  export LD_LIBRARY_PATH=
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+  export DATASET_PATH="${NPA_COSMOS3_SFT_DATASET_PATH}"
+  export BASE_CHECKPOINT_PATH="${NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH}"
+  export WAN_VAE_PATH="${NPA_COSMOS3_SFT_WAN_VAE_PATH}"
+
+  recipe="${NPA_COSMOS3_SFT_RECIPE}"
+  toml="examples/toml/sft_config/${recipe}.toml"
+  launcher="examples/launch_sft_${recipe}.sh"
+  test -f "${toml}"
+  python3 - <<'PY'
+  import json
+  import os
+  from pathlib import Path
+
+  payload = {
+      "status": "seam",
+      "recipe": os.environ["NPA_COSMOS3_SFT_RECIPE"],
+      "toml": f"examples/toml/sft_config/{os.environ['NPA_COSMOS3_SFT_RECIPE']}.toml",
+      "launcher": f"examples/launch_sft_{os.environ['NPA_COSMOS3_SFT_RECIPE']}.sh",
+      "action": os.environ.get("NPA_COSMOS3_SFT_ACTION", "plan"),
+      "validate_only": os.environ.get("NPA_COSMOS3_SFT_VALIDATE_ONLY", "1"),
+      "dataset_path": os.environ.get("DATASET_PATH", ""),
+      "base_checkpoint_path": os.environ.get("BASE_CHECKPOINT_PATH", ""),
+      "wan_vae_path": os.environ.get("WAN_VAE_PATH", ""),
+  }
+  path = Path(os.environ["NPA_COSMOS3_SFT_RESULT_JSON"])
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  print(json.dumps(payload, sort_keys=True))
+  PY
+  if [ "${NPA_COSMOS3_SFT_ACTION}" = "plan" ]; then
+    echo "NPA_COSMOS3_SFT_PLAN_ONLY ${NPA_COSMOS3_SFT_RESULT_JSON}"
+  elif [ "${NPA_COSMOS3_SFT_ACTION}" = "validate" ] || [ "${NPA_COSMOS3_SFT_VALIDATE_ONLY}" = "1" ]; then
+    .venv/bin/python -m cosmos_framework.scripts.train --dryrun --sft-toml="${toml}"
+  elif [ "${NPA_COSMOS3_SFT_ACTION}" = "train" ]; then
+    test -n "${DATASET_PATH}"
+    test -n "${BASE_CHECKPOINT_PATH}"
+    test -n "${WAN_VAE_PATH}"
+    bash "${launcher}"
+  else
+    echo "Unsupported NPA_COSMOS3_SFT_ACTION=${NPA_COSMOS3_SFT_ACTION}" >&2
+    exit 2
+  fi
+
+  if [ -n "${NPA_COSMOS3_OUTPUT_S3_URI}" ]; then
+    if ! command -v aws >/dev/null 2>&1; then
+      python3 -m pip install --user "awscli>=1.32"
+    fi
+    aws s3 cp "${NPA_COSMOS3_SFT_RESULT_JSON}" "${NPA_COSMOS3_OUTPUT_S3_URI%/}/sft-plan.json"
+  fi
