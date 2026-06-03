@@ -1,4 +1,4 @@
-"""Credential and fetch helpers for gated Cosmos3-style model bundles."""
+"""Credential and fetch helpers for public Cosmos3 model bundles."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import httpx
 
 DEFAULT_CACHE_ENV = "NPA_COSMOS3_CACHE"
 DEFAULT_CACHE_DIR = "/tmp/npa-cosmos3-cache"
+DEFAULT_COSMOS3_MODEL_ID = "nvidia/Cosmos3-Nano"
+DEFAULT_COSMOS3_SOURCE_REPO = "https://github.com/NVIDIA/cosmos-framework.git"
 DEFAULT_GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 DEFAULT_HF_TOKEN_ENV = "HF_TOKEN"
 DEFAULT_NGC_API_KEY_ENV = "NGC_API_KEY"
@@ -25,7 +27,7 @@ RunCallable = Callable[..., subprocess.CompletedProcess[str]]
 
 
 class Cosmos3AccessError(RuntimeError):
-    """Raised when gated model access or fetch setup fails."""
+    """Raised when Cosmos3 model access or fetch setup fails."""
 
 
 @dataclass(frozen=True)
@@ -47,10 +49,10 @@ class Cosmos3ServeConfig:
 
 @dataclass(frozen=True)
 class Cosmos3AccessConfig:
-    """Runtime-only configuration for a gated source checkout and HF checkpoint."""
+    """Runtime configuration for a source checkout and HF checkpoint."""
 
-    model_id: str = ""
-    source_repo_url: str = ""
+    model_id: str = DEFAULT_COSMOS3_MODEL_ID
+    source_repo_url: str = DEFAULT_COSMOS3_SOURCE_REPO
     cache_dir: Path | str | None = None
     github_token_env: str = DEFAULT_GITHUB_TOKEN_ENV
     hf_token_env: str = DEFAULT_HF_TOKEN_ENV
@@ -81,7 +83,9 @@ class Cosmos3AccessConfig:
             or DEFAULT_GITHUB_TOKEN_ENV
         )
         resolved_hf_env = (
-            hf_token_env or env.get("NPA_COSMOS3_HF_TOKEN_ENV", "") or DEFAULT_HF_TOKEN_ENV
+            hf_token_env
+            or env.get("NPA_COSMOS3_HF_TOKEN_ENV", "")
+            or DEFAULT_HF_TOKEN_ENV
         )
         resolved_ngc_env = (
             ngc_api_key_env
@@ -89,8 +93,12 @@ class Cosmos3AccessConfig:
             or DEFAULT_NGC_API_KEY_ENV
         )
         return cls(
-            model_id=model_id or env.get("NPA_COSMOS3_MODEL_ID", ""),
-            source_repo_url=source_repo_url or env.get("NPA_COSMOS3_SOURCE_REPO", ""),
+            model_id=model_id
+            or env.get("NPA_COSMOS3_MODEL_ID", "")
+            or DEFAULT_COSMOS3_MODEL_ID,
+            source_repo_url=source_repo_url
+            or env.get("NPA_COSMOS3_SOURCE_REPO", "")
+            or DEFAULT_COSMOS3_SOURCE_REPO,
             cache_dir=cache_dir or env.get(DEFAULT_CACHE_ENV, "") or DEFAULT_CACHE_DIR,
             github_token_env=resolved_github_env,
             hf_token_env=resolved_hf_env,
@@ -180,7 +188,7 @@ def check_cosmos3_access(
     runner: RunCallable | None = None,
     timeout: float = 20.0,
 ) -> Cosmos3CheckResult:
-    """Verify local auth and lightweight reachability for the gated artifacts."""
+    """Verify local auth and lightweight reachability for Cosmos3 artifacts."""
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     errors: list[str] = []
@@ -191,16 +199,18 @@ def check_cosmos3_access(
         errors.append("HF model ID is required")
 
     github_auth = _check_github_auth(config, env, run, timeout)
-    if github_auth == "missing":
-        errors.append(
-            f"GitHub auth missing: set {config.github_token_env} or authenticate gh"
-        )
 
     source_repo = "skipped"
-    if config.source_repo_url and github_auth != "missing":
+    if config.source_repo_url:
         source_repo = _check_source_repo(config, env, run, timeout)
         if source_repo != "reachable":
-            errors.append("source repo is not reachable with current GitHub auth")
+            detail = "source repo is not reachable"
+            if github_auth == "missing":
+                detail += (
+                    f"; set {config.github_token_env} or authenticate gh if using "
+                    "a private source repo"
+                )
+            errors.append(detail)
 
     hf_auth = "configured" if env.get(config.hf_token_env, "") else "missing"
     if hf_auth == "missing":
@@ -423,7 +433,9 @@ def _check_hf_model(
     headers = {"Authorization": f"Bearer {env[config.hf_token_env]}"}
     url = f"https://huggingface.co/api/models/{config.model_id}"
     try:
-        response = httpx.head(url, headers=headers, timeout=timeout, follow_redirects=True)
+        response = httpx.head(
+            url, headers=headers, timeout=timeout, follow_redirects=True
+        )
         if response.status_code == 405:
             response = httpx.get(
                 url,

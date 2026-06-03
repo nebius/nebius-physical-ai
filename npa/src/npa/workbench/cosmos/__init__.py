@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
 from npa.workbench.cosmos.cosmos3 import (
-    Cosmos3AccessConfig,
-    Cosmos3AccessError,
-    Cosmos3CheckResult,
-    Cosmos3FetchResult,
-    Cosmos3ServeConfig,
+    Cosmos3AccessConfig as Cosmos3AccessConfig,
+    Cosmos3AccessError as Cosmos3AccessError,
+    Cosmos3CheckResult as Cosmos3CheckResult,
+    Cosmos3FetchResult as Cosmos3FetchResult,
+    Cosmos3ServeConfig as Cosmos3ServeConfig,
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
@@ -20,10 +20,10 @@ register_byovm = make_cli_wrapper(
     "npa.cli.cosmos", "register_byovm_cmd", "Register a BYOVM Cosmos workbench."
 )
 check = make_cli_wrapper(
-    "npa.cli.cosmos", "check_cmd", "Check Cosmos3 gated source and HF access."
+    "npa.cli.cosmos", "check_cmd", "Check Cosmos3 source and HF access."
 )
 fetch = make_cli_wrapper(
-    "npa.cli.cosmos", "fetch_cmd", "Fetch Cosmos3 gated source and HF artifacts."
+    "npa.cli.cosmos", "fetch_cmd", "Fetch Cosmos3 source and HF artifacts."
 )
 list = make_cli_wrapper("npa.cli.cosmos", "list_cmd", "List Cosmos workbenches.")
 deploy = make_cli_wrapper("npa.cli.cosmos", "deploy_cmd", "Deploy a Cosmos workbench.")
@@ -32,7 +32,9 @@ autoscale = make_cli_wrapper(
 )
 serve = make_cli_wrapper("npa.cli.cosmos", "serve_cmd", "Serve a Cosmos model.")
 finetune = make_cli_wrapper("npa.cli.cosmos", "finetune_cmd", "Run Cosmos finetuning.")
-optimize = make_cli_wrapper("npa.cli.cosmos", "optimize_cmd", "Run Cosmos optimization.")
+optimize = make_cli_wrapper(
+    "npa.cli.cosmos", "optimize_cmd", "Run Cosmos optimization."
+)
 infer = make_cli_wrapper("npa.cli.cosmos", "infer_cmd", "Run Cosmos inference.")
 status = make_cli_wrapper("npa.cli.cosmos", "status_cmd", "Show Cosmos status.")
 system_info = make_cli_wrapper(

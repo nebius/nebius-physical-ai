@@ -1,28 +1,27 @@
-# Cosmos3-EA Phase 1 fetch workflow.
+# Cosmos3 public fetch workflow.
 #
-# This workflow checks gated source + HF checkpoint access and materializes both
-# into node-local ephemeral storage. Supply all gated identifiers and credentials
-# at launch time; do not fill real values into this committed YAML.
+# This workflow checks public source + HF checkpoint access and materializes both
+# into node-local ephemeral storage. HF weights can still require a normal token
+# and license acceptance.
 name: cosmos3-ea-fetch
 execution: serial
 ---
 name: cosmos3-fetch
 resources:
   cloud: kubernetes
-  cpus: 8
-  memory: 32
+  cpus: 8+
+  memory: 32+
   disk_size: 512
-  # Replace with an image that includes the npa CLI, git, and a Python runtime.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-workbench:<tag>"
 envs:
-  # Runtime config. Replace placeholders at launch via SkyPilot env/secrets.
-  NPA_COSMOS3_SOURCE_REPO: "<gated-source-repo-url>"
-  NPA_COSMOS3_MODEL_ID: "<gated-hf-model-id>"
+  # Runtime config can be overridden at launch for BYO forks/checkpoints.
+  NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"
+  NPA_COSMOS3_MODEL_ID: "nvidia/Cosmos3-Nano"
   NPA_COSMOS3_CACHE: "/tmp/npa-cosmos3-cache"
   NPA_COSMOS3_GITHUB_TOKEN_ENV: "GITHUB_TOKEN"
   NPA_COSMOS3_HF_TOKEN_ENV: "HF_TOKEN"
   NPA_COSMOS3_NGC_API_KEY_ENV: "NGC_API_KEY"
   NPA_COSMOS3_REQUIRE_NGC: "0"
+  NPA_RUNTIME_VENV: "/tmp/npa-runtime-venv"
 
   # Serve config carried forward for Phase 2.
   NPA_COSMOS3_REASONING_PARSER: "qwen3"
@@ -39,17 +38,25 @@ setup: |
       exit 1
     fi
   fi
-  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
-    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
   fi
-  if ! command -v huggingface-cli >/dev/null 2>&1; then
-    python3 -m pip install "huggingface_hub[cli]>=0.23"
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if [ ! -x "${NPA_RUNTIME_VENV}/bin/python" ]; then
+    uv venv --python 3.11 --seed "${NPA_RUNTIME_VENV}"
   fi
+  if [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d ./npa ]; then
+    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e ./npa
+  elif [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d /opt/nebius-physical-ai/npa ]; then
+    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+  "${NPA_RUNTIME_VENV}/bin/python" -m pip install "huggingface_hub[cli]>=0.23,<1.0"
 run: |
   set -euo pipefail
+  export PATH="${NPA_RUNTIME_VENV}/bin:${HOME}/.local/bin:${PATH}"
 
-  test -n "${NPA_COSMOS3_SOURCE_REPO}" && test "${NPA_COSMOS3_SOURCE_REPO}" != "<gated-source-repo-url>"
-  test -n "${NPA_COSMOS3_MODEL_ID}" && test "${NPA_COSMOS3_MODEL_ID}" != "<gated-hf-model-id>"
+  test -n "${NPA_COSMOS3_SOURCE_REPO}"
+  test -n "${NPA_COSMOS3_MODEL_ID}"
   hf_token_value="${!NPA_COSMOS3_HF_TOKEN_ENV-}"
   test -n "${hf_token_value}"
 
@@ -84,4 +91,4 @@ run: |
     --tool-call-parser "${NPA_COSMOS3_TOOL_CALL_PARSER}" \
     --output json
 
-  echo "Cosmos3 gated artifacts are staged in ${NPA_COSMOS3_CACHE}"
+  echo "Cosmos3 artifacts are staged in ${NPA_COSMOS3_CACHE}"

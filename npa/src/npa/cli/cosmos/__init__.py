@@ -130,6 +130,8 @@ from npa.serverless_common import (
     validate_output_path,
 )
 from npa.workbench.cosmos.cosmos3 import (
+    DEFAULT_COSMOS3_MODEL_ID,
+    DEFAULT_COSMOS3_SOURCE_REPO,
     DEFAULT_GITHUB_TOKEN_ENV,
     DEFAULT_HF_TOKEN_ENV,
     DEFAULT_NGC_API_KEY_ENV,
@@ -705,13 +707,13 @@ def check_cmd(
         "",
         "--model-id",
         envvar="NPA_COSMOS3_MODEL_ID",
-        help="HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID.",
+        help=f"HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID or {DEFAULT_COSMOS3_MODEL_ID}.",
     ),
     source_repo_url: str = typer.Option(
         "",
         "--source-repo-url",
         envvar="NPA_COSMOS3_SOURCE_REPO",
-        help="Gated source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO.",
+        help=f"Source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO or {DEFAULT_COSMOS3_SOURCE_REPO}.",
     ),
     cache_dir: Path | None = typer.Option(
         None,
@@ -755,7 +757,7 @@ def check_cmd(
         help="Output format.",
     ),
 ) -> None:
-    """Check gated source and HF checkpoint access without downloading weights."""
+    """Check Cosmos3 source and HF checkpoint access without downloading weights."""
     cfg = _cosmos3_access_config(
         model_id=model_id,
         source_repo_url=source_repo_url,
@@ -776,13 +778,13 @@ def fetch_cmd(
         "",
         "--model-id",
         envvar="NPA_COSMOS3_MODEL_ID",
-        help="HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID.",
+        help=f"HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID or {DEFAULT_COSMOS3_MODEL_ID}.",
     ),
     source_repo_url: str = typer.Option(
         "",
         "--source-repo-url",
         envvar="NPA_COSMOS3_SOURCE_REPO",
-        help="Gated source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO.",
+        help=f"Source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO or {DEFAULT_COSMOS3_SOURCE_REPO}.",
     ),
     cache_dir: Path | None = typer.Option(
         None,

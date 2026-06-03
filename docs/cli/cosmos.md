@@ -12,7 +12,7 @@ Options
 --name  -n  TEXT  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
-check  Check gated source and HF checkpoint access without downloading weights.
+check  Check Cosmos3 source and HF checkpoint access without downloading weights.
 fetch  Clone source and download the HF checkpoint into ephemeral runtime cache.
 ensure-ingress  Ensure public ingress for the saved Cosmos BYOVM alias.
 register-byovm  Register an existing VM as a Cosmos BYOVM alias and ensure ingress.
@@ -43,7 +43,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 
 | Command | Description |
 | --- | --- |
-| `check` | Check gated source and HF checkpoint access without downloading weights. |
+| `check` | Check Cosmos3 source and HF checkpoint access without downloading weights. |
 | `fetch` | Clone source and download the HF checkpoint into ephemeral runtime cache. |
 | `ensure-ingress` | Ensure public ingress for the saved Cosmos BYOVM alias. |
 | `register-byovm` | Register an existing VM as a Cosmos BYOVM alias and ensure ingress. |

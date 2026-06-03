@@ -15,21 +15,39 @@ import pytest
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
-YAML_PATH = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-text-to-image-inference.yaml"
+YAML_PATH = (
+    ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "cosmos3-text-to-image-inference.yaml"
+)
 GPU_CHAIN = ("H100:1", "H200:1", "A100:1", "L40S:1", "RTX6000:1")
+PUBLIC_SOURCE_REPO = "https://github.com/NVIDIA/cosmos-framework.git"
+PUBLIC_MODEL_ID = "nvidia/Cosmos3-Nano"
 
 
-def test_cosmos3_text_to_image_raw_sky_on_node_only(tmp_path: Path) -> None:
-    """Run Cosmos3 inference on-node via raw `sky launch`, with no S3 outputs."""
+def test_cosmos3_text_to_image_raw_sky_public_defaults(tmp_path: Path) -> None:
+    """Run Cosmos3 text-to-image inference via raw `sky launch`."""
 
-    env_names = _require_embargo_safe_runtime()
+    env_names = _require_public_runtime()
     sky_bin = _sky_bin()
-    image_id = os.environ["NPA_COSMOS3_E2E_IMAGE_ID"]
-    run_id = f"cosmos3-ea-infer-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
-    evidence_dir = Path(os.environ.get("NPA_COSMOS3_E2E_EVIDENCE_DIR", str(tmp_path / "evidence")))
+    image_id = os.environ.get("NPA_COSMOS3_E2E_IMAGE_ID", "")
+    run_id = f"cosmos3-infer-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
+    evidence_dir = Path(
+        os.environ.get("NPA_COSMOS3_E2E_EVIDENCE_DIR", str(tmp_path / "evidence"))
+    )
     evidence_dir.mkdir(parents=True, exist_ok=True)
     workdir = _copy_clean_workdir(tmp_path / "workdir")
-    yaml_path = workdir / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-text-to-image-inference.yaml"
+    yaml_path = (
+        workdir
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "skypilot"
+        / "cosmos3-text-to-image-inference.yaml"
+    )
     attempts: list[dict[str, Any]] = []
 
     for gpu in _gpu_chain():
@@ -78,36 +96,35 @@ def test_cosmos3_text_to_image_raw_sky_on_node_only(tmp_path: Path) -> None:
         attempts.append(attempt)
 
     _write_evidence(evidence_dir, run_id=run_id, attempts=attempts)
-    pytest.fail(f"Cosmos3 inference raw SkyPilot run failed on all GPU tiers; evidence={evidence_dir}")
+    pytest.fail(
+        f"Cosmos3 inference raw SkyPilot run failed on all GPU tiers; evidence={evidence_dir}"
+    )
 
 
-def _require_embargo_safe_runtime() -> dict[str, str]:
+def _require_public_runtime() -> dict[str, str]:
     if os.environ.get("NPA_INTEGRATION_E2E") != "1":
         pytest.skip("NPA_INTEGRATION_E2E not set")
-    if os.environ.get("NPA_COSMOS3_E2E_EMBARGO_OK") != "1":
-        pytest.skip("Cosmos3 embargo constraints were not explicitly confirmed")
-    required = {
-        "source_repo": "NPA_COSMOS3_SOURCE_REPO",
-        "model_id": "NPA_COSMOS3_MODEL_ID",
-        "infer_command": "NPA_COSMOS3_INFER_COMMAND",
-        "image_id": "NPA_COSMOS3_E2E_IMAGE_ID",
-    }
-    missing = [name for name in required.values() if not os.environ.get(name)]
+    if os.environ.get("NPA_COSMOS3_E2E") != "1":
+        pytest.skip("NPA_COSMOS3_E2E not set")
+    missing: list[str] = []
     github_env = os.environ.get("NPA_COSMOS3_GITHUB_TOKEN_ENV", "GITHUB_TOKEN")
     hf_env = os.environ.get("NPA_COSMOS3_HF_TOKEN_ENV", "HF_TOKEN")
     ngc_env = os.environ.get("NPA_COSMOS3_NGC_API_KEY_ENV", "NGC_API_KEY")
-    for token_env in (github_env, hf_env):
-        if not os.environ.get(token_env):
-            missing.append(token_env)
+    if not os.environ.get(hf_env):
+        missing.append(hf_env)
     if os.environ.get("NPA_COSMOS3_REQUIRE_NGC") == "1" and not os.environ.get(ngc_env):
         missing.append(ngc_env)
     if missing:
-        pytest.skip("Cosmos3 runtime env is incomplete: " + ", ".join(sorted(set(missing))))
+        pytest.skip(
+            "Cosmos3 runtime env is incomplete: " + ", ".join(sorted(set(missing)))
+        )
     return {"github": github_env, "hf": hf_env, "ngc": ngc_env}
 
 
 def _sky_bin() -> str:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin/sky")
+    sky_bin = os.environ.get(
+        "NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin/sky"
+    )
     if not Path(sky_bin).exists():
         pytest.skip(f"SkyPilot binary not found: {sky_bin}")
     return sky_bin
@@ -124,7 +141,9 @@ def _copy_clean_workdir(target: Path) -> Path:
     shutil.copytree(
         ROOT,
         target,
-        ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", "*.pyc"),
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", "*.pyc"
+        ),
     )
     return target
 
@@ -156,8 +175,6 @@ def _sky_launch_command(
         os.environ.get("NPA_COSMOS3_E2E_INFRA", "nebius/eu-north1"),
         "--gpus",
         gpu,
-        "--image-id",
-        image_id,
         "--env",
         f"NPA_COSMOS3_CACHE={cache_dir}",
         "--env",
@@ -175,19 +192,26 @@ def _sky_launch_command(
         "--env",
         f"NPA_COSMOS3_REQUIRE_NGC={os.environ.get('NPA_COSMOS3_REQUIRE_NGC', '0')}",
         "--env",
+        f"NPA_COSMOS3_UV_GROUP={os.environ.get('NPA_COSMOS3_UV_GROUP', 'cu130-train')}",
+        "--env",
         f"NPA_COSMOS3_INFER_PROMPT={os.environ.get('NPA_COSMOS3_INFER_PROMPT', 'a small robot arm sorting colored blocks on a workbench')}",
-        "--secret",
-        "NPA_COSMOS3_SOURCE_REPO",
-        "--secret",
-        "NPA_COSMOS3_MODEL_ID",
-        "--secret",
-        "NPA_COSMOS3_INFER_COMMAND",
-        "--secret",
-        env_names["github"],
         "--secret",
         env_names["hf"],
         str(yaml_path),
     ]
+    if image_id:
+        cmd[-1:-1] = ["--image-id", image_id]
+    for name, default in (
+        ("NPA_COSMOS3_SOURCE_REPO", PUBLIC_SOURCE_REPO),
+        ("NPA_COSMOS3_MODEL_ID", PUBLIC_MODEL_ID),
+        ("NPA_COSMOS3_INFER_COMMAND", ""),
+        ("NPA_COSMOS3_OUTPUT_S3_URI", ""),
+    ):
+        value = os.environ.get(name, "")
+        if value and value != default:
+            cmd[-1:-1] = ["--env", f"{name}={value}"]
+    if os.environ.get(env_names["github"]):
+        cmd[-1:-1] = ["--secret", env_names["github"]]
     if os.environ.get("NPA_COSMOS3_REQUIRE_NGC") == "1":
         cmd[-1:-1] = ["--secret", env_names["ngc"]]
     return cmd
@@ -202,9 +226,15 @@ def _sky_down_and_poll(sky_bin: str, cluster: str, *, evidence_dir: Path) -> Non
         timeout=int(os.environ.get("NPA_COSMOS3_E2E_TEARDOWN_TIMEOUT_SECONDS", "900")),
         check=False,
     )
-    (evidence_dir / f"{cluster}.down.stdout.txt").write_text(down.stdout, encoding="utf-8")
-    (evidence_dir / f"{cluster}.down.stderr.txt").write_text(down.stderr, encoding="utf-8")
-    deadline = time.monotonic() + int(os.environ.get("NPA_COSMOS3_E2E_TEARDOWN_POLL_TIMEOUT_SECONDS", "1200"))
+    (evidence_dir / f"{cluster}.down.stdout.txt").write_text(
+        down.stdout, encoding="utf-8"
+    )
+    (evidence_dir / f"{cluster}.down.stderr.txt").write_text(
+        down.stderr, encoding="utf-8"
+    )
+    deadline = time.monotonic() + int(
+        os.environ.get("NPA_COSMOS3_E2E_TEARDOWN_POLL_TIMEOUT_SECONDS", "1200")
+    )
     while time.monotonic() < deadline:
         status = subprocess.run(
             [sky_bin, "status", "--refresh"],
@@ -214,7 +244,9 @@ def _sky_down_and_poll(sky_bin: str, cluster: str, *, evidence_dir: Path) -> Non
             timeout=300,
             check=False,
         )
-        (evidence_dir / f"{cluster}.status-after-down.txt").write_text(status.stdout + status.stderr, encoding="utf-8")
+        (evidence_dir / f"{cluster}.status-after-down.txt").write_text(
+            status.stdout + status.stderr, encoding="utf-8"
+        )
         if cluster not in status.stdout:
             return
         time.sleep(float(os.environ.get("NPA_COSMOS3_E2E_TEARDOWN_POLL_SECONDS", "30")))
@@ -222,7 +254,7 @@ def _sky_down_and_poll(sky_bin: str, cluster: str, *, evidence_dir: Path) -> Non
 
 
 def _cluster_name(run_id: str, gpu: str) -> str:
-    return (run_id.replace("cosmos3-ea-infer-", "cosmos3-ea-") + "-" + gpu.lower().replace(":", ""))[:63]
+    return (run_id + "-" + gpu.lower().replace(":", ""))[:63]
 
 
 def _redact_command(cmd: list[str], *, image_id: str) -> list[str]:
@@ -230,18 +262,20 @@ def _redact_command(cmd: list[str], *, image_id: str) -> list[str]:
     for part in cmd:
         if part.endswith("/sky"):
             redacted.append("<sky>")
-        elif part == image_id:
+        elif image_id and part == image_id:
             redacted.append("<image-id>")
         else:
             redacted.append(part)
     return redacted
 
 
-def _write_evidence(evidence_dir: Path, *, run_id: str, attempts: list[dict[str, Any]]) -> None:
+def _write_evidence(
+    evidence_dir: Path, *, run_id: str, attempts: list[dict[str, Any]]
+) -> None:
     evidence = {
         "run_id": run_id,
-        "storage": "on-node-only",
-        "s3": "not used",
+        "storage": "node-local with optional configured S3 upload",
+        "s3": os.environ.get("NPA_COSMOS3_OUTPUT_S3_URI", "not configured"),
         "attempts": attempts,
     }
     (evidence_dir / "cosmos3-inference-evidence.json").write_text(
