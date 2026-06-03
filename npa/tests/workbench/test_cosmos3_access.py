@@ -22,14 +22,8 @@ from npa.workbench.cosmos.cosmos3 import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-INFERENCE_YAML = (
-    ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "skypilot"
-    / "cosmos3-text-to-image-inference.yaml"
-)
+SKYPILOT_ROOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
 
 
 def _runner(returncode: int = 0):
@@ -278,3 +272,152 @@ def test_cosmos3_skill_env_aligns_cli_sdk_yaml_guardrails() -> None:
     assert default_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == ""
     assert opt_out_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
     assert opt_out_env.env["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"
+
+
+def test_cosmos3_skill_env_maps_each_skill_yaml_override() -> None:
+    cases = {
+        "cosmos3-setup": (
+            {
+                "source_repo_url": "https://github.com/example/cosmos.git",
+                "model_id": "example/Cosmos3",
+                "cache_dir": "/cache/setup",
+                "github_token_env": "GH_SETUP",
+                "hf_token_env": "HF_SETUP",
+                "ngc_api_key_env": "NGC_SETUP",
+                "require_ngc": True,
+                "uv_group": "cu130-train",
+                "setup_json": "/cache/setup/setup.json",
+                "output_s3_uri": "s3://bucket/setup",
+            },
+            {
+                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
+                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
+                "NPA_COSMOS3_CACHE": "/cache/setup",
+                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SETUP",
+                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SETUP",
+                "NPA_COSMOS3_NGC_API_KEY_ENV": "NGC_SETUP",
+                "NPA_COSMOS3_REQUIRE_NGC": "1",
+                "NPA_COSMOS3_UV_GROUP": "cu130-train",
+                "NPA_COSMOS3_SETUP_JSON": "/cache/setup/setup.json",
+                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/setup",
+            },
+        ),
+        "cosmos3-codebase-nav": (
+            {
+                "source_repo_url": "https://github.com/example/cosmos.git",
+                "cache_dir": "/cache/nav",
+                "github_token_env": "GH_NAV",
+                "nav_output": "/cache/nav/codebase.json",
+                "output_s3_uri": "s3://bucket/nav",
+            },
+            {
+                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
+                "NPA_COSMOS3_CACHE": "/cache/nav",
+                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_NAV",
+                "NPA_COSMOS3_NAV_OUTPUT": "/cache/nav/codebase.json",
+                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/nav",
+            },
+        ),
+        "cosmos3-env-troubleshoot": (
+            {
+                "diagnostics_json": "/tmp/diagnostics.json",
+                "output_s3_uri": "s3://bucket/diagnostics",
+            },
+            {
+                "NPA_COSMOS3_DIAGNOSTICS_JSON": "/tmp/diagnostics.json",
+                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/diagnostics",
+            },
+        ),
+        "cosmos3-inference": (
+            {
+                "source_repo_url": "https://github.com/example/cosmos.git",
+                "model_id": "example/Cosmos3",
+                "cache_dir": "/cache/infer",
+                "github_token_env": "GH_INFER",
+                "hf_token_env": "HF_INFER",
+                "ngc_api_key_env": "NGC_INFER",
+                "require_ngc": True,
+                "uv_group": "cu130-train",
+                "prompt": "robot sorting blocks",
+                "inference_output_dir": "/out",
+                "inference_output_image": "/out/image.png",
+                "inference_success_json": "/out/success.json",
+                "reasoning_parser": "qwen3",
+                "tool_call_parser": "hermes",
+                "output_s3_uri": "s3://bucket/infer",
+                "no_guardrails": True,
+            },
+            {
+                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
+                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
+                "NPA_COSMOS3_CACHE": "/cache/infer",
+                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_INFER",
+                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_INFER",
+                "NPA_COSMOS3_NGC_API_KEY_ENV": "NGC_INFER",
+                "NPA_COSMOS3_REQUIRE_NGC": "1",
+                "NPA_COSMOS3_UV_GROUP": "cu130-train",
+                "NPA_COSMOS3_INFER_PROMPT": "robot sorting blocks",
+                "NPA_COSMOS3_OUTPUT_DIR": "/out",
+                "NPA_COSMOS3_OUTPUT_IMAGE": "/out/image.png",
+                "NPA_COSMOS3_SUCCESS_JSON": "/out/success.json",
+                "NPA_COSMOS3_REASONING_PARSER": "qwen3",
+                "NPA_COSMOS3_TOOL_CALL_PARSER": "hermes",
+                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/infer",
+                "NPA_COSMOS3_NO_GUARDRAILS": "1",
+            },
+        ),
+        "cosmos3-post-training": (
+            {
+                "source_repo_url": "https://github.com/example/cosmos.git",
+                "model_id": "example/Cosmos3",
+                "cache_dir": "/cache/sft",
+                "github_token_env": "GH_SFT",
+                "hf_token_env": "HF_SFT",
+                "uv_group": "cu130-train",
+                "sft_recipe": "vision_nano",
+                "sft_action": "validate",
+                "sft_validate_only": True,
+                "sft_dataset_path": "/data",
+                "sft_base_checkpoint_path": "/ckpt",
+                "sft_wan_vae_path": "/vae/Wan2.2_VAE.pth",
+                "sft_output_root": "/out/train",
+                "sft_result_json": "/out/train/sft-plan.json",
+                "output_s3_uri": "s3://bucket/sft",
+            },
+            {
+                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
+                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
+                "NPA_COSMOS3_CACHE": "/cache/sft",
+                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SFT",
+                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SFT",
+                "NPA_COSMOS3_UV_GROUP": "cu130-train",
+                "NPA_COSMOS3_SFT_RECIPE": "vision_nano",
+                "NPA_COSMOS3_SFT_ACTION": "validate",
+                "NPA_COSMOS3_SFT_VALIDATE_ONLY": "1",
+                "NPA_COSMOS3_SFT_DATASET_PATH": "/data",
+                "NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH": "/ckpt",
+                "NPA_COSMOS3_SFT_WAN_VAE_PATH": "/vae/Wan2.2_VAE.pth",
+                "IMAGINAIRE_OUTPUT_ROOT": "/out/train",
+                "NPA_COSMOS3_SFT_RESULT_JSON": "/out/train/sft-plan.json",
+                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/sft",
+            },
+        ),
+    }
+
+    for skill_name, (kwargs, expected) in cases.items():
+        spec = next(spec for spec in list_cosmos3_skills() if spec.name == skill_name)
+        workflow = ROOT / spec.workflow
+        envs = _workflow_envs(workflow)
+        result = build_cosmos3_skill_env(skill_name, **kwargs)
+
+        assert result.workflow == spec.workflow
+        for key, value in expected.items():
+            assert key in envs
+            assert result.env[key] == value
+
+
+def _workflow_envs(path: Path) -> dict[str, str]:
+    docs = [
+        doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc
+    ]
+    return docs[-1]["envs"]

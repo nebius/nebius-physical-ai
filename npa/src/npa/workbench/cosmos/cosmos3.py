@@ -301,9 +301,29 @@ def build_cosmos3_skill_env(
     source_repo_url: str = "",
     model_id: str = "",
     cache_dir: str = "",
+    github_token_env: str = "",
+    hf_token_env: str = "",
+    ngc_api_key_env: str = "",
+    require_ngc: bool = False,
     output_s3_uri: str = "",
     prompt: str = "",
     uv_group: str = "",
+    setup_json: str = "",
+    nav_output: str = "",
+    diagnostics_json: str = "",
+    inference_output_dir: str = "",
+    inference_output_image: str = "",
+    inference_success_json: str = "",
+    reasoning_parser: str = "",
+    tool_call_parser: str = "",
+    sft_recipe: str = "",
+    sft_action: str = "",
+    sft_validate_only: bool = False,
+    sft_dataset_path: str = "",
+    sft_base_checkpoint_path: str = "",
+    sft_wan_vae_path: str = "",
+    sft_output_root: str = "",
+    sft_result_json: str = "",
     no_guardrails: bool = False,
 ) -> Cosmos3SkillEnv:
     """Resolve CLI/SDK parameters into SkyPilot env vars for a Cosmos3 skill."""
@@ -316,14 +336,56 @@ def build_cosmos3_skill_env(
         env["NPA_COSMOS3_MODEL_ID"] = model_id
     if cache_dir:
         env["NPA_COSMOS3_CACHE"] = cache_dir
+    if github_token_env:
+        env["NPA_COSMOS3_GITHUB_TOKEN_ENV"] = github_token_env
+    if hf_token_env:
+        env["NPA_COSMOS3_HF_TOKEN_ENV"] = hf_token_env
+    if ngc_api_key_env:
+        env["NPA_COSMOS3_NGC_API_KEY_ENV"] = ngc_api_key_env
+    if require_ngc:
+        env["NPA_COSMOS3_REQUIRE_NGC"] = "1"
     if output_s3_uri:
         env["NPA_COSMOS3_OUTPUT_S3_URI"] = output_s3_uri
     if uv_group:
         env["NPA_COSMOS3_UV_GROUP"] = uv_group
-    if prompt and spec.name == "cosmos3-inference":
-        env["NPA_COSMOS3_INFER_PROMPT"] = prompt
     if spec.generative:
         env["NPA_COSMOS3_NO_GUARDRAILS"] = "1" if no_guardrails else ""
+    if spec.name == "cosmos3-setup" and setup_json:
+        env["NPA_COSMOS3_SETUP_JSON"] = setup_json
+    if spec.name == "cosmos3-codebase-nav" and nav_output:
+        env["NPA_COSMOS3_NAV_OUTPUT"] = nav_output
+    if spec.name == "cosmos3-env-troubleshoot" and diagnostics_json:
+        env["NPA_COSMOS3_DIAGNOSTICS_JSON"] = diagnostics_json
+    if spec.name == "cosmos3-inference":
+        if prompt:
+            env["NPA_COSMOS3_INFER_PROMPT"] = prompt
+        if inference_output_dir:
+            env["NPA_COSMOS3_OUTPUT_DIR"] = inference_output_dir
+        if inference_output_image:
+            env["NPA_COSMOS3_OUTPUT_IMAGE"] = inference_output_image
+        if inference_success_json:
+            env["NPA_COSMOS3_SUCCESS_JSON"] = inference_success_json
+        if reasoning_parser:
+            env["NPA_COSMOS3_REASONING_PARSER"] = reasoning_parser
+        if tool_call_parser:
+            env["NPA_COSMOS3_TOOL_CALL_PARSER"] = tool_call_parser
+    if spec.name == "cosmos3-post-training":
+        if sft_recipe:
+            env["NPA_COSMOS3_SFT_RECIPE"] = sft_recipe
+        if sft_action:
+            env["NPA_COSMOS3_SFT_ACTION"] = sft_action
+        if sft_validate_only:
+            env["NPA_COSMOS3_SFT_VALIDATE_ONLY"] = "1"
+        if sft_dataset_path:
+            env["NPA_COSMOS3_SFT_DATASET_PATH"] = sft_dataset_path
+        if sft_base_checkpoint_path:
+            env["NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH"] = sft_base_checkpoint_path
+        if sft_wan_vae_path:
+            env["NPA_COSMOS3_SFT_WAN_VAE_PATH"] = sft_wan_vae_path
+        if sft_output_root:
+            env["IMAGINAIRE_OUTPUT_ROOT"] = sft_output_root
+        if sft_result_json:
+            env["NPA_COSMOS3_SFT_RESULT_JSON"] = sft_result_json
     return Cosmos3SkillEnv(
         skill=spec.name,
         workflow=spec.workflow,

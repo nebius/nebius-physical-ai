@@ -134,3 +134,69 @@ def test_cosmos3_skill_cli_maps_no_guardrails_to_yaml_env() -> None:
     assert payload["guardrails_default"] == "on"
     assert payload["env"]["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
     assert payload["env"]["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"
+
+
+def test_cosmos3_skill_cli_maps_post_training_seam_env() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "skill",
+            "cosmos3-post-training",
+            "--source-repo-url",
+            "https://github.com/example/cosmos.git",
+            "--model-id",
+            "example/Cosmos3",
+            "--cache-dir",
+            "/cache/sft",
+            "--github-token-env",
+            "GH_SFT",
+            "--hf-token-env",
+            "HF_SFT",
+            "--uv-group",
+            "cu130-train",
+            "--sft-recipe",
+            "vision_nano",
+            "--sft-action",
+            "validate",
+            "--sft-validate-only",
+            "--sft-dataset-path",
+            "/data",
+            "--sft-base-checkpoint-path",
+            "/ckpt",
+            "--sft-wan-vae-path",
+            "/vae/Wan2.2_VAE.pth",
+            "--sft-output-root",
+            "/out/train",
+            "--sft-result-json",
+            "/out/train/sft-plan.json",
+            "--output-s3-uri",
+            "s3://bucket/sft",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["skill"]["tier"] == "SEAM"
+    assert payload["guardrails_default"] == "not_applicable"
+    assert payload["env"] == {
+        "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
+        "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
+        "NPA_COSMOS3_CACHE": "/cache/sft",
+        "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SFT",
+        "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SFT",
+        "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/sft",
+        "NPA_COSMOS3_UV_GROUP": "cu130-train",
+        "NPA_COSMOS3_SFT_RECIPE": "vision_nano",
+        "NPA_COSMOS3_SFT_ACTION": "validate",
+        "NPA_COSMOS3_SFT_VALIDATE_ONLY": "1",
+        "NPA_COSMOS3_SFT_DATASET_PATH": "/data",
+        "NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH": "/ckpt",
+        "NPA_COSMOS3_SFT_WAN_VAE_PATH": "/vae/Wan2.2_VAE.pth",
+        "IMAGINAIRE_OUTPUT_ROOT": "/out/train",
+        "NPA_COSMOS3_SFT_RESULT_JSON": "/out/train/sft-plan.json",
+    }
