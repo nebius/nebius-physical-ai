@@ -1,14 +1,17 @@
-"""Convert LeRobotDataset G1 trajectories to Rerun recordings."""
+"""Convert LeRobotDataset trajectories to Rerun recordings."""
 
 from __future__ import annotations
 
+import json
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import urlparse
 
 import numpy as np
+import pyarrow.parquet as pq
 
 from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_NAMES_43
 from npa.clients.config import list_projects, resolve_project_storage
@@ -38,6 +41,14 @@ class RerunAdapterError(Exception):
     """Raised when a LeRobotDataset cannot be exported to Rerun."""
 
 
+@dataclass(frozen=True)
+class LogicalRerunResult:
+    """Rerun output and verified entity counts for a generic LeRobot recording."""
+
+    output_rrd_path: str
+    entity_counts: dict[str, int]
+
+
 def lerobot_to_rerun(
     dataset_path: str | Path,
     output_rrd_path: Path,
@@ -59,6 +70,330 @@ def lerobot_to_rerun(
         )
         if _is_s3_uri(output_ref):
             _storage_client(output_ref).upload_file(str(local_output), output_ref)
+
+
+def lerobot_dataset_logical_to_rerun(
+    dataset_path: str | Path,
+    output_rrd_path: Path,
+    *,
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+    feedback_by_episode: dict[int, dict[str, Any]],
+    duration_s: float | None = None,
+    max_frames_per_episode: int = 32,
+) -> LogicalRerunResult:
+    """Write a logical LeRobotDataset recording with demos, rollout, and eval paths.
+
+    This adapter is intentionally generic: it maps LeRobot camera, state, action,
+    timestamp, and feedback fields to stable Rerun entity paths without assuming
+    a specific robot morphology.
+    """
+
+    output_ref = str(output_rrd_path)
+    with ExitStack() as stack:
+        local_dataset = _materialize_dataset(dataset_path, stack)
+        local_output = _materialize_output(output_ref, stack)
+        _write_logical_lerobot_recording(
+            local_dataset,
+            local_output,
+            input_episode_indices=input_episode_indices,
+            rollout_episode_indices=rollout_episode_indices,
+            feedback_by_episode=feedback_by_episode,
+            duration_s=duration_s,
+            max_frames_per_episode=max_frames_per_episode,
+        )
+        if _is_s3_uri(output_ref):
+            _storage_client(output_ref).upload_file(str(local_output), output_ref)
+        required = _required_logical_entities(
+            input_episode_indices,
+            rollout_episode_indices,
+            feedback_by_episode,
+            _camera_keys(_read_lerobot_metadata(local_dataset)),
+        )
+        counts = verify_rerun_entities(local_output, required)
+    return LogicalRerunResult(output_rrd_path=output_ref, entity_counts=counts)
+
+
+def verify_rerun_entities(rrd_path: Path, required_entities: list[str]) -> dict[str, int]:
+    """Return row counts for required Rerun entities, raising on missing content."""
+
+    try:
+        from rerun.recording import load_recording
+    except ImportError as exc:
+        raise RerunAdapterError("rerun-sdk recording loader is required to verify .rrd content") from exc
+
+    chunks = list(load_recording(rrd_path).chunks())
+    counts: dict[str, int] = {}
+    for entity in required_entities:
+        normalized = "/" + entity.strip("/")
+        counts[normalized] = sum(
+            int(chunk.num_rows)
+            for chunk in chunks
+            if str(chunk.entity_path) == normalized and not chunk.is_static
+        )
+    missing = {entity: count for entity, count in counts.items() if count <= 0}
+    if missing:
+        raise RerunAdapterError(f"Rerun recording is missing dynamic content for: {sorted(missing)}")
+    return counts
+
+
+def _write_logical_lerobot_recording(
+    dataset_path: Path,
+    output_rrd_path: Path,
+    *,
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+    feedback_by_episode: dict[int, dict[str, Any]],
+    duration_s: float | None,
+    max_frames_per_episode: int,
+) -> None:
+    rr, rrb = _import_rerun()
+    if output_rrd_path.suffix.lower() != ".rrd":
+        raise RerunAdapterError(f"Rerun output path must end in .rrd, got: {output_rrd_path}")
+    if max_frames_per_episode <= 0:
+        raise RerunAdapterError(f"max_frames_per_episode must be positive, got {max_frames_per_episode}")
+    output_rrd_path.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata = _read_lerobot_metadata(dataset_path)
+    frame_rows = _read_lerobot_rows(
+        dataset_path,
+        sorted(set(input_episode_indices + rollout_episode_indices)),
+        duration_s=duration_s,
+        fps=int(metadata.get("fps") or DEFAULT_DURATION_CAP_S),
+        max_frames_per_episode=max_frames_per_episode,
+    )
+    camera_keys = _camera_keys(metadata)
+
+    blueprint = rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(
+                origin="input_dataset",
+                contents="input_dataset/**",
+                name="Input demos",
+            ),
+            rrb.Spatial2DView(
+                origin="policy_rollout",
+                contents="policy_rollout/**",
+                name="Policy rollout",
+            ),
+            rrb.TimeSeriesView(
+                origin="eval",
+                contents="eval/**",
+                name="VLM/VLA eval",
+            ),
+            column_shares=[2.0, 2.0, 1.0],
+        ),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
+        auto_layout=False,
+    )
+    recording = rr.RecordingStream(APPLICATION_ID)
+    rr.save(output_rrd_path, default_blueprint=blueprint, recording=recording)
+    rr.send_blueprint(blueprint, recording=recording)
+    video_entities = _log_dataset_videos(rr, recording, dataset_path, metadata, camera_keys)
+
+    for episode in input_episode_indices:
+        _log_episode_rows(
+            rr,
+            recording,
+            rows=frame_rows.get(int(episode), []),
+            root=f"input_dataset/episodes/episode_{int(episode):06d}",
+            video_entities=video_entities,
+            camera_keys=camera_keys,
+        )
+    for episode in rollout_episode_indices:
+        _log_episode_rows(
+            rr,
+            recording,
+            rows=frame_rows.get(int(episode), []),
+            root=f"policy_rollout/episodes/episode_{int(episode):06d}",
+            video_entities=video_entities,
+            camera_keys=camera_keys,
+        )
+        _log_feedback(rr, recording, int(episode), feedback_by_episode.get(int(episode), {}))
+    rr.disconnect(recording=recording)
+
+    if not output_rrd_path.exists() or output_rrd_path.stat().st_size == 0:
+        raise RerunAdapterError(f"Rerun recording was not written: {output_rrd_path}")
+
+
+def _log_episode_rows(
+    rr: Any,
+    recording: Any,
+    *,
+    rows: list[dict[str, Any]],
+    root: str,
+    video_entities: dict[str, str],
+    camera_keys: list[str],
+) -> None:
+    for row in rows:
+        timestamp = float(row.get("timestamp", 0.0) or 0.0)
+        _set_time_seconds(rr, recording, timestamp)
+        for camera_key in camera_keys:
+            video_entity = video_entities.get(camera_key, "")
+            if video_entity:
+                rr.log(
+                    f"{root}/camera/{_entity_key(camera_key)}",
+                    rr.VideoFrameReference(seconds=timestamp, video_reference=video_entity),
+                    recording=recording,
+                )
+        for index, value in enumerate(_as_float_list(row.get("observation.state"))):
+            rr.log(f"{root}/state/dim_{index:02d}", rr.Scalars(float(value)), recording=recording)
+        state = _as_float_list(row.get("observation.state"))
+        if len(state) >= 2:
+            rr.log(
+                f"{root}/state/transform",
+                rr.Transform3D(translation=[float(state[0]), float(state[1]), 0.0]),
+                recording=recording,
+            )
+        for index, value in enumerate(_as_float_list(row.get("action"))):
+            rr.log(f"{root}/actions/dim_{index:02d}", rr.Scalars(float(value)), recording=recording)
+
+
+def _log_feedback(rr: Any, recording: Any, episode: int, feedback: dict[str, Any]) -> None:
+    root = f"eval/episodes/episode_{episode:06d}"
+    _set_time_seconds(rr, recording, float(feedback.get("timestamp", 0.0) or 0.0))
+    rr.log(f"{root}/success", rr.Scalars(1.0 if feedback.get("success") else 0.0), recording=recording)
+    rr.log(f"{root}/score", rr.Scalars(float(feedback.get("score", 0.0))), recording=recording)
+    rationale = str(feedback.get("rationale") or feedback.get("critique") or "No critique provided.")
+    rr.log(f"{root}/critique", rr.TextDocument(rationale, media_type="text/plain"), recording=recording)
+
+
+def _log_dataset_videos(
+    rr: Any,
+    recording: Any,
+    dataset_path: Path,
+    metadata: dict[str, Any],
+    camera_keys: list[str],
+) -> dict[str, str]:
+    video_entities: dict[str, str] = {}
+    video_path_pattern = str(metadata.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
+    for camera_key in camera_keys:
+        candidate = dataset_path / video_path_pattern.format(
+            video_key=camera_key,
+            chunk_index=0,
+            file_index=0,
+        )
+        if not candidate.exists():
+            matches = sorted((dataset_path / "videos" / camera_key).rglob("*.mp4"))
+            candidate = matches[0] if matches else candidate
+        if candidate.exists():
+            entity = f"input_dataset/videos/{_entity_key(camera_key)}"
+            rr.log(entity, rr.AssetVideo(path=candidate), static=True, recording=recording)
+            video_entities[camera_key] = entity
+    return video_entities
+
+
+def _read_lerobot_metadata(dataset_path: Path) -> dict[str, Any]:
+    info_path = dataset_path / "meta" / "info.json"
+    if not info_path.exists():
+        raise RerunAdapterError(f"LeRobotDataset meta/info.json is missing: {info_path}")
+    return json.loads(info_path.read_text(encoding="utf-8"))
+
+
+def _camera_keys(metadata: dict[str, Any]) -> list[str]:
+    features = metadata.get("features") or {}
+    return sorted(
+        key
+        for key, value in features.items()
+        if str(key).startswith("observation.") and isinstance(value, dict) and value.get("dtype") in {"image", "video"}
+    )
+
+
+def _read_lerobot_rows(
+    dataset_path: Path,
+    episode_indices: list[int],
+    *,
+    duration_s: float | None,
+    fps: int,
+    max_frames_per_episode: int,
+) -> dict[int, list[dict[str, Any]]]:
+    data_dir = dataset_path / "data"
+    parquet_paths = sorted(path for path in data_dir.rglob("*.parquet") if not path.name.startswith("._"))
+    if not parquet_paths:
+        raise RerunAdapterError(f"No LeRobot parquet files found under {data_dir}")
+    requested = {int(index) for index in episode_indices}
+    rows_by_episode: dict[int, list[dict[str, Any]]] = {episode: [] for episode in requested}
+    columns = ["observation.state", "action", "episode_index", "frame_index", "timestamp"]
+    for path in parquet_paths:
+        table = pq.read_table(path, columns=columns)
+        for row in table.to_pylist():
+            episode = int(row["episode_index"])
+            if episode in requested:
+                rows_by_episode[episode].append(row)
+    frame_limit = max_frames_per_episode
+    if duration_s is not None:
+        if duration_s <= 0:
+            raise RerunAdapterError(f"duration_s must be positive, got: {duration_s}")
+        frame_limit = min(frame_limit, max(1, int(round(duration_s * max(1, fps)))))
+    for episode, rows in rows_by_episode.items():
+        rows.sort(key=lambda item: int(item.get("frame_index", 0) or 0))
+        if not rows:
+            raise RerunAdapterError(f"Episode {episode} has no rows")
+        if len(rows) > frame_limit:
+            indices = np.rint(np.linspace(0, len(rows) - 1, frame_limit)).astype(np.int64)
+            rows_by_episode[episode] = [rows[int(index)] for index in indices]
+    return rows_by_episode
+
+
+def _required_logical_entities(
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+    feedback_by_episode: dict[int, dict[str, Any]],
+    camera_keys: list[str],
+) -> list[str]:
+    required: list[str] = []
+    first_camera = _entity_key(camera_keys[0]) if camera_keys else ""
+    if input_episode_indices:
+        episode = int(input_episode_indices[0])
+        required.extend(
+            [
+                *(
+                    [f"input_dataset/episodes/episode_{episode:06d}/camera/{first_camera}"]
+                    if first_camera
+                    else []
+                ),
+                f"input_dataset/episodes/episode_{episode:06d}/state/dim_00",
+                f"input_dataset/episodes/episode_{episode:06d}/state/transform",
+                f"input_dataset/episodes/episode_{episode:06d}/actions/dim_00",
+            ]
+        )
+    if rollout_episode_indices:
+        episode = int(rollout_episode_indices[0])
+        required.extend(
+            [
+                *(
+                    [f"policy_rollout/episodes/episode_{episode:06d}/camera/{first_camera}"]
+                    if first_camera
+                    else []
+                ),
+                f"policy_rollout/episodes/episode_{episode:06d}/state/dim_00",
+                f"policy_rollout/episodes/episode_{episode:06d}/state/transform",
+                f"policy_rollout/episodes/episode_{episode:06d}/actions/dim_00",
+            ]
+        )
+        if episode in feedback_by_episode:
+            required.extend(
+                [
+                    f"eval/episodes/episode_{episode:06d}/success",
+                    f"eval/episodes/episode_{episode:06d}/score",
+                    f"eval/episodes/episode_{episode:06d}/critique",
+                ]
+            )
+    return required
+
+
+def _as_float_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, np.ndarray):
+        return [float(item) for item in value.reshape(-1).tolist()]
+    if isinstance(value, list | tuple):
+        return [float(item) for item in value]
+    return [float(value)]
+
+
+def _entity_key(value: str) -> str:
+    return value.replace(".", "_").replace("/", "_")
 
 
 def _write_lerobot_recording(

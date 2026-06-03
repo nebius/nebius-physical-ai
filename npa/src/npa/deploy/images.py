@@ -9,6 +9,7 @@ DEFAULT_CONTAINER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
+    "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
     "cosmos": "npa-cosmos",

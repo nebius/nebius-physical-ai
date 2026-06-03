@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -59,6 +60,7 @@ def submit_workflow(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
+    secret_envs: Sequence[str] | None = None,
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
@@ -99,6 +101,9 @@ def submit_workflow(
             "--yes",
             str(prepared_yaml),
         ]
+        for secret_name in secret_envs or ():
+            if os.environ.get(secret_name):
+                cmd[-1:-1] = ["--secret", secret_name]
         env = sky_environment(runtime_config.isolated_config_dir)
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
         result = subprocess.run(
