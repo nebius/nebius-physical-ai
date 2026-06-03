@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import hashlib
 import json
@@ -42,7 +42,7 @@ class RerunShareFakeS3:
         self.objects[(bucket, key)] = {
             "Body": body,
             "Metadata": metadata or {},
-            "LastModified": last_modified or datetime(2026, 5, 11, tzinfo=UTC),
+            "LastModified": last_modified or datetime(2026, 5, 11, tzinfo=timezone.utc),
         }
 
     def head_object(self, *, Bucket: str, Key: str):
@@ -118,7 +118,7 @@ def test_share_default_ttl_generates_seven_day_url(tmp_path: Path, mocker) -> No
         target_bucket="target",
         s3_client=s3,
         host_s3_client=RerunShareFakeS3(),
-        now=datetime(2026, 5, 11, 22, 30, tzinfo=UTC),
+        now=datetime(2026, 5, 11, 22, 30, tzinfo=timezone.utc),
     )
 
     assert result.rrd_s3_uri == f"s3://target/rerun-shares/default/{sha}.rrd"
@@ -165,7 +165,7 @@ def test_share_workspace_controls_object_path(tmp_path: Path, mocker) -> None:
 def test_list_shares_returns_metadata_for_active_shares(mocker) -> None:
     mocker.patch("npa.cli.rerun.resolve_project_storage", return_value=_storage())
     s3 = RerunShareFakeS3()
-    now = datetime(2026, 5, 11, 22, 30, tzinfo=UTC)
+    now = datetime(2026, 5, 11, 22, 30, tzinfo=timezone.utc)
     s3.add(
         "target",
         "rerun-shares/team-a/aaa.rrd",

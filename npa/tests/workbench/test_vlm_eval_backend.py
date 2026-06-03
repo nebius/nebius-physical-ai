@@ -193,6 +193,7 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
 
 
 @pytest.mark.gpu
+@pytest.mark.e2e
 def test_live_gpu_self_hosted_vlm_eval_returns_structured_score(
     live_gpu_endpoint: LiveGpuEndpoint, tmp_path: Path
 ) -> None:

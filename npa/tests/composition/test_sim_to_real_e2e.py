@@ -136,6 +136,8 @@ def test_sim_to_real_pipeline_shape() -> None:
     assert "domain_randomize=True" in eval_command
 
 
+@pytest.mark.gpu
+@pytest.mark.e2e
 @pytest.mark.e2e_pipeline
 def test_sim_to_real_pipeline_e2e(tmp_path: Path) -> None:
     """Validate Genesis -> SimToLeRobot -> LeRobot -> Genesis composition.
