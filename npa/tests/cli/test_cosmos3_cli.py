@@ -93,110 +93,12 @@ def test_cosmos3_fetch_cli_exits_nonzero_on_failed_result(mocker) -> None:
     assert payload["checkpoint"] == "skipped"
 
 
-def test_cosmos3_skills_cli_lists_integrated_nvidia_skills() -> None:
+def test_cosmos3_skill_commands_are_not_cli_surface() -> None:
     result = runner.invoke(
         app,
-        ["workbench", "cosmos", "skills", "--output", "json"],
+        ["workbench", "cosmos", "--help"],
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["status"] == "ok"
-    assert [skill["name"] for skill in payload["skills"]] == [
-        "cosmos3-setup",
-        "cosmos3-codebase-nav",
-        "cosmos3-env-troubleshoot",
-        "cosmos3-inference",
-        "cosmos3-post-training",
-    ]
-    assert payload["integration_form"] == "npa-authored-by-reference"
-
-
-def test_cosmos3_skill_cli_maps_no_guardrails_to_yaml_env() -> None:
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "cosmos",
-            "skill",
-            "cosmos3-inference",
-            "--prompt",
-            "robot sorting blocks",
-            "--no-guardrails",
-            "--output",
-            "json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["status"] == "ok"
-    assert payload["guardrails_default"] == "on"
-    assert payload["env"]["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
-    assert payload["env"]["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"
-
-
-def test_cosmos3_skill_cli_maps_post_training_seam_env() -> None:
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "cosmos",
-            "skill",
-            "cosmos3-post-training",
-            "--source-repo-url",
-            "https://github.com/example/cosmos.git",
-            "--model-id",
-            "example/Cosmos3",
-            "--cache-dir",
-            "/cache/sft",
-            "--github-token-env",
-            "GH_SFT",
-            "--hf-token-env",
-            "HF_SFT",
-            "--uv-group",
-            "cu130-train",
-            "--sft-recipe",
-            "vision_nano",
-            "--sft-action",
-            "validate",
-            "--sft-validate-only",
-            "--sft-dataset-path",
-            "/data",
-            "--sft-base-checkpoint-path",
-            "/ckpt",
-            "--sft-wan-vae-path",
-            "/vae/Wan2.2_VAE.pth",
-            "--sft-output-root",
-            "/out/train",
-            "--sft-result-json",
-            "/out/train/sft-plan.json",
-            "--output-s3-uri",
-            "s3://bucket/sft",
-            "--output",
-            "json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["status"] == "ok"
-    assert payload["skill"]["tier"] == "SEAM"
-    assert payload["guardrails_default"] == "not_applicable"
-    assert payload["env"] == {
-        "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
-        "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
-        "NPA_COSMOS3_CACHE": "/cache/sft",
-        "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SFT",
-        "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SFT",
-        "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/sft",
-        "NPA_COSMOS3_UV_GROUP": "cu130-train",
-        "NPA_COSMOS3_SFT_RECIPE": "vision_nano",
-        "NPA_COSMOS3_SFT_ACTION": "validate",
-        "NPA_COSMOS3_SFT_VALIDATE_ONLY": "1",
-        "NPA_COSMOS3_SFT_DATASET_PATH": "/data",
-        "NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH": "/ckpt",
-        "NPA_COSMOS3_SFT_WAN_VAE_PATH": "/vae/Wan2.2_VAE.pth",
-        "IMAGINAIRE_OUTPUT_ROOT": "/out/train",
-        "NPA_COSMOS3_SFT_RESULT_JSON": "/out/train/sft-plan.json",
-    }
+    assert " skills " not in result.output
+    assert " skill " not in result.output

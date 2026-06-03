@@ -14,6 +14,14 @@ Genesis.
 
 ## Interfaces
 
+Cosmos3-specific guidance lives as agent skills, not CLI commands:
+
+- `.agents/skills/cosmos3-setup/SKILL.md`
+- `.agents/skills/codebase-nav/SKILL.md`
+- `.agents/skills/env-troubleshoot/SKILL.md`
+- `.agents/skills/inference/SKILL.md`
+- `.agents/skills/cosmos3-post-training/SKILL.md`
+
 API:
 
 - `POST /serve`

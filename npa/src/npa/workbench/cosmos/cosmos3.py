@@ -22,73 +22,12 @@ DEFAULT_HF_TOKEN_ENV = "HF_TOKEN"
 DEFAULT_NGC_API_KEY_ENV = "NGC_API_KEY"
 DEFAULT_REASONING_PARSER = "qwen3"
 DEFAULT_TOOL_CALL_PARSER = "hermes"
-COSMOS3_WORKFLOW_ROOT = Path("npa/workflows/workbench/skypilot")
-COSMOS3_LICENSE = "OpenMDW-1.1"
-COSMOS3_SKILL_SOURCE_ROOT = (
-    "https://github.com/NVIDIA/cosmos-framework/tree/main/.agents/skills"
-)
 
 RunCallable = Callable[..., subprocess.CompletedProcess[str]]
 
 
 class Cosmos3AccessError(RuntimeError):
     """Raised when Cosmos3 model access or fetch setup fails."""
-
-
-@dataclass(frozen=True)
-class Cosmos3SkillSpec:
-    """NPA-authored integration metadata for a referenced NVIDIA Cosmos3 skill."""
-
-    name: str
-    nvidia_path: str
-    purpose: str
-    workflow: Path
-    tier: str
-    evidence: str
-    capability: str
-    generative: bool = False
-    image: str = "source-based"
-    integration_form: str = (
-        "npa-authored-by-reference; NVIDIA skill files are not vendored"
-    )
-
-    @property
-    def source_url(self) -> str:
-        return f"{COSMOS3_SKILL_SOURCE_ROOT}/{self.name}/SKILL.md"
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "nvidia_path": self.nvidia_path,
-            "source_url": self.source_url,
-            "purpose": self.purpose,
-            "workflow": str(self.workflow),
-            "tier": self.tier,
-            "evidence": self.evidence,
-            "capability": self.capability,
-            "generative": self.generative,
-            "image": self.image,
-            "integration_form": self.integration_form,
-            "license": COSMOS3_LICENSE,
-        }
-
-
-@dataclass(frozen=True)
-class Cosmos3SkillEnv:
-    """Resolved environment overrides for a Cosmos3 skill SkyPilot workflow."""
-
-    skill: str
-    workflow: Path
-    env: dict[str, str]
-    no_guardrails: bool = False
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "skill": self.skill,
-            "workflow": str(self.workflow),
-            "env": dict(self.env),
-            "no_guardrails": self.no_guardrails,
-        }
 
 
 @dataclass(frozen=True)
@@ -186,88 +125,6 @@ class Cosmos3AccessConfig:
         return Path(self.cache_dir or DEFAULT_CACHE_DIR).expanduser()
 
 
-COSMOS3_SKILL_SPECS: tuple[Cosmos3SkillSpec, ...] = (
-    Cosmos3SkillSpec(
-        name="cosmos3-setup",
-        nvidia_path=".agents/skills/cosmos3-setup/SKILL.md",
-        purpose=(
-            "Clone Cosmos3, install the selected CUDA extras group, and verify "
-            "source/checkpoint access."
-        ),
-        workflow=COSMOS3_WORKFLOW_ROOT / "cosmos3-setup.yaml",
-        tier="PARTIAL",
-        evidence="YAML/SDK/CLI structure validated; live install requires GPU runtime.",
-        capability="setup",
-    ),
-    Cosmos3SkillSpec(
-        name="cosmos3-codebase-nav",
-        nvidia_path=".agents/skills/cosmos3-codebase-nav/SKILL.md",
-        purpose=(
-            "Clone Cosmos3 and emit a machine-readable inventory of inference "
-            "defaults, recipe TOMLs, scripts, and config locations."
-        ),
-        workflow=COSMOS3_WORKFLOW_ROOT / "cosmos3-codebase-nav.yaml",
-        tier="PARTIAL",
-        evidence="Static source navigation workflow validated without copying NVIDIA skill text.",
-        capability="codebase-navigation",
-    ),
-    Cosmos3SkillSpec(
-        name="cosmos3-env-troubleshoot",
-        nvidia_path=".agents/skills/cosmos3-env-troubleshoot/SKILL.md",
-        purpose=(
-            "Collect Cosmos3 host, Python, CUDA, package, and checkpoint diagnostics "
-            "for setup/inference failures."
-        ),
-        workflow=COSMOS3_WORKFLOW_ROOT / "cosmos3-env-troubleshoot.yaml",
-        tier="PARTIAL",
-        evidence="Diagnostic workflow is source-based and does not require a model backend.",
-        capability="environment-troubleshooting",
-    ),
-    Cosmos3SkillSpec(
-        name="cosmos3-inference",
-        nvidia_path=".agents/skills/cosmos3-inference/SKILL.md",
-        purpose=(
-            "Run public Cosmos3 text-to-image inference through "
-            "cosmos_framework.scripts.inference with guardrails on by default."
-        ),
-        workflow=COSMOS3_WORKFLOW_ROOT / "cosmos3-text-to-image-inference.yaml",
-        tier="PARTIAL",
-        evidence="Raw SkyPilot YAML, SDK env builder, and CLI inventory validate defaults.",
-        capability="inference",
-        generative=True,
-    ),
-    Cosmos3SkillSpec(
-        name="cosmos3-post-training",
-        nvidia_path=".agents/skills/cosmos3-post-training/SKILL.md",
-        purpose=(
-            "Stage the Cosmos3 SFT recipe flow with explicit dataset/checkpoint/Wan VAE "
-            "inputs and an explicit plan/validate/train action."
-        ),
-        workflow=COSMOS3_WORKFLOW_ROOT / "cosmos3-post-training.yaml",
-        tier="SEAM",
-        evidence="Typed SFT extension point; full training is not faked without datasets/checkpoints.",
-        capability="post-training",
-    ),
-)
-
-
-def list_cosmos3_skills() -> tuple[Cosmos3SkillSpec, ...]:
-    """Return the referenced NVIDIA Cosmos3 skills integrated into NPA."""
-
-    return COSMOS3_SKILL_SPECS
-
-
-def get_cosmos3_skill(name: str) -> Cosmos3SkillSpec:
-    """Return a Cosmos3 skill spec by name, raising for unknown skills."""
-
-    normalized = name.strip().lower()
-    for spec in COSMOS3_SKILL_SPECS:
-        if spec.name == normalized:
-            return spec
-    supported = ", ".join(spec.name for spec in COSMOS3_SKILL_SPECS)
-    raise Cosmos3AccessError(f"Unknown Cosmos3 skill '{name}'. Supported: {supported}")
-
-
 def build_cosmos3_inference_args(
     *,
     input_json: str,
@@ -293,105 +150,6 @@ def build_cosmos3_inference_args(
         args.append("--no-guardrails")
     args.append(f"--seed={seed}")
     return args
-
-
-def build_cosmos3_skill_env(
-    skill: str,
-    *,
-    source_repo_url: str = "",
-    model_id: str = "",
-    cache_dir: str = "",
-    github_token_env: str = "",
-    hf_token_env: str = "",
-    ngc_api_key_env: str = "",
-    require_ngc: bool = False,
-    output_s3_uri: str = "",
-    prompt: str = "",
-    uv_group: str = "",
-    setup_json: str = "",
-    nav_output: str = "",
-    diagnostics_json: str = "",
-    inference_output_dir: str = "",
-    inference_output_image: str = "",
-    inference_success_json: str = "",
-    reasoning_parser: str = "",
-    tool_call_parser: str = "",
-    sft_recipe: str = "",
-    sft_action: str = "",
-    sft_validate_only: bool = False,
-    sft_dataset_path: str = "",
-    sft_base_checkpoint_path: str = "",
-    sft_wan_vae_path: str = "",
-    sft_output_root: str = "",
-    sft_result_json: str = "",
-    no_guardrails: bool = False,
-) -> Cosmos3SkillEnv:
-    """Resolve CLI/SDK parameters into SkyPilot env vars for a Cosmos3 skill."""
-
-    spec = get_cosmos3_skill(skill)
-    env: dict[str, str] = {}
-    if source_repo_url:
-        env["NPA_COSMOS3_SOURCE_REPO"] = source_repo_url
-    if model_id:
-        env["NPA_COSMOS3_MODEL_ID"] = model_id
-    if cache_dir:
-        env["NPA_COSMOS3_CACHE"] = cache_dir
-    if github_token_env:
-        env["NPA_COSMOS3_GITHUB_TOKEN_ENV"] = github_token_env
-    if hf_token_env:
-        env["NPA_COSMOS3_HF_TOKEN_ENV"] = hf_token_env
-    if ngc_api_key_env:
-        env["NPA_COSMOS3_NGC_API_KEY_ENV"] = ngc_api_key_env
-    if require_ngc:
-        env["NPA_COSMOS3_REQUIRE_NGC"] = "1"
-    if output_s3_uri:
-        env["NPA_COSMOS3_OUTPUT_S3_URI"] = output_s3_uri
-    if uv_group:
-        env["NPA_COSMOS3_UV_GROUP"] = uv_group
-    if spec.generative:
-        env["NPA_COSMOS3_NO_GUARDRAILS"] = "1" if no_guardrails else ""
-    if spec.name == "cosmos3-setup" and setup_json:
-        env["NPA_COSMOS3_SETUP_JSON"] = setup_json
-    if spec.name == "cosmos3-codebase-nav" and nav_output:
-        env["NPA_COSMOS3_NAV_OUTPUT"] = nav_output
-    if spec.name == "cosmos3-env-troubleshoot" and diagnostics_json:
-        env["NPA_COSMOS3_DIAGNOSTICS_JSON"] = diagnostics_json
-    if spec.name == "cosmos3-inference":
-        if prompt:
-            env["NPA_COSMOS3_INFER_PROMPT"] = prompt
-        if inference_output_dir:
-            env["NPA_COSMOS3_OUTPUT_DIR"] = inference_output_dir
-        if inference_output_image:
-            env["NPA_COSMOS3_OUTPUT_IMAGE"] = inference_output_image
-        if inference_success_json:
-            env["NPA_COSMOS3_SUCCESS_JSON"] = inference_success_json
-        if reasoning_parser:
-            env["NPA_COSMOS3_REASONING_PARSER"] = reasoning_parser
-        if tool_call_parser:
-            env["NPA_COSMOS3_TOOL_CALL_PARSER"] = tool_call_parser
-    if spec.name == "cosmos3-post-training":
-        if sft_recipe:
-            env["NPA_COSMOS3_SFT_RECIPE"] = sft_recipe
-        if sft_action:
-            env["NPA_COSMOS3_SFT_ACTION"] = sft_action
-        if sft_validate_only:
-            env["NPA_COSMOS3_SFT_VALIDATE_ONLY"] = "1"
-        if sft_dataset_path:
-            env["NPA_COSMOS3_SFT_DATASET_PATH"] = sft_dataset_path
-        if sft_base_checkpoint_path:
-            env["NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH"] = sft_base_checkpoint_path
-        if sft_wan_vae_path:
-            env["NPA_COSMOS3_SFT_WAN_VAE_PATH"] = sft_wan_vae_path
-        if sft_output_root:
-            env["IMAGINAIRE_OUTPUT_ROOT"] = sft_output_root
-        if sft_result_json:
-            env["NPA_COSMOS3_SFT_RESULT_JSON"] = sft_result_json
-    return Cosmos3SkillEnv(
-        skill=spec.name,
-        workflow=spec.workflow,
-        env=env,
-        no_guardrails=no_guardrails,
-    )
 
 
 @dataclass(frozen=True)

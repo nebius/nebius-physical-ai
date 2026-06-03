@@ -120,8 +120,6 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
     [
         "check",
         "fetch",
-        "skills",
-        "skill",
         "deploy",
         "reload-env",
         "serve",

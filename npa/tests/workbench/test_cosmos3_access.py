@@ -14,16 +14,15 @@ from npa.workbench.cosmos.cosmos3 import (
     DEFAULT_TOOL_CALL_PARSER,
     Cosmos3AccessConfig,
     build_cosmos3_inference_args,
-    build_cosmos3_skill_env,
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
-    list_cosmos3_skills,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
 INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
+SKILL_ROOT = ROOT / ".agents" / "skills"
 
 
 def _runner(returncode: int = 0):
@@ -219,24 +218,30 @@ def test_cosmos3_inference_yaml_defaults_to_public_cosmos3_and_allows_s3() -> No
     assert "NPA_COSMOS3_MODEL_ID" in rendered
 
 
-def test_cosmos3_skill_inventory_covers_nvidia_agent_skills() -> None:
-    specs = list_cosmos3_skills()
-
-    assert [spec.name for spec in specs] == [
+def test_cosmos3_agent_skills_are_discoverable_and_well_formed() -> None:
+    expected = {
         "cosmos3-setup",
-        "cosmos3-codebase-nav",
-        "cosmos3-env-troubleshoot",
-        "cosmos3-inference",
+        "codebase-nav",
+        "env-troubleshoot",
+        "inference",
         "cosmos3-post-training",
-    ]
-    assert all(spec.integration_form.startswith("npa-authored-by-reference") for spec in specs)
-    assert {spec.image for spec in specs} == {"source-based"}
-    assert {spec.name for spec in specs if spec.generative} == {"cosmos3-inference"}
-    for spec in specs:
-        workflow = ROOT / spec.workflow
-        assert workflow.exists(), spec.name
-        docs = [doc for doc in yaml.safe_load_all(workflow.read_text(encoding="utf-8")) if doc]
-        assert docs[0]["name"] in {spec.name, "cosmos3-text-to-image-inference"}
+    }
+
+    for name in expected:
+        path = SKILL_ROOT / name / "SKILL.md"
+        assert path.exists(), name
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        frontmatter = text.split("---\n", 2)[1]
+        parsed = yaml.safe_load(frontmatter)
+        assert parsed["name"] == name
+        assert parsed["description"]
+        assert "Source And Attribution" in text
+        assert "NVIDIA CORPORATION & AFFILIATES" in text
+        assert "LICENSE-NVIDIA-COSMOS3-OPENMDW-1.1" in text
+
+    assert (SKILL_ROOT / "LICENSE-NVIDIA-COSMOS3-OPENMDW-1.1").exists()
+    assert (SKILL_ROOT / "NOTICE-NVIDIA-COSMOS3").exists()
 
 
 def test_cosmos3_inference_args_keep_guardrails_on_by_default() -> None:
@@ -261,163 +266,13 @@ def test_cosmos3_inference_args_keep_guardrails_on_by_default() -> None:
     )
 
 
-def test_cosmos3_skill_env_aligns_cli_sdk_yaml_guardrails() -> None:
-    default_env = build_cosmos3_skill_env("cosmos3-inference")
-    opt_out_env = build_cosmos3_skill_env(
-        "cosmos3-inference",
-        prompt="robot sorting blocks",
-        no_guardrails=True,
-    )
-
-    assert default_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == ""
-    assert opt_out_env.env["NPA_COSMOS3_NO_GUARDRAILS"] == "1"
-    assert opt_out_env.env["NPA_COSMOS3_INFER_PROMPT"] == "robot sorting blocks"
-
-
-def test_cosmos3_skill_env_maps_each_skill_yaml_override() -> None:
-    cases = {
-        "cosmos3-setup": (
-            {
-                "source_repo_url": "https://github.com/example/cosmos.git",
-                "model_id": "example/Cosmos3",
-                "cache_dir": "/cache/setup",
-                "github_token_env": "GH_SETUP",
-                "hf_token_env": "HF_SETUP",
-                "ngc_api_key_env": "NGC_SETUP",
-                "require_ngc": True,
-                "uv_group": "cu130-train",
-                "setup_json": "/cache/setup/setup.json",
-                "output_s3_uri": "s3://bucket/setup",
-            },
-            {
-                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
-                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
-                "NPA_COSMOS3_CACHE": "/cache/setup",
-                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SETUP",
-                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SETUP",
-                "NPA_COSMOS3_NGC_API_KEY_ENV": "NGC_SETUP",
-                "NPA_COSMOS3_REQUIRE_NGC": "1",
-                "NPA_COSMOS3_UV_GROUP": "cu130-train",
-                "NPA_COSMOS3_SETUP_JSON": "/cache/setup/setup.json",
-                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/setup",
-            },
-        ),
-        "cosmos3-codebase-nav": (
-            {
-                "source_repo_url": "https://github.com/example/cosmos.git",
-                "cache_dir": "/cache/nav",
-                "github_token_env": "GH_NAV",
-                "nav_output": "/cache/nav/codebase.json",
-                "output_s3_uri": "s3://bucket/nav",
-            },
-            {
-                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
-                "NPA_COSMOS3_CACHE": "/cache/nav",
-                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_NAV",
-                "NPA_COSMOS3_NAV_OUTPUT": "/cache/nav/codebase.json",
-                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/nav",
-            },
-        ),
-        "cosmos3-env-troubleshoot": (
-            {
-                "diagnostics_json": "/tmp/diagnostics.json",
-                "output_s3_uri": "s3://bucket/diagnostics",
-            },
-            {
-                "NPA_COSMOS3_DIAGNOSTICS_JSON": "/tmp/diagnostics.json",
-                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/diagnostics",
-            },
-        ),
-        "cosmos3-inference": (
-            {
-                "source_repo_url": "https://github.com/example/cosmos.git",
-                "model_id": "example/Cosmos3",
-                "cache_dir": "/cache/infer",
-                "github_token_env": "GH_INFER",
-                "hf_token_env": "HF_INFER",
-                "ngc_api_key_env": "NGC_INFER",
-                "require_ngc": True,
-                "uv_group": "cu130-train",
-                "prompt": "robot sorting blocks",
-                "inference_output_dir": "/out",
-                "inference_output_image": "/out/image.png",
-                "inference_success_json": "/out/success.json",
-                "reasoning_parser": "qwen3",
-                "tool_call_parser": "hermes",
-                "output_s3_uri": "s3://bucket/infer",
-                "no_guardrails": True,
-            },
-            {
-                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
-                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
-                "NPA_COSMOS3_CACHE": "/cache/infer",
-                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_INFER",
-                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_INFER",
-                "NPA_COSMOS3_NGC_API_KEY_ENV": "NGC_INFER",
-                "NPA_COSMOS3_REQUIRE_NGC": "1",
-                "NPA_COSMOS3_UV_GROUP": "cu130-train",
-                "NPA_COSMOS3_INFER_PROMPT": "robot sorting blocks",
-                "NPA_COSMOS3_OUTPUT_DIR": "/out",
-                "NPA_COSMOS3_OUTPUT_IMAGE": "/out/image.png",
-                "NPA_COSMOS3_SUCCESS_JSON": "/out/success.json",
-                "NPA_COSMOS3_REASONING_PARSER": "qwen3",
-                "NPA_COSMOS3_TOOL_CALL_PARSER": "hermes",
-                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/infer",
-                "NPA_COSMOS3_NO_GUARDRAILS": "1",
-            },
-        ),
-        "cosmos3-post-training": (
-            {
-                "source_repo_url": "https://github.com/example/cosmos.git",
-                "model_id": "example/Cosmos3",
-                "cache_dir": "/cache/sft",
-                "github_token_env": "GH_SFT",
-                "hf_token_env": "HF_SFT",
-                "uv_group": "cu130-train",
-                "sft_recipe": "vision_nano",
-                "sft_action": "validate",
-                "sft_validate_only": True,
-                "sft_dataset_path": "/data",
-                "sft_base_checkpoint_path": "/ckpt",
-                "sft_wan_vae_path": "/vae/Wan2.2_VAE.pth",
-                "sft_output_root": "/out/train",
-                "sft_result_json": "/out/train/sft-plan.json",
-                "output_s3_uri": "s3://bucket/sft",
-            },
-            {
-                "NPA_COSMOS3_SOURCE_REPO": "https://github.com/example/cosmos.git",
-                "NPA_COSMOS3_MODEL_ID": "example/Cosmos3",
-                "NPA_COSMOS3_CACHE": "/cache/sft",
-                "NPA_COSMOS3_GITHUB_TOKEN_ENV": "GH_SFT",
-                "NPA_COSMOS3_HF_TOKEN_ENV": "HF_SFT",
-                "NPA_COSMOS3_UV_GROUP": "cu130-train",
-                "NPA_COSMOS3_SFT_RECIPE": "vision_nano",
-                "NPA_COSMOS3_SFT_ACTION": "validate",
-                "NPA_COSMOS3_SFT_VALIDATE_ONLY": "1",
-                "NPA_COSMOS3_SFT_DATASET_PATH": "/data",
-                "NPA_COSMOS3_SFT_BASE_CHECKPOINT_PATH": "/ckpt",
-                "NPA_COSMOS3_SFT_WAN_VAE_PATH": "/vae/Wan2.2_VAE.pth",
-                "IMAGINAIRE_OUTPUT_ROOT": "/out/train",
-                "NPA_COSMOS3_SFT_RESULT_JSON": "/out/train/sft-plan.json",
-                "NPA_COSMOS3_OUTPUT_S3_URI": "s3://bucket/sft",
-            },
-        ),
+def test_cosmos3_removed_skill_workflow_yaml_files_stay_removed() -> None:
+    removed = {
+        "cosmos3-setup.yaml",
+        "cosmos3-codebase-nav.yaml",
+        "cosmos3-env-troubleshoot.yaml",
+        "cosmos3-post-training.yaml",
     }
 
-    for skill_name, (kwargs, expected) in cases.items():
-        spec = next(spec for spec in list_cosmos3_skills() if spec.name == skill_name)
-        workflow = ROOT / spec.workflow
-        envs = _workflow_envs(workflow)
-        result = build_cosmos3_skill_env(skill_name, **kwargs)
-
-        assert result.workflow == spec.workflow
-        for key, value in expected.items():
-            assert key in envs
-            assert result.env[key] == value
-
-
-def _workflow_envs(path: Path) -> dict[str, str]:
-    docs = [
-        doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc
-    ]
-    return docs[-1]["envs"]
+    for filename in removed:
+        assert not (SKYPILOT_ROOT / filename).exists()
