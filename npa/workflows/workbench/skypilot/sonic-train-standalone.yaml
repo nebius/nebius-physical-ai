@@ -1,0 +1,76 @@
+# Standalone SONIC training smoke workflow.
+#
+# Operator-provided parameters:
+# - POLICY_IMAGE: image containing the npa CLI and SONIC runtime.
+# - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
+# - S3_BUCKET: destination bucket name, without s3://.
+name: sonic-train-standalone
+execution: serial
+---
+name: sonic-train-smoke
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:${POLICY_IMAGE}"
+envs:
+  POLICY_IMAGE: "example.invalid/npa-sonic:latest"
+  S3_ENDPOINT_URL: ""
+  S3_BUCKET: "example-bucket"
+  NPA_PIPELINE_RUN_ID: "sonic-train-smoke"
+  SONIC_CHECKPOINT: "nvidia/GEAR-SONIC:sonic_release/last.pt"
+  SONIC_DATA_PATH: ""
+  SONIC_SAMPLE_DATA: "1"
+  SONIC_EMBODIMENT: "unitree-g1"
+  SONIC_NUM_ENVS: "16"
+  SONIC_HEADLESS: "1"
+  SONIC_MAX_ITERATIONS: "5"
+  SONIC_OUTPUT_PREFIX: "sonic-train/${NPA_PIPELINE_RUN_ID}/"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${NPA_PYTHON_BIN:-$(command -v python3 || command -v python)}"
+  if ! command -v npa >/dev/null 2>&1; then
+    if [ -n "${NPA_REPO_DIR:-}" ] && [ -d "${NPA_REPO_DIR}/npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e "${NPA_REPO_DIR}/npa"
+    elif [ -d "./npa" ]; then
+      "${PYTHON_BIN}" -m pip install -e ./npa
+    fi
+  fi
+run: |
+  set -euo pipefail
+  if [ -z "${S3_ENDPOINT_URL}" ]; then
+    echo "S3_ENDPOINT_URL must be provided by the operator" >&2
+    exit 2
+  fi
+  if [ "${S3_BUCKET}" = "example-bucket" ]; then
+    echo "S3_BUCKET must be provided by the operator" >&2
+    exit 2
+  fi
+
+  export AWS_ENDPOINT_URL="${S3_ENDPOINT_URL}"
+  export NEBIUS_S3_ENDPOINT="${S3_ENDPOINT_URL}"
+  output_path="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
+
+  sample_args=()
+  if [ "${SONIC_SAMPLE_DATA}" = "1" ]; then
+    sample_args+=(--sample-data)
+  fi
+
+  headless_arg="--headless"
+  if [ "${SONIC_HEADLESS}" = "0" ]; then
+    headless_arg="--no-headless"
+  fi
+
+  npa workbench sonic train \
+    --runtime serverless \
+    --checkpoint "${SONIC_CHECKPOINT}" \
+    --data-path "${SONIC_DATA_PATH}" \
+    "${sample_args[@]}" \
+    --embodiment "${SONIC_EMBODIMENT}" \
+    --num-envs "${SONIC_NUM_ENVS}" \
+    "${headless_arg}" \
+    --max-iterations "${SONIC_MAX_ITERATIONS}" \
+    --output-path "${output_path}" \
+    --image "${POLICY_IMAGE}" \
+    --output-format json
