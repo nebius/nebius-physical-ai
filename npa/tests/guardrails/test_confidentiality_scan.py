@@ -48,6 +48,11 @@ def test_confidentiality_matcher_rejects_empty_pattern() -> None:
         compile_denylist("")
 
 
+def test_confidentiality_matcher_names_empty_pattern_source() -> None:
+    with pytest.raises(ValueError, match="INFRA_DENYLIST is empty"):
+        compile_denylist("", source="INFRA_DENYLIST")
+
+
 def test_confidentiality_matcher_surfaces_invalid_regex() -> None:
     with pytest.raises(re.error):
         compile_denylist("[")

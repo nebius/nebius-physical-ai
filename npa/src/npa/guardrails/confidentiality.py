@@ -22,11 +22,11 @@ class ScanHit:
     line_number: int
 
 
-def compile_denylist(pattern: str) -> re.Pattern[str]:
+def compile_denylist(pattern: str, *, source: str = "denylist") -> re.Pattern[str]:
     """Compile the operator-provided denylist regex."""
 
     if not pattern.strip():
-        raise ValueError("CUSTOMER_DENYLIST is empty")
+        raise ValueError(f"{source} is empty")
     return re.compile(pattern)
 
 
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        denylist = compile_denylist(os.environ.get(args.pattern_env, ""))
+        denylist = compile_denylist(os.environ.get(args.pattern_env, ""), source=args.pattern_env)
     except ValueError as exc:
         print(f"confidentiality scan not configured: {exc}", file=sys.stderr)
         return 2

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dev-VM-runnable registry existence check for SkyPilot workflow images."""
+"""Registry existence check for SkyPilot workflow images."""
 
 from __future__ import annotations
 
