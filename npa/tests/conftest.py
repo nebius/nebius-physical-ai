@@ -3,9 +3,14 @@ import pytest
 
 from npa.clients.project_credentials import CredentialPair
 from npa.errors import ScopedCredentialError
+from npa.guardrails.pytest_collection import assert_nonzero_collection
 
 os.environ.setdefault("NPA_PROJECT_ID", "project-test-00000000")
 os.environ.setdefault("NPA_S3_BUCKET", "test-bucket-00000000")
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    assert_nonzero_collection(len(session.items))
 
 
 @pytest.fixture
