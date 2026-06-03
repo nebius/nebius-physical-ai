@@ -1,0 +1,166 @@
+# Cosmos3 text-to-image inference smoke.
+#
+# Defaults track NVIDIA's public Cosmos3 framework release. HF weights can still
+# require a normal Hugging Face token and license acceptance.
+name: cosmos3-text-to-image-inference
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 16+
+  memory: 128+
+  disk_size: 1024
+envs:
+  # Runtime coordinates can be overridden at launch for BYO forks/checkpoints.
+  NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"
+  NPA_COSMOS3_MODEL_ID: "nvidia/Cosmos3-Nano"
+  NPA_COSMOS3_CACHE: "/tmp/npa-cosmos3-cache"
+  NPA_COSMOS3_GITHUB_TOKEN_ENV: "GITHUB_TOKEN"
+  NPA_COSMOS3_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS3_NGC_API_KEY_ENV: "NGC_API_KEY"
+  NPA_COSMOS3_REQUIRE_NGC: "0"
+  NPA_COSMOS3_UV_GROUP: "cu130-train"
+  NPA_RUNTIME_VENV: "/tmp/npa-runtime-venv"
+  NPA_COSMOS3_NO_GUARDRAILS: ""
+
+  # Inference runtime. The command runs on the GPU node after fetch with:
+  # COSMOS3_SOURCE_DIR, COSMOS3_CHECKPOINT_DIR, COSMOS3_PROMPT, and
+  # COSMOS3_OUTPUT_IMAGE exported.
+  NPA_COSMOS3_INFER_COMMAND: |
+    set -euo pipefail
+    export PATH="${HOME}/.local/bin:${PATH}"
+    export HF_HOME="${NPA_COSMOS3_CACHE}/hf"
+    cd "${COSMOS3_SOURCE_DIR}"
+    export GIT_LFS_SKIP_SMUDGE=1
+    uv sync --all-extras --group="${NPA_COSMOS3_UV_GROUP}"
+    export LD_LIBRARY_PATH=
+    mkdir -p "${NPA_COSMOS3_OUTPUT_DIR}"
+    input_json="${NPA_COSMOS3_OUTPUT_DIR}/npa-t2i.json"
+    python - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
+    output = Path(os.environ["NPA_COSMOS3_OUTPUT_DIR"]) / "npa-t2i.json"
+    payload = {
+        "model_mode": "text2image",
+        "name": "npa-t2i",
+        "prompt": os.environ["COSMOS3_PROMPT"],
+    }
+    output.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    PY
+    .venv/bin/python -m cosmos_framework.scripts.inference \
+      --parallelism-preset=latency \
+      -i "${input_json}" \
+      -o "${NPA_COSMOS3_OUTPUT_DIR}" \
+      --checkpoint-path Cosmos3-Nano \
+      ${NPA_COSMOS3_NO_GUARDRAILS:+--no-guardrails} \
+      --seed=0
+    cp "${NPA_COSMOS3_OUTPUT_DIR}/npa-t2i/vision.jpg" "${COSMOS3_OUTPUT_IMAGE}"
+  NPA_COSMOS3_INFER_PROMPT: "a small robot arm sorting colored blocks on a workbench"
+  NPA_COSMOS3_OUTPUT_DIR: "/tmp/npa-cosmos3-inference"
+  NPA_COSMOS3_OUTPUT_IMAGE: "/tmp/npa-cosmos3-inference/text-to-image.png"
+  NPA_COSMOS3_SUCCESS_JSON: "/tmp/npa-cosmos3-inference/success.json"
+  NPA_COSMOS3_OUTPUT_S3_URI: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+
+  # Serve config carried from the fetch workflow.
+  NPA_COSMOS3_REASONING_PARSER: "qwen3"
+  NPA_COSMOS3_TOOL_CALL_PARSER: "hermes"
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends curl ffmpeg git git-lfs libx11-dev tree wget ca-certificates
+    else
+      echo "git is required for Cosmos3 source checkout" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if [ ! -x "${NPA_RUNTIME_VENV}/bin/python" ]; then
+    uv venv --python 3.11 --seed "${NPA_RUNTIME_VENV}"
+  fi
+  "${NPA_RUNTIME_VENV}/bin/python" -m pip install "huggingface_hub[cli]>=0.23,<1.0" "pillow>=10.0"
+run: |
+  set -euo pipefail
+  export PATH="${NPA_RUNTIME_VENV}/bin:${HOME}/.local/bin:${PATH}"
+
+  test -n "${NPA_COSMOS3_SOURCE_REPO}"
+  test -n "${NPA_COSMOS3_MODEL_ID}"
+  test -n "${NPA_COSMOS3_INFER_COMMAND}"
+
+  hf_token_value="${!NPA_COSMOS3_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+  if [ "${NPA_COSMOS3_REQUIRE_NGC}" = "1" ]; then
+    ngc_token_value="${!NPA_COSMOS3_NGC_API_KEY_ENV-}"
+    test -n "${ngc_token_value}"
+  fi
+
+  rm -rf "${NPA_COSMOS3_CACHE}" "${NPA_COSMOS3_OUTPUT_DIR}"
+  mkdir -p "${NPA_COSMOS3_CACHE}" "${NPA_COSMOS3_OUTPUT_DIR}"
+
+  github_token_value="${!NPA_COSMOS3_GITHUB_TOKEN_ENV-}"
+  if [ -n "${github_token_value}" ]; then
+    repo_host="$(python - <<'PY'
+  import os
+  from urllib.parse import urlparse
+
+  print(urlparse(os.environ["NPA_COSMOS3_SOURCE_REPO"]).hostname or "github.com")
+  PY
+  )"
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="http.https://${repo_host}/.extraheader"
+    export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${github_token_value}"
+  fi
+  git clone --depth 1 "${NPA_COSMOS3_SOURCE_REPO}" "${NPA_COSMOS3_CACHE}/source"
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+  huggingface-cli download "${NPA_COSMOS3_MODEL_ID}" --local-dir "${NPA_COSMOS3_CACHE}/checkpoint"
+
+  export COSMOS3_SOURCE_DIR="${NPA_COSMOS3_CACHE}/source"
+  export COSMOS3_CHECKPOINT_DIR="${NPA_COSMOS3_CACHE}/checkpoint"
+  export COSMOS3_PROMPT="${NPA_COSMOS3_INFER_PROMPT}"
+  export COSMOS3_OUTPUT_IMAGE="${NPA_COSMOS3_OUTPUT_IMAGE}"
+  bash -lc "${NPA_COSMOS3_INFER_COMMAND}"
+
+  python - <<'PY'
+  import json
+  import os
+  from pathlib import Path
+
+  from PIL import Image
+
+  output = Path(os.environ["NPA_COSMOS3_OUTPUT_IMAGE"])
+  success_path = Path(os.environ["NPA_COSMOS3_SUCCESS_JSON"])
+  if not output.exists() or output.stat().st_size <= 0:
+      raise SystemExit(f"missing or empty output image: {output}")
+  with Image.open(output) as image:
+      width, height = image.size
+      if width <= 0 or height <= 0:
+          raise SystemExit("output image has invalid dimensions")
+  payload = {
+      "status": "ok",
+      "output_image": str(output),
+      "bytes": output.stat().st_size,
+      "width": width,
+      "height": height,
+      "cache_dir": os.environ["NPA_COSMOS3_CACHE"],
+  }
+  success_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+  print(json.dumps(payload, sort_keys=True))
+  PY
+
+  if [ -n "${NPA_COSMOS3_OUTPUT_S3_URI}" ]; then
+    if ! command -v aws >/dev/null 2>&1; then
+      python -m pip install "awscli>=1.32"
+    fi
+    aws s3 cp "${NPA_COSMOS3_OUTPUT_IMAGE}" "${NPA_COSMOS3_OUTPUT_S3_URI%/}/text-to-image.png"
+    aws s3 cp "${NPA_COSMOS3_SUCCESS_JSON}" "${NPA_COSMOS3_OUTPUT_S3_URI%/}/success.json"
+  fi

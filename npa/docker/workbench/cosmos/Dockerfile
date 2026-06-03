@@ -18,10 +18,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_HF_CACHE=/opt/cosmos-data/hf_cache \
     COSMOS_OUTPUT_DIR=/opt/cosmos-data/outputs \
     COSMOS_MODEL_ID=nvidia/Cosmos-1.0-Diffusion-7B-Text2World \
-    COSMOS_DISABLE_SAFETY=1 \
+    COSMOS_DISABLE_SAFETY=0 \
     COSMOS_VERSION=${COSMOS_VERSION} \
     HF_HOME=/opt/cosmos-data/hf_cache \
     HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -97,28 +98,14 @@ ENV PATH=/opt/cosmos/venv/bin:$PATH \
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/build_server.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
 RUN python -m pip install --no-deps -e /opt/npa \
-    && python - <<'PY'
-import os
-from importlib import metadata
-from pathlib import Path
+    && python /opt/npa/docker/workbench/cosmos/build_server.py
 
-from npa.cli.cosmos import DEFAULT_MODEL, _build_server_py
-
-expected = os.environ["COSMOS_VERSION"]
-actual = metadata.version("cosmos-predict2")
-if actual != expected:
-    raise RuntimeError(f"expected cosmos-predict2 {expected}, found {actual}")
-
-server_py = Path("/opt/cosmos/server.py")
-server_py.write_text(_build_server_py(DEFAULT_MODEL))
-print(f"COSMOS_BUILD_IMPORT_OK {actual}")
-PY
-
-RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
+RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
 WORKDIR /opt/cosmos
 EXPOSE 8080

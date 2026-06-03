@@ -75,6 +75,8 @@ htmlcov/
 *.pth
 *.ckpt
 checkpoints/
+cosmos3-cache/
+npa-cosmos3-cache/
 
 # Temporary and scratch files
 tmp/
