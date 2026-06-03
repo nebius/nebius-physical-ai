@@ -129,6 +129,18 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.cosmos.cosmos3 import (
+    DEFAULT_COSMOS3_MODEL_ID,
+    DEFAULT_COSMOS3_SOURCE_REPO,
+    DEFAULT_GITHUB_TOKEN_ENV,
+    DEFAULT_HF_TOKEN_ENV,
+    DEFAULT_NGC_API_KEY_ENV,
+    DEFAULT_REASONING_PARSER,
+    DEFAULT_TOOL_CALL_PARSER,
+    Cosmos3AccessConfig,
+    check_cosmos3_access,
+    fetch_cosmos3_artifacts,
+)
 
 app = typer.Typer(
     name="cosmos",
@@ -228,13 +240,14 @@ def _cosmos_service_env(
     byovm_effective_gpu_count: int,
     byovm_visible_devices: str,
     include_shared_creds: bool,
+    no_guardrails: bool = False,
 ) -> dict[str, str]:
     env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
         "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
         "COSMOS_SERVER_PORT": str(server_port),
-        "COSMOS_DISABLE_SAFETY": "1",
+        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
         "HF_HOME": COSMOS_HF_CACHE,
         "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
         "HF_TOKEN": credentials.hf_token,
@@ -379,6 +392,37 @@ def _output(data: dict[str, Any], fmt: OutputFormat) -> None:
     else:
         for key, val in data.items():
             typer.echo(f"  {key}: {val}")
+
+
+def _cosmos3_access_config(
+    *,
+    model_id: str,
+    source_repo_url: str,
+    cache_dir: Path | None,
+    github_token_env: str,
+    hf_token_env: str,
+    ngc_api_key_env: str,
+    require_ngc: bool,
+    reasoning_parser: str,
+    tool_call_parser: str,
+) -> Cosmos3AccessConfig:
+    return Cosmos3AccessConfig.from_env(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+
+
+def _finish_cosmos3_result(data: dict[str, Any], output: OutputFormat) -> None:
+    _output(data, output)
+    if data.get("status") != "ok":
+        raise typer.Exit(1)
 
 
 def _get_config(**overrides: str):
@@ -658,6 +702,175 @@ def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
         )
 
 
+@app.command("check")
+def check_cmd(
+    model_id: str = typer.Option(
+        "",
+        "--model-id",
+        envvar="NPA_COSMOS3_MODEL_ID",
+        help=f"HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID or {DEFAULT_COSMOS3_MODEL_ID}.",
+    ),
+    source_repo_url: str = typer.Option(
+        "",
+        "--source-repo-url",
+        envvar="NPA_COSMOS3_SOURCE_REPO",
+        help=f"Source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO or {DEFAULT_COSMOS3_SOURCE_REPO}.",
+    ),
+    cache_dir: Path | None = typer.Option(
+        None,
+        "--cache-dir",
+        envvar="NPA_COSMOS3_CACHE",
+        help="Ephemeral runtime cache directory.",
+    ),
+    github_token_env: str = typer.Option(
+        DEFAULT_GITHUB_TOKEN_ENV,
+        "--github-token-env",
+        help="Environment variable that holds the GitHub token.",
+    ),
+    hf_token_env: str = typer.Option(
+        DEFAULT_HF_TOKEN_ENV,
+        "--hf-token-env",
+        help="Environment variable that holds the Hugging Face token.",
+    ),
+    ngc_api_key_env: str = typer.Option(
+        DEFAULT_NGC_API_KEY_ENV,
+        "--ngc-api-key-env",
+        help="Environment variable that holds the NGC API key.",
+    ),
+    require_ngc: bool = typer.Option(
+        False,
+        "--require-ngc/--no-require-ngc",
+        help="Require NGC auth for workflows that also need an NGC base container.",
+    ),
+    reasoning_parser: str = typer.Option(
+        DEFAULT_REASONING_PARSER,
+        "--reasoning-parser",
+        help="vLLM reasoning parser setting carried into serve config.",
+    ),
+    tool_call_parser: str = typer.Option(
+        DEFAULT_TOOL_CALL_PARSER,
+        "--tool-call-parser",
+        help="vLLM tool-call parser setting carried into serve config.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """Check Cosmos3 source and HF checkpoint access without downloading weights."""
+    cfg = _cosmos3_access_config(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+    _finish_cosmos3_result(check_cosmos3_access(cfg).as_dict(), output)
+
+
+@app.command("fetch")
+def fetch_cmd(
+    model_id: str = typer.Option(
+        "",
+        "--model-id",
+        envvar="NPA_COSMOS3_MODEL_ID",
+        help=f"HF model repo ID. Defaults to NPA_COSMOS3_MODEL_ID or {DEFAULT_COSMOS3_MODEL_ID}.",
+    ),
+    source_repo_url: str = typer.Option(
+        "",
+        "--source-repo-url",
+        envvar="NPA_COSMOS3_SOURCE_REPO",
+        help=f"Source repository URL. Defaults to NPA_COSMOS3_SOURCE_REPO or {DEFAULT_COSMOS3_SOURCE_REPO}.",
+    ),
+    cache_dir: Path | None = typer.Option(
+        None,
+        "--cache-dir",
+        envvar="NPA_COSMOS3_CACHE",
+        help="Ephemeral runtime cache directory.",
+    ),
+    github_token_env: str = typer.Option(
+        DEFAULT_GITHUB_TOKEN_ENV,
+        "--github-token-env",
+        help="Environment variable that holds the GitHub token.",
+    ),
+    hf_token_env: str = typer.Option(
+        DEFAULT_HF_TOKEN_ENV,
+        "--hf-token-env",
+        help="Environment variable that holds the Hugging Face token.",
+    ),
+    ngc_api_key_env: str = typer.Option(
+        DEFAULT_NGC_API_KEY_ENV,
+        "--ngc-api-key-env",
+        help="Environment variable that holds the NGC API key.",
+    ),
+    require_ngc: bool = typer.Option(
+        False,
+        "--require-ngc/--no-require-ngc",
+        help="Require NGC auth for workflows that also need an NGC base container.",
+    ),
+    reasoning_parser: str = typer.Option(
+        DEFAULT_REASONING_PARSER,
+        "--reasoning-parser",
+        help="vLLM reasoning parser setting carried into serve config.",
+    ),
+    tool_call_parser: str = typer.Option(
+        DEFAULT_TOOL_CALL_PARSER,
+        "--tool-call-parser",
+        help="vLLM tool-call parser setting carried into serve config.",
+    ),
+    skip_checkpoint: bool = typer.Option(
+        False,
+        "--skip-checkpoint",
+        help="Clone the source repo but do not download the HF checkpoint.",
+    ),
+    hf_include: list[str] = typer.Option(
+        [],
+        "--hf-include",
+        help="Optional Hugging Face download include pattern; repeatable.",
+    ),
+    hf_exclude: list[str] = typer.Option(
+        [],
+        "--hf-exclude",
+        help="Optional Hugging Face download exclude pattern; repeatable.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace existing runtime cache subdirectories before fetching.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output",
+        help="Output format.",
+    ),
+) -> None:
+    """Clone source and download the HF checkpoint into ephemeral runtime cache."""
+    cfg = _cosmos3_access_config(
+        model_id=model_id,
+        source_repo_url=source_repo_url,
+        cache_dir=cache_dir,
+        github_token_env=github_token_env,
+        hf_token_env=hf_token_env,
+        ngc_api_key_env=ngc_api_key_env,
+        require_ngc=require_ngc,
+        reasoning_parser=reasoning_parser,
+        tool_call_parser=tool_call_parser,
+    )
+    result = fetch_cosmos3_artifacts(
+        cfg,
+        download_checkpoint=not skip_checkpoint,
+        hf_include_patterns=hf_include,
+        hf_exclude_patterns=hf_exclude,
+        force=force,
+    )
+    _finish_cosmos3_result(result.as_dict(), output)
+
+
 @app.command("ensure-ingress")
 def ensure_ingress_cmd(
     name: str = typer.Option(
@@ -757,7 +970,7 @@ from diffusers.utils import export_to_video
 MODEL_DIR = Path(os.environ.get("COSMOS_MODEL_DIR", "{COSMOS_MODEL_DIR}"))
 OUTPUT_DIR = Path(os.environ.get("COSMOS_OUTPUT_DIR", "{COSMOS_HOME}/outputs"))
 DEFAULT_MODEL = "{default_model}"
-DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "1").strip().lower() not in {{"0", "false", "no"}}
+DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "0").strip().lower() in {{"1", "true", "yes", "on"}}
 
 app = FastAPI(title="NPA Cosmos Server")
 _pipe: Any | None = None
@@ -945,9 +1158,10 @@ def _run_inference(req: InferRequest) -> dict[str, Any]:
 '''
 
 
-def _build_install_command(model: str, port: int) -> str:
+def _build_install_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
     model_slug = _model_slug(model)
+    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -996,7 +1210,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY=1
+COSMOS_DISABLE_SAFETY={disable_safety}
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1035,8 +1249,9 @@ PY
     return _remote_bash(script)
 
 
-def _build_serve_command(model: str, port: int) -> str:
+def _build_serve_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
     server_py = _build_server_py(model)
+    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 cat > {COSMOS_HOME}/server.py <<'PY'
@@ -1048,7 +1263,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY=1
+COSMOS_DISABLE_SAFETY={disable_safety}
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1294,6 +1509,7 @@ def _deploy_serverless_endpoint(
     subnet_id: str,
     env_vars: dict[str, str],
     volumes: list[str],
+    no_guardrails: bool,
     replace: bool,
     default: bool,
     wait: bool,
@@ -1315,6 +1531,7 @@ def _deploy_serverless_endpoint(
     serverless_env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_SERVER_PORT": str(container_port),
+        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
         **env_vars,
     }
     extra_env = _serverless_hf_env()
@@ -1800,6 +2017,11 @@ def deploy_cmd(
         "--skip-model-check",
         help="Skip Hugging Face gated-model access validation.",
     ),
+    no_guardrails: bool = typer.Option(
+        False,
+        "--no-guardrails",
+        help="Opt out of Cosmos safety guardrails for generated outputs.",
+    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -1926,6 +2148,7 @@ def deploy_cmd(
             subnet_id=subnet_id,
             env_vars=serverless_env,
             volumes=volume,
+            no_guardrails=no_guardrails,
             replace=replace,
             default=default,
             wait=wait,
@@ -2388,6 +2611,7 @@ def deploy_cmd(
                 byovm_effective_gpu_count=byovm_effective_gpu_count,
                 byovm_visible_devices=byovm_visible_devices,
                 include_shared_creds=not no_shared_creds,
+                no_guardrails=no_guardrails,
             )
             if dry_run:
                 console.print(
@@ -2482,7 +2706,10 @@ def deploy_cmd(
             else:
                 try:
                     ssh.run_or_raise(
-                        _build_install_command(model, server_port), stream=True
+                        _build_install_command(
+                            model, server_port, no_guardrails=no_guardrails
+                        ),
+                        stream=True,
                     )
                 except SSHError as exc:
                     fail_app(f"Cosmos installation failed: {exc}")
@@ -2718,6 +2945,11 @@ def serve_cmd(
         ),
     ),
     port: int = typer.Option(8080, "--port", help="Server port."),
+    no_guardrails: bool = typer.Option(
+        False,
+        "--no-guardrails",
+        help="Opt out of Cosmos safety guardrails for generated outputs.",
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -2769,7 +3001,9 @@ def serve_cmd(
     else:
         ssh = SSHClient(cfg.ssh)
         try:
-            _, out, err = ssh.run_or_raise(_build_serve_command(model, port))
+            _, out, err = ssh.run_or_raise(
+                _build_serve_command(model, port, no_guardrails=no_guardrails)
+            )
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return
@@ -2779,6 +3013,7 @@ def serve_cmd(
         "model": model,
         "port": port,
         "endpoint": cfg.endpoint,
+        "guardrails": "off" if no_guardrails else "on",
     }
     if output == OutputFormat.json and out.strip():
         result["stdout_tail"] = out.strip()[-1000:]

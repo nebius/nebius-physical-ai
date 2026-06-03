@@ -1,0 +1,94 @@
+# Cosmos3 public fetch workflow.
+#
+# This workflow checks public source + HF checkpoint access and materializes both
+# into node-local ephemeral storage. HF weights can still require a normal token
+# and license acceptance.
+name: cosmos3-ea-fetch
+execution: serial
+---
+name: cosmos3-fetch
+resources:
+  cloud: kubernetes
+  cpus: 8+
+  memory: 32+
+  disk_size: 512
+envs:
+  # Runtime config can be overridden at launch for BYO forks/checkpoints.
+  NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"
+  NPA_COSMOS3_MODEL_ID: "nvidia/Cosmos3-Nano"
+  NPA_COSMOS3_CACHE: "/tmp/npa-cosmos3-cache"
+  NPA_COSMOS3_GITHUB_TOKEN_ENV: "GITHUB_TOKEN"
+  NPA_COSMOS3_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS3_NGC_API_KEY_ENV: "NGC_API_KEY"
+  NPA_COSMOS3_REQUIRE_NGC: "0"
+  NPA_RUNTIME_VENV: "/tmp/npa-runtime-venv"
+
+  # Serve config carried forward for Phase 2.
+  NPA_COSMOS3_REASONING_PARSER: "qwen3"
+  NPA_COSMOS3_TOOL_CALL_PARSER: "hermes"
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends git curl ca-certificates
+    else
+      echo "git is required for Cosmos3 source checkout" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if [ ! -x "${NPA_RUNTIME_VENV}/bin/python" ]; then
+    uv venv --python 3.11 --seed "${NPA_RUNTIME_VENV}"
+  fi
+  if [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d ./npa ]; then
+    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e ./npa
+  elif [ ! -x "${NPA_RUNTIME_VENV}/bin/npa" ] && [ -d /opt/nebius-physical-ai/npa ]; then
+    "${NPA_RUNTIME_VENV}/bin/python" -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+  "${NPA_RUNTIME_VENV}/bin/python" -m pip install "huggingface_hub[cli]>=0.23,<1.0"
+run: |
+  set -euo pipefail
+  export PATH="${NPA_RUNTIME_VENV}/bin:${HOME}/.local/bin:${PATH}"
+
+  test -n "${NPA_COSMOS3_SOURCE_REPO}"
+  test -n "${NPA_COSMOS3_MODEL_ID}"
+  hf_token_value="${!NPA_COSMOS3_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+
+  if [ "${NPA_COSMOS3_REQUIRE_NGC}" = "1" ]; then
+    ngc_token_value="${!NPA_COSMOS3_NGC_API_KEY_ENV-}"
+    test -n "${ngc_token_value}"
+  fi
+  github_token_value="${!NPA_COSMOS3_GITHUB_TOKEN_ENV-}"
+  if [ -z "${github_token_value}" ] && command -v gh >/dev/null 2>&1; then
+    gh auth status >/dev/null
+  fi
+
+  npa workbench cosmos check \
+    --source-repo-url "${NPA_COSMOS3_SOURCE_REPO}" \
+    --model-id "${NPA_COSMOS3_MODEL_ID}" \
+    --cache-dir "${NPA_COSMOS3_CACHE}" \
+    --github-token-env "${NPA_COSMOS3_GITHUB_TOKEN_ENV}" \
+    --hf-token-env "${NPA_COSMOS3_HF_TOKEN_ENV}" \
+    --ngc-api-key-env "${NPA_COSMOS3_NGC_API_KEY_ENV}" \
+    --reasoning-parser "${NPA_COSMOS3_REASONING_PARSER}" \
+    --tool-call-parser "${NPA_COSMOS3_TOOL_CALL_PARSER}" \
+    --output json
+
+  npa workbench cosmos fetch \
+    --source-repo-url "${NPA_COSMOS3_SOURCE_REPO}" \
+    --model-id "${NPA_COSMOS3_MODEL_ID}" \
+    --cache-dir "${NPA_COSMOS3_CACHE}" \
+    --github-token-env "${NPA_COSMOS3_GITHUB_TOKEN_ENV}" \
+    --hf-token-env "${NPA_COSMOS3_HF_TOKEN_ENV}" \
+    --ngc-api-key-env "${NPA_COSMOS3_NGC_API_KEY_ENV}" \
+    --reasoning-parser "${NPA_COSMOS3_REASONING_PARSER}" \
+    --tool-call-parser "${NPA_COSMOS3_TOOL_CALL_PARSER}" \
+    --output json
+
+  echo "Cosmos3 artifacts are staged in ${NPA_COSMOS3_CACHE}"

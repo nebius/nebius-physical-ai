@@ -118,6 +118,8 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
 @pytest.mark.parametrize(
     "command",
     [
+        "check",
+        "fetch",
         "deploy",
         "reload-env",
         "serve",
@@ -1542,11 +1544,21 @@ def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:
     assert "/opt/cosmos-data/outputs" in cmd
     assert "export HF_HOME=/opt/cosmos-data/hf_cache" in cmd
     assert "export HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache" in cmd
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
+    assert "COSMOS_DISABLE_SAFETY=0" in cmd
     assert "load_kwargs[\"safety_checker\"] = _NoOpSafetyChecker()" in cmd
     assert "HF_TOKEN=%s" in cmd
     assert "sudo tee -a /etc/npa-cosmos-server/env >/dev/null" in cmd
     assert "--local-dir /opt/cosmos-data/models/nvidia--Cosmos-Test" in cmd
+
+
+def test_cosmos_install_command_allows_explicit_guardrail_opt_out() -> None:
+    cmd = _build_install_command(
+        "nvidia/Cosmos-Test",
+        8080,
+        no_guardrails=True,
+    )
+
+    assert "COSMOS_DISABLE_SAFETY=1" in cmd
 
 
 def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
@@ -1572,13 +1584,36 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     cmd = ssh.run_or_raise.call_args.args[0]
     assert "COSMOS_MODEL_ID=nvidia/Cosmos-Test" in cmd
     assert "COSMOS_SERVER_PORT=9090" in cmd
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
+    assert "COSMOS_DISABLE_SAFETY=0" in cmd
     assert "/opt/cosmos/server.py" in cmd
     assert "from fastapi import FastAPI, HTTPException" in cmd
     assert '@app.get("/jobs/{job_id}")' in cmd
     assert "HF_TOKEN=%s" in cmd
     assert "sudo tee -a /etc/npa-cosmos-server/env >/dev/null" in cmd
     assert "sudo systemctl restart npa-cosmos-server" in cmd
+
+
+def test_cosmos_serve_allows_explicit_guardrail_opt_out(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run_or_raise.return_value = (0, "started", "")
+    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "serve",
+            "--model",
+            "nvidia/Cosmos-Test",
+            "--no-guardrails",
+        ],
+    )
+
+    assert result.exit_code == 0
+    cmd = ssh.run_or_raise.call_args.args[0]
+    assert "COSMOS_DISABLE_SAFETY=1" in cmd
 
 
 def test_cosmos_serve_maps_ssh_error(mocker) -> None:
