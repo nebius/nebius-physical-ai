@@ -40,15 +40,17 @@ def scan_text(text: str, denylist: re.Pattern[str], *, source: str) -> list[Scan
     return hits
 
 
-def tracked_files(repo_root: Path) -> list[Path]:
-    """Return Git-tracked files under the repository root."""
+def tracked_text_files(repo_root: Path) -> list[Path]:
+    """Return Git-tracked files that Git classifies as text."""
 
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "grep", "-Ilz", "-e", "", "--", "."],
         cwd=repo_root,
-        check=True,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    if result.returncode not in (0, 1):
+        result.check_returncode()
     names = [name for name in result.stdout.decode("utf-8").split("\0") if name]
     return [repo_root / name for name in names]
 
@@ -61,10 +63,7 @@ def scan_paths(paths: list[Path], denylist: re.Pattern[str], *, repo_root: Path)
         if not path.is_file():
             continue
         rel = str(path.relative_to(repo_root))
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = path.read_bytes().decode("utf-8", errors="ignore")
+        text = path.read_bytes().decode("utf-8", errors="ignore")
         hits.extend(scan_text(text, denylist, source=rel))
     return hits
 
@@ -106,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = args.repo_root.resolve()
     hits: list[ScanHit] = []
     if args.tree:
-        hits.extend(scan_paths(tracked_files(repo_root), denylist, repo_root=repo_root))
+        hits.extend(scan_paths(tracked_text_files(repo_root), denylist, repo_root=repo_root))
     if args.diff_range:
         hits.extend(scan_git_diff(repo_root, args.diff_range, denylist))
 
