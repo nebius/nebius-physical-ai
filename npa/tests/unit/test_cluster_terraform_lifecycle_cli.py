@@ -35,12 +35,14 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
         + "\n"
     )
     stream_calls: list[list[str]] = []
+    stream_envs: list[dict[str, str]] = []
 
     def fake_require_bin(binary: str) -> str:
         return binary
 
     def fake_stream(args, **kwargs):
         stream_calls.append(args)
+        stream_envs.append(kwargs.get("env", {}))
         return _completed()
 
     def fake_capture(args, **kwargs):
@@ -116,12 +118,21 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
 
     result = runner.invoke(
         app,
-        ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--capacity-block-group",
+            "capacityblockgroup-test",
+            "--skip-sky-smoke",
+        ],
     )
 
     assert result.exit_code == 0, result.output
     assert ["terraform", "init"] in stream_calls
     assert ["terraform", "apply", "-auto-approve"] in stream_calls
+    apply_env = stream_envs[stream_calls.index(["terraform", "apply", "-auto-approve"])]
+    assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
     assert any(call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"] for call in stream_calls)
     assert saved[-1].cluster_id == "mk8scluster-a"
     assert "16 allocatable GPUs" in result.output

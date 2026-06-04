@@ -84,6 +84,13 @@ variable "gpu_nodes_preset" {
   default     = "8gpu-192vcpu-1744gb"
 }
 
+variable "capacity_block_group" {
+  description = "Optional capacity block group ID used as a strict GPU node-group reservation selector. Leave empty for on-demand capacity."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "gpu_disk_size" {
   description = "GPU node boot disk size in GiB."
   type        = string

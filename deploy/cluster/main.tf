@@ -1,6 +1,11 @@
 locals {
-  create_subnet = trimspace(var.subnet_id) == ""
-  subnet_id     = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : var.subnet_id
+  create_subnet        = trimspace(var.subnet_id) == ""
+  subnet_id            = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : var.subnet_id
+  capacity_block_group = trimspace(var.capacity_block_group)
+  gpu_reservation_policy = local.capacity_block_group == "" ? null : {
+    policy          = "STRICT"
+    reservation_ids = [local.capacity_block_group]
+  }
 }
 
 resource "nebius_vpc_v1_network" "cluster" {
@@ -17,7 +22,7 @@ resource "nebius_vpc_v1_subnet" "cluster" {
 }
 
 module "k8s_training" {
-  source = "git::https://github.com/nebius/nebius-solutions-library.git//k8s-training?ref=main-v2026-05-25"
+  source = "./vendor/nebius-solutions-library/k8s-training"
 
   tenant_id = var.tenant_id
   parent_id = var.parent_id
@@ -43,6 +48,7 @@ module "k8s_training" {
   gpu_node_groups                 = 1
   gpu_nodes_platform              = var.gpu_nodes_platform
   gpu_nodes_preset                = var.gpu_nodes_preset
+  gpu_nodes_reservation_policy    = local.gpu_reservation_policy
   gpu_disk_size                   = var.gpu_disk_size
   gpu_nodes_driverfull_image      = false
   enable_gpu_cluster              = var.enable_gpu_cluster

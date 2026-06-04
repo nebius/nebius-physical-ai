@@ -53,6 +53,11 @@ def add_cmd(
         "--public-ip",
         help="Assign public IPs to GPU nodes in this NPA target profile.",
     ),
+    capacity_block_group: str = typer.Option(
+        "",
+        "--capacity-block-group",
+        help="Optional private capacity block group ID for strict reservation selection.",
+    ),
     autoscaling_min: int | None = typer.Option(
         None,
         "--autoscaling-min",
@@ -100,6 +105,7 @@ def add_cmd(
             timeout_minutes=timeout,
             k8s_version=(local_state.k8s_version if local_state else DEFAULT_K8S_VERSION),
             subnet_id=(local_state.subnet_id if local_state else ""),
+            capacity_block_group=capacity_block_group,
         )
         if config.gpu_type == "l40s":
             typer.echo(L40S_WARNING, err=True)

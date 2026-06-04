@@ -108,6 +108,29 @@ def test_create_gpu_node_group_uses_autoscaling_flags() -> None:
     assert "--autoscaling-max-node-count" in calls[0]
 
 
+def test_create_gpu_node_group_uses_capacity_block_group() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return _result(_node_group())
+
+    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None)
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="h100",
+        capacity_block_group="capacityblockgroup-test",
+    )
+
+    client.create_gpu_node_group(config, "mk8scluster-a")
+
+    assert "--template-reservation-policy-policy" in calls[0]
+    policy_index = calls[0].index("--template-reservation-policy-policy") + 1
+    assert calls[0][policy_index] == "strict"
+    ids_index = calls[0].index("--template-reservation-policy-reservation-ids") + 1
+    assert calls[0][ids_index] == "capacityblockgroup-test"
+
+
 def test_get_node_group_uses_name_fallback_after_id_miss() -> None:
     calls: list[list[str]] = []
 

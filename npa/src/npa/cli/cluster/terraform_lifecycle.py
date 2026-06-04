@@ -52,6 +52,14 @@ def up_cmd(
         "--sky-gpus",
         help="SkyPilot GPU demand for the smoke task. Defaults to auto-detecting the first Kubernetes GPU.",
     ),
+    capacity_block_group: str = typer.Option(
+        "",
+        "--capacity-block-group",
+        help=(
+            "Optional private capacity block group ID for strict GPU node-group "
+            "reservation selection. Equivalent to TF_VAR_capacity_block_group."
+        ),
+    ),
     validation_timeout: int = typer.Option(
         60,
         "--validation-timeout",
@@ -66,10 +74,12 @@ def up_cmd(
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
     env = _terraform_env(nebius_bin)
+    _apply_capacity_block_group_env(env, capacity_block_group)
 
     typer.echo(f"Terraform directory: {tf_dir}")
     _run_stream([terraform_bin, "init"], cwd=tf_dir, env=env, timeout=600)
     tfvars = _read_tfvars(tf_dir)
+    _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
     _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
     _preflight_filestore_quota(nebius_bin, tfvars, env)
 
@@ -237,6 +247,18 @@ def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
             key, raw_value = match.groups()
             values[key] = _parse_tfvar_scalar(raw_value)
     return values
+
+
+def _apply_capacity_block_group_env(env: dict[str, str], capacity_block_group: str) -> None:
+    value = capacity_block_group.strip()
+    if value:
+        env["TF_VAR_capacity_block_group"] = value
+
+
+def _apply_capacity_block_group_tfvars(tfvars: dict[str, Any], capacity_block_group: str) -> None:
+    value = capacity_block_group.strip()
+    if value:
+        tfvars["capacity_block_group"] = value
 
 
 def _parse_tfvar_scalar(raw_value: str) -> Any:

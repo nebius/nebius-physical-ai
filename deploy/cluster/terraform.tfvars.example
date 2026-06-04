@@ -13,6 +13,11 @@ gpu_nodes_count    = 2
 gpu_nodes_platform = "gpu-rtx6000"
 gpu_nodes_preset   = "8gpu-192vcpu-1744gb"
 
+# Optional private capacity reservation selector. Prefer passing this through
+# a gitignored terraform.tfvars file, TF_VAR_capacity_block_group, or
+# `terraform apply -var capacity_block_group=<id>`.
+capacity_block_group = ""
+
 enable_filestore              = true
 existing_filestore            = ""
 filestore_disk_size_gibibytes = 1024

@@ -20,5 +20,5 @@ output "created_subnet_id" {
 
 output "k8s_training_ref" {
   description = "Pinned nebius-solutions-library release used by this wrapper."
-  value       = "main-v2026-05-25"
+  value       = "main-v2026-05-25+local-cluster-patches"
 }
