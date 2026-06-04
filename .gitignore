@@ -10,6 +10,7 @@ logs/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+!deploy/cluster/.terraform.lock.hcl
 *.tfvars
 !*.tfvars.example
 tfplan

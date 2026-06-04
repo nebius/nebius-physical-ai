@@ -5,24 +5,37 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import typer
 
+from npa.cli.cluster.terraform_lifecycle import _read_tfvars, terraform_status
 from npa.cluster.api import ClusterInfo, MK8sClient
 from npa.cluster.config import DEFAULT_REGION, resolve_project_id
 from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError
-from npa.cluster.state import ClusterState, list_local_clusters, load_cluster_state, save_cluster_state
+from npa.cluster.state import (
+    ClusterState,
+    kubeconfig_file,
+    list_local_clusters,
+    load_cluster_state,
+    save_cluster_state,
+)
 
 
 def status_cmd(
     name: str = typer.Option("", "--name", help="NPA cluster target name. Lists all known targets when omitted."),
     output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
+    terraform_dir: Path | None = typer.Option(
+        None,
+        "--terraform-dir",
+        help="Terraform cluster directory to include outputs from.",
+    ),
 ) -> None:
     """Show NPA cluster target state from Nebius and the local cache."""
 
-    _emit_status(name=name, output_format=output_format, project_id=project_id)
+    _emit_status(name=name, output_format=output_format, project_id=project_id, terraform_dir=terraform_dir)
 
 
 def list_cmd(
@@ -34,13 +47,13 @@ def list_cmd(
     _emit_status(name="", output_format=output_format, project_id=project_id)
 
 
-def _emit_status(*, name: str, output_format: str, project_id: str) -> None:
+def _emit_status(*, name: str, output_format: str, project_id: str, terraform_dir: Path | None = None) -> None:
     fmt = output_format.lower()
     if fmt not in {"table", "json"}:
         raise typer.BadParameter("--format must be table or json")
     try:
         resolved_project_id = _resolve_project_for_status(project_id)
-        rows = _collect_rows(name=name, project_id=resolved_project_id)
+        rows = _collect_rows(name=name, project_id=resolved_project_id, terraform_dir=terraform_dir)
         if fmt == "json":
             typer.echo(json.dumps(rows, indent=2, sort_keys=True))
         else:
@@ -59,10 +72,11 @@ def _resolve_project_for_status(explicit_project_id: str) -> str:
         return ""
 
 
-def _collect_rows(*, name: str, project_id: str) -> list[dict[str, Any]]:
+def _collect_rows(*, name: str, project_id: str, terraform_dir: Path | None = None) -> list[dict[str, Any]]:
     client = MK8sClient(timeout=120, poll_interval=30.0)
     local_by_name = {state.name: state for state in list_local_clusters()}
     remote_by_name: dict[str, ClusterInfo] = {}
+    terraform_row = _terraform_row(terraform_dir)
 
     if name:
         local_state = load_cluster_state(name)
@@ -79,11 +93,13 @@ def _collect_rows(*, name: str, project_id: str) -> list[dict[str, Any]]:
             except ClusterNotFoundError:
                 pass
         target_names = [name]
+        if terraform_row and terraform_row["name"] == name:
+            local_by_name.setdefault(name, _state_from_terraform_row(terraform_row))
     else:
         if project_id:
             for remote in client.list_clusters(project_id):
                 remote_by_name[remote.name] = remote
-        target_names = sorted(set(local_by_name) | set(remote_by_name))
+        target_names = sorted(set(local_by_name) | set(remote_by_name) | ({terraform_row["name"]} if terraform_row else set()))
 
     rows: list[dict[str, Any]] = []
     for target_name in target_names:
@@ -94,8 +110,71 @@ def _collect_rows(*, name: str, project_id: str) -> list[dict[str, Any]]:
                 remote = client.get_cluster(local_state.cluster_id, project_id=local_state.project_id or project_id)
             except ClusterNotFoundError:
                 pass
-        rows.append(_row_for_cluster(client, target_name, local_state, remote))
+        row = _row_for_cluster(client, target_name, local_state, remote)
+        if terraform_row is not None and terraform_row["name"] == target_name:
+            row = _merge_terraform_row(row, terraform_row)
+        rows.append(row)
     return rows
+
+
+def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
+    if terraform_dir is None:
+        return None
+    outputs = terraform_status(terraform_dir)
+    if not outputs:
+        return None
+    cluster = outputs.get("kube_cluster", {}).get("value") or {}
+    if not isinstance(cluster, dict) or not cluster.get("name"):
+        return None
+    endpoints = cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    filesystem = outputs.get("shared_filesystem", {}).get("value") or {}
+    shared_filesystem_id = str(filesystem.get("id") or "") if isinstance(filesystem, dict) else ""
+    filesystem_csi = outputs.get("filesystem_csi", {}).get("value") or {}
+    if not shared_filesystem_id:
+        filesystem_csi = {}
+    tfvars = _read_tfvars(terraform_dir)
+    name = str(cluster.get("name"))
+    return {
+        "name": name,
+        "cluster_id": str(cluster.get("id") or ""),
+        "region": str(tfvars.get("region") or DEFAULT_REGION),
+        "endpoint": str(endpoints.get("public_endpoint") or ""),
+        "kubeconfig_path": str(kubeconfig_file(name)),
+        "terraform_dir": str(terraform_dir),
+        "k8s_training_ref": str(outputs.get("k8s_training_ref", {}).get("value") or ""),
+        "shared_filesystem_id": shared_filesystem_id,
+        "filesystem_csi_storage_class": (
+            str(filesystem_csi.get("storage_class_name") or "") if isinstance(filesystem_csi, dict) else ""
+        ),
+        "filesystem_csi_status": str(filesystem_csi.get("status") or "") if isinstance(filesystem_csi, dict) else "",
+    }
+
+
+def _state_from_terraform_row(row: dict[str, Any]) -> ClusterState:
+    return ClusterState(
+        name=str(row["name"]),
+        cluster_id=str(row.get("cluster_id") or ""),
+        project_id="",
+        region=str(row.get("region") or DEFAULT_REGION),
+        node_count=0,
+        node_platform="",
+        node_preset="",
+        k8s_version="",
+        subnet_id="",
+        created_at="",
+        endpoint=str(row.get("endpoint") or ""),
+        kubeconfig_path=str(row.get("kubeconfig_path") or ""),
+    )
+
+
+def _merge_terraform_row(row: dict[str, Any], terraform_row: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(row)
+    for key, value in terraform_row.items():
+        if key in {"name", "cluster_id", "endpoint", "kubeconfig_path"}:
+            merged[key] = merged.get(key) or value
+        else:
+            merged[key] = value
+    return merged
 
 
 def _row_for_cluster(
@@ -122,6 +201,7 @@ def _row_for_cluster(
         "node_count": node_count,
         "node_group_id": node_group_id,
         "endpoint": endpoint,
+        "kubeconfig_path": local_state.kubeconfig_path if local_state else "",
         "age": _age(created_at),
         "created_at": created_at,
         "project_id": (remote.project_id if remote is not None else "") or (local_state.project_id if local_state else ""),
@@ -142,7 +222,7 @@ def _row_for_cluster(
 def _format_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "No clusters found."
-    headers = ["NAME", "CLUSTER_ID", "STATE", "REGION", "NODES", "ENDPOINT", "AGE"]
+    headers = ["NAME", "CLUSTER_ID", "STATE", "REGION", "NODES", "ENDPOINT", "KUBECONFIG", "AGE"]
     values = [
         [
             str(row["name"]),
@@ -151,6 +231,7 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
             str(row["region"]),
             str(row["node_count"]),
             str(row["endpoint"]),
+            str(row["kubeconfig_path"]),
             str(row["age"]),
         ]
         for row in rows
