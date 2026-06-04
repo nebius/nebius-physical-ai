@@ -100,6 +100,10 @@ def test_cosmos_registers_after_terraform_before_app_install_and_marks_failure(
         "npa.cli.cosmos.resolve_credentials",
         return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
     )
+    validate_hf_access = mocker.patch(
+        "npa.cli.cosmos.validate_hf_access",
+        return_value=mocker.MagicMock(ok=True, error=""),
+    )
     mocker.patch("npa.cli.cosmos.list_projects", return_value={})
     mocker.patch(
         "npa.cli.cosmos.write_config",
@@ -139,6 +143,7 @@ def test_cosmos_registers_after_terraform_before_app_install_and_marks_failure(
 
     assert result.exit_code == 1
     assert "Cosmos installation failed: install boom" in result.output
+    validate_hf_access.assert_called_once()
     assert events == [
         ("write", "provisioned"),
         ("status", "installing"),

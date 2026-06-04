@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +11,7 @@ from typer.testing import CliRunner
 
 from npa.cli.groot import (
     COSMOS_REASON_REVISION,
+    COSMOS_REASON_MODEL,
     DEFAULT_MODEL,
     GROOT_CONTAINER_ENV_FILE,
     GROOT_CONTAINER_NAME,
@@ -137,12 +137,16 @@ def test_groot_list_filters_to_groot_workbenches(mocker) -> None:
     assert "train" not in result.output
 
 
-@pytest.mark.skipif(
-    not os.environ.get("HF_TOKEN"),
-    reason="requires HF_TOKEN",
-)
 def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
+    )
+    validate_hf_access = mocker.patch(
+        "npa.cli.groot.validate_hf_access",
+        return_value=SimpleNamespace(ok=True, error=""),
+    )
     mocker.patch("npa.cli.groot.list_projects", return_value={})
     init = mocker.patch("npa.cli.groot.provisioner.init")
     apply = mocker.patch("npa.cli.groot.provisioner.apply")
@@ -171,6 +175,10 @@ def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     assert "Deploy complete" in result.output
     assert "gpu-l40s-a" in result.output
     assert "http://<pending>:8080" in result.output
+    assert [call.args for call in validate_hf_access.call_args_list] == [
+        ("hf-test", DEFAULT_MODEL),
+        ("hf-test", COSMOS_REASON_MODEL),
+    ]
     init.assert_not_called()
     apply.assert_not_called()
 

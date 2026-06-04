@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from npa.clients.huggingface import validate_hf_access
 
@@ -33,13 +34,26 @@ def test_validate_hf_access_rejects_403() -> None:
     assert result.status_code == 403
 
 
-def validate_hf_access_with_status(status_code: int):
-    import pytest
+def test_live_hf_access_is_blocked_by_unit_guard() -> None:
+    with pytest.raises(AssertionError, match="Live Hugging Face HTTP is blocked"):
+        validate_hf_access("hf-token", "nvidia/model")
 
+
+def test_validate_hf_access_reports_rate_limit_without_network() -> None:
+    result = validate_hf_access_with_status(429)
+
+    assert result.ok is False
+    assert result.status_code == 429
+    assert (
+        result.error
+        == "Unable to validate Hugging Face access to nvidia/model: HTTP 429"
+    )
+
+
+def validate_hf_access_with_status(status_code: int):
     mocker = pytest.MonkeyPatch()
     try:
         mocker.setattr("httpx.head", lambda *args, **kwargs: httpx.Response(status_code))
         return validate_hf_access("hf-token", "nvidia/model")
     finally:
         mocker.undo()
-
