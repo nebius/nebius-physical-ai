@@ -67,8 +67,8 @@ Real NPA setup surfaces are:
 4. For GPU inference, use the text-to-image SkyPilot workflow. The setup skill
    should point to that workflow; it should not create a skill launcher command.
 
-5. Keep guardrails on by default. The only opt-out is an explicit user request
-   mapped to `NPA_COSMOS3_NO_GUARDRAILS=1` in the inference workflow.
+5. Keep guardrails on. Do not add a customer-facing guardrails-off CLI, SDK, or
+   workflow path.
 
 ## Credential Inputs
 

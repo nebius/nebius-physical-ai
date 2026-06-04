@@ -131,10 +131,9 @@ def build_cosmos3_inference_args(
     output_dir: str,
     checkpoint_path: str = "Cosmos3-Nano",
     seed: int = 0,
-    no_guardrails: bool = False,
     parallelism_preset: str = "latency",
 ) -> list[str]:
-    """Build Cosmos3 inference script arguments with guardrails on by default."""
+    """Build Cosmos3 inference script arguments with guardrails on."""
 
     args = [
         "--parallelism-preset",
@@ -146,8 +145,6 @@ def build_cosmos3_inference_args(
         "--checkpoint-path",
         checkpoint_path,
     ]
-    if no_guardrails:
-        args.append("--no-guardrails")
     args.append(f"--seed={seed}")
     return args
 

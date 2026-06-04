@@ -21,3 +21,6 @@ workflows with Nebius Physical AI Workbench.
 - [SONIC Export and Eval Runbook](sonic-eval-runbook.md): export a trained
   SONIC checkpoint to ONNX, run reference locomotion eval, and swap in a
   config-driven external eval container.
+- [Cosmos 3 Augmentation and Reasoning](cosmos3-augmentation-reasoning.md):
+  run controlled-generation augmentation and structured VLM reasoning through
+  the CLI, SDK, or standalone raw SkyPilot YAML.

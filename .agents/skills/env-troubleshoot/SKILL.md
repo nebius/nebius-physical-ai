@@ -62,7 +62,7 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
    p = Path("npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml")
    doc = yaml.safe_load(p.read_text())
    print(doc["name"])
-   print(doc["envs"]["NPA_COSMOS3_NO_GUARDRAILS"] == "")
+   print("--no-guardrails" not in doc["envs"]["NPA_COSMOS3_INFER_COMMAND"])
    PY
    ```
 
@@ -115,4 +115,4 @@ When the failure remains unresolved, give the user a concise report with:
 - OS, Python, torch, and CUDA versions.
 - Whether `check` passed and whether `fetch --skip-checkpoint` passed.
 - Full traceback with secrets removed.
-- Whether guardrails were left on or explicitly disabled.
+- Confirmation that guardrails were left on.

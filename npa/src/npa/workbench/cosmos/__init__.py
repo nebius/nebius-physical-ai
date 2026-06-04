@@ -13,6 +13,15 @@ from npa.workbench.cosmos.cosmos3 import (
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
+from npa.workbench.cosmos.workflows import (
+    COSMOS_AUGMENT_YAML,
+    COSMOS_ATTRIBUTION,
+    COSMOS_REASON_YAML,
+    CosmosSkyLaunchResult,
+    build_cosmos_augment_env,
+    build_cosmos_reason_env,
+    launch_cosmos_sky_workflow,
+)
 
 ensure_ingress = make_cli_wrapper(
     "npa.cli.cosmos", "ensure_ingress_cmd", "Ensure ingress for a Cosmos workbench."
@@ -37,6 +46,16 @@ optimize = make_cli_wrapper(
     "npa.cli.cosmos", "optimize_cmd", "Run Cosmos optimization."
 )
 infer = make_cli_wrapper("npa.cli.cosmos", "infer_cmd", "Run Cosmos inference.")
+augment = make_cli_wrapper(
+    "npa.cli.cosmos",
+    "augment_cmd",
+    "Run Cosmos controlled-generation augmentation.",
+)
+reason = make_cli_wrapper(
+    "npa.cli.cosmos",
+    "reason_cmd",
+    "Run Cosmos reasoning/VLM evaluation.",
+)
 status = make_cli_wrapper("npa.cli.cosmos", "status_cmd", "Show Cosmos status.")
 system_info = make_cli_wrapper(
     "npa.cli.cosmos", "system_info_cmd", "Show Cosmos system information."
@@ -46,6 +65,10 @@ __all__ = [
     "check_cosmos3_access",
     "fetch_cosmos3_artifacts",
     "build_cosmos3_inference_args",
+    "CosmosSkyLaunchResult",
+    "build_cosmos_augment_env",
+    "build_cosmos_reason_env",
+    "launch_cosmos_sky_workflow",
     "ensure_ingress",
     "register_byovm",
     "check",
@@ -57,6 +80,8 @@ __all__ = [
     "finetune",
     "optimize",
     "infer",
+    "augment",
+    "reason",
     "status",
     "system_info",
 ]

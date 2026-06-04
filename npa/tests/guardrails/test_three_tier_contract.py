@@ -17,6 +17,43 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
     CapabilityContract(
+        name="cosmos/augment",
+        cli_module="npa.cli.cosmos",
+        cli_callback="augment_cmd",
+        sdk_module="npa.sdk.workbench.cosmos",
+        sdk_attr="augment",
+        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos3-augment.yaml"),
+        params=(
+            ParameterContract("source", "source", "NPA_COSMOS_AUGMENT_SOURCE", "--source"),
+            ParameterContract("output_path", "output_path", "NPA_COSMOS_AUGMENT_OUTPUT", "--output-path"),
+            ParameterContract("prompt", "prompt", "NPA_COSMOS_AUGMENT_PROMPT", "--prompt"),
+            ParameterContract("control", "control", "NPA_COSMOS_AUGMENT_CONTROL", "--control"),
+            ParameterContract("control_config", "control_config", "NPA_COSMOS_AUGMENT_CONTROL_CONFIG", "--control-config"),
+            ParameterContract("model_size", "model_size", "NPA_COSMOS_AUGMENT_MODEL_SIZE", "--model-size"),
+            ParameterContract("variants", "variants", "NPA_COSMOS_AUGMENT_VARIANTS", "--variants"),
+            ParameterContract("replicas", "replicas", "NPA_COSMOS_REPLICAS", "--replicas"),
+            ParameterContract("image", "image", "NPA_COSMOS_IMAGE", "--image"),
+            ParameterContract("s3_endpoint", "s3_endpoint", "AWS_ENDPOINT_URL", "--s3-endpoint"),
+        ),
+    ),
+    CapabilityContract(
+        name="cosmos/reason",
+        cli_module="npa.cli.cosmos",
+        cli_callback="reason_cmd",
+        sdk_module="npa.sdk.workbench.cosmos",
+        sdk_attr="reason",
+        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos3-reason.yaml"),
+        params=(
+            ParameterContract("input_path", "input_path", "NPA_COSMOS_REASON_INPUT", "--input-path"),
+            ParameterContract("output_path", "output_path", "NPA_COSMOS_REASON_OUTPUT", "--output-path"),
+            ParameterContract("criteria_prompt", "criteria_prompt", "NPA_COSMOS_REASON_CRITERIA", "--criteria-prompt"),
+            ParameterContract("model_size", "model_size", "NPA_COSMOS_REASON_MODEL_SIZE", "--model-size"),
+            ParameterContract("replicas", "replicas", "NPA_COSMOS_REPLICAS", "--replicas"),
+            ParameterContract("image", "image", "NPA_COSMOS_IMAGE", "--image"),
+            ParameterContract("s3_endpoint", "s3_endpoint", "AWS_ENDPOINT_URL", "--s3-endpoint"),
+        ),
+    ),
+    CapabilityContract(
         name="sonic/train",
         cli_module="npa.cli.workbench.sonic.train",
         cli_callback="train_cmd",
@@ -117,7 +154,6 @@ def test_current_three_tier_contracts_are_coherent() -> None:
 def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
     contracted = {contract.name.split("/", 1)[0] for contract in CONTRACTS}
     seam = {
-        "cosmos",
         "data",
         "fiftyone",
         "genesis",
@@ -136,9 +172,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
 def test_contract_catches_deliberately_broken_yaml_fixture(tmp_path: Path) -> None:
     source = REPO_ROOT / CONTRACTS[0].yaml_path
     docs = load_yaml_documents(source)
-    task_doc = docs[1]
+    task_doc = docs[0]
     envs = dict(task_doc["envs"])
-    envs.pop("SONIC_CHECKPOINT")
+    envs.pop("NPA_COSMOS_AUGMENT_SOURCE")
     task_doc["envs"] = envs
     broken = tmp_path / "broken.yaml"
     import yaml
@@ -148,7 +184,10 @@ def test_contract_catches_deliberately_broken_yaml_fixture(tmp_path: Path) -> No
 
     failures = validate_contract(broken_contract, repo_root=REPO_ROOT)
 
-    assert any("YAML env missing: SONIC_CHECKPOINT" in failure for failure in failures)
+    assert any(
+        "YAML env missing: NPA_COSMOS_AUGMENT_SOURCE" in failure
+        for failure in failures
+    )
 
 
 def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:

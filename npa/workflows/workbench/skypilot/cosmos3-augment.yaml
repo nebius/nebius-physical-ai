@@ -1,0 +1,225 @@
+# Standalone Cosmos controlled-generation augmentation workflow.
+#
+# Run with plain SkyPilot, overriding the image, GPU, input, and output:
+#   sky launch --infra kubernetes --gpus <gpu-type>:1 --image-id docker:<registry>/npa-cosmos:<tag> \
+#     --env NPA_COSMOS_AUGMENT_SOURCE=s3://example-bucket/input/sim.mp4 \
+#     --env NPA_COSMOS_AUGMENT_OUTPUT=s3://example-bucket/output/cosmos-augment/ \
+#     --secret HF_TOKEN \
+#     npa/workflows/workbench/skypilot/cosmos3-augment.yaml
+#
+# SkyPilot 0.12.2 does not expand shell variables inside envs at submit time, so
+# real values are supplied with --env at launch or consumed in run: below.
+name: cosmos3-augment
+resources:
+  cloud: kubernetes
+  cpus: 16+
+  memory: 128+
+  disk_size: 1024
+  image_id: "docker:${NPA_COSMOS_IMAGE}"
+envs:
+  NPA_COSMOS_IMAGE: "example.invalid/npa-cosmos:3.0.0"
+  NPA_COSMOS_AUGMENT_SOURCE: "s3://example-bucket/cosmos/input/sim-render.mp4"
+  NPA_COSMOS_AUGMENT_OUTPUT: "s3://example-bucket/cosmos/output/augment/"
+  NPA_COSMOS_AUGMENT_PROMPT: "A photorealistic robotics workspace preserving the source motion and object layout."
+  NPA_COSMOS_AUGMENT_CONTROL: "edge"
+  NPA_COSMOS_AUGMENT_CONTROL_CONFIG: "{}"
+  NPA_COSMOS_AUGMENT_MODEL_SIZE: "transfer2.5-2b"
+  NPA_COSMOS_AUGMENT_VARIANTS: "1"
+  NPA_COSMOS_REPLICAS: "1"
+  NPA_COSMOS_TRANSFER_SOURCE_REPO: "https://github.com/nvidia-cosmos/cosmos-transfer2.5.git"
+  NPA_COSMOS_TRANSFER_MODEL_ID: "nvidia/Cosmos-Transfer2.5-2B"
+  NPA_COSMOS_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS_CACHE: "/tmp/npa-cosmos-cache"
+  NPA_COSMOS_OUTPUT_DIR: "/tmp/npa-cosmos-augment"
+  NPA_COSMOS_ATTRIBUTION: "Built on NVIDIA Cosmos"
+  AWS_ENDPOINT_URL: ""
+  AWS_PROFILE: ""
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl ffmpeg git git-lfs wget
+    fi
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  python3 -m pip install --user --upgrade "awscli>=1.32" "huggingface_hub[cli]>=0.23"
+run: |
+  set -euo pipefail
+  export PATH="${HOME}/.local/bin:${PATH}"
+  export HF_HOME="${NPA_COSMOS_CACHE}/hf"
+  export HUGGINGFACE_HUB_CACHE="${NPA_COSMOS_CACHE}/hf"
+
+  test -n "${NPA_COSMOS_IMAGE}"
+  test -n "${NPA_COSMOS_AUGMENT_SOURCE}"
+  test -n "${NPA_COSMOS_AUGMENT_OUTPUT}"
+  test -n "${NPA_COSMOS_AUGMENT_CONTROL}"
+  test -n "${NPA_COSMOS_REPLICAS}"
+  if [ -n "${AWS_ENDPOINT_URL}" ]; then
+    export AWS_ENDPOINT_URL
+  fi
+  aws_s3_cp() {
+    if [ -n "${AWS_ENDPOINT_URL}" ]; then
+      aws --endpoint-url "${AWS_ENDPOINT_URL}" s3 cp "$@"
+    else
+      aws s3 cp "$@"
+    fi
+  }
+  hf_token_value="${!NPA_COSMOS_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+
+  rm -rf "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
+  mkdir -p "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
+
+  transfer_dir="${NPA_COSMOS_CACHE}/transfer25"
+  git clone --depth 1 "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" "${transfer_dir}"
+  cd "${transfer_dir}"
+  if command -v git-lfs >/dev/null 2>&1; then
+    git lfs install --local
+  fi
+  uv sync --extra=cu130
+  export LD_LIBRARY_PATH=
+
+  input_dir="${NPA_COSMOS_OUTPUT_DIR}/inputs"
+  mkdir -p "${input_dir}"
+  source_local="${input_dir}/source$(python - <<'PY'
+  import os
+  import subprocess
+  from pathlib import Path
+  suffix = Path(os.environ["NPA_COSMOS_AUGMENT_SOURCE"].split("?", 1)[0]).suffix or ".mp4"
+  print(suffix)
+  PY
+  )"
+  case "${NPA_COSMOS_AUGMENT_SOURCE}" in
+    s3://*)
+      aws_s3_cp "${NPA_COSMOS_AUGMENT_SOURCE}" "${source_local}"
+      ;;
+    http://*|https://*)
+      curl -L "${NPA_COSMOS_AUGMENT_SOURCE}" -o "${source_local}"
+      ;;
+    *)
+      cp "${NPA_COSMOS_AUGMENT_SOURCE}" "${source_local}"
+      ;;
+  esac
+
+  spec_dir="${NPA_COSMOS_OUTPUT_DIR}/specs"
+  mkdir -p "${spec_dir}"
+  python - <<'PY'
+  import json
+  import os
+  import subprocess
+  from pathlib import Path
+
+  control = os.environ["NPA_COSMOS_AUGMENT_CONTROL"].strip().lower()
+  aliases = {"blur": "vis", "visual": "vis", "segmentation": "seg", "rgb": "vis"}
+  control = aliases.get(control, control)
+  if control not in {"edge", "vis", "depth", "seg"}:
+      raise SystemExit(f"unsupported control modality: {control}")
+
+  config_text = os.environ.get("NPA_COSMOS_AUGMENT_CONTROL_CONFIG", "").strip() or "{}"
+  control_config = json.loads(config_text)
+  if not isinstance(control_config, dict):
+      raise SystemExit("NPA_COSMOS_AUGMENT_CONTROL_CONFIG must be a JSON object")
+
+  source_local = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"]) / "inputs" / ("source" + Path(os.environ["NPA_COSMOS_AUGMENT_SOURCE"].split("?", 1)[0]).suffix)
+  if not source_local.exists():
+      matches = sorted((Path(os.environ["NPA_COSMOS_OUTPUT_DIR"]) / "inputs").glob("source.*"))
+      if not matches:
+          raise SystemExit("source input was not downloaded")
+      source_local = matches[0]
+
+  variants = int(os.environ.get("NPA_COSMOS_AUGMENT_VARIANTS", "1"))
+  spec_dir = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"]) / "specs"
+  input_dir = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"]) / "inputs"
+  for index in range(variants):
+      block = dict(control_config)
+      if control in {"depth", "seg"} and "control_path" not in block:
+          raise SystemExit(f"{control} control requires control_config.control_path")
+      control_path = str(block.get("control_path", ""))
+      if control_path.startswith(("s3://", "http://", "https://")):
+          suffix = Path(control_path.split("?", 1)[0]).suffix or ".mp4"
+          local_control = input_dir / f"control-{index}{suffix}"
+          if control_path.startswith("s3://"):
+              cmd = ["aws"]
+              endpoint = os.environ.get("AWS_ENDPOINT_URL", "")
+              if endpoint:
+                  cmd.extend(["--endpoint-url", endpoint])
+              cmd.extend(["s3", "cp", control_path, str(local_control)])
+              subprocess.run(cmd, check=True)
+          else:
+              subprocess.run(["curl", "-L", control_path, "-o", str(local_control)], check=True)
+          block["control_path"] = str(local_control)
+      block.setdefault("control_weight", 1.0)
+      spec = {
+          "name": f"npa_cosmos_augment_{index}",
+          "seed": index,
+          "prompt": os.environ["NPA_COSMOS_AUGMENT_PROMPT"],
+          "video_path": str(source_local),
+          "guidance": 3,
+          control: block,
+      }
+      (spec_dir / f"augment-{index}.json").write_text(json.dumps(spec, indent=2), encoding="utf-8")
+  PY
+
+  model_args=()
+  case "${NPA_COSMOS_AUGMENT_MODEL_SIZE}" in
+    edge/distilled|transfer2.5-2b-distilled-edge)
+      model_args+=(--model=edge/distilled)
+      ;;
+  esac
+
+  for spec in "${spec_dir}"/augment-*.json; do
+    variant_name="$(basename "${spec}" .json)"
+    .venv/bin/python examples/inference.py \
+      -i "${spec}" \
+      -o "${NPA_COSMOS_OUTPUT_DIR}/generated/${variant_name}" \
+      "${model_args[@]}"
+  done
+
+  python - <<'PY'
+  import json
+  import os
+  from pathlib import Path
+
+  root = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"])
+  files = [
+      str(path)
+      for path in sorted((root / "generated").rglob("*"))
+      if path.is_file() and path.suffix.lower() in {".mp4", ".jpg", ".jpeg", ".png", ".json"}
+  ]
+  media = [path for path in files if Path(path).suffix.lower() in {".mp4", ".jpg", ".jpeg", ".png"}]
+  if not media:
+      raise SystemExit("no generated media artifacts found")
+  metadata = {
+      "status": "ok",
+      "workflow": "cosmos-augment",
+      "backend": "cosmos-transfer2.5",
+      "backend_reason": "Cosmos 3 controlled transfer is present in code but not yet exposed in public sample docs; Transfer 2.5 is the documented controlled-generation backend.",
+      "model": os.environ["NPA_COSMOS_TRANSFER_MODEL_ID"],
+      "control": os.environ["NPA_COSMOS_AUGMENT_CONTROL"],
+      "guardrails": "on",
+      "attribution": os.environ["NPA_COSMOS_ATTRIBUTION"],
+      "artifacts": files,
+  }
+  (root / "result.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+  print(json.dumps(metadata, sort_keys=True))
+  PY
+
+  if [ -n "${NPA_COSMOS_AUGMENT_OUTPUT}" ]; then
+    case "${NPA_COSMOS_AUGMENT_OUTPUT}" in
+      s3://*)
+        aws_s3_cp --recursive "${NPA_COSMOS_OUTPUT_DIR}/generated" "${NPA_COSMOS_AUGMENT_OUTPUT%/}/generated/"
+        aws_s3_cp "${NPA_COSMOS_OUTPUT_DIR}/result.json" "${NPA_COSMOS_AUGMENT_OUTPUT%/}/result.json"
+        ;;
+      *)
+        mkdir -p "${NPA_COSMOS_AUGMENT_OUTPUT}"
+        cp -R "${NPA_COSMOS_OUTPUT_DIR}/generated" "${NPA_COSMOS_AUGMENT_OUTPUT}/"
+        cp "${NPA_COSMOS_OUTPUT_DIR}/result.json" "${NPA_COSMOS_AUGMENT_OUTPUT}/result.json"
+        ;;
+    esac
+  fi

@@ -1,0 +1,207 @@
+# Standalone Cosmos 3 reasoning / VLM-eval workflow.
+#
+# Run with plain SkyPilot, overriding the image, GPU, input, and output:
+#   sky launch --infra kubernetes --gpus <gpu-type>:1 --image-id docker:<registry>/npa-cosmos:<tag> \
+#     --env NPA_COSMOS_REASON_INPUT=s3://example-bucket/input/rollout.mp4 \
+#     --env NPA_COSMOS_REASON_OUTPUT=s3://example-bucket/output/cosmos-reason/ \
+#     --env 'NPA_COSMOS_REASON_CRITERIA=Decide whether the robot completes the task.' \
+#     --secret HF_TOKEN \
+#     npa/workflows/workbench/skypilot/cosmos3-reason.yaml
+#
+# SkyPilot 0.12.2 does not expand shell variables inside envs at submit time, so
+# real values are supplied with --env at launch or consumed in run: below.
+name: cosmos3-reason
+resources:
+  cloud: kubernetes
+  cpus: 16+
+  memory: 128+
+  disk_size: 1024
+  image_id: "docker:${NPA_COSMOS_IMAGE}"
+envs:
+  NPA_COSMOS_IMAGE: "example.invalid/npa-cosmos:3.0.0"
+  NPA_COSMOS_REASON_INPUT: "s3://example-bucket/cosmos/input/rollout.mp4"
+  NPA_COSMOS_REASON_OUTPUT: "s3://example-bucket/cosmos/output/reason/"
+  NPA_COSMOS_REASON_CRITERIA: "Evaluate whether the physical task succeeds. Return JSON."
+  NPA_COSMOS_REASON_MODEL_SIZE: "nano"
+  NPA_COSMOS_REASON_CHECKPOINT: "Cosmos3-Nano"
+  NPA_COSMOS_REASON_MODEL_ID: "nvidia/Cosmos3-Nano"
+  NPA_COSMOS_REPLICAS: "1"
+  NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"
+  NPA_COSMOS_HF_TOKEN_ENV: "HF_TOKEN"
+  NPA_COSMOS_CACHE: "/tmp/npa-cosmos-cache"
+  NPA_COSMOS_OUTPUT_DIR: "/tmp/npa-cosmos-reason"
+  NPA_COSMOS_UV_GROUP: "cu130-train"
+  NPA_COSMOS_ATTRIBUTION: "Built on NVIDIA Cosmos"
+  AWS_ENDPOINT_URL: ""
+  AWS_PROFILE: ""
+setup: |
+  set -euo pipefail
+  if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl ffmpeg git git-lfs libx11-dev tree wget
+    fi
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  python3 -m pip install --user --upgrade "awscli>=1.32" "huggingface_hub[cli]>=0.23" "pillow>=10.0"
+run: |
+  set -euo pipefail
+  export PATH="${HOME}/.local/bin:${PATH}"
+  export HF_HOME="${NPA_COSMOS_CACHE}/hf"
+  export HUGGINGFACE_HUB_CACHE="${NPA_COSMOS_CACHE}/hf"
+
+  test -n "${NPA_COSMOS_IMAGE}"
+  test -n "${NPA_COSMOS_REASON_INPUT}"
+  test -n "${NPA_COSMOS_REASON_OUTPUT}"
+  test -n "${NPA_COSMOS_REASON_CRITERIA}"
+  test -n "${NPA_COSMOS_REASON_MODEL_SIZE}"
+  test -n "${NPA_COSMOS_REPLICAS}"
+  if [ -n "${AWS_ENDPOINT_URL}" ]; then
+    export AWS_ENDPOINT_URL
+  fi
+  aws_s3_cp() {
+    if [ -n "${AWS_ENDPOINT_URL}" ]; then
+      aws --endpoint-url "${AWS_ENDPOINT_URL}" s3 cp "$@"
+    else
+      aws s3 cp "$@"
+    fi
+  }
+  hf_token_value="${!NPA_COSMOS_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+
+  rm -rf "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
+  mkdir -p "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
+
+  framework_dir="${NPA_COSMOS_CACHE}/cosmos-framework"
+  git clone --depth 1 "${NPA_COSMOS3_SOURCE_REPO}" "${framework_dir}"
+  cd "${framework_dir}"
+  if command -v git-lfs >/dev/null 2>&1; then
+    git lfs install --local
+  fi
+  uv sync --all-extras --group="${NPA_COSMOS_UV_GROUP}"
+  export LD_LIBRARY_PATH=
+
+  input_dir="${NPA_COSMOS_OUTPUT_DIR}/inputs"
+  mkdir -p "${input_dir}"
+  input_local="${input_dir}/input$(python - <<'PY'
+  import os
+  from pathlib import Path
+  suffix = Path(os.environ["NPA_COSMOS_REASON_INPUT"].split("?", 1)[0]).suffix or ".mp4"
+  print(suffix)
+  PY
+  )"
+  case "${NPA_COSMOS_REASON_INPUT}" in
+    s3://*)
+      aws_s3_cp "${NPA_COSMOS_REASON_INPUT}" "${input_local}"
+      ;;
+    http://*|https://*)
+      curl -L "${NPA_COSMOS_REASON_INPUT}" -o "${input_local}"
+      ;;
+    *)
+      cp "${NPA_COSMOS_REASON_INPUT}" "${input_local}"
+      ;;
+  esac
+
+  sample_json="${NPA_COSMOS_OUTPUT_DIR}/reasoner-input.json"
+  python - <<'PY'
+  import json
+  import os
+  from pathlib import Path
+
+  input_dir = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"]) / "inputs"
+  matches = sorted(input_dir.glob("input.*"))
+  if not matches:
+      raise SystemExit("reasoning input was not downloaded")
+  prompt = (
+      os.environ["NPA_COSMOS_REASON_CRITERIA"].strip()
+      + "\n\nReturn only a JSON object with keys: success (boolean), scores "
+      + "(object with task_completion, physical_plausibility, safety, visual_evidence numbers from 0 to 1), "
+      + "and critique (string)."
+  )
+  payload = {
+      "model_mode": "reasoner",
+      "name": "npa_cosmos_reason",
+      "prompt": prompt,
+      "vision_path": str(matches[0]),
+      "max_new_tokens": 1024,
+  }
+  Path(os.environ["NPA_COSMOS_OUTPUT_DIR"], "reasoner-input.json").write_text(
+      json.dumps(payload, indent=2),
+      encoding="utf-8",
+  )
+  PY
+
+  .venv/bin/python -m cosmos_framework.scripts.inference \
+    --parallelism-preset=latency \
+    -i "${sample_json}" \
+    -o "${NPA_COSMOS_OUTPUT_DIR}/generated" \
+    --checkpoint-path "${NPA_COSMOS_REASON_CHECKPOINT}" \
+    --seed=0
+
+  python - <<'PY'
+  import json
+  import os
+  import re
+  from pathlib import Path
+
+  root = Path(os.environ["NPA_COSMOS_OUTPUT_DIR"])
+  text_path = root / "generated" / "npa_cosmos_reason" / "reasoner_text.txt"
+  outputs_path = root / "generated" / "npa_cosmos_reason" / "sample_outputs.json"
+  raw_text = text_path.read_text(encoding="utf-8") if text_path.exists() else ""
+  if not raw_text and outputs_path.exists():
+      data = json.loads(outputs_path.read_text(encoding="utf-8"))
+      raw_text = data.get("outputs", [{}])[0].get("content", {}).get("reasoner_text", "")
+  if not raw_text:
+      raise SystemExit("missing Cosmos reasoner text output")
+
+  parsed = None
+  match = re.search(r"\{.*\}", raw_text, flags=re.S)
+  if match:
+      try:
+          parsed = json.loads(match.group(0))
+      except json.JSONDecodeError:
+          parsed = None
+  if not isinstance(parsed, dict):
+      parsed = {
+          "success": None,
+          "scores": {
+              "task_completion": None,
+              "physical_plausibility": None,
+              "safety": None,
+              "visual_evidence": None,
+          },
+          "critique": raw_text.strip(),
+      }
+  result = {
+      "status": "ok",
+      "workflow": "cosmos-reason",
+      "backend": "cosmos3-reasoner",
+      "model": os.environ["NPA_COSMOS_REASON_MODEL_ID"],
+      "checkpoint": os.environ["NPA_COSMOS_REASON_CHECKPOINT"],
+      "guardrails": "on",
+      "attribution": os.environ["NPA_COSMOS_ATTRIBUTION"],
+      "result": parsed,
+      "raw_text": raw_text,
+  }
+  (root / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+  print(json.dumps(result, sort_keys=True))
+  PY
+
+  if [ -n "${NPA_COSMOS_REASON_OUTPUT}" ]; then
+    case "${NPA_COSMOS_REASON_OUTPUT}" in
+      s3://*)
+        aws_s3_cp --recursive "${NPA_COSMOS_OUTPUT_DIR}/generated" "${NPA_COSMOS_REASON_OUTPUT%/}/generated/"
+        aws_s3_cp "${NPA_COSMOS_OUTPUT_DIR}/result.json" "${NPA_COSMOS_REASON_OUTPUT%/}/result.json"
+        ;;
+      *)
+        mkdir -p "${NPA_COSMOS_REASON_OUTPUT}"
+        cp -R "${NPA_COSMOS_OUTPUT_DIR}/generated" "${NPA_COSMOS_REASON_OUTPUT}/"
+        cp "${NPA_COSMOS_OUTPUT_DIR}/result.json" "${NPA_COSMOS_REASON_OUTPUT}/result.json"
+        ;;
+    esac
+  fi

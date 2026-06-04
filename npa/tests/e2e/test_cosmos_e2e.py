@@ -18,8 +18,8 @@ from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
 PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
-ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
-IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-cosmos:1.0.9"
+ENDPOINT_URL = "https://storage.example.invalid"
+IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-cosmos:3.0.0"
 MODEL_ID = "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"
 PIPELINE_CLASS = "CosmosTextToWorldPipeline"
 PROMPT = "A robot arm picks up a red cube on a wooden table"
@@ -34,7 +34,7 @@ def test_cosmos_smoke_helper_request_shape() -> None:
     env, extra_env = _job_env(test_id, output_path, access_key="ak", secret_key="sk")
     command = _cosmos_smoke_command()
 
-    assert IMAGE.endswith("/npa-cosmos:1.0.9")
+    assert IMAGE.endswith("/npa-cosmos:3.0.0")
     assert env["COSMOS_MODEL_ID"] == MODEL_ID
     assert env["COSMOS_DISABLE_SAFETY"] == "1"
     assert env["COSMOS_SMOKE_PROMPT"] == PROMPT

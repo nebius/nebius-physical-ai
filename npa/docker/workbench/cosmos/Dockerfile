@@ -1,25 +1,27 @@
-# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.6.3-devel-ubuntu22.04
-# To update: re-resolve via registry API and update digest below.
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
+# Cosmos 3 / Transfer 2.5 runner image for raw SkyPilot workflows.
+#
+# This image intentionally does not bake model weights or credentials. Runtime
+# jobs fetch gated Hugging Face weights with a license-accepted HF token.
+FROM nvidia/cuda:13.0.2-devel-ubuntu24.04
 
-ARG COSMOS_VERSION=1.0.9
-ARG COSMOS_TORCH_VERSION=2.6.0
-ARG COSMOS_TORCHVISION_VERSION=0.21.0
-ARG COSMOS_FLASH_ATTN_VERSION=2.6.3
-ARG COSMOS_NATTEN_VERSION=0.21.0
+ARG COSMOS_IMAGE_VERSION=3.0.0
+ARG COSMOS3_SOURCE_REPO=https://github.com/NVIDIA/cosmos-framework.git
+ARG COSMOS_TRANSFER_SOURCE_REPO=https://github.com/nvidia-cosmos/cosmos-transfer2.5.git
 
 LABEL npa.tool="cosmos" \
-      npa.version="${COSMOS_VERSION}"
+      npa.version="${COSMOS_IMAGE_VERSION}" \
+      npa.cosmos3.source="${COSMOS3_SOURCE_REPO}" \
+      npa.transfer25.source="${COSMOS_TRANSFER_SOURCE_REPO}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_HOME=/opt/cosmos \
+    COSMOS3_HOME=/opt/cosmos/cosmos-framework \
+    COSMOS_TRANSFER25_HOME=/opt/cosmos/cosmos-transfer2.5 \
     COSMOS_DATA_HOME=/opt/cosmos-data \
     COSMOS_MODEL_DIR=/opt/cosmos-data/models \
     COSMOS_HF_CACHE=/opt/cosmos-data/hf_cache \
     COSMOS_OUTPUT_DIR=/opt/cosmos-data/outputs \
-    COSMOS_MODEL_ID=nvidia/Cosmos-1.0-Diffusion-7B-Text2World \
     COSMOS_DISABLE_SAFETY=0 \
-    COSMOS_VERSION=${COSMOS_VERSION} \
     HF_HOME=/opt/cosmos-data/hf_cache \
     HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache \
     PIP_NO_CACHE_DIR=1 \
@@ -31,20 +33,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
       ffmpeg \
       git \
+      git-lfs \
       libegl1 \
       libgl1 \
       libglib2.0-0 \
       libglvnd0 \
       libsm6 \
       libx11-6 \
+      libx11-dev \
       libxext6 \
       libxrender1 \
+      python3 \
       python3-dev \
       python3-pip \
       python3-venv \
+      tree \
+      wget \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/cosmos \
       /opt/cosmos-data/models \
@@ -56,57 +63,45 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 USER ubuntu
 WORKDIR /opt/cosmos
 
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mkdir -p /opt/cosmos/bin \
+    && ln -sf "${HOME}/.local/bin/uv" /opt/cosmos/bin/uv \
+    && ln -sf "${HOME}/.local/bin/uvx" /opt/cosmos/bin/uvx
+
+ENV PATH=/opt/cosmos/bin:/opt/cosmos/venv/bin:$PATH \
+    PYTHONPATH=/opt/npa/src
+
+RUN git clone --depth 1 "${COSMOS3_SOURCE_REPO}" "${COSMOS3_HOME}" \
+    && git clone --depth 1 "${COSMOS_TRANSFER_SOURCE_REPO}" "${COSMOS_TRANSFER25_HOME}"
+
+RUN python3 -m venv /opt/cosmos/awscli-venv \
+    && /opt/cosmos/awscli-venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/cosmos/awscli-venv/bin/python -m pip install "awscli>=1.32" \
+    && ln -sf /opt/cosmos/awscli-venv/bin/aws /opt/cosmos/bin/aws
+
 RUN python3 -m venv /opt/cosmos/venv \
     && /opt/cosmos/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && /opt/cosmos/venv/bin/pip install \
-      "torch==${COSMOS_TORCH_VERSION}" \
-      "torchvision==${COSMOS_TORCHVISION_VERSION}" \
-      --extra-index-url https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple \
-    && curl -L -o "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/flash_attn-2.6.3%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-    && curl -L -o "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.1.0/natten-0.21.0%2Bcu126.torch260-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install \
-      "cosmos-predict2[cu126]==${COSMOS_VERSION}" \
-      --extra-index-url https://nvidia-cosmos.github.io/cosmos-dependencies/cu126_torch260/simple \
-    && /opt/cosmos/venv/bin/pip install \
-      "diffusers==0.38.0" \
-      "peft==0.19.1" \
-      "transformers==4.51.3" \
-      "accelerate==1.13.0" \
-      "fastapi==0.136.1" \
-      "uvicorn[standard]==0.46.0" \
-      "huggingface_hub==0.36.2" \
-      "pillow==11.1.0" \
-      "imageio[ffmpeg]==2.37.0" \
-      "pydantic==2.13.4" \
-      "python-multipart==0.0.27" \
-      "typer==0.24.1" \
-      "httpx==0.28.1" \
-      "paramiko==4.0.0" \
-      "pyyaml==6.0.3" \
-      "rich==15.0.0" \
-      "boto3==1.42.91" \
-      "jinja2==3.1.6" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "cosmos_guardrail==0.1.0" \
-    && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl
-
-ENV PATH=/opt/cosmos/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    && /opt/cosmos/venv/bin/python -m pip install \
+      "boto3>=1.42" \
+      "huggingface_hub[cli]>=0.23" \
+      "numpy>=1.26" \
+      "pillow>=10.0" \
+      "pyyaml>=6.0" \
+      "rich>=15.0" \
+      "typer>=0.24" \
+      "httpx>=0.28"
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
-COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/build_server.py
-COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_env.py
-COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos /opt/npa/docker/workbench/cosmos
 
-RUN python -m pip install --no-deps -e /opt/npa \
-    && python /opt/npa/docker/workbench/cosmos/build_server.py
-
-RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
+RUN python -m pip install -e /opt/npa \
+    && python -m py_compile \
+      /opt/npa/src/npa/workbench/cosmos/cosmos3.py \
+      /opt/npa/src/npa/workbench/cosmos/workflows.py \
+      /opt/npa/docker/workbench/cosmos/smoke_env.py \
+      /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
 WORKDIR /opt/cosmos
-EXPOSE 8080
 ENTRYPOINT ["/bin/bash"]

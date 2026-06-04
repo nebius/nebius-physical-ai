@@ -12,6 +12,7 @@ Options
 --name  -n  TEXT  Workbench instance name within the project.
 --help  Show this message and exit.
 Commands
+augment  Launch controlled-generation augmentation with Cosmos Transfer/Cosmos.
 check  Check Cosmos3 source and HF checkpoint access without downloading weights.
 fetch  Clone source and download the HF checkpoint into ephemeral runtime cache.
 ensure-ingress  Ensure public ingress for the saved Cosmos BYOVM alias.
@@ -27,6 +28,7 @@ finetune  Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on c
 train  Submit a Cosmos training job.
 optimize  Roadmap placeholder for TensorRT compilation and quantization of Cosmos models.
 infer  Submit a Cosmos inference job, poll until completion, then download the output.
+reason  Launch Cosmos 3 reasoning/VLM evaluation over frames or video.
 status  Check the Cosmos endpoint health.
 system-info  Collect and display system hardware information from the Cosmos VM.
 ```
@@ -43,6 +45,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 
 | Command | Description |
 | --- | --- |
+| `augment` | Launch controlled-generation augmentation with Cosmos Transfer/Cosmos. |
 | `check` | Check Cosmos3 source and HF checkpoint access without downloading weights. |
 | `fetch` | Clone source and download the HF checkpoint into ephemeral runtime cache. |
 | `ensure-ingress` | Ensure public ingress for the saved Cosmos BYOVM alias. |
@@ -58,6 +61,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | `train` | Submit a Cosmos training job. |
 | `optimize` | Roadmap placeholder for TensorRT compilation and quantization of Cosmos models. |
 | `infer` | Submit a Cosmos inference job, poll until completion, then download the output. |
+| `reason` | Launch Cosmos 3 reasoning/VLM evaluation over frames or video. |
 | `status` | Check the Cosmos endpoint health. |
 | `system-info` | Collect and display system hardware information from the Cosmos VM. |
 
@@ -66,6 +70,13 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 ```bash
 npa workbench cosmos --help
 npa workbench cosmos ensure-ingress --help
+npa workbench cosmos augment --help
+npa workbench cosmos reason --help
 ```
+
+`augment` and `reason` are three-tier workflow surfaces: the CLI and SDK wrap
+the same standalone raw SkyPilot YAMLs under
+`npa/workflows/workbench/skypilot/`. Guardrails are on by default and there is
+no customer-facing guardrails-off flag or environment variable.
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos`.

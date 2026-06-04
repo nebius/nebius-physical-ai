@@ -141,6 +141,14 @@ from npa.workbench.cosmos.cosmos3 import (
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
+from npa.workbench.cosmos.workflows import (
+    COSMOS_AUGMENT_YAML,
+    COSMOS_REASON_YAML,
+    build_cosmos_augment_env,
+    build_cosmos_reason_env,
+    launch_cosmos_sky_workflow,
+    shell_join,
+)
 
 app = typer.Typer(
     name="cosmos",
@@ -240,14 +248,13 @@ def _cosmos_service_env(
     byovm_effective_gpu_count: int,
     byovm_visible_devices: str,
     include_shared_creds: bool,
-    no_guardrails: bool = False,
 ) -> dict[str, str]:
     env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_MODEL_DIR": COSMOS_MODEL_DIR,
         "COSMOS_OUTPUT_DIR": COSMOS_OUTPUT_DIR,
         "COSMOS_SERVER_PORT": str(server_port),
-        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
+        "COSMOS_DISABLE_SAFETY": "0",
         "HF_HOME": COSMOS_HF_CACHE,
         "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
         "HF_TOKEN": credentials.hf_token,
@@ -755,6 +762,7 @@ def check_cmd(
     output: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output",
+        "--format",
         help="Output format.",
     ),
 ) -> None:
@@ -846,6 +854,7 @@ def fetch_cmd(
     output: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output",
+        "--format",
         help="Output format.",
     ),
 ) -> None:
@@ -869,6 +878,262 @@ def fetch_cmd(
         force=force,
     )
     _finish_cosmos3_result(result.as_dict(), output)
+
+
+@app.command("augment")
+def augment_cmd(
+    source: str = typer.Option(
+        ...,
+        "--source",
+        "--input-path",
+        help="Source sim render, image, video, or S3 URI to augment.",
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        "--output",
+        help="S3 prefix or local directory for generated variants and metadata.",
+    ),
+    prompt: str = typer.Option(
+        "",
+        "--prompt",
+        help="Text prompt describing the desired photorealistic scene.",
+    ),
+    control: str = typer.Option(
+        "edge",
+        "--control",
+        help="Control modality: edge, blur, depth, or segmentation.",
+    ),
+    control_config: str = typer.Option(
+        "",
+        "--control-config",
+        help="Optional JSON object with backend-specific control settings.",
+    ),
+    model_size: str = typer.Option(
+        "transfer2.5-2b",
+        "--model-size",
+        help="Augmentation backend size. Default uses Cosmos Transfer 2.5 2B.",
+    ),
+    variants: int = typer.Option(
+        1,
+        "--variants",
+        min=1,
+        help="Number of generated variants to request per input.",
+    ),
+    replicas: int = typer.Option(
+        1,
+        "--replicas",
+        min=1,
+        help="Parallel SkyPilot nodes to request when launching.",
+    ),
+    image: str = typer.Option(
+        "",
+        "--image",
+        help="Container image for the raw SkyPilot job.",
+    ),
+    s3_endpoint: str = typer.Option(
+        "",
+        "--s3-endpoint",
+        help="S3-compatible endpoint URL. Leave empty to use provider defaults.",
+    ),
+    aws_profile: str = typer.Option(
+        "",
+        "--aws-profile",
+        help="Optional AWS profile name forwarded to the job.",
+    ),
+    infra: str = typer.Option(
+        "kubernetes",
+        "--infra",
+        help="SkyPilot infra selector, for example kubernetes or k8s/<context>.",
+    ),
+    accelerator: str = typer.Option(
+        "",
+        "--accelerator",
+        "--gpus",
+        help="SkyPilot GPU request passed through as --gpus.",
+    ),
+    cluster: str = typer.Option(
+        "",
+        "--cluster",
+        help="SkyPilot cluster/job queue name to use or create.",
+    ),
+    workdir: str = typer.Option(
+        "",
+        "--workdir",
+        help="Optional local workdir to sync with SkyPilot.",
+    ),
+    skypilot_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="Path to the SkyPilot CLI. Defaults to NPA_SKYPILOT_BIN or sky on PATH.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the SkyPilot launch command without submitting it.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--format",
+        help="Output format.",
+    ),
+) -> None:
+    """Run Cosmos controlled-generation augmentation through raw SkyPilot YAML."""
+
+    try:
+        env = build_cosmos_augment_env(
+            source=source,
+            output_path=output_path,
+            prompt=prompt,
+            control=control,
+            control_config=control_config,
+            model_size=model_size,
+            variants=variants,
+            replicas=replicas,
+            image=image,
+            s3_endpoint=s3_endpoint,
+            aws_profile=aws_profile,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+        return
+    result = launch_cosmos_sky_workflow(
+        yaml_path=COSMOS_AUGMENT_YAML,
+        env=env,
+        cluster=cluster,
+        name="cosmos-augment",
+        infra=infra,
+        accelerator=accelerator,
+        num_nodes=replicas,
+        workdir=workdir,
+        skypilot_bin=skypilot_bin,
+        secrets=(env["NPA_COSMOS_HF_TOKEN_ENV"], "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        dry_run=dry_run,
+    )
+    data = result.as_dict()
+    data["command_text"] = shell_join(result.command)
+    _output(data, output)
+    if result.status == "failed":
+        raise typer.Exit(result.returncode or 1)
+
+
+@app.command("reason")
+def reason_cmd(
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        "--input",
+        help="Frames, image, video, or S3 URI to evaluate.",
+    ),
+    criteria_prompt: str = typer.Option(
+        ...,
+        "--criteria-prompt",
+        "--prompt",
+        help="Task and success criteria prompt for structured evaluation.",
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        "--output",
+        help="S3 prefix or local directory for structured result JSON.",
+    ),
+    model_size: str = typer.Option(
+        "nano",
+        "--model-size",
+        help="Cosmos 3 model size: nano or super.",
+    ),
+    replicas: int = typer.Option(
+        1,
+        "--replicas",
+        min=1,
+        help="Parallel SkyPilot nodes to request when launching.",
+    ),
+    image: str = typer.Option(
+        "",
+        "--image",
+        help="Container image for the raw SkyPilot job.",
+    ),
+    s3_endpoint: str = typer.Option(
+        "",
+        "--s3-endpoint",
+        help="S3-compatible endpoint URL. Leave empty to use provider defaults.",
+    ),
+    aws_profile: str = typer.Option(
+        "",
+        "--aws-profile",
+        help="Optional AWS profile name forwarded to the job.",
+    ),
+    infra: str = typer.Option(
+        "kubernetes",
+        "--infra",
+        help="SkyPilot infra selector, for example kubernetes or k8s/<context>.",
+    ),
+    accelerator: str = typer.Option(
+        "",
+        "--accelerator",
+        "--gpus",
+        help="SkyPilot GPU request passed through as --gpus.",
+    ),
+    cluster: str = typer.Option(
+        "",
+        "--cluster",
+        help="SkyPilot cluster/job queue name to use or create.",
+    ),
+    workdir: str = typer.Option(
+        "",
+        "--workdir",
+        help="Optional local workdir to sync with SkyPilot.",
+    ),
+    skypilot_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="Path to the SkyPilot CLI. Defaults to NPA_SKYPILOT_BIN or sky on PATH.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the SkyPilot launch command without submitting it.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--format",
+        help="Output format.",
+    ),
+) -> None:
+    """Run Cosmos 3 reasoning/VLM evaluation through raw SkyPilot YAML."""
+
+    try:
+        env = build_cosmos_reason_env(
+            input_path=input_path,
+            output_path=output_path,
+            criteria_prompt=criteria_prompt,
+            model_size=model_size,
+            replicas=replicas,
+            image=image,
+            s3_endpoint=s3_endpoint,
+            aws_profile=aws_profile,
+        )
+    except ValueError as exc:
+        _fail(str(exc))
+        return
+    result = launch_cosmos_sky_workflow(
+        yaml_path=COSMOS_REASON_YAML,
+        env=env,
+        cluster=cluster,
+        name="cosmos-reason",
+        infra=infra,
+        accelerator=accelerator,
+        num_nodes=replicas,
+        workdir=workdir,
+        skypilot_bin=skypilot_bin,
+        secrets=(env["NPA_COSMOS_HF_TOKEN_ENV"], "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        dry_run=dry_run,
+    )
+    data = result.as_dict()
+    data["command_text"] = shell_join(result.command)
+    _output(data, output)
+    if result.status == "failed":
+        raise typer.Exit(result.returncode or 1)
 
 
 @app.command("ensure-ingress")
@@ -1158,10 +1423,9 @@ def _run_inference(req: InferRequest) -> dict[str, Any]:
 '''
 
 
-def _build_install_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
+def _build_install_command(model: str, port: int) -> str:
     server_py = _build_server_py(model)
     model_slug = _model_slug(model)
-    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1210,7 +1474,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY={disable_safety}
+COSMOS_DISABLE_SAFETY=0
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1249,9 +1513,8 @@ PY
     return _remote_bash(script)
 
 
-def _build_serve_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
+def _build_serve_command(model: str, port: int) -> str:
     server_py = _build_server_py(model)
-    disable_safety = "1" if no_guardrails else "0"
     script = f"""\
 set -euo pipefail
 cat > {COSMOS_HOME}/server.py <<'PY'
@@ -1263,7 +1526,7 @@ COSMOS_MODEL_ID={model}
 COSMOS_MODEL_DIR={COSMOS_MODEL_DIR}
 COSMOS_OUTPUT_DIR={COSMOS_OUTPUT_DIR}
 COSMOS_SERVER_PORT={port}
-COSMOS_DISABLE_SAFETY={disable_safety}
+COSMOS_DISABLE_SAFETY=0
 HF_HOME={COSMOS_HF_CACHE}
 HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
 ENV
@@ -1509,7 +1772,6 @@ def _deploy_serverless_endpoint(
     subnet_id: str,
     env_vars: dict[str, str],
     volumes: list[str],
-    no_guardrails: bool,
     replace: bool,
     default: bool,
     wait: bool,
@@ -1531,7 +1793,7 @@ def _deploy_serverless_endpoint(
     serverless_env = {
         "COSMOS_MODEL_ID": model,
         "COSMOS_SERVER_PORT": str(container_port),
-        "COSMOS_DISABLE_SAFETY": "1" if no_guardrails else "0",
+        "COSMOS_DISABLE_SAFETY": "0",
         **env_vars,
     }
     extra_env = _serverless_hf_env()
@@ -2017,11 +2279,6 @@ def deploy_cmd(
         "--skip-model-check",
         help="Skip Hugging Face gated-model access validation.",
     ),
-    no_guardrails: bool = typer.Option(
-        False,
-        "--no-guardrails",
-        help="Opt out of Cosmos safety guardrails for generated outputs.",
-    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -2148,7 +2405,6 @@ def deploy_cmd(
             subnet_id=subnet_id,
             env_vars=serverless_env,
             volumes=volume,
-            no_guardrails=no_guardrails,
             replace=replace,
             default=default,
             wait=wait,
@@ -2611,7 +2867,6 @@ def deploy_cmd(
                 byovm_effective_gpu_count=byovm_effective_gpu_count,
                 byovm_visible_devices=byovm_visible_devices,
                 include_shared_creds=not no_shared_creds,
-                no_guardrails=no_guardrails,
             )
             if dry_run:
                 console.print(
@@ -2707,7 +2962,7 @@ def deploy_cmd(
                 try:
                     ssh.run_or_raise(
                         _build_install_command(
-                            model, server_port, no_guardrails=no_guardrails
+                            model, server_port
                         ),
                         stream=True,
                     )
@@ -2945,11 +3200,6 @@ def serve_cmd(
         ),
     ),
     port: int = typer.Option(8080, "--port", help="Server port."),
-    no_guardrails: bool = typer.Option(
-        False,
-        "--no-guardrails",
-        help="Opt out of Cosmos safety guardrails for generated outputs.",
-    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -3002,7 +3252,7 @@ def serve_cmd(
         ssh = SSHClient(cfg.ssh)
         try:
             _, out, err = ssh.run_or_raise(
-                _build_serve_command(model, port, no_guardrails=no_guardrails)
+                _build_serve_command(model, port)
             )
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
@@ -3013,7 +3263,7 @@ def serve_cmd(
         "model": model,
         "port": port,
         "endpoint": cfg.endpoint,
-        "guardrails": "off" if no_guardrails else "on",
+        "guardrails": "on",
     }
     if output == OutputFormat.json and out.strip():
         result["stdout_tail"] = out.strip()[-1000:]

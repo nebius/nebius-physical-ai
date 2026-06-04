@@ -17,12 +17,20 @@ from npa.workbench.cosmos.cosmos3 import (
     check_cosmos3_access,
     fetch_cosmos3_artifacts,
 )
+from npa.workbench.cosmos.workflows import (
+    COSMOS_ATTRIBUTION,
+    build_cosmos_augment_env,
+    build_cosmos_reason_env,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
 INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
+AUGMENT_YAML = SKYPILOT_ROOT / "cosmos3-augment.yaml"
+REASON_YAML = SKYPILOT_ROOT / "cosmos3-reason.yaml"
 SKILL_ROOT = ROOT / ".agents" / "skills"
+THIRD_PARTY_COSMOS_ROOT = ROOT / "third_party" / "nvidia-cosmos"
 
 
 def _runner(returncode: int = 0):
@@ -201,12 +209,8 @@ def test_cosmos3_inference_yaml_defaults_to_public_cosmos3_and_allows_s3() -> No
         in envs["NPA_COSMOS3_INFER_COMMAND"]
     )
     assert "--checkpoint-path Cosmos3-Nano" in envs["NPA_COSMOS3_INFER_COMMAND"]
-    assert envs["NPA_COSMOS3_NO_GUARDRAILS"] == ""
-    assert (
-        "${NPA_COSMOS3_NO_GUARDRAILS:+--no-guardrails}"
-        in envs["NPA_COSMOS3_INFER_COMMAND"]
-    )
-    assert "--no-guardrails \\" not in envs["NPA_COSMOS3_INFER_COMMAND"]
+    assert "NPA_COSMOS3_NO_GUARDRAILS" not in envs
+    assert "--no-guardrails" not in envs["NPA_COSMOS3_INFER_COMMAND"]
     assert "npa workbench cosmos fetch" not in doc["run"]
     assert "git clone --depth 1" in doc["run"]
     assert "huggingface-cli download" in doc["run"]
@@ -259,11 +263,69 @@ def test_cosmos3_inference_args_keep_guardrails_on_by_default() -> None:
         "Cosmos3-Nano",
         "--seed=0",
     ]
-    assert "--no-guardrails" in build_cosmos3_inference_args(
-        input_json="input.json",
-        output_dir="out",
-        no_guardrails=True,
+
+
+def test_cosmos_workflow_env_builders_are_generic_and_attributed() -> None:
+    augment = build_cosmos_augment_env(
+        source="s3://example-bucket/input/sim.mp4",
+        output_path="s3://example-bucket/output/augment/",
+        prompt="preserve motion",
+        control="blur",
+        variants=2,
+        replicas=3,
+        image="registry.example/npa-cosmos:3.0.0",
+        s3_endpoint="https://storage.example.invalid",
     )
+    reason = build_cosmos_reason_env(
+        input_path="s3://example-bucket/input/rollout.mp4",
+        output_path="s3://example-bucket/output/reason/",
+        criteria_prompt="did it succeed?",
+        model_size="super",
+        replicas=2,
+        image="registry.example/npa-cosmos:3.0.0",
+        s3_endpoint="https://storage.example.invalid",
+    )
+
+    assert augment["NPA_COSMOS_AUGMENT_CONTROL"] == "vis"
+    assert augment["NPA_COSMOS_AUGMENT_VARIANTS"] == "2"
+    assert augment["NPA_COSMOS_REPLICAS"] == "3"
+    assert augment["NPA_COSMOS_ATTRIBUTION"] == COSMOS_ATTRIBUTION
+    assert reason["NPA_COSMOS_REASON_CHECKPOINT"] == "Cosmos3-Super"
+    assert reason["NPA_COSMOS_REPLICAS"] == "2"
+    assert reason["NPA_COSMOS_ATTRIBUTION"] == COSMOS_ATTRIBUTION
+
+
+def test_cosmos_augment_and_reason_raw_yamls_are_standalone_and_safe() -> None:
+    for path in (AUGMENT_YAML, REASON_YAML):
+        docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc]
+        assert len(docs) == 1
+        doc = docs[0]
+        text = path.read_text(encoding="utf-8")
+        assert doc["resources"]["cloud"] == "kubernetes"
+        assert "accelerators" not in doc["resources"]
+        assert doc["resources"]["image_id"] == "docker:${NPA_COSMOS_IMAGE}"
+        assert "npa workbench" not in doc["run"]
+        assert "--no-guardrails" not in text
+        assert "--endpoint-url" in text
+        assert "guardrails" in text.lower()
+        assert doc["envs"]["NPA_COSMOS_ATTRIBUTION"] == COSMOS_ATTRIBUTION
+
+
+def test_cosmos_license_and_notice_are_vendored() -> None:
+    open_model_license = THIRD_PARTY_COSMOS_ROOT / "NVIDIA_OPEN_MODEL_LICENSE.txt"
+    openmdw_license = THIRD_PARTY_COSMOS_ROOT / "OPENMDW-1.1.txt"
+    notice = THIRD_PARTY_COSMOS_ROOT / "NOTICE.txt"
+
+    assert open_model_license.exists()
+    assert openmdw_license.exists()
+    assert notice.exists()
+    assert "NVIDIA Open Model License Agreement" in open_model_license.read_text(
+        encoding="utf-8"
+    )
+    assert "OpenMDW License Agreement" in openmdw_license.read_text(encoding="utf-8")
+    notice_text = notice.read_text(encoding="utf-8")
+    assert COSMOS_ATTRIBUTION in notice_text
+    assert "No customer-facing flag" in notice_text
 
 
 def test_cosmos3_removed_skill_workflow_yaml_files_stay_removed() -> None:

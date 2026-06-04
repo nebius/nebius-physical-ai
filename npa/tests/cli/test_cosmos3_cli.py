@@ -102,3 +102,83 @@ def test_cosmos3_skill_commands_are_not_cli_surface() -> None:
     assert result.exit_code == 0
     assert " skills " not in result.output
     assert " skill " not in result.output
+
+
+def test_cosmos_augment_cli_dry_run_maps_flags_to_sky_env() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "augment",
+            "--source",
+            "s3://example-bucket/input/sim.mp4",
+            "--output",
+            "s3://example-bucket/output/augment/",
+            "--prompt",
+            "preserve layout",
+            "--control",
+            "blur",
+            "--variants",
+            "2",
+            "--replicas",
+            "3",
+            "--image",
+            "registry.example/npa-cosmos:3.0.0",
+            "--s3-endpoint",
+            "https://storage.example.invalid",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        env={"HF_TOKEN": "hf-secret"},
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "dry_run"
+    assert payload["env"]["NPA_COSMOS_AUGMENT_CONTROL"] == "vis"
+    assert payload["env"]["NPA_COSMOS_AUGMENT_VARIANTS"] == "2"
+    assert payload["env"]["NPA_COSMOS_REPLICAS"] == "3"
+    assert "--gpus" not in payload["command"]
+    assert "--num-nodes" in payload["command"]
+
+
+def test_cosmos_reason_cli_dry_run_maps_model_size_and_accelerator() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos",
+            "reason",
+            "--input",
+            "s3://example-bucket/input/rollout.mp4",
+            "--output",
+            "s3://example-bucket/output/reason/",
+            "--criteria-prompt",
+            "did the robot complete the task?",
+            "--model-size",
+            "super",
+            "--accelerator",
+            "CUSTOMGPU:1",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        env={"HF_TOKEN": "hf-secret"},
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "dry_run"
+    assert payload["env"]["NPA_COSMOS_REASON_CHECKPOINT"] == "Cosmos3-Super"
+    assert payload["env"]["NPA_COSMOS_REASON_MODEL_ID"] == "nvidia/Cosmos3-Super"
+    assert "--gpus" in payload["command"]
+    assert "CUSTOMGPU:1" in payload["command"]
+
+
+def test_cosmos_new_workflows_do_not_expose_guardrail_disable_flags() -> None:
+    for command in ("augment", "reason"):
+        result = runner.invoke(app, ["workbench", "cosmos", command, "--help"])
+        assert result.exit_code == 0
+        assert "--no-guardrails" not in result.output

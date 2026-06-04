@@ -124,6 +124,8 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "reload-env",
         "serve",
         "infer",
+        "augment",
+        "reason",
         "train",
         "finetune",
         "optimize",
@@ -1138,7 +1140,7 @@ def test_cosmos_deploy_runtime_container_starts_image(tmp_path: Path, mocker) ->
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-cosmos"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-cosmos:1.0.9")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-cosmos:3.0.0")
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["cosmos-container"]
     assert wb_cfg["runtime"] == "container"
     assert update_status.call_args_list[0].args == ("proj", "cosmos-container", "installing")
@@ -1551,16 +1553,6 @@ def test_cosmos_install_command_uses_data_disk_for_models_and_cache() -> None:
     assert "--local-dir /opt/cosmos-data/models/nvidia--Cosmos-Test" in cmd
 
 
-def test_cosmos_install_command_allows_explicit_guardrail_opt_out() -> None:
-    cmd = _build_install_command(
-        "nvidia/Cosmos-Test",
-        8080,
-        no_guardrails=True,
-    )
-
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
-
-
 def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run_or_raise.return_value = (0, "started", "")
@@ -1593,27 +1585,11 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     assert "sudo systemctl restart npa-cosmos-server" in cmd
 
 
-def test_cosmos_serve_allows_explicit_guardrail_opt_out(mocker) -> None:
-    ssh = mocker.MagicMock()
-    ssh.run_or_raise.return_value = (0, "started", "")
-    mocker.patch("npa.cli.cosmos.resolve_config", return_value=_cfg())
-    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
-
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "cosmos",
-            "serve",
-            "--model",
-            "nvidia/Cosmos-Test",
-            "--no-guardrails",
-        ],
-    )
+def test_cosmos_serve_has_no_guardrail_opt_out() -> None:
+    result = runner.invoke(app, ["workbench", "cosmos", "serve", "--help"])
 
     assert result.exit_code == 0
-    cmd = ssh.run_or_raise.call_args.args[0]
-    assert "COSMOS_DISABLE_SAFETY=1" in cmd
+    assert "--no-guardrails" not in result.output
 
 
 def test_cosmos_serve_maps_ssh_error(mocker) -> None:

@@ -1,0 +1,39 @@
+NVIDIA Cosmos Notices
+
+This repository includes workflow surfaces and documentation for NVIDIA Cosmos
+model workflows. The workflows fetch model weights at runtime from Hugging Face
+using a user-provided token whose account has accepted the relevant model
+license terms.
+
+Attribution:
+
+  Built on NVIDIA Cosmos
+
+Model and source references:
+
+  Cosmos 3 source:
+    https://github.com/NVIDIA/cosmos
+    https://github.com/NVIDIA/cosmos-framework
+
+  Cosmos 3 model cards:
+    https://huggingface.co/nvidia/Cosmos3-Nano
+    https://huggingface.co/nvidia/Cosmos3-Super
+
+  Cosmos Transfer 2.5 source and model cards:
+    https://github.com/nvidia-cosmos/cosmos-transfer2.5
+    https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B
+
+License references:
+
+  Cosmos 3 source and model cards currently reference OpenMDW-1.1. A copy is
+  vendored in OPENMDW-1.1.txt.
+
+  Cosmos Transfer 2.5 source code is Apache-2.0 and the model materials are
+  released under the NVIDIA Open Model License. A copy is vendored in
+  NVIDIA_OPEN_MODEL_LICENSE.txt.
+
+Safety policy:
+
+  Cosmos guardrails are kept on by default in NPA customer-facing CLI, SDK, and
+  SkyPilot workflow surfaces. No customer-facing flag or environment variable is
+  provided to disable them.

@@ -190,7 +190,7 @@ Smoke command used by W13:
 npa workbench cosmos -p eu-north1 -n w13-cosmos train \
   --runtime serverless \
   --project-id <YOUR_PROJECT_ID> \
-  --image cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-cosmos:1.0.9 \
+  --image cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-cosmos:3.0.0 \
   --gpu-type h100 \
   --gpu-count 1 \
   --gpu-preset 1gpu-16vcpu-200gb \

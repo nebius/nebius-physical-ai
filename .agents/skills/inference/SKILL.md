@@ -39,18 +39,8 @@ SKILL.md files for agents, not commands.
 
 ## Guardrails
 
-Guardrails are on by default.
-
-In the workflow, `NPA_COSMOS3_NO_GUARDRAILS` defaults to an empty string, and
-the inference command expands `--no-guardrails` only when that variable is set.
-Only set it when the user explicitly requests an opt-out:
-
-```yaml
-NPA_COSMOS3_NO_GUARDRAILS: "1"
-```
-
-The agent should preserve this default in CLI, SDK, Docker image, and workflow
-changes.
+Guardrails are on by default and must remain on. Do not add a customer-facing
+guardrails-off CLI, SDK, Docker, or workflow path.
 
 ## Running The Workflow
 
@@ -71,7 +61,6 @@ Review or override these environment fields in the SkyPilot YAML:
 - `NPA_COSMOS3_OUTPUT_IMAGE`
 - `NPA_COSMOS3_SUCCESS_JSON`
 - `NPA_COSMOS3_OUTPUT_S3_URI`
-- `NPA_COSMOS3_NO_GUARDRAILS`
 
 The workflow uses node-local temporary paths by default. Do not write model
 checkpoints or generated outputs into the repository.
@@ -109,6 +98,5 @@ Expected checks include:
 - The inference YAML name is `cosmos3-text-to-image-inference`.
 - `image_id` is not hard-coded in the resources.
 - The command invokes `python -m cosmos_framework.scripts.inference`.
-- `NPA_COSMOS3_NO_GUARDRAILS` defaults to empty.
-- `--no-guardrails` is not present by default.
+- `--no-guardrails` is not present.
 - S3 output remains optional.
