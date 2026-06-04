@@ -55,8 +55,9 @@ COPY --chown=ubuntu:ubuntu docker/workbench/lerobot-policy/entrypoint.sh /opt/le
 
 RUN chmod +x /opt/lerobot/entrypoint.sh \
     && python - <<'PY'
-from npa.workbench.lerobot.policy_container import HeuristicPolicy, parse_feedback_batch
-assert HeuristicPolicy().infer({"observation.state": [0.1, 0.2]}) == [0.1, 0.2]
+from npa.workbench.lerobot.policy_container import assert_lerobot_importable, parse_feedback_batch
+result = assert_lerobot_importable()
+assert result.dataset_class.endswith(".LeRobotDataset")
 assert parse_feedback_batch({"success": True, "score": 0.9, "rationale": "ok"})
 PY
 

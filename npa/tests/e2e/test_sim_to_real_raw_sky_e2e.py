@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RAW_SKY_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
 DEFAULT_BUCKET = "npa-sim2real-d87cf691"
 DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
-GPU_CHAIN = ("H100:1", "H200:1", "A100:1", "L40S:1", "RTX6000:1")
+GPU_CHAIN = ("H100:1", "H200:1", "A100:1")
 
 
 def test_raw_sky_sim_to_real_pipeline_writes_run_scoped_s3_artifacts(tmp_path: Path) -> None:
@@ -236,9 +236,17 @@ def _sky_launch_command(
         "--env",
         f"GPU={gpu}",
         "--env",
-        "VLM_EVAL_BACKEND=stub",
+        "TRAIN_STEPS=2000",
         "--env",
-        "VLM_EVAL_SCORE=0.82",
+        "TRAIN_STEP_BUDGET=6000",
+        "--env",
+        "MAX_TRAINING_ITERATIONS=3",
+        "--env",
+        "EVAL_EPISODES=10",
+        "--env",
+        "EVAL_BACKEND=pusht",
+        "--env",
+        "FEEDBACK_SOURCE=rollout",
         "--secret",
         "AWS_ACCESS_KEY_ID",
         "--secret",
@@ -247,6 +255,9 @@ def _sky_launch_command(
     ]
     if has_session_token:
         cmd[-1:-1] = ["--secret", "AWS_SESSION_TOKEN"]
+    image_id = os.environ.get("NPA_E2E_SIM_TO_REAL_IMAGE_ID")
+    if image_id:
+        cmd[-1:-1] = ["--image-id", image_id]
     return cmd
 
 
@@ -255,18 +266,23 @@ def _assert_s3_artifacts(client: Any, *, bucket: str, prefix: str) -> dict[str, 
         "roundtrip": f"{prefix}/health/s3-roundtrip.json",
         "dataset_summary": f"{prefix}/datasets/lerobot-summary.json",
         "split": f"{prefix}/splits/train/episode-split.json",
-        "checkpoint": f"{prefix}/checkpoints/policy/promoted-checkpoint.json",
+        "checkpoint_manifest": f"{prefix}/checkpoints/policy/policy-checkpoint-manifest.json",
         "report": f"{prefix}/reports/sim-to-real-report.json",
+        "rrd": f"{prefix}/viz/{prefix.rsplit('/', 1)[-1]}.rrd",
     }
     for key in keys.values():
         client.head_object(Bucket=bucket, Key=key)
+    checkpoint_page = client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/checkpoints/policy/")
+    checkpoint_keys = [item["Key"] for item in checkpoint_page.get("Contents", [])]
+    assert any(key.endswith("model.safetensors") or key.endswith("pytorch_model.bin") for key in checkpoint_keys)
     report = json.loads(client.get_object(Bucket=bucket, Key=keys["report"])["Body"].read().decode("utf-8"))
     assert report["run_id"].startswith("sim-to-real-raw-")
-    assert report["feedback"]["score"] == 0.82
+    assert 0.0 <= float(report["feedback"]["score"]) <= 1.0
     assert report["artifacts"]["root"] == f"s3://{bucket}/{prefix}/"
     component_tiers = {component["name"]: component["tier"] for component in report["components"]}
     assert component_tiers["nebius_s3"] == "WORKS"
     assert component_tiers["s3_artifact_upload"] == "WORKS"
+    assert component_tiers["s3_real_artifact_assertions"] == "WORKS"
     return keys
 
 

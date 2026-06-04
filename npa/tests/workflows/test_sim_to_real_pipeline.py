@@ -4,6 +4,7 @@ import importlib.util
 import json
 import stat
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -21,11 +22,19 @@ from npa.workflows.sim_to_real import (
     generate_raw_envs,
     outer_loop_decision,
     parse_feedback_result,
+    run_real_lerobot_loop,
     run_structural_spine,
     seeded_train_heldout_split,
 )
-from npa.workbench.lerobot.policy_container import parse_feedback_batch, run_feedback_training_step
-from npa.workflows.lerobot_dataset import seeded_episode_split
+from npa.workbench.lerobot.policy_container import (
+    CheckpointValidationResult,
+    LeRobotEvalResult,
+    LeRobotImportResult,
+    LeRobotTrainingResult,
+    parse_feedback_batch,
+    run_feedback_training_step,
+)
+from npa.workflows.lerobot_dataset import LeRobotDatasetSummary, seeded_episode_split, summarize_lerobot_dataset
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -107,28 +116,116 @@ def test_feedback_parse_guard_and_training_signal() -> None:
     assert decision["decision"] == "promote_checkpoint"
 
 
-def test_structural_spine_uses_existing_vlm_eval_stub(tmp_path: Path) -> None:
+def test_real_loop_trains_evals_and_records_measured_trend(monkeypatch, tmp_path: Path) -> None:
+    from npa.workflows import sim_to_real as sim_to_real_module
+
     dataset = _write_lerobot_fixture(tmp_path / "fixture")
+    base_summary = summarize_lerobot_dataset(
+        dataset,
+        source_uri=str(dataset),
+        repo_id="lerobot/pusht",
+        revision="test",
+    )
+    summary = replace(base_summary, loaded_with_lerobot_dataset=True, lerobot_dataset_error="")
+    checkpoint = tmp_path / "policy-training" / "checkpoints" / "last" / "pretrained_model"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"real-weights")
+    eval_scores = iter([0.25, 0.62])
+
+    def fake_train(**kwargs):
+        return LeRobotTrainingResult(
+            status="success",
+            command=["lerobot-train", f"--steps={kwargs['steps']}"],
+            output_dir=str(kwargs["output_dir"]),
+            checkpoint_path=str(checkpoint),
+            steps=kwargs["steps"],
+            resume=kwargs["resume"],
+            log_path=str(kwargs["log_path"]),
+            duration_seconds=1.0,
+            exit_code=0,
+            checkpoint_validation={
+                "status": "loadable",
+                "checkpoint_path": str(checkpoint),
+                "weight_file": str(checkpoint / "model.safetensors"),
+                "tensor_count": 1,
+                "parameter_count": 1,
+                "bytes": 12,
+            },
+        )
+
+    def fake_eval(**kwargs):
+        score = next(eval_scores)
+        output_dir = Path(kwargs["output_dir"])
+        output_dir.mkdir(parents=True)
+        eval_info = output_dir / "eval_info.json"
+        eval_info.write_text(
+            json.dumps({"overall": {"pc_success": score, "avg_sum_reward": score, "n_episodes": 2}}),
+            encoding="utf-8",
+        )
+        return LeRobotEvalResult(
+            status="success",
+            backend=kwargs["env_type"],
+            command=["lerobot-eval"],
+            output_dir=str(output_dir),
+            eval_info_path=str(eval_info),
+            score=score,
+            metric_name="pc_success",
+            pc_success=score,
+            avg_sum_reward=score,
+            avg_max_reward=score,
+            n_episodes=2,
+            log_path=str(kwargs["log_path"]),
+            duration_seconds=1.0,
+            exit_code=0,
+            raw_metrics={"overall": {"pc_success": score}},
+        )
+
+    monkeypatch.setattr(
+        sim_to_real_module,
+        "assert_lerobot_importable",
+        lambda: LeRobotImportResult("ok", "0.5.1", "/tmp/lerobot", "lerobot.datasets.lerobot_dataset.LeRobotDataset"),
+    )
+    monkeypatch.setattr(sim_to_real_module, "summarize_lerobot_dataset", lambda *args, **kwargs: summary)
+    monkeypatch.setattr(sim_to_real_module, "run_lerobot_training", fake_train)
+    monkeypatch.setattr(sim_to_real_module, "run_lerobot_eval", fake_eval)
+    monkeypatch.setattr(
+        sim_to_real_module,
+        "validate_lerobot_checkpoint",
+        lambda path: CheckpointValidationResult(
+            "loadable",
+            str(checkpoint),
+            str(checkpoint / "model.safetensors"),
+            1,
+            1,
+            12,
+        ),
+    )
     config = SimToRealConfig(
         run_id="s2r-test",
         output_dir=tmp_path,
         input_data_uri=str(dataset),
         env_count=10,
-        threshold=0.5,
-        vlm_eval_backend="stub",
-        vlm_eval_model="vlm-eval-stub",
-        vlm_eval_score=0.82,
+        train_steps=10,
+        train_step_budget=20,
+        max_training_iterations=2,
+        eval_episodes=2,
+        threshold=0.6,
+        feedback_source="rollout",
+        eval_backend="pusht",
     )
 
-    report = run_structural_spine(config)
+    report = run_real_lerobot_loop(config)
     components = {component.name: component for component in report.components}
 
-    assert report.feedback.score == 0.82
-    assert components["vlm_feedback"].tier == Tier.PARTIAL
-    assert components["real_lerobot_dataset"].tier in {Tier.WORKS, Tier.PARTIAL}
+    assert report.feedback.score == 0.62
+    assert report.outer_loop["trend"] == [0.25, 0.62]
+    assert report.outer_loop["decision"] == "promote_checkpoint"
+    assert components["lerobot_runtime_import"].tier == Tier.WORKS
+    assert components["real_lerobot_dataset"].tier == Tier.WORKS
     assert components["lerobot_episode_split"].tier == Tier.WORKS
-    assert components["inner_feedback_training_loop"].tier == Tier.SEAM
-    assert (tmp_path / "feedback" / "vlm-eval" / "vlm_eval_stub.json").exists()
+    assert components["real_training"].tier == Tier.WORKS
+    assert components["real_rollout_eval"].tier == Tier.WORKS
+    assert components["feedback_training_loop"].tier == Tier.WORKS
     assert (tmp_path / "lerobot-dataset-summary.json").exists()
     assert (tmp_path / "s2r-test.rrd").exists()
     assert (tmp_path / "sim-to-real-report.json").exists()
@@ -163,8 +260,11 @@ def test_yaml_exposes_parameterized_spine_and_feedback_contract() -> None:
     assert task["envs"]["NPA_S3_BUCKET"] == "${S3_BUCKET}"
     assert task["envs"]["POLICY_IMAGE"] == "npa-lerobot-policy:0.1.0"
     assert task["envs"]["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
-    assert task["envs"]["FEEDBACK_SOURCE"] == "vlm"
-    assert "npa.workflows.sim_to_real local-smoke" in task["run"]
+    assert task["envs"]["FEEDBACK_SOURCE"] == "rollout"
+    assert task["envs"]["EVAL_BACKEND"] == "pusht"
+    assert task["envs"]["TRAIN_STEPS"] == "2000"
+    assert task["envs"]["MAX_TRAINING_ITERATIONS"] == "3"
+    assert "npa.workflows.sim_to_real real-loop" in task["run"]
     assert "--attempt-s3-roundtrip" in task["run"]
 
 
@@ -175,8 +275,8 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
         run_id="s2r-render",
         bucket="bucket",
         policy_image="cr.example/npa-lerobot:custom",
-        vlm_eval_backend="stub",
-        vlm_eval_score=0.9,
+        feedback_source="rollout",
+        eval_backend="pusht",
     )
     task_env = docs[0]["envs"]
 
@@ -188,8 +288,9 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
     assert task_env["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
     assert task_env["INPUT_DATA_URI"] == "s3://bucket/datasets/lerobot-pusht/"
     assert task_env["CHECKPOINT_URI"] == "s3://bucket/sim-to-real/s2r-render/checkpoints/policy/"
-    assert task_env["VLM_EVAL_BACKEND"] == "stub"
-    assert task_env["VLM_EVAL_SCORE"] == "0.9"
+    assert task_env["FEEDBACK_SOURCE"] == "rollout"
+    assert task_env["EVAL_BACKEND"] == "pusht"
+    assert "VLM_EVAL_SCORE" not in task_env
     assert "image_id" not in docs[0]["resources"]
 
 
@@ -287,6 +388,7 @@ def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
         run_id="sdk-s2r",
         output_dir=tmp_path,
         input_data_uri=str(dataset),
+        feedback_source="vlm",
         vlm_eval_backend="stub",
         vlm_eval_score=0.7,
     )
@@ -298,7 +400,7 @@ def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
 def test_feedback_result_dataclass_is_public() -> None:
     result = FeedbackResult(success=False, score=0.2, rationale="Needs another loop.")
 
-    assert result.source == "vlm"
+    assert result.source == "rollout"
 
 
 def test_default_policy_image_uses_byo_policy_container() -> None:
