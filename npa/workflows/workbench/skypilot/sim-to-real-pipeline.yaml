@@ -7,9 +7,7 @@ resources:
   accelerators:
     - H100:1
     - H200:1
-    - A100:1
     - L40S:1
-    - RTX6000:1
   cpus: 16
   memory: 64
 envs:
@@ -37,8 +35,8 @@ envs:
   FEEDBACK_SOURCE: "vlm"
   FEEDBACK_TYPE: "critique"
   NPA_GPU_TYPE: "H100:1"
-  NPA_GPU_FAILOVER: "H200:1,A100:1,L40S:1,RTX6000:1"
-  GPU: "H100:1,H200:1,A100:1,L40S:1,RTX6000:1"
+  NPA_GPU_FAILOVER: "H200:1,L40S:1"
+  GPU: "H100:1,H200:1,L40S:1"
   BYO_FEEDBACK_ENDPOINT_URL: ""
   BYO_FEEDBACK_COMMAND: ""
   BYO_FEEDBACK_MODE: "provided-rollout"

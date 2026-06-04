@@ -28,6 +28,12 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotVersionError,
     resolve_sky_bin,
 )
+from npa.orchestration.skypilot.gpu_catalog import (
+    InvalidNebiusGpuRequestError,
+    NebiusGpuCatalog,
+    NebiusGpuCatalogError,
+    resolve_nebius_gpu_preferences,
+)
 from npa.workflows.sim_to_real import (
     DEFAULT_EVAL_BACKEND,
     DEFAULT_FEEDBACK_SOURCE,
@@ -74,7 +80,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        InvalidNebiusGpuRequestError,
+        NebiusGpuCatalogError,
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         print("For a no-infrastructure check, rerun with --render-only.", file=sys.stderr)
         return 2
@@ -104,6 +116,8 @@ def render_workflow(
     seed: int = 42,
     gpu: str = DEFAULT_GPU_TYPE,
     gpu_failover: str = DEFAULT_GPU_FAILOVER,
+    gpu_catalog: NebiusGpuCatalog | None = None,
+    sky_bin: str | os.PathLike[str] | None = None,
     task_cloud: TaskCloud = "kubernetes",
     vlm_eval_backend: str = DEFAULT_VLM_EVAL_BACKEND,
     vlm_eval_model: str = DEFAULT_VLM_EVAL_MODEL,
@@ -213,7 +227,13 @@ def render_workflow(
         resources = doc.get("resources")
         if isinstance(resources, dict):
             _apply_task_cloud(resources, task_cloud)
-            resources["accelerators"] = _render_accelerators(config.gpu, config.gpu_failover)
+            resources["accelerators"] = _render_accelerators(
+                config.gpu,
+                config.gpu_failover,
+                task_cloud=task_cloud,
+                gpu_catalog=gpu_catalog,
+                sky_bin=sky_bin,
+            )
         if doc.get("name") == "s2r-policy-feedback-update":
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
@@ -246,8 +266,19 @@ def output_paths(
     return artifact_uris(config)
 
 
-def _render_accelerators(gpu: str, gpu_failover: str = "") -> str | list[str]:
-    candidates = accelerator_candidates(gpu, gpu_failover)
+def _render_accelerators(
+    gpu: str,
+    gpu_failover: str = "",
+    *,
+    task_cloud: TaskCloud = "kubernetes",
+    gpu_catalog: NebiusGpuCatalog | None = None,
+    sky_bin: str | os.PathLike[str] | None = None,
+) -> str | list[str]:
+    if task_cloud == "nebius":
+        resolution = resolve_nebius_gpu_preferences(gpu, gpu_failover, catalog=gpu_catalog, sky_bin=sky_bin)
+        candidates = list(resolution.accelerators)
+    else:
+        candidates = accelerator_candidates(gpu, gpu_failover)
     if not candidates:
         return DEFAULT_GPU_TYPE
     if len(candidates) == 1:
@@ -308,6 +339,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         seed=args.seed,
         gpu=args.gpu,
         gpu_failover=args.gpu_failover,
+        sky_bin=args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"),
         task_cloud=args.task_cloud,
         vlm_eval_backend=args.vlm_eval_backend,
         vlm_eval_model=args.vlm_eval_model,

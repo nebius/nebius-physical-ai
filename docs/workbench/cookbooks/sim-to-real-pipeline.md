@@ -23,7 +23,7 @@ export AWS_ENDPOINT_URL="$S3_ENDPOINT_URL"
 export NEBIUS_S3_ENDPOINT="$S3_ENDPOINT_URL"
 export POLICY_IMAGE=npa-lerobot-policy:0.1.0
 export NPA_GPU_TYPE=H100:1
-export NPA_GPU_FAILOVER=H200:1,A100:1,L40S:1,RTX6000:1
+export NPA_GPU_FAILOVER=H200:1,L40S:1
 export EVAL_BACKEND=state-success
 export FEEDBACK_SOURCE=vlm
 export FEEDBACK_TYPE=critique
@@ -84,10 +84,17 @@ until ! "$NPA_SKYPILOT_BIN" status --refresh | grep -q "s2r-${RUN_ID}"; do sleep
 ```
 
 The checked-in YAML defaults to ordered SkyPilot accelerator failover:
-`H100:1`, `H200:1`, `A100:1`, `L40S:1`, `RTX6000:1`. For raw SkyPilot launches,
-`--gpus` can override the primary accelerator and the `NPA_GPU_TYPE` /
-`NPA_GPU_FAILOVER` envs keep the runtime report aligned with the resource choice.
-The SkyPilot Nebius catalog uses `RTX6000` for NVIDIA RTX PRO 6000.
+`H100:1`, `H200:1`, `L40S:1`. For raw SkyPilot launches, `--gpus` can override
+the primary accelerator and the `NPA_GPU_TYPE` / `NPA_GPU_FAILOVER` envs keep the
+runtime report aligned with the resource choice.
+
+For the Nebius VM backend, the CLI wrapper validates the requested GPU and
+failover chain against the live `sky show-gpus --cloud nebius` catalog before
+submitting. Explicit multi-GPU VM requests such as `B200:8` remain possible when
+the live catalog reports that accelerator and quantity. A100 and RTX6000 are not
+accepted Nebius VM catalog strings. RTX PRO 6000 (`gpu-rtx6000`, 96 GB) is a
+managed-Kubernetes path, currently in `us-central1`, scheduled by node labels and
+`nvidia.com/gpu`; it is intentionally not part of the VM failover.
 
 ## CLI Wrapper Path
 
@@ -109,7 +116,7 @@ npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
   --vlm-eval-backend stub \
   --vlm-eval-score 0.82 \
   --gpu H100:1 \
-  --gpu-failover H200:1,A100:1,L40S:1,RTX6000:1 \
+  --gpu-failover H200:1,L40S:1 \
   --task-cloud nebius \
   --controller-backend nebius \
   --cleanup
@@ -132,7 +139,7 @@ report = sim_to_real.local_smoke(
     input_data_uri="s3://npa-sim2real-d87cf691/datasets/lerobot-pusht/",
     policy_image="npa-lerobot-policy:0.1.0",
     gpu="H100:1",
-    gpu_failover="H200:1,A100:1,L40S:1,RTX6000:1",
+    gpu_failover="H200:1,L40S:1",
     eval_backend="state-success",
     feedback_source="vlm",
     feedback_type="critique",
@@ -258,8 +265,8 @@ Both should show no in-progress clusters or managed jobs for the run.
 | `--eval-backend` / `EVAL_BACKEND` / `eval_backend` | `state-success` | `vlm-frames` or `heldout-metrics` |
 | `--feedback-source` / `FEEDBACK_SOURCE` / `feedback_source` | `vlm` | `none`, `sim-env`, or `byo-container` |
 | `--feedback-type` / `FEEDBACK_TYPE` / `feedback_type` | `critique` | `scalar`, `dense-per-step`, `pass-fail`, or `preference` |
-| `--gpu` / `NPA_GPU_TYPE` / `gpu` | `H100:1` | Primary SkyPilot accelerator; examples: `H100:1`, `H200:1`, `A100:1`, `L40S:1`, `RTX6000:1` |
-| `--gpu-failover` / `NPA_GPU_FAILOVER` / `gpu_failover` | `H200:1,A100:1,L40S:1,RTX6000:1` | Ordered fallback accelerator list |
+| `--gpu` / `NPA_GPU_TYPE` / `gpu` | `H100:1` | Primary SkyPilot accelerator. Nebius VM examples: `H100:1`, `H200:1`, `L40S:1`, or explicit multi-GPU `B200:8` when present in the live catalog |
+| `--gpu-failover` / `NPA_GPU_FAILOVER` / `gpu_failover` | `H200:1,L40S:1` | Ordered fallback accelerator list, validated against the live Nebius VM catalog before VM submission |
 | `--vlm-eval-backend` | `stub` | Live VLM backend |
 | `--task-cloud` | `nebius` | Task backend for acceptance runs when Kubernetes GPU capacity is occupied |
 | `--controller-backend` | `nebius` | Managed-jobs controller fallback for clusters that cannot validate the Kubernetes controller pod |

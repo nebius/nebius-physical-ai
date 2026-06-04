@@ -42,15 +42,15 @@ class NPASpec:
     region: str = DEFAULT_REGION
 
 
-# Source: `sky show-gpus --cloud nebius --all` captured at
-# /tmp/w9skypilot-integration-bootstrap-20260516T011706Z/phase-a/
-# sky-show-gpus-nebius.txt. Current SkyPilot Nebius catalog entries use
-# RTX6000 for NVIDIA RTX PRO 6000.
+# Static convenience names for NPA specs. Launch-time VM validation uses the
+# live SkyPilot catalog in gpu_catalog.py instead of trusting this map.
+# RTX PRO 6000 (`gpu-rtx6000`, 96 GB) is intentionally absent: it is not a
+# SkyPilot Nebius VM catalog accelerator and belongs to the managed-Kubernetes
+# scheduling path once that resolver hook is wired.
 NPA_GPU_TO_SKYPILOT_ACCELERATOR = {
     "h100": "H100",
     "h200": "H200",
     "l40s": "L40S",
-    "rtx6000": "RTX6000",
 }
 
 GPU_INSTANCE_TYPES_BY_COUNT = {
@@ -66,9 +66,6 @@ GPU_INSTANCE_TYPES_BY_COUNT = {
         1: "gpu-l40s-d_1gpu-16vcpu-96gb",
         2: "gpu-l40s-d_2gpu-64vcpu-384gb",
         4: "gpu-l40s-d_4gpu-128vcpu-768gb",
-    },
-    "rtx6000": {
-        1: "gpu-rtx6000_1gpu-24vcpu-218gb",
     },
 }
 
