@@ -1,21 +1,21 @@
 # Standalone Cosmos controlled-generation augmentation workflow.
 #
 # Run with plain SkyPilot, overriding the image, GPU, input, and output:
-#   sky launch --infra kubernetes --gpus <gpu-type>:1 --image-id docker:<registry>/npa-cosmos:<tag> \
+#   sky launch --infra nebius --gpus <gpu-type>:1 \
+#     --env NPA_COSMOS_IMAGE=<registry>/npa-cosmos:<tag-or-digest> \
 #     --env NPA_COSMOS_AUGMENT_SOURCE=s3://example-bucket/input/sim.mp4 \
 #     --env NPA_COSMOS_AUGMENT_OUTPUT=s3://example-bucket/output/cosmos-augment/ \
 #     --secret HF_TOKEN \
 #     npa/workflows/workbench/skypilot/cosmos3-augment.yaml
 #
-# SkyPilot 0.12.2 does not expand shell variables inside envs at submit time, so
-# real values are supplied with --env at launch or consumed in run: below.
+# The Cosmos image is run explicitly with docker on the VM. Do not use
+# SkyPilot's docker image_id mode here; that mode SSHes into the container.
 name: cosmos3-augment
 resources:
   cloud: kubernetes
   cpus: 16+
   memory: 128+
   disk_size: 1024
-  image_id: "docker:${NPA_COSMOS_IMAGE}"
 envs:
   NPA_COSMOS_IMAGE: "example.invalid/npa-cosmos:3.0.0"
   NPA_COSMOS_AUGMENT_SOURCE: "s3://example-bucket/cosmos/input/sim-render.mp4"
@@ -36,20 +36,96 @@ envs:
   AWS_PROFILE: ""
 setup: |
   set -euo pipefail
-  if ! command -v git >/dev/null 2>&1; then
+  run_root() {
+    if [ "$(id -u)" = "0" ]; then
+      "$@"
+    else
+      sudo "$@"
+    fi
+  }
+  if ! command -v docker >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       export DEBIAN_FRONTEND=noninteractive
-      apt-get update
-      apt-get install -y --no-install-recommends ca-certificates curl ffmpeg git git-lfs wget
+      run_root apt-get update
+      run_root apt-get install -y --no-install-recommends ca-certificates curl docker.io
+    else
+      echo "docker is required to run the Cosmos image" >&2
+      exit 1
     fi
   fi
-  if ! command -v uv >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+  if command -v systemctl >/dev/null 2>&1; then
+    run_root systemctl start docker >/dev/null 2>&1 || true
+  else
+    run_root service docker start >/dev/null 2>&1 || true
   fi
-  python3 -m pip install --user --upgrade "awscli>=1.32" "huggingface_hub[cli]>=0.23"
+  if command -v nvidia-ctk >/dev/null 2>&1; then
+    run_root nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1 || true
+    if command -v systemctl >/dev/null 2>&1; then
+      run_root systemctl restart docker >/dev/null 2>&1 || true
+    else
+      run_root service docker restart >/dev/null 2>&1 || true
+    fi
+  fi
 run: |
   set -euo pipefail
-  export PATH="${HOME}/.local/bin:${PATH}"
+
+  docker_cmd=(docker)
+  if ! docker info >/dev/null 2>&1; then
+    docker_cmd=(sudo docker)
+  fi
+
+  test -n "${NPA_COSMOS_IMAGE}"
+  test -n "${NPA_COSMOS_AUGMENT_SOURCE}"
+  test -n "${NPA_COSMOS_AUGMENT_OUTPUT}"
+  test -n "${NPA_COSMOS_AUGMENT_CONTROL}"
+  test -n "${NPA_COSMOS_REPLICAS}"
+
+  hf_token_value="${!NPA_COSMOS_HF_TOKEN_ENV-}"
+  test -n "${hf_token_value}"
+  export HF_TOKEN="${hf_token_value}"
+  export HUGGING_FACE_HUB_TOKEN="${hf_token_value}"
+
+  if [ -n "${SKYPILOT_DOCKER_SERVER:-}" ] || [ -n "${SKYPILOT_DOCKER_USERNAME:-}" ] || [ -n "${SKYPILOT_DOCKER_PASSWORD:-}" ]; then
+    test -n "${SKYPILOT_DOCKER_SERVER:-}"
+    test -n "${SKYPILOT_DOCKER_USERNAME:-}"
+    test -n "${SKYPILOT_DOCKER_PASSWORD:-}"
+    printf '%s' "${SKYPILOT_DOCKER_PASSWORD}" | "${docker_cmd[@]}" login "${SKYPILOT_DOCKER_SERVER}" -u "${SKYPILOT_DOCKER_USERNAME}" --password-stdin
+  fi
+
+  "${docker_cmd[@]}" pull "${NPA_COSMOS_IMAGE}"
+
+  job_dir="/tmp/npa-cosmos-augment-docker"
+  rm -rf "${job_dir}"
+  mkdir -p "${job_dir}"
+  chmod 700 "${job_dir}"
+
+  env_file="${job_dir}/container.env"
+  : > "${env_file}"
+  chmod 600 "${env_file}"
+  write_env() {
+    key="$1"
+    value="${!key-}"
+    if [ -n "${value}" ]; then
+      printf '%s=%s\n' "${key}" "${value}" >> "${env_file}"
+    fi
+  }
+  for key in \
+    AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_ENDPOINT_URL AWS_PROFILE \
+    HF_TOKEN HUGGING_FACE_HUB_TOKEN \
+    NPA_COSMOS_IMAGE NPA_COSMOS_AUGMENT_SOURCE NPA_COSMOS_AUGMENT_OUTPUT \
+    NPA_COSMOS_AUGMENT_PROMPT NPA_COSMOS_AUGMENT_CONTROL \
+    NPA_COSMOS_AUGMENT_CONTROL_CONFIG NPA_COSMOS_AUGMENT_MODEL_SIZE \
+    NPA_COSMOS_AUGMENT_VARIANTS NPA_COSMOS_REPLICAS \
+    NPA_COSMOS_TRANSFER_SOURCE_REPO NPA_COSMOS_TRANSFER_MODEL_ID \
+    NPA_COSMOS_HF_TOKEN_ENV NPA_COSMOS_CACHE NPA_COSMOS_OUTPUT_DIR \
+    NPA_COSMOS_ATTRIBUTION; do
+    write_env "${key}"
+  done
+
+  cat > "${job_dir}/run-container.sh" <<'NPA_COSMOS_CONTAINER'
+  #!/usr/bin/env bash
+  set -euo pipefail
+  export PATH="/opt/cosmos/bin:${HOME}/.local/bin:${PATH}"
   export HF_HOME="${NPA_COSMOS_CACHE}/hf"
   export HUGGINGFACE_HUB_CACHE="${NPA_COSMOS_CACHE}/hf"
 
@@ -76,8 +152,11 @@ run: |
   rm -rf "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
   mkdir -p "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
 
-  transfer_dir="${NPA_COSMOS_CACHE}/transfer25"
-  git clone --depth 1 "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" "${transfer_dir}"
+  transfer_dir="${COSMOS_TRANSFER25_HOME:-/opt/cosmos/cosmos-transfer2.5}"
+  if [ "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" != "https://github.com/nvidia-cosmos/cosmos-transfer2.5.git" ] || [ ! -d "${transfer_dir}/examples" ]; then
+    transfer_dir="${NPA_COSMOS_CACHE}/transfer25"
+    git clone --depth 1 "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" "${transfer_dir}"
+  fi
   cd "${transfer_dir}"
   if command -v git-lfs >/dev/null 2>&1; then
     git lfs install --local
@@ -89,7 +168,6 @@ run: |
   mkdir -p "${input_dir}"
   source_local="${input_dir}/source$(python - <<'PY'
   import os
-  import subprocess
   from pathlib import Path
   suffix = Path(os.environ["NPA_COSMOS_AUGMENT_SOURCE"].split("?", 1)[0]).suffix or ".mp4"
   print(suffix)
@@ -182,6 +260,7 @@ run: |
   done
 
   python - <<'PY'
+  import hashlib
   import json
   import os
   from pathlib import Path
@@ -195,6 +274,10 @@ run: |
   media = [path for path in files if Path(path).suffix.lower() in {".mp4", ".jpg", ".jpeg", ".png"}]
   if not media:
       raise SystemExit("no generated media artifacts found")
+  sha256 = {
+      path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+      for path in files
+  }
   metadata = {
       "status": "ok",
       "workflow": "cosmos-augment",
@@ -205,6 +288,7 @@ run: |
       "guardrails": "on",
       "attribution": os.environ["NPA_COSMOS_ATTRIBUTION"],
       "artifacts": files,
+      "sha256": sha256,
   }
   (root / "result.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
   print(json.dumps(metadata, sort_keys=True))
@@ -223,3 +307,10 @@ run: |
         ;;
     esac
   fi
+  NPA_COSMOS_CONTAINER
+  chmod +x "${job_dir}/run-container.sh"
+
+  "${docker_cmd[@]}" run --rm --gpus all --ipc=host --network host \
+    --env-file "${env_file}" \
+    -v "${job_dir}:${job_dir}:ro" \
+    "${NPA_COSMOS_IMAGE}" -lc "bash ${job_dir}/run-container.sh"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from npa.workbench.cosmos.workflows import (
     COSMOS_ATTRIBUTION,
     build_cosmos_augment_env,
     build_cosmos_reason_env,
+    launch_cosmos_sky_workflow,
 )
 
 
@@ -303,12 +305,74 @@ def test_cosmos_augment_and_reason_raw_yamls_are_standalone_and_safe() -> None:
         text = path.read_text(encoding="utf-8")
         assert doc["resources"]["cloud"] == "kubernetes"
         assert "accelerators" not in doc["resources"]
-        assert doc["resources"]["image_id"] == "docker:${NPA_COSMOS_IMAGE}"
+        assert "image_id" not in doc["resources"]
+        assert '"${docker_cmd[@]}" run --rm --gpus all' in text
+        assert "docker pull" not in text
+        assert '"${docker_cmd[@]}" pull "${NPA_COSMOS_IMAGE}"' in text
         assert "npa workbench" not in doc["run"]
         assert "--no-guardrails" not in text
         assert "--endpoint-url" in text
         assert "guardrails" in text.lower()
         assert doc["envs"]["NPA_COSMOS_ATTRIBUTION"] == COSMOS_ATTRIBUTION
+
+
+def test_cosmos_sky_launch_materializes_yaml_and_uses_vm_docker(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        command = list(args)
+        rendered_yaml = Path(command[-1])
+        captured["command"] = command
+        captured["doc"] = yaml.safe_load(rendered_yaml.read_text(encoding="utf-8"))
+        captured["docker_password"] = os.environ["SKYPILOT_DOCKER_PASSWORD"]
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    monkeypatch.setenv("NPA_DOCKER_LOGIN_USERNAME", "iam")
+    monkeypatch.setenv("NPA_DOCKER_LOGIN_PASSWORD", "registry-secret")
+    monkeypatch.setenv("NPA_DOCKER_LOGIN_SERVER", "cr.example.invalid")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    env = build_cosmos_augment_env(
+        source="s3://example-bucket/input/sim.mp4",
+        output_path="s3://example-bucket/output/augment/",
+        prompt="preserve robot motion",
+        image="cr.example.invalid/npa-cosmos:3.0.0",
+    )
+    result = launch_cosmos_sky_workflow(
+        yaml_path=AUGMENT_YAML,
+        env=env,
+        infra="nebius",
+        accelerator="RTXPRO:1",
+        skypilot_bin="sky",
+    )
+
+    command = captured["command"]
+    doc = captured["doc"]
+    assert result.status == "submitted"
+    assert "--image-id" not in command
+    assert "--env" not in command
+    assert "--secret" in command
+    assert "SKYPILOT_DOCKER_USERNAME" in command
+    assert "SKYPILOT_DOCKER_PASSWORD" in command
+    assert "SKYPILOT_DOCKER_SERVER" in command
+    assert "registry-secret" not in command
+    assert captured["docker_password"] == "registry-secret"
+    assert not Path(result.rendered_yaml).exists()
+    assert "SKYPILOT_DOCKER_PASSWORD" not in os.environ
+
+    assert doc["resources"]["cloud"] == "nebius"
+    assert doc["resources"]["region"] == "eu-north1"
+    assert doc["resources"]["accelerators"] == "RTXPRO:1"
+    assert "image_id" not in doc["resources"]
+    assert doc["envs"]["NPA_COSMOS_IMAGE"] == "cr.example.invalid/npa-cosmos:3.0.0"
+    assert all(
+        "${" not in value
+        for value in doc["envs"].values()
+        if isinstance(value, str)
+    )
+    assert '"${docker_cmd[@]}" run --rm --gpus all' in doc["run"]
 
 
 def test_cosmos_license_and_notice_are_vendored() -> None:

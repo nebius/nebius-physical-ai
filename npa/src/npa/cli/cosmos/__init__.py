@@ -929,6 +929,7 @@ def augment_cmd(
     image: str = typer.Option(
         "",
         "--image",
+        "--image-id",
         help="Container image for the raw SkyPilot job.",
     ),
     s3_endpoint: str = typer.Option(
@@ -1051,6 +1052,7 @@ def reason_cmd(
     image: str = typer.Option(
         "",
         "--image",
+        "--image-id",
         help="Container image for the raw SkyPilot job.",
     ),
     s3_endpoint: str = typer.Option(

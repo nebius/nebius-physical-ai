@@ -6,10 +6,13 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 DEFAULT_COSMOS3_NANO_MODEL_ID = "nvidia/Cosmos3-Nano"
 DEFAULT_COSMOS3_SUPER_MODEL_ID = "nvidia/Cosmos3-Super"
@@ -19,6 +22,11 @@ DEFAULT_TRANSFER25_SOURCE_REPO = "https://github.com/nvidia-cosmos/cosmos-transf
 DEFAULT_COSMOS_IMAGE = "example.invalid/npa-cosmos:3.0.0"
 DEFAULT_S3_ENDPOINT = ""
 COSMOS_ATTRIBUTION = "Built on NVIDIA Cosmos"
+SKYPILOT_DOCKER_LOGIN_ENV = {
+    "SKYPILOT_DOCKER_USERNAME": "NPA_DOCKER_LOGIN_USERNAME",
+    "SKYPILOT_DOCKER_PASSWORD": "NPA_DOCKER_LOGIN_PASSWORD",
+    "SKYPILOT_DOCKER_SERVER": "NPA_DOCKER_LOGIN_SERVER",
+}
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SKYPILOT_ROOT = REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot"
@@ -56,6 +64,7 @@ class CosmosSkyLaunchResult:
     stdout: str = ""
     stderr: str = ""
     returncode: int | None = None
+    rendered_yaml: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +74,7 @@ class CosmosSkyLaunchResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
             "returncode": self.returncode,
+            "rendered_yaml": self.rendered_yaml,
             "attribution": COSMOS_ATTRIBUTION,
         }
 
@@ -191,7 +201,17 @@ def launch_cosmos_sky_workflow(
     """Launch or render a Cosmos SkyPilot workflow."""
 
     sky_bin = skypilot_bin or os.environ.get("NPA_SKYPILOT_BIN", "") or shutil.which("sky") or "sky"
+    rendered_yaml = _render_materialized_workflow(
+        yaml_path,
+        env=env,
+        infra=infra,
+        accelerator=accelerator,
+    )
+    keep_rendered_yaml = dry_run
     command = [sky_bin, "launch", "--yes", "--infra", infra]
+    docker_secret_names, docker_env_updates = _prepare_docker_login_env()
+    previous_docker_env = {key: os.environ.get(key) for key in docker_env_updates}
+    os.environ.update(docker_env_updates)
     if cluster:
         command.extend(["--cluster", cluster])
     if name:
@@ -202,41 +222,139 @@ def launch_cosmos_sky_workflow(
         command.extend(["--gpus", accelerator])
     if num_nodes > 0:
         command.extend(["--num-nodes", str(num_nodes)])
-    for key, value in sorted(env.items()):
-        if value != "":
-            command.extend(["--env", f"{key}={value}"])
     for secret in secrets:
         if secret and os.environ.get(secret):
             command.extend(["--secret", secret])
-    command.append(str(yaml_path))
+    for secret in docker_secret_names:
+        command.extend(["--secret", secret])
+    command.append(str(rendered_yaml))
 
     if dry_run:
+        try:
+            return CosmosSkyLaunchResult(
+                status="dry_run",
+                command=tuple(command),
+                env=dict(env),
+                rendered_yaml=str(rendered_yaml),
+            )
+        finally:
+            _restore_env(previous_docker_env)
+
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        status = "submitted" if result.returncode == 0 else "failed"
         return CosmosSkyLaunchResult(
-            status="dry_run",
+            status=status,
             command=tuple(command),
             env=dict(env),
+            stdout=result.stdout,
+            stderr=result.stderr,
+            returncode=result.returncode,
+            rendered_yaml=str(rendered_yaml),
         )
-
-    result = subprocess.run(
-        command,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-    )
-    status = "submitted" if result.returncode == 0 else "failed"
-    return CosmosSkyLaunchResult(
-        status=status,
-        command=tuple(command),
-        env=dict(env),
-        stdout=result.stdout,
-        stderr=result.stderr,
-        returncode=result.returncode,
-    )
+    finally:
+        _restore_env(previous_docker_env)
+        if not keep_rendered_yaml:
+            rendered_yaml.unlink(missing_ok=True)
 
 
 def shell_join(command: Sequence[str]) -> str:
     """Return a shell-escaped command string for display."""
 
     return " ".join(shlex.quote(part) for part in command)
+
+
+def _render_materialized_workflow(
+    yaml_path: Path,
+    *,
+    env: Mapping[str, str],
+    infra: str,
+    accelerator: str,
+) -> Path:
+    docs = [doc for doc in yaml.safe_load_all(yaml_path.read_text(encoding="utf-8")) if doc]
+    if not docs:
+        raise ValueError(f"workflow YAML has no documents: {yaml_path}")
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        envs = doc.setdefault("envs", {})
+        if isinstance(envs, dict):
+            for key, value in sorted(env.items()):
+                if value != "":
+                    envs[key] = value
+        resources = doc.setdefault("resources", {})
+        if isinstance(resources, dict):
+            resources.pop("image_id", None)
+            if infra == "nebius":
+                resources["cloud"] = "nebius"
+                resources.setdefault("region", "eu-north1")
+            if accelerator:
+                resources["accelerators"] = accelerator
+        _assert_no_unrendered_submit_values(doc)
+
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="npa-cosmos-",
+        suffix=".yaml",
+        delete=False,
+    )
+    with handle:
+        yaml.safe_dump_all(docs, handle, sort_keys=False)
+    return Path(handle.name)
+
+
+def _assert_no_unrendered_submit_values(doc: Mapping[str, Any]) -> None:
+    resources = doc.get("resources", {})
+    if isinstance(resources, Mapping):
+        image_id = resources.get("image_id")
+        if isinstance(image_id, str) and "${" in image_id:
+            raise ValueError("workflow resources.image_id contains an unrendered variable")
+
+    envs = doc.get("envs", {})
+    if not isinstance(envs, Mapping):
+        return
+    for key, value in envs.items():
+        if not isinstance(value, str):
+            continue
+        if "${" in value:
+            raise ValueError(f"workflow env {key} contains an unrendered variable")
+        if value.startswith("s3://") and "${" in value:
+            raise ValueError(f"workflow S3 env {key} contains an unrendered variable")
+
+
+def _prepare_docker_login_env() -> tuple[tuple[str, ...], dict[str, str]]:
+    sky_values = {
+        sky_key: os.environ.get(sky_key, "")
+        for sky_key in SKYPILOT_DOCKER_LOGIN_ENV
+    }
+    npa_values = {
+        sky_key: os.environ.get(npa_key, "")
+        for sky_key, npa_key in SKYPILOT_DOCKER_LOGIN_ENV.items()
+    }
+    sky_present = any(sky_values.values())
+    npa_present = any(npa_values.values())
+    if not sky_present and not npa_present:
+        return (), {}
+
+    values = sky_values if sky_present else npa_values
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        names = ", ".join(missing)
+        raise ValueError(f"incomplete Docker registry login configuration: {names}")
+    return tuple(SKYPILOT_DOCKER_LOGIN_ENV), ({} if sky_present else values)
+
+
+def _restore_env(previous: Mapping[str, str | None]) -> None:
+    for key, value in previous.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
