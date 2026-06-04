@@ -27,7 +27,6 @@ from npa.clients.config import (
     ConfigError,
     default_project_name,
     default_workbench_name,
-    list_projects,
     resolve_config,
     resolve_container_registry,
     resolve_credentials,
@@ -322,11 +321,11 @@ def list_cmd(
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """List configured LeRobot workbenches (excludes Genesis VMs)."""
-    from npa.clients.config import default_project_name, default_workbench_name, list_projects
+    from npa.clients import config as client_config
 
-    projects = list_projects()
-    def_proj = default_project_name()
-    def_wb = default_workbench_name()
+    projects = client_config.list_projects()
+    def_proj = client_config.default_project_name()
+    def_wb = client_config.default_workbench_name()
 
     if output == OutputFormat.json:
         # Filter to lerobot-only workbenches in JSON output too.
@@ -461,16 +460,16 @@ def status(
         typer.echo(f"  runtime: {getattr(cfg, 'runtime', 'vm')}")
         if container_info:
             typer.echo(f"  container: {container_info.get('state', 'unknown')} ({container_info.get('image', 'unknown')})")
-        typer.echo(f"  server: up")
+        typer.echo("  server: up")
         ps = data.get("policy_server", {})
         if ps.get("running"):
             typer.echo(f"  policy_server: running (checkpoint: {ps.get('checkpoint', 'unknown')})")
         else:
-            typer.echo(f"  policy_server: stopped")
+            typer.echo("  policy_server: stopped")
         for job in data.get("jobs", []):
             typer.echo(f"  job: {job.get('name', '?')} [{job.get('status', '?')}]")
         if not data.get("jobs"):
-            typer.echo(f"  jobs: none")
+            typer.echo("  jobs: none")
 
 
 def _lerobot_serverless_job_name(wb_name: str, suffix: str | None = None) -> str:
@@ -1845,7 +1844,7 @@ def deploy(
             return
 
         if dry_run:
-            console.print(f"  [dry-run] Would bootstrap Nebius environment:")
+            console.print("  [dry-run] Would bootstrap Nebius environment:")
             console.print(f"    project: {env_project}")
             console.print(f"    tenant:  {env_tenant}")
             console.print(f"    region:  {env_region}")
@@ -2017,7 +2016,7 @@ def deploy(
         step += 1
         console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
         if dry_run:
-            console.print(f"    [dry-run] Would run: terraform init")
+            console.print("    [dry-run] Would run: terraform init")
         else:
             try:
                 backend_cfg = (
@@ -2041,7 +2040,7 @@ def deploy(
         }
         console.print(f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})...")
         if dry_run:
-            console.print(f"    [dry-run] terraform apply")
+            console.print("    [dry-run] terraform apply")
             tf_outputs = {"vm_ip": "<pending>", "ssh_user": "ubuntu",
                           "ssh_key_path": "~/.ssh/id_ed25519",
                           "storage_bucket": "<pending>",
@@ -2172,15 +2171,16 @@ def deploy(
         },
     }
 
-    from npa.clients.config import list_projects
-    if default or not list_projects():
+    from npa.clients import config as client_config
+
+    if default or not client_config.list_projects():
         config_data["default_project"] = proj_alias
         config_data["default_workbench"] = wb_name
 
     if not dry_run:
         from npa.clients.config import write_config
         write_config(config_data)
-        console.print(f"    Registered workbench in ~/.npa/config.yaml")
+        console.print("    Registered workbench in ~/.npa/config.yaml")
 
     def mark_app_status(app_status: str) -> None:
         if not dry_run:
@@ -2327,7 +2327,7 @@ def deploy(
     step += 1
     console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
     if not dry_run:
-        console.print(f"    Saved to ~/.npa/config.yaml")
+        console.print("    Saved to ~/.npa/config.yaml")
 
     # ── Optional: pre-load checkpoint ────────────────────────────────
     if checkpoint and not dry_run and not skip_app:
@@ -2695,7 +2695,7 @@ def benchmark_cmd(
             overall["upload_status"] = "success"
         else:
             if stream:
-                console.print(f"  [yellow]S3 upload returned no confirmation[/yellow]")
+                console.print("  [yellow]S3 upload returned no confirmation[/yellow]")
             overall["upload_status"] = "unknown"
 
     # ── Output ───────────────────────────────────────────────────────
@@ -2943,7 +2943,7 @@ def profile_train_cmd(
     # Upload to S3
     if cfg.storage.checkpoint_bucket and cfg.storage.endpoint_url:
         if stream:
-            console.print(f"\n[bold]Uploading to S3...[/bold]")
+            console.print("\n[bold]Uploading to S3...[/bold]")
         upload_script = (
             "import boto3, os, pathlib\n"
             "s3 = boto3.client('s3',\n"
@@ -3122,7 +3122,7 @@ def train_student_cmd(
         if output == OutputFormat.json:
             typer.echo(json.dumps(result, indent=2))
         else:
-            console.print(f"[green]Student training complete.[/green]")
+            console.print("[green]Student training complete.[/green]")
             for k, v in result.items():
                 console.print(f"  {k}: {v}")
     finally:

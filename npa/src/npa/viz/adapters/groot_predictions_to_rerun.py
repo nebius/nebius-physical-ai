@@ -5,7 +5,6 @@ from __future__ import annotations
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
 
 import numpy as np
 

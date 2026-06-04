@@ -48,7 +48,7 @@ class SSHClient:
         for key, value in sorted(self._config.tokens.items()):
             try:
                 validate_env_name(key)
-            except ValueError as exc:
+            except ValueError:
                 raise SSHError(f"Invalid token environment variable name: {key!r}")
             env[key] = value
         return render_shell_env_file(env, export=True)

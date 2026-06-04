@@ -16,7 +16,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 import typer
 
-from npa.clients.config import resolve_project_storage
+from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.project_credentials import s3_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
