@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.workbench.lerobot.policy_container import LeRobotEvalResult
 from npa.workflows.eval_backends import EvalMetric, RolloutContext, evaluate_backend, get_eval_backend
 from npa.workflows.feedback import (
     ByoContainerFeedbackSource,
@@ -27,6 +28,8 @@ def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(tmp_p
 
     assert get_eval_backend("state-success").name == "state-success"
     assert get_eval_backend("genesis").name == "state-success"
+    assert get_eval_backend("pusht").name == "state-success"
+    assert get_eval_backend("lerobot-eval").name == "state-success"
 
     state_metric, state_status = evaluate_backend(
         "state-success",
@@ -52,6 +55,64 @@ def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(tmp_p
     assert heldout_metric.score == 0.25
     assert vlm_metric.score == 0.7
     assert vlm_status.tier == "PARTIAL"
+
+
+def test_state_success_backend_adapts_lerobot_eval_pc_success(monkeypatch, tmp_path: Path) -> None:
+    from npa.workflows import eval_backends as eval_backends_module
+
+    eval_info = tmp_path / "eval" / "eval_info.json"
+
+    def fake_run_lerobot_eval(**kwargs):
+        assert kwargs["checkpoint_path"] == tmp_path / "checkpoint"
+        assert kwargs["env_type"] == "pusht"
+        eval_info.parent.mkdir(parents=True)
+        eval_info.write_text("{}", encoding="utf-8")
+        return LeRobotEvalResult(
+            status="success",
+            backend="pusht",
+            command=["lerobot-eval"],
+            output_dir=str(eval_info.parent),
+            eval_info_path=str(eval_info),
+            score=0.83,
+            metric_name="pc_success",
+            pc_success=0.83,
+            avg_sum_reward=0.83,
+            avg_max_reward=0.9,
+            n_episodes=4,
+            log_path=str(tmp_path / "eval.log"),
+            duration_seconds=1.0,
+            exit_code=0,
+            raw_metrics={"overall": {"pc_success": 0.83}},
+        )
+
+    monkeypatch.setattr(eval_backends_module, "run_lerobot_eval", fake_run_lerobot_eval)
+
+    metric, status = evaluate_backend(
+        "lerobot-eval",
+        checkpoint_uri=str(tmp_path / "checkpoint"),
+        context=RolloutContext(
+            rollout_path=tmp_path / "eval",
+            task="pick",
+            sim_backend="genesis",
+            options={
+                "lerobot_eval": {
+                    "output_dir": tmp_path / "eval",
+                    "env_type": "pusht",
+                    "episodes": 4,
+                    "device": "cuda",
+                }
+            },
+        ),
+        threshold=0.75,
+    )
+
+    assert metric.name == "state-success"
+    assert metric.score == 0.83
+    assert metric.passed is True
+    assert metric.metadata["adapter"] == "lerobot-eval"
+    assert metric.metadata["pc_success"] == 0.83
+    assert status.tier == "WORKS"
+    assert status.artifacts["eval_info"] == str(eval_info)
 
 
 @pytest.mark.parametrize(
@@ -106,7 +167,7 @@ def test_sim_env_feedback_source_adapts_eval_metric(tmp_path: Path) -> None:
         eval_metric=EvalMetric(name="state-success", score=0.9, passed=True),
     )
 
-    payload, status = collect_feedback("sim-env", request)
+    payload, status = collect_feedback("rollout", request)
     signal = adapt_feedback_to_training_signal(payload)
 
     assert payload.value is True

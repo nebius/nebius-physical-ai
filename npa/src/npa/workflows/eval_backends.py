@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from npa.workbench.lerobot.policy_container import PolicyContainerError, run_lerobot_eval
+
 
 DEFAULT_EVAL_BACKEND = "state-success"
 
@@ -45,6 +47,7 @@ class RolloutContext:
     metrics: Mapping[str, Any] = field(default_factory=dict)
     state: Mapping[str, Any] = field(default_factory=dict)
     frames: tuple[Path, ...] = ()
+    options: Mapping[str, Any] = field(default_factory=dict)
 
 
 class EvalBackend(Protocol):
@@ -121,6 +124,15 @@ class StateSuccessEvalBackend:
         context: RolloutContext,
         threshold: float,
     ) -> tuple[EvalMetric, EvalBackendStatus]:
+        lerobot_eval = context.options.get("lerobot_eval")
+        if isinstance(lerobot_eval, Mapping) and lerobot_eval:
+            return _evaluate_lerobot_pc_success(
+                checkpoint_uri=checkpoint_uri,
+                context=context,
+                threshold=threshold,
+                options=lerobot_eval,
+            )
+
         score = _score_from_keys(context.state, ("pc_success", "state_success", "success"))
         if score is None:
             score = _score_from_keys(context.metrics, ("pc_success", "state_success", "success"))
@@ -141,7 +153,7 @@ class StateSuccessEvalBackend:
                 tier="SEAM",
                 evidence=(
                     "state-success is registered as the pose/state predicate backend; "
-                    "wire the real lerobot-eval/pc_success implementation here at merge."
+                    "no state-success or pc_success metric was provided in the rollout context."
                 ),
             )
         return (
@@ -228,6 +240,82 @@ class HeldoutMetricsEvalBackend:
         )
 
 
+def _evaluate_lerobot_pc_success(
+    *,
+    checkpoint_uri: str,
+    context: RolloutContext,
+    threshold: float,
+    options: Mapping[str, Any],
+) -> tuple[EvalMetric, EvalBackendStatus]:
+    output_dir = _required_path(options, "output_dir")
+    env_type = str(options.get("env_type") or context.sim_backend or "pusht")
+    episodes = int(options.get("episodes") or 1)
+    device = str(options.get("device") or "cuda")
+    env_task = str(options.get("env_task") or "")
+    log_path = _optional_path(options.get("log_path"))
+    timeout_seconds = int(options.get("timeout_seconds") or 0)
+    kwargs: dict[str, Any] = {
+        "checkpoint_path": Path(checkpoint_uri),
+        "output_dir": output_dir,
+        "env_type": env_type,
+        "episodes": episodes,
+        "device": device,
+        "env_task": env_task,
+        "log_path": log_path,
+    }
+    if timeout_seconds > 0:
+        kwargs["timeout_seconds"] = timeout_seconds
+    try:
+        result = run_lerobot_eval(**kwargs)
+    except PolicyContainerError as exc:
+        raise EvalBackendError(str(exc)) from exc
+
+    score = _coerce_score(result.score)
+    if score is None:
+        raise EvalBackendError(f"lerobot-eval returned an invalid score: {result.score}")
+    passed = score >= threshold
+    metadata = {
+        "adapter": "lerobot-eval",
+        "checkpoint_uri": checkpoint_uri,
+        "sim_backend": context.sim_backend,
+        "env_type": env_type,
+        "metric_name": result.metric_name,
+        "pc_success": result.pc_success,
+        "avg_sum_reward": result.avg_sum_reward,
+        "avg_max_reward": result.avg_max_reward,
+        "n_episodes": result.n_episodes,
+        "output_dir": result.output_dir,
+        "eval_info_path": result.eval_info_path,
+        "log_path": result.log_path,
+        "raw_metrics": result.raw_metrics,
+    }
+    return (
+        EvalMetric(name="state-success", score=score, passed=passed, metadata=metadata),
+        EvalBackendStatus(
+            name="state_success_eval",
+            tier="WORKS",
+            evidence=(
+                f"Ran lerobot-eval in env={env_type!r} and adapted "
+                f"{result.metric_name}={score:.6f} to state-success."
+            ),
+            artifacts={"eval_info": result.eval_info_path, "eval_log": result.log_path, "output_dir": result.output_dir},
+        ),
+    )
+
+
+def _required_path(options: Mapping[str, Any], key: str) -> Path:
+    value = options.get(key)
+    if not value:
+        raise EvalBackendError(f"lerobot-eval adapter requires {key}")
+    return Path(value)
+
+
+def _optional_path(value: Any) -> Path | None:
+    if not value:
+        return None
+    return Path(value)
+
+
 def _normalize_name(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
@@ -265,6 +353,6 @@ def _coerce_nonnegative(value: Any) -> float | None:
     return number
 
 
-register_eval_backend(StateSuccessEvalBackend(), aliases=("sim-env", "genesis", "pc-success"))
+register_eval_backend(StateSuccessEvalBackend(), aliases=("sim-env", "genesis", "pc-success", "pusht", "lerobot-eval"))
 register_eval_backend(VlmFramesEvalBackend())
 register_eval_backend(HeldoutMetricsEvalBackend())

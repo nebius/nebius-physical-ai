@@ -40,11 +40,14 @@ from npa.workflows.sim_to_real import (
     DEFAULT_FEEDBACK_TYPE,
     DEFAULT_GPU_FAILOVER,
     DEFAULT_GPU_TYPE,
+    DEFAULT_MAX_TRAINING_ITERATIONS,
+    DEFAULT_MIN_EVAL_IMPROVEMENT,
     DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
     DEFAULT_SPLIT_FRACTION,
     DEFAULT_THRESHOLD,
+    DEFAULT_TRAIN_STEP_BUDGET,
     DEFAULT_VLM_EVAL_BACKEND,
     DEFAULT_VLM_EVAL_MODEL,
     accelerator_candidates,
@@ -110,12 +113,19 @@ def render_workflow(
     split_fraction: float = DEFAULT_SPLIT_FRACTION,
     env_count: int = 10,
     episodes: int = 4,
-    train_steps: int = 50,
-    eval_episodes: int = 2,
+    train_steps: int = 2000,
+    eval_episodes: int = 10,
     threshold: float = DEFAULT_THRESHOLD,
     seed: int = 42,
     gpu: str = DEFAULT_GPU_TYPE,
     gpu_failover: str = DEFAULT_GPU_FAILOVER,
+    max_training_iterations: int = DEFAULT_MAX_TRAINING_ITERATIONS,
+    train_step_budget: int = DEFAULT_TRAIN_STEP_BUDGET,
+    min_eval_improvement: float = DEFAULT_MIN_EVAL_IMPROVEMENT,
+    policy_type: str = "act",
+    train_batch_size: int = 8,
+    train_num_workers: int = 4,
+    policy_device: str = "cuda",
     gpu_catalog: NebiusGpuCatalog | None = None,
     sky_bin: str | os.PathLike[str] | None = None,
     task_cloud: TaskCloud = "kubernetes",
@@ -157,6 +167,13 @@ def render_workflow(
         seed=seed,
         gpu=gpu,
         gpu_failover=gpu_failover,
+        max_training_iterations=max_training_iterations,
+        train_step_budget=train_step_budget,
+        min_eval_improvement=min_eval_improvement,
+        policy_type=policy_type,
+        train_batch_size=train_batch_size,
+        train_num_workers=train_num_workers,
+        policy_device=policy_device,
         vlm_eval_backend=vlm_eval_backend,
         vlm_eval_model=vlm_eval_model,
         vlm_eval_endpoint_url=vlm_eval_endpoint_url,
@@ -206,6 +223,13 @@ def render_workflow(
                     "EPISODES": str(episodes),
                     "TRAIN_STEPS": str(train_steps),
                     "EVAL_EPISODES": str(eval_episodes),
+                    "MAX_TRAINING_ITERATIONS": str(max_training_iterations),
+                    "TRAIN_STEP_BUDGET": str(train_step_budget),
+                    "MIN_EVAL_IMPROVEMENT": str(min_eval_improvement),
+                    "POLICY_TYPE": policy_type,
+                    "TRAIN_BATCH_SIZE": str(train_batch_size),
+                    "TRAIN_NUM_WORKERS": str(train_num_workers),
+                    "POLICY_DEVICE": policy_device,
                     "SUCCESS_THRESHOLD": str(threshold),
                     "SEED": str(seed),
                     "NPA_GPU_TYPE": config.gpu,
@@ -339,6 +363,13 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         seed=args.seed,
         gpu=args.gpu,
         gpu_failover=args.gpu_failover,
+        max_training_iterations=args.max_training_iterations,
+        train_step_budget=args.train_step_budget,
+        min_eval_improvement=args.min_eval_improvement,
+        policy_type=args.policy_type,
+        train_batch_size=args.train_batch_size,
+        train_num_workers=args.train_num_workers,
+        policy_device=args.policy_device,
         sky_bin=args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"),
         task_cloud=args.task_cloud,
         vlm_eval_backend=args.vlm_eval_backend,
@@ -459,12 +490,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--split-fraction", type=float, default=DEFAULT_SPLIT_FRACTION)
     parser.add_argument("--env-count", type=int, default=10)
     parser.add_argument("--episodes", type=int, default=4)
-    parser.add_argument("--train-steps", type=int, default=50)
-    parser.add_argument("--eval-episodes", type=int, default=2)
+    parser.add_argument("--train-steps", type=int, default=2000)
+    parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gpu", default=os.environ.get("NPA_GPU_TYPE", DEFAULT_GPU_TYPE))
     parser.add_argument("--gpu-failover", default=os.environ.get("NPA_GPU_FAILOVER", DEFAULT_GPU_FAILOVER))
+    parser.add_argument("--max-training-iterations", type=int, default=DEFAULT_MAX_TRAINING_ITERATIONS)
+    parser.add_argument("--train-step-budget", type=int, default=DEFAULT_TRAIN_STEP_BUDGET)
+    parser.add_argument("--min-eval-improvement", type=float, default=DEFAULT_MIN_EVAL_IMPROVEMENT)
+    parser.add_argument("--policy-type", default="act")
+    parser.add_argument("--train-batch-size", type=int, default=8)
+    parser.add_argument("--train-num-workers", type=int, default=4)
+    parser.add_argument("--policy-device", default="cuda")
     parser.add_argument("--task-cloud", choices=("kubernetes", "nebius"), default="kubernetes")
     parser.add_argument("--vlm-eval-backend", default=DEFAULT_VLM_EVAL_BACKEND)
     parser.add_argument("--vlm-eval-model", default=DEFAULT_VLM_EVAL_MODEL)

@@ -985,7 +985,8 @@ envs:
   FIFTYONE_PUBLIC_URL: ""
 run: |
   set -euo pipefail
-  python - <<'PY'
+  NPA_PYTHON="${NPA_PYTHON:-python3}"
+  "${NPA_PYTHON}" - <<'PY'
   from __future__ import annotations
 
   import os
