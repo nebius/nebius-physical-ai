@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -291,7 +290,7 @@ class TestConvert:
         assert "dataset_to_index" in table.column_names
 
         lengths = table.column("length").to_pylist()
-        assert all(l == N_TIMESTEPS for l in lengths)
+        assert all(length == N_TIMESTEPS for length in lengths)
 
         from_indices = table.column("dataset_from_index").to_pylist()
         to_indices = table.column("dataset_to_index").to_pylist()

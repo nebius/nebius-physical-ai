@@ -677,11 +677,11 @@ def _named_joint_span(info: dict[str, Any], feature_key: str, group: str) -> tup
 
     def matches(name: str) -> bool:
         if group == "left_arm":
-            return "left" in name and not "hand" in name and any(
+            return "left" in name and "hand" not in name and any(
                 token in name for token in ("shoulder", "elbow", "wrist")
             )
         if group == "right_arm":
-            return "right" in name and not "hand" in name and any(
+            return "right" in name and "hand" not in name and any(
                 token in name for token in ("shoulder", "elbow", "wrist")
             )
         if group == "left_hand":

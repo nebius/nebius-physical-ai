@@ -1509,7 +1509,7 @@ def _redact_text(text: str) -> str:
         safe = json.dumps(parsed, indent=2, sort_keys=True) + "\n"
 
     for key in SECRET_ENV_NAMES:
-        safe = re.sub(rf"({re.escape(key)}=)[^\s\"']+", rf"\1<redacted>", safe)
+        safe = re.sub(rf"({re.escape(key)}=)[^\s\"']+", r"\1<redacted>", safe)
     return re.sub(
         r'("name"\s*:\s*"([^"]+)"\s*,\s*"value"\s*:\s*)"[^"]*"',
         lambda match: f'{match.group(1)}"<redacted>"'
