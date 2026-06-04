@@ -23,7 +23,6 @@ from npa.workflows.sim_to_real import (
     outer_loop_decision,
     parse_feedback_result,
     run_real_lerobot_loop,
-    run_structural_spine,
     seeded_train_heldout_split,
 )
 from npa.workbench.lerobot.policy_container import (
@@ -34,7 +33,7 @@ from npa.workbench.lerobot.policy_container import (
     parse_feedback_batch,
     run_feedback_training_step,
 )
-from npa.workflows.lerobot_dataset import LeRobotDatasetSummary, seeded_episode_split, summarize_lerobot_dataset
+from npa.workflows.lerobot_dataset import seeded_episode_split, summarize_lerobot_dataset
 
 
 ROOT = Path(__file__).resolve().parents[3]

@@ -7,7 +7,6 @@ Repeats until task success > 0% or max rounds exhausted.
 
 from __future__ import annotations
 
-import copy
 import logging
 from pathlib import Path
 from typing import Any
@@ -61,7 +60,7 @@ def tune_teacher(
         TuneError: On unrecoverable failure.
     """
     from npa.genesis.diagnose import DiagnoseError, diagnose_teacher, save_diagnosis
-    from npa.genesis.train_teacher import PPOConfig, TrainingError, train_teacher
+    from npa.genesis.train_teacher import TrainingError
 
     checkpoint_path = Path(checkpoint_path).resolve()
     output_dir = Path(output_dir).resolve()

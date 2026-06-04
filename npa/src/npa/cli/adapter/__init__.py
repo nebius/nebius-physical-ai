@@ -67,7 +67,7 @@ def convert_cmd(
             console.print(f"[red]Error:[/red] Input directory does not exist: {inp}")
             raise typer.Exit(1)
 
-        console.print(f"[bold]Converting demos → LeRobotDataset v3[/bold]")
+        console.print("[bold]Converting demos → LeRobotDataset v3[/bold]")
         console.print(f"  input:  {inp}")
         console.print(f"  output: {output_dir if _is_s3_uri(output_dir) else out}")
         console.print(f"  fps={fps}  robot={robot}")

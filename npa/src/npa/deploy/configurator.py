@@ -14,9 +14,8 @@ from typing import Any, Sequence
 
 from jinja2 import Environment, FileSystemLoader
 
-from npa.clients.config import SSHConfig
 from npa.clients.env import render_docker_env_file, render_shell_env_file
-from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.ssh import SSHClient
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DEPLOY_DIR = Path(__file__).parent.parent.parent.parent / "deploy"
@@ -266,7 +265,7 @@ def deploy_server(
             capture_output=True,
         )
         # Upload via SSH (paramiko sftp)
-        ssh.run_or_raise(f"mkdir -p /tmp/npa-deploy")
+        ssh.run_or_raise("mkdir -p /tmp/npa-deploy")
         _sftp_upload(ssh, archive_path, "/tmp/npa-deploy/npa.tgz")
     finally:
         os.unlink(archive_path)
