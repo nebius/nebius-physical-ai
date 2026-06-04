@@ -62,20 +62,28 @@ envs:
   SEED: "42"
   CUSTOM_LEROBOT_TRAINER_COMMAND: ""
   RERUN_MAX_FRAMES_PER_EPISODE: "32"
+  NPA_SOURCE_REPO: "https://github.com/nebius/nebius-physical-ai.git"
+  NPA_SOURCE_REF: "main"
 setup: |
   set -e
-  if [ -d ./npa ]; then
-    python3 -m venv ./npa/.venv
-    ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
-    ./npa/.venv/bin/python -m pip install -e ./npa
-  else
-    echo "Expected SkyPilot workdir to contain ./npa" >&2
-    exit 2
+  if [ ! -f ./npa/pyproject.toml ]; then
+    rm -rf ./npa ./npa-source
+    git clone --depth 1 --branch "${NPA_SOURCE_REF}" "${NPA_SOURCE_REPO}" ./npa-source
+    ln -s ./npa-source/npa ./npa
   fi
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
+  python3 -m pip install --user "uv>=0.9,<1"
+  export PATH="${HOME}/.local/bin:${PATH}"
+  uv python install 3.12
+  uv venv --python 3.12 --seed ./npa/.venv
+  ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
+  ./npa/.venv/bin/python -m pip install -e ./npa
   ./npa/.venv/bin/python -m pip install "lerobot[pusht]==0.5.1" safetensors huggingface_hub datasets
   ./npa/.venv/bin/python -m npa.workbench.lerobot.policy_container check-import
 run: |
   set -euo pipefail
+  export PATH="$(pwd)/npa/.venv/bin:${PATH}"
 
   report_dir="/tmp/npa-sim-to-real-${NPA_SIM_TO_REAL_RUN_ID}"
   mkdir -p "${report_dir}"

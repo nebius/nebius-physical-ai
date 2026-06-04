@@ -6,11 +6,13 @@
 This guide assumes `npa` is already installed, the Nebius CLI is authenticated,
 and user-level credentials are already configured in
 `~/.npa/credentials.yaml`. It takes a first-time partner from platform setup to a
-workbench-capable machine that can run the Isaac Lab BYOF cookbook and write the
-first checkpoint to Nebius S3.
+workbench-capable machine that can run either the H100 sim-to-real quickstart or
+the Isaac Lab BYOF cookbook and write the first checkpoint to S3.
 
 For the canonical credential setup, see [quickstart.md](../quickstart.md). For
-the BYOF training path, see
+the H100 sim-to-real proof path, see
+[sim-to-real-quickstart.md](sim-to-real-quickstart.md). For the BYOF training
+path, see
 [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md).
 For the SkyPilot runtime details, see
 [orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md).
@@ -24,6 +26,7 @@ Operator-required prerequisites:
 - A Nebius account with access to the target project and tenant.
 - A managed Kubernetes context for the target workbench cluster, normally
   `npa-workbench-eu-north1`.
+- H100 capacity for the headless sim-to-real quickstart.
 - Provisioned RT-core GPU capacity for Isaac Lab, normally L40S in
   `eu-north1`. H100 and H200 do not satisfy Isaac Lab rendering requirements.
 - A current registry pull secret in the Kubernetes namespace that SkyPilot will
@@ -217,9 +220,28 @@ npa workbench fiftyone list
 Gate: command help renders, and a fresh machine may report that no workbench
 projects are configured.
 
+## First Sim-To-Real Run
+
+After the gates above pass, run the H100 quickstart:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+```
+
+The command prints the run ID, wall-clock time, task-success metric, checkpoint
+URI, report URI, Rerun URI, and `cluster_absent=True` after teardown. The first
+proof checkpoint path has this structure:
+
+```bash
+s3://${NPA_S3_BUCKET}/sim-to-real/<run-id>/checkpoints/policy/
+```
+
+Continue with [sim-to-real-quickstart.md](sim-to-real-quickstart.md) for the
+exact output format and override options.
+
 ## First BYOF Run
 
-After the gates above pass, continue with
+For Isaac Lab, continue with
 [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md) and
 follow its sections in order.
 
@@ -247,6 +269,8 @@ manifest from S3.
 
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
+- [sim-to-real-quickstart.md](sim-to-real-quickstart.md): first H100
+  sim-to-real checkpoint and eval metric.
 - [orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md):
   isolated SkyPilot runtime details.
 - [quickstart.md](../quickstart.md): platform install and canonical credential
