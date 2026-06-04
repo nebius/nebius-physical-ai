@@ -9,6 +9,7 @@ from npa.cli.cluster.destroy import destroy_cmd
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cli.cluster.node_group import app as node_group_app
 from npa.cli.cluster.status import list_cmd, status_cmd
+from npa.cli.cluster.terraform_lifecycle import down_cmd, up_cmd
 
 app = typer.Typer(
     name="cluster",
@@ -19,6 +20,8 @@ app = typer.Typer(
 
 app.command("deploy")(deploy_cmd)
 app.command("destroy")(destroy_cmd)
+app.command("up")(up_cmd)
+app.command("down")(down_cmd)
 app.command("status")(status_cmd)
 app.command("list")(list_cmd)
 app.add_typer(node_group_app, name="node-group")

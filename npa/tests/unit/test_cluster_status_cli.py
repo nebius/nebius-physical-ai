@@ -95,3 +95,54 @@ def test_list_json_merges_remote_and_local(monkeypatch) -> None:
     assert payload[0]["name"] == "cluster-a"
     assert payload[0]["state"] == "READY"
     assert payload[0]["node_count"] == 1
+
+
+def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def list_clusters(self, project_id):
+            return []
+
+        def get_cluster(self, name, *, project_id=""):
+            raise status_mod.ClusterNotFoundError("not found")
+
+        def list_node_groups(self, cluster_id):
+            return []
+
+    monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [])
+    monkeypatch.setattr(
+        status_mod,
+        "terraform_status",
+        lambda terraform_dir: {
+            "kube_cluster": {
+                "value": {
+                    "id": "mk8scluster-tf",
+                    "name": "cluster-tf",
+                    "endpoints": {"public_endpoint": "https://cluster.example"},
+                }
+            },
+            "k8s_training_ref": {"value": "main-v2026-05-25"},
+            "shared_filesystem": {"value": {"id": "computefilesystem-a"}},
+            "filesystem_csi": {
+                "value": {
+                    "status": "deployed",
+                    "storage_class_name": "csi-mounted-fs-path-sc",
+                }
+            },
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        ["status", "--terraform-dir", str(tmp_path), "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload[0]["name"] == "cluster-tf"
+    assert payload[0]["cluster_id"] == "mk8scluster-tf"
+    assert payload[0]["k8s_training_ref"] == "main-v2026-05-25"
+    assert payload[0]["filesystem_csi_storage_class"] == "csi-mounted-fs-path-sc"

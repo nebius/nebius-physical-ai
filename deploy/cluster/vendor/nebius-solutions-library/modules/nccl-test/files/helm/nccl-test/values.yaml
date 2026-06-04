@@ -1,0 +1,2 @@
+numberOfHosts: 2
+kubernetesClusterDomain: cluster.local

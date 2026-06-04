@@ -49,3 +49,13 @@ def test_default_name_is_truncated_to_cluster_name_limit() -> None:
 
     assert len(name) == 63
     assert name.endswith("-h100-gpu")
+
+
+def test_capacity_block_group_is_trimmed() -> None:
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="h100",
+        capacity_block_group=" capacityblockgroup-test ",
+    )
+
+    assert config.capacity_block_group == "capacityblockgroup-test"
