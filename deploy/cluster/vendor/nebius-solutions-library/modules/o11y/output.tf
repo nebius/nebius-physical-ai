@@ -29,7 +29,7 @@ output "grafana_service_account" {
     id                = var.k8s_node_group_sa_id
     access_key_id     = nebius_iam_v2_access_key.grafana_key[0].status.aws_access_key_id
     secret_access_key = nebius_iam_v2_access_key.grafana_key[0].status.secret
-    access_token      = local.grafana_access_token
+    access_token      = local.grafana_value
   } : null
   sensitive = true
 }
