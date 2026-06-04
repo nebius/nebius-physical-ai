@@ -23,7 +23,14 @@ The SkyPilot blueprint is
   checkpoint URI for normal runs, or a pre-mounted local path for development.
 - Object storage credentials are available to the task, and the endpoint is
   `https://storage.eu-north1.nebius.cloud`.
-- The SONIC image contains the `npa` CLI plus `npa[sonic]` dependencies.
+- The first-party SONIC image is built and pushed as
+  `${NPA_REGISTRY}/npa-sonic:0.1.0`:
+
+  ```bash
+  export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.0"
+  ```
 
 ## One Command
 
@@ -78,7 +85,7 @@ check:
 - `metrics.valid_action_rate`: expected `1.0`
 - `episodes`: per-episode rollout records
 
-## External Eval Container
+## BYO External Eval Container
 
 Switch to a config-driven evaluator without changing the workflow code:
 
@@ -103,6 +110,10 @@ It must read the mounted ONNX and sidecar files, then write JSON to
 `NPA_SONIC_OUTPUT`. If the JSON already uses `npa_sonic_eval_result_v1`, the CLI
 preserves the supplied metrics. Otherwise, the raw payload is embedded under
 `external_result`.
+
+This image is BYO/customer-provided and is not the Workbench first-party
+`npa-sonic` image. Leave `EVAL_BACKEND=reference` and `CONTAINER_IMAGE=""` when
+you want the supported built-in evaluator.
 
 ## Troubleshooting
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from npa.deploy.images import container_image_for_tool
 
 
 runner = CliRunner()
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _json_output(raw: str) -> dict:
@@ -496,3 +498,22 @@ def test_sonic_container_image_name_resolves() -> None:
     assert container_image_for_tool(
         "sonic", registry="registry.example", tag="0.1.0"
     ) == ("registry.example/npa-sonic:0.1.0")
+
+
+def test_sonic_container_build_script_uses_supported_version() -> None:
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/sonic/Dockerfile").read_text()
+    build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
+
+    assert "ARG SONIC_VERSION=0.1.0" in dockerfile
+    assert 'npa.version="${SONIC_VERSION}"' in dockerfile
+    assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
+    assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
+    assert 'rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"' in dockerfile
+    assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
+    assert "--platform linux/amd64" in build_script
+    assert "--push" in build_script
+    assert "NPA_BUILDX_BUILDER" in build_script
+    assert "--driver docker-container" in build_script
+    assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
+    assert 'docker build "${BUILD_ARGS[@]}" -t "$LOCAL_IMAGE"' in build_script
+    assert "npa-sonic:${VERSION}" in build_script

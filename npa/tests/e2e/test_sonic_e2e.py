@@ -20,7 +20,7 @@ PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "sonic-e2e"
-SONIC_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/workbench-sonic:test-tag-amd64"
+SONIC_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:test-tag-amd64"
 GPU_TYPE = "h100"
 GPU_PRESET = "1gpu-16vcpu-200gb"
 CHECKPOINT = "nvidia/GEAR-SONIC:sonic_release/last.pt"
@@ -43,7 +43,7 @@ def test_sonic_e2e_config_shape() -> None:
         job_name=f"{JOB_PREFIX}-shape",
     )
 
-    assert SONIC_IMAGE.endswith("/workbench-sonic:test-tag-amd64")
+    assert SONIC_IMAGE.endswith("/npa-sonic:test-tag-amd64")
     assert command[:7] == ["workbench", "sonic", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "train"]
     assert "--subnet-id" not in command
     assert command[command.index("--gpu-type") + 1] == "h100"

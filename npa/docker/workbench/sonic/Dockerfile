@@ -5,10 +5,11 @@ FROM --platform=linux/amd64 nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f4835
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG SONIC_REPO_URL=https://github.com/NVlabs/GR00T-WholeBodyControl.git
 ARG SONIC_REPO_REF=0a87181c9106d0e49293400714b157676e0ec664
+ARG SONIC_VERSION=0.1.0
 ARG BUILD_SONIC_DEPLOY=0
 
 LABEL npa.tool="sonic" \
-      npa.version="0.1.0" \
+      npa.version="${SONIC_VERSION}" \
       npa.architecture="self-contained-isaac-lab"
 
 ENV ACCEPT_EULA=Y \
@@ -43,7 +44,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && git lfs install --system
 
 RUN mkdir -p /opt/npa/docker/workbench/sonic /tmp/npa-sonic-output
-COPY requirements.txt /opt/npa/docker/workbench/sonic/requirements.txt
+COPY docker/workbench/sonic/requirements.txt /opt/npa/docker/workbench/sonic/requirements.txt
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir --no-deps --ignore-installed \
       "isaaclab==${ISAAC_LAB_VERSION}" \
@@ -58,7 +59,8 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir uv \
 RUN git clone "${SONIC_REPO_URL}" "${SONIC_HOME}" \
     && cd "${SONIC_HOME}" \
     && git checkout "${SONIC_REPO_REF}" \
-    && (git lfs pull --include="download_from_hf.py,gear_sonic/**,gear_sonic_deploy/**,decoupled_wbc/**" --exclude="motionbricks/out/**" || true)
+    && (git lfs pull --include="download_from_hf.py,gear_sonic/**,gear_sonic_deploy/**,decoupled_wbc/**" --exclude="motionbricks/out/**" || true) \
+    && rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir \
       -e "${SONIC_HOME}/gear_sonic[training,teleop,sim]" \
@@ -95,7 +97,7 @@ RUN if [ "${BUILD_SONIC_DEPLOY}" = "1" ]; then \
       echo "Skipping optional SONIC C++ deploy build (BUILD_SONIC_DEPLOY=0)"; \
     fi
 
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/workbench/sonic/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \

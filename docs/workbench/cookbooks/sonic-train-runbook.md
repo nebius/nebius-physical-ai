@@ -40,7 +40,15 @@ npa workbench sonic -p eu-north1 -n w7sonic train \
 When validating an unpromoted build, pass the pushed image explicitly:
 
 ```bash
---image cr.eu-north1.nebius.cloud/<registry>/workbench-sonic:<tag>
+--image "${NPA_REGISTRY}/npa-sonic:0.1.0"
+```
+
+Build and push that required first-party image from the repo root:
+
+```bash
+export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.0"
 ```
 
 Expected output artifacts:
