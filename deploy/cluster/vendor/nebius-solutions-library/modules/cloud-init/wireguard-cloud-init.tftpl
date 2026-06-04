@@ -40,7 +40,7 @@ write_files:
       Wants=network-online.target systemd-networkd-wait-online.service
 
       [Service]
-      ExecStart=/usr/local/bin/wireguard-ui
+      ExecStart=/opt/wireguard-ui
       Restart=on-abnormal
       User=root
       Group=root
@@ -106,8 +106,8 @@ runcmd:
     echo "Download failed. Retrying in 5 seconds..."
     sleep 5
     done
-  - sudo mv ./wireguard-ui /usr/local/bin/wireguard-ui
-  - sudo chmod +x /usr/local/bin/wireguard-ui
+  - sudo mv ./wireguard-ui /opt/wireguard-ui
+  - sudo chmod +x /opt/wireguard-ui
   - sudo systemctl daemon-reload
   - sudo systemctl enable wgui.path
   - sudo systemctl enable wgui.service

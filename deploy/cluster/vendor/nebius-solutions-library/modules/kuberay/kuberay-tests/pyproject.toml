@@ -11,4 +11,3 @@ dependencies = [
   "python-dotenv",
   "cupy-cuda12x"
 ]
-

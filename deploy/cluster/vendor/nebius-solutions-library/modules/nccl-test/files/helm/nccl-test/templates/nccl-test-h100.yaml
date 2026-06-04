@@ -16,7 +16,7 @@ spec:
             - 'mpirun -np {{ mul .Values.numberOfHosts 8 }} -bind-to none -x LD_LIBRARY_PATH -x NCCL_DEBUG=INFO -x
               NCCL_SOCKET_IFNAME=eth0 -x NCCL_IB_HCA=mlx5 -x UCX_NET_DEVICES=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1
               -x SHARP_COLL_ENABLE_PCI_RELAXED_ORDERING=1 -x NCCL_COLLNET_ENABLE=0
-              /usr/local/nccl-tests/build/all_reduce_perf -b 512M -e 8G -f 2 -g 1 #-n 200
+              /opt/nccl_tests/build/all_reduce_perf -b 512M -e 8G -f 2 -g 1 #-n 200
               #-w 2 -n 20 '
             command:
             - /bin/bash

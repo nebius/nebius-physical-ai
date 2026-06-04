@@ -9,4 +9,3 @@ variable "gk_version" {
   type        = string
   default     = "v3.21.0"
 }
-

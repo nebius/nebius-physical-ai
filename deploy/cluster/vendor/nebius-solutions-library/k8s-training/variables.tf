@@ -19,7 +19,7 @@ variable "region" {
   type        = string
 }
 
-# K8s cluster 
+# K8s cluster
 
 # Mk8s cluster name
 variable "cluster_name" {

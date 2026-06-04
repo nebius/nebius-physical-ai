@@ -56,7 +56,7 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
 fi
 
 echo "Access token generated successfully"
-echo "$TOKEN" > "${path.root}/grafana_access_token.txt"
+echo "$TOKEN" > "${path.root}/grafana_value.txt"
 EOT
   }
 
@@ -66,14 +66,14 @@ EOT
     interpreter = ["/bin/bash", "-c"]
     command     = <<EOT
 # Clean up the token file
-rm -f "${path.root}/grafana_access_token.txt"
+rm -f "${path.root}/grafana_value.txt"
 EOT
   }
 }
 
 locals {
-  grafana_o11y_path  = "${path.root}/grafana_access_token.txt"
-  grafana_o11y_value = var.o11y.grafana.enabled && var.k8s_node_group_sa_enabled ? try(trimspace(file(local.grafana_o11y_path)), "") : ""
+  grafana_value_file_path = "${path.root}/grafana_value.txt"
+  grafana_value           = var.o11y.grafana.enabled && var.k8s_node_group_sa_enabled ? try(trimspace(file(local.grafana_value_file_path)), "") : ""
 }
 
 resource "nebius_applications_v1alpha1_k8s_release" "grafana" {
@@ -89,7 +89,7 @@ resource "nebius_applications_v1alpha1_k8s_release" "grafana" {
     set = {
       "grafana.nebius.projectId"   = var.parent_id
       "grafana.adminPassword"      = random_password.grafana_password[0].result
-      "grafana.nebius.accessToken" = local.grafana_o11y_value
+      "grafana.nebius.accessToken" = local.grafana_value
     }
   }
 }

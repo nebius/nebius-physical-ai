@@ -42,7 +42,7 @@ write_files:
       Wants=network-online.target systemd-networkd-wait-online.service
 
       [Service]
-      ExecStart=/usr/local/bin/wireguard-ui
+      ExecStart=/opt/wireguard-ui
       Restart=on-abnormal
       User=root
       Group=root
@@ -70,12 +70,12 @@ write_files:
       #!/bin/bash
       cat <<'EOF'
 
-       	██╗    ██╗███████╗██████╗ ██╗██╗   ██╗███████╗
-      	████╗  ██║██╔════╝██╔══██╗██║██║   ██║██╔════╝
-      	██╔██╗ ██║█████╗  ██████╔╝██║██║   ██║███████╗
-      	██║╚██╗██║██╔══╝  ██╔══██╗██║██║   ██║╚════██║
-      	██║ ╚████║███████╗██████╔╝██║╚╗████╔╝ ███████║
-      	╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝ ╚════╝  ╚══════╝
+               ██╗    ██╗███████╗██████╗ ██╗██╗   ██╗███████╗
+              ████╗  ██║██╔════╝██╔══██╗██║██║   ██║██╔════╝
+              ██╔██╗ ██║█████╗  ██████╔╝██║██║   ██║███████╗
+              ██║╚██╗██║██╔══╝  ██╔══██╗██║██║   ██║╚════██║
+              ██║ ╚████║███████╗██████╔╝██║╚╗████╔╝ ███████║
+              ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝ ╚════╝  ╚══════╝
       EOF
     path: /etc/update-motd.d/01-nebius
     permissions: "0755"
@@ -86,7 +86,7 @@ runcmd:
   - su - ${ssh_user_name} -c 'export HOME=/home/${ssh_user_name}' >> /tmp/csa-install.log 2>&1
   - su - ${ssh_user_name} -c 'curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash' >> /tmp/csa-install.log 2>&1
   - su - ${ssh_user_name} -c 'source "/home/${ssh_user_name}/.bashrc"' >> /tmp/csa-install.log 2>&1
-  
+
   - echo "### Nebius CLI profile create" >> /tmp/csa-install.log 2>&1
   - su - ${ssh_user_name} -c '/home/${ssh_user_name}/.nebius/bin/nebius profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile default --parent-id ${parent_id}' >> /tmp/csa-install.log 2>&1
 
@@ -102,7 +102,7 @@ runcmd:
     else
       echo "Cluster ID is null. Skipping credential retrieval." >> /tmp/csa-install.log
     fi
-    
+
   # Creating keys
   - wg genkey | sudo tee /etc/wireguard/private.key
   - sudo chmod go= /etc/wireguard/private.key
@@ -154,8 +154,8 @@ runcmd:
     echo "Download failed. Retrying in 5 seconds..."
     sleep 5
     done
-  - sudo mv ./wireguard-ui /usr/local/bin/wireguard-ui
-  - sudo chmod +x /usr/local/bin/wireguard-ui
+  - sudo mv ./wireguard-ui /opt/wireguard-ui
+  - sudo chmod +x /opt/wireguard-ui
   - sudo systemctl daemon-reload
   - sudo systemctl enable wgui.path
   - sudo systemctl enable wgui.service

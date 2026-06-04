@@ -71,7 +71,7 @@ From ray gpu worker, run `nvidia-smi` to validate all the correct # of gpus are 
 
 ```shell
 (base) ray@ray-cluster-kuberay-worker-gpu-k2sbd:~$ nvidia-smi
-Mon Aug  5 06:26:21 2024       
+Mon Aug  5 06:26:21 2024
 +---------------------------------------------------------------------------------------+
 | NVIDIA-SMI 535.161.08             Driver Version: 535.161.08   CUDA Version: 12.2     |
 |-----------------------------------------+----------------------+----------------------+
@@ -111,7 +111,7 @@ Mon Aug  5 06:26:21 2024
 | N/A   30C    P0              71W / 700W |      0MiB / 81559MiB |      0%      Default |
 |                                         |                      |             Disabled |
 +-----------------------------------------+----------------------+----------------------+
-                                                                                         
+
 +---------------------------------------------------------------------------------------+
 | Processes:                                                                            |
 |  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
@@ -132,7 +132,7 @@ Required libraries:
 #### Validate that kuberay head service is up and running
 
 ```shell
-kubectl -n ray-cluster get services     
+kubectl -n ray-cluster get services
 NAME                           TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                                         AGE
 kuberay-operator               ClusterIP   172.18.201.156   <none>        8080/TCP                                        2d18h
 *ray-cluster-kuberay-head-svc*   ClusterIP   172.18.238.97    <none>        10001/TCP,8265/TCP,8080/TCP,6379/TCP,8000/TCP   2d18h
@@ -166,11 +166,11 @@ Example output for 2 nodes of H100 (total of 16xH100s gpus):
 
 ```shell
 Job submission server address: http://localhost:8265
-                                           
+
 -------------------------------------------------------
 Job 'raysubmit_C3wurkv53yLxKwSQ' submitted successfully
 -------------------------------------------------------
-                                           
+
 Next steps
   Query the logs of the job:
     ray job logs raysubmit_C3wurkv53yLxKwSQ
@@ -182,7 +182,7 @@ Next steps
 Tailing logs until the job exits (disable with --no-wait):
 2024-08-02 05:10:54,258 INFO worker.py:1405 -- Using address 172.17.132.18:6379 set in the environment variable RAY_ADDRESS
 2024-08-02 05:10:54,259 INFO worker.py:1540 -- Connecting to existing Ray cluster at address: 172.17.132.18:6379...
-2024-08-02 05:10:54,266 INFO worker.py:1715 -- Connected to Ray cluster. View the dashboard at http://172.17.132.18:8265 
+2024-08-02 05:10:54,266 INFO worker.py:1715 -- Connected to Ray cluster. View the dashboard at http://172.17.132.18:8265
 {'object_store_memory': 49007028633.0, 'GPU': 16.0, 'memory': 164282499072.0, 'node:172.17.131.19': 1.0, 'accelerator_type:H100': 2.0, 'CPU': 22.0, 'node:__internal_head__'
 : 1.0, 'node:172.17.132.18': 1.0}
 

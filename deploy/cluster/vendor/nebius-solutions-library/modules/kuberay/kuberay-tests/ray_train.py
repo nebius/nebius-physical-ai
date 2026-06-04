@@ -83,7 +83,7 @@ scaling_config = ray.train.ScalingConfig(
 # AWS_ENDPOINT_URL_S3
 #    key=os.environ["AWS_ACCESS_KEY_ID"],
 #    secret=os.environ["AWS_SECRET_ACCESS_KEY"],
-#    endpoint_url=os.environ["AWS_ENDPOINT_URL_S3"],
+#    endpoint_url="https://storage.eu-north1.nebius.cloud:443",
 #    client_kwargs={
 #        "region_name": "eu-north1",
 #    },
