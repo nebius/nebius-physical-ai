@@ -171,6 +171,7 @@ class MK8sClient:
             boot_disk_size_gib=config.boot_disk_size_gib,
             gpu_type=config.gpu_type,
             driver_preset=config.driver_preset,
+            capacity_block_group=config.capacity_block_group,
         )
 
     def create_node_group(
@@ -190,6 +191,7 @@ class MK8sClient:
         boot_disk_size_gib: int = 128,
         gpu_type: str = "",
         driver_preset: str = "",
+        capacity_block_group: str = "",
     ) -> NodeGroupInfo:
         network_interface: dict[str, Any] = {}
         if subnet_id:
@@ -234,6 +236,15 @@ class MK8sClient:
         )
         if driver_preset:
             args.extend(["--template-gpu-settings-drivers-preset", driver_preset])
+        if capacity_block_group.strip():
+            args.extend(
+                [
+                    "--template-reservation-policy-policy",
+                    "strict",
+                    "--template-reservation-policy-reservation-ids",
+                    capacity_block_group.strip(),
+                ]
+            )
         args.extend(["--format", "json"])
 
         result = self._run(args, timeout=self._timeout)

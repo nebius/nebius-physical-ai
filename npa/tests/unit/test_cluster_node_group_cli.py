@@ -93,11 +93,21 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
 
     result = runner.invoke(
         app,
-        ["node-group", "add", "--cluster-name", "cluster-a", "--gpu-type", "h100"],
+        [
+            "node-group",
+            "add",
+            "--cluster-name",
+            "cluster-a",
+            "--gpu-type",
+            "h100",
+            "--capacity-block-group",
+            "capacityblockgroup-test",
+        ],
     )
 
     assert result.exit_code == 0
     assert seen_configs[0].public_ip is False
+    assert seen_configs[0].capacity_block_group == "capacityblockgroup-test"
     assert saved[-1].last_seen_state == "RUNNING"
     assert "Node group ID: mk8snodegroup-gpu" in result.output
 

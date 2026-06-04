@@ -1,4 +1,7 @@
 ignore-unfixed: true
+scan:
+  skip-dirs:
+    - deploy/cluster/vendor
 severity:
   - CRITICAL
 pkg-types:

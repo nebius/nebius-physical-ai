@@ -1,0 +1,29 @@
+tenant_id = "<tenant-id>"
+parent_id = "<project-id>"
+region    = "<region>"
+subnet_id = "<subnet-id>"
+
+cluster_name = "npa-cluster"
+
+ssh_public_key = {
+  path = "~/.ssh/id_ed25519.pub"
+}
+
+gpu_nodes_count    = 2
+gpu_nodes_platform = "gpu-rtx6000"
+gpu_nodes_preset   = "8gpu-192vcpu-1744gb"
+
+# Optional private capacity reservation selector. Prefer passing this through
+# a gitignored terraform.tfvars file, TF_VAR_capacity_block_group, or
+# `terraform apply -var capacity_block_group=<id>`.
+capacity_block_group = ""
+
+enable_filestore              = true
+existing_filestore            = ""
+filestore_disk_size_gibibytes = 1024
+
+enable_k8s_node_group_sa = false
+
+# The CLI normally supplies this from `nebius iam get-access-token`.
+# Set it here only for direct Terraform use.
+iam_token = "<nebius-iam-token>"

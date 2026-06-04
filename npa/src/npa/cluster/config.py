@@ -138,6 +138,7 @@ class NodeGroupConfig:
     boot_disk_size_gib: int = DEFAULT_BOOT_DISK_SIZE_GIB
     driver_preset: str = DEFAULT_GPU_DRIVER_PRESET
     platform: str = ""
+    capacity_block_group: str = ""
 
     def __post_init__(self) -> None:
         validate_cluster_name(self.cluster_name)
@@ -153,6 +154,8 @@ class NodeGroupConfig:
 
         platform = self.platform.strip() or GPU_TYPE_DEFAULTS[gpu_type]["platform"]
         object.__setattr__(self, "platform", platform)
+
+        object.__setattr__(self, "capacity_block_group", self.capacity_block_group.strip())
 
         preset = resolve_gpu_preset(gpu_type, self.node_preset)
         object.__setattr__(self, "node_preset", preset)
