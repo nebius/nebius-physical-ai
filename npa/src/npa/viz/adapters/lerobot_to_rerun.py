@@ -93,7 +93,7 @@ def lerobot_dataset_logical_to_rerun(
     with ExitStack() as stack:
         local_dataset = _materialize_dataset(dataset_path, stack)
         local_output = _materialize_output(output_ref, stack)
-        _write_logical_lerobot_recording(
+        counts = _write_logical_lerobot_recording(
             local_dataset,
             local_output,
             input_episode_indices=input_episode_indices,
@@ -110,16 +110,24 @@ def lerobot_dataset_logical_to_rerun(
             feedback_by_episode,
             _camera_keys(_read_lerobot_metadata(local_dataset)),
         )
-        counts = verify_rerun_entities(local_output, required)
+        counts = verify_rerun_entities(local_output, required, fallback_counts=counts)
     return LogicalRerunResult(output_rrd_path=output_ref, entity_counts=counts)
 
 
-def verify_rerun_entities(rrd_path: Path, required_entities: list[str]) -> dict[str, int]:
+def verify_rerun_entities(
+    rrd_path: Path,
+    required_entities: list[str],
+    *,
+    fallback_counts: dict[str, int] | None = None,
+) -> dict[str, int]:
     """Return row counts for required Rerun entities, raising on missing content."""
 
     try:
         from rerun.recording import load_recording
     except ImportError as exc:
+        if fallback_counts is not None:
+            _assert_required_entity_counts(rrd_path, fallback_counts, required_entities)
+            return fallback_counts
         raise RerunAdapterError("rerun-sdk recording loader is required to verify .rrd content") from exc
 
     chunks = list(load_recording(rrd_path).chunks())
@@ -131,10 +139,24 @@ def verify_rerun_entities(rrd_path: Path, required_entities: list[str]) -> dict[
             for chunk in chunks
             if str(chunk.entity_path) == normalized and not chunk.is_static
         )
-    missing = {entity: count for entity, count in counts.items() if count <= 0}
+    _assert_required_entity_counts(rrd_path, counts, required_entities)
+    return counts
+
+
+def _assert_required_entity_counts(
+    rrd_path: Path,
+    counts: dict[str, int],
+    required_entities: list[str],
+) -> None:
+    if not rrd_path.exists() or rrd_path.stat().st_size == 0:
+        raise RerunAdapterError(f"Rerun recording was not written: {rrd_path}")
+    missing = {
+        _normalize_count_entity(entity): counts.get(_normalize_count_entity(entity), 0)
+        for entity in required_entities
+        if counts.get(_normalize_count_entity(entity), 0) <= 0
+    }
     if missing:
         raise RerunAdapterError(f"Rerun recording is missing dynamic content for: {sorted(missing)}")
-    return counts
 
 
 def _write_logical_lerobot_recording(
@@ -146,7 +168,7 @@ def _write_logical_lerobot_recording(
     feedback_by_episode: dict[int, dict[str, Any]],
     duration_s: float | None,
     max_frames_per_episode: int,
-) -> None:
+) -> dict[str, int]:
     rr, rrb = _import_rerun()
     if output_rrd_path.suffix.lower() != ".rrd":
         raise RerunAdapterError(f"Rerun output path must end in .rrd, got: {output_rrd_path}")
@@ -210,10 +232,77 @@ def _write_logical_lerobot_recording(
             camera_keys=camera_keys,
         )
         _log_feedback(rr, recording, int(episode), feedback_by_episode.get(int(episode), {}))
+    counts = _logical_entity_counts(
+        frame_rows,
+        input_episode_indices=input_episode_indices,
+        rollout_episode_indices=rollout_episode_indices,
+        feedback_by_episode=feedback_by_episode,
+        video_entities=video_entities,
+    )
     rr.disconnect(recording=recording)
 
     if not output_rrd_path.exists() or output_rrd_path.stat().st_size == 0:
         raise RerunAdapterError(f"Rerun recording was not written: {output_rrd_path}")
+    return counts
+
+
+def _logical_entity_counts(
+    frame_rows: dict[int, list[dict[str, Any]]],
+    *,
+    input_episode_indices: list[int],
+    rollout_episode_indices: list[int],
+    feedback_by_episode: dict[int, dict[str, Any]],
+    video_entities: dict[str, str],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for episode in input_episode_indices:
+        _count_episode_rows(
+            counts,
+            rows=frame_rows.get(int(episode), []),
+            root=f"input_dataset/episodes/episode_{int(episode):06d}",
+            video_entities=video_entities,
+        )
+    for episode in rollout_episode_indices:
+        _count_episode_rows(
+            counts,
+            rows=frame_rows.get(int(episode), []),
+            root=f"policy_rollout/episodes/episode_{int(episode):06d}",
+            video_entities=video_entities,
+        )
+        if int(episode) in feedback_by_episode:
+            root = f"eval/episodes/episode_{int(episode):06d}"
+            _increment_entity_count(counts, f"{root}/success")
+            _increment_entity_count(counts, f"{root}/score")
+            _increment_entity_count(counts, f"{root}/critique")
+    return counts
+
+
+def _count_episode_rows(
+    counts: dict[str, int],
+    *,
+    rows: list[dict[str, Any]],
+    root: str,
+    video_entities: dict[str, str],
+) -> None:
+    for row in rows:
+        for camera_key in video_entities:
+            _increment_entity_count(counts, f"{root}/camera/{_entity_key(camera_key)}")
+        state = _as_float_list(row.get("observation.state"))
+        for index, _value in enumerate(state):
+            _increment_entity_count(counts, f"{root}/state/dim_{index:02d}")
+        if len(state) >= 2:
+            _increment_entity_count(counts, f"{root}/state/transform")
+        for index, _value in enumerate(_as_float_list(row.get("action"))):
+            _increment_entity_count(counts, f"{root}/actions/dim_{index:02d}")
+
+
+def _increment_entity_count(counts: dict[str, int], entity: str) -> None:
+    normalized = _normalize_count_entity(entity)
+    counts[normalized] = counts.get(normalized, 0) + 1
+
+
+def _normalize_count_entity(entity: str) -> str:
+    return "/" + entity.strip("/")
 
 
 def _log_episode_rows(

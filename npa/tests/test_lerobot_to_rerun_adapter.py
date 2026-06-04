@@ -9,7 +9,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from npa.adapter.isaac_lab_lerobot import G1_BONE_PAIRS, G1_STATE_DIM, convert
-from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, lerobot_to_rerun
+from npa.viz.adapters.lerobot_to_rerun import REPRESENTATIVE_JOINTS, lerobot_to_rerun, verify_rerun_entities
 from npa.viz.lerobot import VizDataError
 
 
@@ -170,3 +170,23 @@ def test_lerobot_to_rerun_uploads_s3_output_after_local_save(tmp_path: Path, moc
     lerobot_to_rerun(dataset, "s3://bucket/visuals/out.rrd")
 
     storage.upload_file.assert_called_once()
+
+
+def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(tmp_path: Path, mocker) -> None:
+    output = tmp_path / "logical.rrd"
+    output.write_bytes(b"rrd")
+    counts = {"/input_dataset/episodes/episode_000000/state/dim_00": 3}
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "rerun.recording":
+            raise ImportError("recording loader unavailable")
+        return real_import(name, globals, locals, fromlist, level)
+
+    mocker.patch("builtins.__import__", side_effect=fake_import)
+
+    assert verify_rerun_entities(
+        output,
+        ["input_dataset/episodes/episode_000000/state/dim_00"],
+        fallback_counts=counts,
+    ) == counts
