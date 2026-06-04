@@ -27,6 +27,7 @@ def _public_modules() -> list[ModuleType]:
         workbench.mjlab,
         workbench.retargeting,
         workbench.sonic,
+        workbench.trigger,
         workbench.vlm_eval,
     ]
 
@@ -87,6 +88,7 @@ def test_workbench_public_surface() -> None:
             "validate_onnx_parity",
             "load_export_metadata",
         ],
+        "trigger": ["run_once", "watch"],
         "vlm_eval": ["evaluate_stub", "evaluate_vlm", "write_result", "result_uri_for"],
     }
     for tool, names in expected.items():
