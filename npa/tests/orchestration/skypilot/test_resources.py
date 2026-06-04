@@ -15,7 +15,7 @@ from npa.orchestration.skypilot.resources import (
         ("h100", "H100:1", "gpu-h100-sxm_1gpu-16vcpu-200gb"),
         ("h200", "H200:1", "gpu-h200-sxm_1gpu-16vcpu-200gb"),
         ("l40s", "L40S:1", "gpu-l40s-d_1gpu-16vcpu-96gb"),
-        ("rtx6000", "RTXPRO6000:1", "gpu-rtx6000_1gpu-24vcpu-218gb"),
+        ("rtx6000", "RTX6000:1", "gpu-rtx6000_1gpu-24vcpu-218gb"),
     ],
 )
 def test_resources_for_nebius_gpu_specs(gpu: str, accelerator: str, instance_type: str) -> None:

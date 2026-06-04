@@ -4,7 +4,12 @@
 name: sim-to-real-pipeline
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators:
+    - H100:1
+    - H200:1
+    - A100:1
+    - L40S:1
+    - RTX6000:1
   cpus: 16
   memory: 64
 envs:
@@ -28,8 +33,15 @@ envs:
   CHECKPOINT_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/checkpoints/policy/"
   RERUN_RRD_PATH: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/viz/sim-to-real.rrd"
   SIM_BACKEND: "genesis"
-  EVAL_BACKEND: "genesis"
+  EVAL_BACKEND: "state-success"
   FEEDBACK_SOURCE: "vlm"
+  FEEDBACK_TYPE: "critique"
+  NPA_GPU_TYPE: "H100:1"
+  NPA_GPU_FAILOVER: "H200:1,A100:1,L40S:1,RTX6000:1"
+  GPU: "H100:1,H200:1,A100:1,L40S:1,RTX6000:1"
+  BYO_FEEDBACK_ENDPOINT_URL: ""
+  BYO_FEEDBACK_COMMAND: ""
+  BYO_FEEDBACK_MODE: "provided-rollout"
   VLM_EVAL_BACKEND: "stub"
   VLM_EVAL_MODEL: "vlm-eval-stub"
   VLM_EVAL_ENDPOINT_URL: ""
@@ -43,7 +55,6 @@ envs:
   EVAL_EPISODES: "2"
   SUCCESS_THRESHOLD: "0.75"
   SEED: "42"
-  GPU: "H100:1"
   CUSTOM_LEROBOT_TRAINER_COMMAND: ""
   RERUN_MAX_FRAMES_PER_EPISODE: "32"
 setup: |
@@ -83,6 +94,7 @@ run: |
     --sim-backend "${SIM_BACKEND}" \
     --eval-backend "${EVAL_BACKEND}" \
     --feedback-source "${FEEDBACK_SOURCE}" \
+    --feedback-type "${FEEDBACK_TYPE}" \
     --vlm-eval-backend "${VLM_EVAL_BACKEND}" \
     --vlm-eval-model "${VLM_EVAL_MODEL}" \
     --vlm-eval-endpoint-url "${VLM_EVAL_ENDPOINT_URL}" \
@@ -95,8 +107,12 @@ run: |
     --eval-episodes "${EVAL_EPISODES}" \
     --threshold "${SUCCESS_THRESHOLD}" \
     --seed "${SEED}" \
-    --gpu "${GPU}" \
+    --gpu "${NPA_GPU_TYPE}" \
+    --gpu-failover "${NPA_GPU_FAILOVER}" \
     --trainer-command "${CUSTOM_LEROBOT_TRAINER_COMMAND}" \
+    --byo-feedback-endpoint-url "${BYO_FEEDBACK_ENDPOINT_URL}" \
+    --byo-feedback-command "${BYO_FEEDBACK_COMMAND}" \
+    --byo-feedback-mode "${BYO_FEEDBACK_MODE}" \
     --checkpoint-uri "${CHECKPOINT_URI}" \
     --rrd-path "${RERUN_RRD_PATH}" \
     --rerun-max-frames-per-episode "${RERUN_MAX_FRAMES_PER_EPISODE}" \

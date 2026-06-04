@@ -13,6 +13,7 @@ from npa.workflows.sim_to_real import (
     build_policy_container_contract,
     run_structural_spine,
 )
+from npa.workflows.feedback import FeedbackType
 
 
 def local_smoke(
@@ -43,6 +44,7 @@ def policy_container_contract(**overrides: Any) -> dict[str, Any]:
 __all__ = [
     "SimToRealConfig",
     "SimToRealReport",
+    "FeedbackType",
     "local_smoke",
     "output_paths",
     "policy_container_contract",

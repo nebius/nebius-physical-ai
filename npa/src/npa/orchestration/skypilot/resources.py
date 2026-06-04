@@ -44,14 +44,13 @@ class NPASpec:
 
 # Source: `sky show-gpus --cloud nebius --all` captured at
 # /tmp/w9skypilot-integration-bootstrap-20260516T011706Z/phase-a/
-# sky-show-gpus-nebius.txt. SkyPilot 0.12.2 reports H100, H200, and L40S
-# for Nebius. RTXPRO6000 is the global SkyPilot spelling for RTX PRO 6000,
-# but it is not present in the 0.12.2 Nebius catalog; see novel-issues.md.
+# sky-show-gpus-nebius.txt. Current SkyPilot Nebius catalog entries use
+# RTX6000 for NVIDIA RTX PRO 6000.
 NPA_GPU_TO_SKYPILOT_ACCELERATOR = {
     "h100": "H100",
     "h200": "H200",
     "l40s": "L40S",
-    "rtx6000": "RTXPRO6000",
+    "rtx6000": "RTX6000",
 }
 
 GPU_INSTANCE_TYPES_BY_COUNT = {
