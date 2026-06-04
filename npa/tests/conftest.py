@@ -1,4 +1,7 @@
 import os
+from urllib.parse import urlparse
+
+import httpx
 import pytest
 
 from npa.clients.project_credentials import CredentialPair
@@ -11,6 +14,72 @@ os.environ.setdefault("NPA_S3_BUCKET", "test-bucket-00000000")
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
+
+
+def _is_huggingface_url(url: object) -> bool:
+    host = urlparse(str(url)).hostname or ""
+    return host == "huggingface.co" or host.endswith(".huggingface.co")
+
+
+@pytest.fixture(autouse=True)
+def block_live_huggingface_http(monkeypatch, request):
+    """Keep unit tests from depending on live Hugging Face availability."""
+    live_markers = {
+        "byovm_live",
+        "e2e",
+        "e2e_pipeline",
+        "e2e_serverless",
+        "gpu",
+        "multi_gpu",
+        "ngc_e2e",
+    }
+    if any(request.node.get_closest_marker(marker) for marker in live_markers):
+        return
+
+    def blocked(method: str, url: object) -> None:
+        if _is_huggingface_url(url):
+            raise AssertionError(
+                f"Live Hugging Face HTTP is blocked in unit tests: {method} {url}. "
+                "Mock the access check instead."
+            )
+
+    original_head = httpx.head
+    original_get = httpx.get
+    original_post = httpx.post
+    original_request = httpx.request
+    original_client_request = httpx.Client.request
+    original_async_client_request = httpx.AsyncClient.request
+
+    def guarded_head(url, *args, **kwargs):
+        blocked("HEAD", url)
+        return original_head(url, *args, **kwargs)
+
+    def guarded_get(url, *args, **kwargs):
+        blocked("GET", url)
+        return original_get(url, *args, **kwargs)
+
+    def guarded_post(url, *args, **kwargs):
+        blocked("POST", url)
+        return original_post(url, *args, **kwargs)
+
+    def guarded_request(method, url, *args, **kwargs):
+        blocked(str(method).upper(), url)
+        return original_request(method, url, *args, **kwargs)
+
+    def guarded_client_request(self, method, url, *args, **kwargs):
+        blocked(str(method).upper(), url)
+        return original_client_request(self, method, url, *args, **kwargs)
+
+    async def guarded_async_client_request(self, method, url, *args, **kwargs):
+        blocked(str(method).upper(), url)
+        return await original_async_client_request(self, method, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx, "head", guarded_head)
+    monkeypatch.setattr(httpx, "get", guarded_get)
+    monkeypatch.setattr(httpx, "post", guarded_post)
+    monkeypatch.setattr(httpx, "request", guarded_request)
+    monkeypatch.setattr(httpx.Client, "request", guarded_client_request)
+    monkeypatch.setattr(httpx.AsyncClient, "request", guarded_async_client_request)
 
 
 @pytest.fixture
