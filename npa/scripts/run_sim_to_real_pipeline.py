@@ -28,9 +28,18 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotVersionError,
     resolve_sky_bin,
 )
+from npa.orchestration.skypilot.gpu_catalog import (
+    InvalidNebiusGpuRequestError,
+    NebiusGpuCatalog,
+    NebiusGpuCatalogError,
+    resolve_nebius_gpu_preferences,
+)
 from npa.workflows.sim_to_real import (
     DEFAULT_EVAL_BACKEND,
     DEFAULT_FEEDBACK_SOURCE,
+    DEFAULT_FEEDBACK_TYPE,
+    DEFAULT_GPU_FAILOVER,
+    DEFAULT_GPU_TYPE,
     DEFAULT_MAX_TRAINING_ITERATIONS,
     DEFAULT_MIN_EVAL_IMPROVEMENT,
     DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
@@ -41,6 +50,7 @@ from npa.workflows.sim_to_real import (
     DEFAULT_TRAIN_STEP_BUDGET,
     DEFAULT_VLM_EVAL_BACKEND,
     DEFAULT_VLM_EVAL_MODEL,
+    accelerator_candidates,
     artifact_uris,
     build_config_from_env,
     default_policy_image,
@@ -73,7 +83,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        InvalidNebiusGpuRequestError,
+        NebiusGpuCatalogError,
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         print("For a no-infrastructure check, rerun with --render-only.", file=sys.stderr)
         return 2
@@ -93,6 +109,7 @@ def render_workflow(
     sim_backend: str = DEFAULT_SIM_BACKEND,
     eval_backend: str = DEFAULT_EVAL_BACKEND,
     feedback_source: str = DEFAULT_FEEDBACK_SOURCE,
+    feedback_type: str = DEFAULT_FEEDBACK_TYPE,
     split_fraction: float = DEFAULT_SPLIT_FRACTION,
     env_count: int = 10,
     episodes: int = 4,
@@ -100,7 +117,8 @@ def render_workflow(
     eval_episodes: int = 10,
     threshold: float = DEFAULT_THRESHOLD,
     seed: int = 42,
-    gpu: str = "H100:1",
+    gpu: str = DEFAULT_GPU_TYPE,
+    gpu_failover: str = DEFAULT_GPU_FAILOVER,
     max_training_iterations: int = DEFAULT_MAX_TRAINING_ITERATIONS,
     train_step_budget: int = DEFAULT_TRAIN_STEP_BUDGET,
     min_eval_improvement: float = DEFAULT_MIN_EVAL_IMPROVEMENT,
@@ -108,6 +126,8 @@ def render_workflow(
     train_batch_size: int = 8,
     train_num_workers: int = 4,
     policy_device: str = "cuda",
+    gpu_catalog: NebiusGpuCatalog | None = None,
+    sky_bin: str | os.PathLike[str] | None = None,
     task_cloud: TaskCloud = "kubernetes",
     vlm_eval_backend: str = DEFAULT_VLM_EVAL_BACKEND,
     vlm_eval_model: str = DEFAULT_VLM_EVAL_MODEL,
@@ -116,6 +136,9 @@ def render_workflow(
     vlm_eval_max_frames: int = 4,
     vlm_eval_score: float | None = None,
     trainer_command: str = "",
+    byo_feedback_endpoint_url: str = "",
+    byo_feedback_command: str = "",
+    byo_feedback_mode: str = "provided-rollout",
     rerun_max_frames_per_episode: int = DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
 ) -> list[dict[str, Any]]:
     """Return SkyPilot YAML documents with concrete run settings injected."""
@@ -134,6 +157,7 @@ def render_workflow(
         sim_backend=sim_backend,
         eval_backend=eval_backend,
         feedback_source=feedback_source,
+        feedback_type=feedback_type,
         split_fraction=split_fraction,
         env_count=env_count,
         episodes=episodes,
@@ -142,6 +166,7 @@ def render_workflow(
         threshold=threshold,
         seed=seed,
         gpu=gpu,
+        gpu_failover=gpu_failover,
         max_training_iterations=max_training_iterations,
         train_step_budget=train_step_budget,
         min_eval_improvement=min_eval_improvement,
@@ -156,6 +181,9 @@ def render_workflow(
         vlm_eval_max_frames=vlm_eval_max_frames,
         vlm_eval_score=vlm_eval_score,
         trainer_command=trainer_command,
+        byo_feedback_endpoint_url=byo_feedback_endpoint_url,
+        byo_feedback_command=byo_feedback_command,
+        byo_feedback_mode=byo_feedback_mode,
         rerun_max_frames_per_episode=rerun_max_frames_per_episode,
     )
     config.validate()
@@ -189,6 +217,7 @@ def render_workflow(
                     "SIM_BACKEND": sim_backend,
                     "EVAL_BACKEND": eval_backend,
                     "FEEDBACK_SOURCE": feedback_source,
+                    "FEEDBACK_TYPE": feedback_type,
                     "SPLIT_FRACTION": str(split_fraction),
                     "ENV_COUNT": str(env_count),
                     "EPISODES": str(episodes),
@@ -203,12 +232,18 @@ def render_workflow(
                     "POLICY_DEVICE": policy_device,
                     "SUCCESS_THRESHOLD": str(threshold),
                     "SEED": str(seed),
-                    "GPU": gpu,
+                    "NPA_GPU_TYPE": config.gpu,
+                    "NPA_GPU_FAILOVER": config.gpu_failover,
+                    "GPU": ",".join(accelerator_candidates(config.gpu, config.gpu_failover)),
                     "VLM_EVAL_BACKEND": vlm_eval_backend,
                     "VLM_EVAL_MODEL": vlm_eval_model,
                     "VLM_EVAL_ENDPOINT_URL": vlm_eval_endpoint_url,
                     "VLM_EVAL_FRAME_SELECTION": vlm_eval_frame_selection,
                     "VLM_EVAL_MAX_FRAMES": str(vlm_eval_max_frames),
+                    "VLM_EVAL_SCORE": "" if vlm_eval_score is None else str(vlm_eval_score),
+                    "BYO_FEEDBACK_ENDPOINT_URL": byo_feedback_endpoint_url,
+                    "BYO_FEEDBACK_COMMAND": byo_feedback_command,
+                    "BYO_FEEDBACK_MODE": byo_feedback_mode,
                     "CUSTOM_LEROBOT_TRAINER_COMMAND": trainer_command,
                     "RERUN_MAX_FRAMES_PER_EPISODE": str(rerun_max_frames_per_episode),
                 }
@@ -216,7 +251,13 @@ def render_workflow(
         resources = doc.get("resources")
         if isinstance(resources, dict):
             _apply_task_cloud(resources, task_cloud)
-            resources["accelerators"] = _render_accelerators(gpu)
+            resources["accelerators"] = _render_accelerators(
+                config.gpu,
+                config.gpu_failover,
+                task_cloud=task_cloud,
+                gpu_catalog=gpu_catalog,
+                sky_bin=sky_bin,
+            )
         if doc.get("name") == "s2r-policy-feedback-update":
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
@@ -249,10 +290,21 @@ def output_paths(
     return artifact_uris(config)
 
 
-def _render_accelerators(gpu: str) -> str | list[str]:
-    candidates = [candidate.strip() for candidate in gpu.split(",") if candidate.strip()]
+def _render_accelerators(
+    gpu: str,
+    gpu_failover: str = "",
+    *,
+    task_cloud: TaskCloud = "kubernetes",
+    gpu_catalog: NebiusGpuCatalog | None = None,
+    sky_bin: str | os.PathLike[str] | None = None,
+) -> str | list[str]:
+    if task_cloud == "nebius":
+        resolution = resolve_nebius_gpu_preferences(gpu, gpu_failover, catalog=gpu_catalog, sky_bin=sky_bin)
+        candidates = list(resolution.accelerators)
+    else:
+        candidates = accelerator_candidates(gpu, gpu_failover)
     if not candidates:
-        return "H100:1"
+        return DEFAULT_GPU_TYPE
     if len(candidates) == 1:
         return candidates[0]
     return candidates
@@ -301,6 +353,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         sim_backend=args.sim_backend,
         eval_backend=args.eval_backend,
         feedback_source=args.feedback_source,
+        feedback_type=args.feedback_type,
         split_fraction=args.split_fraction,
         env_count=args.env_count,
         episodes=args.episodes,
@@ -309,6 +362,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         seed=args.seed,
         gpu=args.gpu,
+        gpu_failover=args.gpu_failover,
         max_training_iterations=args.max_training_iterations,
         train_step_budget=args.train_step_budget,
         min_eval_improvement=args.min_eval_improvement,
@@ -316,6 +370,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         train_batch_size=args.train_batch_size,
         train_num_workers=args.train_num_workers,
         policy_device=args.policy_device,
+        sky_bin=args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"),
         task_cloud=args.task_cloud,
         vlm_eval_backend=args.vlm_eval_backend,
         vlm_eval_model=args.vlm_eval_model,
@@ -324,6 +379,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         vlm_eval_max_frames=args.vlm_eval_max_frames,
         vlm_eval_score=args.vlm_eval_score,
         trainer_command=args.trainer_command,
+        byo_feedback_endpoint_url=args.byo_feedback_endpoint_url,
+        byo_feedback_command=args.byo_feedback_command,
+        byo_feedback_mode=args.byo_feedback_mode,
         rerun_max_frames_per_episode=args.rerun_max_frames_per_episode,
     )
     outputs = output_paths(
@@ -428,6 +486,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--sim-backend", default=DEFAULT_SIM_BACKEND)
     parser.add_argument("--eval-backend", default=DEFAULT_EVAL_BACKEND)
     parser.add_argument("--feedback-source", default=DEFAULT_FEEDBACK_SOURCE)
+    parser.add_argument("--feedback-type", default=DEFAULT_FEEDBACK_TYPE)
     parser.add_argument("--split-fraction", type=float, default=DEFAULT_SPLIT_FRACTION)
     parser.add_argument("--env-count", type=int, default=10)
     parser.add_argument("--episodes", type=int, default=4)
@@ -435,7 +494,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--gpu", default="H100:1")
+    parser.add_argument("--gpu", default=os.environ.get("NPA_GPU_TYPE", DEFAULT_GPU_TYPE))
+    parser.add_argument("--gpu-failover", default=os.environ.get("NPA_GPU_FAILOVER", DEFAULT_GPU_FAILOVER))
     parser.add_argument("--max-training-iterations", type=int, default=DEFAULT_MAX_TRAINING_ITERATIONS)
     parser.add_argument("--train-step-budget", type=int, default=DEFAULT_TRAIN_STEP_BUDGET)
     parser.add_argument("--min-eval-improvement", type=float, default=DEFAULT_MIN_EVAL_IMPROVEMENT)
@@ -451,6 +511,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--vlm-eval-max-frames", type=int, default=4)
     parser.add_argument("--vlm-eval-score", type=float, default=None)
     parser.add_argument("--trainer-command", default="")
+    parser.add_argument("--byo-feedback-endpoint-url", default="")
+    parser.add_argument("--byo-feedback-command", default="")
+    parser.add_argument("--byo-feedback-mode", choices=("provided-rollout", "self-rollout"), default="provided-rollout")
     parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
     parser.add_argument("--controller-backend", choices=("kubernetes", "nebius"), default="kubernetes")
     parser.add_argument("--sky-bin", default="")

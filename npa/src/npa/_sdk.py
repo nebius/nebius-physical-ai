@@ -44,6 +44,8 @@ def make_cli_wrapper(module_name: str, callback_name: str, doc: str):
 
     wrapper.__doc__ = doc
     wrapper.__name__ = callback_name.removesuffix("_cmd")
+    wrapper.__npa_cli_module__ = module_name
+    wrapper.__npa_cli_callback__ = callback_name
     return wrapper
 
 

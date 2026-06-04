@@ -1,0 +1,64 @@
+name: confidentiality scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+      INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install npa guardrail module
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e npa
+
+      - name: Run confidentiality scans
+        run: |
+          set -euo pipefail
+
+          scan_range=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            scan_range="${{ github.event.before }}..HEAD"
+          fi
+
+          args=(--repo-root . --tree)
+          if [ -n "${scan_range}" ]; then
+            args+=(--diff-range "${scan_range}")
+          fi
+
+          run_scan() {
+            local pattern_env="$1"
+            local label="$2"
+            shift 2
+
+            if [ -z "${!pattern_env:-}" ]; then
+              echo "::warning::${label} confidentiality scan is not configured; populate the ${pattern_env} secret to enable denylist enforcement"
+              return 0
+            fi
+
+            echo "Running ${label} confidentiality scan"
+            npa/.venv/bin/python -m npa.guardrails.confidentiality "${args[@]}" --pattern-env "${pattern_env}" "$@"
+          }
+
+          run_scan CUSTOMER_DENYLIST customer
+          run_scan INFRA_DENYLIST operator-private --ignore-case

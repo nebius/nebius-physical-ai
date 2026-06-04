@@ -412,7 +412,7 @@ def run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocesso
         "=" * 78,
         f"Device: {device} | Measured: {measure} steps (after {warmup} warmup)",
         f"Batch size: {args.batch_size} | num_workers: {args.num_workers}"
-        + (f" | compiled: True" if args.compile else ""),
+        + (" | compiled: True" if args.compile else ""),
         f"Wall time: {t_total:.2f}s | Throughput: {measure / t_total:.2f} step/s"
         f" | Avg step: {avg_step_ms:.2f}ms",
         "",

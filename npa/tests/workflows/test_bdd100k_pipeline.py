@@ -29,7 +29,7 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "54909c28411d6ba27dbcc72c8c471c6e47385dc5da2ac8f09a78ee3be1a49cfa"
+EXPECTED_YAML_SHA256 = "64590a23aea30ef3cd934ef61fcd67daa80e386a912e2e077bd3b39c933581b9"
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
     "rider": 1,

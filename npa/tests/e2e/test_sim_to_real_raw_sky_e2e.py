@@ -18,7 +18,6 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW_SKY_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
-DEFAULT_BUCKET = "npa-sim2real-d87cf691"
 DEFAULT_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 GPU_CHAIN = ("H100:1", "H200:1", "A100:1")
 
@@ -30,7 +29,9 @@ def test_raw_sky_sim_to_real_pipeline_writes_run_scoped_s3_artifacts(tmp_path: P
     sky_bin = _sky_bin()
     run_id = f"sim-to-real-raw-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
     s3_prefix = f"sim-to-real/{run_id}"
-    bucket = os.environ.get("NPA_E2E_SIM_TO_REAL_BUCKET", os.environ.get("S3_BUCKET", DEFAULT_BUCKET))
+    bucket = os.environ.get("NPA_E2E_SIM_TO_REAL_BUCKET") or os.environ.get("S3_BUCKET")
+    if not bucket:
+        pytest.skip("NPA_E2E_SIM_TO_REAL_BUCKET or S3_BUCKET must be set for live sim-to-real e2e")
     endpoint = os.environ.get("NPA_E2E_SIM_TO_REAL_S3_ENDPOINT", os.environ.get("S3_ENDPOINT_URL", DEFAULT_ENDPOINT))
     policy_image = _policy_image()
     credentials_env = _s3_credentials_env()

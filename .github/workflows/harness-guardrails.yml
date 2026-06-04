@@ -1,0 +1,37 @@
+name: harness guardrails
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    env:
+      NPA_PROJECT_ID: project-test-00000000
+      NPA_S3_BUCKET: test-bucket-00000000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Create repository venv
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python -m pip install -e "npa[server]" pytest pytest-mock PyYAML
+
+      - name: Run guardrail tests
+        run: npa/.venv/bin/python -m pytest npa/tests/guardrails -q
+
+      - name: Assert standard test collection is non-zero
+        run: |
+          cd npa
+          .venv/bin/python -m pytest tests --ignore=tests/e2e --collect-only -q

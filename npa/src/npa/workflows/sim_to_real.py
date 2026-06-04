@@ -31,9 +31,27 @@ from npa.workbench.lerobot.policy_container import (
     assert_lerobot_importable,
     parse_feedback_batch,
     run_feedback_training_step,
-    run_lerobot_eval,
     run_lerobot_training,
     validate_lerobot_checkpoint,
+)
+from npa.workflows.eval_backends import (
+    DEFAULT_EVAL_BACKEND,
+    EvalBackendError,
+    EvalMetric,
+    RolloutContext,
+    evaluate_backend,
+    get_eval_backend,
+)
+from npa.workflows.feedback import (
+    FeedbackPayload,
+    FeedbackRequest,
+    FeedbackSourceError,
+    FeedbackType,
+    adapt_feedback_to_training_signal,
+    byo_feedback_contract,
+    collect_feedback,
+    get_feedback_source,
+    parse_feedback_type,
 )
 from npa.workflows.lerobot_dataset import (
     DEFAULT_PUBLIC_LEROBOT_LICENSE,
@@ -53,17 +71,20 @@ from npa.workflows.lerobot_dataset import (
 
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
-DEFAULT_FEEDBACK_SOURCE = "rollout"
-DEFAULT_SIM_BACKEND = "lerobot-dataset"
-DEFAULT_EVAL_BACKEND = "pusht"
-DEFAULT_VLM_EVAL_BACKEND = "api"
-DEFAULT_VLM_EVAL_MODEL = "vlm-eval"
+DEFAULT_FEEDBACK_SOURCE = "sim-env"
+DEFAULT_FEEDBACK_TYPE = "scalar"
+DEFAULT_SIM_BACKEND = "genesis"
+DEFAULT_VLM_EVAL_BACKEND = "stub"
+DEFAULT_VLM_EVAL_MODEL = "vlm-eval-stub"
 DEFAULT_SPLIT_FRACTION = 0.8
 DEFAULT_THRESHOLD = 0.75
 DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE = 32
 DEFAULT_MAX_TRAINING_ITERATIONS = 3
 DEFAULT_TRAIN_STEP_BUDGET = 6000
 DEFAULT_MIN_EVAL_IMPROVEMENT = 0.0
+DEFAULT_GPU_TYPE = "H100:1"
+DEFAULT_GPU_FAILOVER = "H200:1,L40S:1"
+SUPPORTED_SKYPILOT_ACCELERATOR_EXAMPLES = ("H100:1", "H200:1", "L40S:1", "B200:8")
 APPLICATION_ID = "npa_sim_to_real_pipeline"
 
 
@@ -128,6 +149,7 @@ class SimToRealConfig:
     sim_backend: str = DEFAULT_SIM_BACKEND
     eval_backend: str = DEFAULT_EVAL_BACKEND
     feedback_source: str = DEFAULT_FEEDBACK_SOURCE
+    feedback_type: str = DEFAULT_FEEDBACK_TYPE
     split_fraction: float = DEFAULT_SPLIT_FRACTION
     env_count: int = 10
     episodes: int = 4
@@ -135,7 +157,8 @@ class SimToRealConfig:
     eval_episodes: int = 2
     threshold: float = DEFAULT_THRESHOLD
     seed: int = 42
-    gpu: str = "H100:1"
+    gpu: str = DEFAULT_GPU_TYPE
+    gpu_failover: str = DEFAULT_GPU_FAILOVER
     max_training_iterations: int = DEFAULT_MAX_TRAINING_ITERATIONS
     train_step_budget: int = DEFAULT_TRAIN_STEP_BUDGET
     min_eval_improvement: float = DEFAULT_MIN_EVAL_IMPROVEMENT
@@ -150,6 +173,9 @@ class SimToRealConfig:
     vlm_eval_max_frames: int = 4
     vlm_eval_score: float | None = None
     trainer_command: str = ""
+    byo_feedback_endpoint_url: str = ""
+    byo_feedback_command: str = ""
+    byo_feedback_mode: str = "provided-rollout"
     checkpoint_uri: str = ""
     rrd_path: str = ""
     rerun_max_frames_per_episode: int = DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE
@@ -196,6 +222,17 @@ class SimToRealConfig:
             raise SimToRealError(
                 f"rerun_max_frames_per_episode must be positive, got {self.rerun_max_frames_per_episode}"
             )
+        try:
+            get_eval_backend(self.eval_backend)
+        except EvalBackendError as exc:
+            raise SimToRealError(str(exc)) from exc
+        try:
+            get_feedback_source(self.feedback_source)
+            parse_feedback_type(self.feedback_type)
+        except FeedbackSourceError as exc:
+            raise SimToRealError(str(exc)) from exc
+        if not accelerator_candidates(self.gpu, self.gpu_failover):
+            raise SimToRealError("gpu or gpu_failover must provide at least one accelerator candidate")
 
 
 @dataclass
@@ -240,6 +277,29 @@ def default_s3_prefix(run_id: str) -> str:
     return f"sim-to-real/{run_id}"
 
 
+def accelerator_candidates(gpu: str = "", gpu_failover: str = "") -> list[str]:
+    """Return ordered SkyPilot accelerator candidates from primary and failover strings."""
+
+    candidates: list[str] = []
+    for raw in (gpu, gpu_failover):
+        for candidate in str(raw or "").split(","):
+            normalized = normalize_accelerator(candidate)
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    return candidates
+
+
+def normalize_accelerator(candidate: str) -> str:
+    """Normalize a SkyPilot accelerator token, defaulting bare GPU names to count 1."""
+
+    value = str(candidate or "").strip()
+    if not value:
+        return ""
+    if ":" in value or value.startswith("${"):
+        return value
+    return f"{value}:1"
+
+
 def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     """Build a config from explicit overrides and environment fallbacks."""
 
@@ -278,6 +338,20 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     )
     output_dir = overrides.get("output_dir")
     vlm_score = overrides.get("vlm_eval_score")
+    if vlm_score is None and os.environ.get("VLM_EVAL_SCORE"):
+        vlm_score = os.environ["VLM_EVAL_SCORE"]
+    gpu_override = overrides.get("gpu")
+    legacy_gpu = os.environ.get("GPU") or ""
+    primary_candidates = accelerator_candidates(
+        str(gpu_override or os.environ.get("NPA_GPU_TYPE") or legacy_gpu or DEFAULT_GPU_TYPE)
+    )
+    gpu = primary_candidates[0] if primary_candidates else DEFAULT_GPU_TYPE
+    extra_from_primary = primary_candidates[1:]
+    failover_override = overrides.get("gpu_failover")
+    if failover_override is not None:
+        gpu_failover = str(failover_override)
+    else:
+        gpu_failover = os.environ.get("NPA_GPU_FAILOVER") or ",".join(extra_from_primary) or DEFAULT_GPU_FAILOVER
     return SimToRealConfig(
         run_id=run_id,
         s3_endpoint=str(
@@ -296,6 +370,7 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         sim_backend=str(overrides.get("sim_backend") or os.environ.get("SIM_BACKEND") or DEFAULT_SIM_BACKEND),
         eval_backend=str(overrides.get("eval_backend") or os.environ.get("EVAL_BACKEND") or DEFAULT_EVAL_BACKEND),
         feedback_source=str(overrides.get("feedback_source") or os.environ.get("FEEDBACK_SOURCE") or DEFAULT_FEEDBACK_SOURCE),
+        feedback_type=str(overrides.get("feedback_type") or os.environ.get("FEEDBACK_TYPE") or DEFAULT_FEEDBACK_TYPE),
         split_fraction=float(overrides.get("split_fraction", os.environ.get("SPLIT_FRACTION", DEFAULT_SPLIT_FRACTION))),
         env_count=int(overrides.get("env_count", os.environ.get("ENV_COUNT", "10"))),
         episodes=int(overrides.get("episodes", os.environ.get("EPISODES", "4"))),
@@ -303,7 +378,8 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         eval_episodes=int(overrides.get("eval_episodes", os.environ.get("EVAL_EPISODES", "10"))),
         threshold=float(overrides.get("threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD))),
         seed=int(overrides.get("seed", os.environ.get("SEED", "42"))),
-        gpu=str(overrides.get("gpu") or os.environ.get("GPU") or "H100:1"),
+        gpu=gpu,
+        gpu_failover=gpu_failover,
         max_training_iterations=int(
             overrides.get(
                 "max_training_iterations",
@@ -350,6 +426,15 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         ),
         vlm_eval_score=float(vlm_score) if vlm_score is not None and str(vlm_score) else None,
         trainer_command=str(overrides.get("trainer_command") or os.environ.get("CUSTOM_LEROBOT_TRAINER_COMMAND") or ""),
+        byo_feedback_endpoint_url=str(
+            overrides.get("byo_feedback_endpoint_url") or os.environ.get("BYO_FEEDBACK_ENDPOINT_URL") or ""
+        ),
+        byo_feedback_command=str(
+            overrides.get("byo_feedback_command") or os.environ.get("BYO_FEEDBACK_COMMAND") or ""
+        ),
+        byo_feedback_mode=str(
+            overrides.get("byo_feedback_mode") or os.environ.get("BYO_FEEDBACK_MODE") or "provided-rollout"
+        ),
         checkpoint_uri=checkpoint_uri,
         rrd_path=rrd_path,
         rerun_max_frames_per_episode=int(
@@ -410,7 +495,11 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
             "POLICY_IMAGE": config.policy_image or default_policy_image(),
             "INPUT_DATA_URI": config.input_data_uri,
             "CHECKPOINT_URI": paths.get("checkpoint", config.checkpoint_uri),
+            "EVAL_BACKEND": config.eval_backend,
             "FEEDBACK_SOURCE": config.feedback_source,
+            "FEEDBACK_TYPE": config.feedback_type,
+            "NPA_GPU_TYPE": config.gpu,
+            "NPA_GPU_FAILOVER": config.gpu_failover,
             "TRAIN_STEPS": str(config.train_steps),
             "TRAIN_STEP_BUDGET": str(config.train_step_budget),
             "MAX_TRAINING_ITERATIONS": str(config.max_training_iterations),
@@ -420,6 +509,9 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
             "POLICY_DEVICE": config.policy_device,
             "VLM_EVAL_BACKEND": config.vlm_eval_backend,
             "VLM_EVAL_MODEL": config.vlm_eval_model,
+            "BYO_FEEDBACK_MODE": config.byo_feedback_mode,
+            "BYO_FEEDBACK_ENDPOINT_URL": config.byo_feedback_endpoint_url,
+            "BYO_FEEDBACK_COMMAND": config.byo_feedback_command,
             "CUSTOM_LEROBOT_TRAINER_COMMAND": config.trainer_command,
         },
         "observation_schema": {
@@ -432,11 +524,23 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
             "action": {"dtype": "float32", "shape": ["T", "action_dim"]},
         },
         "feedback_schema": {
-            "success": {"dtype": "bool", "required": True},
-            "score": {"dtype": "float32", "range": [0.0, 1.0], "required": True},
-            "rationale": {"dtype": "string", "required": True},
-            "source": {"dtype": "string", "required": False, "examples": ["vlm", "vla"]},
+            "feedback_type": {
+                "dtype": "string",
+                "required": True,
+                "examples": ["scalar", "dense-per-step", "pass-fail", "critique", "preference"],
+            },
+            "value": {"dtype": "json", "required": True},
+            "score": {"dtype": "float32", "range": [0.0, 1.0], "required": False},
+            "success": {"dtype": "bool", "required": False},
+            "rationale": {"dtype": "string", "required": False},
+            "source": {"dtype": "string", "required": False, "examples": ["none", "sim-env", "vlm", "byo-container"]},
         },
+        "byo_feedback_container": byo_feedback_contract(
+            declared_type=config.feedback_type,
+            mode=config.byo_feedback_mode,
+            endpoint_url=config.byo_feedback_endpoint_url,
+            command=config.byo_feedback_command,
+        ),
     }
 
 
@@ -520,84 +624,74 @@ def evaluate_feedback(
     rollout_path: Path,
     output_path: Path,
     task: str = "sim-to-real",
+    eval_metric: EvalMetric | None = None,
+    checkpoint_uri: str = "",
 ) -> tuple[FeedbackResult, ComponentStatus]:
-    """Evaluate a rollout through the existing VLM eval interface."""
+    """Collect typed feedback and return the legacy normalized result."""
 
-    if config.feedback_source != "vlm":
-        feedback = FeedbackResult(
-            success=False,
-            score=0.0,
-            rationale=f"Feedback source {config.feedback_source!r} is configured as a typed seam.",
-            critique="Configure FEEDBACK_SOURCE=vlm to use the current VLM eval implementation.",
-            source=config.feedback_source,
-        )
-        return feedback, ComponentStatus(
-            name=f"{config.feedback_source}_feedback",
-            tier=Tier.SEAM,
-            evidence=f"{config.feedback_source} feedback is modeled but has no backend implementation.",
-        )
-
-    try:
-        from npa.workbench.vlm_eval import VlmEvalError, evaluate_vlm, write_result
-    except ImportError as exc:
-        fallback = FeedbackResult(
-            success=False,
-            score=0.0,
-            rationale=f"VLM eval interface could not be imported: {exc}",
-            source="vlm",
-        )
-        return fallback, ComponentStatus(
-            name="vlm_feedback",
-            tier=Tier.BLOCKED,
-            evidence=str(exc),
-        )
-
-    try:
-        result = evaluate_vlm(
-            input_path=str(rollout_path),
-            output_path=str(output_path),
-            task=task,
-            backend=config.vlm_eval_backend,
-            model=config.vlm_eval_model,
-            endpoint_url=config.vlm_eval_endpoint_url,
-            frame_selection=config.vlm_eval_frame_selection,
-            max_frames=config.vlm_eval_max_frames,
-            success_threshold=config.threshold,
-            score=config.vlm_eval_score,
-        )
-        payload = asdict(result)
-        payload["written_uri"] = write_result(payload, result_uri=result.result_uri)
-    except (OSError, VlmEvalError) as exc:
-        fallback = FeedbackResult(
-            success=False,
-            score=0.0,
-            rationale=f"VLM eval interface could not score the rollout: {exc}",
-            source="vlm",
-        )
-        return fallback, ComponentStatus(
-            name="vlm_feedback",
-            tier=Tier.BLOCKED,
-            evidence=str(exc),
-        )
-
-    feedback = FeedbackResult(
-        success=result.passed,
-        score=result.score,
-        rationale=result.rationale or result.status,
-        critique=result.rationale,
-        source="vlm",
+    payload, component = collect_feedback_payload(
+        config,
+        rollout_path=rollout_path,
+        output_path=output_path,
+        task=task,
+        eval_metric=eval_metric,
+        checkpoint_uri=checkpoint_uri,
     )
-    tier = Tier.PARTIAL if result.backend == "stub" else Tier.WORKS
-    evidence = (
-        "Existing vlm-eval stub backend produced schema-compatible feedback."
-        if result.backend == "stub"
-        else f"Existing vlm-eval backend {result.backend!r} scored rollout frames."
+    return _feedback_payload_to_result(payload), component
+
+
+def collect_feedback_payload(
+    config: SimToRealConfig,
+    *,
+    rollout_path: Path,
+    output_path: Path,
+    task: str,
+    eval_metric: EvalMetric | None = None,
+    checkpoint_uri: str = "",
+) -> tuple[FeedbackPayload, ComponentStatus]:
+    """Collect typed feedback through the configured feedback source."""
+
+    request = FeedbackRequest(
+        rollout_path=rollout_path,
+        output_path=output_path,
+        task=task,
+        checkpoint_uri=checkpoint_uri or config.checkpoint_uri,
+        threshold=config.threshold,
+        feedback_type=parse_feedback_type(config.feedback_type),
+        eval_metric=eval_metric,
+        vlm_backend=config.vlm_eval_backend,
+        vlm_model=config.vlm_eval_model,
+        vlm_endpoint_url=config.vlm_eval_endpoint_url,
+        vlm_frame_selection=config.vlm_eval_frame_selection,
+        vlm_max_frames=config.vlm_eval_max_frames,
+        vlm_score=config.vlm_eval_score,
+        byo_endpoint_url=config.byo_feedback_endpoint_url,
+        byo_command=config.byo_feedback_command,
+        byo_mode=config.byo_feedback_mode,
     )
-    return feedback, ComponentStatus(
-        name="vlm_feedback",
-        tier=tier,
-        evidence=evidence,
-        artifacts={"result_uri": payload["written_uri"]},
+    payload, status = collect_feedback(config.feedback_source, request)
+    return payload, _component_from_status(status)
+
+
+def _feedback_payload_to_result(payload: FeedbackPayload) -> FeedbackResult:
+    critique = ""
+    if payload.feedback_type == FeedbackType.CRITIQUE and isinstance(payload.value, dict):
+        critique = str(payload.value.get("critique") or "")
+    return FeedbackResult(
+        success=payload.success,
+        score=payload.score,
+        rationale=payload.rationale or critique or f"{payload.feedback_type.value} feedback",
+        critique=critique,
+        source=payload.source,
+    )
+
+
+def _component_from_status(status: Any) -> ComponentStatus:
+    return ComponentStatus(
+        name=status.name,
+        tier=Tier(status.tier),
+        evidence=status.evidence,
+        artifacts=dict(status.artifacts),
     )
 
 
@@ -889,11 +983,37 @@ def run_structural_spine(
 
     rollout_dir = _write_lerobot_rollout_fixture(local_dir / "rollouts", heldout_episodes[0], dataset_summary)
     vlm_output = local_dir / "feedback" / "vlm-eval"
+    checkpoint_uri = config.checkpoint_uri or str(local_dir / "checkpoints" / "policy")
+    rollout_frame = rollout_dir / "frame_000.ppm"
+    eval_metric, eval_status = evaluate_backend(
+        config.eval_backend,
+        checkpoint_uri=checkpoint_uri,
+        context=RolloutContext(
+            rollout_path=rollout_dir,
+            task="Complete the demonstrated manipulation task.",
+            sim_backend=config.sim_backend,
+            metrics={
+                "vlm_score": config.vlm_eval_score,
+                "heldout_score": config.vlm_eval_score,
+                "heldout_episode_count": len(heldout_episodes),
+            },
+            state={
+                "pc_success": config.vlm_eval_score,
+            },
+            frames=(rollout_frame,) if rollout_frame.exists() else (),
+        ),
+        threshold=config.threshold,
+    )
+    components.append(_component_from_status(eval_status))
     feedback_request = {
         "run_id": config.run_id,
         "heldout_episode": heldout_episodes[0],
         "rollout_path": str(rollout_dir),
         "feedback_output": str(vlm_output),
+        "eval_backend": config.eval_backend,
+        "eval_metric": asdict(eval_metric),
+        "feedback_source": config.feedback_source,
+        "feedback_type": config.feedback_type,
         "rubric": {"success": "task completed", "score": "float in [0,1]", "rationale": "brief reason"},
         "observation": {
             "images": dataset_summary.camera_keys,
@@ -901,14 +1021,17 @@ def run_structural_spine(
             "state": dataset_summary.state_keys,
         },
     }
-    feedback, feedback_status = evaluate_feedback(
+    feedback_payload, feedback_status = collect_feedback_payload(
         config,
         rollout_path=rollout_dir,
         output_path=vlm_output,
         task="Complete the demonstrated manipulation task.",
+        eval_metric=eval_metric,
+        checkpoint_uri=checkpoint_uri,
     )
+    feedback = _feedback_payload_to_result(feedback_payload)
     components.append(feedback_status)
-    training_signal = feedback_to_training_signal(feedback)
+    training_signal = adapt_feedback_to_training_signal(feedback_payload)
     _write_json(local_dir / "training-signal.json", training_signal)
 
     try:
@@ -943,7 +1066,6 @@ def run_structural_spine(
             )
         )
 
-    checkpoint_uri = config.checkpoint_uri or str(local_dir / "checkpoints" / "policy")
     outer = outer_loop_decision(feedback.score, config.threshold, checkpoint_uri)
     checkpoint_marker = local_dir / "checkpoints" / "promoted-checkpoint.json"
     checkpoint_marker.parent.mkdir(parents=True, exist_ok=True)
@@ -1006,6 +1128,17 @@ def run_structural_spine(
             },
             "policy_container": policy_contract,
             "feedback_request": feedback_request,
+            "eval_backend": {
+                "name": eval_metric.name,
+                "score": eval_metric.score,
+                "passed": eval_metric.passed,
+                "metadata": eval_metric.metadata,
+            },
+            "feedback": {
+                "source": feedback_payload.source,
+                "type": feedback_payload.feedback_type.value,
+                "metadata": feedback_payload.metadata,
+            },
         },
         artifacts={**artifact_uris(config), "local_report_dir": str(local_dir)},
         components=components,
@@ -1240,6 +1373,8 @@ def run_real_lerobot_loop(
     )
     latest_signal = feedback_to_training_signal(latest_feedback)
     latest_checkpoint = ""
+    latest_eval_status: Any | None = None
+    latest_feedback_status: ComponentStatus | None = None
     previous_score: float | None = None
     cumulative_steps = 0
     stop_reason = "step_budget"
@@ -1267,41 +1402,76 @@ def run_real_lerobot_loop(
                 log_path=local_dir / "logs" / f"train-iter-{iteration:02d}.log",
             )
             checkpoint_validation = validate_lerobot_checkpoint(train_result.checkpoint_path)
-            eval_result = run_lerobot_eval(
-                checkpoint_path=train_result.checkpoint_path,
-                output_dir=eval_root / f"iter-{iteration:02d}",
-                env_type=rollout_env,
-                episodes=config.eval_episodes,
-                device=config.policy_device,
-                log_path=local_dir / "logs" / f"eval-iter-{iteration:02d}.log",
+            eval_output_dir = eval_root / f"iter-{iteration:02d}"
+            eval_metric, eval_status = evaluate_backend(
+                config.eval_backend,
+                checkpoint_uri=train_result.checkpoint_path,
+                context=RolloutContext(
+                    rollout_path=eval_output_dir,
+                    task="Complete the demonstrated manipulation task.",
+                    sim_backend=config.sim_backend,
+                    metrics={"heldout_episode_count": len(heldout_episodes)},
+                    options={
+                        "lerobot_eval": {
+                            "output_dir": eval_output_dir,
+                            "env_type": rollout_env,
+                            "episodes": config.eval_episodes,
+                            "device": config.policy_device,
+                            "log_path": local_dir / "logs" / f"eval-iter-{iteration:02d}.log",
+                        }
+                    },
+                ),
+                threshold=config.threshold,
             )
-        except PolicyContainerError as exc:
+        except (EvalBackendError, PolicyContainerError) as exc:
             raise SimToRealError(str(exc)) from exc
 
         latest_checkpoint = train_result.checkpoint_path
-        latest_feedback = _feedback_from_eval(eval_result.to_dict(), threshold=config.threshold)
-        latest_signal = feedback_to_training_signal(latest_feedback)
+        try:
+            feedback_payload, feedback_status = collect_feedback_payload(
+                config,
+                rollout_path=Path(str(eval_metric.metadata.get("output_dir") or eval_output_dir)),
+                output_path=local_dir / "feedback" / f"iter-{iteration:02d}",
+                task="Complete the demonstrated manipulation task.",
+                eval_metric=eval_metric,
+                checkpoint_uri=train_result.checkpoint_path,
+            )
+        except FeedbackSourceError as exc:
+            raise SimToRealError(str(exc)) from exc
+        latest_feedback = _feedback_payload_to_result(feedback_payload)
+        latest_signal = adapt_feedback_to_training_signal(feedback_payload)
+        latest_eval_status = eval_status
+        latest_feedback_status = feedback_status
         signal_path = local_dir / "training-signals" / f"iter-{iteration:02d}.json"
         _write_json(signal_path, latest_signal)
+        eval_record = _eval_record_from_metric(eval_metric, env_type=rollout_env)
         improvement = (
             None
             if previous_score is None
-            else round(float(eval_result.score) - float(previous_score), 6)
+            else round(float(eval_metric.score) - float(previous_score), 6)
         )
         loop_history.append(
             {
                 "iteration": iteration,
                 "train": train_result.to_dict(),
                 "checkpoint_validation": checkpoint_validation.to_dict(),
-                "eval": eval_result.to_dict(),
+                "eval": eval_record,
+                "eval_backend": {
+                    "name": eval_metric.name,
+                    "score": eval_metric.score,
+                    "passed": eval_metric.passed,
+                    "metadata": eval_metric.metadata,
+                    "status": asdict(eval_status),
+                },
                 "feedback": asdict(latest_feedback),
+                "feedback_payload": asdict(feedback_payload),
                 "training_signal": latest_signal,
                 "training_signal_path": str(signal_path),
                 "improvement": improvement,
             }
         )
-        previous_score = float(eval_result.score)
-        if eval_result.score >= config.threshold:
+        previous_score = float(eval_metric.score)
+        if eval_metric.score >= config.threshold:
             stop_reason = "threshold"
             break
         if cumulative_steps >= config.train_step_budget:
@@ -1310,6 +1480,10 @@ def run_real_lerobot_loop(
 
     if not loop_history:
         raise SimToRealError("real LeRobot loop did not complete any train/eval iteration")
+    if latest_eval_status is not None:
+        components.append(_component_from_status(latest_eval_status))
+    if latest_feedback_status is not None:
+        components.append(latest_feedback_status)
 
     trend = [round(float(item["eval"]["score"]), 6) for item in loop_history]
     improved = len(trend) < 2 or trend[-1] >= trend[0] + config.min_eval_improvement
@@ -1347,7 +1521,7 @@ def run_real_lerobot_loop(
         )
     )
     customer_note = (
-        "For customer-owned non-PushT robot data, rollout task-success and VLM/VLA scoring require that "
+        "For externally provided non-PushT robot data, rollout task-success and VLM/VLA scoring require that "
         "robot's matching rollout environment or the real robot. The Franka simulator is not a substitute; "
         "heldout dataset metrics remain real when no matching rollout env is supplied."
     )
@@ -1483,6 +1657,7 @@ def main(argv: list[str] | None = None) -> int:
             sim_backend=args.sim_backend,
             eval_backend=args.eval_backend,
             feedback_source=args.feedback_source,
+            feedback_type=args.feedback_type,
             split_fraction=args.split_fraction,
             env_count=args.env_count,
             episodes=args.episodes,
@@ -1491,6 +1666,7 @@ def main(argv: list[str] | None = None) -> int:
             threshold=args.threshold,
             seed=args.seed,
             gpu=args.gpu,
+            gpu_failover=args.gpu_failover,
             max_training_iterations=args.max_training_iterations,
             train_step_budget=args.train_step_budget,
             min_eval_improvement=args.min_eval_improvement,
@@ -1505,6 +1681,9 @@ def main(argv: list[str] | None = None) -> int:
             vlm_eval_max_frames=args.vlm_eval_max_frames,
             vlm_eval_score=args.vlm_eval_score,
             trainer_command=args.trainer_command,
+            byo_feedback_endpoint_url=args.byo_feedback_endpoint_url,
+            byo_feedback_command=args.byo_feedback_command,
+            byo_feedback_mode=args.byo_feedback_mode,
             checkpoint_uri=args.checkpoint_uri,
             rrd_path=args.rrd_path,
             rerun_max_frames_per_episode=args.rerun_max_frames_per_episode,
@@ -1538,6 +1717,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sim-backend", default=DEFAULT_SIM_BACKEND)
     parser.add_argument("--eval-backend", default=DEFAULT_EVAL_BACKEND)
     parser.add_argument("--feedback-source", default=DEFAULT_FEEDBACK_SOURCE)
+    parser.add_argument("--feedback-type", default=DEFAULT_FEEDBACK_TYPE)
     parser.add_argument("--split-fraction", type=float, default=DEFAULT_SPLIT_FRACTION)
     parser.add_argument("--env-count", type=int, default=10)
     parser.add_argument("--episodes", type=int, default=4)
@@ -1545,7 +1725,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--gpu", default="H100:1")
+    parser.add_argument("--gpu", default=DEFAULT_GPU_TYPE)
+    parser.add_argument("--gpu-failover", default=DEFAULT_GPU_FAILOVER)
     parser.add_argument("--max-training-iterations", type=int, default=DEFAULT_MAX_TRAINING_ITERATIONS)
     parser.add_argument("--train-step-budget", type=int, default=DEFAULT_TRAIN_STEP_BUDGET)
     parser.add_argument("--min-eval-improvement", type=float, default=DEFAULT_MIN_EVAL_IMPROVEMENT)
@@ -1560,6 +1741,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vlm-eval-max-frames", type=int, default=4)
     parser.add_argument("--vlm-eval-score", type=float, default=None)
     parser.add_argument("--trainer-command", default="")
+    parser.add_argument("--byo-feedback-endpoint-url", default="")
+    parser.add_argument("--byo-feedback-command", default="")
+    parser.add_argument("--byo-feedback-mode", choices=("provided-rollout", "self-rollout"), default="provided-rollout")
     parser.add_argument("--checkpoint-uri", default="")
     parser.add_argument("--rrd-path", default="")
     parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
@@ -1648,29 +1832,37 @@ def _write_rollout_fixture(output_dir: Path, env: SimEnvSpec) -> Path:
 def _matching_rollout_env(config: SimToRealConfig) -> str:
     """Return the real LeRobot rollout env matching the configured dataset."""
 
-    backend = config.eval_backend.strip().lower()
+    backend = config.eval_backend.strip().lower().replace("_", "-")
     if backend in {"pusht", "gym-pusht", "lerobot-pusht"}:
         return "pusht"
-    if backend in {"", "auto"} and config.dataset_repo_id == DEFAULT_PUBLIC_LEROBOT_REPO:
+    if backend in {"", "auto", "state-success", "sim-env", "pc-success", "lerobot-eval"}:
+        if config.dataset_repo_id == DEFAULT_PUBLIC_LEROBOT_REPO:
+            return "pusht"
+        return "pusht"
+    if config.dataset_repo_id == DEFAULT_PUBLIC_LEROBOT_REPO:
         return "pusht"
     return ""
 
 
-def _feedback_from_eval(eval_payload: dict[str, Any], *, threshold: float) -> FeedbackResult:
-    """Convert measured rollout eval metrics into feedback for the next train iteration."""
+def _eval_record_from_metric(metric: EvalMetric, *, env_type: str) -> dict[str, Any]:
+    """Return the legacy LeRobot eval report shape from a registry metric."""
 
-    score = float(eval_payload["score"])
-    metric_name = str(eval_payload.get("metric_name") or "score")
-    return FeedbackResult(
-        success=score >= threshold,
-        score=score,
-        rationale=(
-            f"Measured {metric_name}={score:.6f} against threshold={threshold:.6f} "
-            f"in rollout backend {eval_payload.get('backend', '')}."
-        ),
-        critique="Continue training from the last checkpoint." if score < threshold else "Threshold reached.",
-        source="rollout",
-    )
+    metadata = metric.metadata
+    return {
+        "status": "success",
+        "backend": env_type,
+        "adapter": metadata.get("adapter", ""),
+        "output_dir": str(metadata.get("output_dir", "")),
+        "eval_info_path": str(metadata.get("eval_info_path", "")),
+        "score": metric.score,
+        "metric_name": str(metadata.get("metric_name") or metric.name),
+        "pc_success": metadata.get("pc_success"),
+        "avg_sum_reward": metadata.get("avg_sum_reward"),
+        "avg_max_reward": metadata.get("avg_max_reward"),
+        "n_episodes": metadata.get("n_episodes"),
+        "log_path": str(metadata.get("log_path", "")),
+        "raw_metrics": metadata.get("raw_metrics", {}),
+    }
 
 
 def _assert_uploaded_real_artifacts(config: SimToRealConfig) -> ComponentStatus | None:

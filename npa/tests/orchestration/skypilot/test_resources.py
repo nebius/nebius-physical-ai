@@ -15,7 +15,6 @@ from npa.orchestration.skypilot.resources import (
         ("h100", "H100:1", "gpu-h100-sxm_1gpu-16vcpu-200gb"),
         ("h200", "H200:1", "gpu-h200-sxm_1gpu-16vcpu-200gb"),
         ("l40s", "L40S:1", "gpu-l40s-d_1gpu-16vcpu-96gb"),
-        ("rtx6000", "RTXPRO6000:1", "gpu-rtx6000_1gpu-24vcpu-218gb"),
     ],
 )
 def test_resources_for_nebius_gpu_specs(gpu: str, accelerator: str, instance_type: str) -> None:
@@ -53,6 +52,11 @@ def test_kubernetes_backend_spec_returns_kubernetes_shape() -> None:
 def test_invalid_gpu_type_raises_typed_error() -> None:
     with pytest.raises(InvalidResourceSpecError):
         resources_for_npa_spec({"gpu": "not-a-gpu"})
+
+
+def test_rtx6000_is_not_a_nebius_vm_spec() -> None:
+    with pytest.raises(InvalidResourceSpecError, match="unsupported GPU type 'rtx6000'"):
+        resources_for_npa_spec({"backend": "nebius", "gpu": "rtx6000", "count": 1})
 
 
 def test_unknown_resource_spec_key_raises_typed_error() -> None:
