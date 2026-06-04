@@ -26,6 +26,11 @@ from npa.orchestration.skypilot import (
     submit_workflow,
     workflow_status,
 )
+from npa.orchestration.skypilot.signal_teardown import (
+    SignalTeardown,
+    install_teardown_signal_handlers,
+    restore_signal_handlers,
+)
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
@@ -163,47 +168,66 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             return 0
 
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
-        result = submit_workflow(
-            rendered_yaml,
-            run_id,
+        teardown_guard = SignalTeardown(
+            run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
             sky_bin=sky_bin,
-            timeout=args.submit_timeout,
+            poll_interval=max(float(args.poll_interval), 0.0),
         )
-        summary: dict[str, Any] = {
-            "run_id": run_id,
-            "submit": result.__dict__,
-            "outputs": output_paths(run_id, bucket=args.bucket),
-        }
-        if not result.ok or result.status != "SUBMITTED":
-            print(json.dumps(summary, indent=2, sort_keys=True))
-            return result.returncode or 1
-
-        deadline = time.monotonic() + args.wait_timeout
-        final = result
-        while time.monotonic() < deadline:
-            final = workflow_status(
-                result.job_id,
-                isolated_config_dir=args.isolated_config_dir,
-                config_path=Path(result.log_paths["config"]) if result.log_paths.get("config") else None,
-                sky_bin=sky_bin,
-            )
-            if final.status in TERMINAL_STATUSES:
-                break
-            time.sleep(args.poll_interval)
-        summary["final"] = final.__dict__
-
-        if args.cleanup:
-            cleanup = cleanup_all_for_run(
+        # SIGTERM/SIGINT handlers call the same idempotent teardown path as normal exit.
+        previous_handlers = install_teardown_signal_handlers(teardown_guard.teardown)
+        summary: dict[str, Any] | None = None
+        return_code = 1
+        try:
+            teardown_guard.mark_launched()
+            result = submit_workflow(
+                rendered_yaml,
                 run_id,
                 isolated_config_dir=args.isolated_config_dir,
-                config_path=Path(result.log_paths["config"]) if result.log_paths.get("config") else None,
                 sky_bin=sky_bin,
+                timeout=args.submit_timeout,
             )
-            summary["cleanup"] = cleanup.__dict__
+            config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
+            teardown_guard.mark_launched(config_path=config_path)
+            summary = {
+                "run_id": run_id,
+                "submit": result.__dict__,
+                "outputs": output_paths(run_id, bucket=args.bucket),
+            }
+            if not result.ok or result.status != "SUBMITTED":
+                return_code = result.returncode or 1
+            else:
+                deadline = time.monotonic() + args.wait_timeout
+                final = result
+                while time.monotonic() < deadline:
+                    final = workflow_status(
+                        result.job_id,
+                        isolated_config_dir=args.isolated_config_dir,
+                        config_path=config_path,
+                        sky_bin=sky_bin,
+                    )
+                    if final.status in TERMINAL_STATUSES:
+                        break
+                    time.sleep(args.poll_interval)
+                summary["final"] = final.__dict__
+                return_code = 0 if final.status == "SUCCEEDED" else 1
 
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0 if final.status == "SUCCEEDED" else 1
+            if args.cleanup:
+                cleanup = cleanup_all_for_run(
+                    run_id,
+                    isolated_config_dir=args.isolated_config_dir,
+                    config_path=config_path,
+                    sky_bin=sky_bin,
+                )
+                summary["cleanup"] = cleanup.__dict__
+        finally:
+            teardown = teardown_guard.teardown()
+            restore_signal_handlers(previous_handlers)
+
+        if summary is not None:
+            summary["teardown"] = teardown.__dict__
+            print(json.dumps(summary, indent=2, sort_keys=True))
+        return 1 if teardown.errors else return_code
 
 
 def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
