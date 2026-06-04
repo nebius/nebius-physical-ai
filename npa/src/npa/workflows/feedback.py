@@ -275,9 +275,10 @@ class SimEnvFeedbackSource:
             rationale=f"{metric.name} score={metric.score:.6f}",
             metadata=metric.metadata,
         )
+        tier = "WORKS" if metric.metadata.get("adapter") == "lerobot-eval" else "PARTIAL"
         return payload, FeedbackSourceStatus(
             name="sim_env_feedback",
-            tier="PARTIAL",
+            tier=tier,
             evidence=f"Adapted eval backend {metric.name!r} into {request.feedback_type.value} feedback.",
         )
 
@@ -619,6 +620,6 @@ register_feedback_adapter(FeedbackType.CRITIQUE, _adapt_critique)
 register_feedback_adapter(FeedbackType.PREFERENCE, _adapt_preference)
 
 register_feedback_source(NoneFeedbackSource())
-register_feedback_source(SimEnvFeedbackSource(), aliases=("env",))
+register_feedback_source(SimEnvFeedbackSource(), aliases=("env", "rollout"))
 register_feedback_source(VlmFeedbackSource())
 register_feedback_source(ByoContainerFeedbackSource(), aliases=("byo",))
