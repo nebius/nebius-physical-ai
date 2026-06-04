@@ -10,11 +10,16 @@ import numpy as np
 import yaml
 
 from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM, convert
+from npa.orchestration.skypilot.gpu_catalog import NebiusGpuCatalog, NebiusGpuResolution
 from npa.workflows.sim_to_real import (
+    DEFAULT_GPU_FAILOVER,
+    DEFAULT_GPU_TYPE,
     FeedbackResult,
     SimToRealConfig,
     Tier,
+    accelerator_candidates,
     artifact_uris,
+    build_config_from_env,
     default_policy_image,
     default_s3_prefix,
     feedback_to_training_signal,
@@ -31,6 +36,17 @@ from npa.workflows.lerobot_dataset import seeded_episode_split
 ROOT = Path(__file__).resolve().parents[3]
 YAML_PATH = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_sim_to_real_pipeline.py"
+
+
+def _nebius_catalog() -> NebiusGpuCatalog:
+    return NebiusGpuCatalog(
+        {
+            "H100": frozenset({1, 8}),
+            "H200": frozenset({1, 8}),
+            "B200": frozenset({8}),
+            "L40S": frozenset({1, 2, 4}),
+        }
+    )
 
 
 def _load_wrapper_module():
@@ -156,15 +172,22 @@ def test_yaml_exposes_parameterized_spine_and_feedback_contract() -> None:
     assert len(docs) == 1
     task = docs[0]
     assert task["name"] == "sim-to-real-pipeline"
-    assert task["resources"]["accelerators"] == "H100:1"
+    assert task["resources"]["accelerators"] == ["H100:1", "H200:1", "L40S:1"]
     assert task["envs"]["S3_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     assert task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
     assert task["envs"]["S3_BUCKET"] == "${S3_BUCKET}"
     assert task["envs"]["NPA_S3_BUCKET"] == "${S3_BUCKET}"
     assert task["envs"]["POLICY_IMAGE"] == "npa-lerobot-policy:0.1.0"
     assert task["envs"]["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
+    assert task["envs"]["EVAL_BACKEND"] == "state-success"
     assert task["envs"]["FEEDBACK_SOURCE"] == "vlm"
+    assert task["envs"]["FEEDBACK_TYPE"] == "critique"
+    assert task["envs"]["NPA_GPU_TYPE"] == "H100:1"
+    assert task["envs"]["NPA_GPU_FAILOVER"] == "H200:1,L40S:1"
+    assert task["envs"]["BYO_FEEDBACK_MODE"] == "provided-rollout"
     assert "npa.workflows.sim_to_real local-smoke" in task["run"]
+    assert "--feedback-type" in task["run"]
+    assert "--gpu-failover" in task["run"]
     assert "--attempt-s3-roundtrip" in task["run"]
 
 
@@ -177,6 +200,7 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
         policy_image="cr.example/npa-lerobot:custom",
         vlm_eval_backend="stub",
         vlm_eval_score=0.9,
+        feedback_type="critique",
     )
     task_env = docs[0]["envs"]
 
@@ -188,6 +212,12 @@ def test_runner_renders_policy_image_and_vlm_eval_settings() -> None:
     assert task_env["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
     assert task_env["INPUT_DATA_URI"] == "s3://bucket/datasets/lerobot-pusht/"
     assert task_env["CHECKPOINT_URI"] == "s3://bucket/sim-to-real/s2r-render/checkpoints/policy/"
+    assert task_env["EVAL_BACKEND"] == "state-success"
+    assert task_env["FEEDBACK_SOURCE"] == "vlm"
+    assert task_env["FEEDBACK_TYPE"] == "critique"
+    assert task_env["NPA_GPU_TYPE"] == DEFAULT_GPU_TYPE
+    assert task_env["NPA_GPU_FAILOVER"] == DEFAULT_GPU_FAILOVER
+    assert task_env["GPU"] == "H100:1,H200:1,L40S:1"
     assert task_env["VLM_EVAL_BACKEND"] == "stub"
     assert task_env["VLM_EVAL_SCORE"] == "0.9"
     assert "image_id" not in docs[0]["resources"]
@@ -199,10 +229,13 @@ def test_runner_renders_ordered_gpu_failover_resources() -> None:
         YAML_PATH,
         run_id="s2r-render",
         bucket="bucket",
-        gpu="H100:1,H200:1,A100:1",
+        gpu="H100:1",
+        gpu_failover="H200:1,L40S:1",
     )
 
-    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "L40S:1"]
+    assert docs[0]["envs"]["NPA_GPU_TYPE"] == "H100:1"
+    assert docs[0]["envs"]["NPA_GPU_FAILOVER"] == "H200:1,L40S:1"
 
 
 def test_runner_can_render_nebius_task_cloud_fallback() -> None:
@@ -212,15 +245,36 @@ def test_runner_can_render_nebius_task_cloud_fallback() -> None:
         run_id="s2r-render",
         bucket="bucket",
         task_cloud="nebius",
-        gpu="H100:1,H200:1,A100:1",
+        gpu="H100:1",
+        gpu_failover="H200:1,A100:1,L40S:1,RTX6000:1",
+        gpu_catalog=_nebius_catalog(),
     )
 
     assert docs[0]["resources"]["cloud"] == "nebius"
     assert docs[0]["resources"]["region"] == "eu-north1"
-    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "A100:1"]
+    assert docs[0]["resources"]["accelerators"] == ["H100:1", "H200:1", "L40S:1"]
     assert docs[0]["resources"]["cpus"] == "16+"
     assert docs[0]["resources"]["memory"] == "64+"
     assert "image_id" not in docs[0]["resources"]
+
+
+def test_sdk_env_config_reads_gpu_eval_and_feedback_knobs(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_GPU_TYPE", "B200:8")
+    monkeypatch.setenv("NPA_GPU_FAILOVER", "L40S,H200")
+    monkeypatch.setenv("EVAL_BACKEND", "heldout-metrics")
+    monkeypatch.setenv("FEEDBACK_SOURCE", "sim-env")
+    monkeypatch.setenv("FEEDBACK_TYPE", "pass-fail")
+    monkeypatch.setenv("BYO_FEEDBACK_MODE", "self-rollout")
+
+    config = build_config_from_env(run_id="sdk-env")
+
+    assert config.gpu == "B200:8"
+    assert config.gpu_failover == "L40S,H200"
+    assert accelerator_candidates(config.gpu, config.gpu_failover) == ["B200:8", "L40S:1", "H200:1"]
+    assert config.eval_backend == "heldout-metrics"
+    assert config.feedback_source == "sim-env"
+    assert config.feedback_type == "pass-fail"
+    assert config.byo_feedback_mode == "self-rollout"
 
 
 def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -248,6 +302,16 @@ def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path,
 
     monkeypatch.setattr(wrapper, "submit_workflow", fake_submit_workflow)
     monkeypatch.setattr(wrapper, "workflow_status", fake_workflow_status)
+    monkeypatch.setattr(
+        wrapper,
+        "resolve_nebius_gpu_preferences",
+        lambda gpu, gpu_failover, **kwargs: NebiusGpuResolution(
+            selected="H100:1",
+            accelerators=("H100:1", "H200:1", "L40S:1"),
+            rejected=(),
+            catalog=_nebius_catalog(),
+        ),
+    )
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
@@ -281,6 +345,8 @@ def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path,
 
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:
     from npa.sdk.workbench import sim_to_real
+
+    assert sim_to_real.FeedbackType.CRITIQUE.value == "critique"
 
     dataset = _write_lerobot_fixture(tmp_path / "fixture")
     report = sim_to_real.local_smoke(

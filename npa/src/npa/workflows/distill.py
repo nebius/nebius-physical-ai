@@ -452,20 +452,6 @@ def _run_remote(
         ),
     }
 
-    # S3 upload/download commands for cross-VM artifact handoff.
-    # After convert (sim VM), upload dataset to S3.
-    # Before train_student (train VM), download dataset from S3.
-    # After train_student (train VM), upload checkpoint to S3.
-    # Before eval_student (sim VM), download checkpoint from S3.
-    s3_sync = (
-        "python3 -c \""
-        "import boto3, os, pathlib, sys; "
-        "s3 = boto3.client('s3', "
-        "endpoint_url=os.environ.get('NEBIUS_S3_ENDPOINT', ''), "
-        "aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
-        "aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
-    )
-
     for stage_name in STAGES:
         ssh, conda_prefix, cmd = stage_plan[stage_name]
 

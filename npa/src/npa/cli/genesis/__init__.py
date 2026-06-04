@@ -16,7 +16,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -27,7 +26,6 @@ from rich.console import Console
 from npa.clients.config import (
     default_project_name,
     default_workbench_name,
-    list_projects,
     resolve_container_registry,
     resolve_environment,
     resolve_project_storage,
@@ -826,7 +824,7 @@ def train_teacher_cmd(
     from npa.genesis.diagnose import _THRESHOLD_KEYS
     train_overrides = {k: v for k, v in env_overrides.items() if k not in _THRESHOLD_KEYS}
 
-    console.print(f"[bold]Training teacher (PPO)[/bold]")
+    console.print("[bold]Training teacher (PPO)[/bold]")
     console.print(f"  n_envs={n_envs}  max_iterations={max_iterations}")
     console.print(f"  action_space={action_space.value}")
     if train_overrides:
@@ -854,7 +852,7 @@ def train_teacher_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        console.print(f"[green]Teacher training complete.[/green]")
+        console.print("[green]Teacher training complete.[/green]")
         for k, v in result.items():
             console.print(f"  {k}: {v}")
 
@@ -915,7 +913,7 @@ def generate_demos_cmd(
     target_output = output_path or output or "./data/demos/"
     configured_gpu_count = _configured_generate_gpu_count(gpu_count)
 
-    console.print(f"[bold]Generating demonstrations[/bold]")
+    console.print("[bold]Generating demonstrations[/bold]")
     console.print(f"  checkpoint: {ckpt}")
     console.print(f"  n_envs={n_envs}  domain_randomize={domain_randomize}")
     if configured_gpu_count > 1:
@@ -991,7 +989,7 @@ def generate_demos_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        console.print(f"[green]Demo generation complete.[/green]")
+        console.print("[green]Demo generation complete.[/green]")
         _print_result(result)
 
 
@@ -1019,7 +1017,7 @@ def eval_teacher_cmd(
     if not ckpt.exists():
         _fail(f"Checkpoint not found: {ckpt}")
 
-    console.print(f"[bold]Evaluating teacher (held-out)[/bold]")
+    console.print("[bold]Evaluating teacher (held-out)[/bold]")
     console.print(f"  checkpoint: {ckpt}")
     console.print(f"  n_envs={n_envs}  seed={seed}")
 
@@ -1039,7 +1037,7 @@ def eval_teacher_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps({"teacher_success_rate": round(rate, 4)}, indent=2))
     else:
-        console.print(f"[green]Teacher eval complete.[/green]")
+        console.print("[green]Teacher eval complete.[/green]")
         console.print(f"  success_rate: {rate:.2%}")
 
 
@@ -1102,7 +1100,7 @@ def eval_student_cmd(
             temp_dir.cleanup()
         _fail(f"Checkpoint not found: {ckpt}")
 
-    console.print(f"[bold]Evaluating student policy[/bold]")
+    console.print("[bold]Evaluating student policy[/bold]")
     console.print(f"  checkpoint: {ckpt}")
     console.print(f"  n_envs={n_envs}  n_episodes={n_episodes}")
     console.print(f"  output: {output}")
@@ -1132,7 +1130,7 @@ def eval_student_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        console.print(f"[green]Evaluation complete.[/green]")
+        console.print("[green]Evaluation complete.[/green]")
         console.print(f"  success_rate: {result.get('success_rate', 'N/A')}")
         console.print(f"  n_episodes: {result.get('n_episodes', 'N/A')}")
         for k, v in result.items():
@@ -1217,7 +1215,7 @@ def diagnose_cmd(
 
 def _print_diagnosis(result: dict) -> None:
     """Pretty-print a diagnosis result to stderr."""
-    console.print(f"\n[green]Diagnosis complete.[/green]")
+    console.print("\n[green]Diagnosis complete.[/green]")
     console.print(
         f"  success rate: {result['success_rate']:.2%} "
         f"({result['success_count']}/{result['n_episodes']})"
@@ -1356,9 +1354,9 @@ def _print_tune_result(result: dict) -> None:
     """Pretty-print the tune loop result to stderr."""
     status = result["status"]
     if status == "success":
-        console.print(f"\n[green bold]Tuning succeeded![/green bold]")
+        console.print("\n[green bold]Tuning succeeded![/green bold]")
     else:
-        console.print(f"\n[red bold]Tuning did not achieve success > 0%.[/red bold]")
+        console.print("\n[red bold]Tuning did not achieve success > 0%.[/red bold]")
 
     console.print(f"  rounds completed: {result['rounds_completed']}")
     console.print(f"  final success rate: {result['final_success_rate']:.2%}")
@@ -1421,11 +1419,11 @@ def list_cmd(
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
 ) -> None:
     """List configured Genesis workbenches (excludes LeRobot VMs)."""
-    from npa.clients.config import default_project_name, default_workbench_name, list_projects
+    from npa.clients import config as client_config
 
-    projects = list_projects()
-    def_proj = default_project_name()
-    def_wb = default_workbench_name()
+    projects = client_config.list_projects()
+    def_proj = client_config.default_project_name()
+    def_wb = client_config.default_workbench_name()
 
     if output_format == OutputFormat.json:
         filtered = {}
@@ -1495,7 +1493,6 @@ def deploy_cmd(
     and reused automatically on subsequent deploys.
     """
     from npa.deploy.provisioner import ProvisionerError, apply_boot_disk_tf_vars
-    from typing import Any
 
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "genesis"
@@ -1545,7 +1542,7 @@ def deploy_cmd(
             return
 
         if dry_run:
-            console.print(f"  [dry-run] Would bootstrap Nebius environment:")
+            console.print("  [dry-run] Would bootstrap Nebius environment:")
             console.print(f"    project: {env_project}")
             console.print(f"    tenant:  {env_tenant}")
             console.print(f"    region:  {env_region}")
@@ -1695,7 +1692,7 @@ def deploy_cmd(
             _fail(f"Terraform destroy failed: {exc}")
             return
 
-        console.print(f"  [2/2] Cleaning up config...")
+        console.print("  [2/2] Cleaning up config...")
         from npa.clients.config import remove_workbench_config
         remove_workbench_config(proj_alias, wb_name)
         if use_remote_state:
@@ -1840,8 +1837,9 @@ def deploy_cmd(
         },
     }
 
-    from npa.clients.config import list_projects
-    if default or not list_projects():
+    from npa.clients import config as client_config
+
+    if default or not client_config.list_projects():
         config_data["default_project"] = proj_alias
         config_data["default_workbench"] = wb_name
 
@@ -1850,7 +1848,7 @@ def deploy_cmd(
         write_config(config_data)
         if runtime == WorkbenchRuntime.vm:
             update_workbench_app_status(proj_alias, wb_name, "healthy")
-        console.print(f"    Saved to ~/.npa/config.yaml")
+        console.print("    Saved to ~/.npa/config.yaml")
 
     if runtime_uses_container(runtime):
         step_label = "[container]"
