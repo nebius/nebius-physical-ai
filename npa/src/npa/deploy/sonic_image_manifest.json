@@ -1,0 +1,93 @@
+{
+  "format": "npa_sonic_image_manifest_v1",
+  "tool": "sonic",
+  "default_variant": "sonic-l40s-baked",
+  "images": [
+    {
+      "id": "sonic-l40s-baked",
+      "name": "npa-sonic",
+      "tag": "0.1.2",
+      "purpose": "Self-contained SONIC runtime for compute-only VM hosts that do not mount NVIDIA graphics userspace.",
+      "base": {
+        "cuda": "12.8",
+        "torch": "2.7.0+cu128",
+        "isaac_lab": "2.3.2.post1",
+        "image": "nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f48359a964cb9f807feb226da95d0a107f470fdcad9780ea10fe6f2"
+      },
+      "driver_provisioning": "baked",
+      "gpu_compatibility": [
+        {
+          "gpu": "L40S",
+          "provider_model": "Nebius VM, compute-only host driver",
+          "why": "The host does not provide the graphics userspace Isaac Lab needs, so the image carries the matching NVIDIA GL, NVML, and Vulkan libraries."
+        }
+      ],
+      "build": {
+        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant baked",
+        "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
+        "driver_coupled_packages": [
+          "libnvidia-cfg1-580",
+          "libnvidia-common-580",
+          "libnvidia-compute-580",
+          "libnvidia-decode-580",
+          "libnvidia-gl-580",
+          "libnvidia-gpucomp-580"
+        ]
+      },
+      "digest": "sha256:bdf81f5b7f1c879ac920df53588a15129b2ac71d9492e8c2fc34ce636a5373fb"
+    },
+    {
+      "id": "sonic-k8s-host-mounted",
+      "name": "npa-sonic",
+      "tag": "0.1.2-k8s",
+      "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
+      "base": {
+        "cuda": "12.8",
+        "torch": "2.7.0+cu128",
+        "isaac_lab": "2.3.2.post1",
+        "image": "nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f48359a964cb9f807feb226da95d0a107f470fdcad9780ea10fe6f2"
+      },
+      "driver_provisioning": "host-mounted",
+      "gpu_compatibility": [
+        {
+          "gpu": "RTX PRO 6000 Blackwell",
+          "provider_model": "Nebius Managed Kubernetes with NVIDIA GPU Operator",
+          "why": "The GPU Operator mounts driver-matched NVML, GL, and Vulkan userspace from the node, so the image must not carry conflicting driver-coupled libraries."
+        },
+        {
+          "gpu": "Blackwell sm_120",
+          "provider_model": "Kubernetes with NVIDIA GPU Operator",
+          "why": "Use the operator-mounted driver stack and keep NVIDIA_DRIVER_CAPABILITIES=all."
+        }
+      ],
+      "build": {
+        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant k8s",
+        "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
+        "driver_coupled_packages": []
+      },
+      "digest": "sha256:ceb878ff19234866eab44a257f72c933039f336ac92d6e5c1cc066ba1a90e93d"
+    }
+  ],
+  "gpu_selection": [
+    {
+      "variant": "sonic-k8s-host-mounted",
+      "matches": [
+        "rtx6000",
+        "rtx-pro-6000",
+        "rtx pro 6000",
+        "blackwell",
+        "sm_120",
+        "gpu-rtx6000",
+        "gpu-rtx-pro-6000"
+      ]
+    },
+    {
+      "variant": "sonic-l40s-baked",
+      "matches": [
+        "l40s",
+        "gpu-l40s-a",
+        "gpu-l40s-d"
+      ]
+    }
+  ]
+}

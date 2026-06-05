@@ -7,6 +7,7 @@ from enum import Enum
 import typer
 
 from npa.cli.workbench.sonic.helpers import OutputFormat, fail, output
+from npa.deploy.images import container_image_for_tool
 from npa.workbench.sonic.eval import (
     CONTAINER_BACKEND,
     DEFAULT_CONTAINER_DRIVER_CAPABILITIES,
@@ -62,6 +63,16 @@ def eval_cmd(
         "",
         "--container-image",
         help="Eval container image for --backend container.",
+    ),
+    container_gpu_target: str = typer.Option(
+        "",
+        "--container-gpu-target",
+        help="GPU target used to resolve the manifest image when --container-image is omitted.",
+    ),
+    container_image_variant: str = typer.Option(
+        "",
+        "--container-image-variant",
+        help="SONIC image manifest variant for --backend container.",
     ),
     container_runtime: str = typer.Option(
         DEFAULT_CONTAINER_RUNTIME,
@@ -132,6 +143,17 @@ def eval_cmd(
 ) -> None:
     """Evaluate an exported SONIC ONNX locomotion policy."""
 
+    resolved_container_image = container_image
+    if backend.value == CONTAINER_BACKEND and not resolved_container_image:
+        try:
+            resolved_container_image = container_image_for_tool(
+                "sonic",
+                gpu_target=container_gpu_target or None,
+                image_variant=container_image_variant or None,
+            )
+        except ValueError as exc:
+            fail(str(exc))
+
     try:
         result = evaluate_onnx_policy(
             onnx=onnx_path,
@@ -140,7 +162,7 @@ def eval_cmd(
             episodes=episodes,
             env=env,
             output=output_path,
-            container_image=container_image,
+            container_image=resolved_container_image,
             container_runtime=container_runtime,
             container_gpus=container_gpus,
             container_driver_capabilities=container_driver_capabilities,

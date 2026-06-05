@@ -43,12 +43,21 @@ When validating an unpromoted build, pass the pushed image explicitly:
 --image "${NPA_REGISTRY}/npa-sonic:0.1.2"
 ```
 
-Build and push that required first-party image from the repo root:
+Build and push the required first-party image from the repo root. Use the L40S
+baked variant for compute-only VM hosts:
 
 ```bash
 export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
+npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
 docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+```
+
+For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
+host-mounted variant:
+
+```bash
+npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
 ```
 
 Expected output artifacts:
@@ -67,6 +76,9 @@ physics paths that are best validated on RT-capable hardware:
 
 H100/H200/B200/B300 may be useful for model training throughput, but they are not
 the preferred smoke target for Isaac Lab simulation validation.
+
+The image compatibility catalog is `docs/workbench/sonic-image-catalog.md`; the
+runtime resolver reads `npa/src/npa/deploy/sonic_image_manifest.json`.
 
 ## Parameters
 

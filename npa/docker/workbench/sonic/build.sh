@@ -6,13 +6,15 @@ NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 REGISTRY=""
 PUSH=0
+VARIANT="baked"
 
 usage() {
   cat <<'EOF'
-Usage: build.sh [--registry REGISTRY] [--push]
+Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s]
 
-Builds the SONIC runtime image as npa-sonic:<version>.
-When --registry is provided, also tags REGISTRY/npa-sonic:<version>.
+Builds the SONIC runtime image as npa-sonic:<version> for --variant baked, or
+npa-sonic:<version>-k8s for --variant k8s.
+When --registry is provided, also tags REGISTRY/npa-sonic:<tag>.
 Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
 EOF
 }
@@ -31,6 +33,14 @@ while [ "$#" -gt 0 ]; do
       PUSH=1
       shift
       ;;
+    --variant)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --variant requires baked or k8s" >&2
+        exit 2
+      fi
+      VARIANT="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -47,6 +57,23 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   echo "ERROR: --push requires --registry" >&2
   exit 2
 fi
+
+case "$VARIANT" in
+  baked)
+    TAG_SUFFIX=""
+    INSTALL_NVIDIA_DRIVER_USERSPACE=1
+    NPA_DRIVER_PROVISIONING="baked"
+    ;;
+  k8s)
+    TAG_SUFFIX="-k8s"
+    INSTALL_NVIDIA_DRIVER_USERSPACE=0
+    NPA_DRIVER_PROVISIONING="host-mounted"
+    ;;
+  *)
+    echo "ERROR: --variant must be baked or k8s, got: $VARIANT" >&2
+    exit 2
+    ;;
+esac
 
 PYTHON_BIN="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -97,16 +124,19 @@ else:
 PY
 )"
 
-LOCAL_IMAGE="npa-sonic:${VERSION}"
+IMAGE_TAG="${VERSION}${TAG_SUFFIX}"
+LOCAL_IMAGE="npa-sonic:${IMAGE_TAG}"
 BUILD_ARGS=(
   --platform linux/amd64
   -f "$SCRIPT_DIR/Dockerfile"
   --build-arg "SONIC_VERSION=${VERSION}"
   --build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION}"
+  --build-arg "INSTALL_NVIDIA_DRIVER_USERSPACE=${INSTALL_NVIDIA_DRIVER_USERSPACE}"
+  --build-arg "NPA_DRIVER_PROVISIONING=${NPA_DRIVER_PROVISIONING}"
 )
 
 if [ -n "$REGISTRY" ]; then
-  REGISTRY_IMAGE="${REGISTRY}/npa-sonic:${VERSION}"
+  REGISTRY_IMAGE="${REGISTRY}/npa-sonic:${IMAGE_TAG}"
 else
   REGISTRY_IMAGE=""
 fi

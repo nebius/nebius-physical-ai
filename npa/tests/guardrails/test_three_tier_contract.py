@@ -33,6 +33,8 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             ParameterContract("max_iterations", "max_iterations", "SONIC_MAX_ITERATIONS", "--max-iterations"),
             ParameterContract("output_path", "output_path", "SONIC_OUTPUT_PREFIX", "--output-path"),
             ParameterContract("image", "image", "POLICY_IMAGE", "--image"),
+            ParameterContract("gpu_type", "gpu_type", "SONIC_GPU_TYPE", "--gpu-type"),
+            ParameterContract("image_variant", "image_variant", "SONIC_IMAGE_VARIANT", "--image-variant"),
         ),
     ),
     CapabilityContract(
@@ -159,8 +161,16 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     envs = task["envs"]
 
     assert task["resources"]["image_id"] == "docker:${POLICY_IMAGE}"
-    assert {"POLICY_IMAGE", "S3_ENDPOINT_URL", "S3_BUCKET"} <= set(envs)
+    assert {
+        "POLICY_IMAGE",
+        "SONIC_GPU_TYPE",
+        "SONIC_IMAGE_VARIANT",
+        "S3_ENDPOINT_URL",
+        "S3_BUCKET",
+    } <= set(envs)
     assert envs["POLICY_IMAGE"].startswith("example.invalid/")
+    assert envs["SONIC_GPU_TYPE"] == "l40s"
+    assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["S3_ENDPOINT_URL"] == ""
     assert envs["S3_BUCKET"] == "example-bucket"
     assert "nebius.cloud" not in text

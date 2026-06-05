@@ -222,11 +222,30 @@ def resolve_project_id(explicit_project_id: str) -> str:
     return project_id
 
 
-def sonic_image(project: str, image: str = "") -> str:
+def sonic_image(
+    project: str,
+    image: str = "",
+    *,
+    gpu_target: str = "",
+    image_variant: str = "",
+) -> str:
     if image:
         return image
     try:
         registry = resolve_container_registry(project)
     except ConfigError:
         registry = ""
-    return container_image_for_tool("sonic", registry=registry or None) if registry else container_image_for_tool("sonic")
+    return (
+        container_image_for_tool(
+            "sonic",
+            registry=registry or None,
+            gpu_target=gpu_target or None,
+            image_variant=image_variant or None,
+        )
+        if registry
+        else container_image_for_tool(
+            "sonic",
+            gpu_target=gpu_target or None,
+            image_variant=image_variant or None,
+        )
+    )

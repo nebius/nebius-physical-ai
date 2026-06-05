@@ -113,6 +113,7 @@ def _run_serverless_train(
     output_path: str,
     project_id: str,
     image: str,
+    image_variant: str,
     gpu_type: str,
     gpu_count: int,
     gpu_preset: str,
@@ -133,15 +134,6 @@ def _run_serverless_train(
     if gpu_preset:
         preset = gpu_preset
 
-    if platform in {"gpu-l40s-a", "gpu-l40s-d"}:
-        from npa.cli.workbench.sonic.helpers import console
-
-        console.print(
-            "[yellow]Warning:[/yellow] L40S on-demand availability is effectively zero for "
-            "the SONIC serverless training preset; prefer --gpu-type h100 unless you have "
-            "reserved L40S capacity."
-        )
-
     ctx = context()
     resolved_project_id = resolve_project_id(project_id)
     name = job_name or serverless_job_name(ctx.project, ctx.name, "sonic")
@@ -152,6 +144,15 @@ def _run_serverless_train(
             explicit_subnet_id=subnet_id,
         )
     except SubnetResolutionError as exc:
+        fail(str(exc))
+    try:
+        resolved_image = sonic_image(
+            ctx.project,
+            image,
+            gpu_target=platform,
+            image_variant=image_variant,
+        )
+    except ValueError as exc:
         fail(str(exc))
     env, extra_env = serverless_job_env(
         ctx.project,
@@ -189,7 +190,7 @@ def _run_serverless_train(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=sonic_image(ctx.project, image),
+            image=resolved_image,
             command=build_sonic_serverless_train_command(
                 checkpoint=checkpoint,
                 data_path=data_path,
@@ -242,7 +243,12 @@ def train_cmd(
     output_path: str = typer.Option("", "--output-path", "-o", help="S3 URI where artifacts are written."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
     image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("h100", "--gpu-type", help="GPU type for serverless Jobs."),
+    image_variant: str = typer.Option(
+        "",
+        "--image-variant",
+        help="SONIC image manifest variant. Defaults from --gpu-type.",
+    ),
+    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
     gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
     gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
     subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
@@ -276,6 +282,7 @@ def train_cmd(
             output_path=output_path,
             project_id=project_id,
             image=image,
+            image_variant=image_variant,
             gpu_type=gpu_type,
             gpu_count=gpu_count,
             gpu_preset=gpu_preset,

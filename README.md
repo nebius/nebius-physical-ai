@@ -147,12 +147,14 @@ npa workbench workflow logs run-1 train_student
 `--controller-backend kubernetes`, `--controller-backend nebius`, `--run-id`,
 and repeated `--var KEY=VALUE` substitutions.
 
-SONIC routing is exposed in two places:
+SONIC image routing is manifest-driven:
 
-- `npa workbench sonic train` defaults serverless training to `--gpu-type h100`
-  and `--gpu-count 1`, with explicit flags for other supported routing choices.
-- The SONIC locomotion, MJLab, and export SkyPilot YAMLs request `H100:1`
-  resources for SONIC-heavy stages, while retargeting remains CPU-only.
+- `npa workbench sonic train` resolves the first-party image from
+  `npa/src/npa/deploy/sonic_image_manifest.json` using `--gpu-type`, with
+  `--image` and `--image-variant` available as explicit overrides.
+- L40S VM targets use the baked `npa-sonic:0.1.2` image. RTX PRO 6000
+  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s`
+  image. See `docs/workbench/sonic-image-catalog.md`.
 
 ### Solution Patterns
 

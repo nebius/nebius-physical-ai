@@ -20,6 +20,8 @@ envs:
   SONIC_EVAL_EPISODES: "8"
   SONIC_EVAL_ENV: "smoke"
   SONIC_EVAL_CONTAINER_IMAGE: ""
+  SONIC_EVAL_CONTAINER_GPU_TARGET: "L40S"
+  SONIC_EVAL_CONTAINER_IMAGE_VARIANT: "sonic-l40s-baked"
   SONIC_EVAL_CONTAINER_RUNTIME: "docker"
   SONIC_EVAL_CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
   SONIC_EVAL_CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
@@ -97,6 +99,8 @@ run: |
   if [ "${SONIC_EVAL_BACKEND}" = "container" ]; then
     cmd+=(
       --container-image "${SONIC_EVAL_CONTAINER_IMAGE}"
+      --container-gpu-target "${SONIC_EVAL_CONTAINER_GPU_TARGET}"
+      --container-image-variant "${SONIC_EVAL_CONTAINER_IMAGE_VARIANT}"
       --container-runtime "${SONIC_EVAL_CONTAINER_RUNTIME}"
       --container-gpus "${SONIC_EVAL_CONTAINER_GPUS}"
       --container-driver-capabilities "${SONIC_EVAL_CONTAINER_DRIVER_CAPABILITIES}"

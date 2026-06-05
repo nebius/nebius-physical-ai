@@ -38,12 +38,17 @@ export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-The resulting runtime reference is `${NPA_REGISTRY}/npa-sonic:0.1.2`. It is the
-required Workbench-provided image for SONIC training, export, and reference eval
-workflows. Verify the pushed image before launch with:
+SONIC publishes two first-party image variants. The compatibility source of
+truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
+in `docs/workbench/sonic-image-catalog.md`. The default L40S VM image is
+`${NPA_REGISTRY}/npa-sonic:0.1.2`; the Kubernetes GPU-operator image for
+RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s`.
+
+Verify the pushed image before launch with:
 
 ```bash
 docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
 ```
 
 The default embodiment is Unitree G1:

@@ -1,7 +1,8 @@
 # Standalone SONIC training smoke workflow.
 #
 # Operator-provided parameters:
-# - POLICY_IMAGE: image containing the npa CLI and SONIC runtime.
+# - POLICY_IMAGE: image containing the npa CLI and SONIC runtime. Use the
+#   manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
 # - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
 # - S3_BUCKET: destination bucket name, without s3://.
 name: sonic-train-standalone
@@ -10,12 +11,14 @@ execution: serial
 name: sonic-train-smoke
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators: L40S:1
   cpus: 16
   memory: 64
   image_id: "docker:${POLICY_IMAGE}"
 envs:
-  POLICY_IMAGE: "example.invalid/npa-sonic:latest"
+  POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
+  SONIC_GPU_TYPE: "l40s"
+  SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   S3_ENDPOINT_URL: ""
   S3_BUCKET: "example-bucket"
   NPA_PIPELINE_RUN_ID: "sonic-train-smoke"
@@ -72,5 +75,7 @@ run: |
     "${headless_arg}" \
     --max-iterations "${SONIC_MAX_ITERATIONS}" \
     --output-path "${output_path}" \
+    --gpu-type "${SONIC_GPU_TYPE}" \
+    --image-variant "${SONIC_IMAGE_VARIANT}" \
     --image "${POLICY_IMAGE}" \
     --output-format json

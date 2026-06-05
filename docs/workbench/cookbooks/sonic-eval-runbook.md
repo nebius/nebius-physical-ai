@@ -23,14 +23,19 @@ The SkyPilot blueprint is
   checkpoint URI for normal runs, or a pre-mounted local path for development.
 - Object storage credentials are available to the task, and the endpoint is
   `https://storage.eu-north1.nebius.cloud`.
-- The first-party SONIC image is built and pushed as
-  `${NPA_REGISTRY}/npa-sonic:0.1.2`:
+- The first-party SONIC image is built and pushed with the variant that matches
+  your GPU target. Use `0.1.2` for L40S VM targets and `0.1.2-k8s` for
+  RTX PRO 6000 Blackwell Kubernetes targets:
 
   ```bash
   export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
   docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
   ```
+
+  See `docs/workbench/sonic-image-catalog.md` for the compatibility matrix.
 
 ## One Command
 
@@ -43,7 +48,7 @@ npa workbench workflow submit \
   --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ)
 ```
 
-The default run requests `H100:1` and uses the reference backend:
+The default run requests `L40S:1` and uses the reference backend:
 
 ```yaml
 POLICY_CKPT: s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/last.pt

@@ -57,7 +57,7 @@ def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> N
     assert "npa workbench mjlab eval" in tasks[2]["run"]
 
 
-def test_sonic_locomotion_pipeline_routes_gpu_stages_to_h100() -> None:
+def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_image() -> None:
     docs = _docs(PIPELINE_YAML)
     retarget, train, eval_task = docs[1:]
 
@@ -67,10 +67,13 @@ def test_sonic_locomotion_pipeline_routes_gpu_stages_to_h100() -> None:
         "memory": 16,
         "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>",
     }
-    for task in (train, eval_task):
-        assert task["resources"]["cloud"] == "kubernetes"
-        assert task["resources"]["accelerators"] == "H100:1"
+    assert train["resources"]["cloud"] == "kubernetes"
+    assert train["resources"]["accelerators"] == "L40S:1"
+    assert eval_task["resources"]["cloud"] == "kubernetes"
+    assert eval_task["resources"]["accelerators"] == "H100:1"
     assert train["resources"]["image_id"].endswith("/npa-sonic:<sonic-image-tag>")
+    assert train["envs"]["SONIC_GPU_TYPE"] == "l40s"
+    assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
 
 
 def test_tool_yamls_match_registered_cli_surfaces() -> None:
@@ -92,7 +95,9 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert sonic_export_docs[0] == {"name": "sonic-export", "execution": "serial"}
     assert sonic_export_docs[1]["name"] == "sonic-export-onnx"
     assert "npa workbench sonic export" in sonic_export_docs[1]["run"]
-    assert sonic_export_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sonic_export_docs[1]["resources"]["accelerators"] == "L40S:1"
+    assert sonic_export_docs[1]["envs"]["SONIC_GPU_TARGET"] == "L40S"
+    assert sonic_export_docs[1]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert sonic_export_docs[1]["envs"]["SONIC_OPSET"] == "17"
     assert sonic_export_docs[1]["envs"]["SONIC_AXES"] == "dynamic"
     assert sonic_export_docs[1]["envs"]["SONIC_NORMALIZE"] == "baked"
@@ -106,6 +111,8 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPUS"] == "all"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPU_TARGET"] == "L40S"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_ARGS"] == "eval"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_OUTPUT_PATH"].endswith(
         "sonic_eval_results.json"
@@ -130,6 +137,8 @@ def test_sonic_export_eval_blueprint_chains_real_cli_commands() -> None:
     assert envs["EVAL_ENV"] == "sonic-locomotion-smoke"
     assert envs["EPISODES"] == "8"
     assert envs["CONTAINER_IMAGE"] == ""
+    assert envs["CONTAINER_GPU_TARGET"] == "L40S"
+    assert envs["CONTAINER_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["CONTAINER_GPUS"] == "all"
     assert envs["CONTAINER_ARGS"] == "eval"
     assert envs["GPU"] == "L40S:1"

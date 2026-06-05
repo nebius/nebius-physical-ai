@@ -68,11 +68,14 @@ Semantic step names use `step-<verb>`, for example `step-curate`, `step-augment`
 
 ## GPU Exclusions
 
-L40S-family GPUs are excluded across all workflows because memory #20 recorded a no-log ERROR pattern. Route GPU workflows to H100 or H200 unless a later validation changes that decision.
+L40S-family GPUs are not a global default for throughput workloads, but they are
+valid for Isaac Lab and SONIC render paths that need RT-capable hardware. SONIC
+first-party workflows must use the image variant documented in
+`npa/src/npa/deploy/sonic_image_manifest.json`.
 
 B300 is excluded for Genesis steps specifically because memory #23 recorded the Taichi `sm_103` upstream block. B300 is not globally excluded for non-Genesis tools once those tools validate.
 
-When in doubt, default to H100.
+When in doubt for non-render training or evaluation, default to H100.
 
 ## Safety
 

@@ -77,7 +77,7 @@ The tool must expose at minimum: `/health`, `/status`, `/system-info`, `/list`.
 ## GPU routing rules
 
 Not all tools run on all GPU types. Document in your tool's SKILL.md:
-- **H100**: general training (LanceDB CLIP, detection training, LeRobot, GR00T, SONIC)
+- **H100**: general training (LanceDB CLIP, detection training, LeRobot, GR00T)
 - **L40S or RTX Pro 6000**: Isaac Lab and anything requiring RT cores
 - **Do NOT** route SONIC to L40S — on-demand availability is effectively zero for the required preset
 - **B300/Blackwell**: not yet prioritised; blocked on upstream library support
@@ -143,13 +143,13 @@ original Appendix A snapshot. Each subsection names the W14 condensed
 milestone that anchors it. The original snapshot above is preserved as
 historical baseline.
 
-### SONIC Routing Reconciled (W12 condensed commit)
+### SONIC Image Routing Reconciled
 
-The prior code-vs-skill conflict where SONIC's CLI defaulted to L40S
-while skills documented H100 has been resolved. Code now defaults to
-H100; explicit L40S requests emit an availability warning rather than
-silently routing to a starved capacity class. The corresponding entry
-in `CONTRIBUTING.md` Known Deviations was removed.
+SONIC image selection is now manifest-driven. The baked `npa-sonic:0.1.2`
+variant is used for L40S VM targets, while the host-mounted
+`npa-sonic:0.1.2-k8s` variant is used for RTX PRO 6000 Blackwell Kubernetes
+targets with NVIDIA GPU Operator mounted drivers. The source of truth is
+`npa/src/npa/deploy/sonic_image_manifest.json`.
 
 ### SkyPilot Bootstrap As CLI Capability (W11 condensed commit)
 

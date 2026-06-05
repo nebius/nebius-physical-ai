@@ -7,10 +7,13 @@ ARG SONIC_REPO_URL=https://github.com/NVlabs/GR00T-WholeBodyControl.git
 ARG SONIC_REPO_REF=0a87181c9106d0e49293400714b157676e0ec664
 ARG SONIC_VERSION=0.1.2
 ARG NVIDIA_DRIVER_PACKAGE_VERSION=580.126.09-1ubuntu1
+ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1
+ARG NPA_DRIVER_PROVISIONING=baked
 ARG BUILD_SONIC_DEPLOY=0
 
 LABEL npa.tool="sonic" \
       npa.version="${SONIC_VERSION}" \
+      npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}" \
       npa.architecture="self-contained-isaac-lab"
 
 ENV ACCEPT_EULA=Y \
@@ -51,26 +54,31 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install --system
 
-RUN wget -qO /tmp/cuda-keyring.deb \
-      https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i /tmp/cuda-keyring.deb \
-    && rm /tmp/cuda-keyring.deb \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      "libnvidia-cfg1-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      "libnvidia-common-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      "libnvidia-compute-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      "libnvidia-decode-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      "libnvidia-gl-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      "libnvidia-gpucomp-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
-      vulkan-tools \
-    && apt-mark hold \
-      libnvidia-cfg1-580 \
-      libnvidia-common-580 \
-      libnvidia-compute-580 \
-      libnvidia-decode-580 \
-      libnvidia-gl-580 \
-      libnvidia-gpucomp-580 \
+RUN if [ "${INSTALL_NVIDIA_DRIVER_USERSPACE}" = "1" ]; then \
+      wget -qO /tmp/cuda-keyring.deb \
+        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+      && dpkg -i /tmp/cuda-keyring.deb \
+      && rm /tmp/cuda-keyring.deb \
+      && apt-get update \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        "libnvidia-cfg1-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        "libnvidia-common-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        "libnvidia-compute-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        "libnvidia-decode-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        "libnvidia-gl-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        "libnvidia-gpucomp-580=${NVIDIA_DRIVER_PACKAGE_VERSION}" \
+        vulkan-tools \
+      && apt-mark hold \
+        libnvidia-cfg1-580 \
+        libnvidia-common-580 \
+        libnvidia-compute-580 \
+        libnvidia-decode-580 \
+        libnvidia-gl-580 \
+        libnvidia-gpucomp-580; \
+    else \
+      DEBIAN_FRONTEND=noninteractive apt-get update \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends vulkan-tools; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/npa/docker/workbench/sonic /tmp/npa-sonic-output
