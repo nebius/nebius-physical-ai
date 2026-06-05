@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import re
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli import main as cli_main
 from npa.cli.main import app
+from npa.clients import config as config_module
+from npa.clients import credentials as credentials_module
 from npa.clients.serverless import NotEnoughResourcesError
 
 
@@ -75,6 +79,51 @@ def test_setup_guidance_commands_show_credentials_path(command: str) -> None:
     assert "ngc:" in result.output
     assert "api_key" in result.output
     assert "chmod 600" in result.output
+
+
+def test_configure_non_interactive_writes_runtime_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--non-interactive",
+            "--project",
+            "proj",
+            "--project-id",
+            "project-1",
+            "--tenant-id",
+            "tenant-1",
+            "--region",
+            "eu-north1",
+            "--registry-id",
+            "registry-1",
+            "--s3-endpoint",
+            "storage.eu-north1.nebius.cloud",
+            "--s3-bucket",
+            "bucket/checkpoints/",
+            "--aws-access-key-id",
+            "access",
+            "--aws-secret-access-key",
+            "secret",
+        ],
+    )
+
+    assert result.exit_code == 0
+    config_payload = yaml.safe_load(config_path.read_text())
+    credentials_payload = yaml.safe_load(credentials_path.read_text())
+    assert config_payload["projects"]["proj"]["project_id"] == "project-1"
+    assert config_payload["projects"]["proj"]["registry_id"] == "registry-1"
+    assert config_payload["projects"]["proj"]["storage"]["checkpoint_bucket"] == "s3://bucket/checkpoints/"
+    assert credentials_payload["projects"]["proj"]["storage"]["aws_access_key_id"] == "access"
+    assert credentials_payload["projects"]["proj"]["storage"]["aws_secret_access_key"] == "secret"
 
 
 def test_app_entry_typed_error_exits_one_without_traceback(monkeypatch, capsys) -> None:

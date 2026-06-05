@@ -107,30 +107,43 @@ storage:
   bucket: s3://<your-bucket>/
 ```
 
-## Configure Workbench Shell Values
+## Configure Runtime Values
 
-Export the non-secret resource identifiers used by commands and examples:
+Use `npa configure` to write the canonical runtime config. It captures project,
+tenant, region, registry, and BYO S3 storage settings.
+
+Interactive:
 
 ```bash
-export NEBIUS_PROJECT_ID=<your-project-id>
-export NEBIUS_TENANT_ID=<your-tenant-id>
-export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY_ID=e00cm0vc6t09m0z5gw
-export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+npa configure
+```
+
+Non-interactive:
+
+```bash
+npa configure --non-interactive \
+  --project default \
+  --project-id <your-project-id> \
+  --tenant-id <your-tenant-id> \
+  --region eu-north1 \
+  --registry-id <your-registry-id> \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket s3://<your-bucket>/checkpoints/ \
+  --aws-access-key-id <your-s3-access-key-id> \
+  --aws-secret-access-key <your-s3-secret-access-key>
+```
+
+The command writes non-secret project settings to `~/.npa/config.yaml` and
+project-scoped S3 credentials to `~/.npa/credentials.yaml`. For local `aws s3`
+verification only, export the same storage credentials that are already stored
+in `~/.npa/credentials.yaml`:
+
+```bash
+export AWS_ACCESS_KEY_ID=<your-s3-access-key-id>
+export AWS_SECRET_ACCESS_KEY=<your-s3-secret-access-key>
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
-export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
+export NPA_S3_BUCKET=<your-bucket>
 ```
-
-For local `aws s3` verification only, expose the same storage credentials that
-are already stored in `~/.npa/credentials.yaml`:
-
-```bash
-export AWS_ACCESS_KEY_ID=<YOUR_S3_ACCESS_KEY_ID_FROM_CREDENTIALS_YAML>
-export AWS_SECRET_ACCESS_KEY=<YOUR_S3_SECRET_ACCESS_KEY_FROM_CREDENTIALS_YAML>
-```
-
-These exports are not an alternate NPA credential store; they are shell values
-for tools that do not read `~/.npa/credentials.yaml`.
 
 Verify bucket access:
 
@@ -141,6 +154,15 @@ aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
 Gate: the command lists the bucket or exits successfully with an empty listing.
 `NoSuchBucket` usually means the bucket name, endpoint, or region is wrong.
 `AccessDenied` means the access key lacks bucket access.
+
+To create the bucket and Kubernetes cluster only when absent, run:
+
+```bash
+npa provision-if-absent --project default --cluster-name npa-cluster --terraform-dir deploy/cluster
+```
+
+For the full configure, provision, verify, and demo path, see
+[onboarding-walkthrough.md](onboarding-walkthrough.md).
 
 ## Verify Docker Registry Access
 

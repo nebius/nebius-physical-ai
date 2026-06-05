@@ -9,9 +9,10 @@ resources:
   cpus: 8
   memory: 32
   # Default GPU is L40S:1. Keep GPU below in sync with this accelerator.
-  # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
+  # NPA_SONIC_IMAGE is BYO-overridable; default matches CONTAINER_IMAGE_VARIANT.
+  image_id: "docker:${NPA_SONIC_IMAGE}"
 envs:
+  NPA_SONIC_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-sonic:0.1.2"
   # Required input checkpoint. Local paths work when pre-mounted; s3:// is downloaded.
   POLICY_CKPT: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/last.pt"
   # Output directory or s3:// prefix for ONNX, sidecar metadata, and metrics JSON.

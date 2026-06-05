@@ -70,10 +70,22 @@ registries or custom Workbench images.
 
 ## Build Commands
 
+Set the registry from runtime config or an explicit registry ID:
+
+```bash
+export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+```
+
 Baked L40S variant:
 
 ```bash
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
+```
+
+Resulting pushed tag:
+
+```bash
+${NPA_REGISTRY}/npa-sonic:0.1.2
 ```
 
 Kubernetes host-mounted variant:
@@ -81,6 +93,29 @@ Kubernetes host-mounted variant:
 ```bash
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
 ```
+
+Resulting pushed tag:
+
+```bash
+${NPA_REGISTRY}/npa-sonic:0.1.2-k8s
+```
+
+Verify the tags before wiring them into workflows:
+
+```bash
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+```
+
+The default workflow references use `NPA_SONIC_IMAGE`:
+
+- `npa/workflows/workbench/skypilot/sonic-export.yaml`
+- `npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml`
+- `npa/workflows/workbench/skypilot/sonic-export-eval.yaml`
+- `npa/workflows/workbench/skypilot/sonic-train-standalone.yaml`
+
+Set `NPA_SONIC_IMAGE=${NPA_REGISTRY}/npa-sonic:0.1.2-k8s` when the workflow runs
+on Kubernetes nodes that mount the NVIDIA driver through the GPU Operator.
 
 Do not overwrite existing `0.1.2`, `0.1.1`, or `0.1.0` tags. New compatibility
 variants must use additive tags.

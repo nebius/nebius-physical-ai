@@ -961,9 +961,8 @@ resources:
   cpus: 4
   memory: 16
   ports: 5151
-  # Replace <your-registry-id> with your Nebius container registry ID
-  # Replace <fiftyone-image-tag> with the output of: npa workbench fiftyone system-info
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>"
+  # Pushed first-party FiftyOne image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-fiftyone:1.15.0"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"  # set NPA_S3_BUCKET=your-bucket-name

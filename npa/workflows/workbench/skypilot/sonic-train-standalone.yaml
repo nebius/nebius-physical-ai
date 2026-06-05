@@ -16,7 +16,7 @@ resources:
   memory: 64
   image_id: "docker:${POLICY_IMAGE}"
 envs:
-  POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
+  POLICY_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-sonic:0.1.2"
   SONIC_GPU_TYPE: "l40s"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   S3_ENDPOINT_URL: ""

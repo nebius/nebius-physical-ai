@@ -8,9 +8,8 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  # Replace <your-registry-id> with your Nebius container registry ID.
-  # Keep this image on an RT-core-capable Isaac Lab build.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+  # Pushed first-party Isaac Lab image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-isaac-lab:2.3.2.post1"
 envs:
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   ISAAC_LAB_TASK: "Isaac-Cartpole-v0"

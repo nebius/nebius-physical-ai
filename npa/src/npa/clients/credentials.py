@@ -33,6 +33,14 @@ UK_SOUTH1_STORAGE_WARNING = (
 
 
 @dataclass
+class StorageCredentials:
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    endpoint_url: str = ""
+    bucket: str = ""
+
+
+@dataclass
 class CredentialsConfig:
     tokens: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -43,6 +51,7 @@ class CredentialsConfig:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    project_storage: dict[str, StorageCredentials] = field(default_factory=dict)
 
     @property
     def hf_token(self) -> str:
@@ -192,6 +201,68 @@ def _read_file_storage(path: Path) -> dict[str, str]:
     }
 
 
+def _read_file_project_storage(path: Path) -> dict[str, StorageCredentials]:
+    if not path.exists():
+        return {}
+
+    with path.open() as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        return {}
+
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        return {}
+
+    resolved: dict[str, StorageCredentials] = {}
+    for name, project in projects.items():
+        if not isinstance(project, dict):
+            continue
+        storage = project.get("storage", project.get("object_storage", project.get("object-storage", {})))
+        if not isinstance(storage, dict):
+            continue
+        credentials = StorageCredentials(
+            aws_access_key_id=_first_nonempty(
+                storage,
+                "AWS_ACCESS_KEY_ID",
+                "aws_access_key_id",
+                "access_key_id",
+                "access_key",
+            ),
+            aws_secret_access_key=_first_nonempty(
+                storage,
+                "AWS_SECRET_ACCESS_KEY",
+                "aws_secret_access_key",
+                "secret_access_key",
+                "secret_key",
+            ),
+            endpoint_url=_first_nonempty(
+                storage,
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "endpoint_url",
+                "endpoint",
+                "s3_endpoint",
+            ),
+            bucket=_first_nonempty(
+                storage,
+                "NEBIUS_S3_BUCKET",
+                "NPA_CHECKPOINT_BUCKET",
+                "bucket",
+                "checkpoint_bucket",
+                "s3_bucket",
+            ),
+        )
+        if any((
+            credentials.aws_access_key_id,
+            credentials.aws_secret_access_key,
+            credentials.endpoint_url,
+            credentials.bucket,
+        )):
+            resolved[str(name)] = credentials
+    return resolved
+
+
 def load_credentials(
     *,
     path: Path | None = None,
@@ -211,6 +282,7 @@ def load_credentials(
     file_tokens: dict[str, str] = {}
     file_ssh: dict[str, str] = {}
     file_storage: dict[str, str] = {}
+    file_project_storage: dict[str, StorageCredentials] = {}
 
     if credentials_path.exists():
         if _is_readable_by_other_users(credentials_path):
@@ -218,6 +290,7 @@ def load_credentials(
         file_tokens = _read_file_tokens(credentials_path)
         file_ssh = _read_file_ssh(credentials_path)
         file_storage = _read_file_storage(credentials_path)
+        file_project_storage = _read_file_project_storage(credentials_path)
 
     keys = set(KNOWN_TOKEN_KEYS) | set(file_tokens)
     tokens: dict[str, str] = {}
@@ -250,7 +323,62 @@ def load_credentials(
             or file_storage.get("endpoint", "")
         ),
         s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
+        project_storage=file_project_storage,
     )
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def write_project_storage_credentials(
+    project: str,
+    *,
+    aws_access_key_id: str,
+    aws_secret_access_key: str,
+    endpoint_url: str = "",
+    bucket: str = "",
+    path: Path | None = None,
+) -> Path:
+    """Merge project-scoped S3 credentials into ``credentials.yaml``."""
+    credentials_path = path or CREDENTIALS_PATH
+    existing: dict[str, Any] = {}
+    if credentials_path.exists():
+        with credentials_path.open() as f:
+            loaded = yaml.safe_load(f)
+        existing = loaded if isinstance(loaded, dict) else {}
+
+    storage: dict[str, str] = {}
+    if aws_access_key_id:
+        storage["aws_access_key_id"] = aws_access_key_id
+    if aws_secret_access_key:
+        storage["aws_secret_access_key"] = aws_secret_access_key
+    if endpoint_url:
+        storage["endpoint_url"] = endpoint_url
+    if bucket:
+        storage["bucket"] = bucket
+
+    merged = _deep_merge(
+        existing,
+        {
+            "projects": {
+                project: {
+                    "storage": storage,
+                },
+            },
+        },
+    )
+    credentials_path.parent.mkdir(parents=True, exist_ok=True)
+    with credentials_path.open("w") as f:
+        yaml.safe_dump(merged, f, default_flow_style=False, sort_keys=False)
+    credentials_path.chmod(0o600)
+    return credentials_path
 
 
 def storage_endpoint_url(endpoint: str) -> str:

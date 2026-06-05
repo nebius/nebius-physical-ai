@@ -10,7 +10,7 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-isaac-lab:2.3.2.post1"
 envs:
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "lr-1e-3"
@@ -70,7 +70,7 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-isaac-lab:2.3.2.post1"
 envs:
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "lr-3e-4"
@@ -130,7 +130,7 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-isaac-lab:2.3.2.post1"
 envs:
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "entropy-0"
@@ -190,7 +190,7 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-isaac-lab:2.3.2.post1"
 envs:
   NPA_ISAAC_LAB_RUN_ID: "<your-run-id>"
   RUN_VARIANT: "entropy-0-01"

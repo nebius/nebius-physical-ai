@@ -8,6 +8,7 @@ workflows, and operational runbooks.
 | Path | Purpose |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
+| [onboarding-walkthrough.md](onboarding-walkthrough.md) | Configure runtime settings, provision missing S3/Kubernetes, verify access, and run a demo step |
 | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
 | [../cli/README.md](../cli/README.md) | CLI command reference index |
@@ -25,8 +26,8 @@ workflows, and operational runbooks.
 
 | Reader | Start with |
 | --- | --- |
-| Customer running their first Workbench workload | [getting-started.md](getting-started.md) |
-| Customer running the first H100 sim-to-real proof | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) |
+| User running their first Workbench workload | [getting-started.md](getting-started.md) |
+| User running the first H100 sim-to-real proof | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) |
 | Operator reproducing a workload | [cookbooks/README.md](cookbooks/README.md) |
 | SDK integrator or agent author | [../sdk/errors.md](../sdk/errors.md) |
 | Internal engineer triaging a failure | [../cli-errors.md](../cli-errors.md) |

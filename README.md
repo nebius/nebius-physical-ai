@@ -25,13 +25,20 @@ npa/.venv/bin/python -m pip install -e npa
 export PATH="$PWD/npa/.venv/bin:$PATH"
 ```
 
-Authenticate with the Nebius CLI and let `npa` print the local credential
-schema for optional Hugging Face, NGC, object-storage, and BYOVM SSH values:
+Authenticate with the Nebius CLI and configure project, registry, and storage
+runtime settings:
 
 ```bash
 nebius profile create
 nebius iam get-access-token >/dev/null
 npa configure
+```
+
+To create the configured S3 bucket and Terraform-backed Kubernetes cluster only
+when absent:
+
+```bash
+npa provision-if-absent --project default --cluster-name npa-cluster
 ```
 
 Run a first Workbench command without provisioning infrastructure:

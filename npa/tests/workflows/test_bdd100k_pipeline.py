@@ -29,12 +29,13 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "7ccbfa2a56934766fb1746e5c9a8768f28ecea6edcfa0fdc0c1ab5f0246b5edd"
+EXPECTED_YAML_SHA256 = "6cf52b31f25fa07265cb80f40156da92e61cd078c45cd3994d9612cde91e838d"
 EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
 EXPECTED_DETECTION_IMAGE = (
     "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
     "npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
 )
+EXPECTED_FIFTYONE_IMAGE = "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-fiftyone:1.15.0"
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
     "rider": 1,
@@ -128,7 +129,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         "cpus": 4,
         "memory": 16,
         "ports": 5151,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>",
+        "image_id": EXPECTED_FIFTYONE_IMAGE,
     }
     assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_ADDRESS"] == "0.0.0.0"
     assert fiftyone["envs"]["FIFTYONE_DEFAULT_APP_PORT"] == "5151"

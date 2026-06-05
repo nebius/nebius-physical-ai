@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+EXPECTED_SONIC_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-sonic:0.1.2"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -75,7 +76,8 @@ def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_ima
     assert eval_task["resources"]["accelerators"] == "H100:1"
     assert eval_task["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
     assert eval_task["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
-    assert train["resources"]["image_id"].endswith("/npa-sonic:<sonic-image-tag>")
+    assert train["resources"]["image_id"] == "docker:${NPA_SONIC_IMAGE}"
+    assert train["envs"]["NPA_SONIC_IMAGE"] == EXPECTED_SONIC_IMAGE
     assert train["envs"]["SONIC_GPU_TYPE"] == "l40s"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
 

@@ -1,0 +1,20 @@
+# Standalone provision-if-absent settings.
+#
+# This file is intentionally usable without the npa SDK. Export these values,
+# then run scripts/provision-if-absent.sh from the repository root.
+project: default
+project_id: <project-id>
+tenant_id: <tenant-id>
+region: eu-north1
+registry_id: <registry-id>
+registry: cr.eu-north1.nebius.cloud/<registry-id>
+storage:
+  s3_endpoint: https://storage.eu-north1.nebius.cloud
+  s3_bucket: s3://<bucket>/checkpoints/
+  aws_access_key_id: <aws-access-key-id>
+  aws_secret_access_key: <aws-secret-access-key>
+provision:
+  terraform_dir: deploy/cluster
+  cluster_context: npa-cluster
+  kubeconfig_path: ~/.npa/clusters/npa-cluster/kubeconfig
+  script: scripts/provision-if-absent.sh

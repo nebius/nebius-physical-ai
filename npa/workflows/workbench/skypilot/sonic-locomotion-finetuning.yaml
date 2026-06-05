@@ -24,11 +24,12 @@ envs:
   RETARGET_FRAME_RATE: "50"
   RETARGET_MAX_FRAMES: "0"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_SOURCE_DIR: ""
   NPA_DRY_RUN: "0"
 setup: |
   set -e
-  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
-    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  if ! command -v npa >/dev/null 2>&1 && [ -n "${NPA_SOURCE_DIR:-}" ] && [ -d "${NPA_SOURCE_DIR}/npa" ]; then
+    python3 -m pip install -e "${NPA_SOURCE_DIR}/npa"
   fi
 run: |
   set -euo pipefail
@@ -48,10 +49,10 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  # Replace <your-registry-id> and <sonic-image-tag> with the tag from the
-  # manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
+  # NPA_SONIC_IMAGE is BYO-overridable. The default matches SONIC_IMAGE_VARIANT.
+  image_id: "docker:${NPA_SONIC_IMAGE}"
 envs:
+  NPA_SONIC_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-sonic:0.1.2"
   NPA_PIPELINE_RUN_ID: "<run-id>"
   SONIC_GPU_TYPE: "l40s"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
@@ -92,11 +93,12 @@ envs:
   MJLAB_EPISODES: "8"
   MJLAB_SUCCESS_THRESHOLD: "0.75"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_SOURCE_DIR: ""
   NPA_DRY_RUN: "0"
 setup: |
   set -e
-  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
-    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  if ! command -v npa >/dev/null 2>&1 && [ -n "${NPA_SOURCE_DIR:-}" ] && [ -d "${NPA_SOURCE_DIR}/npa" ]; then
+    python3 -m pip install -e "${NPA_SOURCE_DIR}/npa"
   fi
 run: |
   set -euo pipefail

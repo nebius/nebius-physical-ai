@@ -228,9 +228,11 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
         "S3_ENDPOINT_URL",
         "S3_BUCKET",
     } <= set(envs)
-    assert envs["POLICY_IMAGE"].startswith("example.invalid/")
+    assert envs["POLICY_IMAGE"] == (
+        "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-sonic:0.1.2"
+    )
     assert envs["SONIC_GPU_TYPE"] == "l40s"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["S3_ENDPOINT_URL"] == ""
     assert envs["S3_BUCKET"] == "example-bucket"
-    assert "nebius.cloud" not in text
+    assert "example.invalid" not in text
