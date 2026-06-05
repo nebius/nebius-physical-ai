@@ -31,7 +31,7 @@ DEFAULT_MODEL_REPO = "nvidia/GEAR-SONIC"
 DEFAULT_CHECKPOINT = "nvidia/GEAR-SONIC:sonic_release/last.pt"
 DEFAULT_EMBODIMENT = "unitree-g1"
 DEFAULT_EMBODIMENT_TAG = "UNITREE_G1_SONIC"
-SONIC_VERSION = "0.1.0"
+SONIC_VERSION = "0.1.2"
 SONIC_CONTAINER_NAME = "npa-sonic"
 SONIC_REPO_URL = "https://github.com/NVlabs/GR00T-WholeBodyControl.git"
 
@@ -222,11 +222,30 @@ def resolve_project_id(explicit_project_id: str) -> str:
     return project_id
 
 
-def sonic_image(project: str, image: str = "") -> str:
+def sonic_image(
+    project: str,
+    image: str = "",
+    *,
+    gpu_target: str = "",
+    image_variant: str = "",
+) -> str:
     if image:
         return image
     try:
         registry = resolve_container_registry(project)
     except ConfigError:
         registry = ""
-    return container_image_for_tool("sonic", registry=registry or None) if registry else container_image_for_tool("sonic")
+    return (
+        container_image_for_tool(
+            "sonic",
+            registry=registry or None,
+            gpu_target=gpu_target or None,
+            image_variant=image_variant or None,
+        )
+        if registry
+        else container_image_for_tool(
+            "sonic",
+            gpu_target=gpu_target or None,
+            image_variant=image_variant or None,
+        )
+    )

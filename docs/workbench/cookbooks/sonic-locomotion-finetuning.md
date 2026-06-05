@@ -7,8 +7,8 @@ The workflow composes three Workbench stages:
 
 1. Retarget source motion artifacts into the SONIC embodiment schema with
    `npa workbench retargeting run`.
-2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on H100 with the
-   SONIC container entrypoint.
+2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on L40S with the
+   baked SONIC image variant.
 3. Evaluate the resulting checkpoint with MJLab metrics through
    `npa workbench mjlab eval`.
 
@@ -93,17 +93,19 @@ s3://<your-bucket-name>/sonic-locomotion/<run-id>/mjlab/mjlab_eval.json
 
 ## Resources
 
-Retargeting is CPU-only. SONIC and MJLab evaluation request H100 through
-SkyPilot:
+Retargeting is CPU-only. The first-party SONIC stage requests L40S through
+SkyPilot and uses the baked image variant from the SONIC image manifest. MJLab
+evaluation remains on H100.
 
 ```yaml
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators: L40S:1
 ```
 
-Keep SONIC on H100 for this workflow. The L40S preset is not the default routing
-path for SONIC Workbench runs.
+For RTX PRO 6000 Blackwell Kubernetes targets, switch the accelerator and image
+tag together using `sonic-k8s-host-mounted` from
+`docs/workbench/sonic-image-catalog.md`.
 
 ## Dry Validation
 
