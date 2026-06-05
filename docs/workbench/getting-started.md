@@ -144,8 +144,11 @@ Gate: the command lists the bucket or exits successfully with an empty listing.
 
 ## Verify Docker Registry Access
 
-`NPA_REGISTRY_ID` is the registry namespace only. `NPA_REGISTRY` is the full
-registry prefix used by current image-resolution code.
+`NPA_REGISTRY_ID` is the registry namespace only. The active image-resolution
+paths use `NPA_REGISTRY` as the full registry prefix, or
+`projects.<alias>.container_registry` in NPA config. Build and push commands
+should therefore tag images as `${NPA_REGISTRY}/<image>:<tag>`, not as a value
+derived from `NPA_REGISTRY_ID` alone.
 
 Verify Docker registry access:
 

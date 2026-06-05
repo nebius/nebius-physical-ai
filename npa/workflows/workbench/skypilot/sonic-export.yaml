@@ -5,13 +5,16 @@ execution: serial
 name: sonic-export-onnx
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators: L40S:1
   cpus: 8
   memory: 32
-  # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
+  # Replace <your-registry-id> and <sonic-image-tag> with the tag from the
+  # manifest variant selected by SONIC_GPU_TARGET and SONIC_IMAGE_VARIANT.
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
 envs:
   NPA_PIPELINE_RUN_ID: "<run-id>"
+  SONIC_GPU_TARGET: "L40S"
+  SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   SONIC_CHECKPOINT: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/last.pt"
   SONIC_OUTPUT: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/"
   SONIC_OPSET: "17"
@@ -37,6 +40,7 @@ setup: |
   "${PYTHON_BIN}" -m pip install --quiet boto3
 run: |
   set -euo pipefail
+  echo "SONIC image variant ${SONIC_IMAGE_VARIANT} selected for ${SONIC_GPU_TARGET}" >&2
   WORK_DIR="/tmp/npa-sonic-export-${NPA_PIPELINE_RUN_ID}"
   mkdir -p "${WORK_DIR}"
   export NPA_SONIC_EXPORT_WORK_DIR="${WORK_DIR}"

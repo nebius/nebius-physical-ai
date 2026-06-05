@@ -34,7 +34,7 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 
 | Tool | Intended image | Status | Blocking evidence | Next action |
 |---|---|---|---|---|
-| SONIC | `workbench-sonic:<cuda13-b300-tag>` | Vendor-paced (Isaac Lab 2.3.2 dependency); no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | ETA tied to NVIDIA Isaac Sim x86_64 CUDA 13 alignment; rerun SONIC validation after that package matrix exists. |
+| SONIC | `npa-sonic:<cuda13-b300-tag>` | Vendor-paced (Isaac Lab 2.3.2 dependency); no image pushed | Isaac Lab 2.3.2 imports `isaacsim`. Isaac Sim 5.0 conflicts with Isaac Lab 2.3.2 on Pillow. Isaac Sim 5.1 resolves farther but attempts to install PyTorch 2.7 / CUDA 12 packages on x86_64, which violates the B300 base contract. | ETA tied to NVIDIA Isaac Sim x86_64 CUDA 13 alignment; rerun SONIC validation after that package matrix exists. |
 
 ## Vendor-Paced Workloads
 

@@ -20,9 +20,9 @@ PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "sonic-e2e"
-SONIC_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/workbench-sonic:test-tag-amd64"
-GPU_TYPE = "h100"
-GPU_PRESET = "1gpu-16vcpu-200gb"
+SONIC_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:test-tag-amd64"
+GPU_TYPE = "l40s"
+GPU_PRESET = "1gpu-40vcpu-160gb"
 CHECKPOINT = "nvidia/GEAR-SONIC:sonic_release/last.pt"
 EMBODIMENT = "UNITREE_G1_SONIC"
 NUM_ENVS = 1
@@ -43,10 +43,10 @@ def test_sonic_e2e_config_shape() -> None:
         job_name=f"{JOB_PREFIX}-shape",
     )
 
-    assert SONIC_IMAGE.endswith("/workbench-sonic:test-tag-amd64")
+    assert SONIC_IMAGE.endswith("/npa-sonic:test-tag-amd64")
     assert command[:7] == ["workbench", "sonic", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "train"]
     assert "--subnet-id" not in command
-    assert command[command.index("--gpu-type") + 1] == "h100"
+    assert command[command.index("--gpu-type") + 1] == "l40s"
     for flag in (
         "--runtime",
         "--project-id",
@@ -165,11 +165,6 @@ def _submit_command(
     output_path: str,
     job_name: str,
 ) -> list[str]:
-    # SONIC e2e is hardcoded to H100. L40S is capacity-blocked in eu-north1
-    # per W7-quota-investigation 20260514T175519Z. Same image succeeds on H100
-    # (Job aijob-test-00000000000 in W7-all-fixes Phase B); L40S fails with
-    # opaque PROVISIONING-stuck. Do NOT change this routing without re-validating
-    # L40S capacity.
     return [
         "workbench",
         "sonic",

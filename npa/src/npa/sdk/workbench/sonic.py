@@ -13,12 +13,18 @@ from npa.workbench.sonic import (
 )
 
 train = make_cli_wrapper("npa.cli.workbench.sonic.train", "train_cmd", "Run SONIC training.")
+eval = make_cli_wrapper(
+    "npa.cli.workbench.sonic.eval",
+    "eval_cmd",
+    "Evaluate a SONIC ONNX policy.",
+)
 
 __all__ = [
     "SonicExportError",
     "SonicExportResult",
     "SonicParityResult",
     "export_onnx",
+    "eval",
     "load_export_metadata",
     "train",
     "validate_onnx_parity",
