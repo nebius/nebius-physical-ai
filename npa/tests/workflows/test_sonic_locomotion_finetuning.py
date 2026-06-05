@@ -32,6 +32,14 @@ SONIC_EXPORT_EVAL_YAML = (
     / "skypilot"
     / "sonic-export-eval.yaml"
 )
+SONIC_TRAIN_STANDALONE_YAML = (
+    ROOT
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "skypilot"
+    / "sonic-train-standalone.yaml"
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -74,6 +82,73 @@ def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_ima
     assert train["resources"]["image_id"].endswith("/npa-sonic:<sonic-image-tag>")
     assert train["envs"]["SONIC_GPU_TYPE"] == "l40s"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
+
+
+def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
+    from npa.workbench.sonic.workflow import materialize_sonic_workflow
+
+    plan = materialize_sonic_workflow(
+        PIPELINE_YAML,
+        run_id="sonic-run",
+        registry="registry.example/workbench",
+        npa_image="registry.example/workbench/npa:tools",
+        gpu_target="gpu-rtx6000",
+        s3_endpoint="https://storage.example",
+        s3_bucket="proof-bucket",
+        s3_prefix="sonic-proof/sonic-run",
+        accelerators="RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+    )
+    docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
+    retarget, train, eval_task = docs[1:]
+
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
+    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert train["resources"]["cloud"] == "kubernetes"
+    assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert eval_task["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
+    assert train["envs"]["SONIC_GPU_TYPE"] == "gpu-rtx6000"
+    assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
+    assert train["envs"]["SONIC_TRAIN_OUTPUT_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/training/"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
+    for task in (retarget, train, eval_task):
+        assert "${" not in task["resources"]["image_id"]
+        assert "${" not in "\n".join(str(value) for value in task["envs"].values())
+    assert "<your-" not in plan.yaml_text
+
+
+def test_sonic_sdk_submit_passes_secret_envs(mocker) -> None:
+    from npa.orchestration.skypilot.workflow import WorkflowResult
+    from npa.workbench.sonic import workflow as sonic_workflow
+
+    captured: dict[str, object] = {}
+
+    def fake_submit_workflow(path, run_id, **kwargs):
+        captured["content"] = path.read_text(encoding="utf-8")
+        captured["run_id"] = run_id
+        captured["kwargs"] = kwargs
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch.object(
+        sonic_workflow,
+        "_submit_skypilot_workflow",
+        side_effect=fake_submit_workflow,
+    )
+
+    result = sonic_workflow.submit_sonic_workflow(
+        SONIC_TRAIN_STANDALONE_YAML,
+        run_id="sonic-run",
+        registry="registry.example/workbench",
+        gpu_target="l40s",
+        s3_endpoint="https://storage.example",
+        s3_bucket="proof-bucket",
+        s3_prefix="sonic-proof/sonic-run",
+        secret_envs=["AWS_ACCESS_KEY_ID"],
+    )
+
+    assert result.job_id == "42"
+    assert captured["run_id"] == "sonic-run"
+    assert captured["kwargs"]["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
+    assert "registry.example/workbench/npa-sonic:0.1.2" in str(captured["content"])
 
 
 def test_tool_yamls_match_registered_cli_surfaces() -> None:

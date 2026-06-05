@@ -43,6 +43,84 @@ When validating an unpromoted build, pass the pushed image explicitly:
 --image "${NPA_REGISTRY}/npa-sonic:0.1.2"
 ```
 
+## Standalone SkyPilot YAML
+
+The raw SkyPilot training smoke is
+`npa/workflows/workbench/skypilot/sonic-train-standalone.yaml`. It has literal
+editable defaults because SkyPilot 0.12.2 does not interpolate `${VAR}` inside
+`envs` or `resources.image_id`.
+
+For a zero-NPA raw SkyPilot run, copy the YAML, replace these literals, and
+launch it directly:
+
+| YAML field | L40S value | RTX PRO 6000 Kubernetes value |
+| --- | --- | --- |
+| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s` |
+| `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
+| `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
+| `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
+| `S3_BUCKET` / `SONIC_OUTPUT_PREFIX` | your artifact destination | your artifact destination |
+
+```bash
+cp npa/workflows/workbench/skypilot/sonic-train-standalone.yaml /tmp/sonic-train.yaml
+# Edit /tmp/sonic-train.yaml with concrete image and S3 values.
+sky jobs launch \
+  --name sonic-train-smoke \
+  --secret AWS_ACCESS_KEY_ID \
+  --secret AWS_SECRET_ACCESS_KEY \
+  --yes \
+  /tmp/sonic-train.yaml
+```
+
+The same YAML can be submitted through the CLI, which materializes the image and
+S3 values before SkyPilot submission:
+
+```bash
+npa workbench workflow submit \
+  npa/workflows/workbench/skypilot/sonic-train-standalone.yaml \
+  --run-id sonic-train-smoke \
+  --registry "${NPA_REGISTRY}" \
+  --gpu-target l40s \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket <bucket> \
+  --s3-prefix sonic-train/sonic-train-smoke \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+For Kubernetes targets that pull from a private registry, pass a SkyPilot config
+with the namespace's registry pull secret:
+
+```yaml
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: <registry-pull-secret>
+```
+
+Then add `--config-path /path/to/skypilot-kubernetes.yaml` to the submit command.
+Do not set `serviceAccountName` unless that account can also list Kubernetes
+nodes and pods for SkyPilot prechecks.
+
+SDK equivalent:
+
+```python
+from pathlib import Path
+from npa.sdk.workbench import sonic
+
+sonic.submit_workflow(
+    Path("npa/workflows/workbench/skypilot/sonic-train-standalone.yaml"),
+    run_id="sonic-train-smoke",
+    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    gpu_target="l40s",
+    s3_endpoint="https://storage.eu-north1.nebius.cloud",
+    s3_bucket="<bucket>",
+    s3_prefix="sonic-train/sonic-train-smoke",
+    secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+)
+```
+
 Build and push the required first-party image from the repo root. Use the L40S
 baked variant for compute-only VM hosts:
 

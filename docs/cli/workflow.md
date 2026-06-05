@@ -42,4 +42,46 @@ npa workbench workflow --help
 npa workbench workflow submit --help
 ```
 
+## `submit` Materialization
+
+`submit` can replace `${VAR}` placeholders with repeated `--var KEY=VALUE`
+arguments before calling SkyPilot. For SONIC YAMLs, `--var` also overrides
+matching `envs` keys, and the command materializes the first-party image, S3
+endpoint, bucket, and prefix into the submitted YAML so SkyPilot does not need
+to interpolate values inside `envs`.
+
+```bash
+npa workbench workflow submit \
+  npa/workflows/workbench/skypilot/sonic-train-standalone.yaml \
+  --run-id sonic-smoke-$(date -u +%Y%m%dT%H%M%SZ) \
+  --registry cr.eu-north1.nebius.cloud/<registry-id> \
+  --gpu-target l40s \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket <bucket> \
+  --s3-prefix sonic-workflow-proof/<run-id> \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+For RTX PRO 6000 Kubernetes targets, use the same command with
+`--gpu-target gpu-rtx6000` and an accelerator string accepted by your SkyPilot
+Kubernetes GPU catalog, for example
+`--accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. The SONIC
+materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s`; L40S resolves to
+`npa-sonic:0.1.2`.
+
+When a Kubernetes target pulls from a private registry, provide a SkyPilot config
+through `--config-path` that adds the registry pull secret to worker pods:
+
+```yaml
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: <registry-pull-secret>
+```
+
+Only set `serviceAccountName` in that pod config if the account also has the
+cluster-level permissions SkyPilot needs for node and pod discovery.
+
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.
