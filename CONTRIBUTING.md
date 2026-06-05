@@ -671,8 +671,10 @@ The infra skill uses `${NPA_REGISTRY_ID}` to describe the registry ID. Current
 code uses `NPA_REGISTRY` as the full registry prefix in
 `npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`.
 
-Committed examples may use either a full `NPA_REGISTRY` prefix or a
-`<your-registry-id>` placeholder. Do not commit a concrete registry ID.
+Committed BYO examples may use either a full `NPA_REGISTRY` prefix or a
+`<your-registry-id>` placeholder. Resolver-owned first-party defaults may use
+the `npa-workbench` registry ID `e00cm0vc6t09m0z5gw`; avoid concrete registry
+IDs in customer-specific examples.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

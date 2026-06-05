@@ -33,9 +33,8 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  # Replace <your-registry-id> with your Nebius container registry ID.
-  # Replace <lancedb-image-tag> with: npa workbench lancedb system-info
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"

@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import random
-import shutil
 import sys
 import tempfile
 import uuid
@@ -17,9 +16,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool, supported_tool_version
+from npa.deploy.images import container_image_for_tool
 from npa.workbench.lerobot.policy_container import (
-    VlmRlSignal,
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
 )
