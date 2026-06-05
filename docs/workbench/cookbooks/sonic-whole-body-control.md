@@ -31,6 +31,26 @@ the SONIC C++ deploy source and build tools, but leaves `gear_sonic_deploy`
 compilation opt-in with `BUILD_SONIC_DEPLOY=1` because TensorRT and ONNX Runtime
 discovery are platform-sensitive.
 
+Build and publish the required first-party image from the repo root:
+
+```bash
+export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
+npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
+```
+
+SONIC publishes two first-party image variants. The compatibility source of
+truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
+in `docs/workbench/sonic-image-catalog.md`. The default L40S VM image is
+`${NPA_REGISTRY}/npa-sonic:0.1.2`; the Kubernetes GPU-operator image for
+RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s`.
+
+Verify the pushed image before launch with:
+
+```bash
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+```
+
 The default embodiment is Unitree G1:
 
 ```bash
@@ -134,9 +154,17 @@ eval in one SkyPilot task. It accepts `POLICY_CKPT`, `OUTPUT_DIR`,
 
 The default `reference` backend uses `EVAL_ENV=sonic-locomotion-smoke`, which
 runs deterministic locomotion rollouts against the exported ONNX policy and
-writes `sonic_eval_results.json`. Set `EVAL_BACKEND=container` plus
-`CONTAINER_IMAGE` to stage the ONNX and sidecar metadata into an external
-evaluator with a stable file contract.
+writes `sonic_eval_results.json`.
+
+### BYO External Eval Container
+
+External eval is separate from the required first-party `npa-sonic` runtime.
+Set `EVAL_BACKEND=container` plus `CONTAINER_IMAGE` only when you provide a
+BYO evaluator image. Workbench stages the ONNX policy and sidecar metadata into
+that image through `CONTAINER_POLICY_PATH`, `CONTAINER_METADATA_PATH`, and
+`CONTAINER_OUTPUT_PATH`; the external container must write
+`sonic_eval_results.json`. No external eval image is shipped as an
+`npa-*` image.
 
 ## Relationship To GR00T
 

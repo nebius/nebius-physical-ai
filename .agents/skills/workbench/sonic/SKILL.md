@@ -22,9 +22,14 @@ npa workbench sonic list
 
 ## Routing And Validation
 
-Route SONIC to H100. Do not use L40S; the `1gpu-40vcpu-160gb` preset has effectively zero on-demand availability.
+Route first-party SONIC images through `npa/src/npa/deploy/sonic_image_manifest.json`.
+Use the baked `npa-sonic:0.1.2` image for L40S VM targets and the host-mounted
+`npa-sonic:0.1.2-k8s` image for RTX PRO 6000 Blackwell Kubernetes targets with
+the NVIDIA GPU Operator.
 
-SONIC is validated end-to-end on Nebius when routed to H100.
+SONIC render validation requires RT-capable GPUs. H100 can still be useful for
+non-render training throughput, but it is not the default render validation
+target.
 
 Known issue: job ID reuse anomaly. Investigation is medium priority and deferred.
 

@@ -44,13 +44,16 @@ run: |
 name: sonic-finetune
 resources:
   cloud: kubernetes
-  accelerators: H100:1
+  accelerators: L40S:1
   cpus: 16
   memory: 64
-  # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
+  # Replace <your-registry-id> and <sonic-image-tag> with the tag from the
+  # manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
 envs:
   NPA_PIPELINE_RUN_ID: "<run-id>"
+  SONIC_GPU_TYPE: "l40s"
+  SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SONIC_TRAIN_OUTPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/"
   SONIC_EMBODIMENT: "UNITREE_G1_SONIC"
@@ -65,6 +68,7 @@ envs:
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 run: |
   set -euo pipefail
+  echo "SONIC image variant ${SONIC_IMAGE_VARIANT} selected for ${SONIC_GPU_TYPE}" >&2
   /entrypoint.sh train
 ---
 name: sonic-mjlab-eval

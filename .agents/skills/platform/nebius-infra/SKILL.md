@@ -18,7 +18,8 @@ Always use storage endpoint `storage.eu-north1.nebius.cloud`. The CLI default `s
 ## GPU Routing
 
 - H100, `1gpu-16vcpu-200gb`: general training, CLIP, detection.
-- L40S, `1gpu-40vcpu-160gb`: Isaac Lab when capacity exists because RT cores are required. On-demand availability is often zero; route SONIC to H100 instead.
+- L40S, `1gpu-40vcpu-160gb`: Isaac Lab and SONIC render validation on compute-only VM hosts; use the baked SONIC image variant.
+- RTX PRO 6000 Blackwell on Kubernetes: Isaac Lab and SONIC render validation with NVIDIA GPU Operator mounted drivers; use the host-mounted SONIC image variant.
 - Isaac Lab and Cosmos rendering/visual-generation paths require RT cores, such as L40S or RTX Pro 6000. They will not work on H100/H200 for rendering/simulation paths that need RT cores. Standard Cosmos serving/inference only requires a GPU; see the Cosmos skill.
 - B300/Blackwell: `sm_103` support is blocked on upstream libraries as of mid-2026; do not prioritize B300 enablement unless the vendor stack has moved.
 

@@ -30,9 +30,17 @@ EVAL_RESULT_FORMAT = "npa_sonic_eval_result_v1"
 DEFAULT_EVAL_OUTPUT_NAME = "sonic_eval_results.json"
 DEFAULT_EVAL_ENV = "smoke"
 DEFAULT_CONTAINER_RUNTIME = "docker"
+DEFAULT_CONTAINER_GPUS = "all"
+DEFAULT_CONTAINER_DRIVER_CAPABILITIES = "all"
+DEFAULT_CONTAINER_VULKAN_ICD = "/etc/vulkan/icd.d/nvidia_icd.json"
+DEFAULT_CONTAINER_GLX_VENDOR = "nvidia"
 DEFAULT_CONTAINER_POLICY_PATH = "/npa/eval/input/policy.onnx"
 DEFAULT_CONTAINER_METADATA_PATH = "/npa/eval/input/metadata.json"
 DEFAULT_CONTAINER_OUTPUT_PATH = "/npa/eval/output/sonic_eval_results.json"
+DEFAULT_CONTAINER_RENDER_FRAMES = 8
+DEFAULT_CONTAINER_XDG_RUNTIME_DIR = "/tmp/xdg-runtime"
+DEFAULT_CONTAINER_OMNI_USER_DIR = "/tmp/isaac-sim-cache"
+DEFAULT_CONTAINER_OMNI_LOG_DIR = "/tmp/isaac-sim-cache/logs"
 REFERENCE_BACKEND = "reference"
 CONTAINER_BACKEND = "container"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
@@ -181,6 +189,12 @@ def evaluate_onnx_policy(
     output: str = "",
     container_image: str = "",
     container_runtime: str = DEFAULT_CONTAINER_RUNTIME,
+    container_gpus: str = DEFAULT_CONTAINER_GPUS,
+    container_driver_capabilities: str = DEFAULT_CONTAINER_DRIVER_CAPABILITIES,
+    container_vulkan_icd: str = DEFAULT_CONTAINER_VULKAN_ICD,
+    container_glx_vendor: str = DEFAULT_CONTAINER_GLX_VENDOR,
+    container_device: list[str] | None = None,
+    container_render_frames: int = DEFAULT_CONTAINER_RENDER_FRAMES,
     container_policy_path: str = DEFAULT_CONTAINER_POLICY_PATH,
     container_metadata_path: str = DEFAULT_CONTAINER_METADATA_PATH,
     container_output_path: str = DEFAULT_CONTAINER_OUTPUT_PATH,
@@ -192,6 +206,8 @@ def evaluate_onnx_policy(
     backend = _validate_backend(backend)
     if episodes <= 0:
         raise SonicEvalError("--episodes must be positive")
+    if container_render_frames <= 0:
+        raise SonicEvalError("--container-render-frames must be positive")
 
     bundle = load_eval_bundle(onnx=onnx, metadata=metadata)
     if backend == REFERENCE_BACKEND:
@@ -203,6 +219,12 @@ def evaluate_onnx_policy(
             env=env,
             container_image=container_image,
             container_runtime=container_runtime,
+            container_gpus=container_gpus,
+            container_driver_capabilities=container_driver_capabilities,
+            container_vulkan_icd=container_vulkan_icd,
+            container_glx_vendor=container_glx_vendor,
+            container_devices=container_device or [],
+            container_render_frames=container_render_frames,
             container_policy_path=container_policy_path,
             container_metadata_path=container_metadata_path,
             container_output_path=container_output_path,
@@ -548,6 +570,12 @@ def _run_container_backend(
     env: str,
     container_image: str,
     container_runtime: str,
+    container_gpus: str,
+    container_driver_capabilities: str,
+    container_vulkan_icd: str,
+    container_glx_vendor: str,
+    container_devices: list[str],
+    container_render_frames: int,
     container_policy_path: str,
     container_metadata_path: str,
     container_output_path: str,
@@ -575,6 +603,12 @@ def _run_container_backend(
             image=container_image,
             input_dir=input_dir,
             output_dir=output_dir,
+            container_gpus=container_gpus,
+            container_driver_capabilities=container_driver_capabilities,
+            container_vulkan_icd=container_vulkan_icd,
+            container_glx_vendor=container_glx_vendor,
+            container_devices=container_devices,
+            container_render_frames=container_render_frames,
             container_policy_path=container_policy_path,
             container_metadata_path=container_metadata_path,
             container_output_path=container_output_path,
@@ -604,6 +638,12 @@ def _run_container_backend(
         env=env,
         container_image=container_image,
         container_runtime=container_runtime,
+        container_gpus=container_gpus,
+        container_driver_capabilities=container_driver_capabilities,
+        container_vulkan_icd=container_vulkan_icd,
+        container_glx_vendor=container_glx_vendor,
+        container_devices=container_devices,
+        container_render_frames=container_render_frames,
         container_policy_path=container_policy_path,
         container_metadata_path=container_metadata_path,
         container_output_path=container_output_path,
@@ -616,6 +656,12 @@ def _container_command(
     image: str,
     input_dir: Path,
     output_dir: Path,
+    container_gpus: str,
+    container_driver_capabilities: str,
+    container_vulkan_icd: str,
+    container_glx_vendor: str,
+    container_devices: list[str],
+    container_render_frames: int,
     container_policy_path: str,
     container_metadata_path: str,
     container_output_path: str,
@@ -632,6 +678,13 @@ def _container_command(
         (str(output_dir), output_parent, ""),
     ]
     command = [runtime, "run", "--rm"]
+    if _is_docker_runtime(runtime):
+        command.extend(["--runtime", "nvidia"])
+        if container_gpus:
+            command.extend(["--gpus", container_gpus])
+        for device in container_devices:
+            if device:
+                command.extend(["--device", device])
     for host_path, container_path, mode in _dedupe_mounts(mounts):
         mount = f"{host_path}:{container_path}"
         if mode:
@@ -644,7 +697,18 @@ def _container_command(
         "NPA_SONIC_EPISODES": str(episodes),
         "NPA_SONIC_ENV": env,
         "NPA_SONIC_RESULT_FORMAT": EVAL_RESULT_FORMAT,
+        "NPA_SONIC_RENDER_FRAMES": str(container_render_frames),
+        "XDG_RUNTIME_DIR": DEFAULT_CONTAINER_XDG_RUNTIME_DIR,
+        "OMNI_USER_DIR": DEFAULT_CONTAINER_OMNI_USER_DIR,
+        "OMNI_LOG_DIR": DEFAULT_CONTAINER_OMNI_LOG_DIR,
     }
+    if container_driver_capabilities:
+        env_vars["NVIDIA_DRIVER_CAPABILITIES"] = container_driver_capabilities
+    if container_vulkan_icd:
+        env_vars["VK_ICD_FILENAMES"] = container_vulkan_icd
+        env_vars["VK_DRIVER_FILES"] = container_vulkan_icd
+    if container_glx_vendor:
+        env_vars["__GLX_VENDOR_LIBRARY_NAME"] = container_glx_vendor
     for key, value in env_vars.items():
         command.extend(["-e", f"{key}={value}"])
     command.append(image)
@@ -660,6 +724,12 @@ def _normalize_container_result(
     env: str,
     container_image: str,
     container_runtime: str,
+    container_gpus: str,
+    container_driver_capabilities: str,
+    container_vulkan_icd: str,
+    container_glx_vendor: str,
+    container_devices: list[str],
+    container_render_frames: int,
     container_policy_path: str,
     container_metadata_path: str,
     container_output_path: str,
@@ -685,10 +755,19 @@ def _normalize_container_result(
     base["container"] = {
         "image": container_image,
         "runtime": container_runtime,
+        "gpus": container_gpus,
+        "driver_capabilities": container_driver_capabilities,
+        "vulkan_icd": container_vulkan_icd,
+        "glx_vendor": container_glx_vendor,
+        "devices": _jsonable(container_devices),
+        "render_frames": container_render_frames,
         "policy_path": container_policy_path,
         "metadata_path": container_metadata_path,
         "output_path": container_output_path,
     }
+    for key in ("render", "diagnostics", "artifacts"):
+        if key in payload:
+            base[key] = _jsonable(payload[key])
     if payload.get("format") != EVAL_RESULT_FORMAT:
         base["external_result"] = _jsonable(payload)
     return base
@@ -1018,6 +1097,10 @@ def _dedupe_mounts(mounts: list[tuple[str, str, str]]) -> list[tuple[str, str, s
     return result
 
 
+def _is_docker_runtime(runtime: str) -> bool:
+    return Path(runtime).name == "docker"
+
+
 def _rate(episodes: list[dict[str, Any]], key: str) -> float:
     if not episodes:
         return 0.0
@@ -1054,10 +1137,15 @@ __all__ = [
     "BACKENDS",
     "BUILTIN_REFERENCE_ENVS",
     "CONTAINER_BACKEND",
+    "DEFAULT_CONTAINER_DRIVER_CAPABILITIES",
+    "DEFAULT_CONTAINER_GLX_VENDOR",
+    "DEFAULT_CONTAINER_GPUS",
     "DEFAULT_CONTAINER_METADATA_PATH",
     "DEFAULT_CONTAINER_OUTPUT_PATH",
     "DEFAULT_CONTAINER_POLICY_PATH",
+    "DEFAULT_CONTAINER_RENDER_FRAMES",
     "DEFAULT_CONTAINER_RUNTIME",
+    "DEFAULT_CONTAINER_VULKAN_ICD",
     "DEFAULT_EVAL_ENV",
     "DEFAULT_EVAL_OUTPUT_NAME",
     "EVAL_RESULT_FORMAT",

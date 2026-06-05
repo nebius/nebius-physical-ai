@@ -244,7 +244,8 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
         "sonic-mjlab-eval",
     ]
     assert "npa workbench retargeting run" in sonic_docs[1]["run"]
-    assert sonic_docs[2]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[2]["resources"]["accelerators"] == "L40S:1"
+    assert sonic_docs[2]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert "/entrypoint.sh train" in sonic_docs[2]["run"]
     assert "npa workbench mjlab eval" in sonic_docs[3]["run"]
     assert sonic_docs[3]["resources"]["accelerators"] == "H100:1"

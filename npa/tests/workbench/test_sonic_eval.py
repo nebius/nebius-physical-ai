@@ -192,10 +192,17 @@ def test_sonic_eval_container_backend_uses_configured_io_contract(
     assert result["container"] == {
         "image": "mock-sonic-eval:latest",
         "runtime": str(runtime),
+        "gpus": "all",
+        "driver_capabilities": "all",
+        "vulkan_icd": "/etc/vulkan/icd.d/nvidia_icd.json",
+        "glx_vendor": "nvidia",
+        "devices": [],
+        "render_frames": 8,
         "policy_path": "/contract/input/exported_policy.onnx",
         "metadata_path": "/contract/input/exported_policy.metadata.json",
         "output_path": "/contract/output/results.json",
     }
+    assert result["render"] == {"backend": "mock", "graphics_api": "vulkan", "frames": 8}
     assert result["metrics"]["episode_return_mean"] == 1.25
     assert result["metrics"]["distance_mean"] == 2.5
     written = json.loads(result_path.read_text(encoding="utf-8"))
@@ -259,6 +266,7 @@ def _fake_container_runtime(tmp_path: Path) -> Path:
                     {"episode_index": 0, "episode_return": 1.0, "distance": 2.0},
                     {"episode_index": 1, "episode_return": 1.5, "distance": 3.0}
                 ],
+                "render": {"backend": "mock", "graphics_api": "vulkan", "frames": 8},
                 "warnings": []
             }), encoding="utf-8")
             """

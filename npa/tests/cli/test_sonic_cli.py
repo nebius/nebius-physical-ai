@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,10 +10,11 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.serverless import EndpointNotFoundError
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, sonic_image_variant_for_gpu
 
 
 runner = CliRunner()
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _json_output(raw: str) -> dict:
@@ -37,7 +39,7 @@ def _mock_sonic_serverless(mocker) -> object:
     )
     mocker.patch(
         "npa.cli.workbench.sonic.train.sonic_image",
-        return_value="registry.example/npa-sonic:0.1.0",
+        return_value="registry.example/npa-sonic:0.1.2",
     )
     mocker.patch(
         "npa.cli.workbench.sonic.train.serverless_job_env",
@@ -85,6 +87,10 @@ def test_sonic_eval_help_documents_backend_and_container_contract() -> None:
     assert "--backend" in result.output
     assert "[default: reference]" in result.output
     assert "--container-image" in result.output
+    assert "--container-gpus" in result.output
+    assert "--container-driver-" in result.output
+    assert "--container-vulkan-" in result.output
+    assert "--container-render-" in result.output
     assert "--container-policy-" in result.output
     assert "--container-metadat" in result.output
     assert "--container-output-" in result.output
@@ -213,6 +219,20 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
             "registry.example/sonic-eval:latest",
             "--container-runtime",
             "podman",
+            "--container-gpus",
+            "all",
+            "--container-driver-capabilities",
+            "graphics,compute,utility,display",
+            "--container-vulkan-icd",
+            "/etc/vulkan/icd.d/nvidia_icd.json",
+            "--container-glx-vendor",
+            "nvidia",
+            "--container-device",
+            "/dev/dri/card0",
+            "--container-device",
+            "/dev/dri/renderD128",
+            "--container-render-frames",
+            "12",
             "--container-policy-path",
             "/eval/in/policy.onnx",
             "--container-metadata-path",
@@ -240,6 +260,12 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         output=str(output_path),
         container_image="registry.example/sonic-eval:latest",
         container_runtime="podman",
+        container_gpus="all",
+        container_driver_capabilities="graphics,compute,utility,display",
+        container_vulkan_icd="/etc/vulkan/icd.d/nvidia_icd.json",
+        container_glx_vendor="nvidia",
+        container_device=["/dev/dri/card0", "/dev/dri/renderD128"],
+        container_render_frames=12,
         container_policy_path="/eval/in/policy.onnx",
         container_metadata_path="/eval/in/policy.metadata.json",
         container_output_path="/eval/out/result.json",
@@ -325,8 +351,8 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert payload["embodiment"] == "UNITREE_G1_SONIC"
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
-    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-h100-sxm"
-    assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
+    assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
     client.subnet_resolver.assert_called_once_with(
         project_id="project-1", explicit_subnet_id=""
     )
@@ -363,7 +389,7 @@ def test_sonic_train_explicit_h100_has_no_availability_warning(mocker) -> None:
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-16vcpu-200gb"
 
 
-def test_sonic_train_explicit_l40s_warns_about_availability(mocker) -> None:
+def test_sonic_train_explicit_l40s_uses_l40s_manifest_default(mocker) -> None:
     client = _mock_sonic_serverless(mocker)
 
     result = runner.invoke(
@@ -389,7 +415,7 @@ def test_sonic_train_explicit_l40s_warns_about_availability(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    assert "L40S on-demand availability is effectively zero" in result.output
+    assert "L40S on-demand availability" not in result.output
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
 
@@ -494,5 +520,34 @@ def test_sonic_hf_artifact_manifest() -> None:
 
 def test_sonic_container_image_name_resolves() -> None:
     assert container_image_for_tool(
-        "sonic", registry="registry.example", tag="0.1.0"
-    ) == ("registry.example/npa-sonic:0.1.0")
+        "sonic", registry="registry.example", tag="0.1.2"
+    ) == ("registry.example/npa-sonic:0.1.2")
+    assert container_image_for_tool(
+        "sonic", registry="registry.example", gpu_target="gpu-rtx6000"
+    ) == ("registry.example/npa-sonic:0.1.2-k8s")
+    assert sonic_image_variant_for_gpu("NVIDIA RTX PRO 6000 Blackwell") == (
+        "sonic-k8s-host-mounted"
+    )
+
+
+def test_sonic_container_build_script_uses_supported_version() -> None:
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/sonic/Dockerfile").read_text()
+    build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
+
+    assert "ARG SONIC_VERSION=0.1.2" in dockerfile
+    assert "ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1" in dockerfile
+    assert "ARG NPA_DRIVER_PROVISIONING=baked" in dockerfile
+    assert 'npa.version="${SONIC_VERSION}"' in dockerfile
+    assert 'npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}"' in dockerfile
+    assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
+    assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
+    assert 'rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"' in dockerfile
+    assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
+    assert "--platform linux/amd64" in build_script
+    assert "--variant" in build_script
+    assert "--push" in build_script
+    assert "NPA_BUILDX_BUILDER" in build_script
+    assert "--driver docker-container" in build_script
+    assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
+    assert 'docker build "${BUILD_ARGS[@]}" -t "$LOCAL_IMAGE"' in build_script
+    assert "npa-sonic:${IMAGE_TAG}" in build_script
