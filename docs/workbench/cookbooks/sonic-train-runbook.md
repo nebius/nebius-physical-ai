@@ -40,7 +40,7 @@ npa workbench sonic -p eu-north1 -n w7sonic train \
 When validating an unpromoted build, pass the pushed image explicitly:
 
 ```bash
---image "${NPA_REGISTRY}/npa-sonic:0.1.0"
+--image "${NPA_REGISTRY}/npa-sonic:0.1.2"
 ```
 
 Build and push that required first-party image from the repo root:
@@ -48,7 +48,7 @@ Build and push that required first-party image from the repo root:
 ```bash
 export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.0"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
 ```
 
 Expected output artifacts:
@@ -99,7 +99,7 @@ If the serverless smoke fails after the retry budget, run a degraded container
 smoke:
 
 ```bash
-docker run --rm --platform linux/amd64 npa-sonic:0.1.0 smoke
+docker run --rm --platform linux/amd64 npa-sonic:0.1.2 smoke
 ```
 
 That validates the container entrypoint and imports without consuming Nebius GPU

@@ -24,12 +24,12 @@ The SkyPilot blueprint is
 - Object storage credentials are available to the task, and the endpoint is
   `https://storage.eu-north1.nebius.cloud`.
 - The first-party SONIC image is built and pushed as
-  `${NPA_REGISTRY}/npa-sonic:0.1.0`:
+  `${NPA_REGISTRY}/npa-sonic:0.1.2`:
 
   ```bash
   export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
   npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.0"
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
   ```
 
 ## One Command
