@@ -1,4 +1,4 @@
-# Standalone SONIC training smoke workflow.
+# Standalone SONIC training workflow.
 #
 # Operator-provided parameters:
 # - POLICY_IMAGE: image containing the SONIC /entrypoint.sh runtime. Use the
@@ -13,7 +13,7 @@
 name: sonic-train-standalone
 execution: serial
 ---
-name: sonic-train-smoke
+name: sonic-train
 resources:
   cloud: nebius
   accelerators: L40S:1
@@ -29,7 +29,7 @@ envs:
   AWS_PROFILE: "nebius"
   S3_ENDPOINT_URL: ""
   S3_BUCKET: "example-bucket"
-  NPA_PIPELINE_RUN_ID: "sonic-train-smoke"
+  NPA_PIPELINE_RUN_ID: "sonic-train"
   SONIC_CHECKPOINT: "nvidia/GEAR-SONIC:sonic_release/last.pt"
   SONIC_DATA_PATH: ""
   SONIC_SAMPLE_DATA: "1"
@@ -38,6 +38,11 @@ envs:
   SONIC_HEADLESS: "1"
   SONIC_MAX_ITERATIONS: "5"
   SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
+  NPA_TRAINING_OVERRIDES_JSON: "[]"
+  NPA_TRAINING_WANDB_ENABLED: "0"
+  NPA_TRAINING_WANDB_PROJECT: ""
+  NPA_TRAINING_WANDB_RUN_NAME: ""
+  WANDB_MODE: "disabled"
 setup: |
   set -euo pipefail
   docker_login_if_configured() {
@@ -133,6 +138,9 @@ run: |
       -e SONIC_NUM_ENVS \
       -e SONIC_HEADLESS \
       -e SONIC_MAX_ITERATIONS \
+      -e NPA_TRAINING_OVERRIDES_JSON \
+      -e NPA_TRAINING_OVERRIDES \
+      -e WANDB_MODE \
       "${POLICY_IMAGE}" train
   else
     /entrypoint.sh train
