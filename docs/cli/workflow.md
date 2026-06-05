@@ -55,7 +55,8 @@ npa workbench workflow submit \
   npa/workflows/workbench/skypilot/sonic-train-standalone.yaml \
   --run-id sonic-smoke-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
-  --gpu-target l40s \
+  --gpu-target h100 \
+  --use-spot \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
   --s3-bucket <bucket> \
   --s3-prefix sonic-workflow-proof/<run-id> \
@@ -63,12 +64,43 @@ npa workbench workflow submit \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
+For Nebius Container Registry VM pulls, the SONIC materializer adds SkyPilot's
+Docker login envs to the submitted YAML:
+
+```yaml
+envs:
+  SKYPILOT_DOCKER_USERNAME: iam
+  SKYPILOT_DOCKER_PASSWORD: <fresh-nebius-iam-token>
+  SKYPILOT_DOCKER_SERVER: cr.eu-north1.nebius.cloud
+```
+
+By default the password is minted at submit time with
+`nebius iam get-access-token`, matching Nebius Container Registry's
+short-lived-token login flow. BYO private registries can override the three
+values with:
+
+```bash
+npa workbench workflow submit ... \
+  --registry registry.example/workbench \
+  --registry-server registry.example \
+  --registry-username <username> \
+  --registry-password <token>
+```
+
+Prefer `NPA_REGISTRY_USERNAME`, `NPA_REGISTRY_PASSWORD`, and
+`NPA_REGISTRY_SERVER` when you do not want the token in shell history. Use
+`--no-registry-auth` only for public images or environments that preconfigure
+Docker auth outside SkyPilot.
+
 For RTX PRO 6000 Kubernetes targets, use the same command with
 `--gpu-target gpu-rtx6000` and an accelerator string accepted by your SkyPilot
 Kubernetes GPU catalog, for example
 `--accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. The SONIC
-materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s`; L40S resolves to
-`npa-sonic:0.1.2`.
+materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s`; H100, H200, L40S,
+and B200 VM targets resolve to `npa-sonic:0.1.2` with matching
+`accelerators: <GPU>:1` and the smallest known Nebius VM CPU/RAM preset for that
+GPU. Pass `--use-spot` when the capacity check only reports preemptible
+availability.
 
 When a Kubernetes target pulls from a private registry, provide a SkyPilot config
 through `--config-path` that adds the registry pull secret to worker pods:

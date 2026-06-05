@@ -99,6 +99,29 @@ def submit_cmd(
         "--npa-image",
         help="Generic NPA helper image override for multi-tool workflows.",
     ),
+    registry_auth: bool = typer.Option(
+        True,
+        "--registry-auth/--no-registry-auth",
+        help=(
+            "For VM SONIC image pulls, materialize SkyPilot Docker registry "
+            "auth envs. Nebius CR defaults to a fresh IAM token."
+        ),
+    ),
+    registry_username: str = typer.Option(
+        "",
+        "--registry-username",
+        help="BYO Docker registry username for SONIC VM image pulls.",
+    ),
+    registry_password: str = typer.Option(
+        "",
+        "--registry-password",
+        help="BYO Docker registry password/token for SONIC VM image pulls.",
+    ),
+    registry_server: str = typer.Option(
+        "",
+        "--registry-server",
+        help="BYO Docker registry server for SONIC VM image pulls.",
+    ),
     gpu_target: str = typer.Option(
         "",
         "--gpu-target",
@@ -119,6 +142,11 @@ def submit_cmd(
         "",
         "--cloud",
         help="Cloud value for materialized GPU tasks.",
+    ),
+    use_spot: bool | None = typer.Option(
+        None,
+        "--use-spot/--no-use-spot",
+        help="Optional SkyPilot spot/preemptible setting for materialized SONIC VM GPU tasks.",
     ),
     s3_endpoint: str = typer.Option(
         "",
@@ -180,6 +208,10 @@ def submit_cmd(
                     registry=registry,
                     image=image,
                     npa_image=npa_image,
+                    registry_auth=registry_auth,
+                    registry_username=registry_username,
+                    registry_password=registry_password,
+                    registry_server=registry_server,
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     s3_endpoint=s3_endpoint,
@@ -187,6 +219,7 @@ def submit_cmd(
                     s3_prefix=s3_prefix,
                     accelerators=accelerators,
                     cloud=cloud,
+                    use_spot=use_spot,
                     env_overrides=substitutions,
                 )
             except ValueError as exc:

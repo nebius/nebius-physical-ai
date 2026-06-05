@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Sequence
@@ -21,13 +22,21 @@ DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 DEFAULT_GPU_TARGET = "l40s"
 DEFAULT_SONIC_WORKFLOW_PREFIX = "sonic-locomotion"
 UNRESOLVED_SUBMIT_TOKENS = ("<your-", "<sonic-image-tag>", "<npa-image-tag>", "example.invalid")
+SKYPILOT_DOCKER_USERNAME = "SKYPILOT_DOCKER_USERNAME"
+SKYPILOT_DOCKER_PASSWORD = "SKYPILOT_DOCKER_PASSWORD"
+SKYPILOT_DOCKER_SERVER = "SKYPILOT_DOCKER_SERVER"
+DEFAULT_NEBIUS_REGISTRY_USERNAME = "iam"
+NEBIUS_REGISTRY_SERVER_SUFFIX = ".nebius.cloud"
+REGISTRY_AUTH_USERNAME_ENVS = ("NPA_REGISTRY_USERNAME", SKYPILOT_DOCKER_USERNAME)
+REGISTRY_AUTH_PASSWORD_ENVS = ("NPA_REGISTRY_PASSWORD", SKYPILOT_DOCKER_PASSWORD)
+REGISTRY_AUTH_SERVER_ENVS = ("NPA_REGISTRY_SERVER", SKYPILOT_DOCKER_SERVER)
 
 
 @dataclass(frozen=True)
 class SonicWorkflowPlan:
     """Resolved values used to submit a SONIC workflow YAML."""
 
-    yaml_text: str
+    yaml_text: str = field(repr=False)
     run_id: str
     policy_image: str
     npa_image: str
@@ -38,6 +47,18 @@ class SonicWorkflowPlan:
     s3_prefix: str
     accelerators: str
     cloud: str
+    use_spot: bool | None = None
+    registry_auth_server: str = ""
+    registry_auth_username: str = ""
+    registry_auth_source: str = ""
+
+
+@dataclass(frozen=True)
+class _RegistryAuthConfig:
+    username: str
+    password: str = field(repr=False)
+    server: str
+    source: str
 
 
 def materialize_sonic_workflow(
@@ -47,6 +68,10 @@ def materialize_sonic_workflow(
     registry: str = "",
     image: str = "",
     npa_image: str = "",
+    registry_auth: bool = True,
+    registry_username: str = "",
+    registry_password: str = "",
+    registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
     s3_endpoint: str = "",
@@ -54,6 +79,7 @@ def materialize_sonic_workflow(
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> SonicWorkflowPlan:
     """Return a concrete SONIC workflow YAML with no submit-time env indirection."""
@@ -78,6 +104,14 @@ def materialize_sonic_workflow(
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
     resolved_accelerators = accelerators or _default_accelerators(resolved_gpu_target)
     resolved_cloud = cloud or _default_cloud(resolved_gpu_target)
+    resolved_registry_auth = _resolve_registry_auth(
+        enabled=registry_auth and resolved_cloud.strip().lower() != "kubernetes",
+        policy_image=resolved_policy_image,
+        npa_image=resolved_npa_image,
+        username=registry_username,
+        password=registry_password,
+        server=registry_server,
+    )
 
     replacements = {
         "sonic-locomotion/<run-id>/": resolved_prefix,
@@ -105,6 +139,8 @@ def materialize_sonic_workflow(
                 s3_prefix=resolved_prefix,
                 accelerators=resolved_accelerators,
                 cloud=resolved_cloud,
+                use_spot=use_spot,
+                registry_auth=resolved_registry_auth,
                 env_overrides=env_overrides or {},
             )
 
@@ -121,6 +157,10 @@ def materialize_sonic_workflow(
         s3_prefix=resolved_prefix,
         accelerators=resolved_accelerators,
         cloud=resolved_cloud,
+        use_spot=use_spot,
+        registry_auth_server=resolved_registry_auth.server if resolved_registry_auth else "",
+        registry_auth_username=resolved_registry_auth.username if resolved_registry_auth else "",
+        registry_auth_source=resolved_registry_auth.source if resolved_registry_auth else "",
     )
 
 
@@ -131,6 +171,10 @@ def submit_sonic_workflow(
     registry: str = "",
     image: str = "",
     npa_image: str = "",
+    registry_auth: bool = True,
+    registry_username: str = "",
+    registry_password: str = "",
+    registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
     s3_endpoint: str = "",
@@ -138,6 +182,7 @@ def submit_sonic_workflow(
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
@@ -154,6 +199,10 @@ def submit_sonic_workflow(
         registry=registry,
         image=image,
         npa_image=npa_image,
+        registry_auth=registry_auth,
+        registry_username=registry_username,
+        registry_password=registry_password,
+        registry_server=registry_server,
         gpu_target=gpu_target,
         image_variant=image_variant,
         s3_endpoint=s3_endpoint,
@@ -161,6 +210,7 @@ def submit_sonic_workflow(
         s3_prefix=s3_prefix,
         accelerators=accelerators,
         cloud=cloud,
+        use_spot=use_spot,
         env_overrides=env_overrides,
     )
     unresolved = unresolved_submit_placeholders(plan.yaml_text)
@@ -219,6 +269,14 @@ def _default_accelerators(gpu_target: str) -> str:
     normalized = gpu_target.strip().lower().replace("_", "-")
     if "rtx" in normalized or "blackwell" in normalized or "sm-120" in normalized:
         return "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    if "b200" in normalized:
+        return "B200:1"
+    if "h200" in normalized:
+        return "H200:1"
+    if "h100" in normalized:
+        return "H100:1"
+    if "l40s" in normalized:
+        return "L40S:1"
     return "L40S:1"
 
 
@@ -227,6 +285,24 @@ def _default_cloud(gpu_target: str) -> str:
     if "rtx" in normalized or "blackwell" in normalized or "sm-120" in normalized:
         return "kubernetes"
     return "nebius"
+
+
+def _default_cpus(gpu_target: str) -> int:
+    normalized = gpu_target.strip().lower().replace("_", "-")
+    if "b200" in normalized:
+        return 20
+    return 16
+
+
+def _default_memory(gpu_target: str) -> int:
+    normalized = gpu_target.strip().lower().replace("_", "-")
+    if "b200" in normalized:
+        return 224
+    if "h100" in normalized or "h200" in normalized:
+        return 200
+    if "l40s" in normalized:
+        return 64
+    return 64
 
 
 def _replace_strings(value: Any, replacements: dict[str, str]) -> Any:
@@ -254,6 +330,8 @@ def _materialize_task_doc(
     s3_prefix: str,
     accelerators: str,
     cloud: str,
+    use_spot: bool | None,
+    registry_auth: _RegistryAuthConfig | None,
     env_overrides: dict[str, str],
 ) -> None:
     envs = doc.get("envs")
@@ -267,6 +345,10 @@ def _materialize_task_doc(
     if uses_sonic_runtime_image:
         resources["cloud"] = cloud
         resources["image_id"] = f"docker:{policy_image}"
+        resources["cpus"] = _default_cpus(gpu_target)
+        resources["memory"] = _default_memory(gpu_target)
+        if use_spot is not None and cloud.strip().lower() != "kubernetes":
+            resources["use_spot"] = use_spot
         if resources.get("accelerators"):
             resources["accelerators"] = accelerators
     elif npa_image and _looks_like_npa_helper_image(image_id):
@@ -290,6 +372,10 @@ def _materialize_task_doc(
         envs["NPA_PIPELINE_RUN_ID"] = run_id
     if "SONIC_OUTPUT_PREFIX" in envs:
         envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
+    if registry_auth and _uses_registry_auth_target(doc, registry_auth.server):
+        envs[SKYPILOT_DOCKER_USERNAME] = registry_auth.username
+        envs[SKYPILOT_DOCKER_PASSWORD] = registry_auth.password
+        envs[SKYPILOT_DOCKER_SERVER] = registry_auth.server
     for key, value in env_overrides.items():
         if key in envs:
             envs[key] = value
@@ -315,3 +401,135 @@ def _uses_sonic_runtime_image(doc: dict[str, Any]) -> bool:
 
 def _looks_like_npa_helper_image(image_id: str) -> bool:
     return "/npa:" in image_id or image_id.endswith("/npa:<npa-image-tag>")
+
+
+def _resolve_registry_auth(
+    *,
+    enabled: bool,
+    policy_image: str,
+    npa_image: str,
+    username: str,
+    password: str,
+    server: str,
+) -> _RegistryAuthConfig | None:
+    if not enabled:
+        return None
+
+    explicit = any(value.strip() for value in (username, password, server))
+    env_username = _first_env(REGISTRY_AUTH_USERNAME_ENVS)
+    env_password = _first_env(REGISTRY_AUTH_PASSWORD_ENVS)
+    env_server = _first_env(REGISTRY_AUTH_SERVER_ENVS)
+    env_provided = any(value for value in (env_username, env_password, env_server))
+
+    resolved_server = _normalize_registry_server(
+        server or env_server or _registry_server_for_images(policy_image, npa_image)
+    )
+    resolved_username = username or env_username
+    resolved_password = password or env_password
+    source = "explicit" if explicit else "env" if env_provided else ""
+
+    if resolved_server and _is_nebius_registry_server(resolved_server):
+        if not resolved_username:
+            resolved_username = DEFAULT_NEBIUS_REGISTRY_USERNAME
+        if not resolved_password:
+            resolved_password = _mint_nebius_registry_token()
+            source = "nebius-iam-token"
+    elif explicit or env_provided:
+        source = source or "explicit"
+    else:
+        return None
+
+    missing = [
+        name
+        for name, value in (
+            ("username", resolved_username),
+            ("password", resolved_password),
+            ("server", resolved_server),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "Registry auth requires username, password, and server; missing "
+            + ", ".join(missing)
+        )
+
+    return _RegistryAuthConfig(
+        username=resolved_username,
+        password=resolved_password,
+        server=resolved_server,
+        source=source or "explicit",
+    )
+
+
+def _first_env(names: Sequence[str]) -> str:
+    for name in names:
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _mint_nebius_registry_token() -> str:
+    cli = os.environ.get("NEBIUS_CLI", "nebius")
+    try:
+        result = subprocess.run(
+            [cli, "iam", "get-access-token"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            "Could not mint Nebius registry token with `nebius iam get-access-token`"
+        ) from exc
+
+    token = result.stdout.strip()
+    if result.returncode != 0 or not token:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise ValueError(
+            "Could not mint Nebius registry token with `nebius iam get-access-token`: "
+            + detail
+        )
+    return token
+
+
+def _registry_server_for_images(*images: str) -> str:
+    for image in images:
+        server = _registry_server_from_image(image)
+        if server:
+            return server
+    return ""
+
+
+def _registry_server_from_image(image: str) -> str:
+    image_ref = image.removeprefix("docker:").strip()
+    if "/" not in image_ref:
+        return ""
+    candidate = image_ref.split("/", 1)[0]
+    if "." in candidate or ":" in candidate or candidate == "localhost":
+        return _normalize_registry_server(candidate)
+    return ""
+
+
+def _normalize_registry_server(server: str) -> str:
+    normalized = server.strip()
+    normalized = normalized.removeprefix("https://").removeprefix("http://")
+    return normalized.rstrip("/")
+
+
+def _is_nebius_registry_server(server: str) -> bool:
+    normalized = _normalize_registry_server(server)
+    return normalized.startswith("cr.") and normalized.endswith(NEBIUS_REGISTRY_SERVER_SUFFIX)
+
+
+def _uses_registry_auth_target(doc: dict[str, Any], server: str) -> bool:
+    resources = doc.get("resources")
+    if not isinstance(resources, dict):
+        return False
+    if str(resources.get("cloud", "")).strip().lower() == "kubernetes":
+        return False
+    image_server = _registry_server_from_image(str(resources.get("image_id", "")))
+    return image_server == _normalize_registry_server(server)

@@ -59,6 +59,45 @@ image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/<image>:<image-ta
 Use `npa workbench lancedb system-info` or the corresponding workbench tool's
 `system-info` command to find the current image tag for live submissions.
 
+For raw SkyPilot VM YAMLs that pull private images from Nebius Container
+Registry, add SkyPilot Docker login envs next to the task's other `envs`.
+Nebius Container Registry accepts username `iam` and a short-lived token from
+`nebius iam get-access-token`.
+
+```yaml
+resources:
+  cloud: nebius
+  accelerators: H100:1
+  cpus: 16
+  memory: 200
+  use_spot: true
+  image_id: "docker:cr.eu-north1.nebius.cloud/<registry-id>/<image>:<tag>"
+envs:
+  SKYPILOT_DOCKER_USERNAME: iam
+  SKYPILOT_DOCKER_PASSWORD: ""
+  SKYPILOT_DOCKER_SERVER: cr.eu-north1.nebius.cloud
+```
+
+Supply the token at launch time instead of committing it:
+
+```bash
+sky jobs launch raw-sonic.yaml \
+  --env SKYPILOT_DOCKER_PASSWORD="$(nebius iam get-access-token)"
+```
+
+For NPA's generic submit path, keep the same key in `envs` and pass:
+
+```bash
+npa workbench workflow submit raw-sonic.yaml \
+  --var SKYPILOT_DOCKER_PASSWORD="$(nebius iam get-access-token)"
+```
+
+Do not commit rendered tokens. When submitting through
+`npa workbench workflow submit --tool sonic`, the materializer fills these values
+for Nebius VM targets automatically and lets operators override them with
+`--registry-server`, `--registry-username`, and `--registry-password` for BYO
+registries.
+
 The BDD100K pipeline currently runs serially because the checked-in comment notes
 that SkyPilot `0.12.2` supports serial pipelines and all-parallel job groups, but
 not the mixed dependency graph needed to train and evaluate the three views in

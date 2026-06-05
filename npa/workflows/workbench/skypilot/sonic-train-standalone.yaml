@@ -63,4 +63,11 @@ run: |
   printf 'SONIC_WORKFLOW_IMAGE policy_image=%s gpu_type=%s image_variant=%s\n' \
     "${POLICY_IMAGE}" "${SONIC_GPU_TYPE}" "${SONIC_IMAGE_VARIANT}"
 
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader \
+      | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
+  else
+    echo "nvidia-smi unavailable" | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
+  fi
+
   /entrypoint.sh train
