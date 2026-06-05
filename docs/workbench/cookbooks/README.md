@@ -5,6 +5,9 @@ workflows with Nebius Physical AI Workbench.
 
 ## Available Cookbooks
 
+- [Sim-To-Real Pipeline](sim-to-real-pipeline.md): CLI, SDK, raw SkyPilot, BYO
+  policy image, BYO S3 endpoint, eval, feedback, artifact, and teardown details
+  behind the one-command H100 quickstart.
 - [VLM-Eval Loop Runbook](vlm-eval-loop-runbook.md): serve a VLM with vLLM,
   score rollout directories with `vlm-eval`, and write a task-success report.
 - [LeRobot GPU Benchmarks](lerobot-gpu-benchmarks.md): reproduce the May 2026

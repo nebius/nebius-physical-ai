@@ -1,43 +1,54 @@
-# NPA Workflow Templates
+# NPA SkyPilot Workflow Templates
 
-This directory contains Argo WorkflowTemplate definitions for Workbench reference architectures. The current templates use the pod-as-worker execution model: each workflow step is a Kubernetes pod that performs the step work directly.
+This directory contains Workbench reference workflows for robotics,
+simulation, perception, eval, and synthetic-data workloads. SkyPilot is the
+workflow orchestrator for these templates.
 
 ## Layout
 
-- `templates/`: reference architecture WorkflowTemplates.
-- `steps/`: reusable step WorkflowTemplates referenced with `templateRef`.
-- `schemas/`: conventions for parameters, artifacts, naming, and runtime constraints.
+- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines.
+- `schemas/`: conventions for parameters, artifacts, naming, and runtime
+  constraints.
+- `steps/` and `templates/`: legacy placeholders kept for compatibility with
+  older examples; new workflow work should use `skypilot/`.
 
-## Install Templates
+## Sim-To-Real
 
-Use the target cluster kubeconfig for every command:
-
-```bash
-export KUBECONFIG=/tmp/<run-id>/kubeconfig
-argo template create -n argo npa/workflows/workbench/steps/placeholder-step.yaml
-argo template create -n argo npa/workflows/workbench/templates/curate-augment-train.yaml
-```
-
-For an existing template, use `argo template update -n argo <file>`.
-
-## Submit
-
-Submit a Workflow from a WorkflowTemplate:
+The H100 quickstart submits:
 
 ```bash
-argo submit -n argo \
-  --from workflowtemplate/curate-augment-train \
-  -p dataset-uri=s3://${NPA_S3_BUCKET}/argo-artifacts/fixtures/curate-augment-train-v1/fixture-dataset.txt \
-  --watch
+npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
 ```
 
-## Inspect
+It renders and runs:
+
+```text
+npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+```
+
+The deeper reference path is documented in
+`docs/workbench/cookbooks/sim-to-real-pipeline.md`.
+
+## Submission Pattern
+
+Use the thin Python wrappers under `npa/scripts/` when a workflow needs runtime
+substitution, S3 paths, secret-env injection, GPU validation, or cleanup:
 
 ```bash
-argo list -n argo
-argo watch -n argo <workflow-name>
-argo get -n argo <workflow-name>
-argo logs -n argo <workflow-name>
+npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py --help
+npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py --help
+npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py --help
 ```
 
-The conventions document is the source of truth for parameter names, artifact flow, S3 layout, image rules, and GPU exclusions.
+Invoke SkyPilot through `NPA_SKYPILOT_BIN`, normally resolved by:
+
+```bash
+npa skypilot bootstrap
+export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
+```
+
+## Cleanup
+
+Wrappers that create live GPU resources must use explicit SkyPilot cleanup and
+must poll for absence when they own the user-facing lifecycle. Do not rely on a
+detached terminal or manual cleanup as the only teardown path.

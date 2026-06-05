@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import stat
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -44,6 +45,7 @@ from npa.workflows.lerobot_dataset import seeded_episode_split, summarize_lerobo
 ROOT = Path(__file__).resolve().parents[3]
 YAML_PATH = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim-to-real-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_sim_to_real_pipeline.py"
+QUICKSTART_PATH = ROOT / "npa" / "scripts" / "run_sim_to_real_quickstart.py"
 
 
 def _nebius_catalog() -> NebiusGpuCatalog:
@@ -59,6 +61,15 @@ def _nebius_catalog() -> NebiusGpuCatalog:
 
 def _load_wrapper_module():
     spec = importlib.util.spec_from_file_location("run_sim_to_real_pipeline", WRAPPER_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_quickstart_module():
+    spec = importlib.util.spec_from_file_location("run_sim_to_real_quickstart", QUICKSTART_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -445,6 +456,162 @@ def test_runner_passes_controller_backend_to_submit(monkeypatch, tmp_path: Path,
     assert captured["docs"][0]["envs"]["NPA_SIM_TO_REAL_RUN_ID"] == "s2r-submit"
     assert captured["docs"][0]["resources"]["cloud"] == "nebius"
     assert "image_id" not in captured["docs"][0]["resources"]
+
+
+def test_quickstart_uses_credentials_h100_defaults_and_tears_down(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    quickstart = _load_quickstart_module()
+    run_id = "s2r-quickstart-test-20260604T000000Z"
+    sky_bin = tmp_path / "sky"
+    sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    sky_bin.chmod(sky_bin.stat().st_mode | stat.S_IXUSR)
+    credentials = tmp_path / "credentials.yaml"
+    credentials.write_text(
+        "\n".join(
+            [
+                "storage:",
+                "  aws_access_key_id: quickstart-access-key",
+                "  aws_secret_access_key: quickstart-secret-key",
+                "  endpoint_url: https://storage.eu-north1.nebius.cloud",
+                "  bucket: s3://quickstart-bucket/experiments/",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeTeardown:
+        instances: list["FakeTeardown"] = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.marked: list[Path | None] = []
+            self.teardown_calls = 0
+            self.instances.append(self)
+
+        def mark_launched(self, *, config_path=None):
+            self.marked.append(config_path)
+
+        def teardown(self):
+            self.teardown_calls += 1
+            return quickstart.CleanupResult(resources_removed=["cluster"])
+
+    class FakeStorageClient:
+        @classmethod
+        def from_environment(cls, **kwargs):
+            captured["storage_client"] = kwargs
+            return cls()
+
+        def download_path(self, uri, local_path):
+            captured["download_uri"] = uri
+            Path(local_path).write_text(
+                json.dumps(
+                    {
+                        "outer_loop": {
+                            "score": 0.5,
+                            "decision": "retrain",
+                            "trend": [0.5],
+                        },
+                        "feedback": {"score": 0.5},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    def fake_render_workflow(yaml_path, **kwargs):
+        captured["render"] = kwargs
+        return [
+            {
+                "name": "sim-to-real-pipeline",
+                "resources": {"cloud": kwargs["task_cloud"], "accelerators": kwargs["gpu"]},
+                "envs": {"NPA_SIM_TO_REAL_RUN_ID": kwargs["run_id"]},
+                "run": "true",
+            }
+        ]
+
+    def fake_run(cmd, **kwargs):
+        captured["launch_cmd"] = cmd
+        captured["launch_env"] = kwargs["env"]
+        yaml_path = Path(cmd[-1])
+        captured["submitted_yaml"] = [
+            doc for doc in yaml.safe_load_all(Path(yaml_path).read_text(encoding="utf-8")) if doc is not None
+        ]
+        return subprocess.CompletedProcess(cmd, 0, stdout="done\n", stderr="")
+
+    monkeypatch.setattr(quickstart, "SignalTeardown", FakeTeardown)
+    monkeypatch.setattr(quickstart, "install_teardown_signal_handlers", lambda teardown: {})
+    monkeypatch.setattr(quickstart, "restore_signal_handlers", lambda handlers: None)
+    monkeypatch.setattr(quickstart, "StorageClient", FakeStorageClient)
+    monkeypatch.setattr(quickstart, "render_workflow", fake_render_workflow)
+    monkeypatch.setattr(quickstart.subprocess, "run", fake_run)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.delenv("NPA_S3_BUCKET", raising=False)
+
+    rc = quickstart.main(
+        [
+            "--run-id",
+            run_id,
+            "--credential-path",
+            str(credentials),
+            "--sky-bin",
+            str(sky_bin),
+            "--poll-interval",
+            "0",
+            "--source-ref",
+            "quickstart-test-branch",
+            "--teardown-poll-interval",
+            "0",
+            "--output-json",
+        ]
+    )
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    render = captured["render"]
+    assert render["bucket"] == "quickstart-bucket"
+    assert render["s3_prefix"] == f"experiments/sim-to-real/{run_id}"
+    assert render["gpu"] == "H100:1"
+    assert render["gpu_failover"] == ""
+    assert render["train_steps"] == 20
+    assert render["train_step_budget"] == 20
+    assert render["max_training_iterations"] == 1
+    assert render["eval_episodes"] == 1
+    assert render["task_cloud"] == "nebius"
+    assert captured["launch_cmd"][:6] == [
+        str(sky_bin),
+        "launch",
+        "--cluster",
+        quickstart.run_tag(run_id),
+        "--name",
+        quickstart.run_tag(run_id),
+    ]
+    assert "--secret" in captured["launch_cmd"]
+    assert "AWS_ACCESS_KEY_ID" in captured["launch_cmd"]
+    assert "AWS_SECRET_ACCESS_KEY" in captured["launch_cmd"]
+    assert captured["submitted_yaml"][0]["name"] == quickstart.run_tag(run_id)
+    assert "workdir" not in captured["submitted_yaml"][0]
+    assert captured["submitted_yaml"][0]["envs"]["NPA_SIM_TO_REAL_RUN_ID"] == run_id
+    assert captured["submitted_yaml"][0]["envs"]["NPA_SOURCE_REPO"] == quickstart.DEFAULT_SOURCE_REPO
+    assert captured["submitted_yaml"][0]["envs"]["NPA_SOURCE_REF"] == "quickstart-test-branch"
+    assert FakeTeardown.instances[0].marked == [None]
+    assert FakeTeardown.instances[0].teardown_calls == 1
+    assert output["metric"]["value"] == 0.5
+    assert output["artifacts"]["checkpoint"] == f"s3://quickstart-bucket/experiments/sim-to-real/{run_id}/checkpoints/policy/"
+    assert output["teardown"]["cluster_absent"] is True
+
+
+def test_quickstart_splits_bucket_uri_prefix() -> None:
+    quickstart = _load_quickstart_module()
+
+    assert quickstart._split_bucket_and_prefix("s3://bucket/path/to/runs/") == ("bucket", "path/to/runs")
+    assert quickstart._split_bucket_and_prefix("bucket/path") == ("bucket", "path")
+    assert quickstart._join_s3_prefix("path/to/runs", "sim-to-real/run") == "path/to/runs/sim-to-real/run"
 
 
 def test_sdk_module_exposes_local_smoke(tmp_path: Path) -> None:

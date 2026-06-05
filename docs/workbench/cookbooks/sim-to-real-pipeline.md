@@ -12,6 +12,30 @@ copy is:
 s3://$NPA_S3_BUCKET/datasets/lerobot-pusht/
 ```
 
+## One-Command H100 Quickstart
+
+For the shortest live proof run, use the quickstart wrapper from the repository
+root:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_sim_to_real_quickstart.py
+```
+
+That command is a thin wrapper over this cookbook's CLI/YAML path. It renders
+`npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml`, submits it through
+SkyPilot on `H100:1`, runs `npa.workflows.sim_to_real real-loop`, prints the
+task-success score plus checkpoint/report/Rerun S3 URIs, and tears down the
+run-scoped cluster with `sky down` plus a status poll.
+
+Expected timing is split by cache state. Warm runs target about 5-6 minutes for
+the small proof configuration. Cold runs can take longer because they include
+H100 provisioning, source checkout, Python/runtime bootstrap, dependency
+installation, and dataset staging. The command prints the measured wall-clock
+for each invocation.
+
+See [../sim-to-real-quickstart.md](../sim-to-real-quickstart.md) for the exact
+output format and zero-flag credential resolution.
+
 ## Prerequisites
 
 ```bash
@@ -97,8 +121,9 @@ managed-Kubernetes path, currently in `us-central1`, scheduled by node labels an
 
 ## CLI Wrapper Path
 
-The CLI wrapper renders the same YAML, fills the same envs, submits it through
-the NPA SkyPilot helper, and then polls the managed job:
+The full CLI wrapper renders the same YAML, fills the same envs, submits it
+through the NPA SkyPilot helper, and then polls the managed job. Use it when you
+want explicit control over every pipeline knob:
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
@@ -119,6 +144,12 @@ npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py \
   --controller-backend nebius \
   --cleanup
 ```
+
+The quickstart wrapper above uses the same path with smaller defaults:
+`--train-steps 20`, `--train-step-budget 20`, `--max-training-iterations 1`,
+`--eval-episodes 1`, `--task-cloud nebius`, and `--gpu H100:1`. It launches
+the rendered YAML directly with a run-scoped SkyPilot cluster name so teardown
+can poll that exact cluster.
 
 ## SDK Path
 
