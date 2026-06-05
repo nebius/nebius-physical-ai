@@ -6,6 +6,7 @@ The scanner intentionally reports only locations, never matched text.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -20,6 +21,57 @@ class ScanHit:
 
     source: str
     line_number: int
+
+
+@dataclass(frozen=True)
+class DenylistPattern:
+    """Operator-provided denylist regex plus its redacted source name."""
+
+    pattern: str
+    source: str
+
+
+def default_pattern_file(pattern_env: str) -> Path:
+    """Return the local operator-private fallback path for a denylist env name."""
+
+    file_name = pattern_env.lower().replace("_", "-")
+    return Path("~/.config/npa").expanduser() / f"{file_name}.regex"
+
+
+def load_denylist_pattern(
+    pattern_env: str,
+    *,
+    pattern_file: Path | None = None,
+    environ: Mapping[str, str] = os.environ,
+) -> DenylistPattern:
+    """Load a denylist regex from an env var or an operator-private file."""
+
+    env_pattern = environ.get(pattern_env)
+    if env_pattern and env_pattern.strip():
+        return DenylistPattern(pattern=env_pattern, source=pattern_env)
+
+    pattern_file_env = f"{pattern_env}_FILE"
+    configured_file = environ.get(pattern_file_env)
+    if configured_file:
+        source_path = Path(configured_file).expanduser()
+        source_name = f"{pattern_file_env}:{source_path}"
+    elif pattern_file:
+        source_path = pattern_file.expanduser()
+        source_name = f"--pattern-file:{source_path}"
+    else:
+        source_path = default_pattern_file(pattern_env)
+        source_name = f"default-file:{source_path}"
+
+    if source_path.is_file():
+        return DenylistPattern(
+            pattern=source_path.read_text(encoding="utf-8"),
+            source=source_name,
+        )
+
+    raise ValueError(
+        f"{pattern_env} is empty and no denylist file was found at {source_path} "
+        f"(or via {pattern_file_env})"
+    )
 
 
 def compile_denylist(
@@ -98,6 +150,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Environment variable containing the denylist regex.",
     )
     parser.add_argument(
+        "--pattern-file",
+        type=Path,
+        help=(
+            "Operator-private file containing the denylist regex. If omitted, "
+            "the scanner checks ${PATTERN_ENV}_FILE, then "
+            "~/.config/npa/<lowercase-pattern-env>.regex."
+        ),
+    )
+    parser.add_argument(
         "--ignore-case",
         action="store_true",
         help="Match denylist regexes case-insensitively.",
@@ -105,13 +166,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        source_pattern = load_denylist_pattern(
+            args.pattern_env,
+            pattern_file=args.pattern_file,
+        )
         denylist = compile_denylist(
-            os.environ.get(args.pattern_env, ""),
-            source=args.pattern_env,
+            source_pattern.pattern,
+            source=source_pattern.source,
             ignore_case=args.ignore_case,
         )
     except ValueError as exc:
         print(f"confidentiality scan not configured: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"confidentiality scan source cannot be read: {exc}", file=sys.stderr)
         return 2
     except re.error as exc:
         print(f"confidentiality scan regex is invalid: {exc}", file=sys.stderr)

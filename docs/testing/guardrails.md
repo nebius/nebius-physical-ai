@@ -2,10 +2,14 @@
 
 This repository has additive no-GPU guardrails for PRs:
 
-- `confidentiality scan`: scans the PR diff and tracked tree with regexes sourced from the `CUSTOMER_DENYLIST` and `INFRA_DENYLIST` GitHub Actions secrets. The workflow prints only redacted file locations.
+- `confidentiality scan`: scans the PR diff and tracked tree with regexes sourced from the required `CUSTOMER_DENYLIST` GitHub Actions secret and, when configured, the supplemental `INFRA_DENYLIST` secret. Local operator runs may provide the same regexes through `${PATTERN_ENV}_FILE` or `~/.config/npa/<lowercase-pattern-env>.regex`. The workflow prints only redacted file locations and fails closed when the required customer source is absent.
 - `harness guardrails`: runs static three-tier workbench contracts, pytest collection protection, GPU-skip lint, and SkyPilot teardown lint.
 
 Recommended branch-protection policy is an admin decision. The confidentiality scan and harness guardrails are designed to be merge-blocking checks; the local registry check is informational until it can run from an environment with registry reachability.
+
+Operator-private denylist files must stay outside the repository. For example,
+`CUSTOMER_DENYLIST` falls back to `~/.config/npa/customer-denylist.regex` for
+local scans when the environment variable is not set.
 
 ## Local Registry Image Check
 
