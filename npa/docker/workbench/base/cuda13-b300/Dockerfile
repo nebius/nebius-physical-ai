@@ -10,18 +10,19 @@ ARG TORCHVISION_VERSION=0.24.0
 ARG TORCHAUDIO_VERSION=2.9.0
 ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
 
-LABEL npa.image="cuda13-b300" \
+LABEL npa.image="cuda13-blackwell-sm120" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
       npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};torch_cuda_arch_list=10.3"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION}+cu130;flash_attn_4_commit=${FLASH_ATTN_COMMIT};torch_cuda_arch_list=8.0;9.0;12.0"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TORCH_CUDA_ARCH_LIST=10.3 \
+    TORCH_CUDA_ARCH_LIST="8.0;9.0;12.0" \
+    CUDAARCHS="80;90;120" \
     CUDA_HOME=/usr/local/cuda \
     HF_HOME=/opt/npa/hf_cache \
     HF_HUB_CACHE=/opt/npa/hf_cache/hub \
