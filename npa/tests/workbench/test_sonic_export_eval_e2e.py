@@ -23,7 +23,7 @@ BLUEPRINT = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sonic-export-eval.yaml"
 )
 DEFAULT_IMAGE = "docker:python:3.11-slim"
-DEFAULT_GPU = "H100:1"
+DEFAULT_GPU = "L40S:1"
 DEFAULT_CLOUD = "nebius"
 DEFAULT_TIMEOUT_SECONDS = 5400
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")

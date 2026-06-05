@@ -4,8 +4,8 @@ execution: serial
 ---
 name: sonic-eval-onnx
 resources:
-  cloud: kubernetes
-  accelerators: H100:1
+  cloud: nebius
+  accelerators: L40S:1
   cpus: 8
   memory: 32
   # Replace <your-registry-id> and <npa-image-tag> with an image that includes
@@ -24,6 +24,13 @@ envs:
   SONIC_EVAL_CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
   SONIC_EVAL_CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
   SONIC_EVAL_CONTAINER_OUTPUT_PATH: "/npa/eval/output/sonic_eval_results.json"
+  SONIC_EVAL_CONTAINER_GPUS: "all"
+  SONIC_EVAL_CONTAINER_DRIVER_CAPABILITIES: "all"
+  SONIC_EVAL_CONTAINER_VULKAN_ICD: "/etc/vulkan/icd.d/nvidia_icd.json"
+  SONIC_EVAL_CONTAINER_GLX_VENDOR: "nvidia"
+  SONIC_EVAL_CONTAINER_DEVICES: "/dev/dri/card0,/dev/dri/renderD128"
+  SONIC_EVAL_CONTAINER_RENDER_FRAMES: "8"
+  SONIC_EVAL_CONTAINER_ARGS: "eval"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
@@ -91,10 +98,31 @@ run: |
     cmd+=(
       --container-image "${SONIC_EVAL_CONTAINER_IMAGE}"
       --container-runtime "${SONIC_EVAL_CONTAINER_RUNTIME}"
+      --container-gpus "${SONIC_EVAL_CONTAINER_GPUS}"
+      --container-driver-capabilities "${SONIC_EVAL_CONTAINER_DRIVER_CAPABILITIES}"
+      --container-vulkan-icd "${SONIC_EVAL_CONTAINER_VULKAN_ICD}"
+      --container-glx-vendor "${SONIC_EVAL_CONTAINER_GLX_VENDOR}"
+      --container-render-frames "${SONIC_EVAL_CONTAINER_RENDER_FRAMES}"
       --container-policy-path "${SONIC_EVAL_CONTAINER_POLICY_PATH}"
       --container-metadata-path "${SONIC_EVAL_CONTAINER_METADATA_PATH}"
       --container-output-path "${SONIC_EVAL_CONTAINER_OUTPUT_PATH}"
     )
+    if [ -n "${SONIC_EVAL_CONTAINER_DEVICES}" ]; then
+      IFS=',' read -r -a npa_sonic_eval_devices <<< "${SONIC_EVAL_CONTAINER_DEVICES}"
+      for device in "${npa_sonic_eval_devices[@]}"; do
+        if [ -n "${device}" ]; then
+          cmd+=(--container-device "${device}")
+        fi
+      done
+    fi
+    if [ -n "${SONIC_EVAL_CONTAINER_ARGS}" ]; then
+      read -r -a npa_sonic_eval_args <<< "${SONIC_EVAL_CONTAINER_ARGS}"
+      for arg in "${npa_sonic_eval_args[@]}"; do
+        if [ -n "${arg}" ]; then
+          cmd+=(--container-arg "${arg}")
+        fi
+      done
+    fi
   fi
 
   printf 'SONIC_EVAL_COMMAND'

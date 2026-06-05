@@ -1,15 +1,14 @@
-# Export a trained SONIC locomotion checkpoint to ONNX, then run reference eval.
+# Export a trained SONIC locomotion checkpoint to ONNX, then run eval.
 name: sonic-export-eval
 execution: serial
 ---
 name: sonic-export-eval
 resources:
-  cloud: kubernetes
-  accelerators: H100:1
+  cloud: nebius
+  accelerators: L40S:1
   cpus: 8
   memory: 32
-  # Default GPU is H100:1. If capacity requires it, update both this field and
-  # GPU below to H200:1 or RTXPRO6000:1 before submission.
+  # Default GPU is L40S:1. Keep GPU below in sync with this accelerator.
   # Replace <your-registry-id> and <sonic-image-tag> with the SONIC image tag.
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-sonic:<sonic-image-tag>"
 envs:
@@ -27,8 +26,15 @@ envs:
   CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
   CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
   CONTAINER_OUTPUT_PATH: "/npa/eval/output/sonic_eval_results.json"
+  CONTAINER_GPUS: "all"
+  CONTAINER_DRIVER_CAPABILITIES: "all"
+  CONTAINER_VULKAN_ICD: "/etc/vulkan/icd.d/nvidia_icd.json"
+  CONTAINER_GLX_VENDOR: "nvidia"
+  CONTAINER_DEVICES: "/dev/dri/card0,/dev/dri/renderD128"
+  CONTAINER_RENDER_FRAMES: "8"
+  CONTAINER_ARGS: "eval"
   # Keep this informational knob in sync with resources.accelerators.
-  GPU: "H100:1"
+  GPU: "L40S:1"
   # Optional export inputs when checkpoint metadata is incomplete.
   SONIC_CONFIG: ""
   SONIC_OBS_SPEC: ""
@@ -154,10 +160,31 @@ run: |
     eval_cmd+=(
       --container-image "${CONTAINER_IMAGE}"
       --container-runtime "${CONTAINER_RUNTIME}"
+      --container-gpus "${CONTAINER_GPUS}"
+      --container-driver-capabilities "${CONTAINER_DRIVER_CAPABILITIES}"
+      --container-vulkan-icd "${CONTAINER_VULKAN_ICD}"
+      --container-glx-vendor "${CONTAINER_GLX_VENDOR}"
+      --container-render-frames "${CONTAINER_RENDER_FRAMES}"
       --container-policy-path "${CONTAINER_POLICY_PATH}"
       --container-metadata-path "${CONTAINER_METADATA_PATH}"
       --container-output-path "${CONTAINER_OUTPUT_PATH}"
     )
+    if [ -n "${CONTAINER_DEVICES}" ]; then
+      IFS=',' read -r -a npa_sonic_eval_devices <<< "${CONTAINER_DEVICES}"
+      for device in "${npa_sonic_eval_devices[@]}"; do
+        if [ -n "${device}" ]; then
+          eval_cmd+=(--container-device "${device}")
+        fi
+      done
+    fi
+    if [ -n "${CONTAINER_ARGS}" ]; then
+      read -r -a npa_sonic_eval_args <<< "${CONTAINER_ARGS}"
+      for arg in "${npa_sonic_eval_args[@]}"; do
+        if [ -n "${arg}" ]; then
+          eval_cmd+=(--container-arg "${arg}")
+        fi
+      done
+    fi
   fi
 
   printf 'SONIC_EVAL_COMMAND'

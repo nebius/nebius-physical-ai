@@ -7,6 +7,7 @@ from npa.cli.workbench.sonic.helpers import (
     InputType,
     OutputFormat,
     ServeMode,
+    SONIC_VERSION,
     WorkbenchRuntime,
     enum_value,
     output,
@@ -72,7 +73,8 @@ def serve_cmd(
         "output_path": output_path,
         "container_command": (
             f"docker run --rm --gpus all -e SONIC_MODE=serve -e SONIC_INPUT_TYPE={input_value} "
-            f"-p {zmq_port}:{zmq_port} -p {realtime_debug_port}:{realtime_debug_port} npa-sonic:0.1.0"
+            f"-p {zmq_port}:{zmq_port} -p {realtime_debug_port}:{realtime_debug_port} "
+            f"npa-sonic:{SONIC_VERSION}"
         ),
     }
     output(payload, output_format)

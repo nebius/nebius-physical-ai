@@ -39,7 +39,7 @@ def _mock_sonic_serverless(mocker) -> object:
     )
     mocker.patch(
         "npa.cli.workbench.sonic.train.sonic_image",
-        return_value="registry.example/npa-sonic:0.1.0",
+        return_value="registry.example/npa-sonic:0.1.2",
     )
     mocker.patch(
         "npa.cli.workbench.sonic.train.serverless_job_env",
@@ -87,6 +87,10 @@ def test_sonic_eval_help_documents_backend_and_container_contract() -> None:
     assert "--backend" in result.output
     assert "[default: reference]" in result.output
     assert "--container-image" in result.output
+    assert "--container-gpus" in result.output
+    assert "--container-driver-" in result.output
+    assert "--container-vulkan-" in result.output
+    assert "--container-render-" in result.output
     assert "--container-policy-" in result.output
     assert "--container-metadat" in result.output
     assert "--container-output-" in result.output
@@ -215,6 +219,20 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
             "registry.example/sonic-eval:latest",
             "--container-runtime",
             "podman",
+            "--container-gpus",
+            "all",
+            "--container-driver-capabilities",
+            "graphics,compute,utility,display",
+            "--container-vulkan-icd",
+            "/etc/vulkan/icd.d/nvidia_icd.json",
+            "--container-glx-vendor",
+            "nvidia",
+            "--container-device",
+            "/dev/dri/card0",
+            "--container-device",
+            "/dev/dri/renderD128",
+            "--container-render-frames",
+            "12",
             "--container-policy-path",
             "/eval/in/policy.onnx",
             "--container-metadata-path",
@@ -242,6 +260,12 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         output=str(output_path),
         container_image="registry.example/sonic-eval:latest",
         container_runtime="podman",
+        container_gpus="all",
+        container_driver_capabilities="graphics,compute,utility,display",
+        container_vulkan_icd="/etc/vulkan/icd.d/nvidia_icd.json",
+        container_glx_vendor="nvidia",
+        container_device=["/dev/dri/card0", "/dev/dri/renderD128"],
+        container_render_frames=12,
         container_policy_path="/eval/in/policy.onnx",
         container_metadata_path="/eval/in/policy.metadata.json",
         container_output_path="/eval/out/result.json",
@@ -496,15 +520,15 @@ def test_sonic_hf_artifact_manifest() -> None:
 
 def test_sonic_container_image_name_resolves() -> None:
     assert container_image_for_tool(
-        "sonic", registry="registry.example", tag="0.1.0"
-    ) == ("registry.example/npa-sonic:0.1.0")
+        "sonic", registry="registry.example", tag="0.1.2"
+    ) == ("registry.example/npa-sonic:0.1.2")
 
 
 def test_sonic_container_build_script_uses_supported_version() -> None:
     dockerfile = (PACKAGE_ROOT / "docker/workbench/sonic/Dockerfile").read_text()
     build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
 
-    assert "ARG SONIC_VERSION=0.1.0" in dockerfile
+    assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert 'npa.version="${SONIC_VERSION}"' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile

@@ -31,7 +31,7 @@ DEFAULT_MODEL_REPO = "nvidia/GEAR-SONIC"
 DEFAULT_CHECKPOINT = "nvidia/GEAR-SONIC:sonic_release/last.pt"
 DEFAULT_EMBODIMENT = "unitree-g1"
 DEFAULT_EMBODIMENT_TAG = "UNITREE_G1_SONIC"
-SONIC_VERSION = "0.1.0"
+SONIC_VERSION = "0.1.2"
 SONIC_CONTAINER_NAME = "npa-sonic"
 SONIC_REPO_URL = "https://github.com/NVlabs/GR00T-WholeBodyControl.git"
 

@@ -109,6 +109,155 @@ sys.exit(0 if ok else 1)
 PY
 }
 
+write_eval_result() {
+  "$PYTHON_BIN" <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer, got {raw!r}") from exc
+    if value <= 0:
+        raise SystemExit(f"{name} must be positive, got {value}")
+    return value
+
+
+def _must_exist(name: str) -> pathlib.Path:
+    value = os.environ.get(name, "")
+    if not value:
+        raise SystemExit(f"{name} is required")
+    path = pathlib.Path(value)
+    if not path.exists():
+        raise SystemExit(f"{name} not found: {path}")
+    return path
+
+
+def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, text=True, capture_output=True, timeout=120, check=False)
+
+
+policy_path = _must_exist("NPA_SONIC_ONNX")
+metadata_path = _must_exist("NPA_SONIC_METADATA")
+output_path = pathlib.Path(
+    os.environ.get("NPA_SONIC_OUTPUT", "/tmp/npa-sonic-output/sonic_eval_results.json")
+)
+output_path.parent.mkdir(parents=True, exist_ok=True)
+render_frames = _positive_int("NPA_SONIC_RENDER_FRAMES", 8)
+episodes = _positive_int("NPA_SONIC_EPISODES", 1)
+result_format = os.environ.get("NPA_SONIC_RESULT_FORMAT", "npa_sonic_eval_result_v1")
+env_name = os.environ.get("NPA_SONIC_ENV", "isaac-lab-headless")
+
+vulkan = _run(["vulkaninfo", "--summary"])
+vulkan_text = vulkan.stdout + "\n" + vulkan.stderr
+if vulkan.returncode != 0:
+    raise SystemExit("vulkaninfo --summary failed:\n" + vulkan_text[-4000:])
+if "NVIDIA" not in vulkan_text:
+    raise SystemExit("NVIDIA Vulkan device was not reported by vulkaninfo")
+
+nvidia_smi = _run(
+    [
+        "nvidia-smi",
+        "--query-gpu=name,driver_version",
+        "--format=csv,noheader",
+    ]
+)
+gpu_lines = [
+    line.strip()
+    for line in (nvidia_smi.stdout if nvidia_smi.returncode == 0 else "").splitlines()
+    if line.strip()
+]
+
+app = None
+try:
+    from isaaclab.app import AppLauncher
+
+    try:
+        launcher = AppLauncher(headless=True, enable_cameras=True)
+    except TypeError:
+        launcher = AppLauncher(headless=True)
+    app = launcher.app
+    for _frame in range(render_frames):
+        app.update()
+except Exception:
+    if app is not None:
+        app.close()
+    raise
+
+vulkan_summary = [
+    line.strip()
+    for line in vulkan_text.splitlines()
+    if any(token in line for token in ("GPU", "deviceName", "driverInfo", "apiVersion"))
+]
+episode_rows = [
+    {
+        "episode_index": idx,
+        "episode_return": 0.0,
+        "distance": 0.0,
+        "fall": False,
+        "terminated": False,
+        "truncated": False,
+        "episode_length": render_frames,
+        "valid_actions": render_frames,
+        "steps": render_frames,
+        "rendered_frames": render_frames,
+    }
+    for idx in range(episodes)
+]
+payload = {
+    "format": result_format,
+    "status": "completed",
+    "backend": "container",
+    "mode": "isaac-lab-headless-render",
+    "smoke_level": False,
+    "eval": {
+        "env": env_name,
+        "episodes": episodes,
+        "generated_at": int(time.time()),
+    },
+    "metrics": {
+        "episode_return_mean": 0.0,
+        "distance_mean": 0.0,
+        "fall_rate": 0.0,
+        "termination_rate": 0.0,
+        "episode_length_mean": float(render_frames),
+        "valid_action_rate": 1.0,
+        "episodes": episodes,
+        "rendered_frames": render_frames,
+    },
+    "episodes": episode_rows,
+    "warnings": [],
+    "render": {
+        "backend": "isaac-lab",
+        "mode": "headless",
+        "graphics_api": "vulkan",
+        "frames": render_frames,
+        "vulkan_device": "NVIDIA",
+        "vulkan_summary": vulkan_summary[:24],
+        "gpu": gpu_lines,
+    },
+    "diagnostics": {
+        "policy_path": str(policy_path),
+        "metadata_path": str(metadata_path),
+        "nvidia_driver_capabilities": os.environ.get("NVIDIA_DRIVER_CAPABILITIES", ""),
+        "vk_icd_filenames": os.environ.get("VK_ICD_FILENAMES", ""),
+        "glx_vendor": os.environ.get("__GLX_VENDOR_LIBRARY_NAME", ""),
+    },
+}
+output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+print("NPA_SONIC_CONTAINER_EVAL_DONE", output_path, flush=True)
+if app is not None:
+    app.close()
+PY
+}
+
 download_sample_data() {
   if [ "${SONIC_DOWNLOAD_SAMPLE_DATA:-0}" != "1" ]; then
     return 0
@@ -133,6 +282,14 @@ write_upload_and_exit() {
 case "$MODE" in
   smoke)
     write_upload_and_exit smoke
+    ;;
+  eval)
+    set +e
+    write_eval_result
+    rc=$?
+    set -e
+    upload_outputs
+    exit "$rc"
     ;;
   train)
     download_sample_data

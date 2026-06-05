@@ -101,9 +101,12 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert sonic_eval_docs[0] == {"name": "sonic-eval", "execution": "serial"}
     assert sonic_eval_docs[1]["name"] == "sonic-eval-onnx"
     assert "npa workbench sonic eval" in sonic_eval_docs[1]["run"]
-    assert sonic_eval_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sonic_eval_docs[1]["resources"]["cloud"] == "nebius"
+    assert sonic_eval_docs[1]["resources"]["accelerators"] == "L40S:1"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPUS"] == "all"
+    assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_ARGS"] == "eval"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_OUTPUT_PATH"].endswith(
         "sonic_eval_results.json"
     )
@@ -117,8 +120,8 @@ def test_sonic_export_eval_blueprint_chains_real_cli_commands() -> None:
 
     task = docs[1]
     assert task["name"] == "sonic-export-eval"
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert task["resources"]["accelerators"] == "H100:1"
+    assert task["resources"]["cloud"] == "nebius"
+    assert task["resources"]["accelerators"] == "L40S:1"
 
     envs = task["envs"]
     assert envs["POLICY_CKPT"].startswith("s3://")
@@ -127,13 +130,16 @@ def test_sonic_export_eval_blueprint_chains_real_cli_commands() -> None:
     assert envs["EVAL_ENV"] == "sonic-locomotion-smoke"
     assert envs["EPISODES"] == "8"
     assert envs["CONTAINER_IMAGE"] == ""
-    assert envs["GPU"] == "H100:1"
+    assert envs["CONTAINER_GPUS"] == "all"
+    assert envs["CONTAINER_ARGS"] == "eval"
+    assert envs["GPU"] == "L40S:1"
 
     run = task["run"]
     assert "npa workbench sonic export" in run
     assert "npa workbench sonic eval" in run
     assert "NPA_SONIC_E2E_METRICS_JSON_BEGIN" in run
     assert "--container-image" in run
+    assert "--container-driver-capabilities" in run
 
 
 def test_sonic_locomotion_assets_do_not_add_python_runner() -> None:
