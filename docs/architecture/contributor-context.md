@@ -29,8 +29,9 @@ nebius-physical-ai/
 │   └── demos/                    # Demo runbooks and assets
 ├── npa/workflows/workbench/skypilot/        # Reference pipeline YAMLs
 ├── npa/scripts/                  # Pipeline runner scripts
-├── .agents/skills/               # Codex agent skill files (per tool + infrastructure)
-├── .claude/skills/               # Claude Code agent skill files
+├── skills/                       # Root agent skills manifest and workflow/atomic/tool skills
+├── .agents/skills                # Compatibility symlink to ../skills
+├── .claude/skills                # Compatibility symlink to ../skills
 ├── AGENTS.md                     # Codex root index
 ├── CLAUDE.md                     # Claude Code root index
 └── SECURITY.md
@@ -70,7 +71,7 @@ A new tool follows the established pattern exactly. Use an existing tool (e.g. `
 4. Create `npa/docker/workbench/<tool>/Dockerfile`
 5. Register in `npa/src/npa/workbench/__init__.py`, `npa/src/npa/cli/workbench/__init__.py`, `npa/src/npa/sdk/workbench/__init__.py`
 6. Add tests in `npa/tests/workbench/test_<tool>.py` and `npa/tests/cli/test_<tool>_cli.py`
-7. Add an agent skill file at `.agents/skills/workbench/<tool>/SKILL.md`
+7. Add an agent skill file under `skills/tools/<tool>/SKILL.md` and register it in `skills/index.yaml`
 
 The tool must expose at minimum: `/health`, `/status`, `/system-info`, `/list`.
 
@@ -116,7 +117,7 @@ Expected passing baseline before any PR: **1242+ passed, 0 failures** (excluding
 - One logical change per commit — don't mix tool additions with infrastructure changes
 - PRs must pass the full non-e2e test suite before review
 - New tools: include a brief description of the tool's role and a link to upstream docs in the PR description
-- Agent skill files (`.agents/skills/workbench/<tool>/SKILL.md`) are required for new tools — reviewers will ask for them if missing
+- Agent skill files (`skills/tools/<tool>/SKILL.md`) and `skills/index.yaml` entries are required for new tools — reviewers will ask for them if missing
 
 ## Design partner and customer context
 
@@ -127,10 +128,12 @@ The workbench is being co-developed with robotics and AV design partners. Key pa
 
 ## Agent skill files
 
-The `.agents/skills/` and `.claude/skills/` directories contain structured knowledge that AI agents (Codex, Claude Code) read when working on this repo. When you add a new tool or workflow:
+The root `skills/` tree contains structured knowledge that AI agents (Codex, Claude Code) read when working on this repo. The `.agents/skills` and `.claude/skills` paths are compatibility symlinks to the root tree. When you add a new tool or workflow:
 
-- Add `.agents/skills/workbench/<tool>/SKILL.md` — covers API contract, GPU routing, known issues, integration patterns
-- Add to `.claude/skills/platform/architecture/SKILL.md` if the tool changes the platform architecture
+- Add `skills/tools/<tool>/SKILL.md` for tool-specific API contract, GPU routing, known issues, and integration patterns.
+- Add `skills/workflows/<workflow>/SKILL.md` for workflow-level procedures.
+- Update `skills/atomic/architecture/SKILL.md` if the tool changes the platform architecture.
+- Register the skill in `skills/index.yaml` with a runnable smoke expectation.
 
 These files are documentation for agents, not for humans. Write them as instructions, not prose.
 

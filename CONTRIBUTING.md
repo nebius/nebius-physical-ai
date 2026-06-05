@@ -13,14 +13,14 @@ It is about the tool layer:
 It does not define platform orchestration internals, the agentic layer, or new
 cross-tool composition systems. Those are separate layers. The current repo
 architecture is indexed in `docs/architecture/contributor-context.md` and
-`.claude/skills/platform/architecture/SKILL.md`.
+`skills/atomic/architecture/SKILL.md`.
 
 The strongest full-tool reference is LeRobot:
 
 - `npa/src/npa/cli/workbench/lerobot.py`
 - `npa/src/npa/workbench/lerobot/__init__.py`
 - `npa/docker/workbench/lerobot/Dockerfile`
-- `.agents/skills/workbench/lerobot/SKILL.md`
+- `skills/tools/lerobot/SKILL.md`
 - `npa/tests/cli/test_lerobot_cli.py`
 
 The cleanest service, CLI, and compatibility SDK reference is detection
@@ -71,7 +71,7 @@ flowchart LR
 
 For new tools, keep the container as the deployment unit and the service
 endpoint as the invocation unit. The Workbench tool pattern is documented in
-`.agents/skills/workbench/workbench-tool/SKILL.md`.
+`skills/tools/workbench-tool/SKILL.md`.
 ## Required Interfaces
 Every new Workbench tool needs a coherent HTTP, CLI, and Python-callable
 surface. The exact workload verbs are tool-specific, but the management verbs
@@ -257,7 +257,7 @@ Examples are detection training deploy in
 `npa/src/npa/cli/workbench/detection_training.py`, LanceDB deploy in
 `npa/src/npa/cli/workbench/lancedb/deploy.py`, and FiftyOne Kubernetes deploy in
 `npa/src/npa/cli/fiftyone/__init__.py`. Use the `workbench` namespace for
-deployed services, as documented in `.agents/skills/platform/nebius-infra/SKILL.md`.
+deployed services, as documented in `skills/tools/nebius-infra/SKILL.md`.
 ### Serverless
 Serverless Jobs and Endpoints are the target for batch and serving workloads
 when the tool can run without hard host assumptions.
@@ -386,7 +386,7 @@ Current verified routing:
   H100 or RTX6000 and intentionally exclude L40S in
   `npa/src/npa/cli/fiftyone/__init__.py`.
 - LanceDB CLIP backfill routes to H100 in the BDD100K workflow and
-  `.agents/skills/workbench/lancedb/SKILL.md`.
+  `skills/tools/lancedb/SKILL.md`.
 - B300 support is not a general default. `npa/docker/workbench/tags.yaml`,
   `docs/security/image-reproducibility.md`, and `docs/b300-validation-matrix.md`
   show B300 as validated for the base image and LeRobot ACT smoke training, with
@@ -501,7 +501,7 @@ smoke tests must skip unless their environment variable is set. See
 `docs/testing/smoke-tests.md`.
 
 The current expected non-e2e baseline from
-`.agents/skills/platform/testing-conventions/SKILL.md` is:
+`skills/atomic/testing-conventions/SKILL.md` is:
 
 ```text
 1242+ passed, 21 skipped, 1 xpassed, 0 failures
@@ -523,9 +523,9 @@ Use `npa/src/npa/cli/workbench/lerobot.py` for a rich CLI reference,
 service, and `npa/src/npa/sdk/workbench/detection_training.py` for compatibility
 SDK request handling.
 
-Add an agent skill under `.agents/skills/workbench/`; examples are
-`.agents/skills/workbench/lerobot/SKILL.md`, `.agents/skills/workbench/fiftyone/SKILL.md`, and
-`.agents/skills/workbench/isaac-lab/SKILL.md`. Update `.claude/skills/platform/architecture/SKILL.md`
+Add an agent skill under `skills/tools/`; examples are
+`skills/tools/lerobot/SKILL.md`, `skills/tools/fiftyone/SKILL.md`, and
+`skills/tools/isaac-lab/SKILL.md`. Update `skills/atomic/architecture/SKILL.md`
 only when the platform architecture changes.
 ## Documentation Requirements
 A new tool needs human docs and agent docs.
@@ -548,11 +548,11 @@ worked implementation instead.
 ## Agent Skill Files
 Agent skill files are instructions for coding agents, not marketing docs.
 
-Existing examples are `.agents/skills/workbench/lerobot/SKILL.md`,
-`.agents/skills/workbench/fiftyone/SKILL.md`, `.agents/skills/workbench/genesis/SKILL.md`,
-`.agents/skills/workbench/isaac-lab/SKILL.md`, `.agents/skills/workbench/cosmos/SKILL.md`,
-`.agents/skills/workbench/lancedb/SKILL.md`, `.agents/skills/workbench/groot/SKILL.md`, and
-`.agents/skills/workbench/sonic/SKILL.md`.
+Existing examples are `skills/tools/lerobot/SKILL.md`,
+`skills/tools/fiftyone/SKILL.md`, `skills/tools/genesis/SKILL.md`,
+`skills/tools/isaac-lab/SKILL.md`, `skills/tools/cosmos/SKILL.md`,
+`skills/tools/lancedb/SKILL.md`, `skills/tools/groot/SKILL.md`, and
+`skills/tools/sonic/SKILL.md`.
 
 The skill should include when to use it, the tool role, CLI and API contract,
 input and output data contract, GPU routing, runtime modes, known issues,
@@ -587,7 +587,7 @@ runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
 When 3 or more commits land from an agent run, trigger the Claude Code review
-pattern described in `.agents/skills/platform/super-prompt-patterns/SKILL.md`. A
+pattern described in `skills/atomic/super-prompt-patterns/SKILL.md`. A
 two-commit documentation run does not trigger that review rule.
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke
@@ -607,7 +607,7 @@ For known operational failure modes, read
 `docs/workbench/troubleshooting/known-footguns.md`.
 For the main full-tool reference, read `npa/src/npa/cli/workbench/lerobot.py`,
 `npa/src/npa/workbench/lerobot/__init__.py`, `npa/docker/workbench/lerobot/Dockerfile`,
-and `.agents/skills/workbench/lerobot/SKILL.md`.
+and `skills/tools/lerobot/SKILL.md`.
 
 For the clean HTTP service, CLI, and SDK pattern, read
 `npa/src/npa/workbench/detection_training/service.py`,
@@ -621,7 +621,7 @@ For workflow composition, read `docs/workbench-yaml-guide.md`,
 `npa/tests/workflows/test_bdd100k_pipeline.py`, and
 `npa/tests/workflows/test_isaac_lab_rl.py`. For deeper rationale, read
 `docs/architecture/contributor-context.md` and
-`.claude/skills/platform/architecture/SKILL.md`.
+`skills/atomic/architecture/SKILL.md`.
 ## Known Deviations
 The repo is in active development. These are real current divergences, not new
 patterns to copy.
@@ -676,7 +676,7 @@ Committed examples may use either a full `NPA_REGISTRY` prefix or a
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in
-`.claude/skills/platform/architecture/SKILL.md` or `docs/architecture/contributor-context.md`.
+`skills/atomic/architecture/SKILL.md` or `docs/architecture/contributor-context.md`.
 
 Use it to understand implementation mechanics. Use LeRobot or FiftyOne for
 validated Workbench tool shape.

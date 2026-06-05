@@ -2,16 +2,29 @@
 
 Nebius Physical AI is the workbench and workflow layer for running robotics, simulation, perception, and synthetic-data workloads on Nebius infrastructure. The repo centers on the `npa` CLI/SDK, containerized workbench tools, and SkyPilot workflows that compose those tools through S3 artifacts. The current product shape is a tool marketplace that customers can adapt without hardcoding project-specific infrastructure.
 
-Claude Code should treat this file as an index. Load the relevant skill before making architecture, review, or domain judgments.
+Claude Code should treat this file as a lightweight index. Scan
+`skills/index.yaml` first, then load the relevant root `skills/` entry before
+making architecture, review, or domain judgments.
 
-## Claude Skills
+## Skill Index
 
-- `.claude/skills/platform/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
-- `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews and risk classification.
-- `.claude/skills/workbench/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
-- `.claude/skills/workbench/mjlab/SKILL.md`: load for MJLab locomotion evaluation and SONIC checkpoint scoring.
-- `.claude/skills/workbench/retargeting/SKILL.md`: load for motion retargeting in SONIC locomotion workflows.
-- `.agents/skills/workbench/sim-to-real/SKILL.md`: load for generic sim-to-real data import, Cosmos autoscale, VLM evaluation, and controller-loop workflow planning.
+- `skills/index.yaml`: root manifest with name, when-to-use, path, and CI smoke
+  expectations.
+- `skills/atomic/architecture/SKILL.md`: platform architecture and validation
+  state.
+- `skills/atomic/review-checklist/SKILL.md`: review risk classification.
+- `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
+  GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K
+  context.
+- `skills/tools/mjlab/SKILL.md`: MJLab locomotion evaluation and SONIC checkpoint
+  scoring.
+- `skills/tools/retargeting/SKILL.md`: motion retargeting in SONIC locomotion
+  workflows.
+- `skills/workflows/sim-to-real/SKILL.md`: generic sim-to-real workflow
+  planning.
+
+Compatibility symlinks exist at `.claude/skills` and `.agents/skills`; do not
+create a new split skill tree.
 
 ## Project Instructions
 
