@@ -49,10 +49,11 @@ jobs:
           run_scan() {
             local pattern_env="$1"
             local label="$2"
-            shift 2
+            local required="$3"
+            shift 3
 
-            if [ -z "${!pattern_env:-}" ]; then
-              echo "::warning::${label} confidentiality scan is not configured; populate the ${pattern_env} secret to enable denylist enforcement"
+            if [ "${required}" != "true" ] && [ -z "${!pattern_env:-}" ]; then
+              echo "::warning::${label} confidentiality scan is not configured; populate the ${pattern_env} secret to enable supplemental denylist enforcement"
               return 0
             fi
 
@@ -60,5 +61,5 @@ jobs:
             npa/.venv/bin/python -m npa.guardrails.confidentiality "${args[@]}" --pattern-env "${pattern_env}" "$@"
           }
 
-          run_scan CUSTOMER_DENYLIST customer
-          run_scan INFRA_DENYLIST operator-private --ignore-case
+          run_scan CUSTOMER_DENYLIST customer true
+          run_scan INFRA_DENYLIST operator-private false --ignore-case

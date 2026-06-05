@@ -7,6 +7,8 @@ import pytest
 
 from npa.guardrails.confidentiality import (
     compile_denylist,
+    load_denylist_pattern,
+    main,
     scan_paths,
     scan_text,
     tracked_text_files,
@@ -64,3 +66,53 @@ def test_confidentiality_matcher_names_empty_pattern_source() -> None:
 def test_confidentiality_matcher_surfaces_invalid_regex() -> None:
     with pytest.raises(re.error):
         compile_denylist("[")
+
+
+def test_denylist_loader_prefers_env_pattern_over_file(tmp_path) -> None:
+    pattern_file = tmp_path / "customer.regex"
+    pattern_file.write_text("file-only-pattern\n", encoding="utf-8")
+
+    loaded = load_denylist_pattern(
+        "CUSTOMER_DENYLIST",
+        pattern_file=pattern_file,
+        environ={"CUSTOMER_DENYLIST": "env-only-pattern"},
+    )
+
+    assert loaded.pattern == "env-only-pattern"
+    assert loaded.source == "CUSTOMER_DENYLIST"
+
+
+def test_denylist_loader_reads_configured_file_env(tmp_path) -> None:
+    pattern_file = tmp_path / "customer.regex"
+    pattern_file.write_text("configured-file-pattern\n", encoding="utf-8")
+
+    loaded = load_denylist_pattern(
+        "CUSTOMER_DENYLIST",
+        environ={"CUSTOMER_DENYLIST_FILE": str(pattern_file)},
+    )
+
+    assert loaded.pattern == "configured-file-pattern\n"
+    assert loaded.source == f"CUSTOMER_DENYLIST_FILE:{pattern_file}"
+
+
+def test_denylist_loader_reads_explicit_pattern_file(tmp_path) -> None:
+    pattern_file = tmp_path / "customer.regex"
+    pattern_file.write_text("explicit-file-pattern\n", encoding="utf-8")
+
+    loaded = load_denylist_pattern("CUSTOMER_DENYLIST", pattern_file=pattern_file, environ={})
+
+    assert loaded.pattern == "explicit-file-pattern\n"
+    assert loaded.source == f"--pattern-file:{pattern_file}"
+
+
+def test_denylist_loader_fails_closed_when_source_missing(tmp_path) -> None:
+    missing_file = tmp_path / "missing.regex"
+
+    with pytest.raises(ValueError, match="CUSTOMER_DENYLIST is empty"):
+        load_denylist_pattern("CUSTOMER_DENYLIST", pattern_file=missing_file, environ={})
+
+
+def test_confidentiality_scan_cli_fails_closed_when_source_missing(tmp_path) -> None:
+    missing_file = tmp_path / "missing.regex"
+
+    assert main(["--repo-root", str(tmp_path), "--pattern-file", str(missing_file)]) == 2
