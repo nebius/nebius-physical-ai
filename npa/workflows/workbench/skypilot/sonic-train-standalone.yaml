@@ -1,7 +1,7 @@
 # Standalone SONIC training smoke workflow.
 #
 # Operator-provided parameters:
-# - POLICY_IMAGE: image containing the npa CLI and SONIC runtime. Use the
+# - POLICY_IMAGE: image containing the SONIC /entrypoint.sh runtime. Use the
 #   manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
 # - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
 # - S3_BUCKET: destination bucket name, without s3://.
@@ -10,11 +10,11 @@ execution: serial
 ---
 name: sonic-train-smoke
 resources:
-  cloud: kubernetes
+  cloud: nebius
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:${POLICY_IMAGE}"
+  image_id: "docker:example.invalid/npa-sonic:0.1.2"
 envs:
   POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
   SONIC_GPU_TYPE: "l40s"
@@ -29,16 +29,12 @@ envs:
   SONIC_NUM_ENVS: "16"
   SONIC_HEADLESS: "1"
   SONIC_MAX_ITERATIONS: "5"
-  SONIC_OUTPUT_PREFIX: "sonic-train/${NPA_PIPELINE_RUN_ID}/"
+  SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
 setup: |
   set -euo pipefail
-  PYTHON_BIN="${NPA_PYTHON_BIN:-$(command -v python3 || command -v python)}"
-  if ! command -v npa >/dev/null 2>&1; then
-    if [ -n "${NPA_REPO_DIR:-}" ] && [ -d "${NPA_REPO_DIR}/npa" ]; then
-      "${PYTHON_BIN}" -m pip install -e "${NPA_REPO_DIR}/npa"
-    elif [ -d "./npa" ]; then
-      "${PYTHON_BIN}" -m pip install -e ./npa
-    fi
+  if [ ! -x /entrypoint.sh ]; then
+    echo "The selected POLICY_IMAGE must provide the SONIC /entrypoint.sh runtime" >&2
+    exit 2
   fi
 run: |
   set -euo pipefail
@@ -54,28 +50,17 @@ run: |
   export AWS_ENDPOINT_URL="${S3_ENDPOINT_URL}"
   export NEBIUS_S3_ENDPOINT="${S3_ENDPOINT_URL}"
   output_path="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
+  export NPA_OUTPUT_PATH="${output_path}"
+  export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
+  export SONIC_CHECKPOINT="${SONIC_CHECKPOINT}"
+  export SONIC_DATA_PATH="${SONIC_DATA_PATH}"
+  export SONIC_SAMPLE_DATA="${SONIC_SAMPLE_DATA}"
+  export SONIC_EMBODIMENT="${SONIC_EMBODIMENT}"
+  export SONIC_NUM_ENVS="${SONIC_NUM_ENVS}"
+  export SONIC_HEADLESS="${SONIC_HEADLESS}"
+  export SONIC_MAX_ITERATIONS="${SONIC_MAX_ITERATIONS}"
 
-  sample_args=()
-  if [ "${SONIC_SAMPLE_DATA}" = "1" ]; then
-    sample_args+=(--sample-data)
-  fi
+  printf 'SONIC_WORKFLOW_IMAGE policy_image=%s gpu_type=%s image_variant=%s\n' \
+    "${POLICY_IMAGE}" "${SONIC_GPU_TYPE}" "${SONIC_IMAGE_VARIANT}"
 
-  headless_arg="--headless"
-  if [ "${SONIC_HEADLESS}" = "0" ]; then
-    headless_arg="--no-headless"
-  fi
-
-  npa workbench sonic train \
-    --runtime serverless \
-    --checkpoint "${SONIC_CHECKPOINT}" \
-    --data-path "${SONIC_DATA_PATH}" \
-    "${sample_args[@]}" \
-    --embodiment "${SONIC_EMBODIMENT}" \
-    --num-envs "${SONIC_NUM_ENVS}" \
-    "${headless_arg}" \
-    --max-iterations "${SONIC_MAX_ITERATIONS}" \
-    --output-path "${output_path}" \
-    --gpu-type "${SONIC_GPU_TYPE}" \
-    --image-variant "${SONIC_IMAGE_VARIANT}" \
-    --image "${POLICY_IMAGE}" \
-    --output-format json
+  /entrypoint.sh train

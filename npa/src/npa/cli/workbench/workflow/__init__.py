@@ -79,6 +79,67 @@ def submit_cmd(
         "--var",
         help="Variable substitution as KEY=VALUE.",
     ),
+    tool: str = typer.Option(
+        "",
+        "--tool",
+        help="Workflow-specific materializer. Currently supported: sonic.",
+    ),
+    registry: str = typer.Option(
+        "",
+        "--registry",
+        help="Container registry used by workflow materializers.",
+    ),
+    image: str = typer.Option(
+        "",
+        "--image",
+        help="First-party tool image override used by workflow materializers.",
+    ),
+    npa_image: str = typer.Option(
+        "",
+        "--npa-image",
+        help="Generic NPA helper image override for multi-tool workflows.",
+    ),
+    gpu_target: str = typer.Option(
+        "",
+        "--gpu-target",
+        "--gpu-type",
+        help="GPU target used by workflow materializers.",
+    ),
+    image_variant: str = typer.Option(
+        "",
+        "--image-variant",
+        help="Manifest image variant used by workflow materializers.",
+    ),
+    accelerators: str = typer.Option(
+        "",
+        "--accelerators",
+        help="SkyPilot accelerator string for materialized GPU tasks.",
+    ),
+    cloud: str = typer.Option(
+        "",
+        "--cloud",
+        help="Cloud value for materialized GPU tasks.",
+    ),
+    s3_endpoint: str = typer.Option(
+        "",
+        "--s3-endpoint",
+        help="S3-compatible endpoint materialized into workflow envs.",
+    ),
+    s3_bucket: str = typer.Option(
+        "",
+        "--s3-bucket",
+        help="S3 bucket name materialized into workflow envs.",
+    ),
+    s3_prefix: str = typer.Option(
+        "",
+        "--s3-prefix",
+        help="S3 object prefix materialized into workflow envs.",
+    ),
+    secret_env: list[str] = typer.Option(
+        [],
+        "--secret-env",
+        help="Environment variable name to pass to SkyPilot as a secret.",
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text,
         "--output-format",
@@ -94,13 +155,54 @@ def submit_cmd(
     substitutions = _parse_submit_vars(var)
     submitted_yaml_path = yaml_path
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
-    if substitutions:
+    materializer = _resolve_materializer(tool, yaml_path)
+    if substitutions or materializer:
         submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
         submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
 
     try:
+        source_yaml_path = yaml_path
         if substitutions:
             substituted = _substitute_workflow_vars(yaml_path, substitutions)
+            source_yaml_path = Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
+            source_yaml_path.write_text(substituted, encoding="utf-8")
+
+        if materializer == "sonic":
+            from npa.workbench.sonic.workflow import (
+                materialize_sonic_workflow,
+                unresolved_submit_placeholders,
+            )
+
+            try:
+                plan = materialize_sonic_workflow(
+                    source_yaml_path,
+                    run_id=run_id or _default_submit_run_id(yaml_path),
+                    registry=registry,
+                    image=image,
+                    npa_image=npa_image,
+                    gpu_target=gpu_target,
+                    image_variant=image_variant,
+                    s3_endpoint=s3_endpoint,
+                    s3_bucket=s3_bucket,
+                    s3_prefix=s3_prefix,
+                    accelerators=accelerators,
+                    cloud=cloud,
+                    env_overrides=substitutions,
+                )
+            except ValueError as exc:
+                _fail(str(exc))
+                return
+            unresolved = unresolved_submit_placeholders(plan.yaml_text)
+            if unresolved:
+                _fail(
+                    "SONIC workflow still has unresolved submit placeholders: "
+                    + ", ".join(unresolved)
+                )
+                return
+            submitted_yaml_path.write_text(plan.yaml_text, encoding="utf-8")
+            _warn_unresolved_placeholders(plan.yaml_text)
+        elif substitutions:
+            substituted = source_yaml_path.read_text(encoding="utf-8")
             _warn_unresolved_placeholders(substituted)
             submitted_yaml_path.write_text(substituted, encoding="utf-8")
         else:
@@ -113,6 +215,7 @@ def submit_cmd(
             config_path=config_path,
             sky_bin=sky_bin or None,
             controller_backend=controller_backend.value,
+            secret_envs=secret_env,
             timeout=submit_timeout,
         )
     except OSError as exc:
@@ -149,6 +252,15 @@ def _parse_submit_vars(var: list[str]) -> dict[str, str]:
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
+
+
+def _resolve_materializer(tool: str, yaml_path: Path) -> str:
+    requested = tool.strip().lower()
+    if requested in {"", "auto"}:
+        return "sonic" if "sonic" in yaml_path.name.lower() else ""
+    if requested != "sonic":
+        _fail(f"Unsupported workflow materializer: {tool}")
+    return requested
 
 
 def _substitute_workflow_vars(yaml_path: Path, substitutions: dict[str, str]) -> str:

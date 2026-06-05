@@ -50,6 +50,38 @@ SkyPilot YAMLs expose the same selectors through env vars such as
 `SONIC_EVAL_CONTAINER_GPU_TARGET`, and
 `SONIC_EVAL_CONTAINER_IMAGE_VARIANT`.
 
+For standard workflow submission, the same selector is available on the generic
+workflow command. The submitted YAML is materialized with literal env values
+before SkyPilot sees it:
+
+```bash
+npa workbench workflow submit \
+  npa/workflows/workbench/skypilot/sonic-train-standalone.yaml \
+  --registry "${NPA_REGISTRY}" \
+  --gpu-target l40s \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket <bucket> \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+SDK users call the same materializer:
+
+```python
+from pathlib import Path
+from npa.sdk.workbench import sonic
+
+sonic.submit_workflow(
+    Path("npa/workflows/workbench/skypilot/sonic-train-standalone.yaml"),
+    run_id="sonic-smoke",
+    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    gpu_target="gpu-rtx6000",
+    s3_endpoint="https://storage.eu-north1.nebius.cloud",
+    s3_bucket="<bucket>",
+    secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+)
+```
+
 ## Build Commands
 
 Baked L40S variant:
