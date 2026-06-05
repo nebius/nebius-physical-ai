@@ -39,13 +39,20 @@ The SkyPilot blueprint is
 
 ## One Command
 
-Edit the `envs` block in the YAML for your checkpoint, output prefix, registry,
-and image tag, then submit it:
+Submit through the generic workflow command. The SONIC materializer fills the
+first-party image and S3 endpoint as literal YAML values before SkyPilot sees
+the workflow:
 
 ```bash
 npa workbench workflow submit \
   npa/workflows/workbench/skypilot/sonic-export-eval.yaml \
-  --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ)
+  --run-id sonic-export-eval-$(date -u +%Y%m%dT%H%M%SZ) \
+  --registry "${NPA_REGISTRY}" \
+  --gpu-target l40s \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket <bucket> \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 The default run requests `L40S:1` and uses the reference backend:
@@ -57,6 +64,9 @@ EVAL_BACKEND: reference
 EVAL_ENV: sonic-locomotion-smoke
 EPISODES: "8"
 ```
+
+Use `--var POLICY_CKPT=s3://...` and `--var OUTPUT_DIR=s3://...` when you want
+to override the checkpoint or output prefix without editing a copy of the YAML.
 
 ## Inputs
 

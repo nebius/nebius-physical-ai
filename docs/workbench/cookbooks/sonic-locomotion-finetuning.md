@@ -12,8 +12,12 @@ The workflow composes three Workbench stages:
 3. Evaluate the resulting checkpoint with MJLab metrics through
    `npa workbench mjlab eval`.
 
-The workflow logic is in YAML. There is no Python runner script for this path;
-submit the checked-in YAML directly through the generic SkyPilot submit command.
+The workflow logic is in YAML. There is no Python runner script for this path.
+The same YAML can be used three ways:
+
+- raw SkyPilot, after editing the YAML literals yourself;
+- SDK submission through `npa.sdk.workbench.sonic.submit_workflow`;
+- CLI submission through `npa workbench workflow submit`.
 
 ## Required Inputs
 
@@ -22,10 +26,11 @@ Prepare these S3 prefixes before submission:
 - Source motions: `s3://<your-bucket-name>/motions/source/`
 - Per-run output root: `s3://<your-bucket-name>/sonic-locomotion/<run-id>/`
 
-The committed YAML uses explicit placeholders because SkyPilot 0.12.2 does not
-expand same-block environment variables inside `envs`. Replace
-`<your-bucket-name>`, `<run-id>`, `<your-registry-id>`, and image tags before a
-live run.
+SkyPilot 0.12.2 does not expand same-block environment variables inside `envs`.
+For raw `sky` runs, replace `<your-bucket-name>`, `<run-id>`,
+`<your-registry-id>`, and image tags with literal values before launch. For CLI
+or SDK submission, pass the values to the SONIC materializer and it writes the
+literal YAML before calling SkyPilot.
 
 ## Tool Templates
 
@@ -42,9 +47,31 @@ Those commands point to:
 - `npa/workflows/workbench/skypilot/retargeting.yaml`
 - `npa/workflows/workbench/skypilot/mjlab-eval.yaml`
 
-## Full Submission
+## Raw SkyPilot
 
-Bootstrap the pinned SkyPilot environment, then submit the YAML:
+Copy the YAML, edit literals, then run it directly with SkyPilot:
+
+```bash
+cp npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml /tmp/sonic.yaml
+# Edit /tmp/sonic.yaml so image_id, AWS_ENDPOINT_URL, and all s3:// prefixes
+# contain concrete values. Do not leave ${VAR} in envs or image_id fields.
+sky jobs launch \
+  --name sonic-locomotion-<run-id> \
+  --secret AWS_ACCESS_KEY_ID \
+  --secret AWS_SECRET_ACCESS_KEY \
+  --yes \
+  /tmp/sonic.yaml
+```
+
+The `sonic-finetune` stage uses the first-party SONIC image. The retargeting and
+MJLab stages require a generic helper image that contains the `npa` CLI and this
+repository's Workbench package.
+
+## CLI Submission
+
+Bootstrap the pinned SkyPilot environment, then submit the YAML. The SONIC
+materializer resolves the first-party SONIC image from the manifest and fills
+literal S3 values before SkyPilot sees the YAML:
 
 ```bash
 npa skypilot bootstrap
@@ -52,7 +79,15 @@ export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 
 npa workbench workflow submit \
   npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
-  --run-id sonic-locomotion-<run-id>
+  --run-id sonic-locomotion-<run-id> \
+  --registry cr.eu-north1.nebius.cloud/<registry-id> \
+  --npa-image cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag> \
+  --gpu-target l40s \
+  --s3-endpoint https://storage.eu-north1.nebius.cloud \
+  --s3-bucket <bucket> \
+  --s3-prefix sonic-locomotion/<run-id> \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 Use the Kubernetes controller backend unless you explicitly need the Nebius VM
@@ -63,6 +98,50 @@ npa workbench workflow submit \
   npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml \
   --run-id sonic-locomotion-<run-id> \
   --controller-backend kubernetes
+```
+
+For RTX PRO 6000 Kubernetes targets, use:
+
+```bash
+--gpu-target gpu-rtx6000 \
+--accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+```
+
+This resolves the SONIC stage to `npa-sonic:0.1.2-k8s`. L40S resolves to
+`npa-sonic:0.1.2`.
+
+For Kubernetes targets that pull private images, pass a SkyPilot config with the
+namespace's registry pull secret:
+
+```yaml
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: <registry-pull-secret>
+```
+
+Use that file with `--config-path`. Only add `serviceAccountName` when the
+service account has the Kubernetes node and pod discovery permissions required
+by SkyPilot.
+
+## SDK Submission
+
+```python
+from pathlib import Path
+from npa.sdk.workbench import sonic
+
+sonic.submit_workflow(
+    Path("npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"),
+    run_id="sonic-locomotion-run",
+    registry="cr.eu-north1.nebius.cloud/<registry-id>",
+    npa_image="cr.eu-north1.nebius.cloud/<registry-id>/npa:<tag>",
+    gpu_target="l40s",
+    s3_endpoint="https://storage.eu-north1.nebius.cloud",
+    s3_bucket="<bucket>",
+    s3_prefix="sonic-locomotion/sonic-locomotion-run",
+    secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+)
 ```
 
 ## Stage Contract
