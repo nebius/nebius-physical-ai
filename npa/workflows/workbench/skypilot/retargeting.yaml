@@ -7,10 +7,11 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
-  # the npa CLI and this repository's Workbench package.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+  # NPA_WORKBENCH_IMAGE is BYO-overridable. The default is a pushed first-party
+  # image that installs the npa CLI and this repository's Workbench package.
+  image_id: "docker:${NPA_WORKBENCH_IMAGE}"
 envs:
+  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
   INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
   RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SOURCE_FORMAT: "mocap-json"

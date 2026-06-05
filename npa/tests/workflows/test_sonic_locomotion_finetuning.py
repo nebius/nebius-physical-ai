@@ -6,6 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
+EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -65,12 +66,15 @@ def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_ima
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>",
+        "image_id": "docker:${NPA_WORKBENCH_IMAGE}",
     }
+    assert retarget["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "L40S:1"
     assert eval_task["resources"]["cloud"] == "kubernetes"
     assert eval_task["resources"]["accelerators"] == "H100:1"
+    assert eval_task["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert eval_task["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
     assert train["resources"]["image_id"].endswith("/npa-sonic:<sonic-image-tag>")
     assert train["envs"]["SONIC_GPU_TYPE"] == "l40s"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
@@ -86,11 +90,15 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert retarget_docs[1]["name"] == "retarget-motion"
     assert "npa workbench retargeting run" in retarget_docs[1]["run"]
     assert "accelerators" not in retarget_docs[1]["resources"]
+    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert retarget_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
 
     assert mjlab_docs[0] == {"name": "mjlab-eval", "execution": "serial"}
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
     assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
     assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert mjlab_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert mjlab_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
 
     assert sonic_export_docs[0] == {"name": "sonic-export", "execution": "serial"}
     assert sonic_export_docs[1]["name"] == "sonic-export-onnx"
@@ -108,6 +116,8 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert "npa workbench sonic eval" in sonic_eval_docs[1]["run"]
     assert sonic_eval_docs[1]["resources"]["cloud"] == "nebius"
     assert sonic_eval_docs[1]["resources"]["accelerators"] == "L40S:1"
+    assert sonic_eval_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert sonic_eval_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPUS"] == "all"

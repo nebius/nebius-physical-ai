@@ -22,10 +22,12 @@ Prepare these S3 prefixes before submission:
 - Source motions: `s3://<your-bucket-name>/motions/source/`
 - Per-run output root: `s3://<your-bucket-name>/sonic-locomotion/<run-id>/`
 
-The committed YAML uses explicit placeholders because SkyPilot 0.12.2 does not
-expand same-block environment variables inside `envs`. Replace
-`<your-bucket-name>`, `<run-id>`, `<your-registry-id>`, and image tags before a
-live run.
+The committed YAML keeps bucket and run placeholders for operator input.
+Retargeting and MJLab use `NPA_WORKBENCH_IMAGE`, which defaults to the pushed
+first-party Workbench image
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`. Override that
+variable, or pass `npa workbench retargeting workflow --image ...` and
+`npa workbench mjlab workflow --image ...`, when you need a BYO Workbench image.
 
 ## Tool Templates
 

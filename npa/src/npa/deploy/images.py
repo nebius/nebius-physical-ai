@@ -9,7 +9,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONTAINER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
+DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
+DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
+DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
@@ -21,6 +24,8 @@ CONTAINER_IMAGE_NAMES = {
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
+    "lancedb": "npa-lancedb",
+    "detection-training": "npa-detection-training",
 }
 
 
@@ -125,6 +130,24 @@ def container_image_for_tool(
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or os.environ.get("NPA_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
+
+
+def default_vlm_image(*, registry: str | None = None) -> str:
+    """Return the default self-hosted VLM workflow image, honoring BYO override."""
+
+    override = os.environ.get(DEFAULT_VLM_IMAGE_ENV, "").strip()
+    if override:
+        return override
+    return container_image_for_tool("cosmos", registry=registry)
+
+
+def default_workbench_image(*, registry: str | None = None) -> str:
+    """Return the default generic Workbench workflow image, honoring BYO override."""
+
+    override = os.environ.get(DEFAULT_WORKBENCH_IMAGE_ENV, "").strip()
+    if override:
+        return override
+    return container_image_for_tool("genesis", registry=registry)
 
 
 def _default_sonic_image() -> dict[str, Any]:

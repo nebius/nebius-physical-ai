@@ -5,6 +5,11 @@ The machine-readable source of truth is
 manifest to resolve first-party SONIC image tags for CLI, SDK, and workflow
 paths.
 
+This manifest is SONIC-scoped. Other Workbench images resolve through
+`npa/src/npa/deploy/images.py` and `[tool.npa.supported-tools]` in
+`npa/pyproject.toml`; do not add non-SONIC tools to this manifest unless the
+catalog is intentionally expanded to all Workbench solutions.
+
 SONIC uses two image variants. They differ only in how NVIDIA graphics and
 driver-coupled userspace are provided.
 
@@ -49,6 +54,19 @@ SkyPilot YAMLs expose the same selectors through env vars such as
 `SONIC_GPU_TYPE`, `SONIC_GPU_TARGET`, `SONIC_IMAGE_VARIANT`,
 `SONIC_EVAL_CONTAINER_GPU_TARGET`, and
 `SONIC_EVAL_CONTAINER_IMAGE_VARIANT`.
+
+## Related BYO Images
+
+The VLM eval workflows use `NPA_VLM_IMAGE` for the serving image. The committed
+default is `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9`,
+a pushed CUDA/PyTorch Workbench image; set `NPA_VLM_IMAGE` to a prebuilt VLM or
+vLLM image when you need pinned serving dependencies.
+
+The retargeting and MJLab workflows use `NPA_WORKBENCH_IMAGE` for the generic
+Workbench CLI image. The committed default is
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`, a pushed
+image that installs this repository's `npa` package. Override it for BYO
+registries or custom Workbench images.
 
 ## Build Commands
 

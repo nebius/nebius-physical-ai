@@ -1856,4 +1856,4 @@ def test_groot_system_info_prints_ssh_output(mocker) -> None:
 
 
 def test_groot_release_constant_documented() -> None:
-    assert GROOT_RELEASE == "n1.7"
+    assert GROOT_RELEASE == "0.1.0"

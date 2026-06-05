@@ -20,8 +20,11 @@ persistent service, not a batch Job.
 Build:
 
 ```bash
-docker build -f npa/docker/workbench/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
+npa/docker/workbench/lancedb/build.sh
 ```
+
+The pushed first-party default is
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2`.
 
 Deploy:
 
@@ -32,7 +35,7 @@ npa workbench lancedb deploy \
   --port 8686 \
   --auth-mode none \
   --replace \
-  --image npa-lancedb:0.30.2
+  --image cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2
 ```
 
 Check status:

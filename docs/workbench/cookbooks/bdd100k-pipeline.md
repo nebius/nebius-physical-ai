@@ -66,12 +66,13 @@ configured S3 credentials to list and read this prefix.
 
 ## Images
 
-The YAML uses placeholder image tags because SkyPilot 0.12.2 does not expand
-same-block environment variables inside `image_id`. Replace them before live
-submission:
+The committed YAML pins the first-party LanceDB and detection-training images:
 
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>`
-- `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-detection-training:<detection-training-image-tag>`
+- `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2`
+- `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z`
+
+The optional final FiftyOne app can still be replaced with a BYO registry image:
+
 - `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-fiftyone:<fiftyone-image-tag>`
 
 The final FiftyOne task exposes port `5151` through SkyPilot. The app does not add authentication; restrict the run inputs to datasets that are safe to show publicly and use `sky status --endpoint 5151 <cluster>` to resolve the public URL.
