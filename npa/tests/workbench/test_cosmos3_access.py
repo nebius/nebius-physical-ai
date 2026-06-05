@@ -291,6 +291,11 @@ def test_cosmos_workflow_env_builders_are_generic_and_attributed() -> None:
     assert augment["NPA_COSMOS_AUGMENT_CONTROL"] == "vis"
     assert augment["NPA_COSMOS_AUGMENT_VARIANTS"] == "2"
     assert augment["NPA_COSMOS_REPLICAS"] == "3"
+    assert (
+        augment["NPA_COSMOS2_TRANSFER_IMAGE"]
+        == "registry.example/npa-cosmos:3.0.0"
+    )
+    assert augment["NPA_COSMOS_TRANSFER_MODEL_ID"] == "nvidia/Cosmos-Transfer2.5-2B"
     assert augment["NPA_COSMOS_ATTRIBUTION"] == COSMOS_ATTRIBUTION
     assert reason["NPA_COSMOS_REASON_CHECKPOINT"] == "Cosmos3-Super"
     assert reason["NPA_COSMOS_REPLICAS"] == "2"
@@ -308,7 +313,13 @@ def test_cosmos_augment_and_reason_raw_yamls_are_standalone_and_safe() -> None:
         assert "image_id" not in doc["resources"]
         assert '"${docker_cmd[@]}" run --rm --gpus all' in text
         assert "docker pull" not in text
-        assert '"${docker_cmd[@]}" pull "${NPA_COSMOS_IMAGE}"' in text
+        if path == AUGMENT_YAML:
+            assert '"${docker_cmd[@]}" pull "${NPA_COSMOS2_TRANSFER_IMAGE}"' in text
+            assert doc["envs"]["NPA_COSMOS2_TRANSFER_IMAGE"].endswith(
+                "/npa-cosmos2-transfer:2.5.0"
+            )
+        else:
+            assert '"${docker_cmd[@]}" pull "${NPA_COSMOS_IMAGE}"' in text
         assert "npa workbench" not in doc["run"]
         assert "--no-guardrails" not in text
         assert "--endpoint-url" in text
@@ -366,7 +377,10 @@ def test_cosmos_sky_launch_materializes_yaml_and_uses_vm_docker(
     assert doc["resources"]["region"] == "eu-north1"
     assert doc["resources"]["accelerators"] == "RTXPRO:1"
     assert "image_id" not in doc["resources"]
-    assert doc["envs"]["NPA_COSMOS_IMAGE"] == "cr.example.invalid/npa-cosmos:3.0.0"
+    assert (
+        doc["envs"]["NPA_COSMOS2_TRANSFER_IMAGE"]
+        == "cr.example.invalid/npa-cosmos:3.0.0"
+    )
     assert all(
         "${" not in value
         for value in doc["envs"].values()

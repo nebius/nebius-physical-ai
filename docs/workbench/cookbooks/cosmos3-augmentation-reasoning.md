@@ -73,7 +73,7 @@ npa workbench cosmos augment \
   --model-size transfer2.5-2b \
   --variants 1 \
   --replicas 1 \
-  --image registry.example/npa-cosmos:3.0.0 \
+  --image registry.example/npa-cosmos2-transfer:2.5.0 \
   --s3-endpoint https://storage.example.invalid \
   --infra kubernetes \
   --accelerator "$NPA_COSMOS_GPU"
@@ -96,7 +96,7 @@ npa workbench cosmos reason \
   --criteria-prompt "Decide whether the robot completes the task safely." \
   --model-size nano \
   --replicas 1 \
-  --image registry.example/npa-cosmos:3.0.0 \
+  --image registry.example/npa-cosmos3-reason:3.0.0 \
   --s3-endpoint https://storage.example.invalid \
   --infra kubernetes \
   --accelerator "$NPA_COSMOS_GPU"
@@ -121,7 +121,7 @@ cosmos.augment(
     control="edge",
     variants=1,
     replicas=1,
-    image="registry.example/npa-cosmos:3.0.0",
+    image="registry.example/npa-cosmos2-transfer:2.5.0",
     s3_endpoint="https://storage.example.invalid",
     infra="kubernetes",
     accelerator="GPU_TYPE:1",
@@ -132,7 +132,7 @@ cosmos.reason(
     output_path="s3://example-bucket/cosmos/output/reason/",
     criteria_prompt="Decide whether the robot completes the task safely.",
     model_size="nano",
-    image="registry.example/npa-cosmos:3.0.0",
+    image="registry.example/npa-cosmos3-reason:3.0.0",
     s3_endpoint="https://storage.example.invalid",
     infra="kubernetes",
     accelerator="GPU_TYPE:1",
@@ -155,7 +155,7 @@ pass runtime values with `--env` and consume them in `run:`.
 
 ```bash
 sky launch --infra kubernetes --gpus "$NPA_COSMOS_GPU" \
-  --image-id docker:registry.example/npa-cosmos:3.0.0 \
+  --env NPA_COSMOS2_TRANSFER_IMAGE=registry.example/npa-cosmos2-transfer:2.5.0 \
   --env NPA_COSMOS_AUGMENT_SOURCE=s3://example-bucket/cosmos/input/sim-render.mp4 \
   --env NPA_COSMOS_AUGMENT_OUTPUT=s3://example-bucket/cosmos/output/augment/ \
   --env AWS_ENDPOINT_URL=https://storage.example.invalid \
@@ -163,7 +163,7 @@ sky launch --infra kubernetes --gpus "$NPA_COSMOS_GPU" \
   npa/workflows/workbench/skypilot/cosmos3-augment.yaml
 
 sky launch --infra kubernetes --gpus "$NPA_COSMOS_GPU" \
-  --image-id docker:registry.example/npa-cosmos:3.0.0 \
+  --env NPA_COSMOS_IMAGE=registry.example/npa-cosmos3-reason:3.0.0 \
   --env NPA_COSMOS_REASON_INPUT=s3://example-bucket/cosmos/input/rollout.mp4 \
   --env NPA_COSMOS_REASON_OUTPUT=s3://example-bucket/cosmos/output/reason/ \
   --env 'NPA_COSMOS_REASON_CRITERIA=Decide whether the robot completes the task safely.' \

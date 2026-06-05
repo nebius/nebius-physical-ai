@@ -34,7 +34,7 @@ def check_augment_dry_run() -> CheckResult:
             output_path="s3://example-bucket/output/augment/",
             prompt="preserve robot motion",
             control="edge",
-            image="registry.example/npa-cosmos:3.0.0",
+            image="registry.example/npa-cosmos2-transfer:2.5.0",
         )
         result = launch_cosmos_sky_workflow(
             yaml_path=COSMOS_AUGMENT_YAML,
@@ -44,7 +44,9 @@ def check_augment_dry_run() -> CheckResult:
         )
         if result.status != "dry_run" or "--gpus" not in result.command:
             return CheckResult("render augment dry-run", False, str(result.command))
-        return CheckResult("render augment dry-run", True, env["NPA_COSMOS_ATTRIBUTION"])
+        return CheckResult(
+            "render augment dry-run", True, env["NPA_COSMOS2_TRANSFER_IMAGE"]
+        )
     except Exception as exc:
         return CheckResult("render augment dry-run", False, _format_exception(exc))
 

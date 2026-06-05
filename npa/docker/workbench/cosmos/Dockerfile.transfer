@@ -1,0 +1,84 @@
+# Cosmos Transfer 2.5 runner image for raw SkyPilot augmentation workflows.
+#
+# This image is intentionally separate from the Cosmos3 reasoning runner so
+# npa-cosmos2-transfer tags cannot alias npa-cosmos3-reason manifests.
+ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+
+FROM ${BASE_IMAGE}
+
+ARG COSMOS_TRANSFER_IMAGE_VERSION=2.5.0
+ARG COSMOS_TRANSFER_SOURCE_REPO=https://github.com/nvidia-cosmos/cosmos-transfer2.5.git
+ARG COSMOS_TRANSFER_MODEL_ID=nvidia/Cosmos-Transfer2.5-2B
+ARG CUDA_NAME=cu128
+
+LABEL npa.tool="cosmos2-transfer" \
+      npa.version="${COSMOS_TRANSFER_IMAGE_VERSION}" \
+      npa.cosmos2.transfer_source="${COSMOS_TRANSFER_SOURCE_REPO}" \
+      npa.cosmos2.transfer_model="${COSMOS_TRANSFER_MODEL_ID}" \
+      npa.cosmos.attribution="Built on NVIDIA Cosmos"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    COSMOS_HOME=/workspace \
+    COSMOS_TRANSFER25_HOME=/workspace \
+    COSMOS_TRANSFER_MODEL_ID=${COSMOS_TRANSFER_MODEL_ID} \
+    COSMOS_DATA_HOME=/opt/cosmos-data \
+    COSMOS_HF_CACHE=/opt/cosmos-data/hf_cache \
+    COSMOS_OUTPUT_DIR=/opt/cosmos-data/outputs \
+    COSMOS_DISABLE_SAFETY=0 \
+    CUDA_NAME=${CUDA_NAME} \
+    HF_HOME=/opt/cosmos-data/hf_cache \
+    HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON=3.10 \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      curl \
+      ffmpeg \
+      git \
+      git-lfs \
+      libegl1 \
+      libgl1 \
+      libglib2.0-0 \
+      libglvnd0 \
+      libsm6 \
+      libx11-6 \
+      libx11-dev \
+      libxext6 \
+      libxrender1 \
+      python3 \
+      python3-dev \
+      python3-pip \
+      python3-venv \
+      tree \
+      wget \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.12 /uv /uvx /usr/local/bin/
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+      | bash -s -- --to /usr/local/bin --tag 1.42.4
+
+WORKDIR /workspace
+
+RUN git clone --depth 1 "${COSMOS_TRANSFER_SOURCE_REPO}" /workspace \
+    && git lfs install --local \
+    && python3 -m venv /opt/awscli-venv \
+    && /opt/awscli-venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/awscli-venv/bin/python -m pip install "awscli>=1.32" \
+    && ln -sf /opt/awscli-venv/bin/aws /usr/local/bin/aws \
+    && printf '3.10\n' > .python-version \
+    && uv python install 3.10 \
+    && uv sync --locked --python 3.10 --extra="${CUDA_NAME}" \
+    && .venv/bin/python -m py_compile \
+      examples/inference.py \
+      cosmos_transfer2/inference.py \
+      cosmos_transfer2/config.py
+
+ENV PATH=/workspace/.venv/bin:/usr/local/bin:$PATH
+
+ENTRYPOINT ["/bin/bash"]

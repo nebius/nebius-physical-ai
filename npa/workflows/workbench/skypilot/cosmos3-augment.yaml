@@ -2,7 +2,7 @@
 #
 # Run with plain SkyPilot, overriding the image, GPU, input, and output:
 #   sky launch --infra nebius --gpus <gpu-type>:1 \
-#     --env NPA_COSMOS_IMAGE=<registry>/npa-cosmos:<tag-or-digest> \
+#     --env NPA_COSMOS2_TRANSFER_IMAGE=<registry>/npa-cosmos2-transfer:<tag-or-digest> \
 #     --env NPA_COSMOS_AUGMENT_SOURCE=s3://example-bucket/input/sim.mp4 \
 #     --env NPA_COSMOS_AUGMENT_OUTPUT=s3://example-bucket/output/cosmos-augment/ \
 #     --secret HF_TOKEN \
@@ -17,7 +17,7 @@ resources:
   memory: 128+
   disk_size: 1024
 envs:
-  NPA_COSMOS_IMAGE: "example.invalid/npa-cosmos:3.0.0"
+  NPA_COSMOS2_TRANSFER_IMAGE: "example.invalid/npa-cosmos2-transfer:2.5.0"
   NPA_COSMOS_AUGMENT_SOURCE: "s3://example-bucket/cosmos/input/sim-render.mp4"
   NPA_COSMOS_AUGMENT_OUTPUT: "s3://example-bucket/cosmos/output/augment/"
   NPA_COSMOS_AUGMENT_PROMPT: "A photorealistic robotics workspace preserving the source motion and object layout."
@@ -28,6 +28,7 @@ envs:
   NPA_COSMOS_REPLICAS: "1"
   NPA_COSMOS_TRANSFER_SOURCE_REPO: "https://github.com/nvidia-cosmos/cosmos-transfer2.5.git"
   NPA_COSMOS_TRANSFER_MODEL_ID: "nvidia/Cosmos-Transfer2.5-2B"
+  NPA_COSMOS_TRANSFER_CUDA_EXTRA: "cu128"
   NPA_COSMOS_HF_TOKEN_ENV: "HF_TOKEN"
   NPA_COSMOS_CACHE: "/tmp/npa-cosmos-cache"
   NPA_COSMOS_OUTPUT_DIR: "/tmp/npa-cosmos-augment"
@@ -74,7 +75,7 @@ run: |
     docker_cmd=(sudo docker)
   fi
 
-  test -n "${NPA_COSMOS_IMAGE}"
+  test -n "${NPA_COSMOS2_TRANSFER_IMAGE}"
   test -n "${NPA_COSMOS_AUGMENT_SOURCE}"
   test -n "${NPA_COSMOS_AUGMENT_OUTPUT}"
   test -n "${NPA_COSMOS_AUGMENT_CONTROL}"
@@ -92,7 +93,7 @@ run: |
     printf '%s' "${SKYPILOT_DOCKER_PASSWORD}" | "${docker_cmd[@]}" login "${SKYPILOT_DOCKER_SERVER}" -u "${SKYPILOT_DOCKER_USERNAME}" --password-stdin
   fi
 
-  "${docker_cmd[@]}" pull "${NPA_COSMOS_IMAGE}"
+  "${docker_cmd[@]}" pull "${NPA_COSMOS2_TRANSFER_IMAGE}"
 
   job_dir="/tmp/npa-cosmos-augment-docker"
   rm -rf "${job_dir}"
@@ -112,11 +113,12 @@ run: |
   for key in \
     AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_ENDPOINT_URL AWS_PROFILE \
     HF_TOKEN HUGGING_FACE_HUB_TOKEN \
-    NPA_COSMOS_IMAGE NPA_COSMOS_AUGMENT_SOURCE NPA_COSMOS_AUGMENT_OUTPUT \
+    NPA_COSMOS2_TRANSFER_IMAGE NPA_COSMOS_AUGMENT_SOURCE NPA_COSMOS_AUGMENT_OUTPUT \
     NPA_COSMOS_AUGMENT_PROMPT NPA_COSMOS_AUGMENT_CONTROL \
     NPA_COSMOS_AUGMENT_CONTROL_CONFIG NPA_COSMOS_AUGMENT_MODEL_SIZE \
     NPA_COSMOS_AUGMENT_VARIANTS NPA_COSMOS_REPLICAS \
     NPA_COSMOS_TRANSFER_SOURCE_REPO NPA_COSMOS_TRANSFER_MODEL_ID \
+    NPA_COSMOS_TRANSFER_CUDA_EXTRA \
     NPA_COSMOS_HF_TOKEN_ENV NPA_COSMOS_CACHE NPA_COSMOS_OUTPUT_DIR \
     NPA_COSMOS_ATTRIBUTION; do
     write_env "${key}"
@@ -125,11 +127,11 @@ run: |
   cat > "${job_dir}/run-container.sh" <<'NPA_COSMOS_CONTAINER'
   #!/usr/bin/env bash
   set -euo pipefail
-  export PATH="/opt/cosmos/bin:${HOME}/.local/bin:${PATH}"
+  export PATH="${COSMOS_TRANSFER25_HOME:-/workspace}/.venv/bin:/usr/local/bin:${HOME}/.local/bin:${PATH}"
   export HF_HOME="${NPA_COSMOS_CACHE}/hf"
   export HUGGINGFACE_HUB_CACHE="${NPA_COSMOS_CACHE}/hf"
 
-  test -n "${NPA_COSMOS_IMAGE}"
+  test -n "${NPA_COSMOS2_TRANSFER_IMAGE}"
   test -n "${NPA_COSMOS_AUGMENT_SOURCE}"
   test -n "${NPA_COSMOS_AUGMENT_OUTPUT}"
   test -n "${NPA_COSMOS_AUGMENT_CONTROL}"
@@ -152,16 +154,19 @@ run: |
   rm -rf "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
   mkdir -p "${NPA_COSMOS_CACHE}" "${NPA_COSMOS_OUTPUT_DIR}"
 
-  transfer_dir="${COSMOS_TRANSFER25_HOME:-/opt/cosmos/cosmos-transfer2.5}"
+  transfer_dir="${COSMOS_TRANSFER25_HOME:-/workspace}"
   if [ "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" != "https://github.com/nvidia-cosmos/cosmos-transfer2.5.git" ] || [ ! -d "${transfer_dir}/examples" ]; then
     transfer_dir="${NPA_COSMOS_CACHE}/transfer25"
     git clone --depth 1 "${NPA_COSMOS_TRANSFER_SOURCE_REPO}" "${transfer_dir}"
+    cd "${transfer_dir}"
+    printf '3.10\n' > .python-version
+    uv sync --locked --python 3.10 --extra="${NPA_COSMOS_TRANSFER_CUDA_EXTRA:-cu128}"
+  else
+    cd "${transfer_dir}"
   fi
-  cd "${transfer_dir}"
   if command -v git-lfs >/dev/null 2>&1; then
     git lfs install --local
   fi
-  uv sync --extra=cu130
   export LD_LIBRARY_PATH=
 
   input_dir="${NPA_COSMOS_OUTPUT_DIR}/inputs"
@@ -313,4 +318,4 @@ run: |
   "${docker_cmd[@]}" run --rm --gpus all --ipc=host --network host \
     --env-file "${env_file}" \
     -v "${job_dir}:${job_dir}:ro" \
-    "${NPA_COSMOS_IMAGE}" -lc "bash ${job_dir}/run-container.sh"
+    "${NPA_COSMOS2_TRANSFER_IMAGE}" -lc "bash ${job_dir}/run-container.sh"

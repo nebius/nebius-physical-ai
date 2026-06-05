@@ -20,6 +20,7 @@ DEFAULT_COSMOS3_SOURCE_REPO = "https://github.com/NVIDIA/cosmos-framework.git"
 DEFAULT_TRANSFER25_MODEL_ID = "nvidia/Cosmos-Transfer2.5-2B"
 DEFAULT_TRANSFER25_SOURCE_REPO = "https://github.com/nvidia-cosmos/cosmos-transfer2.5.git"
 DEFAULT_COSMOS_IMAGE = "example.invalid/npa-cosmos:3.0.0"
+DEFAULT_COSMOS2_TRANSFER_IMAGE = "example.invalid/npa-cosmos2-transfer:2.5.0"
 DEFAULT_S3_ENDPOINT = ""
 COSMOS_ATTRIBUTION = "Built on NVIDIA Cosmos"
 SKYPILOT_DOCKER_LOGIN_ENV = {
@@ -125,7 +126,7 @@ def build_cosmos_augment_env(
     if replicas < 1:
         raise ValueError("replicas must be >= 1")
     return {
-        "NPA_COSMOS_IMAGE": image or DEFAULT_COSMOS_IMAGE,
+        "NPA_COSMOS2_TRANSFER_IMAGE": image or DEFAULT_COSMOS2_TRANSFER_IMAGE,
         "NPA_COSMOS_AUGMENT_SOURCE": source,
         "NPA_COSMOS_AUGMENT_OUTPUT": output_path,
         "NPA_COSMOS_AUGMENT_PROMPT": prompt,
@@ -136,6 +137,7 @@ def build_cosmos_augment_env(
         "NPA_COSMOS_REPLICAS": str(replicas),
         "NPA_COSMOS_TRANSFER_SOURCE_REPO": source_repo_url,
         "NPA_COSMOS_TRANSFER_MODEL_ID": hf_model_id,
+        "NPA_COSMOS_TRANSFER_CUDA_EXTRA": "cu128",
         "NPA_COSMOS_HF_TOKEN_ENV": hf_token_env,
         "AWS_ENDPOINT_URL": s3_endpoint,
         "AWS_PROFILE": aws_profile,

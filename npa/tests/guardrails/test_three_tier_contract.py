@@ -32,7 +32,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             ParameterContract("model_size", "model_size", "NPA_COSMOS_AUGMENT_MODEL_SIZE", "--model-size"),
             ParameterContract("variants", "variants", "NPA_COSMOS_AUGMENT_VARIANTS", "--variants"),
             ParameterContract("replicas", "replicas", "NPA_COSMOS_REPLICAS", "--replicas"),
-            ParameterContract("image", "image", "NPA_COSMOS_IMAGE", "--image"),
+            ParameterContract("image", "image", "NPA_COSMOS2_TRANSFER_IMAGE", "--image"),
             ParameterContract("s3_endpoint", "s3_endpoint", "AWS_ENDPOINT_URL", "--s3-endpoint"),
         ),
     ),

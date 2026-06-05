@@ -140,7 +140,10 @@ def test_cosmos_augment_cli_dry_run_maps_flags_to_sky_env() -> None:
     assert payload["env"]["NPA_COSMOS_AUGMENT_CONTROL"] == "vis"
     assert payload["env"]["NPA_COSMOS_AUGMENT_VARIANTS"] == "2"
     assert payload["env"]["NPA_COSMOS_REPLICAS"] == "3"
-    assert payload["env"]["NPA_COSMOS_IMAGE"] == "registry.example/npa-cosmos:3.0.0"
+    assert (
+        payload["env"]["NPA_COSMOS2_TRANSFER_IMAGE"]
+        == "registry.example/npa-cosmos:3.0.0"
+    )
     assert "--image-id" not in payload["command"]
     assert "--gpus" not in payload["command"]
     assert "--num-nodes" in payload["command"]
