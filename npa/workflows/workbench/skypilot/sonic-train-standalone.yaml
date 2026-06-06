@@ -109,6 +109,7 @@ run: |
     fi
   done
 
+  set +e
   "${docker_cmd[@]}" run \
     --rm \
     --gpus all \
@@ -129,3 +130,54 @@ run: |
         echo "nvidia-smi unavailable" | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
       fi
       /entrypoint.sh train'
+  docker_status=$?
+  set -e
+
+  export SONIC_DOCKER_STATUS="${docker_status}"
+  python3 - <<'PY'
+  import datetime
+  import json
+  import os
+  from pathlib import Path
+
+  out = Path(os.environ["NPA_LOCAL_OUTPUT_DIR"])
+  out.mkdir(parents=True, exist_ok=True)
+  status = {
+      "run_id": os.environ.get("NPA_PIPELINE_RUN_ID", ""),
+      "policy_image": os.environ.get("POLICY_IMAGE", ""),
+      "gpu_type": os.environ.get("SONIC_GPU_TYPE", ""),
+      "image_variant": os.environ.get("SONIC_IMAGE_VARIANT", ""),
+      "output_path": os.environ.get("NPA_OUTPUT_PATH", ""),
+      "real_train_requested": os.environ.get("SONIC_RUN_REAL_TRAIN", ""),
+      "max_iterations": os.environ.get("SONIC_MAX_ITERATIONS", ""),
+      "docker_status": int(os.environ.get("SONIC_DOCKER_STATUS", "1")),
+      "written_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  }
+  (out / "sonic_proof_status.json").write_text(json.dumps(status, indent=2, sort_keys=True) + "\n")
+  PY
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -m pip install --quiet boto3 >/dev/null 2>&1 || true
+    python3 - <<'PY' || echo "warning: failed to upload SONIC proof artifacts" >&2
+  import os
+  from pathlib import Path
+
+  import boto3
+
+  bucket = os.environ["S3_BUCKET"]
+  prefix = os.environ.get("SONIC_OUTPUT_PREFIX", "").strip("/")
+  out = Path(os.environ["NPA_LOCAL_OUTPUT_DIR"])
+  s3 = boto3.client(
+      "s3",
+      endpoint_url=os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_ENDPOINT_URL") or None,
+  )
+  for path in sorted(out.glob("sonic_*")):
+      if not path.is_file():
+          continue
+      key = "/".join(part for part in (prefix, path.name) if part)
+      s3.upload_file(str(path), bucket, key)
+      print(f"uploaded s3://{bucket}/{key}")
+  PY
+  fi
+
+  exit "${docker_status}"

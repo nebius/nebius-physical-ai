@@ -226,6 +226,9 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     assert '"${docker_cmd[@]}" run' in task["run"]
     assert "--gpus all" in task["run"]
     assert "/entrypoint.sh train" in task["run"]
+    assert "sonic_proof_status.json" in task["run"]
+    assert "s3.upload_file" in task["run"]
+    assert 'exit "${docker_status}"' in task["run"]
     assert {
         "POLICY_IMAGE",
         "SONIC_GPU_TYPE",

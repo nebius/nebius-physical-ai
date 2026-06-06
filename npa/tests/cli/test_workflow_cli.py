@@ -283,6 +283,9 @@ def test_workbench_workflow_submit_materializes_byo_registry_auth(mocker) -> Non
     assert "image_id" not in task["resources"]
     assert "--gpus all" in task["run"]
     assert "/entrypoint.sh train" in task["run"]
+    assert "sonic_proof_status.json" in task["run"]
+    assert "s3.upload_file" in task["run"]
+    assert 'exit "${docker_status}"' in task["run"]
     assert task["envs"]["SKYPILOT_DOCKER_USERNAME"] == "customer"
     assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "customer-token"
     assert task["envs"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
