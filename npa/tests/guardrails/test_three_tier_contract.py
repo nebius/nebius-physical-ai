@@ -220,7 +220,12 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     task = docs[1]
     envs = task["envs"]
 
-    assert task["resources"]["image_id"] == "docker:example.invalid/npa-sonic:0.1.2"
+    assert "image_id" not in task["resources"]
+    assert '"${docker_cmd[@]}" login' in task["setup"]
+    assert '"${docker_cmd[@]}" pull "${POLICY_IMAGE}"' in task["setup"]
+    assert '"${docker_cmd[@]}" run' in task["run"]
+    assert "--gpus all" in task["run"]
+    assert "/entrypoint.sh train" in task["run"]
     assert {
         "POLICY_IMAGE",
         "SONIC_GPU_TYPE",
@@ -233,6 +238,5 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["S3_ENDPOINT_URL"] == ""
     assert envs["S3_BUCKET"] == "example-bucket"
-    assert "${" not in task["resources"]["image_id"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
     assert "nebius.cloud" not in text

@@ -47,6 +47,7 @@ class SonicWorkflowPlan:
     s3_prefix: str
     accelerators: str
     cloud: str
+    region: str = ""
     use_spot: bool | None = None
     registry_auth_server: str = ""
     registry_auth_username: str = ""
@@ -79,6 +80,7 @@ def materialize_sonic_workflow(
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> SonicWorkflowPlan:
@@ -104,6 +106,7 @@ def materialize_sonic_workflow(
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
     resolved_accelerators = accelerators or _default_accelerators(resolved_gpu_target)
     resolved_cloud = cloud or _default_cloud(resolved_gpu_target)
+    resolved_region = region.strip()
     resolved_registry_auth = _resolve_registry_auth(
         enabled=registry_auth and resolved_cloud.strip().lower() != "kubernetes",
         policy_image=resolved_policy_image,
@@ -139,6 +142,7 @@ def materialize_sonic_workflow(
                 s3_prefix=resolved_prefix,
                 accelerators=resolved_accelerators,
                 cloud=resolved_cloud,
+                region=resolved_region,
                 use_spot=use_spot,
                 registry_auth=resolved_registry_auth,
                 env_overrides=env_overrides or {},
@@ -157,6 +161,7 @@ def materialize_sonic_workflow(
         s3_prefix=resolved_prefix,
         accelerators=resolved_accelerators,
         cloud=resolved_cloud,
+        region=resolved_region,
         use_spot=use_spot,
         registry_auth_server=resolved_registry_auth.server if resolved_registry_auth else "",
         registry_auth_username=resolved_registry_auth.username if resolved_registry_auth else "",
@@ -182,6 +187,7 @@ def submit_sonic_workflow(
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
     isolated_config_dir: Path | None = None,
@@ -210,6 +216,7 @@ def submit_sonic_workflow(
         s3_prefix=s3_prefix,
         accelerators=accelerators,
         cloud=cloud,
+        region=region,
         use_spot=use_spot,
         env_overrides=env_overrides,
     )
@@ -330,6 +337,7 @@ def _materialize_task_doc(
     s3_prefix: str,
     accelerators: str,
     cloud: str,
+    region: str,
     use_spot: bool | None,
     registry_auth: _RegistryAuthConfig | None,
     env_overrides: dict[str, str],
@@ -344,9 +352,14 @@ def _materialize_task_doc(
     image_id = str(resources.get("image_id", ""))
     if uses_sonic_runtime_image:
         resources["cloud"] = cloud
-        resources["image_id"] = f"docker:{policy_image}"
+        if cloud.strip().lower() == "kubernetes":
+            resources["image_id"] = f"docker:{policy_image}"
+        else:
+            resources.pop("image_id", None)
         resources["cpus"] = _default_cpus(gpu_target)
         resources["memory"] = _default_memory(gpu_target)
+        if region and cloud.strip().lower() != "kubernetes":
+            resources["region"] = region
         if use_spot is not None and cloud.strip().lower() != "kubernetes":
             resources["use_spot"] = use_spot
         if resources.get("accelerators"):
@@ -372,7 +385,11 @@ def _materialize_task_doc(
         envs["NPA_PIPELINE_RUN_ID"] = run_id
     if "SONIC_OUTPUT_PREFIX" in envs:
         envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
-    if registry_auth and _uses_registry_auth_target(doc, registry_auth.server):
+    if registry_auth and _uses_registry_auth_target(
+        doc,
+        registry_auth.server,
+        policy_image=policy_image,
+    ):
         envs[SKYPILOT_DOCKER_USERNAME] = registry_auth.username
         envs[SKYPILOT_DOCKER_PASSWORD] = registry_auth.password
         envs[SKYPILOT_DOCKER_SERVER] = registry_auth.server
@@ -525,11 +542,22 @@ def _is_nebius_registry_server(server: str) -> bool:
     return normalized.startswith("cr.") and normalized.endswith(NEBIUS_REGISTRY_SERVER_SUFFIX)
 
 
-def _uses_registry_auth_target(doc: dict[str, Any], server: str) -> bool:
+def _uses_registry_auth_target(
+    doc: dict[str, Any],
+    server: str,
+    *,
+    policy_image: str = "",
+) -> bool:
     resources = doc.get("resources")
     if not isinstance(resources, dict):
         return False
     if str(resources.get("cloud", "")).strip().lower() == "kubernetes":
         return False
-    image_server = _registry_server_from_image(str(resources.get("image_id", "")))
-    return image_server == _normalize_registry_server(server)
+    envs = doc.get("envs")
+    image_servers = {
+        _registry_server_from_image(str(resources.get("image_id", ""))),
+        _registry_server_from_image(policy_image),
+    }
+    if isinstance(envs, dict):
+        image_servers.add(_registry_server_from_image(str(envs.get("POLICY_IMAGE", ""))))
+    return _normalize_registry_server(server) in image_servers

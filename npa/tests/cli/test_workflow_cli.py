@@ -203,6 +203,8 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
             "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
             "--var",
             "SONIC_MAX_ITERATIONS=2",
+            "--var",
+            "SONIC_RUN_REAL_TRAIN=1",
         ],
     )
 
@@ -221,6 +223,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     assert envs["S3_BUCKET"] == "proof-bucket"
     assert envs["SONIC_OUTPUT_PREFIX"] == "sonic-proof/sonic-run/"
     assert envs["SONIC_MAX_ITERATIONS"] == "2"
+    assert envs["SONIC_RUN_REAL_TRAIN"] == "1"
     assert "${" not in task["resources"]["image_id"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
 
@@ -259,6 +262,8 @@ def test_workbench_workflow_submit_materializes_byo_registry_auth(mocker) -> Non
             "customer-token",
             "--gpu-target",
             "h100",
+            "--region",
+            "eu-north1",
             "--use-spot",
             "--s3-endpoint",
             "https://storage.example",
@@ -273,7 +278,11 @@ def test_workbench_workflow_submit_materializes_byo_registry_auth(mocker) -> Non
     task = docs[1]
     assert task["resources"]["accelerators"] == "H100:1"
     assert task["resources"]["memory"] == 200
+    assert task["resources"]["region"] == "eu-north1"
     assert task["resources"]["use_spot"] is True
+    assert "image_id" not in task["resources"]
+    assert "--gpus all" in task["run"]
+    assert "/entrypoint.sh train" in task["run"]
     assert task["envs"]["SKYPILOT_DOCKER_USERNAME"] == "customer"
     assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "customer-token"
     assert task["envs"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"

@@ -24,6 +24,11 @@ def _task_envs(plan) -> tuple[dict, dict]:
     return task["resources"], task["envs"]
 
 
+def _task_doc(plan) -> dict:
+    docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
+    return docs[1]
+
+
 def _patch_nebius_token(monkeypatch: pytest.MonkeyPatch, token: str = "fresh-token") -> list[list[str]]:
     from npa.workbench.sonic import workflow as sonic_workflow
 
@@ -57,6 +62,7 @@ def test_sonic_materializer_adds_nebius_registry_auth_for_vm_tasks(monkeypatch) 
     assert resources["accelerators"] == "H100:1"
     assert resources["cpus"] == 16
     assert resources["memory"] == 200
+    assert "image_id" not in resources
     assert envs["SKYPILOT_DOCKER_USERNAME"] == "iam"
     assert envs["SKYPILOT_DOCKER_PASSWORD"] == "fresh-token"
     assert envs["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
@@ -96,6 +102,7 @@ def test_sonic_materializer_can_enable_spot_for_vm_tasks() -> None:
         run_id="sonic-proof",
         registry="registry.example/workbench",
         gpu_target="h100",
+        region="eu-north1",
         use_spot=True,
         s3_endpoint="https://storage.example",
         s3_bucket="proof-bucket",
@@ -103,6 +110,7 @@ def test_sonic_materializer_can_enable_spot_for_vm_tasks() -> None:
 
     resources, _ = _task_envs(plan)
     assert resources["use_spot"] is True
+    assert resources["region"] == "eu-north1"
 
 
 def test_sonic_materializer_skips_registry_auth_for_kubernetes_targets(monkeypatch) -> None:
@@ -121,6 +129,7 @@ def test_sonic_materializer_skips_registry_auth_for_kubernetes_targets(monkeypat
 
     resources, envs = _task_envs(plan)
     assert resources["cloud"] == "kubernetes"
+    assert resources["image_id"] == "docker:cr.eu-north1.nebius.cloud/registry-id/npa-sonic:0.1.2-k8s"
     assert "SKYPILOT_DOCKER_PASSWORD" not in envs
     assert calls == []
 
@@ -156,3 +165,35 @@ def test_sonic_materializer_defaults_vm_accelerators_by_gpu_target(
     assert resources["accelerators"] == accelerators
     assert resources["cpus"] == cpus
     assert resources["memory"] == memory
+
+
+def test_sonic_materializer_uses_default_vm_runtime_and_docker_payload() -> None:
+    from npa.workbench.sonic.workflow import materialize_sonic_workflow
+
+    plan = materialize_sonic_workflow(
+        SONIC_TRAIN_STANDALONE_YAML,
+        run_id="sonic-proof",
+        registry="registry.example/workbench",
+        registry_username="customer",
+        registry_password="customer-token",
+        registry_server="registry.example",
+        gpu_target="h100",
+        region="eu-north1",
+        s3_endpoint="https://storage.example",
+        s3_bucket="proof-bucket",
+        env_overrides={"SONIC_RUN_REAL_TRAIN": "1", "SONIC_MAX_ITERATIONS": "1"},
+    )
+
+    task = _task_doc(plan)
+    assert "image_id" not in task["resources"]
+    assert task["resources"]["region"] == "eu-north1"
+    assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2"
+    assert task["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
+    assert task["envs"]["SONIC_MAX_ITERATIONS"] == "1"
+    assert '"${docker_cmd[@]}" login' in task["setup"]
+    assert '"${docker_cmd[@]}" pull "registry.example/workbench/npa-sonic:0.1.2"' in task["setup"]
+    assert "--gpus all" in task["run"]
+    assert '"${docker_cmd[@]}" run' in task["run"]
+    assert "--entrypoint /bin/bash" in task["run"]
+    assert "/entrypoint.sh train" in task["run"]
+    assert "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN" in task["run"]

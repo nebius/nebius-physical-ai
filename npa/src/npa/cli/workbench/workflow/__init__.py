@@ -143,6 +143,11 @@ def submit_cmd(
         "--cloud",
         help="Cloud value for materialized GPU tasks.",
     ),
+    region: str = typer.Option(
+        "",
+        "--region",
+        help="Optional cloud region for materialized SONIC VM GPU tasks.",
+    ),
     use_spot: bool | None = typer.Option(
         None,
         "--use-spot/--no-use-spot",
@@ -219,6 +224,7 @@ def submit_cmd(
                     s3_prefix=s3_prefix,
                     accelerators=accelerators,
                     cloud=cloud,
+                    region=region,
                     use_spot=use_spot,
                     env_overrides=substitutions,
                 )

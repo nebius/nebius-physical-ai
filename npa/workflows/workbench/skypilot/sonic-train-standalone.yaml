@@ -14,7 +14,6 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:example.invalid/npa-sonic:0.1.2"
 envs:
   POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
   SONIC_GPU_TYPE: "l40s"
@@ -29,13 +28,33 @@ envs:
   SONIC_NUM_ENVS: "16"
   SONIC_HEADLESS: "1"
   SONIC_MAX_ITERATIONS: "5"
+  SONIC_NUM_PROCESSES: "1"
+  SONIC_RUN_REAL_TRAIN: "0"
+  SONIC_DOWNLOAD_SAMPLE_DATA: "0"
+  SONIC_CHECKPOINT_PATH: "sonic_release/last.pt"
   SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
 setup: |
   set -euo pipefail
-  if [ ! -x /entrypoint.sh ]; then
-    echo "The selected POLICY_IMAGE must provide the SONIC /entrypoint.sh runtime" >&2
+  docker_cmd=(docker)
+  if ! docker ps >/dev/null 2>&1; then
+    docker_cmd=(sudo docker)
+  fi
+  if [ -n "${SKYPILOT_DOCKER_SERVER:-}" ]; then
+    if [ -z "${SKYPILOT_DOCKER_USERNAME:-}" ] || [ -z "${SKYPILOT_DOCKER_PASSWORD:-}" ]; then
+      echo "SKYPILOT_DOCKER_USERNAME and SKYPILOT_DOCKER_PASSWORD are required with SKYPILOT_DOCKER_SERVER" >&2
+      exit 2
+    fi
+    printf '%s' "${SKYPILOT_DOCKER_PASSWORD}" \
+      | "${docker_cmd[@]}" login \
+          --username "${SKYPILOT_DOCKER_USERNAME}" \
+          --password-stdin \
+          "${SKYPILOT_DOCKER_SERVER}"
+  fi
+  if [ -z "${POLICY_IMAGE}" ]; then
+    echo "POLICY_IMAGE must be provided by the operator" >&2
     exit 2
   fi
+  "${docker_cmd[@]}" pull "${POLICY_IMAGE}"
 run: |
   set -euo pipefail
   if [ -z "${S3_ENDPOINT_URL}" ]; then
@@ -52,22 +71,59 @@ run: |
   output_path="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
   export NPA_OUTPUT_PATH="${output_path}"
   export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
-  export SONIC_CHECKPOINT="${SONIC_CHECKPOINT}"
-  export SONIC_DATA_PATH="${SONIC_DATA_PATH}"
-  export SONIC_SAMPLE_DATA="${SONIC_SAMPLE_DATA}"
-  export SONIC_EMBODIMENT="${SONIC_EMBODIMENT}"
-  export SONIC_NUM_ENVS="${SONIC_NUM_ENVS}"
-  export SONIC_HEADLESS="${SONIC_HEADLESS}"
-  export SONIC_MAX_ITERATIONS="${SONIC_MAX_ITERATIONS}"
+  mkdir -p "${NPA_LOCAL_OUTPUT_DIR}"
 
   printf 'SONIC_WORKFLOW_IMAGE policy_image=%s gpu_type=%s image_variant=%s\n' \
     "${POLICY_IMAGE}" "${SONIC_GPU_TYPE}" "${SONIC_IMAGE_VARIANT}"
 
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader \
-      | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
-  else
-    echo "nvidia-smi unavailable" | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
+  docker_cmd=(docker)
+  if ! docker ps >/dev/null 2>&1; then
+    docker_cmd=(sudo docker)
   fi
+  docker_env_args=(
+    --env "AWS_ENDPOINT_URL=${S3_ENDPOINT_URL}"
+    --env "NEBIUS_S3_ENDPOINT=${S3_ENDPOINT_URL}"
+    --env "NPA_OUTPUT_PATH=${NPA_OUTPUT_PATH}"
+    --env "NPA_LOCAL_OUTPUT_DIR=${NPA_LOCAL_OUTPUT_DIR}"
+    --env "SONIC_CHECKPOINT=${SONIC_CHECKPOINT}"
+    --env "SONIC_DATA_PATH=${SONIC_DATA_PATH}"
+    --env "SONIC_SAMPLE_DATA=${SONIC_SAMPLE_DATA}"
+    --env "SONIC_EMBODIMENT=${SONIC_EMBODIMENT}"
+    --env "SONIC_NUM_ENVS=${SONIC_NUM_ENVS}"
+    --env "SONIC_HEADLESS=${SONIC_HEADLESS}"
+    --env "SONIC_MAX_ITERATIONS=${SONIC_MAX_ITERATIONS}"
+    --env "SONIC_NUM_PROCESSES=${SONIC_NUM_PROCESSES}"
+    --env "SONIC_RUN_REAL_TRAIN=${SONIC_RUN_REAL_TRAIN}"
+    --env "SONIC_DOWNLOAD_SAMPLE_DATA=${SONIC_DOWNLOAD_SAMPLE_DATA}"
+    --env "SONIC_CHECKPOINT_PATH=${SONIC_CHECKPOINT_PATH}"
+    --env "NVIDIA_DRIVER_CAPABILITIES=all"
+    --env "VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json"
+    --env "VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
+    --env "__GLX_VENDOR_LIBRARY_NAME=nvidia"
+  )
+  for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN; do
+    if [ -n "${!name:-}" ]; then
+      docker_env_args+=(--env "${name}=${!name}")
+    fi
+  done
 
-  /entrypoint.sh train
+  "${docker_cmd[@]}" run \
+    --rm \
+    --gpus all \
+    --ipc=host \
+    --network host \
+    --ulimit memlock=-1 \
+    --ulimit stack=67108864 \
+    --volume "${NPA_LOCAL_OUTPUT_DIR}:${NPA_LOCAL_OUTPUT_DIR}" \
+    "${docker_env_args[@]}" \
+    --entrypoint /bin/bash \
+    "${POLICY_IMAGE}" \
+    -lc 'set -euo pipefail
+      mkdir -p "${NPA_LOCAL_OUTPUT_DIR}"
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader \
+          | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
+      else
+        echo "nvidia-smi unavailable" | tee "${NPA_LOCAL_OUTPUT_DIR}/sonic_gpu_info.txt"
+      fi
+      /entrypoint.sh train'
