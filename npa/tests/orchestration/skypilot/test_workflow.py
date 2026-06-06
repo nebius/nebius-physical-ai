@@ -26,6 +26,14 @@ def _fake_sky(tmp_path: Path) -> Path:
     return sky
 
 
+def _is_status_cmd(cmd: list[str]) -> bool:
+    return len(cmd) >= 2 and cmd[1] == "status"
+
+
+def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+
 @pytest.fixture(autouse=True)
 def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda sky_bin: Path(sky_bin))
@@ -43,6 +51,8 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 42\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -51,7 +61,8 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
 
     assert result.status == "SUBMITTED"
     assert result.job_id == "42"
-    cmd, kwargs = calls[0]
+    assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
     assert "--detach-run" in cmd
@@ -71,6 +82,8 @@ def test_submit_workflow_network_failure_raises_typed_error(monkeypatch, tmp_pat
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="network connection failed")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -85,6 +98,8 @@ def test_submit_workflow_auth_failure_raises_typed_error(monkeypatch, tmp_path) 
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Authentication failed: credentials expired")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -118,6 +133,8 @@ def test_submit_workflow_cleans_owned_temp_dir_on_timeout(monkeypatch, tmp_path)
         return str(owned_dir)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
     monkeypatch.setattr(workflow_module.tempfile, "mkdtemp", fake_mkdtemp)
@@ -135,6 +152,8 @@ def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_pa
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 12\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -161,6 +180,8 @@ def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_pat
     calls = []
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
 
@@ -190,6 +211,8 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
 
     def fake_run(cmd, **kwargs):
         captured_env.update(kwargs["env"])
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 9", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -198,6 +221,40 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
 
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
     assert captured_env["SKY_RUNTIME_DIR"] == str(tmp_path / "isolated" / "sky-runtime")
+
+
+def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    owned_dir = tmp_path / "owned-autostop-submission"
+    calls = []
+
+    def fake_mkdtemp(prefix: str) -> str:
+        owned_dir.mkdir()
+        return str(owned_dir)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if _is_status_cmd(cmd):
+            stdout = '[{"name": "sky-jobs-controller-64ce57a0", "status": "AUTOSTOPPING"}]'
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        raise AssertionError("launch should be blocked until controller is healthy")
+
+    monkeypatch.setattr(workflow_module.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotSubmitError, match="sky-jobs-controller-64ce57a0=AUTOSTOPPING"):
+        submit_workflow(
+            yaml_path,
+            "run-autostop",
+            sky_bin=sky_bin,
+            controller_preflight_timeout=0,
+            controller_preflight_interval=0,
+        )
+
+    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert not owned_dir.exists()
 
 
 def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
