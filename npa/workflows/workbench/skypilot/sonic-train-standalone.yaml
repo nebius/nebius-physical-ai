@@ -3,6 +3,8 @@
 # Operator-provided parameters:
 # - POLICY_IMAGE: image containing the SONIC /entrypoint.sh runtime. Use the
 #   manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
+# - SONIC_PAYLOAD_MODE: direct runs inside POLICY_IMAGE; docker runs POLICY_IMAGE
+#   from SkyPilot's default VM runtime.
 # - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
 # - S3_BUCKET: destination bucket name, without s3://.
 name: sonic-train-standalone
@@ -17,6 +19,7 @@ resources:
   image_id: "docker:example.invalid/npa-sonic:0.1.2"
 envs:
   POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
+  SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "l40s"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   S3_ENDPOINT_URL: ""
@@ -32,7 +35,13 @@ envs:
   SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
 setup: |
   set -euo pipefail
-  if [ ! -x /entrypoint.sh ]; then
+  if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
+    command -v docker >/dev/null 2>&1 || {
+      echo "SONIC_PAYLOAD_MODE=docker requires docker in the SkyPilot runtime" >&2
+      exit 2
+    }
+    docker pull "${POLICY_IMAGE}"
+  elif [ ! -x /entrypoint.sh ]; then
     echo "The selected POLICY_IMAGE must provide the SONIC /entrypoint.sh runtime" >&2
     exit 2
   fi
@@ -63,4 +72,22 @@ run: |
   printf 'SONIC_WORKFLOW_IMAGE policy_image=%s gpu_type=%s image_variant=%s\n' \
     "${POLICY_IMAGE}" "${SONIC_GPU_TYPE}" "${SONIC_IMAGE_VARIANT}"
 
-  /entrypoint.sh train
+  if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
+    docker run --rm --gpus all --ipc=host --network=host \
+      -e AWS_ACCESS_KEY_ID \
+      -e AWS_SECRET_ACCESS_KEY \
+      -e AWS_ENDPOINT_URL \
+      -e NEBIUS_S3_ENDPOINT \
+      -e NPA_OUTPUT_PATH \
+      -e NPA_LOCAL_OUTPUT_DIR \
+      -e SONIC_CHECKPOINT \
+      -e SONIC_DATA_PATH \
+      -e SONIC_SAMPLE_DATA \
+      -e SONIC_EMBODIMENT \
+      -e SONIC_NUM_ENVS \
+      -e SONIC_HEADLESS \
+      -e SONIC_MAX_ITERATIONS \
+      "${POLICY_IMAGE}" train
+  else
+    /entrypoint.sh train
+  fi

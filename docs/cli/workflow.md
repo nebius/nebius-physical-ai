@@ -67,7 +67,7 @@ For RTX PRO 6000 Kubernetes targets, use the same command with
 `--gpu-target gpu-rtx6000` and an accelerator string accepted by your SkyPilot
 Kubernetes GPU catalog, for example
 `--accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. The SONIC
-materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s`; L40S resolves to
+materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s-runtime`; L40S resolves to
 `npa-sonic:0.1.2`.
 
 When a Kubernetes target pulls from a private registry, provide a SkyPilot config

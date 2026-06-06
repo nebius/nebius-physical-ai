@@ -211,10 +211,10 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
     task = docs[1]
     envs = task["envs"]
-    assert task["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert task["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert envs["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
     assert envs["S3_ENDPOINT_URL"] == "https://storage.example"

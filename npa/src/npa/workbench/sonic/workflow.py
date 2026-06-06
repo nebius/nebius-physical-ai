@@ -261,12 +261,18 @@ def _materialize_task_doc(
     if not isinstance(envs, dict) or not isinstance(resources, dict):
         return
 
+    payload_mode = str(
+        env_overrides.get("SONIC_PAYLOAD_MODE", envs.get("SONIC_PAYLOAD_MODE", "direct"))
+    ).strip().lower()
     has_sonic_env = _has_sonic_env(doc)
     uses_sonic_runtime_image = _uses_sonic_runtime_image(doc)
     image_id = str(resources.get("image_id", ""))
     if uses_sonic_runtime_image:
         resources["cloud"] = cloud
-        resources["image_id"] = f"docker:{policy_image}"
+        if payload_mode == "docker":
+            resources.pop("image_id", None)
+        else:
+            resources["image_id"] = f"docker:{policy_image}"
         if resources.get("accelerators"):
             resources["accelerators"] = accelerators
     elif npa_image and _looks_like_npa_helper_image(image_id):
