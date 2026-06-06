@@ -28,8 +28,9 @@ def main() -> int:
 
 def _title(path: Path) -> str:
     for line in path.read_text().splitlines():
-        if line.startswith("# "):
-            return line[2:].strip().strip("`")
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip().strip("`")
     return path.stem
 
 
