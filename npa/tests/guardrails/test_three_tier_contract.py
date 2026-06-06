@@ -238,5 +238,7 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["S3_ENDPOINT_URL"] == ""
     assert envs["S3_BUCKET"] == "example-bucket"
+    assert envs["WANDB_MODE"] == "offline"
+    assert '--env "WANDB_MODE=${WANDB_MODE}"' in task["run"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
     assert "nebius.cloud" not in text

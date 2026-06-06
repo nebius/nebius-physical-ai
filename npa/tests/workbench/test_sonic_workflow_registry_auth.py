@@ -196,4 +196,7 @@ def test_sonic_materializer_uses_default_vm_runtime_and_docker_payload() -> None
     assert '"${docker_cmd[@]}" run' in task["run"]
     assert "--entrypoint /bin/bash" in task["run"]
     assert "/entrypoint.sh train" in task["run"]
-    assert "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN" in task["run"]
+    assert (
+        "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN "
+        "WANDB_API_KEY WANDB_DISABLED WANDB_DIR"
+    ) in task["run"]

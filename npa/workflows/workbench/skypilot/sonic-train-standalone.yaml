@@ -32,6 +32,7 @@ envs:
   SONIC_RUN_REAL_TRAIN: "0"
   SONIC_DOWNLOAD_SAMPLE_DATA: "0"
   SONIC_CHECKPOINT_PATH: "sonic_release/last.pt"
+  WANDB_MODE: "offline"
   SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
 setup: |
   set -euo pipefail
@@ -96,12 +97,13 @@ run: |
     --env "SONIC_RUN_REAL_TRAIN=${SONIC_RUN_REAL_TRAIN}"
     --env "SONIC_DOWNLOAD_SAMPLE_DATA=${SONIC_DOWNLOAD_SAMPLE_DATA}"
     --env "SONIC_CHECKPOINT_PATH=${SONIC_CHECKPOINT_PATH}"
+    --env "WANDB_MODE=${WANDB_MODE}"
     --env "NVIDIA_DRIVER_CAPABILITIES=all"
     --env "VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json"
     --env "VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
     --env "__GLX_VENDOR_LIBRARY_NAME=nvidia"
   )
-  for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN; do
+  for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN WANDB_API_KEY WANDB_DISABLED WANDB_DIR; do
     if [ -n "${!name:-}" ]; then
       docker_env_args+=(--env "${name}=${!name}")
     fi
