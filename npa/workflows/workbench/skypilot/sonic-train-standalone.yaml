@@ -103,7 +103,7 @@ run: |
     --env "VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
     --env "__GLX_VENDOR_LIBRARY_NAME=nvidia"
   )
-  for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN WANDB_API_KEY WANDB_DISABLED WANDB_DIR; do
+  for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN HF_TOKEN WANDB_API_KEY WANDB_DISABLED WANDB_DIR; do
     if [ -n "${!name:-}" ]; then
       docker_env_args+=(--env "${name}=${!name}")
     fi
@@ -167,6 +167,8 @@ run: |
   bucket = os.environ["S3_BUCKET"]
   prefix = os.environ.get("SONIC_OUTPUT_PREFIX", "").strip("/")
   out = Path(os.environ["NPA_LOCAL_OUTPUT_DIR"])
+  if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+      os.environ.pop("AWS_PROFILE", None)
   s3 = boto3.client(
       "s3",
       endpoint_url=os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_ENDPOINT_URL") or None,

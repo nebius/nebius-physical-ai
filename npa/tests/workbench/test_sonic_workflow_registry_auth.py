@@ -201,6 +201,6 @@ def test_sonic_materializer_uses_default_vm_runtime_and_docker_payload() -> None
     assert "s3.upload_file" in task["run"]
     assert 'exit "${docker_status}"' in task["run"]
     assert (
-        "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE HF_TOKEN "
-        "WANDB_API_KEY WANDB_DISABLED WANDB_DIR"
+        "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN HF_TOKEN WANDB_API_KEY "
+        "WANDB_DISABLED WANDB_DIR"
     ) in task["run"]
