@@ -35,11 +35,25 @@ envs:
   SONIC_OUTPUT_PREFIX: "sonic-train/sonic-train-smoke/"
 setup: |
   set -euo pipefail
+  docker_login_if_configured() {
+    local username="${SKYPILOT_DOCKER_USERNAME:-}"
+    local password="${SKYPILOT_DOCKER_PASSWORD:-}"
+    local server="${SKYPILOT_DOCKER_SERVER:-}"
+    if [ -z "${username}${password}${server}" ]; then
+      return 0
+    fi
+    if [ -z "${username}" ] || [ -z "${password}" ] || [ -z "${server}" ]; then
+      echo "Docker registry auth requires SKYPILOT_DOCKER_USERNAME, SKYPILOT_DOCKER_PASSWORD, and SKYPILOT_DOCKER_SERVER" >&2
+      exit 2
+    fi
+    printf '%s\n' "${password}" | docker login "${server}" --username "${username}" --password-stdin >/dev/null
+  }
   if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
     command -v docker >/dev/null 2>&1 || {
       echo "SONIC_PAYLOAD_MODE=docker requires docker in the SkyPilot runtime" >&2
       exit 2
     }
+    docker_login_if_configured
     docker pull "${POLICY_IMAGE}"
   elif [ ! -x /entrypoint.sh ]; then
     echo "The selected POLICY_IMAGE must provide the SONIC /entrypoint.sh runtime" >&2
