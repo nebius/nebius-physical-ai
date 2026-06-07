@@ -124,7 +124,7 @@ console = Console(stderr=True)
 _project_alias: str = ""
 _workbench_name: str = ""
 
-GROOT_RELEASE = "n1.7"
+GROOT_RELEASE = "0.1.0"
 GROOT_RUNTIME_VERSION = "0.1.0"
 GROOT_PYPI_PACKAGE = f"nvidia-gr00t-sdk=={GROOT_RUNTIME_VERSION}"
 GROOT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T.git"

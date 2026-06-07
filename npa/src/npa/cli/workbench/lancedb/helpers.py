@@ -16,12 +16,13 @@ import typer
 
 from npa.clients.config import default_project_name, default_workbench_name, list_projects
 from npa.clients.credentials import load_credentials
+from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 
 LANCEDB_VERSION = "0.30.2"
 DEFAULT_PORT = 8686
 DEFAULT_TOKEN_ENV = "LANCEDB_TOKEN"
 DEFAULT_API_KEY_ENV = "LANCEDB_API_KEY"
-DEFAULT_CONTAINER_IMAGE = f"npa-lancedb:{LANCEDB_VERSION}"
+DEFAULT_CONTAINER_IMAGE = container_image_for_tool("lancedb", registry=DEFAULT_CONTAINER_REGISTRY)
 DEFAULT_CONTAINER_NAME = "npa-lancedb"
 TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
@@ -301,4 +302,4 @@ def storage_env() -> dict[str, str]:
 
 
 def container_image(image: str = "") -> str:
-    return image.strip() or DEFAULT_CONTAINER_IMAGE
+    return image.strip() or container_image_for_tool("lancedb")

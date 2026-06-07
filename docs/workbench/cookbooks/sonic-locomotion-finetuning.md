@@ -32,6 +32,12 @@ For raw `sky` runs, replace `<your-bucket-name>`, `<run-id>`,
 or SDK submission, pass the values to the SONIC materializer and it writes the
 literal YAML before calling SkyPilot.
 
+Retargeting and MJLab use `NPA_WORKBENCH_IMAGE`, which defaults to the pushed
+first-party Workbench image
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`. Override that
+variable, or pass `npa workbench retargeting workflow --image ...` and
+`npa workbench mjlab workflow --image ...`, when you need a BYO Workbench image.
+
 ## Tool Templates
 
 The individual tool templates are available when you want to validate stages

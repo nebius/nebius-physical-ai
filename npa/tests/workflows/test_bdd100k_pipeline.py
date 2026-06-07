@@ -29,7 +29,12 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "64590a23aea30ef3cd934ef61fcd67daa80e386a912e2e077bd3b39c933581b9"
+EXPECTED_YAML_SHA256 = "7ccbfa2a56934766fb1746e5c9a8768f28ecea6edcfa0fdc0c1ab5f0246b5edd"
+EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+EXPECTED_DETECTION_IMAGE = (
+    "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+    "npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
+)
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
     "rider": 1,
@@ -98,7 +103,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         "accelerators": "H100:1",
         "cpus": 8,
         "memory": 32,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>",
+        "image_id": EXPECTED_LANCEDB_IMAGE,
     }
 
     for name in ("bdd100k-train-rider", "bdd100k-train-nighttime", "bdd100k-train-distant"):
@@ -107,6 +112,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         assert resources["accelerators"] == "H100:1"
         assert resources["cpus"] == 16
         assert resources["memory"] == 64
+        assert resources["image_id"] == EXPECTED_DETECTION_IMAGE
 
     for name in ("bdd100k-eval-rider", "bdd100k-eval-nighttime", "bdd100k-eval-distant"):
         resources = by_name[name]["resources"]
@@ -114,6 +120,7 @@ def test_bdd100k_pipeline_yaml_has_expected_logical_stages_and_resources() -> No
         assert resources["accelerators"] == "H100:1"
         assert resources["cpus"] == 8
         assert resources["memory"] == 32
+        assert resources["image_id"] == EXPECTED_DETECTION_IMAGE
 
     fiftyone = by_name["bdd100k-fiftyone-app"]
     assert fiftyone["resources"] == {

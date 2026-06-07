@@ -10,8 +10,11 @@ store prefix.
 Build the local image:
 
 ```bash
-docker build -f npa/docker/workbench/lancedb/Dockerfile -t npa-lancedb:0.30.2 npa/
+npa/docker/workbench/lancedb/build.sh
 ```
+
+The first-party registry default is
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2`.
 
 Start a local container-backed service:
 
@@ -21,7 +24,7 @@ npa workbench lancedb deploy \
   --storage-path /tmp/npa-lancedb \
   --port 8686 \
   --auth-mode none \
-  --image npa-lancedb:0.30.2
+  --image cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2
 ```
 
 Create a table from local JSON, JSONL, parquet, or a directory of parquet
