@@ -22,7 +22,7 @@ DEFAULT_CONTROLLER_INSTANCE_TYPE = "cpu-e2_2vcpu-8gb"
 DEFAULT_CONTROLLER_CPUS = 2
 DEFAULT_CONTROLLER_MEMORY_GB = 8
 DEFAULT_CONTROLLER_DISK_SIZE_GB = 64
-DEFAULT_CONTROLLER_AUTOSTOP_IDLE_MINUTES = 5
+DEFAULT_JOBS_CONTROLLER_AUTOSTOP = False
 
 
 def controller_resources_kubernetes() -> dict[str, Any]:
@@ -32,6 +32,7 @@ def controller_resources_kubernetes() -> dict[str, Any]:
         "cloud": "kubernetes",
         "cpus": DEFAULT_K8S_CONTROLLER_CPUS,
         "memory": DEFAULT_K8S_CONTROLLER_MEMORY_GB,
+        "autostop": DEFAULT_JOBS_CONTROLLER_AUTOSTOP,
     }
 
 
@@ -45,10 +46,7 @@ def controller_resources_nebius_vm() -> dict[str, Any]:
         "cpus": DEFAULT_CONTROLLER_CPUS,
         "memory": DEFAULT_CONTROLLER_MEMORY_GB,
         "disk_size": DEFAULT_CONTROLLER_DISK_SIZE_GB,
-        "autostop": {
-            "idle_minutes": DEFAULT_CONTROLLER_AUTOSTOP_IDLE_MINUTES,
-            "down": False,
-        },
+        "autostop": DEFAULT_JOBS_CONTROLLER_AUTOSTOP,
     }
 
 
@@ -78,6 +76,7 @@ def apply_controller_override(
     default = _controller_resources_for_backend(controller_backend)
 
     if isinstance(existing, dict) and _is_at_least_default(existing, default):
+        existing["autostop"] = DEFAULT_JOBS_CONTROLLER_AUTOSTOP
         return updated
 
     merged = deepcopy(default)
@@ -87,11 +86,9 @@ def apply_controller_override(
                 key: value
                 for key, value in existing.items()
                 if key not in _unsupported_override_keys(controller_backend)
-                and not (controller_backend == "nebius" and key == "autostop")
             }
         )
-        if controller_backend == "nebius":
-            merged["autostop"] = _safe_autostop(existing.get("autostop"))
+        merged["autostop"] = DEFAULT_JOBS_CONTROLLER_AUTOSTOP
         if not _is_at_least_default(merged, default):
             merged = default
 
@@ -121,8 +118,7 @@ def _is_at_least_default(resources: dict[str, Any], default: dict[str, Any]) -> 
         if actual is None or minimum is None or actual < minimum:
             return False
     if "autostop" in default:
-        autostop = resources.get("autostop")
-        if isinstance(autostop, dict) and autostop.get("down") is True:
+        if resources.get("autostop") is not DEFAULT_JOBS_CONTROLLER_AUTOSTOP:
             return False
     return True
 
@@ -139,15 +135,8 @@ def _compatible_controller_cloud(resources: dict[str, Any], default: dict[str, A
 
 def _unsupported_override_keys(controller_backend: ControllerBackend) -> set[str]:
     if controller_backend == "kubernetes":
-        return {"autostop", "disk_size"}
+        return {"disk_size"}
     return set()
-
-
-def _safe_autostop(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        return controller_resources_nebius_vm()["autostop"]
-    idle_minutes = value.get("idle_minutes", DEFAULT_CONTROLLER_AUTOSTOP_IDLE_MINUTES)
-    return {"idle_minutes": idle_minutes, "down": False}
 
 
 def _number(value: Any) -> float | None:

@@ -73,6 +73,7 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
+        "autostop": False,
     }
 
 
@@ -170,7 +171,7 @@ def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_pa
     resources = config["jobs"]["controller"]["resources"]
     assert resources["cloud"] == "nebius"
     assert resources["instance_type"] == "cpu-e2_2vcpu-8gb"
-    assert resources["autostop"]["down"] is False
+    assert resources["autostop"] is False
 
 
 def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_path) -> None:

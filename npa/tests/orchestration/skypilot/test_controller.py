@@ -16,6 +16,7 @@ def test_default_controller_resources_returns_kubernetes_default() -> None:
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
+        "autostop": False,
     }
     assert "disk_size" not in resources
 
@@ -30,7 +31,7 @@ def test_nebius_vm_controller_resources_remain_available() -> None:
         "cpus": 2,
         "memory": 8,
         "disk_size": 64,
-        "autostop": {"idle_minutes": 5, "down": False},
+        "autostop": False,
     }
 
 
@@ -62,7 +63,10 @@ def test_apply_controller_override_preserves_explicitly_larger_kubernetes_contro
         }
     }
 
-    assert apply_controller_override(existing) == existing
+    config = apply_controller_override(existing)
+
+    expected = {**existing["jobs"]["controller"]["resources"], "autostop": False}
+    assert config["jobs"]["controller"]["resources"] == expected
 
 
 def test_apply_controller_override_drops_kubernetes_disk_size() -> None:
@@ -101,4 +105,26 @@ def test_apply_controller_override_preserves_explicitly_larger_nebius_controller
         }
     }
 
-    assert apply_controller_override(existing, controller_backend="nebius") == existing
+    config = apply_controller_override(existing, controller_backend="nebius")
+
+    expected = {**existing["jobs"]["controller"]["resources"], "autostop": False}
+    assert config["jobs"]["controller"]["resources"] == expected
+
+
+def test_apply_controller_override_disables_existing_controller_autostop() -> None:
+    config = apply_controller_override(
+        {
+            "jobs": {
+                "controller": {
+                    "autostop": 10,
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "cpus": 4,
+                        "memory": 16,
+                    },
+                }
+            }
+        }
+    )
+
+    assert config["jobs"]["controller"]["resources"]["autostop"] is False
