@@ -14,15 +14,41 @@ retrigger.
   - `npa-lerobot-vlm-rl:0.1.0`
   - `npa-sim2real-eval:0.1.0`
   - the CUDA 13 multi-arch base and Genesis reference images used by the site.
-- Hugging Face gated repository access accepted for:
-  - `nvidia/Cosmos-Transfer2.5-2B`
-  - `nvidia/Cosmos-Predict2.5-2B`
-  - `nvidia/Cosmos-Guardrail1`, unless running with `--no-guardrails`
-- `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a
-  Kubernetes secret such as `hf-ngc-tokens`.
+- `HF_TOKEN` and, when the selected image/runtime path needs NGC assets,
+  `NGC_API_KEY` supplied through environment variables or a Kubernetes secret
+  such as `hf-ngc-tokens`.
 - S3-compatible storage credentials through environment variables or the NPA
   credentials loader. Non-default S3-compatible endpoints are supported through
   the same `AWS_ENDPOINT_URL`/`S3_ENDPOINT_URL` seam but are not yet covered by CI.
+
+### Pre-Flight Access Checklist
+
+Accept gated Hugging Face repositories on the account whose token is actually
+wired as `HF_TOKEN`. Manual NVIDIA approval may apply; after approval,
+regenerate or reuse a token from that same account. `runbook.yaml` exposes image
+and command seams rather than literal Cosmos HF model IDs, so this checklist is
+the known Cosmos augment access requirement for the selected Sim2Real images.
+
+- Required:
+  [`nvidia/Cosmos-Transfer2.5-2B`](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B)
+- Required:
+  [`nvidia/Cosmos-Predict2.5-2B`](https://huggingface.co/nvidia/Cosmos-Predict2.5-2B)
+- Optional when guardrails are enabled:
+  [`nvidia/Cosmos-Guardrail1`](https://huggingface.co/nvidia/Cosmos-Guardrail1).
+  If the workflow is run with `--no-guardrails`, this access is not needed.
+- NGC: provide `NGC_API_KEY` for selected images or runtime paths that pull NGC
+  assets; otherwise no NGC entitlement is declared by `runbook.yaml` itself.
+
+### SkyPilot 0.12.2 Caveats
+
+SkyPilot 0.12.2 does not expand `${VAR}` references inside the YAML `envs:`
+block at submit time. Before launching raw SkyPilot, copy `runbook.yaml` and
+replace `envs:` placeholders and `image_id` values with literals. Leave runtime
+shell expansion inside the `run:` block intact.
+
+Do not rely on `--down` or autodown on Nebius with SkyPilot 0.12.2. If you use
+`sky launch` directly, run `sky down <cluster> --yes` after completion and poll
+`sky status --refresh` until the cluster is gone.
 
 ## Run
 
@@ -54,12 +80,14 @@ export NPA_SOURCE_REPO=<https-git-source-url>
 export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.0
 export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.0
 export EVAL_IMAGE=<registry>/npa-sim2real-eval:0.1.0
+cp npa/workflows/workbench/sim2real/runbook.yaml /tmp/sim2real-runbook.yaml
+# Materialize envs: and image_id values in /tmp/sim2real-runbook.yaml.
 sky jobs launch \
   --config /tmp/sim2real-skypilot-k8s.yaml \
   --infra k8s/npa-rtxpro-mk8s \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
-  npa/workflows/workbench/sim2real/runbook.yaml
+  /tmp/sim2real-runbook.yaml
 ```
 
 SDK:

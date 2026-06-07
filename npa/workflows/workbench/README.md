@@ -6,7 +6,9 @@ workflow orchestrator for these templates.
 
 ## Layout
 
-- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines.
+- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines. See
+  `skypilot/README.md` for raw `sky` commands, per-YAML S3/env requirements,
+  and Hugging Face access checklists.
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
