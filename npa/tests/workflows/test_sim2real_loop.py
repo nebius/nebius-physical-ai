@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from npa.sdk.workbench import sim2real
+from npa.sdk.workbench import cosmos2, cosmos3, sim2real
 from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch, run_vlm_signal_training_step
 from npa.workflows.sim2real_loop import (
     SCHEMA_RL_SIGNAL,
@@ -20,6 +20,8 @@ from npa.workflows.sim2real_loop import (
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+COSMOS2_TRANSFER = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
+COSMOS3_REASON = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-reason.yaml"
 
 
 def test_vlm_eval_signal_converter_and_trainer_update_close_loop(tmp_path: Path) -> None:
@@ -104,3 +106,13 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert task["envs"]["EVAL_IMAGE"] == "${EVAL_IMAGE}"
     assert "npa.workflows.sim2real_loop full-loop" in task["run"]
     assert "--byo-signal-converter" in task["run"]
+
+
+def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
+    transfer = cosmos2.transfer(input_uri="s3://bucket/input/", output_uri="s3://bucket/augment/")
+    reason = cosmos3.reason(input_uri="s3://bucket/rollouts/", output_uri="s3://bucket/vlm_eval/")
+
+    assert transfer["schema"] == "npa.cosmos2.transfer.v1"
+    assert reason["schema"] == "npa.cosmos3.reason.v1"
+    assert "cosmos2-transfer" in COSMOS2_TRANSFER.read_text(encoding="utf-8")
+    assert "cosmos3-reason" in COSMOS3_REASON.read_text(encoding="utf-8")
