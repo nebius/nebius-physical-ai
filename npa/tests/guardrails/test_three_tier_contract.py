@@ -78,6 +78,38 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="cosmos2/transfer",
+        cli_module="npa.cli.workbench.cosmos2",
+        cli_callback="transfer_cmd",
+        sdk_module="npa.sdk.workbench.cosmos2",
+        sdk_attr="transfer",
+        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos2-transfer.yaml"),
+        params=(
+            ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
+            ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
+            ParameterContract("assets_uri", "assets_uri", "NPA_ASSETS_URI", "--assets-uri"),
+            ParameterContract("scene_spec_uri", "scene_spec_uri", "NPA_SCENE_SPEC_URI", "--scene-spec-uri"),
+            ParameterContract("image", "image", "COSMOS2_TRANSFER_IMAGE", "--image"),
+            ParameterContract("run_id", "run_id", "NPA_RUN_ID", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
+        name="cosmos3/reason",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="reason_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="reason",
+        yaml_path=Path("npa/workflows/workbench/skypilot/cosmos3-reason.yaml"),
+        params=(
+            ParameterContract("input_uri", "input_uri", "NPA_INPUT_URI", "--input-uri"),
+            ParameterContract("output_uri", "output_uri", "NPA_OUTPUT_URI", "--output-uri"),
+            ParameterContract("model", "model", "COSMOS3_REASON_MODEL", "--model"),
+            ParameterContract("image", "image", "COSMOS3_REASON_IMAGE", "--image"),
+            ParameterContract("prompt", "prompt", "NPA_REASON_PROMPT", "--prompt"),
+            ParameterContract("run_id", "run_id", "NPA_RUN_ID", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
         name="detection-training/train",
         cli_module="npa.cli.workbench.detection_training",
         cli_callback="train_cmd",
@@ -189,6 +221,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lerobot",
         "mjlab",
         "retargeting",
+        "sim2real",
+        "sim2real-envgen",
         "workflow",
     }
     discovered = registered_workbench_tools()

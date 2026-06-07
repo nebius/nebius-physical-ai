@@ -18,9 +18,14 @@ CONTAINER_IMAGE_NAMES = {
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
     "cosmos": "npa-cosmos",
+    "cosmos3-reason": "npa-cosmos3-reason",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
+    "sim2real-envgen": "npa-sim2real-envgen",
+    "sim2real-reference-policy": "npa-sim2real-reference-policy",
+    "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
+    "sim2real-eval": "npa-sim2real-eval",
 }
 
 
