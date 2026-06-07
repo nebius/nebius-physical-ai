@@ -35,7 +35,7 @@ export AWS_ENDPOINT_URL=<default-platform-s3-endpoint>
 export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.0
 
 # 4. Reference image defaults. Override only if you have a newer pushed image.
-export AUGMENT_IMAGE=<registry>/npa-sim2real-envgen:0.1.1
+export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.0
 export POLICY_IMAGE=<registry>/npa-sim2real-reference-policy:0.1.1
 export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.1-genuine-sm120
 export EVAL_IMAGE=<registry>/npa-sim2real-eval:0.1.1-genuine-sm120
@@ -97,6 +97,7 @@ reports/sim2real-report.json
 - Python 3.11 or newer and this package installed in `npa/.venv`.
 - A Kubernetes GPU cluster with schedulable RTX PRO 6000 class `sm_120` GPUs.
 - Pushed reference images:
+  - `npa-cosmos2-transfer:2.5.0`
   - `npa-sim2real-envgen:0.1.1`
   - `npa-sim2real-reference-policy:0.1.1`
   - `npa-cosmos3-reason:3.0.1-genuine-sm120`
