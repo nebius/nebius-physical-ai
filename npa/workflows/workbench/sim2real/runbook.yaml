@@ -24,6 +24,8 @@ envs:
   NPA_SIM2REAL_RUN_ID: "${NPA_SIM2REAL_RUN_ID}"
   NPA_SIM2REAL_BUCKET: "${NPA_SIM2REAL_BUCKET}"
   NPA_SIM2REAL_PREFIX: "${NPA_SIM2REAL_PREFIX}"
+  NPA_SIM2REAL_TRIGGER_DATASET_URI: "${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
+  NPA_SIM2REAL_TRIGGER_DATASET_ID: "${NPA_SIM2REAL_TRIGGER_DATASET_ID}"
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
   S3_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
   ACTION_ROLLOUTS_URI: "${ACTION_ROLLOUTS_URI}"
@@ -81,8 +83,10 @@ run: |
     --run-id "${run_id}" \
     --output-dir "${output_dir}" \
     --s3-bucket "${NPA_SIM2REAL_BUCKET:-${S3_BUCKET:-}}" \
-    --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}" \
+    --s3-prefix "${NPA_SIM2REAL_PREFIX-sim2real-b}" \
     --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}" \
+    --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" \
+    --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}" \
     --action-rollouts-uri "${ACTION_ROLLOUTS_URI:-}" \
     --train-envs-uri "${TRAIN_ENVS_URI:-}" \
     --heldout-envs-uri "${HELDOUT_ENVS_URI:-}" \

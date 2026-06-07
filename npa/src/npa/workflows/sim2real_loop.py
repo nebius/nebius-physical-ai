@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import random
-import shutil
 import sys
 import tempfile
 import uuid
@@ -17,9 +16,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
-from npa.deploy.images import container_image_for_tool, supported_tool_version
+from npa.deploy.images import container_image_for_tool
 from npa.workbench.lerobot.policy_container import (
-    VlmRlSignal,
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
 )
@@ -29,6 +27,8 @@ DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
 DEFAULT_VLM_IMAGE_TAG = "3.0.0"
+DEFAULT_ENVGEN_TAG = "0.1.1"
+DEFAULT_REFERENCE_POLICY_TAG = "0.1.1"
 DEFAULT_TRAINER_TAG = "0.1.0"
 DEFAULT_EVAL_TAG = "0.1.0"
 DEFAULT_THRESHOLD = 0.75
@@ -39,6 +39,7 @@ DEFAULT_ROLLOUT_COUNT = 3
 DEFAULT_STEPS_PER_ROLLOUT = 4
 DEFAULT_HELDOUT_ENVS = 8
 DEFAULT_REFERENCE_VLM_MODEL = "npa-cosmos3-reason"
+DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
 SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
@@ -106,16 +107,18 @@ class Sim2RealLoopConfig:
     s3_bucket: str = ""
     s3_prefix: str = DEFAULT_PREFIX
     s3_endpoint: str = DEFAULT_S3_ENDPOINT
+    trigger_dataset_uri: str = ""
+    trigger_dataset_id: str = DEFAULT_LEROBOT_DATASET_ID
     action_rollouts_uri: str = ""
     train_envs_uri: str = ""
     heldout_envs_uri: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
-    augment_image: str = ""
-    policy_image: str = ""
-    trainer_image: str = ""
-    vlm_image: str = ""
-    eval_image: str = ""
+    augment_image: str = f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+    policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
+    trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
+    vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
+    eval_image: str = f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
     threshold: float = DEFAULT_THRESHOLD
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
@@ -138,7 +141,9 @@ class Sim2RealLoopConfig:
         if not self.run_id:
             raise Sim2RealLoopError("run_id must not be empty")
         if not 0.0 <= self.threshold <= 1.0:
-            raise Sim2RealLoopError(f"threshold must be in [0, 1], got {self.threshold}")
+            raise Sim2RealLoopError(
+                f"threshold must be in [0, 1], got {self.threshold}"
+            )
         if self.inner_iterations <= 0:
             raise Sim2RealLoopError("inner_iterations must be positive")
         if self.outer_iterations <= 0:
@@ -172,6 +177,22 @@ def default_vlm_image(*, registry: str | None = None) -> str:
     return f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
 
 
+def default_envgen_image(*, registry: str | None = None) -> str:
+    """Return the reference env-generation image used by Stages 3-6."""
+
+    if registry or os.environ.get("NPA_REGISTRY"):
+        return container_image_for_tool("sim2real-envgen", registry=registry)
+    return f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+
+
+def default_policy_image(*, registry: str | None = None) -> str:
+    """Return the reference action-generation policy image."""
+
+    if registry or os.environ.get("NPA_REGISTRY"):
+        return container_image_for_tool("sim2real-reference-policy", registry=registry)
+    return f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
+
+
 def default_trainer_image(*, registry: str | None = None) -> str:
     """Return the reference VLM-signal LeRobot trainer image."""
 
@@ -191,7 +212,9 @@ def default_eval_image(*, registry: str | None = None) -> str:
 def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     """Build a Sim2Real loop config from explicit values and env fallbacks."""
 
-    run_id = str(overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id())
+    run_id = str(
+        overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
+    )
     bucket = str(
         overrides.get("s3_bucket")
         or os.environ.get("NPA_SIM2REAL_BUCKET")
@@ -200,7 +223,12 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or ""
     )
     registry = os.environ.get("NPA_REGISTRY", "")
-    s3_prefix = str(overrides.get("s3_prefix") or os.environ.get("NPA_SIM2REAL_PREFIX") or DEFAULT_PREFIX)
+    if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
+        s3_prefix = str(overrides["s3_prefix"])
+    elif "NPA_SIM2REAL_PREFIX" in os.environ:
+        s3_prefix = os.environ.get("NPA_SIM2REAL_PREFIX", "")
+    else:
+        s3_prefix = DEFAULT_PREFIX
     action_rollouts_uri = str(
         overrides.get("action_rollouts_uri")
         or os.environ.get("ACTION_ROLLOUTS_URI")
@@ -208,7 +236,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     )
     return Sim2RealLoopConfig(
         run_id=run_id,
-        output_dir=Path(overrides["output_dir"]) if overrides.get("output_dir") else None,
+        output_dir=Path(overrides["output_dir"])
+        if overrides.get("output_dir")
+        else None,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
         s3_endpoint=str(
@@ -217,46 +247,138 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("S3_ENDPOINT_URL")
             or DEFAULT_S3_ENDPOINT
         ),
+        trigger_dataset_uri=str(
+            overrides.get("trigger_dataset_uri")
+            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
+            or os.environ.get("TRIGGER_DATASET_URI")
+            or (f"s3://{bucket}/sim2real-triggers/{run_id}/" if bucket else "")
+        ),
+        trigger_dataset_id=str(
+            overrides.get("trigger_dataset_id")
+            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
+            or os.environ.get("TRIGGER_DATASET_ID")
+            or DEFAULT_LEROBOT_DATASET_ID
+        ),
         action_rollouts_uri=action_rollouts_uri,
-        train_envs_uri=str(overrides.get("train_envs_uri") or os.environ.get("TRAIN_ENVS_URI") or ""),
-        heldout_envs_uri=str(overrides.get("heldout_envs_uri") or os.environ.get("HELDOUT_ENVS_URI") or ""),
-        assets_uri=str(overrides.get("assets_uri") or os.environ.get("ASSETS_URI") or ""),
-        scene_spec_uri=str(overrides.get("scene_spec_uri") or os.environ.get("SCENE_SPEC_URI") or ""),
-        augment_image=str(overrides.get("augment_image") or os.environ.get("AUGMENT_IMAGE") or ""),
-        policy_image=str(overrides.get("policy_image") or os.environ.get("POLICY_IMAGE") or ""),
-        trainer_image=str(overrides.get("trainer_image") or os.environ.get("TRAINER_IMAGE") or default_trainer_image(registry=registry or None)),
-        vlm_image=str(overrides.get("vlm_image") or os.environ.get("VLM_IMAGE") or default_vlm_image(registry=registry or None)),
-        eval_image=str(overrides.get("eval_image") or os.environ.get("EVAL_IMAGE") or default_eval_image(registry=registry or None)),
-        vlm_model=str(overrides.get("vlm_model") or os.environ.get("VLM_MODEL") or DEFAULT_REFERENCE_VLM_MODEL),
-        threshold=float(overrides.get("threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD))),
-        inner_iterations=int(overrides.get("inner_iterations", os.environ.get("INNER_ITERATIONS", DEFAULT_INNER_ITERATIONS))),
-        outer_iterations=int(overrides.get("outer_iterations", os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS))),
+        train_envs_uri=str(
+            overrides.get("train_envs_uri") or os.environ.get("TRAIN_ENVS_URI") or ""
+        ),
+        heldout_envs_uri=str(
+            overrides.get("heldout_envs_uri")
+            or os.environ.get("HELDOUT_ENVS_URI")
+            or ""
+        ),
+        assets_uri=str(
+            overrides.get("assets_uri") or os.environ.get("ASSETS_URI") or ""
+        ),
+        scene_spec_uri=str(
+            overrides.get("scene_spec_uri") or os.environ.get("SCENE_SPEC_URI") or ""
+        ),
+        augment_image=str(
+            overrides.get("augment_image")
+            or os.environ.get("AUGMENT_IMAGE")
+            or default_envgen_image(registry=registry or None)
+        ),
+        policy_image=str(
+            overrides.get("policy_image")
+            or os.environ.get("POLICY_IMAGE")
+            or default_policy_image(registry=registry or None)
+        ),
+        trainer_image=str(
+            overrides.get("trainer_image")
+            or os.environ.get("TRAINER_IMAGE")
+            or default_trainer_image(registry=registry or None)
+        ),
+        vlm_image=str(
+            overrides.get("vlm_image")
+            or os.environ.get("VLM_IMAGE")
+            or default_vlm_image(registry=registry or None)
+        ),
+        eval_image=str(
+            overrides.get("eval_image")
+            or os.environ.get("EVAL_IMAGE")
+            or default_eval_image(registry=registry or None)
+        ),
+        vlm_model=str(
+            overrides.get("vlm_model")
+            or os.environ.get("VLM_MODEL")
+            or DEFAULT_REFERENCE_VLM_MODEL
+        ),
+        threshold=float(
+            overrides.get(
+                "threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)
+            )
+        ),
+        inner_iterations=int(
+            overrides.get(
+                "inner_iterations",
+                os.environ.get("INNER_ITERATIONS", DEFAULT_INNER_ITERATIONS),
+            )
+        ),
+        outer_iterations=int(
+            overrides.get(
+                "outer_iterations",
+                os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS),
+            )
+        ),
         loop_of_loops_iterations=int(
             overrides.get(
                 "loop_of_loops_iterations",
-                os.environ.get("LOOP_OF_LOOPS_ITERATIONS", DEFAULT_LOOP_OF_LOOPS_ITERATIONS),
+                os.environ.get(
+                    "LOOP_OF_LOOPS_ITERATIONS", DEFAULT_LOOP_OF_LOOPS_ITERATIONS
+                ),
             )
         ),
-        rollout_count=int(overrides.get("rollout_count", os.environ.get("ROLLOUT_COUNT", DEFAULT_ROLLOUT_COUNT))),
+        rollout_count=int(
+            overrides.get(
+                "rollout_count", os.environ.get("ROLLOUT_COUNT", DEFAULT_ROLLOUT_COUNT)
+            )
+        ),
         steps_per_rollout=int(
-            overrides.get("steps_per_rollout", os.environ.get("STEPS_PER_ROLLOUT", DEFAULT_STEPS_PER_ROLLOUT))
+            overrides.get(
+                "steps_per_rollout",
+                os.environ.get("STEPS_PER_ROLLOUT", DEFAULT_STEPS_PER_ROLLOUT),
+            )
         ),
         heldout_env_count=int(
-            overrides.get("heldout_env_count", os.environ.get("HELDOUT_ENV_COUNT", DEFAULT_HELDOUT_ENVS))
+            overrides.get(
+                "heldout_env_count",
+                os.environ.get("HELDOUT_ENV_COUNT", DEFAULT_HELDOUT_ENVS),
+            )
         ),
         seed=int(overrides.get("seed", os.environ.get("SEED", "42"))),
-        upload_artifacts=_bool_value(overrides.get("upload_artifacts", os.environ.get("UPLOAD_ARTIFACTS", "0"))),
-        no_guardrails=_bool_value(overrides.get("no_guardrails", os.environ.get("NO_GUARDRAILS", "0"))),
+        upload_artifacts=_bool_value(
+            overrides.get("upload_artifacts", os.environ.get("UPLOAD_ARTIFACTS", "0"))
+        ),
+        no_guardrails=_bool_value(
+            overrides.get("no_guardrails", os.environ.get("NO_GUARDRAILS", "0"))
+        ),
         signal_loss_weight=float(
-            overrides.get("signal_loss_weight", os.environ.get("SIGNAL_LOSS_WEIGHT", "1.0"))
+            overrides.get(
+                "signal_loss_weight", os.environ.get("SIGNAL_LOSS_WEIGHT", "1.0")
+            )
         ),
-        learning_rate=float(overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.05"))),
+        learning_rate=float(
+            overrides.get("learning_rate", os.environ.get("LEARNING_RATE", "0.05"))
+        ),
         byo_signal_converter=str(
-            overrides.get("byo_signal_converter") or os.environ.get("BYO_SIGNAL_CONVERTER") or ""
+            overrides.get("byo_signal_converter")
+            or os.environ.get("BYO_SIGNAL_CONVERTER")
+            or ""
         ),
-        byo_trainer_command=str(overrides.get("byo_trainer_command") or os.environ.get("BYO_TRAINER_COMMAND") or ""),
-        byo_vlm_command=str(overrides.get("byo_vlm_command") or os.environ.get("BYO_VLM_COMMAND") or ""),
-        byo_eval_command=str(overrides.get("byo_eval_command") or os.environ.get("BYO_EVAL_COMMAND") or ""),
+        byo_trainer_command=str(
+            overrides.get("byo_trainer_command")
+            or os.environ.get("BYO_TRAINER_COMMAND")
+            or ""
+        ),
+        byo_vlm_command=str(
+            overrides.get("byo_vlm_command") or os.environ.get("BYO_VLM_COMMAND") or ""
+        ),
+        byo_eval_command=str(
+            overrides.get("byo_eval_command")
+            or os.environ.get("BYO_EVAL_COMMAND")
+            or ""
+        ),
     )
 
 
@@ -265,9 +387,10 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
 
     if not config.s3_bucket:
         return {}
-    root = f"s3://{config.s3_bucket}/{config.s3_prefix.strip('/')}/{config.run_id}"
+    root = _artifact_root_uri(config)
     return {
         "root": f"{root}/",
+        "trigger_dataset": config.trigger_dataset_uri,
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
         "stage_02_assets_stub": f"{root}/stage_02_assets/external_stub.json",
         "stage_03_augment": f"{root}/augment/manifest.json",
@@ -293,6 +416,8 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
     return {
         "s3_endpoint": config.s3_endpoint,
         "s3_bucket": config.s3_bucket,
+        "trigger_dataset_uri": config.trigger_dataset_uri,
+        "trigger_dataset_id": config.trigger_dataset_id,
         "assets_uri": config.assets_uri,
         "scene_spec_uri": config.scene_spec_uri,
         "augment_image": config.augment_image,
@@ -322,19 +447,23 @@ def run_full_loop(
     """Run the full local/executable Sim2Real loop and write all artifacts."""
 
     config.validate()
-    local_dir = config.output_dir or Path(tempfile.mkdtemp(prefix=f"npa-{config.run_id}-"))
+    local_dir = config.output_dir or Path(
+        tempfile.mkdtemp(prefix=f"npa-{config.run_id}-")
+    )
     local_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(config.seed)
     components: list[ComponentRecord] = []
     stage_artifacts: dict[str, str] = {}
     stage_records: list[dict[str, Any]] = []
 
-    stage_records.append(_write_stage(local_dir, 1, "trigger", _trigger_payload(config)))
+    stage_records.append(
+        _write_stage(local_dir, 1, "trigger", _trigger_payload(config))
+    )
     components.append(
         ComponentRecord(
             "stage_01_trigger",
             "WORKS",
-            "Created run trigger payload and resolved runtime plug points.",
+            "Consumed the dedicated LeRobot dataset trigger path and resolved runtime plug points.",
             {"local": str(local_dir / "stage_01_trigger" / "trigger.json")},
         )
     )
@@ -388,7 +517,11 @@ def run_full_loop(
         )
     )
 
-    raw_envs = _write_env_manifest(local_dir / "envs" / "raw", count=max(config.heldout_env_count, 10), seed=config.seed)
+    raw_envs = _write_env_manifest(
+        local_dir / "envs" / "raw",
+        count=max(config.heldout_env_count, 10),
+        seed=config.seed,
+    )
     train_envs, heldout_envs = _write_train_heldout_split(
         local_dir / "envs",
         raw_envs=raw_envs,
@@ -484,7 +617,11 @@ def run_full_loop(
             "stage_12_external_validation",
             "SEAM",
             "External real-world validation is a documented BYO gate; loop-of-loops continues through Stage 13.",
-            {"local": str(local_dir / "stage_12_external_validation" / "external_stub.json")},
+            {
+                "local": str(
+                    local_dir / "stage_12_external_validation" / "external_stub.json"
+                )
+            },
         )
     )
 
@@ -495,13 +632,17 @@ def run_full_loop(
         "source_decision": final_decision["decision"],
         "loop_of_loops_iteration": 1,
         "max_loop_of_loops_iterations": config.loop_of_loops_iterations,
-        "retrigger_stage": 1,
-        "should_retrigger": (
-            final_decision["decision"] != "promote_checkpoint"
-            and config.loop_of_loops_iterations > 1
-        ),
+        "target_stage": 1,
+        "trigger_dataset_uri": config.trigger_dataset_uri,
+        "trigger_dataset_id": config.trigger_dataset_id,
+        "retrigger_condition": "real_world_lerobot_dataset_landed",
+        "should_retrigger": config.loop_of_loops_iterations > 1,
     }
-    stage_records.append(_write_json_artifact(local_dir / "stage_13_retrigger" / "retrigger.json", retrigger))
+    stage_records.append(
+        _write_json_artifact(
+            local_dir / "stage_13_retrigger" / "retrigger.json", retrigger
+        )
+    )
     components.append(
         ComponentRecord(
             "stage_13_retrigger",
@@ -552,8 +693,22 @@ def run_full_loop(
             "latest_decision": final_decision,
         },
         "image_completeness": {
-            "required": [config.vlm_image, config.trainer_image, config.eval_image],
-            "all_referenced": all([config.vlm_image, config.trainer_image, config.eval_image]),
+            "required": [
+                config.augment_image,
+                config.policy_image,
+                config.vlm_image,
+                config.trainer_image,
+                config.eval_image,
+            ],
+            "all_referenced": all(
+                [
+                    config.augment_image,
+                    config.policy_image,
+                    config.vlm_image,
+                    config.trainer_image,
+                    config.eval_image,
+                ]
+            ),
         },
     }
     report_path = local_dir / "reports" / "sim2real-report.json"
@@ -588,7 +743,13 @@ def run_inner_loop(
     reward_head = 0.0
     action_bias = 0.0
     for iteration in range(1, config.inner_iterations + 1):
-        actions_dir = local_dir / "actions" / "train" / f"outer-{outer_iteration:02d}" / f"iter-{iteration:02d}"
+        actions_dir = (
+            local_dir
+            / "actions"
+            / "train"
+            / f"outer-{outer_iteration:02d}"
+            / f"iter-{iteration:02d}"
+        )
         rollouts = generate_action_rollouts(
             actions_dir,
             count=config.rollout_count,
@@ -596,8 +757,20 @@ def run_inner_loop(
             seed=config.seed + outer_iteration * 100 + iteration,
             quality=quality,
         )
-        eval_dir = local_dir / "vlm_eval" / "train" / f"outer-{outer_iteration:02d}" / f"iter-{iteration:02d}"
-        signal_dir = local_dir / "training_signal" / "train" / f"outer-{outer_iteration:02d}" / f"iter-{iteration:02d}"
+        eval_dir = (
+            local_dir
+            / "vlm_eval"
+            / "train"
+            / f"outer-{outer_iteration:02d}"
+            / f"iter-{iteration:02d}"
+        )
+        signal_dir = (
+            local_dir
+            / "training_signal"
+            / "train"
+            / f"outer-{outer_iteration:02d}"
+            / f"iter-{iteration:02d}"
+        )
         evals: list[dict[str, Any]] = []
         signals: list[dict[str, Any]] = []
         for rollout in rollouts:
@@ -610,12 +783,23 @@ def run_inner_loop(
             _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
             evals.append(evaluation)
             signals.append(signal)
-        signal_batch_path = local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / f"signals-iter-{iteration:02d}.json"
-        _write_json_artifact(signal_batch_path, {"schema": SCHEMA_RL_SIGNAL, "signals": signals})
+        signal_batch_path = (
+            local_dir
+            / "inner_loop"
+            / f"outer-{outer_iteration:02d}"
+            / f"signals-iter-{iteration:02d}.json"
+        )
+        _write_json_artifact(
+            signal_batch_path, {"schema": SCHEMA_RL_SIGNAL, "signals": signals}
+        )
         parsed_signals = parse_vlm_signal_batch({"signals": signals})
         update = run_vlm_signal_training_step(
             parsed_signals,
-            output_dir=local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "trainer" / f"iter-{iteration:02d}",
+            output_dir=local_dir
+            / "inner_loop"
+            / f"outer-{outer_iteration:02d}"
+            / "trainer"
+            / f"iter-{iteration:02d}",
             learning_rate=config.learning_rate,
             signal_loss_weight=config.signal_loss_weight,
             initial_reward_head=reward_head,
@@ -623,7 +807,11 @@ def run_inner_loop(
         )
         control = run_vlm_signal_training_step(
             parsed_signals,
-            output_dir=local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "control" / f"iter-{iteration:02d}",
+            output_dir=local_dir
+            / "inner_loop"
+            / f"outer-{outer_iteration:02d}"
+            / "control"
+            / f"iter-{iteration:02d}",
             learning_rate=config.learning_rate,
             signal_loss_weight=config.signal_loss_weight,
             initial_reward_head=reward_head,
@@ -631,12 +819,20 @@ def run_inner_loop(
             control=True,
         )
         reward_head = update.reward_head_after
-        action_bias = update.policy_output_after[0] if update.policy_output_after else action_bias
-        mean_reward = round(sum(_signal_mean_reward(signal) for signal in signals) / float(len(signals)), 6)
+        action_bias = (
+            update.policy_output_after[0] if update.policy_output_after else action_bias
+        )
+        mean_reward = round(
+            sum(_signal_mean_reward(signal) for signal in signals)
+            / float(len(signals)),
+            6,
+        )
         reward_trend.append(mean_reward)
         delta_vs_control = max(0.0, update.policy_delta_l2 - control.policy_delta_l2)
         policy_deltas.append(round(delta_vs_control, 8))
-        quality = min(0.98, quality + max(0.06, min(0.18, delta_vs_control * 2.0 + 0.07)))
+        quality = min(
+            0.98, quality + max(0.06, min(0.18, delta_vs_control * 2.0 + 0.07))
+        )
         iteration_records.append(
             {
                 "iteration": iteration,
@@ -667,7 +863,9 @@ def run_inner_loop(
         "iterations": iteration_records,
         "final_quality": round(quality, 6),
     }
-    evidence_path = local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "evidence.json"
+    evidence_path = (
+        local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "evidence.json"
+    )
     _write_json_artifact(evidence_path, evidence)
     return {**evidence, "evidence_uri": str(evidence_path)}
 
@@ -711,7 +909,9 @@ def generate_action_rollouts(
                 "rollout_id": rollout_id,
                 "quality": round(quality, 6),
                 "steps": steps_per_rollout,
-                "camera_observations": [f"camera-{step:03d}.ppm" for step in range(steps_per_rollout)],
+                "camera_observations": [
+                    f"camera-{step:03d}.ppm" for step in range(steps_per_rollout)
+                ],
                 "actions": actions,
             },
         )
@@ -771,7 +971,9 @@ def convert_vlm_eval_to_rl_signal(evaluation: dict[str, Any]) -> dict[str, Any]:
     """Convert structured VLM critique JSON into a dense RL signal."""
 
     if evaluation.get("schema") != SCHEMA_VLM_EVAL:
-        raise Sim2RealLoopError(f"unsupported VLM eval schema: {evaluation.get('schema')}")
+        raise Sim2RealLoopError(
+            f"unsupported VLM eval schema: {evaluation.get('schema')}"
+        )
     raw_steps = evaluation.get("per_step")
     if not isinstance(raw_steps, list) or not raw_steps:
         raise Sim2RealLoopError("VLM eval must include non-empty per_step")
@@ -782,7 +984,9 @@ def convert_vlm_eval_to_rl_signal(evaluation: dict[str, Any]) -> dict[str, Any]:
         tags = [str(tag) for tag in raw_step.get("error_tags", [])] or ["ok"]
         severity = max(ERROR_SEVERITY.get(tag, 0.4) for tag in tags)
         success_bonus = 0.35 if success else -0.15
-        reward = max(-1.0, min(1.0, success_bonus + 0.65 * (1.0 - severity) - 0.75 * severity))
+        reward = max(
+            -1.0, min(1.0, success_bonus + 0.65 * (1.0 - severity) - 0.75 * severity)
+        )
         rewards.append(reward)
         target = _merge_targets(tags)
         source_action = raw_step.get("action") or []
@@ -880,7 +1084,8 @@ def run_heldout_eval(
         "per_env": per_env,
         "physics_fidelity": {
             "mean": round(
-                sum(item["physics_fidelity"]["score"] for item in per_env) / float(len(per_env)),
+                sum(item["physics_fidelity"]["score"] for item in per_env)
+                / float(len(per_env)),
                 6,
             ),
             "min": round(min(item["physics_fidelity"]["score"] for item in per_env), 6),
@@ -914,7 +1119,7 @@ def threshold_decision(
         "outer_iteration": outer_iteration,
         "success_rate": round(success_rate, 6),
         "threshold": config.threshold,
-        "decision": "promote_checkpoint" if promoted else "loop_back_to_stage_1",
+        "decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
         "checkpoint_uri": checkpoint_uri,
         "max_outer_iterations": config.outer_iterations,
         "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
@@ -937,7 +1142,7 @@ def threshold_decision(
             {
                 "schema": "npa.sim2real.loopback.v1",
                 "from_stage": 11,
-                "to_stage": 1,
+                "to_stage": 7,
                 "reason": "heldout threshold not met",
                 "decision": decision,
             },
@@ -954,7 +1159,7 @@ def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[st
         return {"status": "skipped", "reason": "s3_bucket is not configured"}
     try:
         client = StorageClient.from_environment(endpoint_url=config.s3_endpoint)
-        destination = f"s3://{config.s3_bucket}/{config.s3_prefix.strip('/')}/{config.run_id}/"
+        destination = f"{_artifact_root_uri(config)}/"
         uploaded = client.upload_directory(str(local_dir), destination)
     except Exception as exc:
         return {
@@ -970,11 +1175,17 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    full = subparsers.add_parser("full-loop", help="Run the full Stage 1-13 Sim2Real workflow.")
+    full = subparsers.add_parser(
+        "full-loop", help="Run the full Stage 1-13 Sim2Real workflow."
+    )
     _add_common_args(full)
-    inner = subparsers.add_parser("inner-loop", help="Run only the VLM-to-RL inner loop.")
+    inner = subparsers.add_parser(
+        "inner-loop", help="Run only the VLM-to-RL inner loop."
+    )
     _add_common_args(inner)
-    convert = subparsers.add_parser("convert-signal", help="Convert one VLM eval JSON to RL signal JSON.")
+    convert = subparsers.add_parser(
+        "convert-signal", help="Convert one VLM eval JSON to RL signal JSON."
+    )
     convert.add_argument("--vlm-json", type=Path, required=True)
     convert.add_argument("--output-json", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -990,6 +1201,8 @@ def main(argv: list[str] | None = None) -> int:
         s3_bucket=args.s3_bucket,
         s3_prefix=args.s3_prefix,
         s3_endpoint=args.s3_endpoint,
+        trigger_dataset_uri=args.trigger_dataset_uri,
+        trigger_dataset_id=args.trigger_dataset_id,
         action_rollouts_uri=args.action_rollouts_uri,
         train_envs_uri=args.train_envs_uri,
         heldout_envs_uri=args.heldout_envs_uri,
@@ -1024,7 +1237,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "inner-loop":
         config.validate()
-        local_dir = config.output_dir or Path(tempfile.mkdtemp(prefix=f"npa-{config.run_id}-"))
+        local_dir = config.output_dir or Path(
+            tempfile.mkdtemp(prefix=f"npa-{config.run_id}-")
+        )
         evidence = run_inner_loop(config, local_dir=local_dir, initial_quality=0.38)
         print(json.dumps(evidence, indent=2, sort_keys=True))
         return 0
@@ -1032,28 +1247,69 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--run-id", default=os.environ.get("NPA_SIM2REAL_RUN_ID", new_run_id()))
+    parser.add_argument(
+        "--run-id", default=os.environ.get("NPA_SIM2REAL_RUN_ID", new_run_id())
+    )
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--s3-bucket", default=os.environ.get("NPA_SIM2REAL_BUCKET", os.environ.get("S3_BUCKET", "")))
-    parser.add_argument("--s3-prefix", default=os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX))
-    parser.add_argument("--s3-endpoint", default=os.environ.get("AWS_ENDPOINT_URL", DEFAULT_S3_ENDPOINT))
-    parser.add_argument("--action-rollouts-uri", default=os.environ.get("ACTION_ROLLOUTS_URI", ""))
-    parser.add_argument("--train-envs-uri", default=os.environ.get("TRAIN_ENVS_URI", ""))
-    parser.add_argument("--heldout-envs-uri", default=os.environ.get("HELDOUT_ENVS_URI", ""))
+    parser.add_argument(
+        "--s3-bucket",
+        default=os.environ.get("NPA_SIM2REAL_BUCKET", os.environ.get("S3_BUCKET", "")),
+    )
+    parser.add_argument(
+        "--s3-prefix", default=os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX)
+    )
+    parser.add_argument(
+        "--s3-endpoint", default=os.environ.get("AWS_ENDPOINT_URL", DEFAULT_S3_ENDPOINT)
+    )
+    parser.add_argument(
+        "--trigger-dataset-uri",
+        default=os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI", ""),
+    )
+    parser.add_argument(
+        "--trigger-dataset-id",
+        default=os.environ.get(
+            "NPA_SIM2REAL_TRIGGER_DATASET_ID", DEFAULT_LEROBOT_DATASET_ID
+        ),
+    )
+    parser.add_argument(
+        "--action-rollouts-uri", default=os.environ.get("ACTION_ROLLOUTS_URI", "")
+    )
+    parser.add_argument(
+        "--train-envs-uri", default=os.environ.get("TRAIN_ENVS_URI", "")
+    )
+    parser.add_argument(
+        "--heldout-envs-uri", default=os.environ.get("HELDOUT_ENVS_URI", "")
+    )
     parser.add_argument("--assets-uri", default=os.environ.get("ASSETS_URI", ""))
-    parser.add_argument("--scene-spec-uri", default=os.environ.get("SCENE_SPEC_URI", ""))
+    parser.add_argument(
+        "--scene-spec-uri", default=os.environ.get("SCENE_SPEC_URI", "")
+    )
     parser.add_argument("--augment-image", default=os.environ.get("AUGMENT_IMAGE", ""))
     parser.add_argument("--policy-image", default=os.environ.get("POLICY_IMAGE", ""))
     parser.add_argument("--trainer-image", default=os.environ.get("TRAINER_IMAGE", ""))
     parser.add_argument("--vlm-image", default=os.environ.get("VLM_IMAGE", ""))
     parser.add_argument("--eval-image", default=os.environ.get("EVAL_IMAGE", ""))
-    parser.add_argument("--vlm-model", default=os.environ.get("VLM_MODEL", DEFAULT_REFERENCE_VLM_MODEL))
-    parser.add_argument("--threshold", type=float, default=float(os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)))
-    parser.add_argument("--inner-iterations", type=int, default=DEFAULT_INNER_ITERATIONS)
-    parser.add_argument("--outer-iterations", type=int, default=DEFAULT_OUTER_ITERATIONS)
-    parser.add_argument("--loop-of-loops-iterations", type=int, default=DEFAULT_LOOP_OF_LOOPS_ITERATIONS)
+    parser.add_argument(
+        "--vlm-model", default=os.environ.get("VLM_MODEL", DEFAULT_REFERENCE_VLM_MODEL)
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=float(os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)),
+    )
+    parser.add_argument(
+        "--inner-iterations", type=int, default=DEFAULT_INNER_ITERATIONS
+    )
+    parser.add_argument(
+        "--outer-iterations", type=int, default=DEFAULT_OUTER_ITERATIONS
+    )
+    parser.add_argument(
+        "--loop-of-loops-iterations", type=int, default=DEFAULT_LOOP_OF_LOOPS_ITERATIONS
+    )
     parser.add_argument("--rollout-count", type=int, default=DEFAULT_ROLLOUT_COUNT)
-    parser.add_argument("--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT)
+    parser.add_argument(
+        "--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT
+    )
     parser.add_argument("--heldout-env-count", type=int, default=DEFAULT_HELDOUT_ENVS)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--upload-artifacts", action="store_true")
@@ -1080,7 +1336,9 @@ def _write_stage(
 
 def _write_json_artifact(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {"path": str(path), "payload": payload}
 
 
@@ -1119,11 +1377,21 @@ def _write_train_heldout_split(
     heldout = envs[train_size:] or envs[-1:]
     train_record = _write_json_artifact(
         root / "train" / "manifest.json",
-        {"schema": "npa.sim2real.env_split.v1", "stage": 5, "split": "train", "envs": train},
+        {
+            "schema": "npa.sim2real.env_split.v1",
+            "stage": 5,
+            "split": "train",
+            "envs": train,
+        },
     )
     heldout_record = _write_json_artifact(
         root / "heldout" / "manifest.json",
-        {"schema": "npa.sim2real.env_split.v1", "stage": 5, "split": "heldout", "envs": heldout},
+        {
+            "schema": "npa.sim2real.env_split.v1",
+            "stage": 5,
+            "split": "heldout",
+            "envs": heldout,
+        },
     )
     return train_record, heldout_record
 
@@ -1134,6 +1402,10 @@ def _trigger_payload(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "stage": 1,
         "run_id": config.run_id,
         "created_at": _utc_now(),
+        "trigger_dataset_uri": config.trigger_dataset_uri,
+        "trigger_dataset_id": config.trigger_dataset_id,
+        "input_format": "lerobot",
+        "start_condition": "dataset_landed_in_trigger_path",
         "artifact_root": artifact_uris(config).get("root", ""),
         "byo_seams": byo_seams(config),
     }
@@ -1152,12 +1424,20 @@ def _tags_for_quality(quality: float, *, step: int) -> list[str]:
 def _critique_for_tags(tags: list[str], *, quality: float) -> str:
     if tags == ["ok"]:
         return f"Step is stable; estimated rollout quality {quality:.2f}."
-    corrections = [CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"])["nl_correction"] for tag in tags]
+    corrections = [
+        CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"])[
+            "nl_correction"
+        ]
+        for tag in tags
+    ]
     return " ".join(corrections)
 
 
 def _merge_targets(tags: list[str]) -> dict[str, Any]:
-    corrections = [CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"]) for tag in tags]
+    corrections = [
+        CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"])
+        for tag in tags
+    ]
     action_dim = max(len(item["action_delta"]) for item in corrections)
     merged = [0.0 for _ in range(action_dim)]
     for item in corrections:
@@ -1179,7 +1459,9 @@ def _write_ppm(path: Path, *, red: int, green: int, blue: int) -> None:
     width = 32
     height = 32
     header = f"P6\n{width} {height}\n255\n".encode("ascii")
-    pixel = bytes([max(0, min(255, red)), max(0, min(255, green)), max(0, min(255, blue))])
+    pixel = bytes(
+        [max(0, min(255, red)), max(0, min(255, green)), max(0, min(255, blue))]
+    )
     path.write_bytes(header + pixel * width * height)
 
 
@@ -1187,6 +1469,11 @@ def _redacted_config(config: Sim2RealLoopConfig) -> dict[str, Any]:
     payload = asdict(config)
     payload["output_dir"] = str(config.output_dir) if config.output_dir else None
     return payload
+
+
+def _artifact_root_uri(config: Sim2RealLoopConfig) -> str:
+    parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
+    return f"s3://{config.s3_bucket}/{'/'.join(parts)}"
 
 
 def _bool_value(value: Any) -> bool:
@@ -1211,13 +1498,16 @@ __all__ = [
     "SCHEMA_RL_SIGNAL",
     "SCHEMA_THRESHOLD_DECISION",
     "SCHEMA_VLM_EVAL",
+    "DEFAULT_LEROBOT_DATASET_ID",
     "Sim2RealLoopConfig",
     "Sim2RealLoopError",
     "artifact_uris",
     "build_config_from_env",
     "byo_seams",
     "convert_vlm_eval_to_rl_signal",
+    "default_envgen_image",
     "default_eval_image",
+    "default_policy_image",
     "default_trainer_image",
     "default_vlm_image",
     "evaluate_rollout_with_vlm",
