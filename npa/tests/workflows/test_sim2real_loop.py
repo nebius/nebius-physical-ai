@@ -6,11 +6,15 @@ from pathlib import Path
 import yaml
 
 from npa.sdk.workbench import cosmos2, cosmos3, sim2real
-from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch, run_vlm_signal_training_step
+from npa.workbench.lerobot.policy_container import (
+    parse_vlm_signal_batch,
+    run_vlm_signal_training_step,
+)
 from npa.workflows.sim2real_loop import (
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
     Sim2RealLoopConfig,
+    artifact_uris,
     convert_vlm_eval_to_rl_signal,
     evaluate_rollout_with_vlm,
     generate_action_rollouts,
@@ -20,11 +24,17 @@ from npa.workflows.sim2real_loop import (
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
-COSMOS2_TRANSFER = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
-COSMOS3_REASON = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-reason.yaml"
+COSMOS2_TRANSFER = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
+)
+COSMOS3_REASON = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos3-reason.yaml"
+)
 
 
-def test_vlm_eval_signal_converter_and_trainer_update_close_loop(tmp_path: Path) -> None:
+def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
+    tmp_path: Path,
+) -> None:
     config = Sim2RealLoopConfig(
         run_id="sim2real-unit",
         output_dir=tmp_path,
@@ -40,11 +50,15 @@ def test_vlm_eval_signal_converter_and_trainer_update_close_loop(tmp_path: Path)
         quality=0.4,
     )[0]
 
-    evaluation = evaluate_rollout_with_vlm(rollout, output_dir=tmp_path / "vlm_eval", config=config)
+    evaluation = evaluate_rollout_with_vlm(
+        rollout, output_dir=tmp_path / "vlm_eval", config=config
+    )
     signal = convert_vlm_eval_to_rl_signal(evaluation)
     parsed = parse_vlm_signal_batch(signal)
     update = run_vlm_signal_training_step(parsed, output_dir=tmp_path / "update")
-    control = run_vlm_signal_training_step(parsed, output_dir=tmp_path / "control", control=True)
+    control = run_vlm_signal_training_step(
+        parsed, output_dir=tmp_path / "control", control=True
+    )
 
     assert evaluation["schema"] == SCHEMA_VLM_EVAL
     assert signal["schema"] == SCHEMA_RL_SIGNAL
@@ -57,6 +71,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     config = Sim2RealLoopConfig(
         run_id="sim2real-full-unit",
         output_dir=tmp_path,
+        trigger_dataset_uri="s3://bucket/sim2real-triggers/lerobot-pusht/",
         threshold=0.45,
         inner_iterations=2,
         outer_iterations=1,
@@ -71,19 +86,74 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
 
     assert report["schema"] == "npa.sim2real.e2e_report.v1"
     assert reward_trend[-1] >= reward_trend[0]
+    assert report["s3_artifacts"] == {}
+    assert (
+        report["byo_seams"]["trigger_dataset_uri"]
+        == "s3://bucket/sim2real-triggers/lerobot-pusht/"
+    )
     assert decision["decision"] == "promote_checkpoint"
+    trigger = json.loads((tmp_path / "stage_01_trigger" / "trigger.json").read_text())
+    retrigger = json.loads(
+        (tmp_path / "stage_13_retrigger" / "retrigger.json").read_text()
+    )
+    assert (
+        trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
+    )
+    assert trigger["start_condition"] == "dataset_landed_in_trigger_path"
+    assert retrigger["target_stage"] == 1
+    assert (
+        retrigger["trigger_dataset_uri"]
+        == "s3://bucket/sim2real-triggers/lerobot-pusht/"
+    )
     assert (tmp_path / "vlm_eval" / "train").exists()
     assert (tmp_path / "training_signal" / "train").exists()
     assert (tmp_path / "inner_loop" / "outer-01" / "evidence.json").exists()
-    assert json.loads((tmp_path / "eval" / "heldout" / "report.json").read_text())["success_rate"] >= 0.45
+    assert (
+        json.loads((tmp_path / "eval" / "heldout" / "report.json").read_text())[
+            "success_rate"
+        ]
+        >= 0.45
+    )
     assert (tmp_path / "checkpoints" / "candidate" / "candidate.json").exists()
     assert (tmp_path / "reports" / "sim2real-report.json").exists()
+
+
+def test_threshold_failure_loops_back_to_inner_loop(tmp_path: Path) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-loopback-unit",
+        output_dir=tmp_path,
+        threshold=0.98,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+    )
+
+    report = run_full_loop(config)
+    decision = report["outer_loop"]["latest_decision"]
+    loopback = json.loads((tmp_path / "outer_loop" / "loopback.json").read_text())
+
+    assert decision["decision"] == "loop_back_to_inner_loop"
+    assert loopback["to_stage"] == 7
+
+
+def test_empty_s3_prefix_writes_under_run_id() -> None:
+    config = Sim2RealLoopConfig(
+        run_id="pusht-demo",
+        s3_bucket="bucket",
+        s3_prefix="",
+        trigger_dataset_uri="s3://bucket/sim2real-triggers/pusht-demo/lerobot-pusht/",
+    )
+
+    assert artifact_uris(config)["root"] == "s3://bucket/pusht-demo/"
 
 
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     report = sim2real.run(
         run_id="sim2real-sdk-unit",
         output_dir=tmp_path,
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
         threshold=0.45,
         inner_iterations=1,
         rollout_count=1,
@@ -93,24 +163,42 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
 
     assert report["run_id"] == "sim2real-sdk-unit"
     assert "vlm_image" in report["byo_seams"]
+    assert report["byo_seams"]["trigger_dataset_uri"] == "s3://bucket/triggers/pusht/"
 
 
 def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
-    docs = [doc for doc in yaml.safe_load_all(RUNBOOK.read_text(encoding="utf-8")) if doc is not None]
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(RUNBOOK.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
 
     assert len(docs) == 1
     task = docs[0]
     assert task["name"] == "sim2real-full-loop"
+    assert (
+        task["envs"]["NPA_SIM2REAL_TRIGGER_DATASET_URI"]
+        == "${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
+    )
+    assert (
+        task["envs"]["NPA_SIM2REAL_TRIGGER_DATASET_ID"]
+        == "${NPA_SIM2REAL_TRIGGER_DATASET_ID}"
+    )
     assert task["envs"]["VLM_IMAGE"] == "${VLM_IMAGE}"
     assert task["envs"]["TRAINER_IMAGE"] == "${TRAINER_IMAGE}"
     assert task["envs"]["EVAL_IMAGE"] == "${EVAL_IMAGE}"
     assert "npa.workflows.sim2real_loop full-loop" in task["run"]
+    assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
-    transfer = cosmos2.transfer(input_uri="s3://bucket/input/", output_uri="s3://bucket/augment/")
-    reason = cosmos3.reason(input_uri="s3://bucket/rollouts/", output_uri="s3://bucket/vlm_eval/")
+    transfer = cosmos2.transfer(
+        input_uri="s3://bucket/input/", output_uri="s3://bucket/augment/"
+    )
+    reason = cosmos3.reason(
+        input_uri="s3://bucket/rollouts/", output_uri="s3://bucket/vlm_eval/"
+    )
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
