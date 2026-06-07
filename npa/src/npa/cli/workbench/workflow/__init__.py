@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import tempfile
+import time
 from enum import Enum
 from pathlib import Path
 
@@ -68,6 +70,11 @@ def submit_cmd(
         ControllerBackendOption.kubernetes,
         "--controller-backend",
         help="Managed-jobs controller backend.",
+    ),
+    infra: str = typer.Option(
+        "",
+        "--infra",
+        help="SkyPilot infrastructure target, for example k8s/<context>.",
     ),
     submit_timeout: int = typer.Option(
         1800,
@@ -178,6 +185,27 @@ def submit_cmd(
         "--s3-prefix",
         help="S3 object prefix materialized into workflow envs.",
     ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias used to resolve durable workflow S3 credentials.",
+    ),
+    durable_s3: bool = typer.Option(
+        False,
+        "--durable-s3/--no-durable-s3",
+        help="Instrument the workflow with S3 manifest, status, artifacts, and redacted logs.",
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact durable workflow run prefix, for example s3://bucket/run-id/.",
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "",
+        "--workflow-s3-prefix",
+        help="Parent prefix for durable workflow state. The run ID is appended.",
+    ),
     secret_env: list[str] = typer.Option(
         [],
         "--secret-env",
@@ -191,6 +219,13 @@ def submit_cmd(
 ) -> None:
     """Submit a SkyPilot workflow YAML through the NPA controller convention."""
     from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, submit_workflow
+    from npa.orchestration.skypilot.workflow_state import (
+        SECRET_ENV_NAMES,
+        WorkflowStateError,
+        instrument_workflow_yaml,
+        resolve_workflow_s3_config,
+        write_manifest,
+    )
 
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
@@ -199,7 +234,11 @@ def submit_cmd(
     submitted_yaml_path = yaml_path
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
     materializer = _resolve_materializer(tool, yaml_path)
-    if substitutions or materializer:
+    resolved_run_id = run_id or _default_submit_run_id(yaml_path)
+    workflow_state = None
+    instrumented = None
+    extra_env: dict[str, str] = {}
+    if substitutions or materializer or durable_s3:
         submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
         submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
 
@@ -219,7 +258,7 @@ def submit_cmd(
             try:
                 plan = materialize_sonic_workflow(
                     source_yaml_path,
-                    run_id=run_id or _default_submit_run_id(yaml_path),
+                    run_id=resolved_run_id,
                     registry=registry,
                     image=image,
                     npa_image=npa_image,
@@ -257,17 +296,53 @@ def submit_cmd(
         else:
             _warn_unresolved_placeholders(yaml_path.read_text(encoding="utf-8"))
 
+        if durable_s3:
+            try:
+                workflow_state = resolve_workflow_s3_config(
+                    run_id=resolved_run_id,
+                    project=project or None,
+                    workflow_s3_uri=workflow_s3_uri,
+                    workflow_s3_prefix=workflow_s3_prefix,
+                    s3_bucket=s3_bucket,
+                    s3_endpoint=s3_endpoint,
+                )
+                instrumented = instrument_workflow_yaml(
+                    submitted_yaml_path if submitted_yaml_path.exists() else source_yaml_path,
+                    run_id=resolved_run_id,
+                    state=workflow_state,
+                )
+                submitted_yaml_path.write_text(instrumented.yaml_text, encoding="utf-8")
+                write_manifest(instrumented.manifest, workflow_state)
+                extra_env.update(workflow_state.secret_env())
+                for name in SECRET_ENV_NAMES:
+                    if name not in secret_env:
+                        secret_env.append(name)
+            except WorkflowStateError as exc:
+                _fail(str(exc))
+                return
+
         result = submit_workflow(
             submitted_yaml_path,
-            run_id or _default_submit_run_id(yaml_path),
+            resolved_run_id,
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin or None,
             controller_backend=controller_backend.value,
+            infra=infra,
             secret_envs=secret_env,
             require_controller_up=require_controller_up,
+            extra_env=extra_env,
             timeout=submit_timeout,
         )
+        if workflow_state is not None and instrumented is not None:
+            instrumented_manifest = write_manifest(
+                instrumented.manifest,
+                workflow_state,
+                job_id=result.job_id,
+            )
+            result.log_paths["run_prefix_uri"] = workflow_state.uri
+            result.log_paths["manifest_uri"] = f"{workflow_state.uri.rstrip('/')}/manifest.json"
+            result.log_paths["stages"] = ",".join(instrumented_manifest.get("stages", {}).keys())
     except OSError as exc:
         _fail(f"SkyPilot workflow submission failed: {exc}")
         return
@@ -285,6 +360,8 @@ def submit_cmd(
     typer.echo(f"status: {result.status}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
+    if workflow_state is not None:
+        typer.echo(f"run_prefix_uri: {workflow_state.uri}")
 
 
 def _default_submit_run_id(yaml_path: Path) -> str:
@@ -327,6 +404,214 @@ def _warn_unresolved_placeholders(content: str) -> None:
             f"Warning: unresolved placeholders remain: {', '.join(unresolved)}",
             err=True,
         )
+
+
+def _uses_s3_monitor(
+    run_id: str,
+    *,
+    project: str = "",
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+    s3_bucket: str = "",
+) -> bool:
+    return bool(
+        run_id.startswith("s3://")
+        or project
+        or workflow_s3_uri
+        or workflow_s3_prefix
+        or s3_bucket
+    )
+
+
+def _resolve_monitor_state(
+    run_id: str,
+    *,
+    project: str = "",
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+):
+    from npa.orchestration.skypilot.workflow_state import resolve_workflow_s3_config
+
+    exact_uri = workflow_s3_uri or (run_id if run_id.startswith("s3://") else "")
+    resolved_run_id = _display_run_id(run_id)
+    return resolve_workflow_s3_config(
+        run_id=resolved_run_id,
+        project=project or None,
+        workflow_s3_uri=exact_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+    )
+
+
+def _resolve_monitor_parent_state(
+    *,
+    project: str = "",
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+):
+    from npa.orchestration.skypilot.workflow_state import WorkflowS3Config, parse_s3_uri, resolve_workflow_s3_config
+
+    if workflow_s3_uri:
+        bucket, prefix = parse_s3_uri(workflow_s3_uri)
+        child = resolve_workflow_s3_config(
+            run_id=prefix.rsplit("/", 1)[-1] or "runs",
+            project=project or None,
+            workflow_s3_uri=workflow_s3_uri,
+            s3_endpoint=s3_endpoint,
+        )
+        return WorkflowS3Config(
+            bucket=bucket,
+            prefix=prefix,
+            endpoint_url=child.endpoint_url,
+            aws_access_key_id=child.aws_access_key_id,
+            aws_secret_access_key=child.aws_secret_access_key,
+            project=child.project,
+        )
+
+    sentinel = "__npa_workflow_parent__"
+    child = resolve_workflow_s3_config(
+        run_id=sentinel,
+        project=project or None,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+    )
+    prefix = child.prefix.removesuffix("/" + sentinel)
+    if prefix == child.prefix and child.prefix == sentinel:
+        prefix = ""
+    return WorkflowS3Config(
+        bucket=child.bucket,
+        prefix=prefix,
+        endpoint_url=child.endpoint_url,
+        aws_access_key_id=child.aws_access_key_id,
+        aws_secret_access_key=child.aws_secret_access_key,
+        project=child.project,
+    )
+
+
+def _display_run_id(run_id: str) -> str:
+    if not run_id.startswith("s3://"):
+        return run_id
+    from npa.orchestration.skypilot.workflow_state import parse_s3_uri
+
+    _bucket, prefix = parse_s3_uri(run_id)
+    return prefix.rstrip("/").rsplit("/", 1)[-1] or run_id
+
+
+def _resolve_sky_bin(sky_bin: str = "") -> str:
+    resolved = sky_bin or shutil.which("sky") or ""
+    if resolved:
+        return resolved
+    env_value = str(Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky")
+    return env_value
+
+
+def _durable_workflow_status(
+    run_id: str,
+    *,
+    project: str = "",
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+    sky_bin: str = "",
+) -> dict[str, object]:
+    from npa.orchestration.skypilot.workflow import workflow_status
+    from npa.orchestration.skypilot.workflow_state import read_manifest, read_stage_status
+
+    state = _resolve_monitor_state(
+        run_id,
+        project=project,
+        workflow_s3_uri=workflow_s3_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+    )
+    manifest = read_manifest(state)
+    stages: dict[str, dict[str, object]] = {}
+    for stage, info in (manifest.get("stages", {}) or {}).items():
+        stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
+        status = read_stage_status(state, str(stage))
+        if status:
+            stage_info.update(status)
+        stages[str(stage)] = stage_info
+
+    job_id = str(manifest.get("sky_job_id") or "")
+    live_status = ""
+    if job_id:
+        try:
+            live = workflow_status(job_id, sky_bin=_resolve_sky_bin(sky_bin))
+            live_status = live.status if not live.error else ""
+        except Exception:
+            live_status = ""
+    status = _aggregate_stage_status(stages, live_status)
+    return {
+        "run_id": manifest.get("run_id") or _display_run_id(run_id),
+        "workflow_name": manifest.get("workflow_name", ""),
+        "status": status,
+        "live_status": live_status,
+        "sky_job_id": job_id,
+        "run_prefix_uri": manifest.get("run_prefix_uri") or state.uri,
+        "manifest_uri": f"{state.uri.rstrip('/')}/manifest.json",
+        "stages": stages,
+    }
+
+
+def _aggregate_stage_status(stages: dict[str, dict[str, object]], live_status: str) -> str:
+    stage_states = [str(info.get("state") or "").upper() for info in stages.values()]
+    if any(state.startswith("FAILED") or state in {"CANCELLED", "BLOCKED"} for state in stage_states):
+        return "FAILED"
+    if stage_states and all(state == "SUCCEEDED" for state in stage_states):
+        return "SUCCEEDED"
+    live = live_status.upper()
+    if live:
+        return live
+    if any(state == "RUNNING" for state in stage_states):
+        return "RUNNING"
+    return "UNKNOWN"
+
+
+def _workflow_status_is_terminal(status: str) -> bool:
+    normalized = status.upper()
+    return normalized == "SUCCEEDED" or normalized.startswith("FAILED") or normalized in {"CANCELLED", "BLOCKED"}
+
+
+def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat) -> None:
+    if output_format == OutputFormat.json:
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+        return
+    typer.echo(f"run_id: {result.get('run_id')}")
+    typer.echo(f"status: {result.get('status')}")
+    if result.get("sky_job_id"):
+        typer.echo(f"sky_job_id: {result.get('sky_job_id')}")
+    typer.echo(f"run_prefix_uri: {result.get('run_prefix_uri')}")
+    stages = result.get("stages", {})
+    if isinstance(stages, dict):
+        for stage, info in stages.items():
+            state = info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            tier = info.get("tier", "") if isinstance(info, dict) else ""
+            suffix = f" ({tier})" if tier else ""
+            typer.echo(f"{stage}: {state}{suffix}")
+
+
+def _resolve_stage_name(manifest: dict[str, object], requested: str) -> str:
+    stages = manifest.get("stages", {})
+    if not isinstance(stages, dict) or not stages:
+        if requested:
+            return requested
+        raise ValueError("manifest contains no stages")
+    if requested:
+        if requested not in stages:
+            raise ValueError(f"stage not found in manifest: {requested}")
+        return requested
+    if len(stages) == 1:
+        return next(iter(stages.keys()))
+    raise ValueError("--stage is required when a workflow has multiple stages")
 
 
 @app.command("run")
@@ -409,11 +694,79 @@ def run_cmd(
 @app.command("status")
 def status_cmd(
     run_id: str = typer.Argument(help="Run ID to check status of."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias used to resolve durable workflow S3 credentials.",
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact durable workflow run prefix, for example s3://bucket/run-id/.",
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "",
+        "--workflow-s3-prefix",
+        help="Parent prefix for durable workflow state. The run ID is appended.",
+    ),
+    s3_bucket: str = typer.Option(
+        "",
+        "--s3-bucket",
+        help="S3 bucket name or URI for durable workflow state.",
+    ),
+    s3_endpoint: str = typer.Option(
+        "",
+        "--s3-endpoint",
+        help="S3-compatible endpoint for durable workflow state.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable path for live status.",
+    ),
+    watch: bool = typer.Option(
+        False,
+        "--watch/--no-watch",
+        help="Refresh status until the workflow reaches a terminal state.",
+    ),
+    interval: float = typer.Option(
+        10.0,
+        "--interval",
+        help="Watch refresh interval in seconds.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Shortcut for --output-format json."),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
 ) -> None:
     """Check the status of a workflow run."""
+    if _uses_s3_monitor(
+        run_id,
+        project=project,
+        workflow_s3_uri=workflow_s3_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+    ):
+        try:
+            while True:
+                result = _durable_workflow_status(
+                    run_id,
+                    project=project,
+                    workflow_s3_uri=workflow_s3_uri,
+                    workflow_s3_prefix=workflow_s3_prefix,
+                    s3_bucket=s3_bucket,
+                    s3_endpoint=s3_endpoint,
+                    sky_bin=sky_bin,
+                )
+                _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
+                if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
+                    return
+                time.sleep(interval)
+        except Exception as exc:
+            _fail(str(exc))
+            return
+
     from npa.workflows.distill import DistillationError, get_run_status
 
     try:
@@ -422,7 +775,7 @@ def status_cmd(
         _fail(str(exc))
         return
 
-    if output_format == OutputFormat.json:
+    if json_output or output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
         console.print(f"  run_id: {result.get('run_id')}")
@@ -434,18 +787,228 @@ def status_cmd(
 @app.command("logs")
 def logs_cmd(
     run_id: str = typer.Argument(help="Run ID."),
-    stage: str = typer.Argument(help="Stage name (train_teacher, generate_demos, convert, train_student, eval_student)."),
+    stage: str | None = typer.Argument(
+        None,
+        help="Stage name. Legacy distill runs require this positional argument.",
+    ),
+    stage_option: str = typer.Option(
+        "",
+        "--stage",
+        help="Stage name for durable S3 workflow logs.",
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Project alias used to resolve durable workflow S3 credentials.",
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact durable workflow run prefix, for example s3://bucket/run-id/.",
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "",
+        "--workflow-s3-prefix",
+        help="Parent prefix for durable workflow state. The run ID is appended.",
+    ),
+    s3_bucket: str = typer.Option(
+        "",
+        "--s3-bucket",
+        help="S3 bucket name or URI for durable workflow state.",
+    ),
+    s3_endpoint: str = typer.Option(
+        "",
+        "--s3-endpoint",
+        help="S3-compatible endpoint for durable workflow state.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable path for live --follow logs.",
+    ),
+    follow: bool = typer.Option(
+        False,
+        "--follow/--no-follow",
+        help="Tail live SkyPilot logs when the managed job is still running.",
+    ),
 ) -> None:
     """Show logs for a specific stage of a workflow run."""
+    selected_stage = stage_option or stage or ""
+    if _uses_s3_monitor(
+        run_id,
+        project=project,
+        workflow_s3_uri=workflow_s3_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+    ):
+        try:
+            state = _resolve_monitor_state(
+                run_id,
+                project=project,
+                workflow_s3_uri=workflow_s3_uri,
+                workflow_s3_prefix=workflow_s3_prefix,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+            )
+            from npa.orchestration.skypilot.workflow_state import (
+                read_manifest,
+                read_stage_log,
+                tail_live_job_logs,
+            )
+
+            manifest = read_manifest(state)
+            selected_stage = _resolve_stage_name(manifest, selected_stage)
+            job_id = str(manifest.get("sky_job_id") or "")
+            if follow and job_id:
+                live = tail_live_job_logs(
+                    sky_bin=_resolve_sky_bin(sky_bin),
+                    job_id=job_id,
+                    stage=selected_stage,
+                    follow=True,
+                    timeout=86400,
+                )
+                if live.stdout:
+                    typer.echo(live.stdout, nl=False)
+                if live.stderr:
+                    typer.echo(live.stderr, err=True, nl=False)
+                if live.returncode == 0:
+                    return
+            typer.echo(read_stage_log(state, selected_stage), nl=False)
+            return
+        except Exception as exc:
+            _fail(str(exc))
+            return
+
+    if not selected_stage:
+        _fail("stage is required for legacy distill logs")
+        return
+
     from npa.workflows.distill import DistillationError, get_stage_logs
 
     try:
-        logs = get_stage_logs(run_id, stage)
+        logs = get_stage_logs(run_id, selected_stage)
     except DistillationError as exc:
         _fail(str(exc))
         return
 
     typer.echo(logs)
+
+
+@app.command("artifacts")
+def artifacts_cmd(
+    run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
+    stage: str = typer.Option("", "--stage", help="Optional stage name."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
+    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
+    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """List durable S3 artifact URIs for a workflow run."""
+    try:
+        from npa.orchestration.skypilot.workflow_state import list_artifacts
+
+        state = _resolve_monitor_state(
+            run_id,
+            project=project,
+            workflow_s3_uri=workflow_s3_uri,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        artifacts = list_artifacts(state, stage or None)
+    except Exception as exc:
+        _fail(str(exc))
+        return
+    if json_output:
+        typer.echo(json.dumps({"run_id": _display_run_id(run_id), "artifacts": artifacts}, indent=2))
+        return
+    for uri in artifacts:
+        typer.echo(uri)
+
+
+@app.command("list")
+def list_cmd(
+    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
+    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Parent durable workflow prefix."),
+    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix for durable workflow state."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    limit: int = typer.Option(50, "--limit", help="Maximum runs to list."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """List durable S3 workflow runs."""
+    try:
+        from npa.orchestration.skypilot.workflow_state import list_runs
+
+        parent_state = _resolve_monitor_parent_state(
+            project=project,
+            workflow_s3_uri=workflow_s3_uri,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        runs = list_runs(state_parent=parent_state, limit=limit)
+    except Exception as exc:
+        _fail(str(exc))
+        return
+    if json_output:
+        typer.echo(json.dumps({"runs": runs}, indent=2))
+        return
+    for item in runs:
+        typer.echo(
+            f"{item.get('run_id', '')}\t{item.get('workflow_name', '')}\t"
+            f"{item.get('sky_job_id', '')}\t{item.get('run_prefix_uri', '')}"
+        )
+
+
+@app.command("cancel")
+def cancel_cmd(
+    run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
+    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
+    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable path."),
+    cluster: str = typer.Option("", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Cancel a managed workflow job and explicitly tear down its cluster."""
+    try:
+        from npa.orchestration.skypilot.workflow_state import cancel_workflow_job, read_manifest
+
+        state = _resolve_monitor_state(
+            run_id,
+            project=project,
+            workflow_s3_uri=workflow_s3_uri,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        manifest = read_manifest(state)
+        job_id = str(manifest.get("sky_job_id") or "")
+        if not job_id:
+            _fail("manifest does not contain a sky_job_id")
+            return
+        result = cancel_workflow_job(
+            sky_bin=_resolve_sky_bin(sky_bin),
+            job_id=job_id,
+            run_id=str(manifest.get("run_id") or _display_run_id(run_id)),
+            cluster=cluster,
+        )
+    except Exception as exc:
+        _fail(str(exc))
+        return
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+        return
+    typer.echo(f"job_id: {result['job_id']}")
+    typer.echo(f"cluster: {result['cluster']}")
+    typer.echo(f"cancel_returncode: {result['cancel_returncode']}")
+    typer.echo(f"down_returncode: {result['down_returncode']}")
 
 
 @app.command("teardown")

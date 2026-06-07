@@ -244,6 +244,41 @@ def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_pat
     assert "AWS_SECRET_ACCESS_KEY" not in cmd
 
 
+def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs["env"])
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-config-secrets",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/npa-rtxpro-mk8s",
+        secret_envs=("AWS_ACCESS_KEY_ID",),
+        extra_env={"AWS_ACCESS_KEY_ID": "from-config"},
+    )
+
+    cmd = calls[0]
+    assert "--infra" in cmd
+    assert cmd[cmd.index("--infra") + 1] == "k8s/npa-rtxpro-mk8s"
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == cmd[cmd.index("--secret") : cmd.index("--secret") + 2]
+    assert "from-config" not in cmd
+    assert captured_env["AWS_ACCESS_KEY_ID"] == "from-config"
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")
