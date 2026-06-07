@@ -8,10 +8,12 @@ resources:
   accelerators: H100:1
   cpus: 16
   memory: 80
-  # Replace <your-registry-id> and <vlm-image-tag> with an image that includes
-  # the npa CLI plus a CUDA/PyTorch stack suitable for vLLM.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-vlm:<vlm-image-tag>"
+  # NPA_VLM_IMAGE is BYO-overridable. The default is a pushed first-party
+  # CUDA/PyTorch Workbench image; set NPA_VLM_IMAGE to a prebuilt VLM/vLLM image
+  # when you need pinned serving dependencies.
+  image_id: "docker:${NPA_VLM_IMAGE}"
 envs:
+  NPA_VLM_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
   EVAL_INPUT_URI: "s3://<your-bucket-name>/sim-to-real/<run-id>/rollouts/"
   VLM_EVAL_OUTPUT_URI: "s3://<your-bucket-name>/sim-to-real/<run-id>/vlm-eval/"
   VLM_EVAL_TASK: "sim-to-real"

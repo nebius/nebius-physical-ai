@@ -105,8 +105,22 @@ def image_refs_for_workflows(paths: list[Path]) -> list[str]:
             image_id = resources.get("image_id")
             if isinstance(image_id, str) and image_id.strip():
                 image = image_id.removeprefix("docker:").strip()
+                envs = doc.get("envs")
+                if isinstance(envs, dict):
+                    image = _resolve_image_env_refs(image, envs)
                 refs.append(image)
     return refs
+
+
+def _resolve_image_env_refs(image: str, envs: dict[str, Any]) -> str:
+    """Resolve simple ${VAR} image refs from a task's env defaults."""
+
+    resolved = image
+    for key, value in envs.items():
+        if not isinstance(value, str):
+            continue
+        resolved = resolved.replace(f"${{{key}}}", value)
+    return resolved
 
 
 def unresolved_image_placeholders(image: str) -> bool:

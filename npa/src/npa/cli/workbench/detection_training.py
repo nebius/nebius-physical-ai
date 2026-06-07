@@ -14,7 +14,9 @@ from typing import Any
 import httpx
 import typer
 
+from npa.clients.config import resolve_container_registry
 from npa.clients.credentials import load_credentials
+from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 from npa.workbench.detection_training.schemas import (
     DEFAULT_LANCE_URI,
     DEFAULT_PORT,
@@ -29,7 +31,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-DEFAULT_IMAGE = "npa-detection-training:latest"
+DEFAULT_IMAGE = container_image_for_tool("detection-training", registry=DEFAULT_CONTAINER_REGISTRY)
 DEFAULT_NAME = "npa-detection-training"
 DEFAULT_NAMESPACE = "default"
 GPU_NODE_SELECTORS = {
@@ -56,9 +58,10 @@ def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = No
 
 
 def deploy_cmd(
+    project: str = typer.Option("", "--project", "-p", help="Project alias used to resolve container_registry."),
     cluster_name: str = typer.Option("npa-workbench-eu-north1", "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    image: str = typer.Option(DEFAULT_IMAGE, "--image", help="Container image to deploy."),
+    image: str = typer.Option("", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."),
     name: str = typer.Option(DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."),
     namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
@@ -92,8 +95,12 @@ def deploy_cmd(
     selector_value = node_selector_value.strip() or GPU_NODE_SELECTORS.get(gpu_type.strip().lower())
     if not selector_value:
         fail("--gpu-type must be h100 or l40s unless --node-selector-value is provided")
+    resolved_image = image.strip() or container_image_for_tool(
+        "detection-training",
+        registry=resolve_container_registry(project or None),
+    )
     manifest = _kubernetes_manifest(
-        image=image,
+        image=resolved_image,
         name=name,
         namespace=namespace,
         port=port,
@@ -110,7 +117,7 @@ def deploy_cmd(
         return
     if image_pull_secret:
         _ensure_image_pull_secret(
-            image=image,
+            image=resolved_image,
             secret_name=image_pull_secret,
             namespace=namespace,
             kubeconfig=resolved_kubeconfig,
@@ -123,7 +130,7 @@ def deploy_cmd(
             "status": "deployed",
             "name": name,
             "namespace": namespace,
-            "image": image,
+            "image": resolved_image,
             "endpoint": endpoint,
             "node_selector": {node_selector_key: selector_value},
         },

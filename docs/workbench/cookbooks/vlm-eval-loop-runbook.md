@@ -24,7 +24,8 @@ export RUN_ID="vlm-eval-loop-smoke"
 export NPA_S3_BUCKET="<your-bucket-name>"
 export ROLLOUTS="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/rollouts/"
 export OUTPUT_DIR="s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/vlm-eval-loop/"
-export VLM_IMAGE_ID="docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-vlm:<vlm-image-tag>"
+export NPA_VLM_IMAGE="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
+# For production BYO, set NPA_VLM_IMAGE to a prebuilt VLM/vLLM serving image.
 
 npa/.venv/bin/python - <<'PY'
 import os
@@ -36,7 +37,8 @@ source = Path("npa/workflows/workbench/skypilot/sim-to-real-loop.yaml")
 target = Path("/tmp/vlm-eval-loop.yaml")
 docs = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
 task = docs[1]
-task["resources"]["image_id"] = os.environ["VLM_IMAGE_ID"]
+task["envs"]["NPA_VLM_IMAGE"] = os.environ["NPA_VLM_IMAGE"]
+task["resources"]["image_id"] = f"docker:{os.environ['NPA_VLM_IMAGE']}"
 task["envs"]["ROLLOUTS"] = os.environ["ROLLOUTS"]
 task["envs"]["OUTPUT_DIR"] = os.environ["OUTPUT_DIR"]
 target.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")

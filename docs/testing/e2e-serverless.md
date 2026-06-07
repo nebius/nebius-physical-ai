@@ -281,7 +281,7 @@ npa workbench groot -p uk-south1 -n w7p-groot infer \
 
 W7-parallel-tools result: code path and unit coverage are present, but three
 smoke attempts failed before logs. W7p-groot-debug classified those failures as
-a missing image tag: the jobs used `npa-groot:n1.7`, while the pushed GR00T
+a missing image tag: the jobs used the old unpushed GR00T tag, while the pushed GR00T
 runtime image is `npa-groot:0.1.0`.
 
 W7p-groot-debug fixed the default serverless image tag and retried once on

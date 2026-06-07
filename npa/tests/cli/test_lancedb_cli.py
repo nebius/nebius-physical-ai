@@ -303,7 +303,10 @@ def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.Monke
 
 
 def test_lancedb_container_image_name_resolves() -> None:
-    assert DEFAULT_CONTAINER_IMAGE == "npa-lancedb:0.30.2"
+    assert (
+        DEFAULT_CONTAINER_IMAGE
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+    )
 
 
 @pytest.mark.smoke

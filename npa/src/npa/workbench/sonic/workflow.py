@@ -21,7 +21,13 @@ from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypi
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 DEFAULT_GPU_TARGET = "l40s"
 DEFAULT_SONIC_WORKFLOW_PREFIX = "sonic-locomotion"
-UNRESOLVED_SUBMIT_TOKENS = ("<your-", "<sonic-image-tag>", "<npa-image-tag>", "example.invalid")
+UNRESOLVED_SUBMIT_TOKENS = (
+    "<your-",
+    "<sonic-image-tag>",
+    "<npa-image-tag>",
+    "${NPA_WORKBENCH_IMAGE}",
+    "example.invalid",
+)
 SKYPILOT_DOCKER_USERNAME = "SKYPILOT_DOCKER_USERNAME"
 SKYPILOT_DOCKER_PASSWORD = "SKYPILOT_DOCKER_PASSWORD"
 SKYPILOT_DOCKER_SERVER = "SKYPILOT_DOCKER_SERVER"
@@ -340,7 +346,6 @@ def _materialize_task_doc(
     ).strip().lower()
     has_sonic_env = _has_sonic_env(doc)
     uses_sonic_runtime_image = _uses_sonic_runtime_image(doc)
-    image_id = str(resources.get("image_id", ""))
     if uses_sonic_runtime_image:
         resources["cloud"] = cloud
         if payload_mode == "docker":
@@ -354,8 +359,10 @@ def _materialize_task_doc(
             resources["memory"] = _default_memory(gpu_target)
             if use_spot is not None:
                 resources["use_spot"] = use_spot
-    elif npa_image and _looks_like_npa_helper_image(image_id):
+    elif npa_image and _looks_like_npa_helper_image(doc):
         resources["image_id"] = f"docker:{npa_image}"
+        if "NPA_WORKBENCH_IMAGE" in envs:
+            envs["NPA_WORKBENCH_IMAGE"] = npa_image
 
     for key in ("POLICY_IMAGE", "CONTAINER_IMAGE", "SONIC_EVAL_CONTAINER_IMAGE"):
         if key in envs and has_sonic_env:
@@ -402,8 +409,16 @@ def _uses_sonic_runtime_image(doc: dict[str, Any]) -> bool:
     return isinstance(envs, dict) and ("npa-sonic" in image_id or "POLICY_IMAGE" in envs)
 
 
-def _looks_like_npa_helper_image(image_id: str) -> bool:
-    return "/npa:" in image_id or image_id.endswith("/npa:<npa-image-tag>")
+def _looks_like_npa_helper_image(doc: dict[str, Any]) -> bool:
+    envs = doc.get("envs")
+    resources = doc.get("resources")
+    image_id = str(resources.get("image_id", "")) if isinstance(resources, dict) else ""
+    return (
+        "/npa:" in image_id
+        or image_id.endswith("/npa:<npa-image-tag>")
+        or "${NPA_WORKBENCH_IMAGE}" in image_id
+        or (isinstance(envs, dict) and "NPA_WORKBENCH_IMAGE" in envs)
+    )
 
 
 def _resolve_registry_auth(

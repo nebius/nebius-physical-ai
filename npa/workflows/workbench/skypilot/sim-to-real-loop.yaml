@@ -16,10 +16,12 @@ resources:
   # GPU defaults to H100:1 below. If H100 capacity is unavailable, change both
   # resources.accelerators and envs.GPU to H200:1 or L40S:1 before launch.
   #
-  # Replace <your-registry-id> and <vlm-image-tag> with an image that includes
-  # the npa CLI plus a CUDA/PyTorch stack suitable for vLLM.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-vlm:<vlm-image-tag>"
+  # NPA_VLM_IMAGE is BYO-overridable. The default is a pushed first-party
+  # CUDA/PyTorch Workbench image; set NPA_VLM_IMAGE to a prebuilt VLM/vLLM image
+  # when you need pinned serving dependencies.
+  image_id: "docker:${NPA_VLM_IMAGE}"
 envs:
+  NPA_VLM_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
   # Rollout set. Use an S3 prefix or a local path in the image; child
   # directories are treated as independent rollouts.
   ROLLOUTS: "s3://<your-bucket-name>/sim-to-real/<run-id>/rollouts/"
