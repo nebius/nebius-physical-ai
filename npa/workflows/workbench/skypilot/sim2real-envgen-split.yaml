@@ -1,0 +1,28 @@
+# Sim2Real raw env generation and 80/20 split.
+#
+# Render concrete values before submitting. Secrets are injected through
+# Kubernetes/SkyPilot secret envs, not committed in this file.
+name: sim2real-envgen-split
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO6000:1
+  image_id: "docker:${ENVGEN_IMAGE}"
+envs:
+  NPA_SIM2REAL_RUN_ID: "${NPA_SIM2REAL_RUN_ID}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  NPA_ENV_COUNT: "10000"
+  NPA_SHARD_COUNT: "16"
+  NPA_TRAIN_FRACTION: "0.8"
+  NPA_SEED: "42"
+  NPA_AUGMENTED_FRAMES_URI: ""
+run: |
+  set -euo pipefail
+  python -m npa.workflows.sim2real_envgen raw-shard \
+    --run-id "${NPA_SIM2REAL_RUN_ID}" \
+    --output-uri "${NPA_OUTPUT_URI}" \
+    --env-count "${NPA_ENV_COUNT}" \
+    --shard-index "${JOB_COMPLETION_INDEX:-0}" \
+    --shard-count "${NPA_SHARD_COUNT}" \
+    --train-fraction "${NPA_TRAIN_FRACTION}" \
+    --seed "${NPA_SEED}" \
+    --augmented-frames-uri "${NPA_AUGMENTED_FRAMES_URI}"

@@ -1,0 +1,25 @@
+# Standalone Cosmos2 transfer stage.
+#
+# Render concrete values before submitting. Secrets are injected through
+# Kubernetes/SkyPilot secret envs, not committed in this file.
+name: cosmos2-transfer
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO6000:1
+  image_id: "docker:${COSMOS2_TRANSFER_IMAGE}"
+envs:
+  NPA_RUN_ID: "${NPA_RUN_ID}"
+  NPA_INPUT_URI: "${NPA_INPUT_URI}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  NPA_ASSETS_URI: "${NPA_ASSETS_URI}"
+  NPA_SCENE_SPEC_URI: "${NPA_SCENE_SPEC_URI}"
+  COSMOS2_TRANSFER_IMAGE: "${COSMOS2_TRANSFER_IMAGE}"
+run: |
+  set -euo pipefail
+  python -m npa.workflows.cosmos_split cosmos2-transfer \
+    --run-id "${NPA_RUN_ID:-}" \
+    --input-uri "${NPA_INPUT_URI}" \
+    --output-uri "${NPA_OUTPUT_URI}" \
+    --assets-uri "${NPA_ASSETS_URI:-}" \
+    --scene-spec-uri "${NPA_SCENE_SPEC_URI:-}" \
+    --image "${COSMOS2_TRANSFER_IMAGE:-}"
