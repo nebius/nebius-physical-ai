@@ -1,0 +1,110 @@
+# Standalone Sim2Real VLM-to-RL full-loop runbook.
+#
+# Run with raw SkyPilot after providing S3 credentials and any BYO image
+# overrides as environment variables or Kubernetes secrets. For Kubernetes
+# clusters that require a service account, pass a SkyPilot config containing:
+#
+# kubernetes:
+#   pod_config:
+#     spec:
+#       serviceAccountName: agent-sa
+#       imagePullSecrets:
+#         - name: <registry-pull-secret>
+#       envFrom:
+#         - secretRef:
+#             name: hf-ngc-tokens
+name: sim2real-full-loop
+resources:
+  cloud: kubernetes
+  accelerators: RTX6000:1
+  cpus: 16+
+  memory: 64+
+  image_id: "docker:${TRAINER_IMAGE}"
+envs:
+  NPA_SIM2REAL_RUN_ID: "${NPA_SIM2REAL_RUN_ID}"
+  NPA_SIM2REAL_BUCKET: "${NPA_SIM2REAL_BUCKET}"
+  NPA_SIM2REAL_PREFIX: "${NPA_SIM2REAL_PREFIX}"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  S3_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  ACTION_ROLLOUTS_URI: "${ACTION_ROLLOUTS_URI}"
+  TRAIN_ENVS_URI: "${TRAIN_ENVS_URI}"
+  HELDOUT_ENVS_URI: "${HELDOUT_ENVS_URI}"
+  ASSETS_URI: "${ASSETS_URI}"
+  SCENE_SPEC_URI: "${SCENE_SPEC_URI}"
+  AUGMENT_IMAGE: "${AUGMENT_IMAGE}"
+  POLICY_IMAGE: "${POLICY_IMAGE}"
+  TRAINER_IMAGE: "${TRAINER_IMAGE}"
+  VLM_IMAGE: "${VLM_IMAGE}"
+  EVAL_IMAGE: "${EVAL_IMAGE}"
+  VLM_MODEL: "${VLM_MODEL}"
+  SUCCESS_THRESHOLD: "${SUCCESS_THRESHOLD}"
+  INNER_ITERATIONS: "${INNER_ITERATIONS}"
+  OUTER_ITERATIONS: "${OUTER_ITERATIONS}"
+  LOOP_OF_LOOPS_ITERATIONS: "${LOOP_OF_LOOPS_ITERATIONS}"
+  ROLLOUT_COUNT: "${ROLLOUT_COUNT}"
+  STEPS_PER_ROLLOUT: "${STEPS_PER_ROLLOUT}"
+  HELDOUT_ENV_COUNT: "${HELDOUT_ENV_COUNT}"
+  SIGNAL_LOSS_WEIGHT: "${SIGNAL_LOSS_WEIGHT}"
+  LEARNING_RATE: "${LEARNING_RATE}"
+  NO_GUARDRAILS: "${NO_GUARDRAILS}"
+  BYO_SIGNAL_CONVERTER: "${BYO_SIGNAL_CONVERTER}"
+  BYO_TRAINER_COMMAND: "${BYO_TRAINER_COMMAND}"
+  BYO_VLM_COMMAND: "${BYO_VLM_COMMAND}"
+  BYO_EVAL_COMMAND: "${BYO_EVAL_COMMAND}"
+  NPA_SOURCE_REPO: "${NPA_SOURCE_REPO}"
+  NPA_SOURCE_REF: "${NPA_SOURCE_REF}"
+setup: |
+  set -euo pipefail
+  if [ ! -f ./npa/pyproject.toml ]; then
+    if [ -z "${NPA_SOURCE_REPO:-}" ]; then
+      echo "ERROR: NPA_SOURCE_REPO is required when the source tree is not mounted." >&2
+      exit 2
+    fi
+    rm -rf ./npa-source ./npa
+    git clone --depth 1 --branch "${NPA_SOURCE_REF:-main}" "${NPA_SOURCE_REPO}" ./npa-source
+    ln -s ./npa-source/npa ./npa
+  fi
+  python3 -m pip install --user "uv>=0.9,<1"
+  export PATH="${HOME}/.local/bin:${PATH}"
+  uv python install 3.11
+  uv venv --python 3.11 --seed ./npa/.venv
+  ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
+  ./npa/.venv/bin/python -m pip install -e ./npa
+run: |
+  set -euo pipefail
+  export PATH="$(pwd)/npa/.venv/bin:${PATH}"
+  run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
+  output_dir="/tmp/npa-sim2real-${run_id}"
+  mkdir -p "${output_dir}"
+
+  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop full-loop \
+    --run-id "${run_id}" \
+    --output-dir "${output_dir}" \
+    --s3-bucket "${NPA_SIM2REAL_BUCKET:-${S3_BUCKET:-}}" \
+    --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}" \
+    --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}" \
+    --action-rollouts-uri "${ACTION_ROLLOUTS_URI:-}" \
+    --train-envs-uri "${TRAIN_ENVS_URI:-}" \
+    --heldout-envs-uri "${HELDOUT_ENVS_URI:-}" \
+    --assets-uri "${ASSETS_URI:-}" \
+    --scene-spec-uri "${SCENE_SPEC_URI:-}" \
+    --augment-image "${AUGMENT_IMAGE:-}" \
+    --policy-image "${POLICY_IMAGE:-}" \
+    --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}" \
+    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.0}" \
+    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.0}" \
+    --vlm-model "${VLM_MODEL:-npa-cosmos3-reason}" \
+    --threshold "${SUCCESS_THRESHOLD:-0.75}" \
+    --inner-iterations "${INNER_ITERATIONS:-2}" \
+    --outer-iterations "${OUTER_ITERATIONS:-1}" \
+    --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}" \
+    --rollout-count "${ROLLOUT_COUNT:-3}" \
+    --steps-per-rollout "${STEPS_PER_ROLLOUT:-4}" \
+    --heldout-env-count "${HELDOUT_ENV_COUNT:-8}" \
+    --signal-loss-weight "${SIGNAL_LOSS_WEIGHT:-1.0}" \
+    --learning-rate "${LEARNING_RATE:-0.05}" \
+    --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}" \
+    --byo-trainer-command "${BYO_TRAINER_COMMAND:-}" \
+    --byo-vlm-command "${BYO_VLM_COMMAND:-}" \
+    --byo-eval-command "${BYO_EVAL_COMMAND:-}" \
+    --upload-artifacts

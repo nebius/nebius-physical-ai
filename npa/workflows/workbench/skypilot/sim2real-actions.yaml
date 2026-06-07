@@ -1,0 +1,29 @@
+# Sim2Real action-conditioning with a swappable policy image.
+#
+# Render concrete values before submitting. Secrets are injected through
+# Kubernetes/SkyPilot secret envs, not committed in this file.
+name: sim2real-actions
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO6000:1
+  image_id: "docker:${POLICY_IMAGE}"
+envs:
+  NPA_SIM2REAL_RUN_ID: "${NPA_SIM2REAL_RUN_ID}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  NPA_TRAIN_ENVS_URI: "${NPA_TRAIN_ENVS_URI}"
+  NPA_ACTIONS_URI: "${NPA_ACTIONS_URI}"
+  NPA_ENV_COUNT: "10000"
+  NPA_ACTION_LIMIT: "512"
+  NPA_SEED: "42"
+  POLICY_IMAGE: "${POLICY_IMAGE}"
+run: |
+  set -euo pipefail
+  python -m npa.workflows.sim2real_envgen actions \
+    --run-id "${NPA_SIM2REAL_RUN_ID}" \
+    --output-uri "${NPA_OUTPUT_URI}" \
+    --env-count "${NPA_ENV_COUNT}" \
+    --limit "${NPA_ACTION_LIMIT}" \
+    --seed "${NPA_SEED}" \
+    --policy-image "${POLICY_IMAGE}" \
+    --train-envs-uri "${NPA_TRAIN_ENVS_URI}" \
+    --actions-uri "${NPA_ACTIONS_URI}"
