@@ -27,5 +27,9 @@ payload = {
 assert parse_vlm_signal_batch(payload)[0].rollout_id == "build-smoke"
 PY
 
+RUN chown -R ubuntu:ubuntu /workspace /opt/npa
+
+USER ubuntu
+
 ENTRYPOINT ["python", "-m", "npa.workbench.lerobot.policy_container"]
 CMD ["vlm-signal-step", "--help"]

@@ -6,4 +6,6 @@ LABEL org.opencontainers.image.description="Reference BYO-compatible Sim2Real ac
 
 ENV POLICY_IMAGE_KIND=npa-sim2real-reference-policy
 
+USER ubuntu
+
 CMD ["python", "-m", "npa.workflows.sim2real_envgen", "policy-contract", "--help"]

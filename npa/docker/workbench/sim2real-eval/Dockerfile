@@ -16,7 +16,10 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 RUN python -m pip install tomli \
     && python -m pip install --no-deps -e /opt/npa \
-    && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py
+    && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
+    && chown -R ubuntu:ubuntu /workspace /opt/npa
+
+USER ubuntu
 
 ENTRYPOINT ["python", "-m", "npa.workflows.sim2real_loop"]
 CMD ["full-loop", "--help"]
