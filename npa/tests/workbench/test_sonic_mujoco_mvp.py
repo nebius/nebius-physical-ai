@@ -110,6 +110,7 @@ def test_sonic_mvp_materializer_sets_h100_spot_region_and_docker_payload(monkeyp
     assert "-e WANDB_MODE" in docs[1]["run"]
     assert "-e WANDB_DISABLED" in docs[1]["run"]
     assert "NPA_SONIC_OUTPUT" in docs[2]["run"]
+    assert "SONIC_MUJOCO_METRICS_PATH" in docs[2]["run"]
     assert "mujoco_eval_metrics.json" in docs[2]["run"]
     assert "mujoco-eval" in docs[2]["run"]
     assert plan.region == "eu-north1"

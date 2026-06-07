@@ -259,6 +259,7 @@ run: |
   export NPA_OUTPUT_PATH="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
   export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-mujoco-eval}"
   export NPA_SONIC_OUTPUT="${NPA_SONIC_OUTPUT:-${NPA_LOCAL_OUTPUT_DIR}/mujoco_eval_metrics.json}"
+  export SONIC_MUJOCO_METRICS_PATH="${SONIC_MUJOCO_METRICS_PATH:-${NPA_SONIC_OUTPUT}}"
   export SONIC_POLICY_IMAGE="${POLICY_IMAGE}"
   if [ "${SONIC_PAYLOAD_MODE}" = "docker" ]; then
     export SONIC_IMAGE_REPO_DIGESTS="$(docker_cmd image inspect "${POLICY_IMAGE}" --format '{{join .RepoDigests ","}}' || true)"
@@ -278,6 +279,7 @@ run: |
       -e NPA_OUTPUT_PATH \
       -e NPA_LOCAL_OUTPUT_DIR \
       -e NPA_SONIC_OUTPUT \
+      -e SONIC_MUJOCO_METRICS_PATH \
       -e SONIC_POLICY_IMAGE \
       -e SONIC_IMAGE_REPO_DIGESTS \
       -e SONIC_PAYLOAD_MODE \
