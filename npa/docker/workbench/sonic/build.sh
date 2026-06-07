@@ -11,10 +11,11 @@ IMAGE_TAG_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
-Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s] [--tag TAG]
+Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s|mujoco] [--tag TAG]
 
 Builds the SONIC runtime image as npa-sonic:<version> for --variant baked, or
-npa-sonic:<version>-k8s for --variant k8s.
+npa-sonic:<version>-k8s for --variant k8s. The mujoco variant builds the
+additive npa-sonic-mujoco:<tag> image from an existing SONIC base image.
 When --tag is provided, it overrides the final image tag.
 When --registry is provided, also tags REGISTRY/npa-sonic:<tag>.
 Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
@@ -37,7 +38,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --variant)
       if [ "$#" -lt 2 ]; then
-        echo "ERROR: --variant requires baked or k8s" >&2
+        echo "ERROR: --variant requires baked, k8s, or mujoco" >&2
         exit 2
       fi
       VARIANT="$2"
@@ -80,9 +81,21 @@ case "$VARIANT" in
     INSTALL_NVIDIA_DRIVER_USERSPACE=0
     NPA_DRIVER_PROVISIONING="host-mounted"
     NPA_RUNTIME_USER="root"
+    IMAGE_NAME="npa-sonic"
+    DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+    DEFAULT_IMAGE_TAG=""
+    ;;
+  mujoco)
+    TAG_SUFFIX=""
+    INSTALL_NVIDIA_DRIVER_USERSPACE=0
+    NPA_DRIVER_PROVISIONING="inherited"
+    NPA_RUNTIME_USER="ubuntu"
+    IMAGE_NAME="npa-sonic-mujoco"
+    DOCKERFILE="$SCRIPT_DIR/Dockerfile.mujoco"
+    DEFAULT_IMAGE_TAG="${NPA_SONIC_MUJOCO_TAG:-0.1.3-mvp}"
     ;;
   *)
-    echo "ERROR: --variant must be baked or k8s, got: $VARIANT" >&2
+    echo "ERROR: --variant must be baked, k8s, or mujoco, got: $VARIANT" >&2
     exit 2
     ;;
 esac
@@ -136,11 +149,21 @@ else:
 PY
 )"
 
-IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-${VERSION}${TAG_SUFFIX}}"
-LOCAL_IMAGE="npa-sonic:${IMAGE_TAG}"
+if [ -z "${IMAGE_NAME:-}" ]; then
+  IMAGE_NAME="npa-sonic"
+fi
+if [ -z "${DOCKERFILE:-}" ]; then
+  DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+fi
+if [ -z "${DEFAULT_IMAGE_TAG:-}" ]; then
+  DEFAULT_IMAGE_TAG="${VERSION}${TAG_SUFFIX}"
+fi
+
+IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-${DEFAULT_IMAGE_TAG}}"
+LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 BUILD_ARGS=(
   --platform linux/amd64
-  -f "$SCRIPT_DIR/Dockerfile"
+  -f "$DOCKERFILE"
   --build-arg "SONIC_VERSION=${VERSION}"
   --build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION}"
   --build-arg "INSTALL_NVIDIA_DRIVER_USERSPACE=${INSTALL_NVIDIA_DRIVER_USERSPACE}"
@@ -148,8 +171,20 @@ BUILD_ARGS=(
   --build-arg "NPA_RUNTIME_USER=${NPA_RUNTIME_USER}"
 )
 
+if [ "$VARIANT" = "mujoco" ]; then
+  BASE_IMAGE="${NPA_SONIC_MUJOCO_BASE_IMAGE:-}"
+  if [ -z "$BASE_IMAGE" ]; then
+    if [ -n "$REGISTRY" ]; then
+      BASE_IMAGE="${REGISTRY}/npa-sonic:${VERSION}"
+    else
+      BASE_IMAGE="npa-sonic:${VERSION}"
+    fi
+  fi
+  BUILD_ARGS+=(--build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "SONIC_MUJOCO_VERSION=${IMAGE_TAG}")
+fi
+
 if [ -n "$REGISTRY" ]; then
-  REGISTRY_IMAGE="${REGISTRY}/npa-sonic:${IMAGE_TAG}"
+  REGISTRY_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 else
   REGISTRY_IMAGE=""
 fi

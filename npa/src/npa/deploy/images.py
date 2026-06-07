@@ -201,6 +201,11 @@ def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, A
         "rtx-pro": "sonic-k8s-host-mounted",
         "rtx6000": "sonic-k8s-host-mounted",
         "rtx-pro-6000": "sonic-k8s-host-mounted",
+        "mujoco": "sonic-mujoco-h100-mvp",
+        "h100": "sonic-mujoco-h100-mvp",
+        "h200": "sonic-mujoco-h100-mvp",
+        "sonic-mujoco": "sonic-mujoco-h100-mvp",
+        "mvp": "sonic-mujoco-h100-mvp",
     }
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:

@@ -21,6 +21,9 @@ workflows with Nebius Physical AI Workbench.
 - [SONIC Locomotion Fine-Tuning](sonic-locomotion-finetuning.md): retarget
   motion data, run SONIC fine-tuning, and evaluate with MJLab through SkyPilot
   YAML.
+- [SONIC G1 Fine-Tune to MuJoCo MVP](sonic-mvp-g1-mujoco.md): first milestone
+  G1 warm-start fine-tune from the released SONIC checkpoint and headless
+  MuJoCo checkpoint evaluation.
 - [SONIC Export and Eval Runbook](sonic-eval-runbook.md): export a trained
   SONIC checkpoint to ONNX, run reference locomotion eval, and swap in a
   config-driven external eval container.

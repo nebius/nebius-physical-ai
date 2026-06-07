@@ -61,6 +61,7 @@ def submit_workflow(
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     secret_envs: Sequence[str] | None = None,
+    require_controller_up: bool = False,
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
@@ -90,6 +91,11 @@ def submit_workflow(
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        env = sky_environment(runtime_config.isolated_config_dir)
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
+
+        if require_controller_up:
+            _assert_jobs_controller_up(sky_executable, env=env)
 
         cmd = [
             sky_executable,
@@ -104,8 +110,6 @@ def submit_workflow(
         for secret_name in secret_envs or ():
             if os.environ.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
-        env = sky_environment(runtime_config.isolated_config_dir)
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
         result = subprocess.run(
             cmd,
             env=env,
@@ -231,6 +235,71 @@ def _parse_job_id(output: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def _assert_jobs_controller_up(sky_executable: str, *, env: dict[str, str]) -> None:
+    try:
+        result = subprocess.run(
+            [sky_executable, "status", "--refresh", "--output", "json"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SkyPilotSubmitError("SkyPilot jobs-controller health check timed out") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise SkyPilotSubmitError(f"SkyPilot jobs-controller health check failed: {detail}")
+    controllers = _jobs_controller_rows(result.stdout)
+    if not controllers:
+        raise SkyPilotSubmitError("SkyPilot jobs-controller health check failed: no jobs-controller found")
+    bad = []
+    for row in controllers:
+        name = str(row.get("name") or row.get("cluster") or "")
+        status = str(row.get("status") or "").upper()
+        if status != "UP":
+            bad.append(f"{name or 'jobs-controller'}={status or 'UNKNOWN'}")
+    if bad:
+        raise SkyPilotSubmitError(
+            "SkyPilot jobs-controller must be UP before submit; found " + ", ".join(bad)
+        )
+
+
+def _jobs_controller_rows(output: str) -> list[dict[str, Any]]:
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        return []
+    rows = payload if isinstance(payload, list) else payload.get("clusters", payload.get("jobs", []))
+    controllers: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or row.get("cluster") or "")
+        if name.startswith("sky-jobs-controller"):
+            controllers.append(row)
+    return controllers
+
+
+def _json_payload_from_output(output: str) -> Any | None:
+    text = output.strip()
+    for candidate in _json_payload_candidates(text):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _json_payload_candidates(text: str) -> list[str]:
+    candidates = [text or "[]"]
+    for marker in ("\n[", "\n{"):
+        idx = text.rfind(marker)
+        if idx != -1:
+            candidates.append(text[idx + 1 :])
+    return candidates
 
 
 def _cleanup_owned_submission_dir(path: Path | None) -> None:
