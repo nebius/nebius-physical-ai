@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -74,9 +75,12 @@ def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_ima
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
-        "image_id": "docker:${NPA_WORKBENCH_IMAGE}",
+        "image_id": "docker:${NPA_RETARGETING_IMAGE}",
     }
-    assert retarget["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
+    assert retarget["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget["envs"]["SOURCE_FORMAT"] == "auto"
+    assert retarget["envs"]["RETARGET_FRAME_RATE"] == "30"
+    assert retarget["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "L40S:1"
     assert eval_task["resources"]["cloud"] == "kubernetes"
@@ -105,7 +109,7 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
     retarget, train, eval_task = docs[1:]
 
-    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
     assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
@@ -186,8 +190,9 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert retarget_docs[1]["name"] == "retarget-motion"
     assert "npa workbench retargeting run" in retarget_docs[1]["run"]
     assert "accelerators" not in retarget_docs[1]["resources"]
-    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
-    assert retarget_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
+    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_RETARGETING_IMAGE}"
+    assert retarget_docs[1]["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget_docs[1]["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
 
     assert mjlab_docs[0] == {"name": "mjlab-eval", "execution": "serial"}
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"

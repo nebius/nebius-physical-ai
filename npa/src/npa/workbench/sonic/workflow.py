@@ -26,6 +26,7 @@ UNRESOLVED_SUBMIT_TOKENS = (
     "<sonic-image-tag>",
     "<npa-image-tag>",
     "${NPA_WORKBENCH_IMAGE}",
+    "${NPA_RETARGETING_IMAGE}",
     "example.invalid",
 )
 SKYPILOT_DOCKER_USERNAME = "SKYPILOT_DOCKER_USERNAME"
@@ -46,6 +47,7 @@ class SonicWorkflowPlan:
     run_id: str
     policy_image: str
     npa_image: str
+    retargeting_image: str
     gpu_target: str
     image_variant: str
     s3_endpoint: str
@@ -104,6 +106,7 @@ def materialize_sonic_workflow(
         gpu_target=resolved_gpu_target or None,
         image_variant=resolved_variant,
     )
+    resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
     resolved_npa_image = npa_image
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
@@ -138,6 +141,7 @@ def materialize_sonic_workflow(
                 run_id=resolved_run_id,
                 policy_image=resolved_policy_image,
                 npa_image=resolved_npa_image,
+                retargeting_image=resolved_retargeting_image,
                 gpu_target=resolved_gpu_target,
                 image_variant=resolved_variant,
                 s3_endpoint=resolved_endpoint,
@@ -156,6 +160,7 @@ def materialize_sonic_workflow(
         run_id=resolved_run_id,
         policy_image=resolved_policy_image,
         npa_image=resolved_npa_image,
+        retargeting_image=resolved_retargeting_image,
         gpu_target=resolved_gpu_target,
         image_variant=resolved_variant,
         s3_endpoint=resolved_endpoint,
@@ -325,6 +330,7 @@ def _materialize_task_doc(
     run_id: str,
     policy_image: str,
     npa_image: str,
+    retargeting_image: str,
     gpu_target: str,
     image_variant: str,
     s3_endpoint: str,
@@ -340,6 +346,10 @@ def _materialize_task_doc(
     resources = doc.get("resources")
     if not isinstance(envs, dict) or not isinstance(resources, dict):
         return
+
+    if "NPA_RETARGETING_IMAGE" in envs:
+        resources["image_id"] = f"docker:{retargeting_image}"
+        envs["NPA_RETARGETING_IMAGE"] = retargeting_image
 
     payload_mode = str(
         env_overrides.get("SONIC_PAYLOAD_MODE", envs.get("SONIC_PAYLOAD_MODE", "direct"))

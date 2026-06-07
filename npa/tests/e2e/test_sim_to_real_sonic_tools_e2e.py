@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import joblib
+import numpy as np
 import pytest
 import yaml
 
@@ -116,19 +118,23 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     e2e_project: str | None,
     e2e_test_bucket: str,
     s3_helper: Any,
+    tmp_path: Path,
 ) -> None:
-    source_motion_key = "sonic-locomotion/source-motion/motion-000.json"
-    s3_helper.client.put_object(
-        Bucket=e2e_test_bucket,
-        Key=source_motion_key,
-        Body=json.dumps(
-            {
-                "format": "mocap-json",
-                "embodiment": "source",
-                "frames": [{"t": 0.0, "root": [0, 0, 0]}],
+    source_motion_key = "sonic-locomotion/source-motion/walk.pkl"
+    source_motion = tmp_path / "walk.pkl"
+    joblib.dump(
+        {
+            "walk": {
+                "root_trans_offset": np.zeros((4, 3), dtype=np.float32),
+                "pose_aa": np.zeros((4, 30, 3), dtype=np.float32),
+                "dof": np.zeros((4, 29), dtype=np.float32),
+                "root_rot": np.zeros((4, 4), dtype=np.float32),
+                "fps": 30,
             }
-        ).encode("utf-8"),
+        },
+        source_motion,
     )
+    s3_helper.client.upload_file(str(source_motion), e2e_test_bucket, source_motion_key)
     checkpoint_key = "sonic-locomotion/training/checkpoint_smoke.json"
     s3_helper.client.put_object(
         Bucket=e2e_test_bucket,
@@ -149,7 +155,7 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
             "--output-path",
             retargeted_uri,
             "--source-format",
-            "mocap-json",
+            "motion-lib",
             "--embodiment",
             "unitree-g1",
             "--frame-rate",
@@ -165,14 +171,21 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     assert retarget_result.returncode == 0, _format_result(retarget_result)
     retarget_payload = json.loads(retarget_result.stdout)
     assert retarget_payload["status"] == "retargeted"
-    assert retarget_payload["written_uri"] == f"{retargeted_uri}retargeting_manifest.json"
+    assert retarget_payload["artifact_kind"] == "robot_motion_lib"
+    assert retarget_payload["artifact_uri"] == retargeted_uri
+    assert retarget_payload["metadata_written_uri"] == f"{retargeted_uri}retargeting_result.json"
     retarget_object = s3_helper.client.get_object(
         Bucket=e2e_test_bucket,
-        Key="sonic-locomotion/retargeted/retargeting_manifest.json",
+        Key="sonic-locomotion/retargeted/retargeting_result.json",
     )
-    retarget_manifest = json.loads(retarget_object["Body"].read().decode("utf-8"))
-    assert retarget_manifest["embodiment"] == "unitree-g1"
-    assert retarget_manifest["max_frames"] == 8
+    retarget_metadata = json.loads(retarget_object["Body"].read().decode("utf-8"))
+    assert retarget_metadata["embodiment"] == "unitree-g1"
+    assert retarget_metadata["max_frames"] == 8
+    retargeted_motion = s3_helper.client.get_object(
+        Bucket=e2e_test_bucket,
+        Key="sonic-locomotion/retargeted/walk.pkl",
+    )
+    assert retargeted_motion["ContentLength"] > 0
 
     mjlab_uri = f"s3://{e2e_test_bucket}/sonic-locomotion/mjlab/"
     mjlab_result = _run_npa(
