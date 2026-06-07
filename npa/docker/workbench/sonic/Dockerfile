@@ -9,11 +9,13 @@ ARG SONIC_VERSION=0.1.2
 ARG NVIDIA_DRIVER_PACKAGE_VERSION=580.126.09-1ubuntu1
 ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1
 ARG NPA_DRIVER_PROVISIONING=baked
+ARG NPA_RUNTIME_USER=ubuntu
 ARG BUILD_SONIC_DEPLOY=0
 
 LABEL npa.tool="sonic" \
       npa.version="${SONIC_VERSION}" \
       npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}" \
+      npa.runtime_user="${NPA_RUNTIME_USER}" \
       npa.architecture="self-contained-isaac-lab"
 
 ENV ACCEPT_EULA=Y \
@@ -162,6 +164,6 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
       /tmp/isaac-sim-cache
 
 WORKDIR /opt/sonic
-USER ubuntu
+USER ${NPA_RUNTIME_USER}
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["smoke"]

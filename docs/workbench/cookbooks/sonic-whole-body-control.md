@@ -42,13 +42,13 @@ SONIC publishes two first-party image variants. The compatibility source of
 truth is `npa/src/npa/deploy/sonic_image_manifest.json`, with the human catalog
 in `docs/workbench/sonic-image-catalog.md`. The default L40S VM image is
 `${NPA_REGISTRY}/npa-sonic:0.1.2`; the Kubernetes GPU-operator image for
-RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s`.
+RTX PRO 6000 Blackwell is `${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime`.
 
 Verify the pushed image before launch with:
 
 ```bash
 docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
 ```
 
 The default embodiment is Unitree G1:

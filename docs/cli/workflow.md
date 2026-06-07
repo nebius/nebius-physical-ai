@@ -63,11 +63,40 @@ npa workbench workflow submit \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
+For Nebius Container Registry VM pulls, the SONIC materializer adds SkyPilot's
+Docker login envs to the submitted YAML:
+
+```yaml
+envs:
+  SKYPILOT_DOCKER_USERNAME: iam
+  SKYPILOT_DOCKER_PASSWORD: <fresh-nebius-iam-token>
+  SKYPILOT_DOCKER_SERVER: cr.eu-north1.nebius.cloud
+```
+
+By default the password is minted at submit time with
+`nebius iam get-access-token`, matching Nebius Container Registry's
+short-lived-token login flow. BYO private registries can override the three
+values with:
+
+```bash
+npa workbench workflow submit ... \
+  --registry registry.example/workbench \
+  --registry-server registry.example \
+  --registry-username <username> \
+  --registry-password <token>
+```
+
+Prefer `NPA_REGISTRY_USERNAME`, `NPA_REGISTRY_PASSWORD`, and
+`NPA_REGISTRY_SERVER` when you do not want the token in shell history. Use
+`--no-registry-auth` only for public images or environments that preconfigure
+Docker auth outside SkyPilot. In `SONIC_PAYLOAD_MODE=docker`, the standalone
+SONIC task uses the same envs for an in-task `docker login` before `docker pull`.
+
 For RTX PRO 6000 Kubernetes targets, use the same command with
 `--gpu-target gpu-rtx6000` and an accelerator string accepted by your SkyPilot
 Kubernetes GPU catalog, for example
 `--accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. The SONIC
-materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s`; L40S resolves to
+materializer resolves `gpu-rtx6000` to `npa-sonic:0.1.2-k8s-runtime`; L40S resolves to
 `npa-sonic:0.1.2`.
 
 When a Kubernetes target pulls from a private registry, provide a SkyPilot config

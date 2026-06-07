@@ -7,13 +7,15 @@ NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 REGISTRY=""
 PUSH=0
 VARIANT="baked"
+IMAGE_TAG_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
-Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s]
+Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s] [--tag TAG]
 
 Builds the SONIC runtime image as npa-sonic:<version> for --variant baked, or
 npa-sonic:<version>-k8s for --variant k8s.
+When --tag is provided, it overrides the final image tag.
 When --registry is provided, also tags REGISTRY/npa-sonic:<tag>.
 Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
 EOF
@@ -41,6 +43,14 @@ while [ "$#" -gt 0 ]; do
       VARIANT="$2"
       shift 2
       ;;
+    --tag)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --tag requires a value" >&2
+        exit 2
+      fi
+      IMAGE_TAG_OVERRIDE="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -63,11 +73,13 @@ case "$VARIANT" in
     TAG_SUFFIX=""
     INSTALL_NVIDIA_DRIVER_USERSPACE=1
     NPA_DRIVER_PROVISIONING="baked"
+    NPA_RUNTIME_USER="ubuntu"
     ;;
   k8s)
     TAG_SUFFIX="-k8s"
     INSTALL_NVIDIA_DRIVER_USERSPACE=0
     NPA_DRIVER_PROVISIONING="host-mounted"
+    NPA_RUNTIME_USER="root"
     ;;
   *)
     echo "ERROR: --variant must be baked or k8s, got: $VARIANT" >&2
@@ -124,7 +136,7 @@ else:
 PY
 )"
 
-IMAGE_TAG="${VERSION}${TAG_SUFFIX}"
+IMAGE_TAG="${IMAGE_TAG_OVERRIDE:-${VERSION}${TAG_SUFFIX}}"
 LOCAL_IMAGE="npa-sonic:${IMAGE_TAG}"
 BUILD_ARGS=(
   --platform linux/amd64
@@ -133,6 +145,7 @@ BUILD_ARGS=(
   --build-arg "ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION}"
   --build-arg "INSTALL_NVIDIA_DRIVER_USERSPACE=${INSTALL_NVIDIA_DRIVER_USERSPACE}"
   --build-arg "NPA_DRIVER_PROVISIONING=${NPA_DRIVER_PROVISIONING}"
+  --build-arg "NPA_RUNTIME_USER=${NPA_RUNTIME_USER}"
 )
 
 if [ -n "$REGISTRY" ]; then

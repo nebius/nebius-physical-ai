@@ -524,7 +524,7 @@ def test_sonic_container_image_name_resolves() -> None:
     ) == ("registry.example/npa-sonic:0.1.2")
     assert container_image_for_tool(
         "sonic", registry="registry.example", gpu_target="gpu-rtx6000"
-    ) == ("registry.example/npa-sonic:0.1.2-k8s")
+    ) == ("registry.example/npa-sonic:0.1.2-k8s-runtime")
     assert sonic_image_variant_for_gpu("NVIDIA RTX PRO 6000 Blackwell") == (
         "sonic-k8s-host-mounted"
     )
