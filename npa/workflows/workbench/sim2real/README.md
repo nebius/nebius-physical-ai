@@ -21,8 +21,8 @@ retrigger.
 - `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a
   Kubernetes secret such as `hf-ngc-tokens`.
 - S3-compatible storage credentials through environment variables or the NPA
-  credentials loader. GCP/GCS S3-compatible endpoints are supported through the
-  same `AWS_ENDPOINT_URL`/`S3_ENDPOINT_URL` seam but are not yet covered by CI.
+  credentials loader. Non-default S3-compatible endpoints are supported through
+  the same `AWS_ENDPOINT_URL`/`S3_ENDPOINT_URL` seam but are not yet covered by CI.
 
 ## Run
 
