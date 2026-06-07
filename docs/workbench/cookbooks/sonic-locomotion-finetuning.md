@@ -107,7 +107,7 @@ For RTX PRO 6000 Kubernetes targets, use:
 --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
 ```
 
-This resolves the SONIC stage to `npa-sonic:0.1.2-k8s`. L40S resolves to
+This resolves the SONIC stage to `npa-sonic:0.1.2-k8s-runtime`. L40S resolves to
 `npa-sonic:0.1.2`.
 
 For Kubernetes targets that pull private images, pass a SkyPilot config with the

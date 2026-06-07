@@ -39,7 +39,7 @@
     {
       "id": "sonic-k8s-host-mounted",
       "name": "npa-sonic",
-      "tag": "0.1.2-k8s",
+      "tag": "0.1.2-k8s-runtime",
       "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
       "base": {
         "cuda": "12.8",
@@ -61,7 +61,7 @@
         }
       ],
       "build": {
-        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant k8s",
+        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant k8s --tag 0.1.2-k8s-runtime",
         "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
         "driver_coupled_packages": []
       },

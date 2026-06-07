@@ -102,7 +102,7 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     retarget, train, eval_task = docs[1:]
 
     assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
-    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert eval_task["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
@@ -149,6 +149,27 @@ def test_sonic_sdk_submit_passes_secret_envs(mocker) -> None:
     assert captured["run_id"] == "sonic-run"
     assert captured["kwargs"]["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
     assert "registry.example/workbench/npa-sonic:0.1.2" in str(captured["content"])
+
+
+def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
+    from npa.workbench.sonic.workflow import materialize_sonic_workflow
+
+    plan = materialize_sonic_workflow(
+        SONIC_TRAIN_STANDALONE_YAML,
+        run_id="sonic-run",
+        registry="registry.example/workbench",
+        gpu_target="l40s",
+        s3_endpoint="https://storage.example",
+        s3_bucket="proof-bucket",
+        env_overrides={"SONIC_PAYLOAD_MODE": "docker"},
+    )
+    docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
+    task = docs[1]
+
+    assert "image_id" not in task["resources"]
+    assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2"
+    assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
+    assert "docker run --rm --gpus all" in task["run"]
 
 
 def test_tool_yamls_match_registered_cli_surfaces() -> None:

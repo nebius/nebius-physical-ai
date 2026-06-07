@@ -55,7 +55,7 @@ launch it directly:
 
 | YAML field | L40S value | RTX PRO 6000 Kubernetes value |
 | --- | --- | --- |
-| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s` |
+| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s-runtime` |
 | `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
 | `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
 | `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
@@ -134,8 +134,12 @@ For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
 host-mounted variant:
 
 ```bash
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+npa/docker/workbench/sonic/build.sh \
+  --registry "${NPA_REGISTRY}" \
+  --push \
+  --variant k8s \
+  --tag 0.1.2-k8s-runtime
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
 ```
 
 Expected output artifacts:

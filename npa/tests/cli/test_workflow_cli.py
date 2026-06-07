@@ -211,10 +211,10 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
     task = docs[1]
     envs = task["envs"]
-    assert task["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert task["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert envs["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
     assert envs["S3_ENDPOINT_URL"] == "https://storage.example"
@@ -223,6 +223,60 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     assert envs["SONIC_MAX_ITERATIONS"] == "2"
     assert "${" not in task["resources"]["image_id"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
+
+
+def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
+    yaml_path = REPO_ROOT / "workflows/workbench/skypilot/sonic-train-standalone.yaml"
+    captured: dict[str, object] = {}
+
+    def fake_submit_workflow(path, run_id, **kwargs):
+        captured["content"] = path.read_text(encoding="utf-8")
+        captured["run_id"] = run_id
+        captured["kwargs"] = kwargs
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit_workflow,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "sonic-run",
+            "--registry",
+            "registry.example/workbench",
+            "--registry-server",
+            "registry.example",
+            "--registry-username",
+            "operator",
+            "--registry-password",
+            "redacted-test-token",
+            "--gpu-target",
+            "h100",
+            "--use-spot",
+            "--s3-endpoint",
+            "https://storage.example",
+            "--s3-bucket",
+            "proof-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "redacted-test-token" not in result.output
+    docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
+    task = docs[1]
+    assert task["resources"]["accelerators"] == "H100:1"
+    assert task["resources"]["memory"] == 200
+    assert task["resources"]["use_spot"] is True
+    assert task["envs"]["SKYPILOT_DOCKER_USERNAME"] == "operator"
+    assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
+    assert task["envs"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
 def test_workbench_workflow_submit_blocks_unresolved_sonic_placeholders(mocker) -> None:
