@@ -66,9 +66,59 @@
         "driver_coupled_packages": []
       },
       "digest": "sha256:ceb878ff19234866eab44a257f72c933039f336ac92d6e5c1cc066ba1a90e93d"
+    },
+    {
+      "id": "sonic-mujoco-h100-mvp",
+      "name": "npa-sonic-mujoco",
+      "tag": "0.1.3-mvp",
+      "purpose": "Combined SONIC fine-tuning and MuJoCo evaluation runtime for the first G1 MVP milestone.",
+      "base": {
+        "cuda": "12.8",
+        "torch": "2.7.0+cu128",
+        "isaac_lab": "2.3.2.post1",
+        "image": "npa-sonic:0.1.2"
+      },
+      "driver_provisioning": "baked",
+      "gpu_compatibility": [
+        {
+          "gpu": "H100",
+          "provider_model": "Nebius VM, compute-only host driver",
+          "why": "The SONIC release fine-tune path is state/proprioceptive and headless; MuJoCo eval uses EGL/headless physics and does not require RT-core rendering."
+        },
+        {
+          "gpu": "H200",
+          "provider_model": "Nebius VM, compute-only host driver",
+          "why": "Capacity fallback for the same headless state-based workload when H100 spot capacity is unavailable."
+        }
+      ],
+      "build": {
+        "command": "npa/docker/workbench/sonic/build.sh --registry ${NPA_REGISTRY} --push --variant mujoco --tag 0.1.3-mvp",
+        "dockerfile": "npa/docker/workbench/sonic/Dockerfile.mujoco",
+        "driver_coupled_packages": [
+          "inherited from npa-sonic:0.1.2"
+        ],
+        "additional_packages": [
+          "mujoco>=3.3,<3.4",
+          "boto3",
+          "headless EGL/GL runtime libraries"
+        ]
+      },
+      "digest": "sha256:a9939d92106757e70b7b5ef94c7428aad0be0d000358634348f7e2184cf50f7d"
     }
   ],
   "gpu_selection": [
+    {
+      "variant": "sonic-mujoco-h100-mvp",
+      "matches": [
+        "h100",
+        "gpu-h100",
+        "gpu-h100-sxm",
+        "h200",
+        "gpu-h200",
+        "gpu-h200-sxm",
+        "sonic-mujoco"
+      ]
+    },
     {
       "variant": "sonic-k8s-host-mounted",
       "matches": [

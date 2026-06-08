@@ -239,16 +239,18 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
 
     assert sonic_docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
     assert [task["name"] for task in sonic_docs[1:]] == [
-        "sonic-retarget-motion",
-        "sonic-finetune",
-        "sonic-mjlab-eval",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
     ]
-    assert "npa workbench retargeting run" in sonic_docs[1]["run"]
-    assert sonic_docs[2]["resources"]["accelerators"] == "L40S:1"
-    assert sonic_docs[2]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert "/entrypoint.sh train" in sonic_docs[2]["run"]
-    assert "npa workbench mjlab eval" in sonic_docs[3]["run"]
-    assert sonic_docs[3]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[1]["resources"]["use_spot"] is True
+    assert sonic_docs[1]["resources"]["region"] == "eu-north1"
+    assert sonic_docs[1]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
+    assert sonic_docs[1]["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
+    assert "/entrypoint.sh finetune" in sonic_docs[1]["run"]
+    assert sonic_docs[2]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[2]["resources"]["use_spot"] is True
+    assert "mujoco-eval" in sonic_docs[2]["run"]
 
     assert retarget_docs[1]["name"] == "retarget-motion"
     assert "npa workbench retargeting run" in retarget_docs[1]["run"]
