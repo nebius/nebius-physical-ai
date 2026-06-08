@@ -130,6 +130,42 @@ def run_command(
     byo_eval_command: str = typer.Option(
         "", "--byo-eval-command", help="BYO eval command."
     ),
+    k8s_namespace: str = typer.Option(
+        "", "--k8s-namespace", help="Namespace for sibling component Jobs."
+    ),
+    k8s_service_account: str = typer.Option(
+        "agent-sa", "--k8s-service-account", help="Service account for sibling Jobs."
+    ),
+    k8s_image_pull_secrets: str = typer.Option(
+        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry",
+        "--k8s-image-pull-secrets",
+        help="Comma-separated imagePullSecrets for sibling Jobs.",
+    ),
+    k8s_env_secret_names: str = typer.Option(
+        "hf-ngc-tokens,npa-storage-credentials",
+        "--k8s-env-secret-names",
+        help="Comma-separated env secrets for sibling Jobs.",
+    ),
+    k8s_gpu_resource: str = typer.Option(
+        "nvidia.com/gpu", "--k8s-gpu-resource", help="Kubernetes GPU resource key."
+    ),
+    k8s_gpu_product: str = typer.Option(
+        "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        "--k8s-gpu-product",
+        help="GPU product node selector for sibling Jobs.",
+    ),
+    k8s_job_timeout_s: int = typer.Option(
+        7200, "--k8s-job-timeout-s", help="Sibling Job timeout in seconds."
+    ),
+    source_repo: str = typer.Option(
+        "", "--source-repo", help="Optional source repository cloned by sibling Jobs."
+    ),
+    source_ref: str = typer.Option(
+        "", "--source-ref", help="Optional source ref cloned by sibling Jobs."
+    ),
+    heldout_eval_limit: int = typer.Option(
+        0, "--heldout-eval-limit", help="Optional held-out env sample cap."
+    ),
     output_json: bool = typer.Option(False, "--output-json", help="Print only JSON."),
 ) -> None:
     """Run the full 13-stage Sim2Real workflow."""
@@ -169,6 +205,16 @@ def run_command(
         byo_trainer_command=byo_trainer_command,
         byo_vlm_command=byo_vlm_command,
         byo_eval_command=byo_eval_command,
+        k8s_namespace=k8s_namespace,
+        k8s_service_account=k8s_service_account,
+        k8s_image_pull_secrets=k8s_image_pull_secrets,
+        k8s_env_secret_names=k8s_env_secret_names,
+        k8s_gpu_resource=k8s_gpu_resource,
+        k8s_gpu_product=k8s_gpu_product,
+        k8s_job_timeout_s=k8s_job_timeout_s,
+        source_repo=source_repo,
+        source_ref=source_ref,
+        heldout_eval_limit=heldout_eval_limit,
     )
     report = run_full_loop(config)
     text = json.dumps(report, indent=2, sort_keys=True)

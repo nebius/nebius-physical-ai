@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
+import npa.workflows.sim2real_loop as loop_module
 from npa.sdk.workbench import cosmos2, cosmos3, sim2real
 from npa.workbench.lerobot.policy_container import (
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
 )
 from npa.workflows.sim2real_loop import (
+    SCHEMA_HELDOUT_REPORT,
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
     Sim2RealLoopConfig,
@@ -20,6 +23,7 @@ from npa.workflows.sim2real_loop import (
     evaluate_rollout_with_vlm,
     generate_action_rollouts,
     run_full_loop,
+    run_heldout_eval,
 )
 
 
@@ -238,6 +242,212 @@ def test_empty_s3_prefix_writes_under_run_id() -> None:
     assert artifact_uris(config)["root"] == "s3://bucket/pusht-demo/"
 
 
+class _FakeComponentStorage:
+    def __init__(self, downloads: dict[str, dict]) -> None:
+        self.downloads = downloads
+        self.uploaded_directories: list[tuple[str, str]] = []
+        self.uploaded_files: list[tuple[str, str]] = []
+
+    def upload_directory(self, local_dir: str, bucket_uri: str, *, remote_prefix: str = "") -> str:
+        self.uploaded_directories.append((local_dir, bucket_uri))
+        return bucket_uri
+
+    def upload_file(self, local_file: str, bucket_uri: str) -> str:
+        self.uploaded_files.append((local_file, bucket_uri))
+        return bucket_uri
+
+    def download_path(self, bucket_uri: str, local_path: str) -> str:
+        payload = self.downloads.get(bucket_uri)
+        if payload is None and "/vlm-eval/" in bucket_uri:
+            payload = self.downloads.get("vlm_eval")
+        if payload is None and "/heldout-eval/" in bucket_uri:
+            payload = self.downloads.get("heldout_eval")
+        if payload is None:
+            raise KeyError(bucket_uri)
+        target = Path(local_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        return str(target)
+
+
+def _patch_component_storage(monkeypatch, storage: _FakeComponentStorage) -> None:
+    monkeypatch.setattr(
+        loop_module.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, endpoint_url="": storage),
+    )
+
+
+def _patch_kubectl(monkeypatch) -> list[dict]:
+    calls: list[dict] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append({"cmd": cmd, "input": kwargs.get("input")})
+        if "apply" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
+        if "wait" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling condition met\n", "")
+        if "get" in cmd and "pods" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "sibling-pod"},
+                                "spec": {
+                                    "nodeName": "sm120-node",
+                                    "containers": [
+                                        {
+                                            "resources": {
+                                                "requests": {"nvidia.com/gpu": 1},
+                                                "limits": {"nvidia.com/gpu": 1},
+                                            }
+                                        }
+                                    ],
+                                },
+                                "status": {
+                                    "phase": "Succeeded",
+                                    "containerStatuses": [
+                                        {
+                                            "name": "component",
+                                            "ready": False,
+                                            "restartCount": 0,
+                                            "state": {"terminated": {"exitCode": 0}},
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ),
+                "",
+            )
+        if "logs" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"component":"ok"}\n', "")
+        if "delete" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "job.batch deleted\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    return calls
+
+
+def test_image_vlm_eval_launches_sibling_job_and_parses_output(monkeypatch, tmp_path: Path) -> None:
+    output_payload = {
+        "schema": SCHEMA_VLM_EVAL,
+        "rollout_id": "rollout-0000",
+        "success": False,
+        "score": 0.512345,
+        "per_step": [
+            {
+                "step": 0,
+                "critique_text": "Parsed component output from the sibling stage.",
+                "error_tags": ["collision", "minor_alignment"],
+                "action": [0.1, 0.0, -0.1],
+                "camera_observation": "camera-000.ppm",
+            }
+        ],
+        "summary": "sibling output",
+        "model": "job-vlm",
+    }
+    storage = _FakeComponentStorage({"vlm_eval": output_payload})
+    _patch_component_storage(monkeypatch, storage)
+    calls = _patch_kubectl(monkeypatch)
+    config = Sim2RealLoopConfig(
+        run_id="sibling-vlm-unit",
+        s3_bucket="bucket",
+        s3_prefix="neutral-prefix",
+        s3_endpoint="https://storage.example",
+        threshold=0.75,
+        k8s_namespace="default",
+        source_repo="https://example.invalid/repo.git",
+        source_ref="dev-branch",
+    )
+    rollout = generate_action_rollouts(
+        tmp_path / "actions",
+        count=1,
+        steps_per_rollout=1,
+        seed=7,
+        quality=0.4,
+    )[0]
+
+    evaluation = evaluate_rollout_with_vlm(
+        rollout,
+        output_dir=tmp_path / "vlm_eval",
+        config=config,
+    )
+
+    apply_call = next(call for call in calls if "apply" in call["cmd"])
+    manifest = json.loads(apply_call["input"])
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+
+    assert evaluation["score"] == 0.512345
+    assert evaluation["component_invocation"]["mode"] == "kubernetes_job"
+    assert evaluation["component_invocation"]["pod"]["node_name"] == "sm120-node"
+    assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
+    assert storage.uploaded_directories
+    assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-sa"
+    assert {"name": "agent-sa"} in manifest["spec"]["template"]["spec"]["imagePullSecrets"]
+    assert {"secretRef": {"name": "hf-ngc-tokens", "optional": True}} in container["envFrom"]
+    assert {"secretRef": {"name": "npa-storage-credentials", "optional": True}} in container["envFrom"]
+    assert container["resources"]["requests"]["nvidia.com/gpu"] == 1
+    assert (
+        manifest["spec"]["template"]["spec"]["nodeSelector"]["nvidia.com/gpu.compute.major"]
+        == "12"
+    )
+    assert "component-vlm-eval" in container["args"][0]
+
+
+def test_heldout_eval_launches_sibling_job_and_parses_per_env_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    output_payload = {
+        "schema": SCHEMA_HELDOUT_REPORT,
+        "per_env": [
+            {"env_id": "env-a", "score": 0.81, "success": True, "details": {}},
+            {"env_id": "env-b", "score": 0.52, "success": False, "details": {}},
+        ],
+    }
+    storage = _FakeComponentStorage({"heldout_eval": output_payload})
+    _patch_component_storage(monkeypatch, storage)
+    calls = _patch_kubectl(monkeypatch)
+    config = Sim2RealLoopConfig(
+        run_id="sibling-heldout-unit",
+        s3_bucket="bucket",
+        s3_prefix="neutral-prefix",
+        s3_endpoint="https://storage.example",
+        heldout_envs_uri="s3://bucket/neutral-prefix/run/envs/heldout/",
+        heldout_eval_limit=2,
+        threshold=0.75,
+        k8s_namespace="default",
+        source_ref="dev-branch",
+    )
+    inner_evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "reward_trend": [0.1, 0.2],
+    }
+
+    report = run_heldout_eval(
+        config,
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        outer_iteration=1,
+    )
+    apply_call = next(call for call in calls if "apply" in call["cmd"])
+    manifest = json.loads(apply_call["input"])
+    args = manifest["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+    assert report["success_rate"] == 0.5
+    assert report["per_env"][0]["env_id"] == "env-a"
+    assert report["component_invocation"]["mode"] == "kubernetes_job"
+    assert report["component_invocation"]["gpu_request"]["count"] == 1
+    assert storage.uploaded_files
+    assert "component-heldout-eval" in args
+    assert "--limit" in args
+
+
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     report = sim2real.run(
@@ -282,6 +492,8 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert "npa.workflows.sim2real_loop full-loop" in task["run"]
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
+    assert "--k8s-service-account" in task["run"]
+    assert "--heldout-eval-limit" in task["run"]
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
