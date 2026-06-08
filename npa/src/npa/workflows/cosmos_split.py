@@ -27,7 +27,7 @@ class Cosmos3ReasonConfig:
 
     input_uri: str
     output_uri: str
-    model: str = "npa-cosmos3-reason"
+    model: str = "nvidia/Cosmos-Reason1-7B"
     image: str = ""
     prompt: str = ""
     run_id: str = ""
@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     reason = sub.add_parser("cosmos3-reason")
     reason.add_argument("--input-uri", required=True)
     reason.add_argument("--output-uri", required=True)
-    reason.add_argument("--model", default="npa-cosmos3-reason")
+    reason.add_argument("--model", default="nvidia/Cosmos-Reason1-7B")
     reason.add_argument("--image", default="")
     reason.add_argument("--prompt", default="")
     reason.add_argument("--run-id", default="")

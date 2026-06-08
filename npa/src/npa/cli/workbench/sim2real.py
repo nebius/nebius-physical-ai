@@ -80,7 +80,7 @@ def run_command(
     vlm_image: str = typer.Option("", "--vlm-image", help="BYO VLM image."),
     eval_image: str = typer.Option("", "--eval-image", help="BYO held-out eval image."),
     vlm_model: str = typer.Option(
-        "npa-cosmos3-reason", "--vlm-model", help="VLM model id/name."
+        "nvidia/Cosmos-Reason1-7B", "--vlm-model", help="VLM model id/name."
     ),
     threshold: float = typer.Option(
         DEFAULT_THRESHOLD, "--threshold", help="Held-out success threshold."

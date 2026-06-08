@@ -74,6 +74,7 @@ setup: |
     git clone --depth 1 --branch "${NPA_SOURCE_REF:-main}" "${NPA_SOURCE_REPO}" ./npa-source
     ln -s ./npa-source/npa ./npa
   fi
+  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
   python3 -m pip install --user "uv>=0.9,<1"
   export PATH="${HOME}/.local/bin:${PATH}"
   uv python install 3.11
@@ -87,6 +88,7 @@ setup: |
 run: |
   set -euo pipefail
   export PATH="/tmp:$(pwd)/npa/.venv/bin:${PATH}"
+  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
   run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
   output_dir="/tmp/npa-sim2real-${run_id}"
   mkdir -p "${output_dir}"
@@ -107,9 +109,9 @@ run: |
     --augment-image "${AUGMENT_IMAGE:-}" \
     --policy-image "${POLICY_IMAGE:-}" \
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}" \
-    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.0}" \
-    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.0}" \
-    --vlm-model "${VLM_MODEL:-npa-cosmos3-reason}" \
+    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}" \
+    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}" \
+    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}" \
     --threshold "${SUCCESS_THRESHOLD:-0.75}" \
     --inner-iterations "${INNER_ITERATIONS:-2}" \
     --outer-iterations "${OUTER_ITERATIONS:-1}" \
