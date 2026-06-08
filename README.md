@@ -13,20 +13,41 @@ orchestration, vLLM serving, managed Kubernetes, and GPU clusters.
 
 ## Quick Start
 
-Install the package from the `npa/` Python project:
+Install the `npa` package into a fresh virtual environment. The venv can live
+anywhere; activating it puts `npa` on your `PATH` (Python 3.10+ required):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
 
-python3 -m venv npa/.venv
-npa/.venv/bin/python -m pip install --upgrade pip
-npa/.venv/bin/python -m pip install -e npa
-export PATH="$PWD/npa/.venv/bin:$PATH"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e npa
+
+npa --version
 ```
 
-Authenticate with the Nebius CLI and let `npa` print the local credential
-schema for optional Hugging Face, NGC, object-storage, and BYOVM SSH values:
+Run your first real result with **no cloud, GPU, or credentials** — score a
+shipped sample rollout set with the offline stub backend:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
+  --output /tmp/vlm-eval-benchmark.json \
+  --backend stub \
+  --thresholds 0.5,0.8,0.9 \
+  --rubrics default,strict \
+  --models Qwen/Qwen2-VL-7B-Instruct \
+  --format json
+```
+
+You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
+That is the full local loop; the same command swaps `--backend stub` for a real
+`self-hosted` or `api` VLM backend once you add credentials.
+
+Next, authenticate with the Nebius CLI and print the credential schema (see
+[docs/quickstart.md](docs/quickstart.md) for the full walkthrough):
 
 ```bash
 nebius profile create
@@ -34,17 +55,12 @@ nebius iam get-access-token >/dev/null
 npa configure
 ```
 
-Run a first Workbench command without provisioning infrastructure:
+To work on `npa` itself (tests, lint), install the dev extra and run the fast
+suite — see [CONTRIBUTING.md](CONTRIBUTING.md):
 
 ```bash
-npa workbench vlm-eval list
-npa workbench vlm-eval run \
-  --input-path ./rollout.json \
-  --output-path ./eval.json \
-  --backend stub \
-  --score 0.9 \
-  --dry-run \
-  --output json
+pip install -e "npa[dev]"
+make test
 ```
 
 For full cloud setup, continue with [docs/quickstart.md](docs/quickstart.md)

@@ -64,7 +64,7 @@ ngc:
   # org: optional-ngc-org
   # team: optional-ngc-team
 ssh:
-  host: 203.0.113.10
+  host: <your-byovm-host>
   user: ubuntu
   key_path: ~/.ssh/id_ed25519
 
