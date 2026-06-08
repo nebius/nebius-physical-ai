@@ -541,7 +541,10 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert 'npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}"' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
-    assert 'rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"' in dockerfile
+    assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
+    assert "git sparse-checkout set" in dockerfile
+    assert '"/gear_sonic/**"' in dockerfile
+    assert 'rm -rf "${SONIC_HOME}/.git"' in dockerfile
     assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
     assert "--platform linux/amd64" in build_script
     assert "--variant" in build_script
