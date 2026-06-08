@@ -25,7 +25,7 @@ app = typer.Typer(
 def reason_cmd(
     input_uri: str = typer.Option(..., "--input-uri", help="Input rollout or frame URI."),
     output_uri: str = typer.Option(..., "--output-uri", help="Output prefix for reasoning JSON."),
-    model: str = typer.Option("npa-cosmos3-reason", "--model", help="Reasoning model id."),
+    model: str = typer.Option("nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."),
     image: str = typer.Option("", "--image", help="BYO Cosmos3 reason image."),
     prompt: str = typer.Option("", "--prompt", help="Optional reasoning prompt."),
     run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),

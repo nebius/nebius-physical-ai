@@ -448,6 +448,105 @@ def test_heldout_eval_launches_sibling_job_and_parses_per_env_output(
     assert "--limit" in args
 
 
+def test_component_vlm_payload_uses_cosmos_reason_model_and_frames(
+    monkeypatch, tmp_path: Path
+) -> None:
+    rollout_dir = tmp_path / "rollout"
+    rollout_dir.mkdir()
+    frame = rollout_dir / "camera-000.ppm"
+    frame.write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+    manifest = {
+        "schema": "npa.sim2real.action_rollout.v1",
+        "rollout_id": "rollout-0000",
+        "task_description": "Move the object to the target.",
+        "actions": [{"step": 0, "action": [0.1, 0.0, -0.1]}],
+        "camera_observations": [frame.name],
+    }
+    (rollout_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    captured = {}
+
+    def fake_cosmos_reason(**kwargs):
+        captured.update(kwargs)
+        return {
+            "schema": SCHEMA_VLM_EVAL,
+            "rollout_id": kwargs["rollout_id"],
+            "success": False,
+            "score": 0.41,
+            "per_step": [
+                {
+                    "step": 0,
+                    "critique_text": "The object remains offset from the target after contact.",
+                    "error_tags": ["missed_target"],
+                    "action": [0.1, 0.0, -0.1],
+                    "camera_observation": frame.name,
+                }
+            ],
+            "summary": "real model judgment",
+        }
+
+    monkeypatch.setattr(loop_module, "_run_cosmos_reason_vlm", fake_cosmos_reason)
+
+    payload = loop_module._component_vlm_payload(
+        manifest,
+        rollout_root=rollout_dir,
+        model="npa-cosmos3-reason",
+        threshold=0.75,
+        rollout_id="rollout-0000",
+    )
+
+    assert captured["model_id"] == "nvidia/Cosmos-Reason1-7B"
+    assert captured["image_paths"] == [frame]
+    assert captured["task_description"] == "Move the object to the target."
+    assert payload["component_source"] == "cosmos_reason_vlm"
+    assert payload["model"] == "nvidia/Cosmos-Reason1-7B"
+    assert payload["frame_count"] == 1
+    assert "synthetic_signature" not in payload
+
+
+def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> None:
+    envs = [
+        {"env_id": "heldout-0000", "target_pose": [0.0, 0.1, 0.0]},
+        {"env_id": "heldout-0001", "target_pose": [0.1, 0.0, 0.0]},
+    ]
+    captured = {}
+
+    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold):
+        captured["envs"] = env_payload
+        captured["inner_evidence"] = inner_evidence
+        captured["threshold"] = threshold
+        return [
+            {
+                "env_id": "heldout-0000",
+                "score": 0.82,
+                "success": True,
+                "details": {"backend": "genesis"},
+            },
+            {
+                "env_id": "heldout-0001",
+                "score": 0.44,
+                "success": False,
+                "details": {"backend": "genesis"},
+            },
+        ]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_genesis_rollouts)
+    inner_evidence = {"reward_trend": [0.2, 0.6], "policy_delta_l2": 0.12}
+
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence=inner_evidence,
+        threshold=0.75,
+    )
+
+    assert captured["envs"] == envs
+    assert captured["inner_evidence"] == inner_evidence
+    assert captured["threshold"] == 0.75
+    assert payload["component_source"] == "genesis_rollout"
+    assert payload["rollout_backend"] == "npa.genesis.env_pick_place.FrankaPickPlaceEnv"
+    assert payload["policy_source"] == "inner_evidence_adapter"
+    assert "synthetic_signature" not in payload
+
+
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     report = sim2real.run(
