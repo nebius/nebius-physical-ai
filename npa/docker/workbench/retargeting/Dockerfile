@@ -46,6 +46,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
       "pandas>=2.0" \
       "paramiko~=4.0.0" \
       "pillow>=10.0" \
+      "pydantic>=2.0" \
       "pyarrow>=14.0" \
       "pyyaml~=6.0.3" \
       "rich~=15.0.0" \

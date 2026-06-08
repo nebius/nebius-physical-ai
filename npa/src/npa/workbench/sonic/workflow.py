@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 import yaml
 
+from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
 from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
 from npa.orchestration.skypilot.workflow import WorkflowResult
@@ -19,6 +20,7 @@ from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypi
 
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
+DEFAULT_AWS_PROFILE = "nebius"
 DEFAULT_GPU_TARGET = "l40s"
 DEFAULT_SONIC_WORKFLOW_PREFIX = "sonic-locomotion"
 UNRESOLVED_SUBMIT_TOKENS = (
@@ -50,11 +52,13 @@ class SonicWorkflowPlan:
     retargeting_image: str
     gpu_target: str
     image_variant: str
+    aws_profile: str
     s3_endpoint: str
     s3_bucket: str
     s3_prefix: str
     accelerators: str
     cloud: str
+    region: str
     use_spot: bool | None = None
     registry_auth_server: str = ""
     registry_auth_username: str = ""
@@ -82,11 +86,13 @@ def materialize_sonic_workflow(
     registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
+    aws_profile: str = "",
     s3_endpoint: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> SonicWorkflowPlan:
@@ -108,11 +114,13 @@ def materialize_sonic_workflow(
     )
     resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
     resolved_npa_image = npa_image
+    resolved_aws_profile = aws_profile or os.environ.get("AWS_PROFILE", "") or DEFAULT_AWS_PROFILE
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
     resolved_accelerators = accelerators or _default_accelerators(resolved_gpu_target)
     resolved_cloud = cloud or _default_cloud(resolved_gpu_target)
+    resolved_region = _resolve_region(region)
     resolved_registry_auth = _resolve_registry_auth(
         enabled=registry_auth and resolved_cloud.strip().lower() != "kubernetes",
         username=registry_username,
@@ -144,11 +152,13 @@ def materialize_sonic_workflow(
                 retargeting_image=resolved_retargeting_image,
                 gpu_target=resolved_gpu_target,
                 image_variant=resolved_variant,
+                aws_profile=resolved_aws_profile,
                 s3_endpoint=resolved_endpoint,
                 s3_bucket=resolved_bucket,
                 s3_prefix=resolved_prefix,
                 accelerators=resolved_accelerators,
                 cloud=resolved_cloud,
+                region=resolved_region,
                 use_spot=use_spot,
                 registry_auth=resolved_registry_auth,
                 env_overrides=env_overrides or {},
@@ -163,11 +173,13 @@ def materialize_sonic_workflow(
         retargeting_image=resolved_retargeting_image,
         gpu_target=resolved_gpu_target,
         image_variant=resolved_variant,
+        aws_profile=resolved_aws_profile,
         s3_endpoint=resolved_endpoint,
         s3_bucket=resolved_bucket,
         s3_prefix=resolved_prefix,
         accelerators=resolved_accelerators,
         cloud=resolved_cloud,
+        region=resolved_region,
         use_spot=use_spot,
         registry_auth_server=resolved_registry_auth.server if resolved_registry_auth else "",
         registry_auth_username=resolved_registry_auth.username if resolved_registry_auth else "",
@@ -188,11 +200,13 @@ def submit_sonic_workflow(
     registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
+    aws_profile: str = "",
     s3_endpoint: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
     accelerators: str = "",
     cloud: str = "",
+    region: str = "",
     use_spot: bool | None = None,
     env_overrides: dict[str, str] | None = None,
     isolated_config_dir: Path | None = None,
@@ -200,6 +214,7 @@ def submit_sonic_workflow(
     sky_bin: str | None = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     secret_envs: Sequence[str] | None = None,
+    require_controller_up: bool = False,
     timeout: int = 1800,
 ) -> WorkflowResult:
     """Materialize and submit a SONIC SkyPilot workflow."""
@@ -216,11 +231,13 @@ def submit_sonic_workflow(
         registry_server=registry_server,
         gpu_target=gpu_target,
         image_variant=image_variant,
+        aws_profile=aws_profile,
         s3_endpoint=s3_endpoint,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
         accelerators=accelerators,
         cloud=cloud,
+        region=region,
         use_spot=use_spot,
         env_overrides=env_overrides,
     )
@@ -241,6 +258,7 @@ def submit_sonic_workflow(
             sky_bin=sky_bin,
             controller_backend=controller_backend,
             secret_envs=secret_envs,
+            require_controller_up=require_controller_up,
             timeout=timeout,
         )
 
@@ -296,6 +314,16 @@ def _default_cloud(gpu_target: str) -> str:
     return "nebius"
 
 
+def _resolve_region(region: str) -> str:
+    resolved = (region or os.environ.get("NPA_SKYPILOT_REGION", "") or DEFAULT_REGION).strip()
+    if resolved == "me-west1":
+        raise ValueError("SONIC H100/H200 workflows explicitly exclude me-west1")
+    if resolved and resolved not in SUPPORTED_REGIONS:
+        choices = ", ".join(sorted(SUPPORTED_REGIONS))
+        raise ValueError(f"Unsupported SONIC SkyPilot region {resolved!r}; choose one of: {choices}")
+    return resolved
+
+
 def _default_cpus(gpu_target: str) -> int:
     normalized = gpu_target.strip().lower().replace("_", "-")
     if "b200" in normalized:
@@ -333,11 +361,13 @@ def _materialize_task_doc(
     retargeting_image: str,
     gpu_target: str,
     image_variant: str,
+    aws_profile: str,
     s3_endpoint: str,
     s3_bucket: str,
     s3_prefix: str,
     accelerators: str,
     cloud: str,
+    region: str,
     use_spot: bool | None,
     registry_auth: _RegistryAuthConfig | None,
     env_overrides: dict[str, str],
@@ -365,6 +395,8 @@ def _materialize_task_doc(
         if resources.get("accelerators"):
             resources["accelerators"] = accelerators
         if cloud.strip().lower() != "kubernetes":
+            if region:
+                resources["region"] = region
             resources["cpus"] = _default_cpus(gpu_target)
             resources["memory"] = _default_memory(gpu_target)
             if use_spot is not None:
@@ -383,6 +415,8 @@ def _materialize_task_doc(
     for key in ("SONIC_IMAGE_VARIANT", "CONTAINER_IMAGE_VARIANT", "SONIC_EVAL_CONTAINER_IMAGE_VARIANT"):
         if key in envs and has_sonic_env:
             envs[key] = image_variant
+    if "AWS_PROFILE" in envs:
+        envs["AWS_PROFILE"] = aws_profile
     for key in ("S3_ENDPOINT_URL", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
         if key in envs:
             envs[key] = s3_endpoint
@@ -391,7 +425,9 @@ def _materialize_task_doc(
     if "NPA_PIPELINE_RUN_ID" in envs:
         envs["NPA_PIPELINE_RUN_ID"] = run_id
     if "SONIC_OUTPUT_PREFIX" in envs:
-        envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
+        current_prefix = str(envs["SONIC_OUTPUT_PREFIX"]).strip()
+        if not current_prefix or not current_prefix.strip("/").startswith(s3_prefix.strip("/")):
+            envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
     for key, value in env_overrides.items():
         if key in envs:
             envs[key] = value

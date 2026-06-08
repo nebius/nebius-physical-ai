@@ -279,9 +279,20 @@ def test_workbench_workflow_submit_materializes_registry_auth(mocker) -> None:
     assert task["envs"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
-def test_workbench_workflow_submit_blocks_unresolved_sonic_placeholders(mocker) -> None:
+def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> None:
     yaml_path = REPO_ROOT / "workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml"
-    submit_mock = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    captured: dict[str, object] = {}
+
+    def fake_submit_workflow(path, run_id, **kwargs):
+        captured["content"] = path.read_text(encoding="utf-8")
+        captured["run_id"] = run_id
+        captured["kwargs"] = kwargs
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit_workflow,
+    )
 
     result = runner.invoke(
         app,
@@ -294,18 +305,49 @@ def test_workbench_workflow_submit_blocks_unresolved_sonic_placeholders(mocker) 
             "sonic-run",
             "--registry",
             "registry.example/workbench",
+            "--registry-server",
+            "registry.example",
+            "--registry-username",
+            "operator",
+            "--registry-password",
+            "redacted-test-token",
             "--gpu-target",
-            "l40s",
+            "h100",
+            "--use-spot",
+            "--region",
+            "eu-north1",
             "--s3-endpoint",
             "https://storage.example",
             "--s3-bucket",
             "proof-bucket",
+            "--s3-prefix",
+            "sonic-mvp-proof/sonic-run",
+            "--var",
+            "SONIC_PAYLOAD_MODE=docker",
         ],
     )
 
-    assert result.exit_code == 1
-    assert "unresolved submit placeholders" in result.output
-    submit_mock.assert_not_called()
+    assert result.exit_code == 0
+    assert "redacted-test-token" not in result.output
+    docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
+    assert [doc["name"] for doc in docs[1:]] == [
+        "sonic-retarget-motion",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
+    ]
+    assert docs[1]["resources"]["cloud"] == "kubernetes"
+    assert docs[1]["envs"]["AWS_PROFILE"] == "nebius"
+    assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
+    for task in docs[2:]:
+        assert task["resources"]["accelerators"] == "H100:1"
+        assert task["resources"]["region"] == "eu-north1"
+        assert task["resources"]["use_spot"] is True
+        assert "image_id" not in task["resources"]
+        assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic-mujoco:0.1.3-mvp"
+        assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
+        assert task["envs"]["AWS_PROFILE"] == "nebius"
+        assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
+    assert captured["kwargs"]["require_controller_up"] is False
 
 
 def test_workflow_run_unknown_workflow_errors() -> None:

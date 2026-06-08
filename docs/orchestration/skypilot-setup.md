@@ -56,7 +56,14 @@ jobs:
       cloud: kubernetes
       cpus: 4
       memory: 16
+      autostop: false
 ```
+
+`autostop: false` is deliberate. Workbench and SONIC submissions generate a
+per-submit `SKYPILOT_GLOBAL_CONFIG`, so the generated config must carry the
+jobs-controller resource autostop policy instead of relying on the runner's
+default `~/.sky/config.yaml`. This keeps fresh managed-job submits from racing a
+shared controller that is already entering `AUTOSTOPPING`.
 
 Do not set `disk_size` for this controller mode. SkyPilot 0.12.2's Kubernetes
 backend does not apply custom controller disk sizing; it uses the cluster's

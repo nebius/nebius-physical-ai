@@ -550,4 +550,6 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "--driver docker-container" in build_script
     assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
     assert 'docker build "${BUILD_ARGS[@]}" -t "$LOCAL_IMAGE"' in build_script
-    assert "npa-sonic:${IMAGE_TAG}" in build_script
+    assert 'IMAGE_NAME="npa-sonic"' in build_script
+    assert 'IMAGE_NAME="npa-sonic-mujoco"' in build_script
+    assert 'LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"' in build_script

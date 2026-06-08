@@ -47,8 +47,8 @@ npa workbench workflow submit --help
 `submit` can replace `${VAR}` placeholders with repeated `--var KEY=VALUE`
 arguments before calling SkyPilot. For SONIC YAMLs, `--var` also overrides
 matching `envs` keys, and the command materializes the first-party image, S3
-endpoint, bucket, and prefix into the submitted YAML so SkyPilot does not need
-to interpolate values inside `envs`.
+profile, endpoint, bucket, and prefix into the submitted YAML so SkyPilot does
+not need to interpolate values inside `envs`.
 
 ```bash
 npa workbench workflow submit \
@@ -56,6 +56,8 @@ npa workbench workflow submit \
   --run-id sonic-smoke-$(date -u +%Y%m%dT%H%M%SZ) \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --gpu-target l40s \
+  --region eu-north1 \
+  --aws-profile nebius \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
   --s3-bucket <bucket> \
   --s3-prefix sonic-workflow-proof/<run-id> \
@@ -91,6 +93,13 @@ Prefer `NPA_REGISTRY_USERNAME`, `NPA_REGISTRY_PASSWORD`, and
 `--no-registry-auth` only for public images or environments that preconfigure
 Docker auth outside SkyPilot. In `SONIC_PAYLOAD_MODE=docker`, the standalone
 SONIC task uses the same envs for an in-task `docker login` before `docker pull`.
+
+For the SONIC G1 fine-tune to MuJoCo MVP, submit
+`npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml` with
+`--gpu-target h100 --region eu-north1 --use-spot --require-controller-up` and
+`--var SONIC_PAYLOAD_MODE=docker`. The materializer selects
+`npa-sonic-mujoco:0.1.3-mvp`, writes `region: eu-north1` into Nebius VM GPU
+tasks, and rejects `me-west1`.
 
 For RTX PRO 6000 Kubernetes targets, use the same command with
 `--gpu-target gpu-rtx6000` and an accelerator string accepted by your SkyPilot

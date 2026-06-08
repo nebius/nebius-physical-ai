@@ -9,7 +9,7 @@ def reason(
     *,
     input_uri: str,
     output_uri: str,
-    model: str = "npa-cosmos3-reason",
+    model: str = "nvidia/Cosmos-Reason1-7B",
     image: str = "",
     prompt: str = "",
     run_id: str = "",

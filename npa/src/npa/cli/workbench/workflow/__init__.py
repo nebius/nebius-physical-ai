@@ -143,10 +143,25 @@ def submit_cmd(
         "--cloud",
         help="Cloud value for materialized GPU tasks.",
     ),
+    region: str = typer.Option(
+        "",
+        "--region",
+        help="Nebius region for materialized SONIC VM GPU tasks. Defaults to eu-north1; me-west1 is rejected.",
+    ),
     use_spot: bool | None = typer.Option(
         None,
         "--use-spot/--no-use-spot",
         help="Optional SkyPilot spot/preemptible setting for materialized SONIC VM GPU tasks.",
+    ),
+    aws_profile: str = typer.Option(
+        "",
+        "--aws-profile",
+        help="AWS profile name materialized for S3-compatible storage access.",
+    ),
+    require_controller_up: bool = typer.Option(
+        False,
+        "--require-controller-up/--skip-controller-health-guard",
+        help="Before submit, require an existing SkyPilot jobs-controller with status UP.",
     ),
     s3_endpoint: str = typer.Option(
         "",
@@ -219,7 +234,9 @@ def submit_cmd(
                     s3_prefix=s3_prefix,
                     accelerators=accelerators,
                     cloud=cloud,
+                    region=region,
                     use_spot=use_spot,
+                    aws_profile=aws_profile,
                     env_overrides=substitutions,
                 )
             except ValueError as exc:
@@ -233,7 +250,6 @@ def submit_cmd(
                 )
                 return
             submitted_yaml_path.write_text(plan.yaml_text, encoding="utf-8")
-            _warn_unresolved_placeholders(plan.yaml_text)
         elif substitutions:
             substituted = source_yaml_path.read_text(encoding="utf-8")
             _warn_unresolved_placeholders(substituted)
@@ -249,6 +265,7 @@ def submit_cmd(
             sky_bin=sky_bin or None,
             controller_backend=controller_backend.value,
             secret_envs=secret_env,
+            require_controller_up=require_controller_up,
             timeout=submit_timeout,
         )
     except OSError as exc:

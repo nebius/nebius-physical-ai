@@ -23,6 +23,8 @@ envs:
   RETARGET_MAX_FRAMES: "0"
   RETARGET_NUM_WORKERS: "4"
   RETARGET_INDIVIDUAL: "1"
+  AWS_PROFILE: "nebius"
+  S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   NPA_DRY_RUN: "0"
 setup: |
@@ -30,6 +32,9 @@ setup: |
   npa --version
 run: |
   set -euo pipefail
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
   cmd=(npa workbench retargeting run \
     --input-path "${INPUT_MOTION_URI}" \
     --output-path "${RETARGETED_MOTION_URI}" \

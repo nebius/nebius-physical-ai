@@ -40,7 +40,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "genesis": "0.4.6",
     "isaac-lab": "2.3.2.post1",
     "cosmos": "1.0.9",
-    "cosmos3-reason": "3.0.0",
+    "cosmos3-reason": "3.0.1-genuine-sm120",
     "groot": "0.1.0",
     "fiftyone": "1.15.0",
     "sonic": "0.1.2",
@@ -48,7 +48,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "sim2real-envgen": "0.1.1",
     "sim2real-reference-policy": "0.1.1",
     "lerobot-vlm-rl": "0.1.0",
-    "sim2real-eval": "0.1.0",
+    "sim2real-eval": "0.1.1-genuine-sm120",
     "lancedb": "0.30.2",
     "detection-training": "bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z",
     "nebius-cli": "0.12.192",
@@ -203,6 +203,11 @@ def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, A
         "rtx-pro": "sonic-k8s-host-mounted",
         "rtx6000": "sonic-k8s-host-mounted",
         "rtx-pro-6000": "sonic-k8s-host-mounted",
+        "mujoco": "sonic-mujoco-h100-mvp",
+        "h100": "sonic-mujoco-h100-mvp",
+        "h200": "sonic-mujoco-h100-mvp",
+        "sonic-mujoco": "sonic-mujoco-h100-mvp",
+        "mvp": "sonic-mujoco-h100-mvp",
     }
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:
