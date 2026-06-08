@@ -74,6 +74,7 @@ setup: |
     git clone --depth 1 --branch "${NPA_SOURCE_REF:-main}" "${NPA_SOURCE_REPO}" ./npa-source
     ln -s ./npa-source/npa ./npa
   fi
+  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
   python3 -m pip install --user "uv>=0.9,<1"
   export PATH="${HOME}/.local/bin:${PATH}"
   uv python install 3.11
@@ -87,6 +88,7 @@ setup: |
 run: |
   set -euo pipefail
   export PATH="/tmp:$(pwd)/npa/.venv/bin:${PATH}"
+  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
   run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
   output_dir="/tmp/npa-sim2real-${run_id}"
   mkdir -p "${output_dir}"
