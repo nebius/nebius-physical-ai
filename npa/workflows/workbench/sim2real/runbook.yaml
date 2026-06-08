@@ -53,6 +53,14 @@ envs:
   BYO_TRAINER_COMMAND: "${BYO_TRAINER_COMMAND}"
   BYO_VLM_COMMAND: "${BYO_VLM_COMMAND}"
   BYO_EVAL_COMMAND: "${BYO_EVAL_COMMAND}"
+  NPA_SIM2REAL_K8S_NAMESPACE: "${NPA_SIM2REAL_K8S_NAMESPACE}"
+  NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT}"
+  NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS}"
+  NPA_SIM2REAL_K8S_ENV_SECRET_NAMES: "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES}"
+  NPA_SIM2REAL_K8S_GPU_RESOURCE: "${NPA_SIM2REAL_K8S_GPU_RESOURCE}"
+  NPA_SIM2REAL_K8S_GPU_PRODUCT: "${NPA_SIM2REAL_K8S_GPU_PRODUCT}"
+  NPA_SIM2REAL_K8S_JOB_TIMEOUT_S: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S}"
+  NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT}"
   NPA_SOURCE_REPO: "${NPA_SOURCE_REPO}"
   NPA_SOURCE_REF: "${NPA_SOURCE_REF}"
 setup: |
@@ -72,9 +80,13 @@ setup: |
   uv venv --python 3.11 --seed ./npa/.venv
   ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
   ./npa/.venv/bin/python -m pip install -e ./npa
+  if ! command -v kubectl >/dev/null 2>&1; then
+    curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl"
+    chmod +x /tmp/kubectl
+  fi
 run: |
   set -euo pipefail
-  export PATH="$(pwd)/npa/.venv/bin:${PATH}"
+  export PATH="/tmp:$(pwd)/npa/.venv/bin:${PATH}"
   run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
   output_dir="/tmp/npa-sim2real-${run_id}"
   mkdir -p "${output_dir}"
@@ -111,4 +123,14 @@ run: |
     --byo-trainer-command "${BYO_TRAINER_COMMAND:-}" \
     --byo-vlm-command "${BYO_VLM_COMMAND:-}" \
     --byo-eval-command "${BYO_EVAL_COMMAND:-}" \
+    --k8s-namespace "${NPA_SIM2REAL_K8S_NAMESPACE:-default}" \
+    --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}" \
+    --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}" \
+    --k8s-env-secret-names "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES:-hf-ngc-tokens,npa-storage-credentials}" \
+    --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}" \
+    --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}" \
+    --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-7200}" \
+    --source-repo "${NPA_SOURCE_REPO:-}" \
+    --source-ref "${NPA_SOURCE_REF:-}" \
+    --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}" \
     --upload-artifacts
