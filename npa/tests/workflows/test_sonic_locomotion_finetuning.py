@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -57,17 +58,31 @@ def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> N
     assert docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
     tasks = docs[1:]
     assert [task["name"] for task in tasks] == [
+        "sonic-retarget-motion",
         "sonic-g1-finetune",
         "sonic-mujoco-eval",
     ]
-    assert "/entrypoint.sh finetune" in tasks[0]["run"]
-    assert "mujoco-eval" in tasks[1]["run"]
+    assert "npa workbench retargeting run" in tasks[0]["run"]
+    assert "/entrypoint.sh finetune" in tasks[1]["run"]
+    assert "mujoco-eval" in tasks[2]["run"]
 
 
 def test_sonic_locomotion_pipeline_uses_h100_mujoco_mvp_image() -> None:
     docs = _docs(PIPELINE_YAML)
-    train, eval_task = docs[1:]
+    retarget, train, eval_task = docs[1:]
 
+    assert retarget["resources"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": 16,
+        "image_id": "docker:${NPA_RETARGETING_IMAGE}",
+    }
+    assert retarget["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget["envs"]["SOURCE_FORMAT"] == "auto"
+    assert retarget["envs"]["RETARGET_FRAME_RATE"] == "30"
+    assert retarget["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
+    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     assert train["resources"]["cloud"] == "nebius"
     assert train["resources"]["region"] == "eu-north1"
     assert train["resources"]["accelerators"] == "H100:1"
@@ -86,11 +101,14 @@ def test_sonic_locomotion_pipeline_uses_h100_mujoco_mvp_image() -> None:
     assert eval_task["envs"]["POLICY_IMAGE"] == "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
     assert train["envs"]["SONIC_GPU_TYPE"] == "h100"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
+    assert train["envs"]["AWS_PROFILE"] == "nebius"
+    assert train["envs"]["RETARGETED_MOTION_URI"].endswith("/retargeted/")
     assert train["envs"]["SONIC_TRAIN_MODE"] == "finetune"
     assert train["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
     assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"].endswith(
         "/training/checkpoints/last.pt"
     )
+    assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
     assert eval_task["envs"]["SONIC_MUJOCO_STEPS"] == "64"
 
 
@@ -109,11 +127,12 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
         accelerators="RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
     )
     docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
-    train, eval_task = docs[1:]
+    retarget, train, eval_task = docs[1:]
 
-    assert train["resources"]["image_id"] == (
-        "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
-    )
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
+    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert eval_task["resources"]["image_id"] == (
@@ -123,13 +142,16 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     assert eval_task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert train["envs"]["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
+    assert train["envs"]["AWS_PROFILE"] == "nebius"
     assert train["envs"]["POLICY_IMAGE"] == (
         "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     )
     assert eval_task["envs"]["POLICY_IMAGE"] == (
         "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     )
+    assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
     assert train["envs"]["SONIC_TRAIN_OUTPUT_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/training/"
+    assert train["envs"]["RETARGETED_MOTION_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/retargeted/"
     assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"] == (
         "s3://proof-bucket/sonic-proof/sonic-run/training/checkpoints/last.pt"
     )
@@ -138,7 +160,7 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     )
     assert train["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert eval_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
-    for task in (train, eval_task):
+    for task in (retarget, train, eval_task):
         assert "${" not in task["resources"]["image_id"]
         assert "${" not in "\n".join(str(value) for value in task["envs"].values())
     assert "<your-" not in plan.yaml_text
@@ -210,8 +232,9 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert retarget_docs[1]["name"] == "retarget-motion"
     assert "npa workbench retargeting run" in retarget_docs[1]["run"]
     assert "accelerators" not in retarget_docs[1]["resources"]
-    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
-    assert retarget_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
+    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_RETARGETING_IMAGE}"
+    assert retarget_docs[1]["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget_docs[1]["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
 
     assert mjlab_docs[0] == {"name": "mjlab-eval", "execution": "serial"}
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"

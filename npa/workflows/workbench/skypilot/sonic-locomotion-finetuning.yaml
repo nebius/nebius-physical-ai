@@ -1,10 +1,61 @@
 # SONIC G1 first-milestone pipeline.
 #
-# Fine-tune G1 from the released SONIC checkpoint, then run a MuJoCo rollout
-# that consumes the fine-tuned checkpoint. Retargeting and full ONNX/WBC export
-# are intentionally out of scope for this milestone.
+# Retarget source motion, fine-tune G1 from the released SONIC checkpoint,
+# then run a MuJoCo rollout that consumes the fine-tuned checkpoint.
 name: sonic-locomotion-finetuning
 execution: serial
+---
+name: sonic-retarget-motion
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # NPA_RETARGETING_IMAGE is BYO-overridable. The default is a CPU preprocess
+  # image with npa plus upstream SONIC data_process scripts.
+  image_id: "docker:${NPA_RETARGETING_IMAGE}"
+envs:
+  NPA_RETARGETING_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
+  NPA_RETARGETING_UPSTREAM_REF: "a9d20b2ac0949244d94461a1a3263f38c5027c4a"
+  NPA_PIPELINE_RUN_ID: "<run-id>"
+  INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
+  RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
+  SOURCE_FORMAT: "auto"
+  SONIC_EMBODIMENT: "unitree-g1"
+  RETARGET_MAP_URI: ""
+  RETARGET_FRAME_RATE: "30"
+  RETARGET_SOURCE_FRAME_RATE: "120"
+  RETARGET_MAX_FRAMES: "0"
+  RETARGET_NUM_WORKERS: "4"
+  RETARGET_INDIVIDUAL: "1"
+  AWS_PROFILE: "nebius"
+  S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+  NPA_DRY_RUN: "0"
+setup: |
+  set -euo pipefail
+  npa --version
+run: |
+  set -euo pipefail
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
+  cmd=(npa workbench retargeting run \
+    --input-path "${INPUT_MOTION_URI}" \
+    --output-path "${RETARGETED_MOTION_URI}" \
+    --source-format "${SOURCE_FORMAT}" \
+    --embodiment "${SONIC_EMBODIMENT}" \
+    --retarget-map "${RETARGET_MAP_URI}" \
+    --frame-rate "${RETARGET_FRAME_RATE}" \
+    --source-frame-rate "${RETARGET_SOURCE_FRAME_RATE}" \
+    --max-frames "${RETARGET_MAX_FRAMES}" \
+    --num-workers "${RETARGET_NUM_WORKERS}" \
+    --output json)
+  if [ "${RETARGET_INDIVIDUAL}" = "1" ]; then
+    cmd+=(--individual)
+  else
+    cmd+=(--combined)
+  fi
+  "${cmd[@]}"
 ---
 name: sonic-g1-finetune
 resources:
@@ -20,11 +71,14 @@ envs:
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "h100"
   SONIC_IMAGE_VARIANT: "sonic-mujoco-h100-mvp"
+  AWS_PROFILE: "nebius"
   S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   S3_BUCKET: "<your-bucket-name>"
   NPA_PIPELINE_RUN_ID: "<run-id>"
+  RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SONIC_OUTPUT_PREFIX: "sonic-locomotion/<run-id>/training/"
   SONIC_TRAIN_OUTPUT_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/training/"
+  SONIC_DATA_PATH: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SONIC_TRAIN_MODE: "finetune"
   SONIC_RUN_REAL_TRAIN: "1"
   SONIC_RESUME: "False"
@@ -111,8 +165,10 @@ run: |
     echo "S3_BUCKET must be provided by the operator" >&2
     exit 2
   fi
-  export AWS_ENDPOINT_URL="${S3_ENDPOINT_URL}"
-  export NEBIUS_S3_ENDPOINT="${S3_ENDPOINT_URL}"
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
+  export S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
   export NPA_OUTPUT_PATH="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
   export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
   export SONIC_POLICY_IMAGE="${POLICY_IMAGE}"
@@ -129,7 +185,9 @@ run: |
     docker_cmd run --rm --gpus all --ipc=host --network=host \
       -e AWS_ACCESS_KEY_ID \
       -e AWS_SECRET_ACCESS_KEY \
+      -e AWS_PROFILE \
       -e AWS_ENDPOINT_URL \
+      -e S3_ENDPOINT_URL \
       -e NEBIUS_S3_ENDPOINT \
       -e HF_TOKEN \
       -e NPA_OUTPUT_PATH \
@@ -190,6 +248,7 @@ envs:
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "h100"
   SONIC_IMAGE_VARIANT: "sonic-mujoco-h100-mvp"
+  AWS_PROFILE: "nebius"
   S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   S3_BUCKET: "<your-bucket-name>"
   NPA_PIPELINE_RUN_ID: "<run-id>"
@@ -254,8 +313,10 @@ run: |
     echo "S3_BUCKET must be provided by the operator" >&2
     exit 2
   fi
-  export AWS_ENDPOINT_URL="${S3_ENDPOINT_URL}"
-  export NEBIUS_S3_ENDPOINT="${S3_ENDPOINT_URL}"
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
+  export S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
   export NPA_OUTPUT_PATH="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
   export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-mujoco-eval}"
   export NPA_SONIC_OUTPUT="${NPA_SONIC_OUTPUT:-${NPA_LOCAL_OUTPUT_DIR}/mujoco_eval_metrics.json}"
@@ -274,7 +335,9 @@ run: |
     docker_cmd run --rm --gpus all --ipc=host --network=host \
       -e AWS_ACCESS_KEY_ID \
       -e AWS_SECRET_ACCESS_KEY \
+      -e AWS_PROFILE \
       -e AWS_ENDPOINT_URL \
+      -e S3_ENDPOINT_URL \
       -e NEBIUS_S3_ENDPOINT \
       -e NPA_OUTPUT_PATH \
       -e NPA_LOCAL_OUTPUT_DIR \
