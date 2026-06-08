@@ -43,6 +43,7 @@ DEFAULT_CONTAINER_OMNI_USER_DIR = "/tmp/isaac-sim-cache"
 DEFAULT_CONTAINER_OMNI_LOG_DIR = "/tmp/isaac-sim-cache/logs"
 REFERENCE_BACKEND = "reference"
 CONTAINER_BACKEND = "container"
+NVIDIA_CDI_DEVICE_PREFIX = "nvidia.com/"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
 BUILTIN_REFERENCE_ENVS = {"locomotion-smoke", "sonic-locomotion-smoke"}
 BUILTIN_REFERENCE_STEPS = 32
@@ -678,10 +679,14 @@ def _container_command(
         (str(output_dir), output_parent, ""),
     ]
     command = [runtime, "run", "--rm"]
+    nvidia_visible_devices = ""
     if _is_docker_runtime(runtime):
         command.extend(["--runtime", "nvidia"])
         if container_gpus:
-            command.extend(["--gpus", container_gpus])
+            if _is_nvidia_cdi_device_request(container_gpus):
+                nvidia_visible_devices = container_gpus
+            else:
+                command.extend(["--gpus", container_gpus])
         for device in container_devices:
             if device:
                 command.extend(["--device", device])
@@ -702,6 +707,8 @@ def _container_command(
         "OMNI_USER_DIR": DEFAULT_CONTAINER_OMNI_USER_DIR,
         "OMNI_LOG_DIR": DEFAULT_CONTAINER_OMNI_LOG_DIR,
     }
+    if nvidia_visible_devices:
+        env_vars["NVIDIA_VISIBLE_DEVICES"] = nvidia_visible_devices
     if container_driver_capabilities:
         env_vars["NVIDIA_DRIVER_CAPABILITIES"] = container_driver_capabilities
     if container_vulkan_icd:
@@ -1099,6 +1106,10 @@ def _dedupe_mounts(mounts: list[tuple[str, str, str]]) -> list[tuple[str, str, s
 
 def _is_docker_runtime(runtime: str) -> bool:
     return Path(runtime).name == "docker"
+
+
+def _is_nvidia_cdi_device_request(gpu_request: str) -> bool:
+    return gpu_request.strip().startswith(NVIDIA_CDI_DEVICE_PREFIX)
 
 
 def _rate(episodes: list[dict[str, Any]], key: str) -> float:

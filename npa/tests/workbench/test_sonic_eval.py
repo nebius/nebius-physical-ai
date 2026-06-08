@@ -210,8 +210,48 @@ def test_sonic_eval_container_backend_uses_configured_io_contract(
     assert written["metrics"]["valid_action_rate"] == 1.0
 
 
-def _fake_container_runtime(tmp_path: Path) -> Path:
-    runtime = tmp_path / "fake-container-runtime.py"
+def test_sonic_eval_container_backend_accepts_nvidia_cdi_gpu_request(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "policy.onnx"
+    export = export_onnx(
+        checkpoint="in-memory-policy",
+        output=str(output),
+        policy=TinyEvalPolicy().eval(),
+        verify=False,
+    )
+    runtime = _fake_container_runtime(tmp_path, name="docker")
+
+    result = evaluate_onnx_policy(
+        onnx=export.onnx_path,
+        metadata=export.metadata_path,
+        backend="container",
+        episodes=1,
+        env="isaac-lab-headless-render",
+        container_image="mock-sonic-eval:latest",
+        container_runtime=str(runtime),
+        container_gpus="nvidia.com/gpu=all",
+        container_args=["eval"],
+    )
+
+    argv = result["diagnostics"]["argv"]
+    env = result["diagnostics"]["env"]
+    assert "--gpus" not in argv
+    assert argv[0:4] == ["run", "--rm", "--runtime", "nvidia"]
+    assert env["NVIDIA_VISIBLE_DEVICES"] == "nvidia.com/gpu=all"
+    assert env["NVIDIA_DRIVER_CAPABILITIES"] == "all"
+    assert result["container"]["gpus"] == "nvidia.com/gpu=all"
+    assert result["render"] == {
+        "backend": "mock",
+        "graphics_api": "vulkan",
+        "frames": 8,
+    }
+
+
+def _fake_container_runtime(
+    tmp_path: Path, *, name: str = "fake-container-runtime.py"
+) -> Path:
+    runtime = tmp_path / name
     runtime.write_text(
         textwrap.dedent(
             """\
@@ -267,6 +307,7 @@ def _fake_container_runtime(tmp_path: Path) -> Path:
                     {"episode_index": 1, "episode_return": 1.5, "distance": 3.0}
                 ],
                 "render": {"backend": "mock", "graphics_api": "vulkan", "frames": 8},
+                "diagnostics": {"argv": args, "env": env},
                 "warnings": []
             }), encoding="utf-8")
             """

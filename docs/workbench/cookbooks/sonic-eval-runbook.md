@@ -114,6 +114,11 @@ CONTAINER_OUTPUT_PATH: /npa/eval/output/sonic_eval_results.json
 
 The container receives:
 
+- Docker GPU injection defaults to `CONTAINER_GPUS=all`, which uses Docker's
+  `--gpus` flag. For NVIDIA CDI sidecars, set
+  `CONTAINER_GPUS=nvidia.com/gpu=all`; the CLI then uses the NVIDIA runtime and
+  passes that CDI device through `NVIDIA_VISIBLE_DEVICES` instead of `--gpus`.
+
 - `NPA_SONIC_ONNX`
 - `NPA_SONIC_METADATA`
 - `NPA_SONIC_OUTPUT`

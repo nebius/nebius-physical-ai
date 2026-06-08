@@ -103,6 +103,17 @@ Then add `--config-path /path/to/skypilot-kubernetes.yaml` to the submit command
 Do not set `serviceAccountName` unless that account can also list Kubernetes
 nodes and pods for SkyPilot prechecks.
 
+When `SONIC_PAYLOAD_MODE=docker`, the default `SONIC_DOCKER_GPU_REQUEST=all`
+uses Docker's legacy `--gpus all` path. On Kubernetes sidecars where the NVIDIA
+runtime is configured for CDI, set
+`SONIC_DOCKER_GPU_REQUEST: nvidia.com/gpu=all` and ensure the SkyPilot runtime
+has `nvidia-ctk` from `nvidia-container-toolkit`. The workflow generates
+`/etc/cdi/nvidia.yaml` immediately before `docker run`, then starts the payload
+with `--runtime=nvidia`, `NVIDIA_VISIBLE_DEVICES=nvidia.com/gpu=all`, and
+`NVIDIA_DRIVER_CAPABILITIES=all`. If the sidecar is unprivileged or lacks Docker
+and `nvidia-ctk`, use the direct Kubernetes host-mounted SONIC image path rather
+than the nested Docker payload.
+
 SDK equivalent:
 
 ```python

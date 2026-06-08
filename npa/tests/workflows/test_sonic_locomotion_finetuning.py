@@ -219,7 +219,11 @@ def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
     assert "image_id" not in task["resources"]
     assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2"
     assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
-    assert "docker run --rm --gpus all" in task["run"]
+    assert task["envs"]["SONIC_DOCKER_GPU_REQUEST"] == "all"
+    assert '--gpus "${SONIC_DOCKER_GPU_REQUEST}"' in task["run"]
+    assert "nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" in task["run"]
+    assert "NVIDIA_VISIBLE_DEVICES=${SONIC_DOCKER_GPU_REQUEST}" in task["run"]
+    assert 'docker run --rm "${docker_gpu_args[@]}"' in task["run"]
 
 
 def test_tool_yamls_match_registered_cli_surfaces() -> None:
