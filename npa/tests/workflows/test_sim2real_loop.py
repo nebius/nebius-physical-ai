@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import yaml
@@ -32,15 +33,85 @@ COSMOS3_REASON = (
 )
 
 
+def _component_command(tmp_path: Path) -> str:
+    script = tmp_path / "component_contract.py"
+    script.write_text(
+        """
+import json
+import os
+from pathlib import Path
+
+component = os.environ["NPA_SIM2REAL_COMPONENT"]
+out = Path(os.environ["NPA_SIM2REAL_OUTPUT_JSON"])
+out.parent.mkdir(parents=True, exist_ok=True)
+marker = Path(os.environ.get("NPA_SIM2REAL_COMPONENT_MARKER", out.parent / "component-marker.log"))
+
+if component == "vlm_eval":
+    rollout_dir = Path(os.environ["NPA_SIM2REAL_ROLLOUT_DIR"])
+    manifest = json.loads((rollout_dir / "manifest.json").read_text())
+    per_step = []
+    for item in manifest["actions"]:
+        step = int(item["step"])
+        frame = rollout_dir / f"camera-{step:03d}.ppm"
+        payload = frame.read_bytes()
+        signal = sum(payload[-12:]) % 17
+        tag = "minor_alignment"
+        per_step.append({
+            "step": step,
+            "critique_text": f"Frame {frame.name} has content signal {signal}; adjust {tag}.",
+            "error_tags": [tag],
+            "action": item["action"],
+            "camera_observation": frame.name,
+        })
+    score = 0.62 + ((sum(Path(os.environ["NPA_SIM2REAL_ROLLOUT_MANIFEST"]).read_bytes()) % 20) / 100.0)
+    result = {
+        "schema": "npa.sim2real.vlm_eval.v1",
+        "rollout_id": manifest["rollout_id"],
+        "success": score >= float(os.environ["NPA_SIM2REAL_THRESHOLD"]),
+        "score": round(score, 6),
+        "per_step": per_step,
+        "summary": "component-derived frame judgment",
+        "model": os.environ.get("NPA_SIM2REAL_VLM_MODEL", "test-vlm"),
+    }
+elif component == "heldout_eval":
+    count = int(os.environ["NPA_SIM2REAL_HELDOUT_ENV_COUNT"])
+    threshold = float(os.environ["NPA_SIM2REAL_THRESHOLD"])
+    per_env = []
+    for index in range(count):
+        score = 0.56 + (index % 5) * 0.05
+        per_env.append({
+            "env_id": f"heldout-{index:04d}",
+            "score": round(score, 6),
+            "success": score >= threshold,
+            "details": {"source": "component-contract", "index_mod": index % 5},
+        })
+    result = {"schema": "npa.sim2real.heldout_eval.v1", "per_env": per_env}
+else:
+    raise SystemExit(f"unknown component {component}")
+
+out.write_text(json.dumps(result) + "\\n")
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write(component + "\\n")
+print(json.dumps({"component": component, "output": str(out)}))
+""",
+        encoding="utf-8",
+    )
+    return f"{sys.executable} {script}"
+
+
+
 def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
     tmp_path: Path,
 ) -> None:
+    marker = tmp_path / "component-marker.log"
+    command = _component_command(tmp_path)
     config = Sim2RealLoopConfig(
         run_id="sim2real-unit",
         output_dir=tmp_path,
         threshold=0.75,
         rollout_count=1,
         steps_per_rollout=3,
+        byo_vlm_command=f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {command}",
     )
     rollout = generate_action_rollouts(
         tmp_path / "actions",
@@ -61,6 +132,8 @@ def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
     )
 
     assert evaluation["schema"] == SCHEMA_VLM_EVAL
+    assert evaluation["component_invocation"]["mode"] == "command"
+    assert "vlm_eval" in marker.read_text(encoding="utf-8")
     assert signal["schema"] == SCHEMA_RL_SIGNAL
     assert signal["per_step"][0]["target"]["nl_correction"]
     assert update.policy_delta_l2 > control.policy_delta_l2
@@ -68,6 +141,8 @@ def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
 
 
 def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
+    marker = tmp_path / "component-marker.log"
+    command = _component_command(tmp_path)
     config = Sim2RealLoopConfig(
         run_id="sim2real-full-unit",
         output_dir=tmp_path,
@@ -78,6 +153,8 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
         rollout_count=2,
         steps_per_rollout=3,
         heldout_env_count=4,
+        byo_vlm_command=f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {command}",
+        byo_eval_command=f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {command}",
     )
 
     report = run_full_loop(config)
@@ -116,9 +193,19 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     )
     assert (tmp_path / "checkpoints" / "candidate" / "candidate.json").exists()
     assert (tmp_path / "reports" / "sim2real-report.json").exists()
+    marker_text = marker.read_text(encoding="utf-8")
+    assert marker_text.count("vlm_eval") == 4
+    assert "heldout_eval" in marker_text
+    raw_envs = json.loads((tmp_path / "envs" / "raw" / "manifest.json").read_text())
+    train_envs = json.loads((tmp_path / "envs" / "train" / "manifest.json").read_text())
+    heldout_envs = json.loads((tmp_path / "envs" / "heldout" / "manifest.json").read_text())
+    assert len(raw_envs["envs"]) == 6
+    assert len(train_envs["envs"]) == 2
+    assert len(heldout_envs["envs"]) == 4
 
 
 def test_threshold_failure_loops_back_to_inner_loop(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
     config = Sim2RealLoopConfig(
         run_id="sim2real-loopback-unit",
         output_dir=tmp_path,
@@ -128,6 +215,8 @@ def test_threshold_failure_loops_back_to_inner_loop(tmp_path: Path) -> None:
         rollout_count=1,
         steps_per_rollout=2,
         heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
     )
 
     report = run_full_loop(config)
@@ -150,6 +239,7 @@ def test_empty_s3_prefix_writes_under_run_id() -> None:
 
 
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
     report = sim2real.run(
         run_id="sim2real-sdk-unit",
         output_dir=tmp_path,
@@ -159,6 +249,8 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
         rollout_count=1,
         steps_per_rollout=2,
         heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
     )
 
     assert report["run_id"] == "sim2real-sdk-unit"

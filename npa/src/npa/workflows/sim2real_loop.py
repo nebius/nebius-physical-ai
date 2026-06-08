@@ -6,6 +6,9 @@ import argparse
 import json
 import os
 import random
+import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -519,12 +522,14 @@ def run_full_loop(
 
     raw_envs = _write_env_manifest(
         local_dir / "envs" / "raw",
-        count=max(config.heldout_env_count, 10),
+        count=config.rollout_count + config.heldout_env_count,
         seed=config.seed,
     )
     train_envs, heldout_envs = _write_train_heldout_split(
         local_dir / "envs",
         raw_envs=raw_envs,
+        train_count=config.rollout_count,
+        heldout_count=config.heldout_env_count,
         seed=config.seed,
     )
     stage_records.extend([raw_envs, train_envs, heldout_envs])
@@ -570,7 +575,7 @@ def run_full_loop(
         heldout_report = run_heldout_eval(
             config,
             local_dir=local_dir,
-            policy_quality=quality,
+            inner_evidence=inner,
             outer_iteration=outer_iteration,
         )
         final_eval = heldout_report
@@ -925,46 +930,270 @@ def evaluate_rollout_with_vlm(
     output_dir: Path,
     config: Sim2RealLoopConfig,
 ) -> dict[str, Any]:
-    """Run the reference structured VLM evaluation for one rollout."""
+    """Invoke the configured VLM component and parse its structured judgment."""
 
     manifest_path = rollout_dir / "manifest.json"
     if not manifest_path.exists():
         raise Sim2RealLoopError(f"rollout manifest not found: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    quality = float(manifest.get("quality", 0.0))
     rollout_id = str(manifest.get("rollout_id") or rollout_dir.name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{rollout_id}.json"
+    env = _component_env(
+        config,
+        component="vlm_eval",
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_ROLLOUT_DIR": str(rollout_dir),
+            "NPA_SIM2REAL_ROLLOUT_ID": rollout_id,
+            "NPA_SIM2REAL_ROLLOUT_MANIFEST": str(manifest_path),
+            "NPA_SIM2REAL_VLM_MODEL": config.vlm_model,
+            "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
+            "NPA_SIM2REAL_VLM_IMAGE": config.vlm_image,
+        },
+    )
+    if config.byo_vlm_command.strip():
+        invocation = _run_component_command(
+            config.byo_vlm_command,
+            cwd=rollout_dir,
+            env=env,
+            component="vlm_eval",
+        )
+    else:
+        invocation = _run_image_component(
+            config.vlm_image,
+            component="vlm_eval",
+            env=env,
+            mounts=[
+                (rollout_dir, "/npa/input/rollout", "ro"),
+                (output_dir, "/npa/output", "rw"),
+            ],
+            output_json=output_path,
+            container_output_json=f"/npa/output/{rollout_id}.json",
+        )
+    payload = _read_component_json(output_path, invocation)
+    evaluation = _normalize_vlm_evaluation(
+        payload,
+        manifest=manifest,
+        rollout_id=rollout_id,
+        config=config,
+        invocation=invocation,
+    )
+    _write_json_artifact(output_path, evaluation)
+    return evaluation
+
+
+def _component_env(
+    config: Sim2RealLoopConfig,
+    *,
+    component: str,
+    output_json: Path,
+    extra: dict[str, str],
+) -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "NPA_SIM2REAL_COMPONENT": component,
+            "NPA_SIM2REAL_RUN_ID": config.run_id,
+            "NPA_SIM2REAL_OUTPUT_JSON": str(output_json),
+            "NPA_SIM2REAL_S3_BUCKET": config.s3_bucket,
+            "NPA_SIM2REAL_S3_PREFIX": config.s3_prefix,
+            "AWS_ENDPOINT_URL": config.s3_endpoint or env.get("AWS_ENDPOINT_URL", ""),
+        }
+    )
+    env.update(extra)
+    return env
+
+
+def _run_component_command(
+    command: str,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    component: str,
+    timeout_s: int = 7200,
+) -> dict[str, Any]:
+    result = subprocess.run(
+        command,
+        cwd=str(cwd),
+        env=env,
+        shell=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_s,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise Sim2RealLoopError(
+            f"{component} command failed with exit {result.returncode}: "
+            f"{_component_excerpt(result.stderr or result.stdout)}"
+        )
+    return {
+        "mode": "command",
+        "component": component,
+        "command": _redact_command(command),
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "stdout_excerpt": _component_excerpt(result.stdout),
+        "stderr_excerpt": _component_excerpt(result.stderr),
+    }
+
+
+def _run_image_component(
+    image: str,
+    *,
+    component: str,
+    env: dict[str, str],
+    mounts: list[tuple[Path, str, str]],
+    output_json: Path,
+    container_output_json: str,
+    timeout_s: int = 7200,
+) -> dict[str, Any]:
+    runtime = os.environ.get("NPA_CONTAINER_RUNTIME") or _first_available_runtime()
+    if not runtime:
+        raise Sim2RealLoopError(
+            f"no BYO {component} command was provided and no docker/podman runtime is available for image {image}"
+        )
+    container_env = dict(env)
+    container_env["NPA_SIM2REAL_OUTPUT_JSON"] = container_output_json
+    cmd = [runtime, "run", "--rm"]
+    if runtime.endswith("docker") and os.environ.get("NPA_SIM2REAL_CONTAINER_GPUS", "all") != "none":
+        cmd.extend(["--gpus", os.environ.get("NPA_SIM2REAL_CONTAINER_GPUS", "all")])
+    for key in sorted(container_env):
+        if key.startswith("NPA_SIM2REAL") or key in {"AWS_ENDPOINT_URL", "S3_ENDPOINT_URL"}:
+            cmd.extend(["-e", key])
+    for host, container, mode in mounts:
+        cmd.extend(["-v", f"{host}:{container}:{mode}"])
+    cmd.append(image)
+    result = subprocess.run(
+        cmd,
+        env=container_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_s,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise Sim2RealLoopError(
+            f"{component} image {image} failed with exit {result.returncode}: "
+            f"{_component_excerpt(result.stderr or result.stdout)}"
+        )
+    return {
+        "mode": "image",
+        "component": component,
+        "image": image,
+        "command": " ".join(shlex.quote(part) for part in cmd),
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "stdout_excerpt": _component_excerpt(result.stdout),
+        "stderr_excerpt": _component_excerpt(result.stderr),
+    }
+
+
+def _first_available_runtime() -> str:
+    for candidate in ("docker", "podman"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return ""
+
+
+def _read_component_json(output_path: Path, invocation: dict[str, Any]) -> dict[str, Any]:
+    if output_path.exists():
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    stdout = str(invocation.get("stdout") or "")
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            return json.loads(stripped)
+    raise Sim2RealLoopError(
+        f"{invocation.get('component', 'component')} did not write JSON to {output_path}"
+    )
+
+
+def _normalize_vlm_evaluation(
+    payload: dict[str, Any],
+    *,
+    manifest: dict[str, Any],
+    rollout_id: str,
+    config: Sim2RealLoopConfig,
+    invocation: dict[str, Any],
+) -> dict[str, Any]:
+    if "score" not in payload:
+        raise Sim2RealLoopError("VLM component output must include score")
+    score = max(0.0, min(1.0, float(payload["score"])))
+    success = bool(payload.get("success", score >= config.threshold))
+    raw_steps = payload.get("per_step") or payload.get("steps") or []
+    if not raw_steps and payload.get("critique_text"):
+        raw_steps = [{"step": 0, "critique_text": payload["critique_text"], "error_tags": payload.get("error_tags", [])}]
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise Sim2RealLoopError("VLM component output must include non-empty per_step")
+    actions = {int(item["step"]): item.get("action", []) for item in manifest.get("actions", [])}
+    observations = list(manifest.get("camera_observations", []))
     per_step: list[dict[str, Any]] = []
-    for item in manifest.get("actions", []):
-        step = int(item["step"])
-        tags = _tags_for_quality(quality, step=step)
-        critique = _critique_for_tags(tags, quality=quality)
+    for raw in raw_steps:
+        step = int(raw.get("step", len(per_step)))
+        tags = raw.get("error_tags", raw.get("tags", [])) or ["ok"]
+        if isinstance(tags, str):
+            tags = [tags]
+        critique = str(raw.get("critique_text") or raw.get("critique") or raw.get("text") or "")
+        if not critique:
+            raise Sim2RealLoopError("VLM component per_step entries must include critique text")
+        camera = raw.get("camera_observation")
+        if not camera and 0 <= step < len(observations):
+            camera = observations[step]
         per_step.append(
             {
                 "step": step,
                 "critique_text": critique,
-                "error_tags": tags,
-                "action": item.get("action", []),
-                "camera_observation": f"camera-{step:03d}.ppm",
+                "error_tags": [str(tag) for tag in tags],
+                "action": raw.get("action", actions.get(step, [])),
+                "camera_observation": str(camera or f"camera-{step:03d}.ppm"),
             }
         )
-    success = quality >= config.threshold
-    evaluation = {
+    return {
         "schema": SCHEMA_VLM_EVAL,
-        "rollout_id": rollout_id,
+        "rollout_id": str(payload.get("rollout_id") or rollout_id),
         "success": success,
-        "score": round(max(0.0, min(1.0, quality)), 6),
+        "score": round(score, 6),
         "per_step": per_step,
-        "summary": (
-            "Rollout completes the task with stable final state."
-            if success
-            else "Rollout needs policy correction before held-out promotion."
-        ),
-        "model": config.vlm_model,
+        "summary": str(payload.get("summary") or payload.get("critique") or ""),
+        "model": str(payload.get("model") or config.vlm_model),
         "vlm_image": config.vlm_image,
+        "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
-    _write_json_artifact(output_dir / f"{rollout_id}.json", evaluation)
-    return evaluation
+
+
+def _component_excerpt(text: str, limit: int = 1200) -> str:
+    scrubbed = []
+    for line in str(text or "").splitlines():
+        if "AWS_SECRET_ACCESS_KEY" in line or "AWS_ACCESS_KEY_ID" in line:
+            scrubbed.append("[redacted secret line]")
+        else:
+            scrubbed.append(line)
+    return "\n".join(scrubbed)[-limit:]
+
+
+def _redact_command(command: str) -> str:
+    redacted = str(command)
+    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"):
+        value = os.environ.get(key)
+        if value:
+            redacted = redacted.replace(value, f"<{key}>")
+    return redacted
+
+
+def _public_invocation(invocation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in invocation.items()
+        if key not in {"stdout", "stderr"}
+    }
 
 
 def convert_vlm_eval_to_rl_signal(evaluation: dict[str, Any]) -> dict[str, Any]:
@@ -1042,61 +1271,107 @@ def run_heldout_eval(
     config: Sim2RealLoopConfig,
     *,
     local_dir: Path,
-    policy_quality: float,
+    inner_evidence: dict[str, Any],
     outer_iteration: int,
 ) -> dict[str, Any]:
-    """Run the reference held-out evaluation and write report.json."""
+    """Invoke the configured held-out eval component and write report.json."""
 
-    rng = random.Random(config.seed + 9000 + outer_iteration)
+    output_dir = local_dir / "eval" / "heldout"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "report.json"
+    inner_path = output_dir / f"inner-evidence-outer-{outer_iteration:02d}.json"
+    _write_json_artifact(inner_path, inner_evidence)
+    env = _component_env(
+        config,
+        component="heldout_eval",
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / "heldout"),
+            "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(config.heldout_env_count),
+            "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
+            "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
+            "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
+        },
+    )
+    if config.byo_eval_command.strip():
+        invocation = _run_component_command(
+            config.byo_eval_command,
+            cwd=local_dir,
+            env=env,
+            component="heldout_eval",
+        )
+    else:
+        invocation = _run_image_component(
+            config.eval_image,
+            component="heldout_eval",
+            env=env,
+            mounts=[
+                (local_dir / "envs" / "heldout", "/npa/input/heldout_envs", "ro"),
+                (output_dir, "/npa/output", "rw"),
+                (inner_path, "/npa/input/inner_evidence.json", "ro"),
+            ],
+            output_json=output_path,
+            container_output_json="/npa/output/report.json",
+        )
+    payload = _read_component_json(output_path, invocation)
+    report = _normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=outer_iteration,
+        inner_evidence_uri=str(inner_path),
+        invocation=invocation,
+    )
+    _write_json_artifact(output_path, report)
+    return {**report, "report_uri": str(output_path)}
+
+
+def _normalize_heldout_report(
+    payload: dict[str, Any],
+    *,
+    config: Sim2RealLoopConfig,
+    outer_iteration: int,
+    inner_evidence_uri: str,
+    invocation: dict[str, Any],
+) -> dict[str, Any]:
+    raw_items = payload.get("per_env") or payload.get("env_scores") or payload.get("scores")
+    if isinstance(raw_items, dict):
+        raw_items = [
+            {"env_id": key, **(value if isinstance(value, dict) else {"score": value})}
+            for key, value in raw_items.items()
+        ]
+    if not isinstance(raw_items, list) or not raw_items:
+        raise Sim2RealLoopError("held-out eval component output must include non-empty per_env/env_scores")
     per_env: list[dict[str, Any]] = []
     passed = 0
-    for index in range(config.heldout_env_count):
-        env_id = f"heldout-{index:04d}"
-        physics_fidelity = round(0.91 + rng.random() * 0.07, 4)
-        score = max(0.0, min(1.0, policy_quality + rng.uniform(-0.04, 0.04)))
-        success = score >= config.threshold
+    for index, item in enumerate(raw_items):
+        if not isinstance(item, dict):
+            item = {"score": item}
+        score = max(0.0, min(1.0, float(item.get("score", item.get("success_score", 0.0)))))
+        success = bool(item.get("success", score >= config.threshold))
         passed += int(success)
         per_env.append(
             {
-                "env_id": env_id,
+                "env_id": str(item.get("env_id") or f"heldout-{index:04d}"),
                 "success": success,
                 "score": round(score, 6),
-                "physics_fidelity": {
-                    "score": physics_fidelity,
-                    "backend": "reference-genesis-compatible",
-                    "checks": {
-                        "contact_model": physics_fidelity >= 0.9,
-                        "camera_sync": True,
-                        "action_schema": True,
-                    },
-                },
+                "details": item.get("details", {}),
             }
         )
-    success_rate = passed / float(config.heldout_env_count)
-    report = {
+    success_rate = passed / float(len(per_env))
+    return {
         "schema": SCHEMA_HELDOUT_REPORT,
         "stage": 10,
         "outer_iteration": outer_iteration,
         "status": "completed",
-        "policy_quality": round(policy_quality, 6),
         "success_rate": round(success_rate, 6),
         "threshold": config.threshold,
         "per_env": per_env,
-        "physics_fidelity": {
-            "mean": round(
-                sum(item["physics_fidelity"]["score"] for item in per_env)
-                / float(len(per_env)),
-                6,
-            ),
-            "min": round(min(item["physics_fidelity"]["score"] for item in per_env), 6),
-        },
         "eval_image": config.eval_image,
-        "byo_eval_command": config.byo_eval_command,
+        "byo_eval_command": _redact_command(config.byo_eval_command),
+        "inner_evidence_uri": inner_evidence_uri,
+        "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
-    path = local_dir / "eval" / "heldout" / "report.json"
-    _write_json_artifact(path, report)
-    return {**report, "report_uri": str(path)}
 
 
 def threshold_decision(
@@ -1367,14 +1642,22 @@ def _write_train_heldout_split(
     root: Path,
     *,
     raw_envs: dict[str, Any],
+    train_count: int,
+    heldout_count: int,
     seed: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     envs = list(raw_envs["payload"]["envs"])
+    expected = train_count + heldout_count
+    if len(envs) != expected:
+        raise Sim2RealLoopError(
+            f"raw env count {len(envs)} must equal train+heldout count {expected}"
+        )
     rng = random.Random(seed)
     rng.shuffle(envs)
-    train_size = max(1, int(round(len(envs) * 0.8)))
-    train = envs[:train_size]
-    heldout = envs[train_size:] or envs[-1:]
+    train = envs[:train_count]
+    heldout = envs[train_count:train_count + heldout_count]
+    if len(train) != train_count or len(heldout) != heldout_count:
+        raise Sim2RealLoopError("train/heldout split did not preserve requested counts")
     train_record = _write_json_artifact(
         root / "train" / "manifest.json",
         {
