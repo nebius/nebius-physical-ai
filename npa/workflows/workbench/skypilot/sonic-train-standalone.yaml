@@ -16,10 +16,9 @@ resources:
   accelerators: L40S:1
   cpus: 16
   memory: 64
-  image_id: "docker:example.invalid/npa-sonic:0.1.2"
 envs:
   POLICY_IMAGE: "example.invalid/npa-sonic:0.1.2"
-  SONIC_PAYLOAD_MODE: "direct"
+  SONIC_PAYLOAD_MODE: "docker"
   SONIC_GPU_TYPE: "l40s"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
   S3_ENDPOINT_URL: ""

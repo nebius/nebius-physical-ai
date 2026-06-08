@@ -5,6 +5,8 @@ PYTHON_BIN="${NPA_PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
   if [ -x /isaac-sim/python.sh ]; then
     PYTHON_BIN=/isaac-sim/python.sh
+  elif [ -x /opt/npa/venv/bin/python ]; then
+    PYTHON_BIN=/opt/npa/venv/bin/python
   elif [ -x /opt/isaac-lab/venv/bin/python ]; then
     PYTHON_BIN=/opt/isaac-lab/venv/bin/python
   else
