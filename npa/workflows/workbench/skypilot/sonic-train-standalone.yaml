@@ -5,6 +5,7 @@
 #   manifest variant selected by SONIC_GPU_TYPE and SONIC_IMAGE_VARIANT.
 # - SONIC_PAYLOAD_MODE: direct runs inside POLICY_IMAGE; docker runs POLICY_IMAGE
 #   from SkyPilot's default VM runtime.
+# - AWS_PROFILE: profile name for S3-compatible storage access.
 # - S3_ENDPOINT_URL: S3-compatible endpoint for artifact writes.
 # - S3_BUCKET: destination bucket name, without s3://.
 name: sonic-train-standalone
@@ -22,6 +23,7 @@ envs:
   SONIC_PAYLOAD_MODE: "direct"
   SONIC_GPU_TYPE: "l40s"
   SONIC_IMAGE_VARIANT: "sonic-l40s-baked"
+  AWS_PROFILE: "nebius"
   S3_ENDPOINT_URL: ""
   S3_BUCKET: "example-bucket"
   NPA_PIPELINE_RUN_ID: "sonic-train-smoke"
@@ -70,8 +72,10 @@ run: |
     exit 2
   fi
 
-  export AWS_ENDPOINT_URL="${S3_ENDPOINT_URL}"
-  export NEBIUS_S3_ENDPOINT="${S3_ENDPOINT_URL}"
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL}}"
+  export S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
   output_path="s3://${S3_BUCKET}/${SONIC_OUTPUT_PREFIX}"
   export NPA_OUTPUT_PATH="${output_path}"
   export NPA_LOCAL_OUTPUT_DIR="${NPA_LOCAL_OUTPUT_DIR:-/tmp/npa-sonic-output}"
@@ -90,7 +94,9 @@ run: |
     docker run --rm --gpus all --ipc=host --network=host \
       -e AWS_ACCESS_KEY_ID \
       -e AWS_SECRET_ACCESS_KEY \
+      -e AWS_PROFILE \
       -e AWS_ENDPOINT_URL \
+      -e S3_ENDPOINT_URL \
       -e NEBIUS_S3_ENDPOINT \
       -e NPA_OUTPUT_PATH \
       -e NPA_LOCAL_OUTPUT_DIR \

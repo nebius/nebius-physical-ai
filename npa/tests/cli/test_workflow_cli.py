@@ -330,14 +330,22 @@ def test_workbench_workflow_submit_materializes_sonic_mvp_workflow(mocker) -> No
     assert result.exit_code == 0
     assert "redacted-test-token" not in result.output
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
-    assert [doc["name"] for doc in docs[1:]] == ["sonic-g1-finetune", "sonic-mujoco-eval"]
-    for task in docs[1:]:
+    assert [doc["name"] for doc in docs[1:]] == [
+        "sonic-retarget-motion",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
+    ]
+    assert docs[1]["resources"]["cloud"] == "kubernetes"
+    assert docs[1]["envs"]["AWS_PROFILE"] == "nebius"
+    assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
+    for task in docs[2:]:
         assert task["resources"]["accelerators"] == "H100:1"
         assert task["resources"]["region"] == "eu-north1"
         assert task["resources"]["use_spot"] is True
         assert "image_id" not in task["resources"]
         assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic-mujoco:0.1.3-mvp"
         assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
+        assert task["envs"]["AWS_PROFILE"] == "nebius"
         assert task["envs"]["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
     assert captured["kwargs"]["require_controller_up"] is False
 

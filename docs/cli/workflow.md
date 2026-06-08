@@ -47,8 +47,8 @@ npa workbench workflow submit --help
 `submit` can replace `${VAR}` placeholders with repeated `--var KEY=VALUE`
 arguments before calling SkyPilot. For SONIC YAMLs, `--var` also overrides
 matching `envs` keys, and the command materializes the first-party image, S3
-endpoint, bucket, and prefix into the submitted YAML so SkyPilot does not need
-to interpolate values inside `envs`.
+profile, endpoint, bucket, and prefix into the submitted YAML so SkyPilot does
+not need to interpolate values inside `envs`.
 
 ```bash
 npa workbench workflow submit \
@@ -57,6 +57,7 @@ npa workbench workflow submit \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --gpu-target l40s \
   --region eu-north1 \
+  --aws-profile nebius \
   --s3-endpoint https://storage.eu-north1.nebius.cloud \
   --s3-bucket <bucket> \
   --s3-prefix sonic-workflow-proof/<run-id> \

@@ -65,8 +65,17 @@ def test_sonic_mvp_materializer_sets_h100_spot_region_and_docker_payload(monkeyp
 
     docs = _docs(plan)
     assert docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
-    assert [doc["name"] for doc in docs[1:]] == ["sonic-g1-finetune", "sonic-mujoco-eval"]
-    for task in docs[1:]:
+    assert [doc["name"] for doc in docs[1:]] == [
+        "sonic-retarget-motion",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
+    ]
+    retarget = docs[1]
+    assert retarget["resources"]["cloud"] == "kubernetes"
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
+    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+    for task in docs[2:]:
         resources = task["resources"]
         envs = task["envs"]
         assert "image_id" not in resources
@@ -82,9 +91,11 @@ def test_sonic_mvp_materializer_sets_h100_spot_region_and_docker_payload(monkeyp
         assert envs["SKYPILOT_DOCKER_PASSWORD"] == "redacted-test-token"
         assert envs["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
-    train_env = docs[1]["envs"]
-    eval_env = docs[2]["envs"]
+    train_env = docs[2]["envs"]
+    eval_env = docs[3]["envs"]
     assert train_env["SONIC_RUN_REAL_TRAIN"] == "1"
+    assert train_env["AWS_PROFILE"] == "nebius"
+    assert eval_env["AWS_PROFILE"] == "nebius"
     assert train_env["SONIC_TRAIN_MODE"] == "finetune"
     assert train_env["SONIC_CHECKPOINT_PATH"] == "sonic_release/last.pt"
     assert train_env["SONIC_RUNTIME_INSTALL_TRAINING_DEPS"] == "1"
@@ -95,24 +106,26 @@ def test_sonic_mvp_materializer_sets_h100_spot_region_and_docker_payload(monkeyp
     assert eval_env["SONIC_FINE_TUNED_CHECKPOINT_URI"] == (
         "s3://proof-bucket/sonic-mvp-proof/sonic-mvp-proof/training/checkpoints/last.pt"
     )
-    assert '[ "${S3_BUCKET}" = "proof-bucket" ]' not in docs[1]["run"]
     assert '[ "${S3_BUCKET}" = "proof-bucket" ]' not in docs[2]["run"]
-    assert "placeholder_bucket=" in docs[1]["run"]
+    assert '[ "${S3_BUCKET}" = "proof-bucket" ]' not in docs[3]["run"]
     assert "placeholder_bucket=" in docs[2]["run"]
-    assert "sudo -E docker" in docs[1]["setup"]
+    assert "placeholder_bucket=" in docs[3]["run"]
     assert "sudo -E docker" in docs[2]["setup"]
-    assert "docker_cmd run --rm --gpus all" in docs[1]["run"]
+    assert "sudo -E docker" in docs[3]["setup"]
     assert "docker_cmd run --rm --gpus all" in docs[2]["run"]
-    assert "--entrypoint /bin/bash" in docs[1]["run"]
-    assert "pip install --user --no-cache-dir" in docs[1]["run"]
-    assert "\"open3d>=0.18,<0.20\"" in docs[1]["run"]
-    assert "\"vector-quantize-pytorch>=1.14,<2\"" in docs[1]["run"]
-    assert "-e WANDB_MODE" in docs[1]["run"]
-    assert "-e WANDB_DISABLED" in docs[1]["run"]
-    assert "NPA_SONIC_OUTPUT" in docs[2]["run"]
-    assert "SONIC_MUJOCO_METRICS_PATH" in docs[2]["run"]
-    assert "mujoco_eval_metrics.json" in docs[2]["run"]
-    assert "mujoco-eval" in docs[2]["run"]
+    assert "docker_cmd run --rm --gpus all" in docs[3]["run"]
+    assert "-e AWS_PROFILE" in docs[2]["run"]
+    assert "-e AWS_PROFILE" in docs[3]["run"]
+    assert "--entrypoint /bin/bash" in docs[2]["run"]
+    assert "pip install --user --no-cache-dir" in docs[2]["run"]
+    assert "\"open3d>=0.18,<0.20\"" in docs[2]["run"]
+    assert "\"vector-quantize-pytorch>=1.14,<2\"" in docs[2]["run"]
+    assert "-e WANDB_MODE" in docs[2]["run"]
+    assert "-e WANDB_DISABLED" in docs[2]["run"]
+    assert "NPA_SONIC_OUTPUT" in docs[3]["run"]
+    assert "SONIC_MUJOCO_METRICS_PATH" in docs[3]["run"]
+    assert "mujoco_eval_metrics.json" in docs[3]["run"]
+    assert "mujoco-eval" in docs[3]["run"]
     assert plan.region == "eu-north1"
 
 

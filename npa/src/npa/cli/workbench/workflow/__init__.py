@@ -153,6 +153,11 @@ def submit_cmd(
         "--use-spot/--no-use-spot",
         help="Optional SkyPilot spot/preemptible setting for materialized SONIC VM GPU tasks.",
     ),
+    aws_profile: str = typer.Option(
+        "",
+        "--aws-profile",
+        help="AWS profile name materialized for S3-compatible storage access.",
+    ),
     require_controller_up: bool = typer.Option(
         False,
         "--require-controller-up/--skip-controller-health-guard",
@@ -231,6 +236,7 @@ def submit_cmd(
                     cloud=cloud,
                     region=region,
                     use_spot=use_spot,
+                    aws_profile=aws_profile,
                     env_overrides=substitutions,
                 )
             except ValueError as exc:
