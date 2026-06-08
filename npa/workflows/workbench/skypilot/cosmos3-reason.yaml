@@ -20,6 +20,6 @@ run: |
     --run-id "${NPA_RUN_ID:-}" \
     --input-uri "${NPA_INPUT_URI}" \
     --output-uri "${NPA_OUTPUT_URI}" \
-    --model "${COSMOS3_REASON_MODEL:-npa-cosmos3-reason}" \
+    --model "${COSMOS3_REASON_MODEL:-nvidia/Cosmos-Reason1-7B}" \
     --image "${COSMOS3_REASON_IMAGE:-}" \
     --prompt "${NPA_REASON_PROMPT:-}"

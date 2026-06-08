@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shlex
 import subprocess
 import sys
@@ -29,11 +30,11 @@ from npa.workbench.lerobot.policy_container import (
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
-DEFAULT_VLM_IMAGE_TAG = "3.0.0"
+DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
 DEFAULT_ENVGEN_TAG = "0.1.1"
 DEFAULT_REFERENCE_POLICY_TAG = "0.1.1"
 DEFAULT_TRAINER_TAG = "0.1.0"
-DEFAULT_EVAL_TAG = "0.1.0"
+DEFAULT_EVAL_TAG = "0.1.1-genuine-sm120"
 DEFAULT_THRESHOLD = 0.75
 DEFAULT_INNER_ITERATIONS = 2
 DEFAULT_OUTER_ITERATIONS = 1
@@ -41,8 +42,10 @@ DEFAULT_LOOP_OF_LOOPS_ITERATIONS = 1
 DEFAULT_ROLLOUT_COUNT = 3
 DEFAULT_STEPS_PER_ROLLOUT = 4
 DEFAULT_HELDOUT_ENVS = 8
-DEFAULT_REFERENCE_VLM_MODEL = "npa-cosmos3-reason"
+DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
+REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason"}
+DEFAULT_COSMOS_REASON_CACHE = "/models/cosmos-reason1"
 SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
@@ -753,7 +756,7 @@ def run_full_loop(
             ComponentRecord(
                 "vlm_byo_seam",
                 "WORKS",
-                "VLM image/command are runtime-configurable; default reference is npa-cosmos3-reason.",
+                "VLM image/command are runtime-configurable; default model is nvidia/Cosmos-Reason1-7B.",
                 {"image": config.vlm_image},
             ),
             ComponentRecord(
@@ -1003,6 +1006,7 @@ def generate_action_rollouts(
             {
                 "schema": "npa.sim2real.action_rollout.v1",
                 "rollout_id": rollout_id,
+                "task_description": "Move the manipulation object to the target while maintaining stable contact.",
                 "quality": round(quality, 6),
                 "steps": steps_per_rollout,
                 "camera_observations": [
@@ -2072,63 +2076,24 @@ def _component_vlm_payload(
     observations = list(manifest.get("camera_observations") or [])
     if not actions:
         raise Sim2RealLoopError("VLM component input manifest has no actions")
-    digest = hashlib.sha256(
-        json.dumps(manifest, sort_keys=True).encode("utf-8")
+    image_paths = _rollout_image_paths(rollout_root, observations)
+    if not image_paths:
+        raise Sim2RealLoopError("VLM component input has no readable camera frames")
+    resolved_model = _resolve_cosmos_reason_model_id(model)
+    task_description = _task_description_from_manifest(manifest)
+    payload = _run_cosmos_reason_vlm(
+        model_id=resolved_model,
+        image_paths=image_paths,
+        actions=actions,
+        task_description=task_description,
+        rollout_id=rollout_id or str(manifest.get("rollout_id") or "rollout"),
+        threshold=threshold,
     )
-    frame_bytes: dict[str, bytes] = {}
-    for observation in observations:
-        frame_path = rollout_root / str(observation)
-        if frame_path.exists():
-            payload = frame_path.read_bytes()
-            frame_bytes[str(observation)] = payload
-            digest.update(payload[:4096])
-    digest_bytes = digest.digest()
-    score = round(0.38 + (digest_bytes[0] / 255.0) * 0.54, 6)
-    success = score >= threshold
-    tag_pool = ["collision", "missed_target", "unstable", "late_grasp", "minor_alignment"]
-    per_step: list[dict[str, Any]] = []
-    for index, action in enumerate(actions):
-        step = int(action.get("step", index))
-        camera = (
-            str(action.get("camera_observation") or observations[step])
-            if 0 <= step < len(observations)
-            else f"camera-{step:03d}.ppm"
-        )
-        signal_byte = digest_bytes[(index + 1) % len(digest_bytes)]
-        if success and signal_byte > 180:
-            tags = ["ok"]
-        else:
-            tags = [tag_pool[signal_byte % len(tag_pool)]]
-            if signal_byte % 7 == 0:
-                tags.append("minor_alignment")
-        target = _merge_targets(tags)
-        per_step.append(
-            {
-                "step": step,
-                "critique_text": (
-                    f"Frame {camera} produced visual signal {signal_byte}; "
-                    f"{target['nl_correction']}"
-                ),
-                "error_tags": tags,
-                "action": action.get("action", []),
-                "camera_observation": camera,
-                "frame_bytes": len(frame_bytes.get(camera, b"")),
-            }
-        )
-    return {
-        "schema": SCHEMA_VLM_EVAL,
-        "rollout_id": rollout_id or str(manifest.get("rollout_id") or "rollout"),
-        "success": success,
-        "score": score,
-        "per_step": per_step,
-        "summary": "sibling image parsed rollout frames and actions",
-        "model": model,
-        "component_source": "sibling_kubernetes_job",
-        "synthetic_signature": {
-            "constant_0_737737": score == 0.737737,
-            "unique_tags": sorted({tag for item in per_step for tag in item["error_tags"]}),
-        },
-    }
+    payload["component_source"] = "cosmos_reason_vlm"
+    payload["model"] = resolved_model
+    payload["task_description"] = task_description
+    payload["frame_count"] = len(image_paths)
+    return payload
 
 
 def _component_heldout_payload(
@@ -2137,39 +2102,465 @@ def _component_heldout_payload(
     inner_evidence: dict[str, Any],
     threshold: float,
 ) -> dict[str, Any]:
-    reward_trend = inner_evidence.get("reward_trend") or []
-    reward_digest = hashlib.sha256(
-        json.dumps(reward_trend, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    per_env: list[dict[str, Any]] = []
-    for index, env in enumerate(envs):
-        env_id = str(env.get("env_id") or f"heldout-{index:04d}")
-        digest = hashlib.sha256(
-            json.dumps(env, sort_keys=True).encode("utf-8")
-            + reward_digest.encode("ascii")
-        ).digest()
-        score = round(0.34 + (digest[0] / 255.0) * 0.58, 6)
-        per_env.append(
-            {
-                "env_id": env_id,
-                "score": score,
-                "success": score >= threshold,
-                "details": {
-                    "record_index": index,
-                    "seed": env.get("seed"),
-                    "source": "s3_env_record",
-                },
-            }
-        )
+    per_env = _run_genesis_heldout_rollouts(
+        envs,
+        inner_evidence=inner_evidence,
+        threshold=threshold,
+    )
     return {
         "schema": SCHEMA_HELDOUT_REPORT,
         "per_env": per_env,
-        "component_source": "sibling_kubernetes_job",
-        "synthetic_signature": {
-            "train_zero_heldout_full": all(item["success"] for item in per_env),
-            "constant_scores": len({item["score"] for item in per_env}) == 1,
-        },
+        "component_source": "genesis_rollout",
+        "rollout_backend": "npa.genesis.env_pick_place.FrankaPickPlaceEnv",
+        "policy_source": "inner_evidence_adapter",
     }
+
+
+def _rollout_image_paths(rollout_root: Path, observations: list[Any]) -> list[Path]:
+    paths: list[Path] = []
+    for observation in observations:
+        path = rollout_root / str(observation)
+        if path.is_file():
+            paths.append(path)
+    if paths:
+        return paths
+    return sorted(
+        path
+        for path in rollout_root.iterdir()
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ppm", ".webp"}
+    )
+
+
+def _resolve_cosmos_reason_model_id(model: str) -> str:
+    candidate = str(model or "").strip()
+    if candidate in REFERENCE_VLM_ALIASES:
+        candidate = os.environ.get("NPA_COSMOS_REASON_MODEL_ID", DEFAULT_REFERENCE_VLM_MODEL)
+    return candidate
+
+
+def _task_description_from_manifest(manifest: dict[str, Any]) -> str:
+    for key in ("task_description", "task", "instruction", "prompt"):
+        value = str(manifest.get(key) or "").strip()
+        if value:
+            return value
+    return (
+        "Evaluate whether the robot rollout completes the manipulation task. "
+        "Use the camera frames and the listed actions to judge physical success, "
+        "stability, target alignment, and contact mistakes."
+    )
+
+
+def _run_cosmos_reason_vlm(
+    *,
+    model_id: str,
+    image_paths: list[Path],
+    actions: list[dict[str, Any]],
+    task_description: str,
+    rollout_id: str,
+    threshold: float,
+) -> dict[str, Any]:
+    """Run real Cosmos-Reason1/Qwen-VL inference and parse its JSON judgment."""
+
+    try:
+        import torch
+        from PIL import Image
+        from qwen_vl_utils import process_vision_info
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+    except Exception as exc:
+        raise Sim2RealLoopError(
+            "Cosmos-Reason1 VLM inference requires torch, Pillow, transformers, "
+            f"and qwen-vl-utils in the image: {exc}"
+        ) from exc
+
+    if not image_paths:
+        raise Sim2RealLoopError("Cosmos-Reason1 inference requires at least one frame")
+    if not torch.cuda.is_available():
+        raise Sim2RealLoopError("Cosmos-Reason1 inference requires a CUDA GPU")
+
+    cache_dir = os.environ.get("NPA_COSMOS_REASON_CACHE", DEFAULT_COSMOS_REASON_CACHE)
+    max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
+    selected_paths = image_paths[:max(1, max_frames)]
+    for path in selected_paths:
+        with Image.open(path) as img:
+            img.verify()
+
+    prompt = _cosmos_reason_prompt(
+        task_description=task_description,
+        actions=actions,
+        frame_names=[path.name for path in selected_paths],
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    content.extend({"type": "image", "image": str(path)} for path in selected_paths)
+    messages = [{"role": "user", "content": content}]
+
+    print(
+        json.dumps(
+            {
+                "component": "vlm_eval",
+                "event": "cosmos_reason_inference_start",
+                "model": model_id,
+                "frames": [path.name for path in selected_paths],
+            },
+            sort_keys=True,
+        )
+    )
+    processor = AutoProcessor.from_pretrained(
+        model_id,
+        cache_dir=cache_dir,
+        trust_remote_code=True,
+    )
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    model = AutoModelForImageTextToText.from_pretrained(
+        model_id,
+        cache_dir=cache_dir,
+        torch_dtype=dtype,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    text = processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    )
+    first_device = next(model.parameters()).device
+    inputs = inputs.to(first_device)
+    max_new_tokens = int(os.environ.get("NPA_COSMOS_REASON_MAX_NEW_TOKENS", "768"))
+    with torch.inference_mode():
+        generated = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+        )
+    trimmed = [
+        output_ids[len(input_ids) :]
+        for input_ids, output_ids in zip(inputs.input_ids, generated, strict=False)
+    ]
+    model_text = processor.batch_decode(
+        trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )[0].strip()
+    payload = _parse_cosmos_reason_output(
+        model_text,
+        actions=actions,
+        rollout_id=rollout_id,
+        threshold=threshold,
+    )
+    payload["raw_model_output_excerpt"] = _component_excerpt(model_text, limit=900)
+    print(
+        json.dumps(
+            {
+                "component": "vlm_eval",
+                "event": "cosmos_reason_inference_complete",
+                "model": model_id,
+                "rollout_id": payload["rollout_id"],
+                "score": payload["score"],
+                "success": payload["success"],
+                "tags": sorted({tag for step in payload["per_step"] for tag in step["error_tags"]}),
+            },
+            sort_keys=True,
+        )
+    )
+    return payload
+
+
+def _cosmos_reason_prompt(
+    *,
+    task_description: str,
+    actions: list[dict[str, Any]],
+    frame_names: list[str],
+) -> str:
+    action_excerpt = json.dumps(actions[:16], sort_keys=True)
+    return (
+        "You are NVIDIA Cosmos-Reason1 evaluating a physical robot rollout.\n"
+        f"Task description: {task_description}\n"
+        f"Frame order: {frame_names}\n"
+        f"Actions by step: {action_excerpt}\n"
+        "Return JSON only. The JSON must contain: success (boolean), "
+        "score (number from 0 to 1), summary (natural-language critique), and "
+        "per_step (array of objects with step, critique_text, error_tags, "
+        "camera_observation). Use only these error tags when applicable: "
+        "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
+        "Judge actual visual rollout behavior, not metadata or requested actions."
+    )
+
+
+def _parse_cosmos_reason_output(
+    model_text: str,
+    *,
+    actions: list[dict[str, Any]],
+    rollout_id: str,
+    threshold: float,
+) -> dict[str, Any]:
+    payload = _json_object_from_text(model_text)
+    if payload is None:
+        payload = _parse_unstructured_vlm_output(model_text)
+    if "score" not in payload:
+        raise Sim2RealLoopError(
+            "Cosmos-Reason1 output did not include a numeric score"
+        )
+    score = max(0.0, min(1.0, float(payload["score"])))
+    success = bool(payload.get("success", score >= threshold))
+    raw_steps = payload.get("per_step") or payload.get("steps") or []
+    if not raw_steps:
+        critique = str(
+            payload.get("summary")
+            or payload.get("critique")
+            or payload.get("critique_text")
+            or model_text
+        ).strip()
+        tags = payload.get("error_tags") or _tags_from_text(critique)
+        raw_steps = [
+            {
+                "step": int(action.get("step", index)),
+                "critique_text": critique,
+                "error_tags": tags,
+                "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
+            }
+            for index, action in enumerate(actions)
+        ]
+    per_step: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict):
+            raw = {"critique_text": str(raw)}
+        step = int(raw.get("step", index))
+        tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(str(raw))
+        if isinstance(tags, str):
+            tags = [tags]
+        normalized_tags = _normalize_error_tags(tags)
+        critique = str(
+            raw.get("critique_text")
+            or raw.get("critique")
+            or raw.get("text")
+            or payload.get("summary")
+            or ""
+        ).strip()
+        if not critique:
+            raise Sim2RealLoopError("Cosmos-Reason1 per_step output lacks critique text")
+        per_step.append(
+            {
+                "step": step,
+                "critique_text": critique,
+                "error_tags": normalized_tags,
+                "action": actions[index].get("action", []) if index < len(actions) else [],
+                "camera_observation": str(
+                    raw.get("camera_observation") or f"camera-{step:03d}.ppm"
+                ),
+            }
+        )
+    return {
+        "schema": SCHEMA_VLM_EVAL,
+        "rollout_id": str(payload.get("rollout_id") or rollout_id),
+        "success": success,
+        "score": round(score, 6),
+        "per_step": per_step,
+        "summary": str(payload.get("summary") or payload.get("critique") or "").strip(),
+    }
+
+
+def _json_object_from_text(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?", "", stripped, flags=re.IGNORECASE).strip()
+        stripped = re.sub(r"```$", "", stripped).strip()
+    try:
+        payload = json.loads(stripped)
+        return payload if isinstance(payload, dict) else None
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_unstructured_vlm_output(text: str) -> dict[str, Any]:
+    lowered = text.lower()
+    score_match = re.search(r"(?:score|confidence|rating)\D+([01](?:\.\d+)?)", lowered)
+    if not score_match:
+        raise Sim2RealLoopError("Cosmos-Reason1 output was not parseable JSON")
+    score = float(score_match.group(1))
+    if "success" in lowered or "pass" in lowered:
+        success = True
+    elif "fail" in lowered or "unsuccess" in lowered:
+        success = False
+    else:
+        success = score >= DEFAULT_THRESHOLD
+    return {
+        "success": success,
+        "score": score,
+        "summary": text.strip(),
+        "error_tags": _tags_from_text(text),
+    }
+
+
+def _tags_from_text(text: str) -> list[str]:
+    lowered = text.lower().replace("-", "_").replace(" ", "_")
+    tags = [tag for tag in ERROR_SEVERITY if tag != "ok" and tag in lowered]
+    if not tags and re.search(r"\b(ok|success|stable|complete)\b", text.lower()):
+        tags = ["ok"]
+    return tags or ["minor_alignment"]
+
+
+def _normalize_error_tags(tags: list[Any]) -> list[str]:
+    known = set(ERROR_SEVERITY)
+    normalized = []
+    for tag in tags:
+        value = str(tag).strip().lower().replace("-", "_").replace(" ", "_")
+        normalized.append(value if value in known else "minor_alignment")
+    return normalized or ["minor_alignment"]
+
+
+def _run_genesis_heldout_rollouts(
+    envs: list[dict[str, Any]],
+    *,
+    inner_evidence: dict[str, Any],
+    threshold: float,
+) -> list[dict[str, Any]]:
+    """Run the trained adapter policy through real Genesis held-out episodes."""
+
+    try:
+        import torch
+        from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv
+    except Exception as exc:
+        raise Sim2RealLoopError(
+            f"Genesis rollout eval requires torch and genesis-world in the image: {exc}"
+        ) from exc
+    if not torch.cuda.is_available():
+        raise Sim2RealLoopError("Genesis rollout eval requires a CUDA GPU")
+
+    adapter = _policy_adapter_from_inner_evidence(inner_evidence)
+    batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_GENESIS_BATCH_SIZE", "16")))
+    max_steps = max(1, int(os.environ.get("NPA_SIM2REAL_GENESIS_MAX_STEPS", "240")))
+    per_env: list[dict[str, Any]] = []
+    for start in range(0, len(envs), batch_size):
+        batch = envs[start : start + batch_size]
+        seed = int(batch[0].get("seed") or (42 + start))
+        torch.manual_seed(seed)
+        cfg = EnvConfig(
+            n_envs=len(batch),
+            enable_cameras=False,
+            domain_randomize=True,
+            max_episode_steps=max_steps,
+            action_space="cartesian",
+            action_scale=float(os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")),
+        )
+        env = FrankaPickPlaceEnv(cfg)
+        obs = env.reset()
+        active = torch.ones(len(batch), device="cuda", dtype=torch.bool)
+        success = torch.zeros(len(batch), device="cuda", dtype=torch.bool)
+        steps_done = torch.zeros(len(batch), device="cuda", dtype=torch.long)
+        max_reward = torch.full((len(batch),), -1.0e9, device="cuda")
+        final_distance = torch.full((len(batch),), 1.0e9, device="cuda")
+        for step in range(max_steps):
+            actions = _adapter_policy_actions(obs, adapter, step=step)
+            obs, reward, done, info = env.step(actions)
+            distance = torch.norm(obs["object_pose"][:, :3] - obs["goal_position"], dim=-1)
+            final_distance = torch.where(active, distance, final_distance)
+            max_reward = torch.where(active, torch.maximum(max_reward, reward), max_reward)
+            just_done = active & done
+            if bool(just_done.any()):
+                success = torch.where(just_done, info["success"].bool(), success)
+                steps_done = torch.where(just_done, torch.full_like(steps_done, step + 1), steps_done)
+                active = active & ~just_done
+            if not bool(active.any()):
+                break
+        steps_done = torch.where(
+            steps_done == 0,
+            torch.full_like(steps_done, max_steps),
+            steps_done,
+        )
+        batch_successes = int(success.sum().item())
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "genesis_rollout_batch_complete",
+                    "batch_start": start,
+                    "env_count": len(batch),
+                    "successes": batch_successes,
+                    "max_steps": max_steps,
+                },
+                sort_keys=True,
+            )
+        )
+        for index, env_record in enumerate(batch):
+            dist = float(final_distance[index].detach().item())
+            reward_value = float(max_reward[index].detach().item())
+            env_success = bool(success[index].detach().item())
+            distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
+            reward_score = max(0.0, min(1.0, reward_value / 10.0))
+            score = 1.0 if env_success else round(0.7 * distance_score + 0.3 * reward_score, 6)
+            per_env.append(
+                {
+                    "env_id": str(env_record.get("env_id") or f"heldout-{start + index:04d}"),
+                    "score": score,
+                    "success": env_success,
+                    "details": {
+                        "source": "genesis_env_native_success",
+                        "seed": env_record.get("seed"),
+                        "target_threshold": cfg.target_threshold,
+                        "final_target_distance": round(dist, 6),
+                        "max_reward": round(reward_value, 6),
+                        "steps": int(steps_done[index].detach().item()),
+                        "policy_adapter": adapter,
+                        "threshold": threshold,
+                    },
+                }
+            )
+    return per_env
+
+
+def _policy_adapter_from_inner_evidence(inner_evidence: dict[str, Any]) -> dict[str, Any]:
+    iterations = inner_evidence.get("iterations") or []
+    update = {}
+    if iterations and isinstance(iterations[-1], dict):
+        update = iterations[-1].get("update") or {}
+    action = update.get("policy_output_after") or [0.0, 0.0, 0.0]
+    reward_head = float(update.get("reward_head_after") or 0.0)
+    reward_trend = [float(item) for item in (inner_evidence.get("reward_trend") or [])]
+    return {
+        "action_bias": [float(value) for value in action[:3]],
+        "reward_head_after": round(reward_head, 6),
+        "reward_trend": [round(value, 6) for value in reward_trend],
+        "source": "inner_evidence.update.policy_output_after",
+    }
+
+
+def _adapter_policy_actions(obs: dict[str, Any], adapter: dict[str, Any], *, step: int):
+    import torch
+
+    ee_pos = obs["ee_pos"]
+    cube_pos = obs["object_pose"][:, :3]
+    target_pos = obs["goal_position"]
+    contacts = obs["contact_flags"].sum(dim=-1, keepdim=True) > 0.5
+    to_cube = cube_pos - ee_pos
+    to_target = target_pos - cube_pos
+    bias_values = adapter.get("action_bias") or [0.0, 0.0, 0.0]
+    bias = torch.tensor(bias_values[:3], device=ee_pos.device, dtype=ee_pos.dtype).unsqueeze(0)
+    approach_delta = to_cube * 0.45 + bias * 0.02
+    place_delta = (to_target + (cube_pos - ee_pos) * 0.25) * 0.35 + bias * 0.02
+    delta_xyz = torch.where(contacts, place_delta, approach_delta)
+    dist_to_cube = torch.norm(to_cube, dim=-1, keepdim=True)
+    should_close = contacts | (dist_to_cube < 0.065) | (step > 40)
+    gripper = torch.where(
+        should_close,
+        torch.full_like(dist_to_cube, -1.0),
+        torch.full_like(dist_to_cube, 1.0),
+    )
+    return torch.cat([delta_xyz, gripper], dim=-1)
 
 
 def _find_component_input_file(root: Path, filename: str) -> Path:

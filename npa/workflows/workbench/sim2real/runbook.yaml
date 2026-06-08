@@ -107,9 +107,9 @@ run: |
     --augment-image "${AUGMENT_IMAGE:-}" \
     --policy-image "${POLICY_IMAGE:-}" \
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}" \
-    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.0}" \
-    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.0}" \
-    --vlm-model "${VLM_MODEL:-npa-cosmos3-reason}" \
+    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}" \
+    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}" \
+    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}" \
     --threshold "${SUCCESS_THRESHOLD:-0.75}" \
     --inner-iterations "${INNER_ITERATIONS:-2}" \
     --outer-iterations "${OUTER_ITERATIONS:-1}" \
