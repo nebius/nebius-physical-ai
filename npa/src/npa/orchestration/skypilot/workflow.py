@@ -66,6 +66,7 @@ def submit_workflow(
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     secret_envs: Sequence[str] | None = None,
+    require_controller_up: bool = False,
     timeout: int = 1800,
     controller_preflight_timeout: int = 300,
     controller_preflight_interval: float = 15.0,
@@ -97,6 +98,8 @@ def submit_workflow(
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        env = sky_environment(runtime_config.isolated_config_dir)
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
 
         cmd = [
             sky_executable,
@@ -111,13 +114,12 @@ def submit_workflow(
         for secret_name in secret_envs or ():
             if os.environ.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
-        env = sky_environment(runtime_config.isolated_config_dir)
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
         _wait_for_healthy_jobs_controller(
             sky_executable,
             env=env,
             timeout=controller_preflight_timeout,
             interval=controller_preflight_interval,
+            require_existing=require_controller_up,
         )
         result = subprocess.run(
             cmd,
@@ -215,11 +217,12 @@ def _wait_for_healthy_jobs_controller(
     env: dict[str, str],
     timeout: int,
     interval: float,
+    require_existing: bool = False,
 ) -> None:
     """Block launch while an existing managed-jobs controller is not ready."""
 
     deadline = time.monotonic() + max(timeout, 0)
-    last_summary = ""
+    last_summary = "no jobs-controller found" if require_existing else ""
     while True:
         result = subprocess.run(
             [sky_executable, "status", "--refresh", "--output", "json"],
@@ -233,25 +236,32 @@ def _wait_for_healthy_jobs_controller(
         if result.returncode != 0:
             raise SkyPilotSubmitError(f"SkyPilot controller health check failed: {_command_detail(result)}")
         controllers = _jobs_controller_statuses(result.stdout)
-        unhealthy = [
-            (name, status)
-            for name, status in controllers
-            if status.upper() != HEALTHY_CONTROLLER_STATUS
-        ]
-        if not unhealthy:
-            return
-        last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
+        if require_existing and not controllers:
+            last_summary = "no jobs-controller found"
+        else:
+            unhealthy = [
+                (name, status)
+                for name, status in controllers
+                if status.upper() != HEALTHY_CONTROLLER_STATUS
+            ]
+            if not unhealthy:
+                return
+            last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
         if time.monotonic() >= deadline:
             raise SkyPilotSubmitError(f"SkyPilot jobs controller not healthy before launch: {last_summary}")
         time.sleep(max(interval, 0.1))
 
 
 def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
-    try:
-        payload = json.loads(output or "[]")
-    except json.JSONDecodeError as exc:
-        raise SkyPilotSubmitError("SkyPilot controller health check returned non-json output") from exc
-    clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
+    payload = _json_payload_from_output(output)
+    if payload is None:
+        raise SkyPilotSubmitError("SkyPilot controller health check returned non-json output")
+    if isinstance(payload, list):
+        clusters = payload
+    elif isinstance(payload, dict):
+        clusters = payload.get("clusters", payload.get("jobs", []))
+    else:
+        clusters = []
     controllers = []
     for cluster in clusters or []:
         if not isinstance(cluster, dict):
@@ -262,6 +272,25 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
         status = str(cluster.get("status") or cluster.get("cluster_status") or "")
         controllers.append((name, status.upper()))
     return controllers
+
+
+def _json_payload_from_output(output: str) -> Any | None:
+    text = output.strip()
+    for candidate in _json_payload_candidates(text):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _json_payload_candidates(text: str) -> list[str]:
+    candidates = [text or "[]"]
+    for marker in ("\n[", "\n{"):
+        idx = text.rfind(marker)
+        if idx != -1:
+            candidates.append(text[idx + 1 :])
+    return candidates
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
