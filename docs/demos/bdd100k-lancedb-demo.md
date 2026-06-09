@@ -110,8 +110,11 @@ Each failure-mode view trains a separate Faster R-CNN ResNet50 FPN v2 detector.
 ### Reproducing This Demo
 
 Prerequisites: Nebius account, `npa` CLI installed, and access to the
-`npa-workbench-eu-north1` cluster profile. Start with the no-infrastructure
-validation first:
+`npa-workbench-eu-north1` cluster profile. To provision the object store,
+Kubernetes cluster, GPU node groups, and in-cluster services from scratch,
+follow the "Prerequisites: Provision Infrastructure" section of
+[`docs/workbench/cookbooks/bdd100k-pipeline.md`](../workbench/cookbooks/bdd100k-pipeline.md).
+Start with the no-infrastructure validation first:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \

@@ -6,7 +6,9 @@ workflow orchestrator for these templates.
 
 ## Layout
 
-- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines.
+- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines. See
+  `skypilot/README.md` for the index that maps each YAML to its guide in `docs/`
+  and its submission wrapper in `npa/scripts/`.
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with

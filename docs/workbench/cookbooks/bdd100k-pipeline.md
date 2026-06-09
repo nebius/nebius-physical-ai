@@ -3,7 +3,7 @@
 This cookbook describes the SkyPilot workflow at
 `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
-The workflow composes the six BDD100K reproduction stages:
+The workflow composes the BDD100K reproduction stages:
 
 1. Import the BDD100K subset into LanceDB with `POST /import-bdd100k`.
 2. Backfill CPU UDF columns with five sequential `POST /backfill` calls.
@@ -20,6 +20,143 @@ three training tasks and three evaluation tasks. The logical DAG is still:
 ```text
 ingest -> CPU backfill -> CLIP backfill -> materialized views -> training x3 -> eval x3 -> FiftyOne app
 ```
+
+## Prerequisites: Provision Infrastructure
+
+The pipeline tasks assume the object store, the Kubernetes cluster with GPU
+node groups, and the in-cluster workbench services already exist. The repo
+provisions all of these; provision them in this order before running any live
+submission. The `--mock-endpoints` dry validation below needs none of this
+infrastructure and is the right first step.
+
+### 0. Operator setup
+
+Complete the platform quickstart and workbench getting-started first. They cover
+`npa` install, Nebius CLI auth, `~/.npa/credentials.yaml`, the `kubectl`/Docker/
+Terraform/AWS-CLI tooling, and the SkyPilot runtime bootstrap.
+
+- [docs/quickstart.md](../../quickstart.md)
+- [docs/workbench/getting-started.md](../getting-started.md)
+- [docs/orchestration/skypilot-setup.md](../../orchestration/skypilot-setup.md)
+
+Export the non-secret identifiers used throughout this cookbook:
+
+```bash
+export NPA_S3_BUCKET=<your-bucket>            # bucket name only, no s3:// prefix
+export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
+export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
+```
+
+### 1. Object store (S3 bucket)
+
+The pipeline reads raw frames from and writes every artifact under the bucket in
+`NPA_S3_BUCKET`. Creating the bucket itself is a Nebius account action (Console
+or `nebius storage bucket create`); the access keys belong in
+`~/.npa/credentials.yaml` under `storage.*`, as described in getting-started.
+
+Verify the bucket is reachable:
+
+```bash
+aws s3 ls "s3://${NPA_S3_BUCKET}/" --endpoint-url "${AWS_ENDPOINT_URL}"
+```
+
+For a real-data run, stage a 3-5k frame BDD100K subset in standard BDD100K
+format at the source prefix the YAML expects:
+
+```text
+s3://${NPA_S3_BUCKET}/raw-bdd100k/subset-demo/
+```
+
+For a first run, skip staging and use `--synthetic`, which generates rows in the
+ingest service instead of reading the source prefix.
+
+### 2. Kubernetes cluster and GPU node groups
+
+`npa cluster up` provisions a Managed Kubernetes cluster from
+`deploy/cluster` with the NVIDIA GPU Operator, the Nebius Network Operator, a
+default StorageClass, and a default GPU node group. Copy
+`deploy/cluster/terraform.tfvars.example` to `terraform.tfvars` and set your
+`tenant_id`, `parent_id`, `region`, and `subnet_id` first.
+
+```bash
+npa cluster up --terraform-dir deploy/cluster
+```
+
+This writes a kubeconfig under `~/.npa/clusters/<cluster-name>/kubeconfig`,
+validates GPU nodes and the default StorageClass, and runs a SkyPilot GPU smoke
+task. The default node group in `terraform.tfvars.example` is RTX PRO 6000
+(`gpu-rtx6000`).
+
+The CLIP-embedding, training, and evaluation stages request `H100:1`. If your
+default node group is not H100, attach an H100 node group so SkyPilot can place
+those tasks:
+
+```bash
+npa cluster node-group add \
+  --cluster-name npa-cluster \
+  --gpu-type h100 \
+  --node-count 1
+```
+
+The CPU stages (ingest, CPU backfill, materialized views) request only CPU and
+schedule on any node. Confirm SkyPilot can place pods and that the registry pull
+secret exists in the namespace SkyPilot uses (normally `default`):
+
+```bash
+export KUBECONFIG=~/.npa/clusters/npa-cluster/kubeconfig
+kubectl auth can-i create pods -n default
+kubectl get secret npa-nebius-registry -n default
+```
+
+### 3. In-cluster workbench services
+
+Each pipeline task calls existing workbench services over HTTP. Deploy them into
+the `workbench` namespace so the in-cluster DNS names in the YAML resolve:
+
+```text
+http://npa-lancedb.workbench.svc.cluster.local:8686
+http://npa-detection-training.workbench.svc.cluster.local:8790
+```
+
+Deploy detection-training with the output prefix it writes checkpoints under:
+
+```bash
+npa workbench detection-training deploy \
+  --namespace workbench \
+  --output-path "s3://${NPA_S3_BUCKET}/bdd100k-pipeline/"
+```
+
+Deploy LanceDB so the ingest, backfill, and materialized-view stages can reach
+it. The container and cloud paths are production-ready today; the in-cluster
+`workbench`-namespace service deploy is still partly operator-owned in this
+build (see the "Known Limitation" section of
+[lancedb-deploy-runbook.md](lancedb-deploy-runbook.md)). Until that path is a
+one-command deploy, provide a reachable LanceDB endpoint and override it at
+submission time:
+
+```bash
+python npa/scripts/run_bdd100k_pipeline.py \
+  --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+  --synthetic 5000 \
+  --lancedb-endpoint http://<your-lancedb-endpoint>:8686 \
+  --run-id <your-run-id>
+```
+
+See [lancedb-deploy-runbook.md](lancedb-deploy-runbook.md) for deploy runtimes,
+auth, and storage, and [lancedb-vector-search.md](lancedb-vector-search.md) for
+table, query, and import usage.
+
+### Teardown
+
+After the demo, remove the GPU node group and the cluster to stop GPU spend:
+
+```bash
+npa cluster node-group remove --cluster-name npa-cluster --name <node-group-name>
+npa cluster down --terraform-dir deploy/cluster
+```
+
+Object-store artifacts persist independently; delete the run prefix under
+`s3://${NPA_S3_BUCKET}/bdd100k-pipeline/<run-id>/` when you no longer need it.
 
 ## Dry Validation
 
@@ -52,8 +189,9 @@ The wrapper renders run-specific S3 paths before calling
 
 ## Required Services
 
-The task pods call existing workbench services by HTTP. Override these if the
-service names differ:
+The task pods call the in-cluster workbench services deployed in
+[Prerequisites step 3](#3-in-cluster-workbench-services) over HTTP. Override
+these defaults if the service names differ:
 
 ```bash
 --lancedb-endpoint http://npa-lancedb.workbench.svc.cluster.local:8686
