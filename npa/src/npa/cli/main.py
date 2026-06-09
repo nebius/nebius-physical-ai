@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import traceback
 from importlib.metadata import version as package_version
+from typing import Callable, Optional
 
 import typer
 
@@ -53,9 +56,14 @@ app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
+DEFAULT_STORAGE_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
+DEFAULT_REGION = "eu-north1"
+
 _SETUP_GUIDANCE = """Credential setup
 
-Create ~/.npa/credentials.yaml for user-level tokens and BYOVM SSH defaults:
+Run `npa configure` in a terminal for an interactive setup, or create
+~/.npa/credentials.yaml by hand for user-level tokens, object storage, and
+BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
@@ -63,6 +71,11 @@ ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
   # team: optional-ngc-team
+storage:
+  aws_access_key_id: <your-s3-access-key-id>
+  aws_secret_access_key: <your-s3-secret-access-key>
+  endpoint_url: https://storage.eu-north1.nebius.cloud
+  bucket: s3://<your-bucket>/
 ssh:
   host: <your-byovm-host>
   user: ubuntu
@@ -72,8 +85,10 @@ Then secure it:
 
 chmod 600 ~/.npa/credentials.yaml
 
-Deploy commands create and update ~/.npa/config.yaml for projects, workbenches,
-SSH targets, container registry settings, and Terraform state.
+`npa configure` also writes ~/.npa/config.yaml with your Nebius project id,
+tenant id, region, and container registry so commands no longer need those
+values exported in the shell or read from the Nebius CLI. Deploy commands
+extend the same file with workbench endpoints and Terraform state.
 """
 
 
@@ -98,24 +113,186 @@ def main(
     """Nebius Physical AI workbench CLI."""
 
 
+def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> bool:
+    """Return True when the local Nebius CLI has a usable, authenticated profile."""
+
+    if not shutil.which("nebius"):
+        return False
+    try:
+        result = runner(
+            ["nebius", "iam", "get-access-token"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
+def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
+    """Run the interactive `nebius profile create` flow."""
+
+    try:
+        result = runner(["nebius", "profile", "create"], check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
+def _ensure_nebius_profile() -> None:
+    """Detect or interactively create a local Nebius CLI profile."""
+
+    if _nebius_profile_ready():
+        typer.echo("Nebius CLI profile detected (`nebius iam get-access-token` works).")
+        return
+    if not shutil.which("nebius"):
+        typer.echo(
+            "Nebius CLI not found. Install it from https://docs.nebius.com/cli/install, "
+            "then re-run `npa configure` to create a local profile."
+        )
+        return
+    if not typer.confirm(
+        "No authenticated Nebius CLI profile found. Create one now?",
+        default=True,
+    ):
+        typer.echo("Skipped Nebius profile creation. Run `nebius profile create` later.")
+        return
+    if _create_nebius_profile() and _nebius_profile_ready():
+        typer.echo("Nebius CLI profile is ready.")
+    else:
+        typer.echo(
+            "Could not verify a Nebius profile. Run `nebius profile create` manually, "
+            "then `nebius iam get-access-token` to confirm."
+        )
+
+
+def _run_interactive_configure() -> None:
+    """Prompt for credentials/config and write the NPA dotfiles."""
+
+    from npa.clients.config import CONFIG_PATH, write_config
+    from npa.clients.credentials import write_credentials_file
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+    typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
+    _ensure_nebius_profile()
+    typer.echo("")
+
+    def ask(label: str, *, default: str = "", secret: bool = False) -> str:
+        return str(
+            typer.prompt(
+                label,
+                default=default,
+                hide_input=secret,
+                show_default=bool(default) and not secret,
+            )
+        ).strip()
+
+    hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
+    s3_access_key = ask("S3 access key id (AWS_ACCESS_KEY_ID)", secret=True)
+    s3_secret_key = ask("S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True)
+    s3_endpoint = ask("S3 endpoint URL", default=DEFAULT_STORAGE_ENDPOINT)
+    s3_bucket = ask("S3 bucket (e.g. s3://my-bucket/)")
+    registry = ask("Container registry", default=DEFAULT_CONTAINER_REGISTRY)
+    project_id = ask("Nebius project id")
+    tenant_id = ask("Nebius tenant id")
+    region = ask("Region", default=DEFAULT_REGION)
+
+    credentials_path = write_credentials_file(
+        {
+            "tokens": {"HF_TOKEN": hf_token},
+            "storage": {
+                "aws_access_key_id": s3_access_key,
+                "aws_secret_access_key": s3_secret_key,
+                "endpoint_url": s3_endpoint,
+                "bucket": s3_bucket,
+            },
+        }
+    )
+
+    project_stanza = {
+        key: value
+        for key, value in (
+            ("project_id", project_id),
+            ("tenant_id", tenant_id),
+            ("region", region),
+            ("container_registry", registry),
+        )
+        if value
+    }
+    wrote_config = False
+    if project_id or tenant_id:
+        alias = region or "default"
+        write_config({"projects": {alias: project_stanza}, "default_project": alias})
+        wrote_config = True
+
+    typer.echo(f"\nWrote {credentials_path} (chmod 600).")
+    if wrote_config:
+        typer.echo(f"Wrote {CONFIG_PATH}.")
+    else:
+        typer.echo(
+            "Skipped ~/.npa/config.yaml: provide a Nebius project id to write a "
+            "project profile."
+        )
+    typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+
+
+def _configure_impl(*, show: bool, interactive: Optional[bool]) -> None:
+    if show:
+        typer.echo(_SETUP_GUIDANCE)
+        return
+    should_prompt = interactive if interactive is not None else sys.stdin.isatty()
+    if not should_prompt:
+        typer.echo(_SETUP_GUIDANCE)
+        return
+    try:
+        _run_interactive_configure()
+    except (EOFError, typer.Abort):
+        typer.echo("\n")
+        typer.echo(_SETUP_GUIDANCE)
+
+
 @app.command(
     "configure",
-    help="Show credential and config setup guidance.",
+    help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
-def configure() -> None:
-    """Show credential and config setup guidance."""
-    typer.echo(_SETUP_GUIDANCE)
+def configure(
+    show: bool = typer.Option(
+        False,
+        "--show",
+        help="Print the credential/config file layout instead of prompting.",
+    ),
+    interactive: Optional[bool] = typer.Option(
+        None,
+        "--interactive/--no-interactive",
+        help="Force or disable interactive prompting (defaults to auto-detect TTY).",
+    ),
+) -> None:
+    """Interactively write ~/.npa credentials and config, or show guidance."""
+    _configure_impl(show=show, interactive=interactive)
 
 
 @app.command(
     "init",
-    help="Show credential and config setup guidance.",
+    help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
-def init() -> None:
-    """Show credential and config setup guidance."""
-    configure()
+def init(
+    show: bool = typer.Option(
+        False,
+        "--show",
+        help="Print the credential/config file layout instead of prompting.",
+    ),
+    interactive: Optional[bool] = typer.Option(
+        None,
+        "--interactive/--no-interactive",
+        help="Force or disable interactive prompting (defaults to auto-detect TTY).",
+    ),
+) -> None:
+    """Interactively write ~/.npa credentials and config, or show guidance."""
+    _configure_impl(show=show, interactive=interactive)
 
 
 def app_entry() -> None:

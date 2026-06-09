@@ -253,6 +253,54 @@ def load_credentials(
     )
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
+    pruned: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            nested = _prune_empty(value)
+            if nested:
+                pruned[key] = nested
+        elif value not in ("", None):
+            pruned[key] = value
+    return pruned
+
+
+def write_credentials_file(
+    data: Mapping[str, Any],
+    *,
+    path: Path | None = None,
+) -> Path:
+    """Deep-merge *data* into ``~/.npa/credentials.yaml`` and write it 0600.
+
+    Empty string / ``None`` values are dropped so an interactive setup that
+    skips a field never clobbers an existing value with a blank one.
+    """
+
+    credentials_path = path or CREDENTIALS_PATH
+    existing: dict[str, Any] = {}
+    if credentials_path.exists():
+        with credentials_path.open() as handle:
+            loaded = yaml.safe_load(handle)
+        if isinstance(loaded, dict):
+            existing = loaded
+    merged = _deep_merge(existing, _prune_empty(dict(data)))
+    credentials_path.parent.mkdir(parents=True, exist_ok=True)
+    with credentials_path.open("w") as handle:
+        yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)
+    credentials_path.chmod(0o600)
+    return credentials_path
+
+
 def storage_endpoint_url(endpoint: str) -> str:
     """Return a URL form for a Nebius S3-compatible endpoint."""
     value = endpoint.strip()

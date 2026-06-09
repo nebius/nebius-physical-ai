@@ -185,7 +185,7 @@ SONIC image routing is manifest-driven:
   `npa/src/npa/deploy/sonic_image_manifest.json` using `--gpu-type`, with
   `--image` and `--image-variant` available as explicit overrides.
 - L40S VM targets use the baked `npa-sonic:0.1.2` image. RTX PRO 6000
-  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s`
+  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s-runtime`
   image. See `docs/workbench/sonic-image-catalog.md`.
 
 ### Solution Patterns
