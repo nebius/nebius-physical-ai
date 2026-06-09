@@ -24,6 +24,7 @@ from npa.cli.workbench.detection_training import app as detection_training_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
 from npa.cli.workbench.workflow import app as workflow_app
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.health import app as health_app
 
 app = typer.Typer(
     name="workbench",
@@ -60,3 +61,4 @@ app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(trigger_app, name="trigger")
+app.add_typer(health_app, name="health")

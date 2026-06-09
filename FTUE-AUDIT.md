@@ -17,7 +17,7 @@ a "non-default S3-compatible endpoint."
    pointing at the wrong cluster, and a schedulable-GPU count of zero were all
    only discoverable *mid-run*, after provisioning. A first-time user had no way
    to confirm readiness up front.
-   **Fixed:** `npa doctor sim2real` runs these as explicit PASS/WARN/FAIL/SKIP
+   **Fixed:** `npa workbench health sim2real` runs these as explicit PASS/WARN/FAIL/SKIP
    checks (`config`, `coherence`, `s3`, `registry`, `tokens`, `cluster`), with
    `--checks`, `--json`, and `--warn-only`.
 
@@ -52,7 +52,7 @@ a "non-default S3-compatible endpoint."
    **Fixed:** a canonical seam table (`SIM2REAL_SEAMS`) plus a `coherence_failures`
    check now validate, for all 20 BYO seams, that the CLI flag exists on
    `sim2real run`, the SDK/config field exists, and the runbook env is both
-   declared and referenced. This guard runs inside `npa doctor` and as a
+   declared and referenced. This guard runs inside `npa workbench health` and as a
    guardrail test alongside the existing contracts.
 
 6. **No one-value BYO seam map.** A new user had to read code to learn which CLI

@@ -116,7 +116,7 @@ HF/NGC tokens, kube context, schedulable-GPU count, and three-tier coherence) as
 PASS/WARN/FAIL/SKIP so you hit them up front instead of mid-pipeline:
 
 ```bash
-npa doctor sim2real \
+npa workbench health sim2real \
   --s3-bucket <bucket> \
   --s3-endpoint <your-s3-compatible-endpoint> \
   --trigger-dataset-uri s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/ \

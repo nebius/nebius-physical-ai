@@ -237,7 +237,7 @@ def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
     # The sim2real headline workflow uses a **overrides SDK surface, so it cannot
     # use the inspect-based CapabilityContract. Its coherence is enforced through
     # the doctor seam table instead (CLI flag <-> config/SDK field <-> YAML env).
-    from npa.workflows.sim2real_doctor import coherence_failures
+    from npa.workflows.sim2real_health import coherence_failures
 
     failures = coherence_failures(REPO_ROOT)
     assert not failures, "\n".join(failures)
@@ -251,6 +251,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "fiftyone",
         "genesis",
         "groot",
+        "health",
         "isaac-lab",
         "lancedb",
         "lerobot",
