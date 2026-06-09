@@ -577,22 +577,32 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert len(docs) == 1
     task = docs[0]
     assert task["name"] == "sim2real-full-loop"
-    assert (
-        task["envs"]["NPA_SIM2REAL_TRIGGER_DATASET_URI"]
-        == "${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
-    )
-    assert (
-        task["envs"]["NPA_SIM2REAL_TRIGGER_DATASET_ID"]
-        == "${NPA_SIM2REAL_TRIGGER_DATASET_ID}"
-    )
-    assert task["envs"]["VLM_IMAGE"] == "${VLM_IMAGE}"
-    assert task["envs"]["TRAINER_IMAGE"] == "${TRAINER_IMAGE}"
-    assert task["envs"]["EVAL_IMAGE"] == "${EVAL_IMAGE}"
+
+    # SkyPilot 0.12.2 does not interpolate ${VAR} inside `envs` or `image_id`.
+    # The raw runbook must therefore carry materialized literals and expand env
+    # vars only at container runtime in the `run` block.
+    env_values = "\n".join(str(value) for value in task["envs"].values())
+    assert "${" not in env_values
+    assert "${" not in str(task["resources"]["image_id"])
+    assert task["resources"]["image_id"].startswith("docker:example.invalid/")
+
+    # The BYO seam env names are still declared and consumed by the run block.
+    for env_name in (
+        "NPA_SIM2REAL_TRIGGER_DATASET_URI",
+        "NPA_SIM2REAL_TRIGGER_DATASET_ID",
+        "VLM_IMAGE",
+        "TRAINER_IMAGE",
+        "EVAL_IMAGE",
+    ):
+        assert env_name in task["envs"]
+        assert env_name in task["run"]
+
     assert "npa.workflows.sim2real_loop full-loop" in task["run"]
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
+    assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
