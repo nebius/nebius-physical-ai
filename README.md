@@ -55,6 +55,22 @@ nebius iam get-access-token >/dev/null
 npa configure
 ```
 
+The flagship GPU workload is **NVIDIA Cosmos** (world-foundation model for
+synthetic data and world generation). It runs across multiple NVIDIA GPU
+platforms via a single `--gpu-type` flag (`gpu-h100-sxm`, `gpu-h200-sxm`,
+`gpu-b300-sxm`, `gpu-l40s`) with no RT-core lock-in:
+
+```bash
+npa workbench cosmos -p <your-project-alias> -n cosmos deploy \
+  --runtime serverless --gpu-type <gpu-platform> --wait
+npa workbench cosmos -p <your-project-alias> -n cosmos infer \
+  --prompt "A robot arm stacks colored cubes" \
+  --output-path s3://<your-bucket>/cosmos/out/
+```
+
+Cosmos needs Nebius credentials, an `HF_TOKEN`, and GPU capacity; see the
+flagship walkthrough in [docs/quickstart.md](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos).
+
 To work on `npa` itself (tests, lint), install the dev extra and run the fast
 suite — see [CONTRIBUTING.md](CONTRIBUTING.md):
 

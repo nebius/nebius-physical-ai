@@ -366,7 +366,60 @@ touches real infrastructure even if your shell has Nebius credentials exported.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
-## 7. Where to next
+## 7. Flagship GPU workload: NVIDIA Cosmos
+
+Once the offline loop above works, the headline Workbench workload is **NVIDIA
+Cosmos** — a world-foundation model for synthetic data and world generation.
+Cosmos is the recommended first GPU workload because it runs across **multiple
+NVIDIA GPU platforms** (for example `gpu-h100-sxm`, `gpu-h200-sxm`,
+`gpu-b300-sxm`, `gpu-l40s`) selected with a single `--gpu-type` flag. It does
+**not** require RT cores, so you are not locked to one GPU family the way
+RT-core tools are.
+
+This step needs Nebius credentials, a `HF_TOKEN` for the gated Cosmos weights
+(Section 4), and GPU capacity. Set GPU routing with one flag and keep the same
+command shape across platforms:
+
+```bash
+# Deploy a Cosmos serving endpoint on the GPU platform of your choice.
+npa workbench cosmos -p <your-project-alias> -n cosmos deploy \
+  --runtime serverless \
+  --gpu-type <gpu-platform> \
+  --gpu-preset <gpu-preset> \
+  --wait
+
+# Generate from a text prompt; output lands in your bucket.
+npa workbench cosmos -p <your-project-alias> -n cosmos infer \
+  --prompt "A robot arm stacks colored cubes on a table" \
+  --output-path s3://<your-bucket>/cosmos/out/ \
+  --output-format json
+
+npa workbench cosmos -p <your-project-alias> -n cosmos teardown --yes
+```
+
+The three tiers stay coherent here too:
+
+- **CLI:** the `npa workbench cosmos` commands above.
+- **SDK:** `from npa.sdk.workbench import cosmos` mirrors the same operations.
+- **Raw `sky`:** checked-in, parameterizable SkyPilot YAMLs under
+  `npa/workflows/workbench/skypilot/` (for example
+  `cosmos3-text-to-image-inference.yaml`), runnable with plain `sky launch`
+  using `--env`/`--gpu-type` overrides and a BYO `image_id`.
+
+Artifact-bearing end-to-end validation (a real serverless GPU job) is:
+
+```bash
+npa workbench cosmos train --runtime serverless --smoke --gpu-type <gpu-platform>
+```
+
+Because this launches a real, potentially long GPU job, run it from a durable
+launcher (your job queue / SkyPilot-managed job) rather than an interactive
+session you might close. See [the Cosmos guide](../.agents/skills/workbench/cosmos/SKILL.md)
+and [the workflows guide](workbench-yaml-guide.md) for routing, backend
+selection, and known limits. Isaac Lab is the simulation counterpart but is
+RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
+
+## 8. Where to next
 
 - [Workbench Getting Started](workbench/getting-started.md): Kubernetes,
   SkyPilot, registry, S3, and first workload setup.
@@ -377,7 +430,7 @@ conventions (branch → PR → squash, one approval, never self-approve).
   machine-managed `~/.npa/config.yaml` shape for reference only.
 - [Known onboarding and runtime gotchas](../FIXME.md): active follow-up list.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 `npa: command not found`
 
