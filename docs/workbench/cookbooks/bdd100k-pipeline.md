@@ -160,15 +160,71 @@ Object-store artifacts persist independently; delete the run prefix under
 
 ## Dry Validation
 
-Use the wrapper's mock-endpoint path to validate the curl requests without
-submitting GPU work:
+The mock-endpoint path validates the full pipeline — every task's `run:` script,
+the curl/jq request plumbing, and the request ordering — with **no cloud, GPU,
+or credentials**. It is the reproducible first step and the basis of the
+recorded demo below.
+
+First install the package into the repo virtualenv (one time):
 
 ```bash
-python npa/scripts/run_bdd100k_pipeline.py \
+python3 -m venv npa/.venv
+npa/.venv/bin/pip install -e npa
+```
+
+Then run the dry validation. Writing `--output-json` gives a machine-checkable
+summary in addition to stdout:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
   --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints \
-  --run-id <your-run-id>
+  --run-id demo-validate \
+  --output-json /tmp/bdd100k-validation.json
+```
+
+Expected result: exit code `0`, all 11 tasks return `0`, no failures, and the
+recorded request order is
+`import-bdd100k -> 6x backfill -> 3x create-mv` (LanceDB) and
+`3x train -> 3x eval` (detection-training). Confirm the summary:
+
+```bash
+npa/.venv/bin/python - <<'PY'
+import json
+d = json.load(open("/tmp/bdd100k-validation.json"))
+print("tasks:", len(d["task_results"]), "all rc==0:",
+      all(t["returncode"] == 0 for t in d["task_results"]))
+print("failures:", d["failures"])
+PY
+```
+
+### Record the validation
+
+To capture a shareable recording of the validation (and the full unit-test
+suite) run it under `script(1)`:
+
+```bash
+script -q -e -c '
+  npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
+  npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
+    --yaml npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml \
+    --synthetic 5000 --mock-endpoints --run-id demo-recording
+' /tmp/bdd100k-demo-recording.log
+```
+
+View the recording (it is a plain text typescript; `script` inserts carriage
+returns, so strip them when reading in a pager):
+
+```bash
+# Quick read
+cat /tmp/bdd100k-demo-recording.log
+
+# Clean view in a pager (strips CR control characters)
+col -b < /tmp/bdd100k-demo-recording.log | less
+
+# Just the pass/fail summary lines
+grep -E 'passed|DEMO STATUS|rc=' /tmp/bdd100k-demo-recording.log
 ```
 
 ## Full Submission
