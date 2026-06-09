@@ -1,8 +1,21 @@
 # Standalone Sim2Real VLM-to-RL full-loop runbook.
 #
-# Run with raw SkyPilot after providing S3 credentials and any BYO image
-# overrides as environment variables or Kubernetes secrets. For Kubernetes
-# clusters that require a service account, pass a SkyPilot config containing:
+# This is the raw-SkyPilot tier of the three-tier example set. It is meant to be
+# read and run without npa in the loop. The SDK (sim2real.run) and CLI
+# (npa workbench sim2real run) wrap the same workflow; they do not gate it.
+#
+# SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
+# `image_id` at submission time. So every value below is a materialized literal,
+# and the `run` block expands env vars at container runtime instead. Operators
+# override literals at submit time with `--env KEY=VALUE` / `--secret KEY`, and
+# edit `image_id` to point at their own registry.
+#
+# GPU-reaching path: raw `sky jobs launch` against this file is currently blocked
+# by the SkyPilot 0.12.2 pre-setup getcwd() bug. Reach GPUs through the
+# materialized-runbook / direct-Kubernetes route documented in README.md until
+# that is fixed upstream.
+#
+# For Kubernetes clusters that require a service account, pass a SkyPilot config:
 #
 # kubernetes:
 #   pod_config:
@@ -19,50 +32,50 @@ resources:
   accelerators: RTX6000:1
   cpus: 16+
   memory: 64+
-  image_id: "docker:${TRAINER_IMAGE}"
+  image_id: "docker:example.invalid/npa-lerobot-vlm-rl:0.1.0"
 envs:
-  NPA_SIM2REAL_RUN_ID: "${NPA_SIM2REAL_RUN_ID}"
-  NPA_SIM2REAL_BUCKET: "${NPA_SIM2REAL_BUCKET}"
-  NPA_SIM2REAL_PREFIX: "${NPA_SIM2REAL_PREFIX}"
-  NPA_SIM2REAL_TRIGGER_DATASET_URI: "${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
-  NPA_SIM2REAL_TRIGGER_DATASET_ID: "${NPA_SIM2REAL_TRIGGER_DATASET_ID}"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
-  S3_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
-  ACTION_ROLLOUTS_URI: "${ACTION_ROLLOUTS_URI}"
-  TRAIN_ENVS_URI: "${TRAIN_ENVS_URI}"
-  HELDOUT_ENVS_URI: "${HELDOUT_ENVS_URI}"
-  ASSETS_URI: "${ASSETS_URI}"
-  SCENE_SPEC_URI: "${SCENE_SPEC_URI}"
-  AUGMENT_IMAGE: "${AUGMENT_IMAGE}"
-  POLICY_IMAGE: "${POLICY_IMAGE}"
-  TRAINER_IMAGE: "${TRAINER_IMAGE}"
-  VLM_IMAGE: "${VLM_IMAGE}"
-  EVAL_IMAGE: "${EVAL_IMAGE}"
-  VLM_MODEL: "${VLM_MODEL}"
-  SUCCESS_THRESHOLD: "${SUCCESS_THRESHOLD}"
-  INNER_ITERATIONS: "${INNER_ITERATIONS}"
-  OUTER_ITERATIONS: "${OUTER_ITERATIONS}"
-  LOOP_OF_LOOPS_ITERATIONS: "${LOOP_OF_LOOPS_ITERATIONS}"
-  ROLLOUT_COUNT: "${ROLLOUT_COUNT}"
-  STEPS_PER_ROLLOUT: "${STEPS_PER_ROLLOUT}"
-  HELDOUT_ENV_COUNT: "${HELDOUT_ENV_COUNT}"
-  SIGNAL_LOSS_WEIGHT: "${SIGNAL_LOSS_WEIGHT}"
-  LEARNING_RATE: "${LEARNING_RATE}"
-  NO_GUARDRAILS: "${NO_GUARDRAILS}"
-  BYO_SIGNAL_CONVERTER: "${BYO_SIGNAL_CONVERTER}"
-  BYO_TRAINER_COMMAND: "${BYO_TRAINER_COMMAND}"
-  BYO_VLM_COMMAND: "${BYO_VLM_COMMAND}"
-  BYO_EVAL_COMMAND: "${BYO_EVAL_COMMAND}"
-  NPA_SIM2REAL_K8S_NAMESPACE: "${NPA_SIM2REAL_K8S_NAMESPACE}"
-  NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT}"
-  NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS}"
-  NPA_SIM2REAL_K8S_ENV_SECRET_NAMES: "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES}"
-  NPA_SIM2REAL_K8S_GPU_RESOURCE: "${NPA_SIM2REAL_K8S_GPU_RESOURCE}"
-  NPA_SIM2REAL_K8S_GPU_PRODUCT: "${NPA_SIM2REAL_K8S_GPU_PRODUCT}"
-  NPA_SIM2REAL_K8S_JOB_TIMEOUT_S: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S}"
-  NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT}"
-  NPA_SOURCE_REPO: "${NPA_SOURCE_REPO}"
-  NPA_SOURCE_REF: "${NPA_SOURCE_REF}"
+  NPA_SIM2REAL_RUN_ID: ""
+  NPA_SIM2REAL_BUCKET: "example-bucket"
+  NPA_SIM2REAL_PREFIX: "sim2real-b"
+  NPA_SIM2REAL_TRIGGER_DATASET_URI: ""
+  NPA_SIM2REAL_TRIGGER_DATASET_ID: "lerobot/pusht"
+  AWS_ENDPOINT_URL: ""
+  S3_ENDPOINT_URL: ""
+  ACTION_ROLLOUTS_URI: ""
+  TRAIN_ENVS_URI: ""
+  HELDOUT_ENVS_URI: ""
+  ASSETS_URI: ""
+  SCENE_SPEC_URI: ""
+  AUGMENT_IMAGE: ""
+  POLICY_IMAGE: ""
+  TRAINER_IMAGE: ""
+  VLM_IMAGE: ""
+  EVAL_IMAGE: ""
+  VLM_MODEL: "nvidia/Cosmos-Reason1-7B"
+  SUCCESS_THRESHOLD: "0.75"
+  INNER_ITERATIONS: "2"
+  OUTER_ITERATIONS: "1"
+  LOOP_OF_LOOPS_ITERATIONS: "1"
+  ROLLOUT_COUNT: "3"
+  STEPS_PER_ROLLOUT: "4"
+  HELDOUT_ENV_COUNT: "8"
+  SIGNAL_LOSS_WEIGHT: "1.0"
+  LEARNING_RATE: "0.05"
+  NO_GUARDRAILS: "0"
+  BYO_SIGNAL_CONVERTER: ""
+  BYO_TRAINER_COMMAND: ""
+  BYO_VLM_COMMAND: ""
+  BYO_EVAL_COMMAND: ""
+  NPA_SIM2REAL_K8S_NAMESPACE: "default"
+  NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"
+  NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+  NPA_SIM2REAL_K8S_ENV_SECRET_NAMES: "hf-ngc-tokens,npa-storage-credentials"
+  NPA_SIM2REAL_K8S_GPU_RESOURCE: "nvidia.com/gpu"
+  NPA_SIM2REAL_K8S_GPU_PRODUCT: "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+  NPA_SIM2REAL_K8S_JOB_TIMEOUT_S: "7200"
+  NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "0"
+  NPA_SOURCE_REPO: ""
+  NPA_SOURCE_REF: ""
 setup: |
   set -euo pipefail
   if [ ! -f ./npa/pyproject.toml ]; then
@@ -89,6 +102,13 @@ run: |
   set -euo pipefail
   export PATH="/tmp:$(pwd)/npa/.venv/bin:${PATH}"
   export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
+
+  bucket="${NPA_SIM2REAL_BUCKET:-${S3_BUCKET:-}}"
+  if [ -z "${bucket}" ] || [ "${bucket}" = "example-bucket" ]; then
+    echo "ERROR: set NPA_SIM2REAL_BUCKET to a real bucket (override the example literal)." >&2
+    exit 2
+  fi
+
   run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
   output_dir="/tmp/npa-sim2real-${run_id}"
   mkdir -p "${output_dir}"
@@ -96,8 +116,8 @@ run: |
   ./npa/.venv/bin/python -m npa.workflows.sim2real_loop full-loop \
     --run-id "${run_id}" \
     --output-dir "${output_dir}" \
-    --s3-bucket "${NPA_SIM2REAL_BUCKET:-${S3_BUCKET:-}}" \
-    --s3-prefix "${NPA_SIM2REAL_PREFIX-sim2real-b}" \
+    --s3-bucket "${bucket}" \
+    --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}" \
     --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}" \
     --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" \
     --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}" \

@@ -108,9 +108,63 @@ reports/sim2real-report.json
 - S3-compatible storage credentials and endpoint configured through environment
   variables, project config, or Kubernetes secrets.
 
+## Preflight First
+
+Before launching anything, run the preflight. It validates the config and
+surfaces the recurring blockers (S3 reachability, image pull / `agent-sa` path,
+HF/NGC tokens, kube context, schedulable-GPU count, and three-tier coherence) as
+PASS/WARN/FAIL/SKIP so you hit them up front instead of mid-pipeline:
+
+```bash
+npa doctor sim2real \
+  --s3-bucket <bucket> \
+  --s3-endpoint <your-s3-compatible-endpoint> \
+  --trigger-dataset-uri s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/ \
+  --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
+  --policy-image <registry>/npa-sim2real-reference-policy:0.1.1
+```
+
+Use `--checks config,coherence` for an infra-free static check, `--json` for
+machine-readable output, and `--warn-only` to report without failing the exit
+code.
+
+## One BYO Seam, One Value
+
+Each seam is one value you set the same way across all three tiers: the CLI
+flag, the SDK keyword argument, and the raw-YAML env are all wired to the same
+config field. Set what you need; the rest fall back to reference defaults.
+
+| BYO seam | CLI flag | SDK keyword | Raw-YAML env |
+| --- | --- | --- | --- |
+| S3 endpoint | `--s3-endpoint` | `s3_endpoint=` | `AWS_ENDPOINT_URL` |
+| S3 bucket (required) | `--s3-bucket` | `s3_bucket=` | `NPA_SIM2REAL_BUCKET` |
+| Run prefix | `--s3-prefix` | `s3_prefix=` | `NPA_SIM2REAL_PREFIX` |
+| Trigger path | `--trigger-dataset-uri` | `trigger_dataset_uri=` | `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
+| Source dataset id | `--trigger-dataset-id` | `trigger_dataset_id=` | `NPA_SIM2REAL_TRIGGER_DATASET_ID` |
+| Sim-asset source path | `--assets-uri` | `assets_uri=` | `ASSETS_URI` |
+| SceneSpec path | `--scene-spec-uri` | `scene_spec_uri=` | `SCENE_SPEC_URI` |
+| Augment image | `--augment-image` | `augment_image=` | `AUGMENT_IMAGE` |
+| Policy image | `--policy-image` | `policy_image=` | `POLICY_IMAGE` |
+| Trainer image | `--trainer-image` | `trainer_image=` | `TRAINER_IMAGE` |
+| VLM image | `--vlm-image` | `vlm_image=` | `VLM_IMAGE` |
+| Eval image | `--eval-image` | `eval_image=` | `EVAL_IMAGE` |
+| Success threshold | `--threshold` | `threshold=` | `SUCCESS_THRESHOLD` |
+| Inner-loop cap | `--inner-iterations` | `inner_iterations=` | `INNER_ITERATIONS` |
+| Outer-loop cap | `--outer-iterations` | `outer_iterations=` | `OUTER_ITERATIONS` |
+| Loop-of-loops cap | `--loop-of-loops-iterations` | `loop_of_loops_iterations=` | `LOOP_OF_LOOPS_ITERATIONS` |
+| Rollout count | `--rollout-count` | `rollout_count=` | `ROLLOUT_COUNT` |
+| Steps per rollout | `--steps-per-rollout` | `steps_per_rollout=` | `STEPS_PER_ROLLOUT` |
+| Held-out env count | `--heldout-env-count` | `heldout_env_count=` | `HELDOUT_ENV_COUNT` |
+
 ## Run All Three Tiers
 
-Raw SkyPilot:
+Each tier is independently usable. The raw YAML runs without npa in the loop;
+the SDK and CLI wrap the same workflow without gating it.
+
+Raw SkyPilot — `runbook.yaml` is materialized with literal defaults because
+SkyPilot 0.12.2 does **not** interpolate `${VAR}` inside the YAML `envs` block or
+in `image_id`. Override the literals at submit time with `--env` / `--secret`,
+and edit `image_id` to your own registry:
 
 ```bash
 cat > /tmp/sim2real-skypilot-k8s.yaml <<'YAML'
@@ -123,9 +177,16 @@ kubernetes:
             name: hf-ngc-tokens
 YAML
 
+# Reaching GPUs: raw `sky jobs launch` against this YAML is currently blocked by
+# the SkyPilot 0.12.2 pre-setup getcwd() bug. Until that is fixed upstream, reach
+# GPUs through the materialized-runbook / direct-Kubernetes route: render the
+# run-block command (literal endpoint, bucket, and images already in place) into
+# a Kubernetes Job that uses the agent-sa pull path and the hf-ngc-tokens secret.
 sky jobs launch \
   --config /tmp/sim2real-skypilot-k8s.yaml \
   --infra k8s/<cluster-name> \
+  --env NPA_SIM2REAL_BUCKET=<bucket> \
+  --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
   npa/workflows/workbench/sim2real/runbook.yaml

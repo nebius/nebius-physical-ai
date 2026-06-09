@@ -15,6 +15,7 @@ from npa.cli.adapter import app as adapter_app
 from npa.cli.cluster import app as cluster_app
 from npa.cli.convert import app as convert_app
 from npa.cli.demo import app as demo_app
+from npa.cli.doctor import app as doctor_app
 from npa.cli.network import app as network_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
@@ -42,6 +43,12 @@ app.add_typer(
 # migrate to appropriate namespaces in a future change. New commands should be
 # registered under a solution namespace, such as `npa workbench ...`, instead of
 # adding more top-level registrations here.
+app.add_typer(
+    doctor_app,
+    name="doctor",
+    short_help="Preflight checks for workbench workflows.",
+    rich_help_panel="Setup",
+)
 app.add_typer(adapter_app, name="adapter", rich_help_panel="Platform utilities")
 app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
 app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
