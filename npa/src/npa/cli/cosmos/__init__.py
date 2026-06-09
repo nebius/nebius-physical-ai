@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import typer
+from boto3.exceptions import S3UploadFailedError
 from rich.console import Console
 
 from npa.cli._error_formatting import format_error_for_user
@@ -75,6 +76,7 @@ from npa.clients.scoped_credentials import (
     run_with_host_credential_fallback,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.errors import ScopedCredentialError
 from npa.clients.serverless import (
     EndpointInfo,
     EndpointSpec,
@@ -192,6 +194,10 @@ COSMOS_CREDENTIAL_ENV_NAMES = {
     "HUGGING_FACE_HUB_TOKEN",
 }
 
+UPLOAD_FAILURE_ERRORS = (
+    ScopedCredentialError,
+    S3UploadFailedError,
+)
 
 def _cosmos_gated_models(model: str) -> list[str]:
     return [model or DEFAULT_MODEL]
@@ -3467,6 +3473,28 @@ def _poll_inference_job(
             time.sleep(sleep_for)
 
 
+def _fail_upload(
+    exc: BaseException,
+    output_path: str,
+    remote_output_path: str,
+) -> None:
+    lines = [
+        f"Generation succeeded but uploading the output to {output_path} failed: {exc}"
+    ]
+    if remote_output_path:
+        lines.append(
+            f"The generated file is still on the Cosmos VM at {remote_output_path}; "
+            "copy it off the VM before tearing the cluster down to avoid re-running "
+            "generation."
+        )
+    lines.append(
+        "This is an upload problem, not a generation failure. Verify the destination "
+        "bucket exists and the Service Account has write access to it."
+    )
+    console.print("[red]Error:[/red] " + "\n".join(lines), soft_wrap=True)
+    raise typer.Exit(1)
+
+
 @app.command("infer")
 def infer_cmd(
     prompt: str = typer.Option(
@@ -3587,30 +3615,33 @@ def infer_cmd(
 
         result = {**data, "job_id": job_id}
         remote_output_path = str(data.get("output_path") or "")
-        if remote_output_path:
-            downloaded_to = _download_remote_output(
-                remote_output_path,
-                output_path,
-                cfg,
-                temp_dirs,
-                result=result,
-                allow_host_creds=allow_host_creds,
-                target_project=resolved_target_project,
-            )
-            result["downloaded_to"] = downloaded_to
-            if _is_s3_uri(downloaded_to):
-                result["saved_to"] = downloaded_to
-        elif output_path:
-            saved_to = _save_inference_output(
-                result,
-                output_path,
-                cfg,
-                temp_dirs,
-                allow_host_creds=allow_host_creds,
-                target_project=resolved_target_project,
-            )
-            if saved_to:
-                result["saved_to"] = saved_to
+        try:
+            if remote_output_path:
+                downloaded_to = _download_remote_output(
+                    remote_output_path,
+                    output_path,
+                    cfg,
+                    temp_dirs,
+                    result=result,
+                    allow_host_creds=allow_host_creds,
+                    target_project=resolved_target_project,
+                )
+                result["downloaded_to"] = downloaded_to
+                if _is_s3_uri(downloaded_to):
+                    result["saved_to"] = downloaded_to
+            elif output_path:
+                saved_to = _save_inference_output(
+                    result,
+                    output_path,
+                    cfg,
+                    temp_dirs,
+                    allow_host_creds=allow_host_creds,
+                    target_project=resolved_target_project,
+                )
+                if saved_to:
+                    result["saved_to"] = saved_to
+        except UPLOAD_FAILURE_ERRORS as exc:
+            _fail_upload(exc, output_path, remote_output_path)
         _output(result, output_format)
     finally:
         for tmp in temp_dirs:
