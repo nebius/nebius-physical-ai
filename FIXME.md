@@ -46,7 +46,7 @@ work lives).
 #### [H] Cosmos infer surfaces S3 upload AccessDenied as an uncaught traceback
 
 - **Surfaced by**: 2026-05-09 8x H200 rerun.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: Cosmos generation can complete successfully, then local S3
   upload failure prints a Python traceback instead of a clean command error.
 - **Next step**: Catch upload failures, report the generated VM-local file path,
