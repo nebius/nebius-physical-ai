@@ -1,8 +1,9 @@
 """Preflight diagnostics for the Sim2Real VLM-to-RL workflow.
 
-This module is the single source of truth for ``npa doctor sim2real``. It turns
-the recurring cold-start blockers into explicit PASS/WARN/FAIL/SKIP checks that a
-customer can run before launching anything, instead of discovering them mid-run.
+This module is the single source of truth for ``npa workbench health sim2real``.
+It turns the recurring cold-start blockers into explicit PASS/WARN/FAIL/SKIP
+checks that a customer can run before launching anything, instead of discovering
+them mid-run.
 
 Every check is a pure function that takes the resolved config plus an injectable
 probe. The CLI wires real probes (S3, registry, kubectl); unit tests inject

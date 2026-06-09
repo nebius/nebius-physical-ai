@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from npa.workflows import sim2real_doctor as doctor
-from npa.workflows.sim2real_doctor import (
+from npa.workflows import sim2real_health as health
+from npa.workflows.sim2real_health import (
     DoctorProbes,
     KubeResult,
     check_cluster,
@@ -32,17 +32,17 @@ class _Creds:
 
 
 def _config(**overrides):
-    return build_config_from_env(run_id="doctor-test", **overrides)
+    return build_config_from_env(run_id="health-test", **overrides)
 
 
 def test_coherence_passes_on_real_repo() -> None:
     assert coherence_failures(REPO_ROOT) == []
-    assert check_coherence(REPO_ROOT).status == doctor.PASS
+    assert check_coherence(REPO_ROOT).status == health.PASS
 
 
 def test_sdk_accepts_every_seam_as_config_field() -> None:
     field_names = {f for f in vars(_config()).keys()}
-    for seam in doctor.SIM2REAL_SEAMS:
+    for seam in health.SIM2REAL_SEAMS:
         assert seam.config_field in field_names
         # build_config_from_env applies the override keyed by config-field name.
         applied = build_config_from_env(**{seam.config_field: getattr(_config(), seam.config_field)})
@@ -53,13 +53,13 @@ def test_config_fails_without_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ("NPA_S3_BUCKET", "NPA_SIM2REAL_BUCKET", "S3_BUCKET"):
         monkeypatch.delenv(key, raising=False)
     result = check_config(_config(s3_bucket=""))
-    assert result.status == doctor.FAIL
+    assert result.status == health.FAIL
     assert any("s3_bucket" in d for d in result.details)
 
 
 def test_config_warns_on_derived_optional_seams() -> None:
     result = check_config(_config(s3_bucket="real-bucket", trigger_dataset_uri="", assets_uri="", scene_spec_uri=""))
-    assert result.status == doctor.WARN
+    assert result.status == health.WARN
 
 
 def test_config_passes_when_seams_resolve() -> None:
@@ -70,21 +70,21 @@ def test_config_passes_when_seams_resolve() -> None:
             assets_uri="s3://real-bucket/assets/",
         )
     )
-    assert result.status == doctor.PASS
+    assert result.status == health.PASS
 
 
 def test_config_fails_on_invalid_schema() -> None:
     result = check_config(_config(s3_bucket="real-bucket", threshold=5.0))
-    assert result.status == doctor.FAIL
+    assert result.status == health.FAIL
 
 
 def test_s3_skips_without_endpoint_or_creds() -> None:
     probes = DoctorProbes(credentials=_Creds())
-    assert check_s3(_config(s3_bucket="b", s3_endpoint=""), probes=probes).status == doctor.SKIP
+    assert check_s3(_config(s3_bucket="b", s3_endpoint=""), probes=probes).status == health.SKIP
 
     probes_no_keys = DoctorProbes(credentials=_Creds())
     res = check_s3(_config(s3_bucket="b", s3_endpoint="https://endpoint.example"), probes=probes_no_keys)
-    assert res.status == doctor.SKIP
+    assert res.status == health.SKIP
 
 
 def test_s3_pass_and_fail_with_injected_client() -> None:
@@ -101,20 +101,20 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
         _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
         probes=DoctorProbes(credentials=creds, s3_client_factory=_OkClient),
     )
-    assert ok.status == doctor.PASS
+    assert ok.status == health.PASS
 
     bad = check_s3(
         _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
         probes=DoctorProbes(credentials=creds, s3_client_factory=_BadClient),
     )
-    assert bad.status == doctor.FAIL
+    assert bad.status == health.FAIL
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
 def test_registry_warns_on_unqualified_images() -> None:
     # Default reference images are bare npa-* names, not registry-qualified.
     result = check_registry(_config(), probes=DoctorProbes(image_inspector=lambda i: True))
-    assert result.status == doctor.WARN
+    assert result.status == health.WARN
 
 
 def test_registry_inspects_qualified_images() -> None:
@@ -127,22 +127,22 @@ def test_registry_inspects_qualified_images() -> None:
     }
     cfg = _config(**qualified)
     ok = check_registry(cfg, probes=DoctorProbes(image_inspector=lambda i: True))
-    assert ok.status == doctor.PASS
+    assert ok.status == health.PASS
 
     missing = check_registry(
         cfg, probes=DoctorProbes(image_inspector=lambda i: i.endswith("0.1.0"))
     )
-    assert missing.status == doctor.FAIL
+    assert missing.status == health.FAIL
 
     no_tool = check_registry(cfg, probes=DoctorProbes(image_inspector=lambda i: None))
-    assert no_tool.status == doctor.SKIP
+    assert no_tool.status == health.SKIP
 
 
 def test_tokens_warns_when_missing_and_passes_when_present() -> None:
     warn = check_tokens(_config(), probes=DoctorProbes(credentials=_Creds()))
-    assert warn.status == doctor.WARN
+    assert warn.status == health.WARN
     ok = check_tokens(_config(), probes=DoctorProbes(credentials=_Creds(hf="hf_x", ngc="nv_x")))
-    assert ok.status == doctor.PASS
+    assert ok.status == health.PASS
 
 
 def _kube_nodes(gpu_count: int, nodes: int = 1) -> str:
@@ -154,7 +154,7 @@ def _kube_nodes(gpu_count: int, nodes: int = 1) -> str:
 
 
 def test_cluster_skips_without_runner() -> None:
-    assert check_cluster(_config(), probes=DoctorProbes()).status == doctor.SKIP
+    assert check_cluster(_config(), probes=DoctorProbes()).status == health.SKIP
 
 
 def test_cluster_pass_counts_schedulable_gpus() -> None:
@@ -168,7 +168,7 @@ def test_cluster_pass_counts_schedulable_gpus() -> None:
         return KubeResult(1, "", "unexpected")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == doctor.PASS
+    assert result.status == health.PASS
     assert "16 schedulable" in result.summary
 
 
@@ -183,7 +183,7 @@ def test_cluster_fails_on_zero_gpus() -> None:
         return KubeResult(1, "", "x")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == doctor.FAIL
+    assert result.status == health.FAIL
     assert "0 schedulable" in result.summary
 
 
@@ -194,7 +194,7 @@ def test_cluster_fails_on_unpinned_context() -> None:
         return KubeResult(0, "yes")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == doctor.FAIL
+    assert result.status == health.FAIL
     assert "context" in result.summary.lower()
 
 
@@ -207,7 +207,7 @@ def test_cluster_fails_without_pod_permission() -> None:
         return KubeResult(0, "")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
-    assert result.status == doctor.FAIL
+    assert result.status == health.FAIL
 
 
 def test_run_preflight_selects_requested_checks() -> None:
@@ -222,4 +222,4 @@ def test_run_preflight_selects_requested_checks() -> None:
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])
 def test_count_schedulable_handles_bad_json(gpu_resource: str) -> None:
-    assert doctor._count_schedulable_gpus("not-json", gpu_resource) == (0, 0)
+    assert health._count_schedulable_gpus("not-json", gpu_resource) == (0, 0)
