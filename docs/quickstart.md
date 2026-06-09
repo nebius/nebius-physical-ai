@@ -486,6 +486,18 @@ These come from the cloud, not from `npa`. Retry in a few minutes, pick a
 different GPU type/region, or request a quota increase in the Nebius console.
 Run any command with `NPA_DEBUG=1` for a full traceback.
 
+`PermissionDenied` / `No permission` when submitting a serverless job
+
+Serverless workloads (`cosmos train --runtime serverless`, `cosmos infer`, and
+serverless `deploy`) create Nebius AI Jobs. If the principal behind your active
+`nebius` profile is a service account that lacks the AI Jobs role, the submit is
+rejected with `PermissionDenied: service iam ... appbox-...` even though
+authentication, capacity lookup, subnet discovery, and S3 all succeed. This is
+an authorization gap, not stale credentials — `nebius iam get-access-token`
+still works. Grant that service account a role that permits creating and
+managing AI Jobs on the project, or switch to a profile whose principal has it
+(`nebius profile activate <profile>`), then retry the same command.
+
 `credentials.yaml` is missing or tokens are not loading
 
 Offline commands tolerate a missing credentials file, but token-dependent
