@@ -493,6 +493,21 @@ These come from the cloud, not from `npa`. Retry in a few minutes, pick a
 different GPU type/region, or request a quota increase in the Nebius console.
 Run any command with `NPA_DEBUG=1` for a full traceback.
 
+`source repo is not reachable` from `npa workbench cosmos check`
+
+Cosmos checks the framework source repo with `git ls-remote`, injecting
+`GITHUB_TOKEN` as an auth header when that variable is set. A stale or invalid
+`GITHUB_TOKEN` makes even a public repo return `401`, so the check reports the
+source as unreachable. Clear the bad token (the public clone works
+anonymously) or export a valid one:
+
+```bash
+env -u GITHUB_TOKEN npa workbench cosmos check
+```
+
+SkyPilot pods do not inherit your shell's `GITHUB_TOKEN`, so the in-cluster
+clone is unaffected.
+
 `PermissionDenied` / `No permission` when submitting a serverless job
 
 Serverless workloads (`cosmos train --runtime serverless`, `cosmos infer`, and
