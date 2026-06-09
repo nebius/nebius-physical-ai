@@ -397,20 +397,27 @@ npa workbench cosmos -p <your-project-alias> -n cosmos infer \
 npa workbench cosmos -p <your-project-alias> -n cosmos teardown --yes
 ```
 
-The three tiers stay coherent here too:
-
-- **CLI:** the `npa workbench cosmos` commands above.
-- **SDK:** `from npa.sdk.workbench import cosmos` mirrors the same operations.
-- **Raw `sky`:** checked-in, parameterizable SkyPilot YAMLs under
-  `npa/workflows/workbench/skypilot/` (for example
-  `cosmos3-text-to-image-inference.yaml`), runnable with plain `sky launch`
-  using `--env`/`--gpu-type` overrides and a BYO `image_id`.
-
-Artifact-bearing end-to-end validation (a real serverless GPU job) is:
+Artifact-bearing end-to-end validation (a real serverless GPU job that writes a
+`checkpoint.json` to your bucket) is:
 
 ```bash
 npa workbench cosmos train --runtime serverless --smoke --gpu-type <gpu-platform>
 ```
+
+This same serverless job is available three coherent ways:
+
+- **CLI:** the `npa workbench cosmos train --runtime serverless` command above.
+- **SDK:** Cosmos serverless jobs are submitted programmatically with
+  `npa.clients.serverless.ServerlessClient.create_job(...)` plus the
+  `npa.serverless_common` env helpers (the `npa.sdk.workbench.cosmos` namespace
+  itself currently exposes `check`/`fetch`). See the worked SDK example in
+  [docs/sdk/cosmos-serverless.md](sdk/cosmos-serverless.md).
+- **Raw `sky` (GPU-cluster alternative):** the checked-in, parameterizable
+  SkyPilot YAMLs under `npa/workflows/workbench/skypilot/` (for example
+  `cosmos3-text-to-image-inference.yaml`) run Cosmos on a GPU *cluster* with
+  plain `sky launch`, using `--env`/`--gpu-type` overrides and a BYO `image_id`.
+  This is a different runtime from Serverless AI Jobs (it provisions a cluster
+  and needs network access to the Cosmos framework source + gated weights).
 
 Because this launches a real, potentially long GPU job, run it from a durable
 launcher (your job queue / SkyPilot-managed job) rather than an interactive
