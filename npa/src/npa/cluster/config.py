@@ -13,6 +13,7 @@ DEFAULT_REGION = "eu-north1"
 DEFAULT_K8S_VERSION = "1.33"
 DEFAULT_NODE_PLATFORM = "cpu-e2"
 DEFAULT_NODE_PRESET = "2vcpu-8gb"
+DEFAULT_CPU_NODE_GROUP_PRESET = "8vcpu-32gb"
 DEFAULT_NODE_COUNT = 1
 DEFAULT_BOOT_DISK_TYPE = "network_ssd"
 DEFAULT_BOOT_DISK_SIZE_GIB = 128
@@ -183,6 +184,68 @@ class NodeGroupConfig:
             raise ClusterConfigError("--k8s-version must use <major>.<minor> format")
 
 
+@dataclass(frozen=True)
+class CpuNodeGroupConfig:
+    """Validated CPU node-group deployment configuration.
+
+    CPU node groups give the cluster batchable, GPU-free capacity for
+    CPU-only workloads such as motion retargeting and batched inference,
+    so those jobs do not consume GPU nodes.
+    """
+
+    cluster_name: str
+    name: str = ""
+    project_id: str = ""
+    cluster_id: str = ""
+    platform: str = DEFAULT_NODE_PLATFORM
+    node_preset: str = DEFAULT_CPU_NODE_GROUP_PRESET
+    node_count: int = DEFAULT_NODE_COUNT
+    public_ip: bool = False
+    autoscaling_min: int | None = None
+    autoscaling_max: int | None = None
+    wait: bool = True
+    timeout_minutes: int = 30
+    poll_interval_seconds: float = 30.0
+    k8s_version: str = DEFAULT_K8S_VERSION
+    subnet_id: str = ""
+    boot_disk_type: str = DEFAULT_BOOT_DISK_TYPE
+    boot_disk_size_gib: int = DEFAULT_BOOT_DISK_SIZE_GIB
+
+    def __post_init__(self) -> None:
+        validate_cluster_name(self.cluster_name)
+        platform = self.platform.strip() or DEFAULT_NODE_PLATFORM
+        object.__setattr__(self, "platform", platform)
+        preset = self.node_preset.strip() or DEFAULT_CPU_NODE_GROUP_PRESET
+        object.__setattr__(self, "node_preset", preset)
+        validate_node_shape(platform, preset)
+
+        name = self.name.strip() or default_cpu_node_group_name(self.cluster_name, preset)
+        validate_cluster_name(name)
+        object.__setattr__(self, "name", name)
+
+        if self.node_count < 1 or self.node_count > 100:
+            raise ClusterConfigError("--node-count must be between 1 and 100")
+        if (self.autoscaling_min is None) != (self.autoscaling_max is None):
+            raise ClusterConfigError("--autoscaling-min and --autoscaling-max must be provided together")
+        if self.autoscaling_min is not None and self.autoscaling_max is not None:
+            if self.autoscaling_min < 0:
+                raise ClusterConfigError("--autoscaling-min must be at least 0")
+            if self.autoscaling_max < 1:
+                raise ClusterConfigError("--autoscaling-max must be at least 1")
+            if self.autoscaling_min > self.autoscaling_max:
+                raise ClusterConfigError("--autoscaling-min must be less than or equal to --autoscaling-max")
+        if not isinstance(self.public_ip, bool):
+            raise ClusterConfigError("public_ip must be a boolean")
+        if self.timeout_minutes < 1:
+            raise ClusterConfigError("--timeout must be at least 1 minute")
+        if self.poll_interval_seconds <= 0:
+            raise ClusterConfigError("poll interval must be positive")
+        if self.boot_disk_size_gib < 32:
+            raise ClusterConfigError("boot disk size must be at least 32 GiB")
+        if not _K8S_VERSION_RE.match(self.k8s_version):
+            raise ClusterConfigError("--k8s-version must use <major>.<minor> format")
+
+
 def validate_cluster_name(name: str) -> None:
     if not name or not _NAME_RE.match(name):
         raise ClusterConfigError(
@@ -211,6 +274,15 @@ def validate_node_shape(platform: str, preset: str) -> None:
 
 def default_node_group_name(cluster_name: str, gpu_type: str) -> str:
     suffix = f"-{gpu_type}-gpu"
+    prefix = cluster_name[: 63 - len(suffix)].rstrip("-")
+    return f"{prefix}{suffix}"
+
+
+def default_cpu_node_group_name(cluster_name: str, preset: str) -> str:
+    """Return a default name for a CPU node group, scoped by preset size."""
+
+    token = re.sub(r"[^a-z0-9]+", "", preset.split("-", 1)[0].lower()) or "cpu"
+    suffix = f"-{token}-cpu"
     prefix = cluster_name[: 63 - len(suffix)].rstrip("-")
     return f"{prefix}{suffix}"
 
