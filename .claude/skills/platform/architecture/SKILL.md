@@ -27,8 +27,6 @@ SkyPilot is the sole orchestrator. Argo is deprecated.
 
 Partner model: partners listed in the ecosystem must run workloads on Nebius infrastructure when accessed through the platform.
 
-OSMO is available for existing announced relationships but is not the foundation for Nebius's own implementation.
-
 LeRobot connects data generation to robot policy training and is the default training framework for robot policy workflows.
 
 The sim-to-real gap is the most important and least-tooled layer. Existing approaches are either deeply custom or unproductized.

@@ -6,12 +6,18 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 
 ## Claude Skills
 
+- `.claude/skills/platform/quickstart/SKILL.md`: load for first-time setup, the zero-credential first run, install, Nebius auth, and the contributor dev/test loop.
+- `.claude/skills/workbench/cookbooks/SKILL.md`: load for running working end-to-end cookbooks (BDD100K, sim-to-real, VLM-eval loop, LeRobot benchmarks, Isaac Lab BYOF) mapped to their validated entrypoints.
 - `.claude/skills/platform/architecture/SKILL.md`: load for platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state.
 - `.claude/skills/platform/review-checklist/SKILL.md`: load for code reviews and risk classification.
 - `.claude/skills/workbench/physical-ai-context/SKILL.md`: load for robotics, sim-to-real, GPU routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K context.
 - `.claude/skills/workbench/mjlab/SKILL.md`: load for MJLab locomotion evaluation and SONIC checkpoint scoring.
 - `.claude/skills/workbench/retargeting/SKILL.md`: load for motion retargeting in SONIC locomotion workflows.
 - `.agents/skills/workbench/sim-to-real/SKILL.md`: load for generic sim-to-real data import, Cosmos autoscale, VLM evaluation, and controller-loop workflow planning.
+
+### Partner Capability Roadmap
+
+Onboarding NVIDIA Physical AI / Omniverse capabilities (NuRec, CAD-to-SimReady, USD tooling, defect-image SDG, video data augmentation, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`. Those are not yet implemented in the workbench; add each as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 
