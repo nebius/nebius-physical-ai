@@ -522,6 +522,83 @@ def test_deploy_can_build_registry_pull_secret_from_docker_auth(tmp_path: Path, 
     }
 
 
+def test_train_cli_label_map_and_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    import npa.cli.workbench.detection_training as cli_module
+
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs.get("payload") or kwargs.get("params") or {}))
+        if path == "/train":
+            return {"run_id": "r1", "status": "running", "checkpoint_uri_pattern": "s3://b/out/r1/checkpoints/epoch_{epoch}.pt",
+                    "metrics_uri": "s3://b/out/r1/metrics.json", "total_epochs": 1, "manifest_sha256": "m"}
+        return {"run_id": "r1", "status": "completed", "epochs_completed": 1, "total_epochs": 1}
+
+    monkeypatch.setattr(cli_module, "request_json", fake_request)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _s: None)
+
+    result = runner.invoke(detection_training_app, [
+        "train", "--service", "--endpoint", "http://dt.example",
+        "--view", "bdd100k_rider_train", "--lance-uri", "s3://b/db/", "--output-uri", "s3://b/out",
+        "--label-map", '{"person":0,"rider":1}', "--epochs", "1",
+        "--wait", "--poll-seconds", "0", "--timeout", "60", "--output", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    train_payload = next(p for m, path, p in calls if path == "/train")
+    assert train_payload["label_map"] == {"person": 0, "rider": 1}
+    assert train_payload["num_classes"] is None
+    assert any(path == "/status" for _m, path, _p in calls)
+    assert json.loads(result.output)["status"] == "completed"
+
+
+def test_eval_cli_from_view_latest_discovers_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    import npa.cli.workbench.detection_training as cli_module
+
+    eval_payloads: list[dict[str, Any]] = []
+
+    def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path == "/runs":
+            return {"runs": [{"status": "completed", "total_epochs": 10,
+                              "checkpoint_uri_pattern": "s3://b/training/bdd100k_rider_train/r1/checkpoints/epoch_{epoch}.pt"}]}
+        eval_payloads.append(kwargs.get("payload") or {})
+        return {"mAP": 0.5, "mAP_50": 0.6, "mAP_75": 0.4, "per_category_AP": {}, "eval_run_id": "e1", "manifest_sha256": "m"}
+
+    monkeypatch.setattr(cli_module, "request_json", fake_request)
+
+    result = runner.invoke(detection_training_app, [
+        "eval", "--service", "--endpoint", "http://dt.example",
+        "--from-view-latest", "bdd100k_rider_train", "--eval-view", "bdd100k_rider_train",
+        "--lance-uri", "s3://b/db/", "--output-uri", "s3://b/eval", "--output", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    assert eval_payloads[0]["checkpoint_uri"] == "s3://b/training/bdd100k_rider_train/r1/checkpoints/epoch_10.pt"
+
+
+def test_eval_cli_requires_exactly_one_checkpoint_source() -> None:
+    result = runner.invoke(detection_training_app, [
+        "eval", "--service", "--endpoint", "http://dt.example",
+        "--eval-view", "v", "--output-uri", "s3://b/eval",
+    ])
+    assert result.exit_code != 0
+
+
+def test_eval_cli_writes_canonical_metrics_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import npa.cli.workbench.detection_training as cli_module
+
+    monkeypatch.setattr(cli_module, "request_json", lambda *a, **k: {
+        "mAP": 0.5, "mAP_50": 0.6, "mAP_75": 0.4, "per_category_AP": {}, "eval_run_id": "e1", "manifest_sha256": "m"})
+
+    out = tmp_path / "eval"
+    result = runner.invoke(detection_training_app, [
+        "eval", "--service", "--endpoint", "http://dt.example",
+        "--checkpoint-uri", "s3://b/ckpt.pt", "--eval-view", "v",
+        "--output-uri", str(out), "--write-canonical-metrics", "--output", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    written = json.loads((out / "metrics.json").read_text())
+    assert written["mAP"] == 0.5
+
+
 @pytest.mark.skipif(os.environ.get("NPA_INTEGRATION_E2E") != "1", reason="Set NPA_INTEGRATION_E2E=1 to run detection-training e2e")
 def test_detection_training_e2e_placeholder() -> None:
     assert os.environ["NPA_INTEGRATION_E2E"] == "1"
