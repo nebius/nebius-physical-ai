@@ -218,8 +218,8 @@ Workbench runs on Nebius infrastructure rather than hiding it:
 
 - Object storage is the data layer for datasets, checkpoints, rollouts, eval
   JSON, exported models, and Rerun recordings.
-- OSMO and SkyPilot provide orchestration patterns for multi-stage jobs and
-  managed Kubernetes backed workflows.
+- SkyPilot provides orchestration patterns for multi-stage jobs and managed
+  Kubernetes backed workflows.
 - vLLM-compatible endpoints support shared model-serving and Eval backends.
 - Managed Kubernetes, VM, BYOVM, container, and serverless runtimes cover GPU
   targets including H100, H200, L40S, B300, and RTX6000 profiles as each tool is

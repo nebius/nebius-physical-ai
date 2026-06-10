@@ -32,14 +32,14 @@ npa workbench isaac-lab list
 
 ## Custom Forks
 
-Canonical onboarding starts at `docs/getting-started.md`; do not duplicate
-credential, S3, Kubernetes, registry, or SkyPilot bootstrap setup here.
+Canonical onboarding starts at `docs/workbench/getting-started.md`; do not
+duplicate credential, S3, Kubernetes, registry, or SkyPilot bootstrap setup here.
 
 Customers can bring their own Isaac Lab fork through an `image_id` override in the SkyPilot YAML. The workbench provides a validated base container; the customer layers their fork on top.
 
 The replacement image must preserve the expected Isaac Lab entry point or runner contract.
 
-Cookbook: `docs/cookbooks/byof-isaac-lab/README.md`.
+Cookbook: `docs/workbench/cookbooks/byof-isaac-lab/README.md`.
 
 Validated BYOF surfaces:
 
