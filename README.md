@@ -13,20 +13,41 @@ orchestration, vLLM serving, managed Kubernetes, and GPU clusters.
 
 ## Quick Start
 
-Install the package from the `npa/` Python project:
+Install the `npa` package into a fresh virtual environment. The venv can live
+anywhere; activating it puts `npa` on your `PATH` (Python 3.10+ required):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
 
-python3 -m venv npa/.venv
-npa/.venv/bin/python -m pip install --upgrade pip
-npa/.venv/bin/python -m pip install -e npa
-export PATH="$PWD/npa/.venv/bin:$PATH"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e npa
+
+npa --version
 ```
 
-Authenticate with the Nebius CLI and let `npa` print the local credential
-schema for optional Hugging Face, NGC, object-storage, and BYOVM SSH values:
+Run your first real result with **no cloud, GPU, or credentials** — score a
+shipped sample rollout set with the offline stub backend:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
+  --output /tmp/vlm-eval-benchmark.json \
+  --backend stub \
+  --thresholds 0.5,0.8,0.9 \
+  --rubrics default,strict \
+  --models Qwen/Qwen2-VL-7B-Instruct \
+  --format json
+```
+
+You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
+That is the full local loop; the same command swaps `--backend stub` for a real
+`self-hosted` or `api` VLM backend once you add credentials.
+
+Next, authenticate with the Nebius CLI and print the credential schema (see
+[docs/quickstart.md](docs/quickstart.md) for the full walkthrough):
 
 ```bash
 nebius profile create
@@ -34,17 +55,28 @@ nebius iam get-access-token >/dev/null
 npa configure
 ```
 
-Run a first Workbench command without provisioning infrastructure:
+The flagship GPU workload is **NVIDIA Cosmos** (world-foundation model for
+synthetic data and world generation). It runs across multiple NVIDIA GPU
+platforms via a single `--gpu-type` flag (`gpu-h100-sxm`, `gpu-h200-sxm`,
+`gpu-b300-sxm`, `gpu-l40s`) with no RT-core lock-in:
 
 ```bash
-npa workbench vlm-eval list
-npa workbench vlm-eval run \
-  --input-path ./rollout.json \
-  --output-path ./eval.json \
-  --backend stub \
-  --score 0.9 \
-  --dry-run \
-  --output json
+npa workbench cosmos -p <your-project-alias> -n cosmos deploy \
+  --runtime serverless --gpu-type <gpu-platform> --wait
+npa workbench cosmos -p <your-project-alias> -n cosmos infer \
+  --prompt "A robot arm stacks colored cubes" \
+  --output-path s3://<your-bucket>/cosmos/out/
+```
+
+Cosmos needs Nebius credentials, an `HF_TOKEN`, and GPU capacity; see the
+flagship walkthrough in [docs/quickstart.md](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos).
+
+To work on `npa` itself (tests, lint), install the dev extra and run the fast
+suite — see [CONTRIBUTING.md](CONTRIBUTING.md):
+
+```bash
+pip install -e "npa[dev]"
+make test
 ```
 
 For full cloud setup, continue with [docs/quickstart.md](docs/quickstart.md)
@@ -153,7 +185,7 @@ SONIC image routing is manifest-driven:
   `npa/src/npa/deploy/sonic_image_manifest.json` using `--gpu-type`, with
   `--image` and `--image-variant` available as explicit overrides.
 - L40S VM targets use the baked `npa-sonic:0.1.2` image. RTX PRO 6000
-  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s`
+  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s-runtime`
   image. See `docs/workbench/sonic-image-catalog.md`.
 
 ### Solution Patterns
