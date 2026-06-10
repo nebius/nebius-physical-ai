@@ -53,9 +53,25 @@ sonic = [
     "onnxscript>=0.5",
     "onnxruntime>=1.18",
 ]
+# Development and test tooling. Install with: pip install -e "npa[dev]"
+# Includes the server extra so the standard (non-e2e) test suite collects
+# without pulling in GPU-heavy extras (genesis, groot, sonic).
+dev = [
+    "npa[server]",
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "pytest-cov>=5.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.4.0",
+]
 
 [dependency-groups]
 dev = [
+    "fastapi~=0.136.1",
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "pytest-cov>=5.0",
+    "pytest-timeout>=2.3",
     "ruff>=0.4.0",
 ]
 

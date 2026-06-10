@@ -24,7 +24,7 @@ npa workbench sonic list
 
 Route first-party SONIC images through `npa/src/npa/deploy/sonic_image_manifest.json`.
 Use the baked `npa-sonic:0.1.2` image for L40S VM targets and the host-mounted
-`npa-sonic:0.1.2-k8s` image for RTX PRO 6000 Blackwell Kubernetes targets with
+`npa-sonic:0.1.2-k8s-runtime` image for RTX PRO 6000 Blackwell Kubernetes targets with
 the NVIDIA GPU Operator.
 
 SONIC render validation requires RT-capable GPUs. H100 can still be useful for
