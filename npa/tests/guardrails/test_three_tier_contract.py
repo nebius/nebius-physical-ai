@@ -59,11 +59,11 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
-        name="retargeting/run",
-        cli_module="npa.cli.workbench.retargeting",
-        cli_callback="run_cmd",
-        sdk_module="npa.sdk.workbench.retargeting",
-        sdk_attr="run",
+        name="sonic/retarget",
+        cli_module="npa.cli.workbench.sonic.retarget",
+        cli_callback="retarget_cmd",
+        sdk_module="npa.sdk.workbench.sonic",
+        sdk_attr="retarget",
         yaml_path=Path("npa/workflows/workbench/skypilot/retargeting.yaml"),
         params=(
             ParameterContract("input_path", "input_path", "INPUT_MOTION_URI", "--input-path"),

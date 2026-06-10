@@ -12,22 +12,27 @@ from npa.cli.main import app
 runner = CliRunner()
 
 
-def test_retargeting_registered_under_workbench() -> None:
-    result = runner.invoke(app, ["workbench", "--help"])
+def test_retarget_registered_under_sonic() -> None:
+    result = runner.invoke(app, ["workbench", "sonic", "--help"])
 
     assert result.exit_code == 0
-    assert "retargeting" in result.output
+    assert "retarget" in result.output
 
 
-def test_retargeting_command_help() -> None:
-    for command in ("run", "workflow", "status", "list"):
-        result = runner.invoke(app, ["workbench", "retargeting", command, "--help"])
+def test_retargeting_is_not_a_top_level_workbench_tool() -> None:
+    result = runner.invoke(app, ["workbench", "retargeting", "--help"])
 
-        assert result.exit_code == 0
-        assert "Usage:" in result.output
+    assert result.exit_code != 0
 
 
-def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
+def test_sonic_retarget_command_help() -> None:
+    result = runner.invoke(app, ["workbench", "sonic", "retarget", "--help"])
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+
+
+def test_sonic_retarget_writes_real_motion_lib_and_metadata(tmp_path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     source_motion = source_dir / "walk.pkl"
@@ -49,8 +54,8 @@ def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
         app,
         [
             "workbench",
-            "retargeting",
-            "run",
+            "sonic",
+            "retarget",
             "--input-path",
             str(source_dir),
             "--output-path",
@@ -83,7 +88,7 @@ def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
     assert json.loads(metadata.read_text(encoding="utf-8"))["embodiment"] == "unitree-g1"
 
 
-def test_retargeting_respects_env_dry_run(monkeypatch, tmp_path) -> None:
+def test_sonic_retarget_respects_env_dry_run(monkeypatch, tmp_path) -> None:
     output_dir = tmp_path / "retargeted"
     monkeypatch.setenv("NPA_DRY_RUN", "1")
 
@@ -91,8 +96,8 @@ def test_retargeting_respects_env_dry_run(monkeypatch, tmp_path) -> None:
         app,
         [
             "workbench",
-            "retargeting",
-            "run",
+            "sonic",
+            "retarget",
             "--input-path",
             "s3://bucket/motions/source/",
             "--output-path",
@@ -109,13 +114,13 @@ def test_retargeting_respects_env_dry_run(monkeypatch, tmp_path) -> None:
     assert not output_dir.exists()
 
 
-def test_retargeting_rejects_negative_frame_limit() -> None:
+def test_sonic_retarget_rejects_negative_frame_limit() -> None:
     result = runner.invoke(
         app,
         [
             "workbench",
-            "retargeting",
-            "run",
+            "sonic",
+            "retarget",
             "--input-path",
             "s3://bucket/motions/source/",
             "--output-path",
@@ -127,13 +132,3 @@ def test_retargeting_rejects_negative_frame_limit() -> None:
 
     assert result.exit_code == 1
     assert "--max-frames must be non-negative" in result.output
-
-
-def test_retargeting_workflow_path() -> None:
-    result = runner.invoke(app, ["workbench", "retargeting", "workflow", "--output", "json"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["workflow"] == "npa/workflows/workbench/skypilot/retargeting.yaml"
-    assert payload["image_env"] == "NPA_RETARGETING_IMAGE"
-    assert payload["image"].endswith("/npa-retargeting:0.1.0")
