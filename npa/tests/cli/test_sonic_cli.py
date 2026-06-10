@@ -535,21 +535,39 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
+    assert "ARG BASE_IMAGE=" in dockerfile
+    assert "ARG INSTALL_ISAACSIM_EXTRA=0" in dockerfile
+    assert "ARG REQUIRE_TORCH_SM120=0" in dockerfile
     assert "ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1" in dockerfile
     assert "ARG NPA_DRIVER_PROVISIONING=baked" in dockerfile
+    assert 'npa.cuda_architectures="${NPA_CUDA_ARCHITECTURES}"' in dockerfile
     assert 'npa.version="${SONIC_VERSION}"' in dockerfile
     assert 'npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}"' in dockerfile
+    assert '"isaaclab[all]==${ISAAC_LAB_VERSION}"' in dockerfile
+    assert "npa-torch-constraints.txt" in dockerfile
+    assert '"isaacsim-kernel==${ISAAC_SIM_VERSION}"' in dockerfile
+    assert "--no-deps --ignore-installed" in dockerfile
+    assert "_cuda_getArchFlags" in dockerfile
+    assert '"sm_120" not in arches' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
-    assert 'rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"' in dockerfile
+    assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
+    assert "git sparse-checkout set" in dockerfile
+    assert '"/gear_sonic/**"' in dockerfile
+    assert 'rm -rf "${SONIC_HOME}/.git"' in dockerfile
     assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
     assert "--platform linux/amd64" in build_script
     assert "--variant" in build_script
     assert "--push" in build_script
+    assert "--base-image" in build_script
+    assert "cuda13-b300-sm80-sm90-sm120-latest" in build_script
+    assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
+    assert 'REQUIRE_TORCH_SM120=1' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script
     assert "--driver docker-container" in build_script
     assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
-    assert 'docker build "${BUILD_ARGS[@]}" -t "$LOCAL_IMAGE"' in build_script
     assert 'IMAGE_NAME="npa-sonic"' in build_script
     assert 'IMAGE_NAME="npa-sonic-mujoco"' in build_script
     assert 'LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"' in build_script
+    assert 'docker build "${BUILD_ARGS[@]}" "${LOCAL_BUILD_TAGS[@]}" "$NPA_ROOT"' in build_script
+    assert 'REGISTRY_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"' in build_script

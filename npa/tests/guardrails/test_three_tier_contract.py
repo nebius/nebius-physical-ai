@@ -59,11 +59,11 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
-        name="retargeting/run",
-        cli_module="npa.cli.workbench.retargeting",
-        cli_callback="run_cmd",
-        sdk_module="npa.sdk.workbench.retargeting",
-        sdk_attr="run",
+        name="sonic/retarget",
+        cli_module="npa.cli.workbench.sonic.retarget",
+        cli_callback="retarget_cmd",
+        sdk_module="npa.sdk.workbench.sonic",
+        sdk_attr="retarget",
         yaml_path=Path("npa/workflows/workbench/skypilot/retargeting.yaml"),
         params=(
             ParameterContract("input_path", "input_path", "INPUT_MOTION_URI", "--input-path"),
@@ -237,7 +237,7 @@ def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
     # The sim2real headline workflow uses a **overrides SDK surface, so it cannot
     # use the inspect-based CapabilityContract. Its coherence is enforced through
     # the doctor seam table instead (CLI flag <-> config/SDK field <-> YAML env).
-    from npa.workflows.sim2real_doctor import coherence_failures
+    from npa.workflows.sim2real_health import coherence_failures
 
     failures = coherence_failures(REPO_ROOT)
     assert not failures, "\n".join(failures)
@@ -251,6 +251,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "fiftyone",
         "genesis",
         "groot",
+        "health",
         "isaac-lab",
         "lancedb",
         "lerobot",
@@ -288,7 +289,7 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     task = docs[1]
     envs = task["envs"]
 
-    assert task["resources"]["image_id"] == "docker:example.invalid/npa-sonic:0.1.2"
+    assert "image_id" not in task["resources"]
     assert {
         "POLICY_IMAGE",
         "SONIC_GPU_TYPE",
@@ -301,6 +302,6 @@ def test_standalone_policy_yaml_is_parameterized_and_endpoint_safe() -> None:
     assert envs["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
     assert envs["S3_ENDPOINT_URL"] == ""
     assert envs["S3_BUCKET"] == "example-bucket"
-    assert "${" not in task["resources"]["image_id"]
+    assert "image_id" not in task["resources"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
     assert "nebius.cloud" not in text

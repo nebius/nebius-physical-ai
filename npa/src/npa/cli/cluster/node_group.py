@@ -11,7 +11,14 @@ import typer
 
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo
-from npa.cluster.config import DEFAULT_K8S_VERSION, NodeGroupConfig, resolve_project_id
+from npa.cluster.config import (
+    DEFAULT_CPU_NODE_GROUP_PRESET,
+    DEFAULT_K8S_VERSION,
+    DEFAULT_NODE_PLATFORM,
+    CpuNodeGroupConfig,
+    NodeGroupConfig,
+    resolve_project_id,
+)
 from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError, NodeGroupNotFoundError
 from npa.cluster.node_group import L40S_WARNING
 from npa.cluster.state import (
@@ -144,6 +151,136 @@ def add_cmd(
         typer.echo(f"Nodes: {state.node_count}")
     except ClusterError as exc:
         typer.echo(f"Node-group add failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
+def add_cpu_cmd(
+    cluster_name: str = typer.Option(..., "--cluster-name", help="Parent NPA cluster target/profile name."),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="NPA node-group profile name. Defaults from cluster target and preset.",
+    ),
+    platform: str = typer.Option(
+        DEFAULT_NODE_PLATFORM,
+        "--platform",
+        help="CPU node platform: cpu-e2 or cpu-d3.",
+    ),
+    preset: str = typer.Option(
+        DEFAULT_CPU_NODE_GROUP_PRESET,
+        "--preset",
+        help="CPU preset, e.g. 8vcpu-32gb, 16vcpu-64gb, 32vcpu-128gb.",
+    ),
+    node_count: int = typer.Option(1, "--node-count", help="Fixed CPU worker count for this profile."),
+    autoscaling_min: int | None = typer.Option(
+        None,
+        "--autoscaling-min",
+        help="Autoscaling minimum (use 0 to scale CPU capacity to zero when idle).",
+    ),
+    autoscaling_max: int | None = typer.Option(
+        None,
+        "--autoscaling-max",
+        help="Autoscaling maximum for batched CPU workloads.",
+    ),
+    public_ip: bool = typer.Option(
+        False,
+        "--public-ip",
+        help="Assign public IPs to CPU nodes in this profile.",
+    ),
+    boot_disk_size_gib: int = typer.Option(
+        128,
+        "--boot-disk-size-gib",
+        help="Boot disk size per CPU node, in GiB.",
+    ),
+    subnet_id: str = typer.Option(
+        "",
+        "--subnet-id",
+        help="VPC subnet ID. Defaults from local cluster state when available.",
+    ),
+    wait: bool = typer.Option(
+        True,
+        "--wait/--no-wait",
+        help="Wait until the CPU node-group target is READY/RUNNING.",
+    ),
+    timeout: int = typer.Option(30, "--timeout", help="CPU target readiness timeout in minutes."),
+    project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
+) -> None:
+    """Attach a CPU node-group profile to an NPA Workbench cluster target.
+
+    Adds GPU-free, batchable capacity for CPU-only workloads (motion
+    retargeting, batched inference) so they do not consume GPU nodes. Wraps
+    `nebius mk8s` node-group create with NPA CPU presets and local cache.
+    """
+
+    try:
+        client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
+        cluster, local_state = _resolve_cluster(client, cluster_name, project_id)
+        config = CpuNodeGroupConfig(
+            cluster_name=cluster_name,
+            name=name,
+            project_id=cluster.project_id,
+            cluster_id=cluster.id,
+            platform=platform,
+            node_preset=preset,
+            node_count=node_count,
+            public_ip=public_ip,
+            autoscaling_min=autoscaling_min,
+            autoscaling_max=autoscaling_max,
+            wait=wait,
+            timeout_minutes=timeout,
+            boot_disk_size_gib=boot_disk_size_gib,
+            k8s_version=(local_state.k8s_version if local_state else DEFAULT_K8S_VERSION),
+            subnet_id=(subnet_id.strip() or (local_state.subnet_id if local_state else "")),
+        )
+
+        typer.echo(
+            f"Creating CPU node group {config.name} on {cluster.name or cluster_name} "
+            f"({config.platform}/{config.node_preset})..."
+        )
+        node_group = client.create_node_group(
+            cluster_id=cluster.id,
+            name=config.name,
+            platform=config.platform,
+            preset=config.node_preset,
+            node_count=config.node_count,
+            public_ip=config.public_ip,
+            autoscaling_min=config.autoscaling_min,
+            autoscaling_max=config.autoscaling_max,
+            subnet_id=config.subnet_id,
+            k8s_version=config.k8s_version,
+            boot_disk_type=config.boot_disk_type,
+            boot_disk_size_gib=config.boot_disk_size_gib,
+        )
+        state = _cpu_state_from_config(config, node_group.id, node_group.status)
+        save_node_group_state(state)
+
+        if wait:
+            def on_state_change(current: NodeGroupInfo) -> None:
+                typer.echo(f"State: node_group={current.name}:{current.status}")
+
+            node_group = client.wait_for_node_group_ready(
+                cluster.id,
+                node_group.id or config.name,
+                timeout_minutes=config.timeout_minutes,
+                on_state_change=on_state_change,
+            )
+            state = replace(
+                state,
+                node_group_id=node_group.id or state.node_group_id,
+                last_seen_state=node_group.status,
+                node_count=node_group.node_count or state.node_count,
+            )
+            save_node_group_state(state)
+
+        typer.echo(f"Node group: {config.name}")
+        typer.echo(f"Node group ID: {state.node_group_id}")
+        typer.echo(f"State: {state.last_seen_state}")
+        typer.echo(f"Platform/preset: {state.platform}/{state.preset}")
+        typer.echo(f"Nodes: {state.node_count}")
+        if config.autoscaling_min is not None:
+            typer.echo(f"Autoscaling: {config.autoscaling_min}-{config.autoscaling_max}")
+    except ClusterError as exc:
+        typer.echo(f"CPU node-group add failed: {exc}", err=True)
         raise typer.Exit(1) from exc
 
 
@@ -355,6 +492,23 @@ def _state_from_config(config: NodeGroupConfig, node_group_id: str, state: str) 
     )
 
 
+def _cpu_state_from_config(config: CpuNodeGroupConfig, node_group_id: str, state: str) -> NodeGroupState:
+    return NodeGroupState(
+        cluster_name=config.cluster_name,
+        name=config.name,
+        node_group_id=node_group_id,
+        gpu_type="cpu",
+        platform=config.platform,
+        preset=config.node_preset,
+        node_count=config.node_count,
+        created_at=utc_now_iso(),
+        last_seen_state=state,
+        public_ip=config.public_ip,
+        autoscaling_min=config.autoscaling_min,
+        autoscaling_max=config.autoscaling_max,
+    )
+
+
 def _row_for_node_group(
     cluster: ClusterInfo,
     local_state: NodeGroupState | None,
@@ -468,6 +622,7 @@ def _age(created_at: str) -> str:
 
 
 app.command("add")(add_cmd)
+app.command("add-cpu")(add_cpu_cmd)
 app.command("remove")(remove_cmd)
 app.command("status")(status_cmd)
 app.command("list")(list_cmd)

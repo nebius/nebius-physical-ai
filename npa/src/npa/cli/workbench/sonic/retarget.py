@@ -1,4 +1,10 @@
-"""npa workbench retargeting - motion retargeting commands."""
+"""`npa workbench sonic retarget` - motion retargeting for SONIC locomotion.
+
+Retargeting converts source motion artifacts into the embodiment schema
+consumed by SONIC locomotion training. It is a SONIC action (CPU-only,
+S3-in/S3-out), so it lives under the SONIC tool rather than as its own
+top-level workbench tool.
+"""
 
 from __future__ import annotations
 
@@ -6,28 +12,14 @@ import json
 import os
 from dataclasses import asdict
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 import typer
 from rich.console import Console
 
-from npa.deploy.images import container_image_for_tool
-from npa.workbench.retargeting import (
-    SUPPORTED_SOURCE_FORMATS,
-    RetargetingError,
-    run_retargeting,
-)
+from npa.workbench.retargeting import RetargetingError, run_retargeting
 
-app = typer.Typer(
-    name="retargeting",
-    help="Motion retargeting for SONIC locomotion workflows.",
-    no_args_is_help=True,
-)
 console = Console(stderr=True)
-
-WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/retargeting.yaml")
-DEFAULT_RETARGETING_IMAGE_ENV = "NPA_RETARGETING_IMAGE"
 
 
 class OutputFormat(str, Enum):
@@ -45,8 +37,7 @@ class SourceFormat(str, Enum):
     bvh = "bvh"
 
 
-@app.command("run")
-def run_cmd(
+def retarget_cmd(
     input_path: str = typer.Option(
         ...,
         "--input-path",
@@ -115,54 +106,6 @@ def run_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
-
-
-@app.command("workflow")
-def workflow_cmd(
-    image: str = typer.Option(
-        "",
-        "--image",
-        envvar=DEFAULT_RETARGETING_IMAGE_ENV,
-        help="Retargeting workflow image. Also settable with NPA_RETARGETING_IMAGE.",
-    ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
-) -> None:
-    """Show the SkyPilot YAML template for retargeting."""
-
-    _emit(
-        {
-            "workflow": str(WORKFLOW_PATH),
-            "image_env": DEFAULT_RETARGETING_IMAGE_ENV,
-            "image": image.strip() or container_image_for_tool("retargeting"),
-        },
-        output,
-    )
-
-
-@app.command("status")
-def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
-) -> None:
-    """Show retargeting tool status."""
-
-    _emit(
-        {
-            "backend": "sonic-motion-lib-converter",
-            "status": "available",
-            "workflow": str(WORKFLOW_PATH),
-            "source_formats": list(SUPPORTED_SOURCE_FORMATS),
-        },
-        output,
-    )
-
-
-@app.command("list")
-def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
-) -> None:
-    """List supported retargeting source formats."""
-
-    _emit({"source_formats": list(SUPPORTED_SOURCE_FORMATS)}, output)
 
 
 def _env_dry_run() -> bool:

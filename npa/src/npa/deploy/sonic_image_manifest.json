@@ -42,10 +42,11 @@
       "tag": "0.1.2-k8s-runtime",
       "purpose": "SONIC runtime for GPU-operator-managed Kubernetes nodes where the NVIDIA host driver is mounted into the container.",
       "base": {
-        "cuda": "12.8",
-        "torch": "2.7.0+cu128",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
         "isaac_lab": "2.3.2.post1",
-        "image": "nvcr.io/nvidia/isaac-lab:2.3.2@sha256:388dbc806f48359a964cb9f807feb226da95d0a107f470fdcad9780ea10fe6f2"
+        "isaac_sim": "5.1.0",
+        "image": "npa-base:cuda13-b300-sm80-sm90-sm120-latest"
       },
       "driver_provisioning": "host-mounted",
       "gpu_compatibility": [
@@ -57,7 +58,7 @@
         {
           "gpu": "Blackwell sm_120",
           "provider_model": "Kubernetes with NVIDIA GPU Operator",
-          "why": "Use the operator-mounted driver stack and keep NVIDIA_DRIVER_CAPABILITIES=all."
+          "why": "Use the CUDA 13 sm_120 PyTorch base, the operator-mounted driver stack, and NVIDIA_DRIVER_CAPABILITIES=all."
         }
       ],
       "build": {
@@ -65,7 +66,7 @@
         "dockerfile": "npa/docker/workbench/sonic/Dockerfile",
         "driver_coupled_packages": []
       },
-      "digest": "sha256:ceb878ff19234866eab44a257f72c933039f336ac92d6e5c1cc066ba1a90e93d"
+      "digest": "sha256:bc246a1b2bc3038de5443107bb9ff34db9dddbe4cc15bac5b51a68b5e335e1d2"
     },
     {
       "id": "sonic-mujoco-h100-mvp",

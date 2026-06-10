@@ -9,6 +9,7 @@ from npa.cli.workbench.sonic import (
     eval as eval_mod,
     export as export_mod,
     list as list_mod,
+    retarget as retarget_mod,
     serve,
     status,
     train,
@@ -37,6 +38,7 @@ def main(
 
 app.command("deploy")(deploy.deploy_cmd)
 app.command("train")(train.train_cmd)
+app.command("retarget")(retarget_mod.retarget_cmd)
 app.command("export")(export_mod.export_cmd)
 app.command("eval")(eval_mod.eval_cmd)
 app.command("serve")(serve.serve_cmd)

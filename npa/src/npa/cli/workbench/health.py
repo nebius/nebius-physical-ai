@@ -1,4 +1,4 @@
-"""``npa doctor`` — preflight diagnostics for workbench workflows.
+"""``npa workbench health`` — preflight diagnostics for workbench workflows.
 
 Runs the recurring cold-start blockers as explicit PASS/WARN/FAIL/SKIP checks so
 a customer hits them as a clear preflight instead of a mid-pipeline failure.
@@ -18,7 +18,7 @@ import typer
 from npa.clients.credentials import load_credentials
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
-from npa.workflows.sim2real_doctor import (
+from npa.workflows.sim2real_health import (
     ALL_CHECKS,
     DoctorProbes,
     FAIL,
@@ -32,8 +32,8 @@ from npa.workflows.sim2real_doctor import (
 from npa.workflows.sim2real_loop import build_config_from_env
 
 app = typer.Typer(
-    name="doctor",
-    help="Preflight checks for workbench workflows.",
+    name="health",
+    help="Preflight health checks for workbench workflows.",
     no_args_is_help=True,
 )
 
@@ -44,7 +44,7 @@ def _repo_root() -> Path:
     override = os.environ.get("NPA_REPO_ROOT")
     if override:
         return Path(override)
-    # src/npa/cli/doctor.py -> repo root is four parents up from this file's package.
+    # Walk up to the repo root that contains the workflow tree.
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "npa" / "workflows" / "workbench").is_dir():

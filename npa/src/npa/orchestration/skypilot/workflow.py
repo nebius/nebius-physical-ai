@@ -35,6 +35,31 @@ JOBS_CONTROLLER_PREFIX = "sky-jobs-controller-"
 HEALTHY_CONTROLLER_STATUS = "UP"
 
 
+def _stable_sky_cwd(isolated_config_dir: Path | None) -> str:
+    """Return a durable directory to run the ``sky`` CLI from.
+
+    SkyPilot runs a long-lived local API server daemon that performs all
+    provisioning and file sync, and it inherits the working directory of the
+    process that first starts it. NPA workflows frequently execute from
+    short-lived temp directories (e.g. ``tempfile.mkdtemp``). If the daemon
+    auto-starts with such a cwd and that directory is later cleaned up, every
+    later operation fails with ``getcwd() failed: No such file or directory``
+    and ``rsync`` exits with code 3 ("Failed to set up SkyPilot runtime").
+    Pinning sky invocations to a durable directory keeps the daemon's cwd valid.
+    """
+
+    for candidate in (isolated_config_dir, Path.home()):
+        if candidate is None:
+            continue
+        try:
+            path = Path(candidate)
+            if path.is_dir():
+                return str(path)
+        except OSError:
+            continue
+    return str(Path.home())
+
+
 @dataclass
 class WorkflowResult:
     """Result of submitting or querying a SkyPilot managed workflow."""
@@ -114,16 +139,19 @@ def submit_workflow(
         for secret_name in secret_envs or ():
             if os.environ.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
+        stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
         _wait_for_healthy_jobs_controller(
             sky_executable,
             env=env,
             timeout=controller_preflight_timeout,
             interval=controller_preflight_interval,
             require_existing=require_controller_up,
+            cwd=stable_cwd,
         )
         result = subprocess.run(
             cmd,
             env=env,
+            cwd=stable_cwd,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -185,6 +213,7 @@ def workflow_status(
     result = subprocess.run(
         cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -218,6 +247,7 @@ def _wait_for_healthy_jobs_controller(
     timeout: int,
     interval: float,
     require_existing: bool = False,
+    cwd: str | None = None,
 ) -> None:
     """Block launch while an existing managed-jobs controller is not ready."""
 
@@ -227,6 +257,7 @@ def _wait_for_healthy_jobs_controller(
         result = subprocess.run(
             [sky_executable, "status", "--refresh", "--output", "json"],
             env=env,
+            cwd=cwd,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

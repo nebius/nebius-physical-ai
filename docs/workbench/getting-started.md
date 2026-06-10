@@ -272,6 +272,8 @@ manifest from S3.
 
 ## Next Docs
 
+- [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md): how to call any
+  Workbench tool through the CLI, SDK, and SkyPilot YAML.
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
 - [sim-to-real-quickstart.md](sim-to-real-quickstart.md): first H100

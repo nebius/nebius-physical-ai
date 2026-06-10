@@ -14,6 +14,9 @@ workflow orchestrator for these templates.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with
   older examples; new workflow work should use `skypilot/`.
 
+The raw SkyPilot YAML catalog, per-workflow S3 I/O, GPU targets, and HF/NGC
+rights notes are documented in [`skypilot/README.md`](skypilot/README.md).
+
 ## Sim-To-Real
 
 The H100 quickstart submits:
