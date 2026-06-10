@@ -11,6 +11,7 @@ from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot import workflow as workflow_module
 from npa.orchestration.skypilot.workflow import (
     SkyPilotSubmitError,
+    _stable_sky_cwd,
     _status_from_queue_payload,
     submit_workflow,
     workflow_status,
@@ -75,6 +76,45 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
         "memory": 16,
         "autostop": False,
     }
+
+
+def test_submit_workflow_runs_sky_from_stable_cwd(monkeypatch, tmp_path) -> None:
+    """All sky invocations must run from a durable cwd so the auto-started
+    API server daemon never inherits an ephemeral (later-deleted) directory."""
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    isolated = tmp_path / "sky-state"
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 7\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(yaml_path, "run-cwd", isolated_config_dir=isolated, sky_bin=sky_bin)
+
+    assert calls, "expected sky to be invoked"
+    for cmd, kwargs in calls:
+        cwd = kwargs.get("cwd")
+        assert cwd, f"sky command missing stable cwd: {cmd}"
+        assert Path(cwd).is_dir(), f"sky cwd is not an existing directory: {cwd}"
+        assert cwd == str(isolated)
+
+
+def test_stable_sky_cwd_falls_back_to_home_when_dir_missing(tmp_path) -> None:
+    missing = tmp_path / "does-not-exist"
+    assert _stable_sky_cwd(missing) == str(Path.home())
+    assert _stable_sky_cwd(None) == str(Path.home())
+
+
+def test_stable_sky_cwd_prefers_existing_isolated_dir(tmp_path) -> None:
+    isolated = tmp_path / "sky-state"
+    isolated.mkdir()
+    assert _stable_sky_cwd(isolated) == str(isolated)
 
 
 def test_submit_workflow_network_failure_raises_typed_error(monkeypatch, tmp_path) -> None:
