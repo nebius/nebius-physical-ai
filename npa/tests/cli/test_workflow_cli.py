@@ -211,7 +211,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
     task = docs[1]
     envs = task["envs"]
-    assert task["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    assert "image_id" not in task["resources"]
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert envs["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
@@ -221,7 +221,7 @@ def test_workbench_workflow_submit_materializes_sonic_yaml(mocker) -> None:
     assert envs["S3_BUCKET"] == "proof-bucket"
     assert envs["SONIC_OUTPUT_PREFIX"] == "sonic-proof/sonic-run/"
     assert envs["SONIC_MAX_ITERATIONS"] == "2"
-    assert "${" not in task["resources"]["image_id"]
+    assert "image_id" not in task["resources"]
     assert "${" not in "\n".join(str(value) for value in envs.values())
 
 
