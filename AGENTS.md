@@ -13,6 +13,7 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 - `.agents/skills/workbench/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
 - `.agents/skills/platform/skypilot-workflows/SKILL.md`: SkyPilot workflow authoring, runner scripts, limitations, and cleanup.
 - `.agents/skills/platform/nebius-infra/SKILL.md`: cluster, storage, registry, credential, GPU routing, and namespace facts.
+- `.agents/skills/platform/cluster/SKILL.md`: NPA Workbench cluster targets and GPU/CPU node-group management (add, add-cpu, remove, status, list).
 - `.agents/skills/platform/testing-conventions/SKILL.md`: pytest, ruff, gates, expected baseline, and known failures.
 - `.agents/skills/platform/super-prompt-patterns/SKILL.md`: repo super-prompt phase, dirty-tree, NOVEL_ISSUE, and commit-lock conventions.
 - `.agents/skills/workbench/lerobot/SKILL.md`: LeRobot policy training, serving, inference, datasets, and validation.
