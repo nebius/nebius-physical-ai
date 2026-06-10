@@ -62,7 +62,7 @@ def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> N
         "sonic-g1-finetune",
         "sonic-mujoco-eval",
     ]
-    assert "npa workbench retargeting run" in tasks[0]["run"]
+    assert "npa workbench sonic retarget" in tasks[0]["run"]
     assert "/entrypoint.sh finetune" in tasks[1]["run"]
     assert "mujoco-eval" in tasks[2]["run"]
 
@@ -234,7 +234,7 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
 
     assert retarget_docs[0] == {"name": "retargeting", "execution": "serial"}
     assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench retargeting run" in retarget_docs[1]["run"]
+    assert "npa workbench sonic retarget" in retarget_docs[1]["run"]
     assert "accelerators" not in retarget_docs[1]["resources"]
     assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_RETARGETING_IMAGE}"
     assert retarget_docs[1]["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE

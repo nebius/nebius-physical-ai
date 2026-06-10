@@ -20,7 +20,6 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench mjlab](mjlab.md)
 - [npa network](network.md)
 - [npa rerun](rerun.md)
-- [npa workbench retargeting](retargeting.md)
 - [npa skypilot](skypilot.md)
 - [npa workbench sonic](sonic.md)
 - [npa viz](viz.md)
