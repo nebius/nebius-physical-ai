@@ -39,7 +39,7 @@ run: |
   export AWS_PROFILE="${AWS_PROFILE:-nebius}"
   export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
   export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
-  cmd=(npa workbench sonic retarget \
+  cmd=(npa workbench retargeting run \
     --input-path "${INPUT_MOTION_URI}" \
     --output-path "${RETARGETED_MOTION_URI}" \
     --source-format "${SOURCE_FORMAT}" \

@@ -10,6 +10,11 @@ description = "Generic sim-to-real pipeline tools within the Workbench solution"
 cli_command = "npa workbench workflow submit npa/workflows/workbench/skypilot/sim-to-real-loop.yaml"
 
 [[solutions]]
+name = "retargeting"
+description = "Motion retargeting Workbench tool for SONIC locomotion pipelines"
+cli_command = "npa workbench retargeting"
+
+[[solutions]]
 name = "mjlab"
 description = "MJLab locomotion evaluation Workbench tool"
 cli_command = "npa workbench mjlab"

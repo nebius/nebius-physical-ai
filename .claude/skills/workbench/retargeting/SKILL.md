@@ -8,19 +8,16 @@ description: Use when working on Workbench motion retargeting, SONIC retargeted 
 Retargeting converts already-retargeted SOMA/G1/Bones motion artifacts into the
 real motion-lib PKL schema consumed by SONIC locomotion training.
 
-Retargeting is a SONIC action, not a standalone Workbench tool: it is invoked
-as `npa workbench sonic retarget` (CPU-only, S3 in/out) and feeds SONIC
-locomotion training.
-
 ## Interfaces
 
 CLI:
 
 ```bash
-npa workbench sonic retarget
+npa workbench retargeting run
+npa workbench retargeting workflow
+npa workbench retargeting status
+npa workbench retargeting list
 ```
-
-SDK: `npa.sdk.workbench.sonic.retarget(...)`.
 
 SkyPilot YAML:
 
