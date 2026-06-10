@@ -112,6 +112,88 @@ def test_add_node_group_saves_state(monkeypatch) -> None:
     assert "Node group ID: mk8snodegroup-gpu" in result.output
 
 
+def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
+    saved: list[NodeGroupState] = []
+    seen: list[dict] = []
+
+    def _cpu_node_group(state: str = "RUNNING") -> NodeGroupInfo:
+        return NodeGroupInfo(
+            id="mk8snodegroup-cpu",
+            name="cluster-a-16vcpu-cpu",
+            cluster_id="mk8scluster-a",
+            status=state,
+            node_count=2,
+            platform="cpu-e2",
+            preset="16vcpu-64gb",
+        )
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_node_group(self, **kwargs):
+            seen.append(kwargs)
+            return _cpu_node_group(state="PROVISIONING")
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _cpu_node_group(state="RUNNING")
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", saved.append)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "add-cpu",
+            "--cluster-name",
+            "cluster-a",
+            "--preset",
+            "16vcpu-64gb",
+            "--autoscaling-min",
+            "0",
+            "--autoscaling-max",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen[0]["platform"] == "cpu-e2"
+    assert seen[0]["preset"] == "16vcpu-64gb"
+    assert seen[0]["autoscaling_min"] == 0
+    assert seen[0]["autoscaling_max"] == 3
+    assert seen[0]["subnet_id"] == "vpcsubnet-a"
+    assert saved[-1].gpu_type == "cpu"
+    assert saved[-1].platform == "cpu-e2"
+    assert saved[-1].last_seen_state == "RUNNING"
+    assert "Node group ID: mk8snodegroup-cpu" in result.output
+
+
+def test_add_cpu_node_group_rejects_bad_preset(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: _cluster_state())
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        ["node-group", "add-cpu", "--cluster-name", "cluster-a", "--preset", "999vcpu-9gb"],
+    )
+
+    assert result.exit_code == 1
+    assert "unsupported preset" in result.output
+
+
 def test_remove_node_group_handles_local_state_remote_missing(monkeypatch) -> None:
     deleted: list[tuple[str, str]] = []
 
