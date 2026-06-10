@@ -132,6 +132,53 @@ def get_iam_token() -> str:
     return token
 
 
+# ── Profile-derived defaults ─────────────────────────────────────────────
+
+
+def _config_get(key: str) -> str:
+    """Return ``nebius config get <key>`` output, or "" when unavailable.
+
+    Best-effort: any failure (missing CLI, unauthenticated profile, unknown
+    key) resolves to an empty string so callers can fall back to prompting.
+    """
+    try:
+        return _run(["config", "get", key])
+    except Exception:
+        # Best-effort default lookup; never fail setup over a missing profile.
+        return ""
+
+
+def current_project_id() -> str:
+    """Best-effort Nebius project id from the active CLI profile."""
+    return _config_get("parent-id")
+
+
+def current_tenant_id() -> str:
+    """Best-effort Nebius tenant id from the active CLI profile."""
+    return _config_get("tenant-id")
+
+
+def discover_container_registry(project_id: str) -> str:
+    """Best-effort container registry URL for *project_id*, or "".
+
+    Returns ``<registry_fqdn>/<registry-id>`` for the first registry in the
+    project, matching the ``DEFAULT_CONTAINER_REGISTRY`` format. Any failure
+    resolves to "" so callers fall back to the default registry.
+    """
+    if not project_id:
+        return ""
+    try:
+        data = _run_json(["registry", "list", "--parent-id", project_id])
+    except Exception:
+        return ""
+    for item in data.get("items", []):
+        fqdn = item.get("status", {}).get("registry_fqdn", "")
+        registry_id = item.get("metadata", {}).get("id", "")
+        if fqdn and registry_id:
+            return f"{fqdn}/{registry_id.removeprefix('registry-')}"
+    return ""
+
+
 # ── Service account ──────────────────────────────────────────────────────
 
 
@@ -313,22 +360,41 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
     return f"lerobot-{suffix}"
 
 
-def ensure_bucket(project_id: str, bucket_name: str) -> str:
-    """Get or create an S3 bucket, return its name."""
+def bucket_exists(project_id: str, bucket_name: str) -> bool:
+    """Return True when *bucket_name* already exists in the project."""
     data = _run_json([
         "storage", "bucket", "list",
         "--parent-id", project_id,
     ])
-    for item in data.get("items", []):
-        if item.get("metadata", {}).get("name") == bucket_name:
-            return bucket_name
+    return any(
+        item.get("metadata", {}).get("name") == bucket_name
+        for item in data.get("items", [])
+    )
 
-    _run([
+
+def ensure_bucket(
+    project_id: str,
+    bucket_name: str,
+    *,
+    max_size_bytes: int = 0,
+) -> str:
+    """Get or create an S3 bucket, return its name.
+
+    *max_size_bytes* caps a newly created bucket (0 = unlimited). It is only
+    applied when the bucket is created; an existing bucket is reused unchanged.
+    """
+    if bucket_exists(project_id, bucket_name):
+        return bucket_name
+
+    args = [
         "storage", "bucket", "create",
         "--name", bucket_name,
         "--parent-id", project_id,
         "--versioning-policy", "enabled",
-    ])
+    ]
+    if max_size_bytes > 0:
+        args += ["--max-size-bytes", str(max_size_bytes)]
+    _run(args)
     return bucket_name
 
 
@@ -340,14 +406,19 @@ def bootstrap_environment(
     tenant_id: str,
     region: str,
     *,
+    bucket_name: str | None = None,
+    bucket_max_size_bytes: int = 0,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
     This is the Python equivalent of ``source environment.sh``.
 
-    *on_status* is an optional callback ``(message: str) -> None`` for
-    progress reporting.
+    *bucket_name* selects the object-storage bucket; when omitted it falls back
+    to the deterministic ``bucket_name_for`` name. *bucket_max_size_bytes* caps
+    a newly created bucket (0 = unlimited); it is ignored when the bucket
+    already exists. *on_status* is an optional callback ``(message: str) ->
+    None`` for progress reporting.
     """
 
     def _status(msg: str) -> None:
@@ -364,8 +435,8 @@ def bootstrap_environment(
     ensure_editors_membership(tenant_id, sa_id)
 
     _status("Setting up S3 bucket...")
-    bucket_name = bucket_name_for(tenant_id, project_id)
-    ensure_bucket(project_id, bucket_name)
+    bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
+    ensure_bucket(project_id, bucket_name, max_size_bytes=bucket_max_size_bytes)
 
     _status("Setting up access key for S3...")
     aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)
