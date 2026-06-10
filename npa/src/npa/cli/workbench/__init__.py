@@ -10,7 +10,6 @@ from npa.cli.workbench.cosmos3 import app as cosmos3_app
 from npa.cli.workbench.data import app as data_app
 from npa.cli.workbench.lerobot import app as lerobot_app
 from npa.cli.workbench.mjlab import app as mjlab_app
-from npa.cli.workbench.retargeting import app as retargeting_app
 from npa.cli.cosmos import app as cosmos_app
 from npa.cli.fiftyone import app as fiftyone_app
 from npa.cli.genesis import app as genesis_app
@@ -55,7 +54,6 @@ app.add_typer(sonic_app, name="sonic")
 app.add_typer(sim2real_app, name="sim2real")
 app.add_typer(sim2real_envgen_app, name="sim2real-envgen")
 app.add_typer(mjlab_app, name="mjlab")
-app.add_typer(retargeting_app, name="retargeting")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")

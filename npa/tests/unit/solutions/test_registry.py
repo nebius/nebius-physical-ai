@@ -23,11 +23,6 @@ CONFIGURED_SOLUTIONS = [
         ),
     },
     {
-        "name": "retargeting",
-        "description": "Motion retargeting Workbench tool for SONIC locomotion pipelines",
-        "cli_command": "npa workbench retargeting",
-    },
-    {
         "name": "mjlab",
         "description": "MJLab locomotion evaluation Workbench tool",
         "cli_command": "npa workbench mjlab",
