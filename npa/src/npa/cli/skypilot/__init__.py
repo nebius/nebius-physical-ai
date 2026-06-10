@@ -139,6 +139,23 @@ def verify_cmd(
         "--path",
         help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
     ),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help=(
+            "Kubeconfig to verify against. Sets KUBECONFIG for `sky check` so "
+            "verify does not silently run against an ambient/empty context and "
+            "report a misleading 403 anonymous 'missing context'."
+        ),
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "NPA cluster name. Resolves ~/.npa/clusters/<name>/kubeconfig when "
+            "--kubeconfig is not given."
+        ),
+    ),
 ) -> None:
     """Run `sky check` against the isolated SkyPilot runtime."""
 
@@ -148,12 +165,40 @@ def verify_cmd(
         _fail(f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run `npa skypilot bootstrap`.")
         return
 
-    result = _run_no_raise([str(state.sky_bin), "check"])
+    check_env = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster)
+    result = _run_no_raise([str(state.sky_bin), "check"], env=check_env)
     if result.stdout:
         typer.echo(result.stdout.rstrip())
     if result.stderr:
         console.print(result.stderr.rstrip())
     raise typer.Exit(result.returncode)
+
+
+def _verify_kube_env(
+    *, kubeconfig: Path | None, cluster: str | None
+) -> dict[str, str] | None:
+    """Build the env for `sky check`, pinning KUBECONFIG when known.
+
+    Without an explicit kubeconfig/cluster the behavior is unchanged (inherits
+    the ambient environment).
+    """
+
+    resolved = kubeconfig
+    if resolved is None and cluster:
+        from npa.cluster.state import kubeconfig_file
+
+        resolved = kubeconfig_file(cluster)
+    if resolved is None:
+        return None
+    resolved = resolved.expanduser()
+    if not resolved.exists():
+        _fail(
+            f"Kubeconfig not found: {resolved}. Run `npa cluster up`/`deploy` first "
+            "or pass an explicit --kubeconfig."
+        )
+    env = os.environ.copy()
+    env["KUBECONFIG"] = str(resolved)
+    return env
 
 
 def bootstrap_skypilot(
@@ -340,9 +385,13 @@ def _sky_importable(python_bin: Path) -> bool:
     return result.returncode == 0
 
 
-def _run_no_raise(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_no_raise(
+    cmd: list[str], *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, check=False, env=env
+        )
     except FileNotFoundError as exc:
         return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=str(exc))
     except OSError as exc:

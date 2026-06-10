@@ -161,3 +161,80 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(tmp_path: Path) -> No
     assert result.reused is False
     assert result.sky_bin.is_file()
     assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(encoding="utf-8")
+
+
+def _intercept_sky_check(monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]):
+    """Capture only the `sky check` invocation; delegate other calls.
+
+    ``_run_no_raise`` is also used by ``inspect_venv`` for version/import probes,
+    so a blanket stub would make the venv look uninstalled.
+    """
+
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+        if cmd[-1] == "check":
+            captured["cmd"] = cmd
+            captured["env"] = env
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="checks passed", stderr=""
+            )
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+
+
+def test_verify_pins_kubeconfig_from_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "kube.yaml"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--kubeconfig", str(kubeconfig)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["cmd"][-1] == "check"
+    assert captured["env"]["KUBECONFIG"] == str(kubeconfig)
+
+
+def test_verify_without_kubeconfig_inherits_ambient_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(app, ["skypilot", "verify", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert captured["env"] is None
+
+
+def test_verify_fails_clearly_on_missing_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    missing = tmp_path / "absent" / "kube.yaml"
+
+    original = skypilot_cli._run_no_raise
+
+    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
+        if cmd[-1] == "check":
+            raise AssertionError("sky check must not run when kubeconfig is missing")
+        return original(cmd, env=env)
+
+    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--kubeconfig", str(missing)],
+    )
+
+    assert result.exit_code == 1
+    assert "Kubeconfig not found" in result.output
