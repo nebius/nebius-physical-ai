@@ -1,6 +1,13 @@
 # BDD100K Failure-Mode Detection Demo
 ## Nebius Physical AI Workbench - LanceDB Reproduction
 
+> This demo reproduces LanceDB's autonomous-vehicle perception pipeline on
+> Nebius Physical AI Workbench, adding a FiftyOne (Voxel51) visual-review stage.
+> Source material:
+>
+> - Blog: [Unifying the AV ML Stack: From Raw Data to Trained Model with LanceDB](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb)
+> - Reference code: [lancedb/training — object-detection](https://github.com/lancedb/training/tree/main/object-detection)
+
 ### The Problem
 
 AV perception models fail silently on rare scenarios: riders, nighttime pedestrians, and objects far from the camera. These failure modes are underrepresented in training data and easy to miss in aggregate metrics.

@@ -3,6 +3,12 @@
 This cookbook describes the SkyPilot workflow at
 `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 
+> This pipeline reproduces LanceDB's autonomous-vehicle perception walkthrough on
+> Nebius Physical AI Workbench (adding a FiftyOne/Voxel51 review stage). See
+> LanceDB's [Unifying the AV ML Stack](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb)
+> blog and the [lancedb/training object-detection](https://github.com/lancedb/training/tree/main/object-detection)
+> reference code.
+
 The workflow composes the BDD100K reproduction stages:
 
 1. Import the BDD100K subset into LanceDB with `POST /import-bdd100k`.

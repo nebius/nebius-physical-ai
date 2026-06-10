@@ -9,6 +9,7 @@ exact FiftyOne (Voxel51) UI steps and commands for technical viewers.
 - **Narrated slideshow video (built from live captures):** [assets/bdd100k/bdd100k-demo.mp4](assets/bdd100k/bdd100k-demo.mp4)
 - **Unedited live session recording (real FiftyOne UI):** [assets/bdd100k/bdd100k-live-session.mp4](assets/bdd100k/bdd100k-live-session.mp4)
 - **Architecture diagram:** [assets/bdd100k/architecture.png](assets/bdd100k/architecture.png)
+- **Reproduced from (LanceDB):** [Unifying the AV ML Stack blog](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb) · [lancedb/training object-detection](https://github.com/lancedb/training/tree/main/object-detection)
 
 > The `live-*.png` screenshots and `bdd100k-live-session.mp4` were captured from
 > the deployed FiftyOne app (`bdd100k-real-data-demo`) running on the
