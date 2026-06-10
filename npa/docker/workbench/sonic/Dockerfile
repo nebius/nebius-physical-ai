@@ -96,11 +96,17 @@ RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir \
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv \
     && curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
-RUN git clone "${SONIC_REPO_URL}" "${SONIC_HOME}" \
+RUN git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}" "${SONIC_HOME}" \
     && cd "${SONIC_HOME}" \
+    && git sparse-checkout init --no-cone \
+    && git sparse-checkout set \
+      "/download_from_hf.py" \
+      "/gear_sonic/**" \
+      "/gear_sonic_deploy/**" \
+      "/decoupled_wbc/**" \
     && git checkout "${SONIC_REPO_REF}" \
     && (git lfs pull --include="download_from_hf.py,gear_sonic/**,gear_sonic_deploy/**,decoupled_wbc/**" --exclude="motionbricks/out/**" || true) \
-    && rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"
+    && rm -rf "${SONIC_HOME}/.git"
 
 RUN "${ISAAC_LAB_PYTHON}" -m pip install --no-cache-dir \
       -e "${SONIC_HOME}/gear_sonic[training,teleop,sim]" \
