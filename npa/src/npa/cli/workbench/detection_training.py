@@ -7,11 +7,9 @@ import json
 import os
 import shutil
 import subprocess
-import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -145,73 +143,47 @@ def train_cmd(
     view: str = typer.Option(..., "--view", help="Lance materialized view name."),
     output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
     lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
-    num_classes: int = typer.Option(10, "--num-classes", help="Detector class count (ignored when --label-map is set)."),
-    label_map: str = typer.Option("", "--label-map", help="JSON object mapping category name -> class id; injected per BDD100K convention."),
+    num_classes: int = typer.Option(10, "--num-classes", help="Detector class count."),
     epochs: int = typer.Option(10, "--epochs", help="Training epochs."),
     batch_size: int = typer.Option(8, "--batch-size", help="Training batch size."),
     learning_rate: float = typer.Option(0.005, "--learning-rate", help="SGD learning rate."),
     validation_filter_sql: str = typer.Option("", "--validation-filter-sql", help="Optional validation filter SQL."),
-    wait: bool = typer.Option(False, "--wait", help="Poll until the run reaches a terminal status."),
-    poll_seconds: int = typer.Option(30, "--poll-seconds", help="Polling interval in seconds when --wait."),
-    timeout: int = typer.Option(21600, "--timeout", help="Maximum seconds to wait when --wait."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
-    """Start a detection-training run, optionally waiting for completion."""
-    parsed_label_map = _parse_label_map(label_map)
+    """Start a detection-training run."""
     payload = TrainRequest(
         view=view,
         lance_uri=lance_uri,
         output_uri=output_uri,
-        num_classes=None if parsed_label_map else num_classes,
-        label_map=parsed_label_map,
+        num_classes=num_classes,
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
         validation_filter_sql=validation_filter_sql or None,
     ).model_dump(mode="json")
     if service:
-        resolved = resolve_endpoint(endpoint)
-        result = request_json("POST", resolved, "/train", payload=payload, token_env=token_env, timeout=60.0)
+        result = request_json("POST", resolve_endpoint(endpoint), "/train", payload=payload, token_env=token_env, timeout=60.0)
     else:
         from npa.sdk.workbench.detection_training import train
 
         result = train(**payload).model_dump(mode="json")
-        resolved = ""
-    if wait:
-        result = _poll_until_terminal(
-            run_id=str(result.get("run_id", "")),
-            service=service,
-            endpoint=resolved,
-            token_env=token_env,
-            poll_seconds=poll_seconds,
-            timeout=timeout,
-        )
     emit(result, output=output, text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}")
 
 
 def eval_cmd(
+    checkpoint_uri: str = typer.Option(..., "--checkpoint-uri", help="Checkpoint S3/local URI."),
     eval_view: str = typer.Option(..., "--eval-view", help="Lance materialized view to evaluate."),
     output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
-    checkpoint_uri: str = typer.Option("", "--checkpoint-uri", help="Checkpoint S3/local URI. Provide this or --from-view-latest."),
-    from_view_latest: str = typer.Option("", "--from-view-latest", help="Resolve the checkpoint from the latest completed training run for this view (requires --service)."),
     lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
-    write_canonical_metrics: bool = typer.Option(False, "--write-canonical-metrics", help="Write the eval response to <output-uri>/metrics.json (best effort)."),
     service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
     endpoint: str = typer.Option("", "--endpoint", help="Detection-training service endpoint."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
-    """Evaluate a detection-training checkpoint, resolving it from a view when asked."""
-    if bool(checkpoint_uri) == bool(from_view_latest):
-        fail("provide exactly one of --checkpoint-uri or --from-view-latest")
-    resolved = resolve_endpoint(endpoint) if service else ""
-    if from_view_latest:
-        if not service:
-            fail("--from-view-latest requires --service")
-        checkpoint_uri = _discover_latest_checkpoint(from_view_latest, endpoint=resolved, token_env=token_env)
+    """Evaluate a detection-training checkpoint."""
     payload = EvalRequest(
         checkpoint_uri=checkpoint_uri,
         eval_view=eval_view,
@@ -219,13 +191,11 @@ def eval_cmd(
         output_uri=output_uri,
     ).model_dump(mode="json")
     if service:
-        result = request_json("POST", resolved, "/eval", payload=payload, token_env=token_env, timeout=900.0)
+        result = request_json("POST", resolve_endpoint(endpoint), "/eval", payload=payload, token_env=token_env, timeout=900.0)
     else:
         from npa.sdk.workbench.detection_training import eval as sdk_eval
 
         result = sdk_eval(**payload).model_dump(mode="json")
-    if write_canonical_metrics:
-        _write_canonical_metrics(output_uri, result)
     emit(result, output=output, text=f"mAP: {result.get('mAP')}\neval_run_id: {result.get('eval_run_id')}")
 
 
@@ -347,99 +317,6 @@ def request_json(
     if not isinstance(data, dict):
         fail("Detection-training endpoint returned an unexpected response")
     return data
-
-
-def _parse_label_map(raw: str) -> dict[str, int] | None:
-    value = raw.strip()
-    if not value:
-        return None
-    try:
-        data = json.loads(value)
-    except json.JSONDecodeError as exc:
-        fail(f"--label-map must be valid JSON: {exc.msg}")
-    if not isinstance(data, dict) or not data:
-        fail("--label-map must be a non-empty JSON object")
-    parsed: dict[str, int] = {}
-    for name, raw_id in data.items():
-        try:
-            parsed[str(name)] = int(raw_id)
-        except (TypeError, ValueError):
-            fail("--label-map values must be integers")
-    return parsed
-
-
-def _poll_until_terminal(
-    *,
-    run_id: str,
-    service: bool,
-    endpoint: str,
-    token_env: str,
-    poll_seconds: int,
-    timeout: int,
-) -> dict[str, Any]:
-    if not run_id:
-        fail("cannot wait: train did not return a run_id")
-    deadline = time.monotonic() + max(timeout, 0)
-    interval = max(poll_seconds, 0)
-    while True:
-        if service:
-            snapshot = request_json("GET", endpoint, "/status", params={"run_id": run_id}, token_env=token_env, timeout=30.0)
-        else:
-            from npa.sdk.workbench.detection_training import status
-
-            snapshot = status(run_id=run_id).model_dump(mode="json")
-        state = snapshot.get("status")
-        if state == "completed":
-            return snapshot
-        if state == "failed":
-            fail(f"training run {run_id} failed: {snapshot.get('error') or 'unknown error'}")
-        if time.monotonic() > deadline:
-            fail(f"training run {run_id} did not complete within {timeout}s (last status: {state})")
-        time.sleep(interval)
-
-
-def _discover_latest_checkpoint(view: str, *, endpoint: str, token_env: str) -> str:
-    runs = request_json("GET", endpoint, "/runs", token_env=token_env, timeout=30.0).get("runs", [])
-    slug = f"/training/{view}/"
-    completed = [
-        run for run in runs
-        if run.get("status") == "completed" and slug in str(run.get("checkpoint_uri_pattern", ""))
-    ]
-    if not completed:
-        fail(f"no completed training run found for view {view}")
-    latest = completed[-1]
-    pattern = str(latest.get("checkpoint_uri_pattern", ""))
-    epochs = latest.get("total_epochs")
-    if not pattern or epochs in (None, ""):
-        fail(f"latest run for view {view} has no resolvable checkpoint pattern")
-    return pattern.replace("{epoch}", str(epochs))
-
-
-def _write_canonical_metrics(output_uri: str, result: dict[str, Any]) -> None:
-    target = f"{output_uri.rstrip('/')}/metrics.json"
-    body = json.dumps(result, indent=2, sort_keys=True).encode("utf-8")
-    try:
-        if output_uri.startswith("s3://"):
-            import boto3
-
-            from npa.clients.credentials import load_credentials
-
-            creds = load_credentials()
-            parsed = urlparse(target)
-            client = boto3.client(
-                "s3",
-                aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID") or creds.s3_access_key_id,
-                aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key,
-                endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or creds.s3_endpoint or None,
-                region_name=os.environ.get("AWS_REGION", "auto"),
-            )
-            client.put_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"), Body=body)
-        else:
-            path = Path(target)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
-    except Exception as exc:  # best-effort: never fail the eval on metrics write
-        typer.echo(f"warning: could not write canonical metrics to {target}: {exc}", err=True)
 
 
 def _kubernetes_manifest(

@@ -6,7 +6,7 @@ This cookbook describes the SkyPilot workflow at
 The workflow composes three Workbench stages:
 
 1. Retarget source motion artifacts into the SONIC embodiment schema with
-   `npa workbench sonic retarget`.
+   `npa workbench retargeting run`.
 2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on L40S with the
    baked SONIC image variant.
 3. Evaluate the resulting checkpoint with MJLab metrics through
@@ -45,7 +45,7 @@ The individual tool templates are available when you want to validate stages
 separately:
 
 ```bash
-npa workbench workflow submit npa/workflows/workbench/skypilot/retargeting.yaml
+npa workbench retargeting workflow
 npa workbench mjlab workflow
 ```
 
@@ -207,7 +207,7 @@ The tool CLIs support `NPA_DRY_RUN=1`, which validates inputs and returns the
 artifact schema without writing outputs:
 
 ```bash
-NPA_DRY_RUN=1 npa workbench sonic retarget \
+NPA_DRY_RUN=1 npa workbench retargeting run \
   --input-path s3://bucket/motions/source/ \
   --output-path s3://bucket/sonic-locomotion/run-1/retargeted/ \
   --source-format bones-seed-csv \
