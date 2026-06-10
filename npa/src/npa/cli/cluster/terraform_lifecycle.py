@@ -190,10 +190,25 @@ def _require_bin(binary: str) -> str:
 
 def _terraform_env(nebius_bin: str) -> dict[str, str]:
     env = os.environ.copy()
-    if not env.get("TF_VAR_iam_token"):
-        token = _run_capture([nebius_bin, "iam", "get-access-token"], env=env).stdout.strip()
-        env["TF_VAR_iam_token"] = token
-        env["NEBIUS_IAM_TOKEN"] = token
+    # A stale ambient IAM token (e.g. a cloud-env token) silently shadows the
+    # intended Nebius profile and mints kubeconfig/registry credentials for the
+    # wrong principal -- the cause of Forbidden jobs/pods/nodes and 401 image
+    # pulls. Mint a fresh token by default after clearing any stale token; opt
+    # back into reuse only when NPA_REUSE_IAM_TOKEN is explicitly set (e.g. CI
+    # that injects a short-lived token intentionally).
+    reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if reuse and env.get("TF_VAR_iam_token"):
+        return env
+    env.pop("TF_VAR_iam_token", None)
+    env.pop("NEBIUS_IAM_TOKEN", None)
+    token = _run_capture([nebius_bin, "iam", "get-access-token"], env=env).stdout.strip()
+    env["TF_VAR_iam_token"] = token
+    env["NEBIUS_IAM_TOKEN"] = token
     return env
 
 

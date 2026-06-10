@@ -838,6 +838,7 @@ def run_inner_loop(
     iteration_records: list[dict[str, Any]] = []
     reward_trend: list[float] = []
     policy_deltas: list[float] = []
+    all_signals: list[dict[str, Any]] = []
     quality = float(initial_quality)
     reward_head = 0.0
     action_bias = 0.0
@@ -882,6 +883,7 @@ def run_inner_loop(
             _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
             evals.append(evaluation)
             signals.append(signal)
+            all_signals.append(signal)
         signal_batch_path = (
             local_dir
             / "inner_loop"
@@ -949,11 +951,25 @@ def run_inner_loop(
             }
         )
 
+    signal_diversity = _signal_diversity_report(all_signals)
+    if signal_diversity["degenerate"] and _bool_value(
+        os.environ.get("NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY", "0")
+    ):
+        raise Sim2RealLoopError(
+            "VLM->RL signal is degenerate: "
+            f"{signal_diversity['distinct_scores']} distinct score(s) and "
+            f"{signal_diversity['distinct_mean_rewards']} distinct mean-reward(s) "
+            f"across {signal_diversity['total_rollouts']} rollout(s) "
+            f"(scores={signal_diversity['score_values']}). "
+            "Unset NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY to downgrade this gate to a "
+            "diagnostic."
+        )
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": outer_iteration,
         "status": "closed",
         "reward_trend": reward_trend,
+        "signal_diversity": signal_diversity,
         "policy_delta_vs_no_signal_control": policy_deltas,
         "attribution": (
             "The reference update and no-signal control share initial adapter state. "
@@ -1257,6 +1273,7 @@ def _run_kubernetes_image_component(
         "mode": "kubernetes_job",
         "component": component,
         "image": image,
+        "image_digests": pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "pod": pod_info,
@@ -1303,7 +1320,7 @@ def _component_job_manifest(
             {
                 "name": "component",
                 "image": image,
-                "imagePullPolicy": "IfNotPresent",
+                "imagePullPolicy": _image_pull_policy(image),
                 "command": ["bash", "-lc"],
                 "args": [_component_job_script(component)],
                 "env": [
@@ -1475,20 +1492,27 @@ def _component_pod_info(
     container = (pod.get("spec", {}).get("containers") or [{}])[0]
     resources = container.get("resources", {})
     statuses = pod.get("status", {}).get("containerStatuses") or []
+    container_statuses = [
+        {
+            "name": item.get("name", ""),
+            "ready": item.get("ready", False),
+            "restart_count": item.get("restartCount", 0),
+            "image": item.get("image", ""),
+            "image_id": item.get("imageID", ""),
+            "state": item.get("state", {}),
+        }
+        for item in statuses
+    ]
+    image_digests = [
+        status["image_id"] for status in container_statuses if status["image_id"]
+    ]
     return {
         "name": pod.get("metadata", {}).get("name", ""),
         "node_name": pod.get("spec", {}).get("nodeName", ""),
         "phase": pod.get("status", {}).get("phase", ""),
         "resources": resources,
-        "container_statuses": [
-            {
-                "name": item.get("name", ""),
-                "ready": item.get("ready", False),
-                "restart_count": item.get("restartCount", 0),
-                "state": item.get("state", {}),
-            }
-            for item in statuses
-        ],
+        "container_statuses": container_statuses,
+        "image_digests": image_digests,
     }
 
 
@@ -2318,11 +2342,16 @@ def _parse_cosmos_reason_output(
             or model_text
         ).strip()
         tags = payload.get("error_tags") or _tags_from_text(critique)
+        # The model returned no per-step breakdown, so the single summary critique
+        # is broadcast across every action step. Mark it as such so a degenerate
+        # (all-identical) per-step signal is visible rather than masquerading as
+        # genuine per-step granularity.
         raw_steps = [
             {
                 "step": int(action.get("step", index)),
                 "critique_text": critique,
                 "error_tags": tags,
+                "critique_source": "summary_broadcast",
                 "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
             }
             for index, action in enumerate(actions)
@@ -2502,7 +2531,9 @@ def _run_genesis_heldout_rollouts(
             env_success = bool(success[index].detach().item())
             distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
             reward_score = max(0.0, min(1.0, reward_value / 10.0))
-            score = 1.0 if env_success else round(0.7 * distance_score + 0.3 * reward_score, 6)
+            score = _heldout_env_score(
+                distance_score, reward_score, env_success=env_success
+            )
             per_env.append(
                 {
                     "env_id": str(env_record.get("env_id") or f"heldout-{start + index:04d}"),
@@ -2987,6 +3018,68 @@ def _merge_targets(tags: list[str]) -> dict[str, Any]:
 def _signal_mean_reward(signal: dict[str, Any]) -> float:
     steps = signal.get("per_step") or []
     return sum(float(step["reward"]) for step in steps) / float(len(steps))
+
+
+def _heldout_env_score(
+    distance_score: float, reward_score: float, *, env_success: bool
+) -> float:
+    """Map per-env distance/reward to a continuous held-out score.
+
+    Successful and failed envs occupy separate bands, but the score stays
+    continuous in the env's own distance/reward so the held-out report keeps a
+    gradient instead of collapsing to a flat ``1.0`` across every env (which
+    produced an uninformative, incoherent signal).
+    """
+
+    quality = max(0.0, min(1.0, 0.7 * distance_score + 0.3 * reward_score))
+    if env_success:
+        return round(0.75 + 0.25 * quality, 6)
+    return round(0.6 * quality, 6)
+
+
+def _signal_diversity_report(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize cross-rollout diversity of the VLM->RL signal.
+
+    A genuine signal varies across rollouts; a single distinct score/reward
+    across every rollout is the degenerate ("hollow") pattern. These metrics
+    (``distinct_scores``, ``coherent``) are emitted into loop evidence so a run
+    is self-describing instead of requiring an external validator to infer them.
+    """
+
+    scores = [round(float(signal.get("score") or 0.0), 4) for signal in signals]
+    mean_rewards = [round(_signal_mean_reward(signal), 4) for signal in signals]
+    distinct_scores = sorted({score for score in scores})
+    distinct_rewards = sorted({reward for reward in mean_rewards})
+    total = len(signals)
+    coherent = total > 1 and len(distinct_scores) > 1 and len(distinct_rewards) > 1
+    return {
+        "total_rollouts": total,
+        "distinct_scores": len(distinct_scores),
+        "distinct_mean_rewards": len(distinct_rewards),
+        "score_values": distinct_scores,
+        "mean_reward_values": distinct_rewards,
+        "coherent": coherent,
+        "degenerate": not coherent,
+    }
+
+
+def _image_pull_policy(image: str) -> str:
+    """Choose the imagePullPolicy for a sibling component image.
+
+    Provenance-sensitive ``-genuine-`` builds are pulled fresh so a stale image
+    cached under the same tag cannot silently masquerade as the genuine build.
+    A digest-pinned reference (``@sha256:``) is already immutable.
+    """
+
+    override = os.environ.get("NPA_SIM2REAL_IMAGE_PULL_POLICY", "").strip()
+    if override:
+        return override
+    if "@sha256:" in image:
+        return "IfNotPresent"
+    tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else ""
+    if "genuine" in tag:
+        return "Always"
+    return "IfNotPresent"
 
 
 def _write_ppm(path: Path, *, red: int, green: int, blue: int) -> None:
