@@ -16,7 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
@@ -27,6 +27,10 @@ from npa.deploy.images import container_image_for_tool
 # (lancedb/fiftyone/etc.), which is intentionally absent from the Isaac Lab
 # held-out image; the Isaac rollout path never needs it. Keeping the import lazy
 # lets sim2real_loop run on a minimal interpreter.
+
+
+if TYPE_CHECKING:
+    from npa.workbench.lerobot.policy_container import VlmSignalUpdateResult
 
 
 def _signal_training_imports():
