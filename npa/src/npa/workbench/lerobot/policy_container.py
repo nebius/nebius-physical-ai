@@ -115,6 +115,60 @@ class VlmSignalUpdateResult:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> VlmSignalUpdateResult:
+        """Parse a BYO trainer-command JSON result into a structured update.
+
+        Required fields (a BYO trainer-command MUST emit these): ``reward_head_after``,
+        ``policy_output_after`` (non-empty list), and ``policy_delta_l2``. Every other
+        field falls back to a safe default so a minimal customer trainer hook still
+        produces a usable, attributable update record.
+        """
+
+        if not isinstance(payload, dict):
+            raise PolicyContainerError(
+                "VlmSignalUpdateResult.from_dict requires a JSON object payload"
+            )
+        for required in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
+            if required not in payload:
+                raise PolicyContainerError(
+                    f"trainer update payload missing required field: {required}"
+                )
+        policy_output_after = payload["policy_output_after"]
+        if not isinstance(policy_output_after, list) or not policy_output_after:
+            raise PolicyContainerError(
+                "trainer update policy_output_after must be a non-empty list"
+            )
+        policy_output_after = [float(item) for item in policy_output_after]
+        raw_before = payload.get("policy_output_before")
+        if isinstance(raw_before, list) and raw_before:
+            policy_output_before = [float(item) for item in raw_before]
+        else:
+            policy_output_before = [0.0 for _ in policy_output_after]
+        loss_before = float(payload.get("loss_before", 0.0))
+        loss_after = float(payload.get("loss_after", loss_before))
+        return cls(
+            status=str(payload.get("status", "updated")),
+            backend=str(payload.get("backend", "byo_command")),
+            steps=int(payload.get("steps", 1)),
+            loss_before=loss_before,
+            loss_after=loss_after,
+            reward_head_before=float(payload.get("reward_head_before", 0.0)),
+            reward_head_after=float(payload["reward_head_after"]),
+            policy_output_before=policy_output_before,
+            policy_output_after=policy_output_after,
+            policy_delta_l2=float(payload["policy_delta_l2"]),
+            mean_reward=float(payload.get("mean_reward", 0.0)),
+            mean_advantage=float(payload.get("mean_advantage", 0.0)),
+            checkpoint_path=str(payload.get("checkpoint_path", "")),
+            signal_count=int(payload.get("signal_count", 0)),
+            control=bool(payload.get("control", False)),
+            loss_integration_point=str(
+                payload.get("loss_integration_point", "byo_trainer_command")
+            ),
+            duration_ms=float(payload.get("duration_ms", 0.0)),
+        )
+
 
 @dataclass(frozen=True)
 class LeRobotImportResult:

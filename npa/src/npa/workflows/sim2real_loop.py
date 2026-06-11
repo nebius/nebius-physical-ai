@@ -21,12 +21,12 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
-
 # npa.workbench.lerobot.policy_container is imported lazily inside the inner
-# loop (see _signal_training_imports). Importing it at module load pulls the
-# full npa.workbench tool tree (lancedb/fiftyone/etc.), which is intentionally
-# absent from the Isaac Lab held-out image; the Isaac rollout path never needs
-# it. Keeping the import lazy lets sim2real_loop run on a minimal interpreter.
+# loop (see _signal_training_imports) and inside the BYO signal/trainer helpers.
+# Importing it at module load pulls the full npa.workbench tool tree
+# (lancedb/fiftyone/etc.), which is intentionally absent from the Isaac Lab
+# held-out image; the Isaac rollout path never needs it. Keeping the import lazy
+# lets sim2real_loop run on a minimal interpreter.
 
 
 def _signal_training_imports():
@@ -171,6 +171,8 @@ class Sim2RealLoopConfig:
     byo_trainer_command: str = ""
     byo_vlm_command: str = ""
     byo_eval_command: str = ""
+    byo_rerun_command: str = ""
+    rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
     k8s_image_pull_secrets: str = "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
@@ -476,6 +478,14 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("BYO_EVAL_COMMAND")
             or ""
         ),
+        byo_rerun_command=str(
+            overrides.get("byo_rerun_command")
+            or os.environ.get("BYO_RERUN_COMMAND")
+            or ""
+        ),
+        rerun_enabled=_bool_value(
+            overrides.get("rerun_enabled", os.environ.get("NPA_SIM2REAL_RERUN", "1"))
+        ),
         k8s_namespace=str(
             overrides.get("k8s_namespace")
             or os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE")
@@ -600,6 +610,8 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "byo_trainer_command": config.byo_trainer_command,
         "byo_vlm_command": config.byo_vlm_command,
         "byo_eval_command": config.byo_eval_command,
+        "byo_rerun_command": config.byo_rerun_command,
+        "rerun_enabled": config.rerun_enabled,
         "k8s_namespace": config.k8s_namespace,
         "k8s_service_account": config.k8s_service_account,
         "k8s_image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
@@ -846,6 +858,14 @@ def run_full_loop(
         )
     )
 
+    viz_component, viz_info = _run_sim2real_viz_stage(
+        config,
+        local_dir=local_dir,
+        inner_evidence=final_inner,
+        heldout_report=final_eval,
+    )
+    components.append(viz_component)
+
     components.extend(
         [
             ComponentRecord(
@@ -886,6 +906,7 @@ def run_full_loop(
             "latest_heldout_report": final_eval,
             "latest_decision": final_decision,
         },
+        "visualization": viz_info,
         "image_completeness": {
             "required": [
                 config.augment_image,
@@ -919,6 +940,126 @@ def run_full_loop(
         }
         _write_json_artifact(report_path, report)
     return report
+
+
+def _run_sim2real_viz_stage(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    inner_evidence: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> tuple[ComponentRecord, dict[str, Any]]:
+    """Produce ``reports/sim2real.rrd`` and a status ComponentRecord.
+
+    Degrades gracefully (WARN, not hard-fail) when ``rerun`` is unavailable or the
+    toggle is off, but produces a real ``.rrd`` whenever rerun is installed. If a
+    ``byo_rerun_command`` is set it runs that customer hook instead, reading the
+    run dir from ``NPA_SIM2REAL_RUN_DIR`` / report from ``NPA_SIM2REAL_REPORT_JSON``
+    and writing to ``NPA_SIM2REAL_OUTPUT_RRD``.
+    """
+
+    rrd_path = local_dir / "reports" / "sim2real.rrd"
+    if not config.rerun_enabled:
+        info = {"status": "disabled", "reason": "rerun_enabled is false"}
+        return (
+            ComponentRecord(
+                "stage_14_rerun_viz",
+                "SEAM",
+                "Rerun visualization disabled via toggle (NPA_SIM2REAL_RERUN=0 / --no-rerun).",
+                {},
+                next_action="CONTINUE",
+            ),
+            info,
+        )
+
+    if config.byo_rerun_command.strip():
+        return _run_byo_rerun_command(config, local_dir=local_dir, rrd_path=rrd_path)
+
+    try:
+        from npa.workflows.sim2real_viz import (
+            RerunUnavailableError,
+            emit_sim2real_rerun,
+        )
+
+        result = emit_sim2real_rerun(
+            local_dir=local_dir,
+            inner_evidence=inner_evidence,
+            heldout_report=heldout_report,
+            output_rrd=rrd_path,
+            write_mp4=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN_MP4", "0")),
+        )
+    except RerunUnavailableError as exc:
+        info = {"status": "skipped", "reason": str(exc), "source": "reference"}
+        return (
+            ComponentRecord(
+                "stage_14_rerun_viz",
+                "WARN",
+                "rerun-sdk not installed locally; skipped .rrd emission (install rerun-sdk to enable).",
+                {},
+                next_action="CONTINUE",
+            ),
+            info,
+        )
+    info = {"source": "reference", **result.to_dict()}
+    return (
+        ComponentRecord(
+            "stage_14_rerun_viz",
+            "WORKS",
+            (
+                f"Wrote Rerun recording with {result.rollout_count} rollout(s), "
+                f"{result.frame_count} camera frame(s), and {result.heldout_env_count} "
+                "held-out env score(s); camera streams, VLM critiques, RL signal, and "
+                "held-out scores are logged."
+            ),
+            {"rrd": str(rrd_path)},
+        ),
+        info,
+    )
+
+
+def _run_byo_rerun_command(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    rrd_path: Path,
+) -> tuple[ComponentRecord, dict[str, Any]]:
+    rrd_path.parent.mkdir(parents=True, exist_ok=True)
+    report_json = local_dir / "reports" / "sim2real-report.json"
+    env = _component_env(
+        config,
+        component="rerun_viz",
+        output_json=rrd_path,
+        extra={
+            "NPA_SIM2REAL_RUN_DIR": str(local_dir),
+            "NPA_SIM2REAL_REPORT_JSON": str(report_json),
+            "NPA_SIM2REAL_OUTPUT_RRD": str(rrd_path),
+        },
+    )
+    invocation = _run_component_command(
+        config.byo_rerun_command,
+        cwd=local_dir,
+        env=env,
+        component="rerun_viz",
+    )
+    if not rrd_path.exists() or rrd_path.stat().st_size == 0:
+        raise Sim2RealLoopError(
+            f"byo_rerun_command did not write a non-empty recording to {rrd_path}"
+        )
+    info = {
+        "source": "byo_command",
+        "status": "written",
+        "output_rrd_path": str(rrd_path),
+        "component_invocation": _public_invocation(invocation),
+    }
+    return (
+        ComponentRecord(
+            "stage_14_rerun_viz",
+            "WORKS",
+            "Customer byo_rerun_command produced the Rerun recording.",
+            {"rrd": str(rrd_path)},
+        ),
+        info,
+    )
 
 
 def run_inner_loop(
@@ -968,13 +1109,20 @@ def run_inner_loop(
         )
         evals: list[dict[str, Any]] = []
         signals: list[dict[str, Any]] = []
+        signal_converter_source = (
+            "byo_command" if config.byo_signal_converter.strip() else "reference"
+        )
         for rollout in rollouts:
             evaluation = evaluate_rollout_with_vlm(
                 rollout,
                 output_dir=eval_dir,
                 config=config,
             )
-            signal = convert_vlm_eval_to_rl_signal(evaluation)
+            signal = _convert_eval_to_signal(
+                evaluation,
+                config=config,
+                output_dir=signal_dir,
+            )
             _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
             evals.append(evaluation)
             signals.append(signal)
@@ -990,18 +1138,35 @@ def run_inner_loop(
         )
         parse_vlm_signal_batch, run_vlm_signal_training_step = _signal_training_imports()
         parsed_signals = parse_vlm_signal_batch({"signals": signals})
-        update = run_vlm_signal_training_step(
-            parsed_signals,
-            output_dir=local_dir
+        trainer_dir = (
+            local_dir
             / "inner_loop"
             / f"outer-{outer_iteration:02d}"
             / "trainer"
-            / f"iter-{iteration:02d}",
-            learning_rate=config.learning_rate,
-            signal_loss_weight=config.signal_loss_weight,
-            initial_reward_head=reward_head,
-            initial_action_bias=action_bias,
+            / f"iter-{iteration:02d}"
         )
+        if config.byo_trainer_command.strip():
+            update = _run_trainer_via_command(
+                signal_batch_path,
+                config=config,
+                output_dir=trainer_dir,
+                initial_reward_head=reward_head,
+                initial_action_bias=action_bias,
+            )
+            trainer_source = "byo_command"
+        else:
+            update = run_vlm_signal_training_step(
+                parsed_signals,
+                output_dir=trainer_dir,
+                learning_rate=config.learning_rate,
+                signal_loss_weight=config.signal_loss_weight,
+                initial_reward_head=reward_head,
+                initial_action_bias=action_bias,
+            )
+            trainer_source = "reference"
+        # The no-signal control always runs the in-process reference trainer so the
+        # policy-delta attribution baseline stays honest even when a BYO trainer
+        # produces the signal-driven update.
         control = run_vlm_signal_training_step(
             parsed_signals,
             output_dir=local_dir
@@ -1038,6 +1203,8 @@ def run_inner_loop(
                 "signal_dir": str(signal_dir),
                 "signal_batch": str(signal_batch_path),
                 "mean_reward": mean_reward,
+                "trainer_source": trainer_source,
+                "signal_converter_source": signal_converter_source,
                 "update": update.to_dict(),
                 "no_signal_control": control.to_dict(),
                 "policy_delta_vs_control": round(delta_vs_control, 8),
@@ -1064,6 +1231,12 @@ def run_inner_loop(
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": outer_iteration,
         "status": "closed",
+        "trainer_source": (
+            "byo_command" if config.byo_trainer_command.strip() else "reference"
+        ),
+        "signal_converter_source": (
+            "byo_command" if config.byo_signal_converter.strip() else "reference"
+        ),
         "reward_trend": reward_trend,
         "signal_diversity": signal_diversity,
         "policy_delta_vs_no_signal_control": policy_deltas,
@@ -1929,6 +2102,139 @@ def signal_mapping_rules() -> dict[str, Any]:
         "nl_corrective_targets": CORRECTIVE_TARGETS,
         "error_severity": ERROR_SEVERITY,
     }
+
+
+def _convert_eval_to_signal(
+    evaluation: dict[str, Any],
+    *,
+    config: Sim2RealLoopConfig,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Convert a VLM eval to an RL signal via the BYO command or the reference.
+
+    BYO signal-converter contract: the command reads the VLM evaluation JSON from
+    ``NPA_SIM2REAL_EVALUATION_JSON`` and writes an ``npa.sim2real.rl_signal.v1``
+    document to ``NPA_SIM2REAL_OUTPUT_JSON``. A missing, empty, non-conforming, or
+    failing command raises ``Sim2RealLoopError`` -- the loop never silently falls
+    back to the in-process reference converter.
+    """
+
+    if not config.byo_signal_converter.strip():
+        return convert_vlm_eval_to_rl_signal(evaluation)
+
+    rollout_id = str(evaluation.get("rollout_id") or "rollout")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    eval_path = output_dir / f"{rollout_id}.evaluation.json"
+    _write_json_artifact(eval_path, evaluation)
+    output_path = output_dir / f"{rollout_id}.byo-signal.json"
+    env = _component_env(
+        config,
+        component="signal_converter",
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_EVALUATION_JSON": str(eval_path),
+            "NPA_SIM2REAL_ROLLOUT_ID": rollout_id,
+            "NPA_SIM2REAL_RL_SIGNAL_SCHEMA": SCHEMA_RL_SIGNAL,
+        },
+    )
+    invocation = _run_component_command(
+        config.byo_signal_converter,
+        cwd=output_dir,
+        env=env,
+        component="signal_converter",
+    )
+    payload = _read_component_json(output_path, invocation)
+    return _normalize_byo_rl_signal(
+        payload,
+        rollout_id=rollout_id,
+        invocation=invocation,
+    )
+
+
+def _normalize_byo_rl_signal(
+    payload: dict[str, Any],
+    *,
+    rollout_id: str,
+    invocation: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise Sim2RealLoopError("signal_converter output must be a JSON object")
+    if payload.get("schema") != SCHEMA_RL_SIGNAL:
+        raise Sim2RealLoopError(
+            "signal_converter output must use schema "
+            f"{SCHEMA_RL_SIGNAL}, got {payload.get('schema')!r}"
+        )
+    per_step = payload.get("per_step")
+    if not isinstance(per_step, list) or not per_step:
+        raise Sim2RealLoopError(
+            "signal_converter output must include non-empty per_step"
+        )
+    payload.setdefault("rollout_id", rollout_id)
+    payload.setdefault("source", "byo")
+    parse_vlm_signal_batch, _ = _signal_training_imports()
+    try:
+        parse_vlm_signal_batch(payload)
+    except Exception as exc:
+        raise Sim2RealLoopError(
+            f"signal_converter output is not a valid {SCHEMA_RL_SIGNAL}: {exc}"
+        ) from exc
+    payload["component_invocation"] = _public_invocation(invocation)
+    return payload
+
+
+def _run_trainer_via_command(
+    signal_batch_path: Path,
+    *,
+    config: Sim2RealLoopConfig,
+    output_dir: Path,
+    initial_reward_head: float,
+    initial_action_bias: float,
+) -> VlmSignalUpdateResult:
+    """Run the BYO trainer command and parse its update result.
+
+    BYO trainer contract: the command reads the parsed signal batch JSON from
+    ``NPA_SIM2REAL_SIGNAL_JSON`` and writes an update JSON to
+    ``NPA_SIM2REAL_OUTPUT_JSON`` containing at least ``reward_head_after``,
+    ``policy_output_after`` (list), and ``policy_delta_l2`` (optional
+    ``loss_before``/``loss_after``). A missing, empty, non-conforming, or failing
+    command raises ``Sim2RealLoopError`` -- the loop never silently falls back to
+    the in-process reference trainer.
+    """
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "byo-trainer-update.json"
+    env = _component_env(
+        config,
+        component="trainer",
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_SIGNAL_JSON": str(signal_batch_path),
+            "NPA_SIM2REAL_INITIAL_REWARD_HEAD": str(initial_reward_head),
+            "NPA_SIM2REAL_INITIAL_ACTION_BIAS": str(initial_action_bias),
+            "NPA_SIM2REAL_LEARNING_RATE": str(config.learning_rate),
+            "NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT": str(config.signal_loss_weight),
+            "NPA_SIM2REAL_TRAINER_IMAGE": config.trainer_image,
+        },
+    )
+    invocation = _run_component_command(
+        config.byo_trainer_command,
+        cwd=output_dir,
+        env=env,
+        component="trainer",
+    )
+    payload = _read_component_json(output_path, invocation)
+    if not isinstance(payload, dict):
+        raise Sim2RealLoopError("trainer command output must be a JSON object")
+    from npa.workbench.lerobot.policy_container import VlmSignalUpdateResult
+
+    try:
+        result = VlmSignalUpdateResult.from_dict(payload)
+    except Exception as exc:
+        raise Sim2RealLoopError(
+            f"trainer command output is not a valid update result: {exc}"
+        ) from exc
+    _write_json_artifact(output_path, result.to_dict())
+    return result
 
 
 def run_heldout_eval(
@@ -3480,6 +3786,8 @@ def main(argv: list[str] | None = None) -> int:
         byo_trainer_command=args.byo_trainer_command,
         byo_vlm_command=args.byo_vlm_command,
         byo_eval_command=args.byo_eval_command,
+        byo_rerun_command=args.byo_rerun_command,
+        rerun_enabled=args.rerun,
         k8s_namespace=args.k8s_namespace,
         k8s_service_account=args.k8s_service_account,
         k8s_image_pull_secrets=args.k8s_image_pull_secrets,
@@ -3592,6 +3900,20 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
     parser.add_argument("--byo-eval-command", default="")
+    parser.add_argument("--byo-rerun-command", default="")
+    parser.add_argument(
+        "--rerun",
+        dest="rerun",
+        action="store_true",
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN", "1")),
+        help="Emit a Rerun .rrd visualization after the loop (default on).",
+    )
+    parser.add_argument(
+        "--no-rerun",
+        dest="rerun",
+        action="store_false",
+        help="Disable Rerun .rrd visualization emission.",
+    )
     parser.add_argument(
         "--k8s-namespace",
         default=os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", ""),
