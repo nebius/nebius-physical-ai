@@ -2985,13 +2985,21 @@ def _isaac_import_mesh_to_usd(local_path: str, *, work_dir: Path) -> str:
             )
             converter = UrdfConverter(cfg)
         else:
+            import isaaclab.sim as sim_utils
             from isaaclab.sim.converters import MeshConverter, MeshConverterCfg
 
+            # Bake RigidBody/Collision/Mass APIs into the converted USD so the
+            # mesh spawns as a physics rigid body (Isaac Lab's RigidObject
+            # requires 'USD RigidBodyAPI' on the prim).
             cfg = MeshConverterCfg(
                 asset_path=str(src),
                 usd_dir=str(work_dir),
                 usd_file_name=f"{src.stem}.usd",
                 force_usd_conversion=True,
+                collision_approximation="convexHull",
+                mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             )
             converter = MeshConverter(cfg)
     except Exception as exc:  # noqa: BLE001 - surface converter import/runtime errors
@@ -3029,6 +3037,8 @@ def _set_isaac_object_usd(env_cfg: Any, usd_path: str, *, scale: Any) -> None:
             max_depenetration_velocity=5.0,
             disable_gravity=False,
         ),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+        collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
     )
 
 
@@ -3179,80 +3189,79 @@ def _run_isaac_heldout_rollouts(
     reward_norm = float(os.environ.get("NPA_SIM2REAL_ISAAC_REWARD_NORM", "20.0"))
     success_dist = float(os.environ.get("NPA_SIM2REAL_ISAAC_SUCCESS_DIST", "0.05"))
     per_env: list[dict[str, Any]] = []
-    if True:
-        for start in range(0, len(envs), batch_size):
-            batch = envs[start : start + batch_size]
-            seed = int(batch[0].get("seed") or (42 + start))
-            torch.manual_seed(seed)
-            env_cfg = parse_env_cfg(isaac_task, device=device, num_envs=len(batch))
-            if usd_override:
-                _set_isaac_object_usd(env_cfg, usd_override, scale=manip_scale)
-            env = gym.make(isaac_task, cfg=env_cfg)
-            action_dim = int(env.action_space.shape[-1])
-            obs, _ = env.reset()
-            n = len(batch)
-            max_reward = torch.full((n,), -1.0e9, device=device)
-            final_distance = torch.full((n,), 1.0e9, device=device)
-            for step in range(max_steps):
-                actions = _isaac_adapter_actions(
-                    action_dim, adapter, n_envs=n, step=step, device=device
-                )
-                obs, reward, terminated, truncated, _ = env.step(actions)
-                reward_t = torch.as_tensor(reward, device=device, dtype=torch.float32).reshape(-1)
-                max_reward = torch.maximum(max_reward, reward_t)
-                final_distance = _isaac_goal_distance(env.unwrapped).reshape(-1).detach()
-                done = torch.as_tensor(terminated, device=device).reshape(-1) | torch.as_tensor(
-                    truncated, device=device
-                ).reshape(-1)
-                if bool(done.all()):
-                    break
-            success = final_distance < success_dist
-            batch_successes = int(success.sum().item())
-            print(
-                json.dumps(
-                    {
-                        "component": "heldout_eval",
-                        "event": "isaac_rollout_batch_complete",
-                        "batch_start": start,
-                        "env_count": n,
-                        "successes": batch_successes,
-                        "max_steps": max_steps,
-                        "isaac_task": isaac_task,
-                    },
-                    sort_keys=True,
-                )
+    for start in range(0, len(envs), batch_size):
+        batch = envs[start : start + batch_size]
+        seed = int(batch[0].get("seed") or (42 + start))
+        torch.manual_seed(seed)
+        env_cfg = parse_env_cfg(isaac_task, device=device, num_envs=len(batch))
+        if usd_override:
+            _set_isaac_object_usd(env_cfg, usd_override, scale=manip_scale)
+        env = gym.make(isaac_task, cfg=env_cfg)
+        action_dim = int(env.action_space.shape[-1])
+        obs, _ = env.reset()
+        n = len(batch)
+        max_reward = torch.full((n,), -1.0e9, device=device)
+        final_distance = torch.full((n,), 1.0e9, device=device)
+        for step in range(max_steps):
+            actions = _isaac_adapter_actions(
+                action_dim, adapter, n_envs=n, step=step, device=device
             )
-            for index, env_record in enumerate(batch):
-                dist = float(final_distance[index].detach().item())
-                reward_value = float(max_reward[index].detach().item())
-                env_success = bool(success[index].detach().item())
-                distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
-                reward_score = max(0.0, min(1.0, reward_value / reward_norm))
-                score = _heldout_env_score(
-                    distance_score, reward_score, env_success=env_success
-                )
-                per_env.append(
-                    {
-                        "env_id": str(
-                            env_record.get("env_id") or f"heldout-{start + index:04d}"
-                        ),
-                        "score": score,
-                        "success": env_success,
-                        "details": {
-                            "source": "isaac_lift_env_goal_distance",
-                            "sim_backend": SIM_BACKEND_ISAAC,
-                            "isaac_task": isaac_task,
-                            "seed": env_record.get("seed"),
-                            "target_threshold": success_dist,
-                            "final_target_distance": round(dist, 6),
-                            "max_reward": round(reward_value, 6),
-                            "steps": max_steps,
-                            "policy_adapter": adapter,
-                            "threshold": threshold,
-                        },
-                    }
-                )
-            env.close()
+            obs, reward, terminated, truncated, _ = env.step(actions)
+            reward_t = torch.as_tensor(reward, device=device, dtype=torch.float32).reshape(-1)
+            max_reward = torch.maximum(max_reward, reward_t)
+            final_distance = _isaac_goal_distance(env.unwrapped).reshape(-1).detach()
+            done = torch.as_tensor(terminated, device=device).reshape(-1) | torch.as_tensor(
+                truncated, device=device
+            ).reshape(-1)
+            if bool(done.all()):
+                break
+        success = final_distance < success_dist
+        batch_successes = int(success.sum().item())
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "isaac_rollout_batch_complete",
+                    "batch_start": start,
+                    "env_count": n,
+                    "successes": batch_successes,
+                    "max_steps": max_steps,
+                    "isaac_task": isaac_task,
+                },
+                sort_keys=True,
+            )
+        )
+        for index, env_record in enumerate(batch):
+            dist = float(final_distance[index].detach().item())
+            reward_value = float(max_reward[index].detach().item())
+            env_success = bool(success[index].detach().item())
+            distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
+            reward_score = max(0.0, min(1.0, reward_value / reward_norm))
+            score = _heldout_env_score(
+                distance_score, reward_score, env_success=env_success
+            )
+            per_env.append(
+                {
+                    "env_id": str(
+                        env_record.get("env_id") or f"heldout-{start + index:04d}"
+                    ),
+                    "score": score,
+                    "success": env_success,
+                    "details": {
+                        "source": "isaac_lift_env_goal_distance",
+                        "sim_backend": SIM_BACKEND_ISAAC,
+                        "isaac_task": isaac_task,
+                        "seed": env_record.get("seed"),
+                        "target_threshold": success_dist,
+                        "final_target_distance": round(dist, 6),
+                        "max_reward": round(reward_value, 6),
+                        "steps": max_steps,
+                        "policy_adapter": adapter,
+                        "threshold": threshold,
+                    },
+                }
+            )
+        env.close()
     return per_env
 
 
