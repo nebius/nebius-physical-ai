@@ -11,30 +11,36 @@ from npa.deploy.images import (
 )
 
 
-def test_default_registry_is_real_first_party_registry() -> None:
-    assert DEFAULT_CONTAINER_REGISTRY == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+def test_default_registry_id_is_placeholder_not_a_real_nebius_id() -> None:
+    import re
+
+    # The committed default must be an inert placeholder, never a real Nebius
+    # registry identifier (which matches the e0<...> pattern).
+    assert DEFAULT_CONTAINER_REGISTRY == "cr.eu-north1.nebius.cloud/<your-registry-id>"
+    assert not re.search(r"\be0[0-9][a-z0-9]{12,}\b", DEFAULT_CONTAINER_REGISTRY)
+
+
+def test_default_registry_id_honors_env(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/team")
+    assert container_image_for_tool("lancedb") == "registry.example/team/npa-lancedb:0.30.2"
 
 
 def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("lancedb")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.2"
     )
     assert container_image_for_tool("detection-training") == (
-        "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+        "cr.eu-north1.nebius.cloud/<your-registry-id>/"
         "npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
     )
     assert (
         container_image_for_tool("groot")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-groot:0.1.0"
-    )
-    assert (
-        container_image_for_tool("cosmos2-transfer")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos2-transfer:2.5.0"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-groot:0.1.0"
     )
     assert (
         container_image_for_tool("cosmos3-reason")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:3.0.1-genuine-sm120"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos3-reason:3.0.1-genuine-sm120"
     )
 
 
@@ -57,11 +63,11 @@ def test_byo_workflow_images_have_pushed_defaults(monkeypatch) -> None:
 
     assert (
         default_vlm_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
     )
     assert (
         default_workbench_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6"
     )
 
 

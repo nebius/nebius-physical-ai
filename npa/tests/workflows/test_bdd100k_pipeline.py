@@ -29,10 +29,10 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "e452310cef2b4f54bc0ececc4110064fb94c811d5f4a2acab3eae56f57e216e7"
-EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+EXPECTED_YAML_SHA256 = "a5010171a40433618667e3ef8048b5c479dd9330c9c851b9f918ef2e3caaf51f"
+EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.2"
 EXPECTED_DETECTION_IMAGE = (
-    "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+    "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/"
     "npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
 )
 SYNTHETIC_BDD100K_LABEL_MAP = {

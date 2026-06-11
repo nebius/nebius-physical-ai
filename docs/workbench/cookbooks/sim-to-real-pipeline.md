@@ -297,7 +297,7 @@ Both should show no in-progress clusters or managed jobs for the run.
 | `--gpu` / `NPA_GPU_TYPE` / `gpu` | `H100:1` | Primary SkyPilot accelerator. Nebius VM examples: `H100:1`, `H200:1`, `L40S:1`, or explicit multi-GPU `B200:8` when present in the live catalog |
 | `--gpu-failover` / `NPA_GPU_FAILOVER` / `gpu_failover` | `H200:1,L40S:1` | Ordered fallback accelerator list, validated against the live Nebius VM catalog before VM submission |
 | `--vlm-eval-backend` | `stub` | Live VLM backend |
-| `NPA_VLM_IMAGE` / `npa workbench vlm-eval workflow --image` / `workflow(image=...)` | `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9` | BYO prebuilt VLM/vLLM serving image |
+| `NPA_VLM_IMAGE` / `npa workbench vlm-eval workflow --image` / `workflow(image=...)` | `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9` | BYO prebuilt VLM/vLLM serving image |
 | `--task-cloud` | `nebius` | Task backend for acceptance runs when Kubernetes GPU capacity is occupied |
 | `--controller-backend` | `nebius` | Managed-jobs controller fallback for clusters that cannot validate the Kubernetes controller pod |
 | `--rerun-max-frames-per-episode` | `32` | Lower for smoke, higher for inspection |

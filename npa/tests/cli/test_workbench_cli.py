@@ -618,7 +618,7 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, 
     mocker.patch("npa.deploy.configurator.write_manifest")
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_container_registry",
-        return_value=DEFAULT_CONTAINER_REGISTRY,
+        return_value="cr.eu-north1.nebius.cloud/test-registry",
     )
 
     result = runner.invoke(
@@ -651,7 +651,7 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, 
     install_lerobot.assert_not_called()
     deploy_server.assert_not_called()
 
-    image = f"{DEFAULT_CONTAINER_REGISTRY}/npa-lerobot:0.5.1"
+    image = "cr.eu-north1.nebius.cloud/test-registry/npa-lerobot:0.5.1"
     remote_commands = "\n".join(call.args[0] for call in ssh.run_or_raise.call_args_list)
     assert f"docker pull {image}" in remote_commands
     assert "docker run -d --gpus all --ipc=host --network host" in remote_commands

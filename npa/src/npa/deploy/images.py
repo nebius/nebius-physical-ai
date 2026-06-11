@@ -9,7 +9,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
+# The registry ID must never be hardcoded to a real Nebius identifier in the
+# committed tree (see SECURITY.md and the repo rules). The committed default is
+# an inert placeholder; operators supply the real registry via NPA_REGISTRY_ID /
+# NPA_REGISTRY env vars or `container_registry` in ~/.npa/config.yaml, and
+# resolve_workflow_image() substitutes the placeholder at submit time.
+DEFAULT_CONTAINER_REGISTRY_ID = "<your-registry-id>"
 DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
@@ -161,8 +166,19 @@ def container_image_for_tool(
             raise ValueError(f"Image variants are only defined for SONIC, got tool={tool!r}")
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
-    resolved_registry = registry or os.environ.get("NPA_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
+    resolved_registry = registry or _registry_from_env() or DEFAULT_CONTAINER_REGISTRY
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
+
+
+def _registry_from_env() -> str:
+    """Resolve a container registry from environment without hardcoding an ID."""
+    explicit = os.environ.get("NPA_REGISTRY", "").strip()
+    if explicit:
+        return explicit
+    registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
+    if registry_id:
+        return f"cr.eu-north1.nebius.cloud/{registry_id}"
+    return ""
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:

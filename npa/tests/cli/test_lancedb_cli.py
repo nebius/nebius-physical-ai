@@ -55,6 +55,32 @@ def test_lancedb_deploy_vm_requires_storage_path() -> None:
     assert "--storage-path is required" in result.output
 
 
+def test_lancedb_container_dry_run_redacts_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE12345")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "supersecretvalue1234567890")
+    monkeypatch.setenv("LANCEDB_TOKEN", "tok-shh-9999")
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "/tmp/lancedb-data",
+            "--auth-mode",
+            "token",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "supersecretvalue1234567890" not in result.output
+    assert "tok-shh-9999" not in result.output
+    assert "AWS_SECRET_ACCESS_KEY=<redacted>" in result.output
+    assert "LANCEDB_TOKEN=<redacted>" in result.output
+
+
 def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LANCEDB_API_KEY", raising=False)
 
@@ -305,7 +331,7 @@ def test_lancedb_import_bdd100k_service_calls_endpoint(monkeypatch: pytest.Monke
 def test_lancedb_container_image_name_resolves() -> None:
     assert (
         DEFAULT_CONTAINER_IMAGE
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+        == "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:0.30.2"
     )
 
 
