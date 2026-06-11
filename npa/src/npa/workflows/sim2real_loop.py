@@ -2034,11 +2034,16 @@ def _normalize_heldout_report(
         "threshold": config.threshold,
         "per_env": per_env,
         "eval_image": config.eval_image,
+        "sim_backend": str(payload.get("sim_backend") or config.sim_backend),
+        "heldout_backend_image": config.heldout_backend_image(),
         "byo_eval_command": _redact_command(config.byo_eval_command),
         "inner_evidence_uri": inner_evidence_uri,
         "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
+    for key in ("component_source", "rollout_backend"):
+        if payload.get(key):
+            report[key] = payload[key]
     if "asset_provenance" in payload:
         report["asset_provenance"] = payload["asset_provenance"]
         report["asset_fallback_used"] = bool(
