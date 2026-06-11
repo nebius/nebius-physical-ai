@@ -90,6 +90,7 @@ eval/heldout/
 outer_loop/decision.json
 stage_13_retrigger/retrigger.json
 reports/sim2real-report.json
+reports/sim2real.rrd
 ```
 
 ## Prerequisites
@@ -156,6 +157,37 @@ config field. Set what you need; the rest fall back to reference defaults.
 | Rollout count | `--rollout-count` | `rollout_count=` | `ROLLOUT_COUNT` |
 | Steps per rollout | `--steps-per-rollout` | `steps_per_rollout=` | `STEPS_PER_ROLLOUT` |
 | Held-out env count | `--heldout-env-count` | `heldout_env_count=` | `HELDOUT_ENV_COUNT` |
+| VLM command swap | `--byo-vlm-command` | `byo_vlm_command=` | `BYO_VLM_COMMAND` |
+| Signal-converter swap | `--byo-signal-converter` | `byo_signal_converter=` | `BYO_SIGNAL_CONVERTER` |
+| Trainer command swap | `--byo-trainer-command` | `byo_trainer_command=` | `BYO_TRAINER_COMMAND` |
+| Held-out eval swap | `--byo-eval-command` | `byo_eval_command=` | `BYO_EVAL_COMMAND` |
+| Rerun viz toggle | `--rerun` / `--no-rerun` | `rerun_enabled=` | `NPA_SIM2REAL_RERUN` |
+| Rerun command swap | `--byo-rerun-command` | `byo_rerun_command=` | `BYO_RERUN_COMMAND` |
+
+### Command-Swap I/O Contracts
+
+Each `byo_*_command` is a shell command the loop runs at the matching seam. They
+all share the same convention: inputs arrive as JSON file paths in environment
+variables, and the command writes its result JSON to `NPA_SIM2REAL_OUTPUT_JSON`.
+A command that exits non-zero, writes nothing, or emits a non-conforming /empty
+document fails the run loudly — the loop never silently falls back to the
+reference implementation. Each run records which path executed
+(`trainer_source` / `signal_converter_source` = `byo_command` | `reference`) in
+the inner-loop evidence so a run can prove the customer hook actually ran.
+
+| Seam | Reads | Writes (`NPA_SIM2REAL_OUTPUT_JSON`) |
+| --- | --- | --- |
+| `byo_vlm_command` | `NPA_SIM2REAL_ROLLOUT_DIR`, `NPA_SIM2REAL_ROLLOUT_MANIFEST` | `npa.sim2real.vlm_eval.v1` (score + per_step critiques) |
+| `byo_signal_converter` | `NPA_SIM2REAL_EVALUATION_JSON` | `npa.sim2real.rl_signal.v1` (non-empty `per_step` of `{step, reward, advantage?, target?, error_tags?}`) |
+| `byo_trainer_command` | `NPA_SIM2REAL_SIGNAL_JSON` (+ `NPA_SIM2REAL_INITIAL_REWARD_HEAD`, `NPA_SIM2REAL_INITIAL_ACTION_BIAS`, `NPA_SIM2REAL_LEARNING_RATE`, `NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT`) | trainer update with at least `reward_head_after`, `policy_output_after` (list), `policy_delta_l2` (optional `loss_before`/`loss_after`) |
+| `byo_eval_command` | `NPA_SIM2REAL_HELDOUT_ENVS_DIR`, `NPA_SIM2REAL_INNER_EVIDENCE_JSON` | `npa.sim2real.heldout_eval.v1` (non-empty `per_env`) |
+| `byo_rerun_command` | `NPA_SIM2REAL_RUN_DIR`, `NPA_SIM2REAL_REPORT_JSON` | non-empty `.rrd` at `NPA_SIM2REAL_OUTPUT_RRD` |
+
+When a `byo_trainer_command` is set, the per-iteration no-signal **control** still
+runs the in-process reference trainer. This keeps the policy-delta attribution
+honest: the BYO trainer produces the signal-driven update, and the reference
+control provides the shared-initial-state, no-signal baseline that the delta is
+measured against.
 
 ## Run All Three Tiers
 
@@ -262,6 +294,32 @@ npa workbench sim2real inner-loop \
     `stage_12_external_validation/external_stub.json`.
 13. Retrigger: writes `stage_13_retrigger/retrigger.json`, targeting Stage 1
     when a new real-world LeRobot dataset lands in the trigger path.
+14. Rerun visualization: writes `reports/sim2real.rrd` (a single Rerun recording)
+    from the completed run's artifacts. Default on (`NPA_SIM2REAL_RERUN=1` /
+    `--rerun`); set `NPA_SIM2REAL_RERUN=0` / `--no-rerun` to skip. Degrades to a
+    WARN (not a hard failure) when `rerun-sdk` is not installed locally, but
+    always produces the `.rrd` when it is available.
+
+### Rerun Visualization
+
+The `.rrd` reuses the repo's existing Rerun capability (the same `rerun-sdk`
+recording API the LeRobot/GR00T adapters build on) and logs, on a shared
+`frame_time` timeline:
+
+- `rollouts/iter_NN/<rollout_id>/camera` — rollout camera frames as image streams.
+- `rollouts/iter_NN/<rollout_id>/critique` — per-step VLM critique text + error
+  tags as a text document overlay.
+- `rollouts/iter_NN/<rollout_id>/score` — the VLM success score.
+- `signal/reward` and `signal/advantage` — the per-step VLM->RL signal as scalar
+  timeseries, plus `signal/reward_trend` across iterations.
+- `heldout/scores` and `heldout/per_env/<env_id>` — held-out per-env scores as a
+  scalar/bar view.
+
+Open it with `rerun reports/sim2real.rrd`, or load it headlessly with
+`rerun.recording.load_recording(...)` to inspect entity counts. Set
+`NPA_SIM2REAL_RERUN_MP4=1` to also emit best-effort per-rollout `rollout.mp4`
+files (skipped when `ffmpeg` is not on PATH). When `--upload-artifacts` is set,
+the `.rrd` uploads with the rest of the run tree.
 
 ## Loops
 
@@ -341,6 +399,7 @@ options:
 - `byo_signal_converter`
 - `trainer_image`, `byo_trainer_command`
 - `eval_image`, `byo_eval_command`
+- `rerun_enabled`, `byo_rerun_command`
 - `threshold`
 - `inner_iterations`, `outer_iterations`, `loop_of_loops_iterations`
 - `rollout_count`, `steps_per_rollout`, `heldout_env_count`

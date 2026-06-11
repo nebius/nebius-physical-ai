@@ -62,10 +62,31 @@ envs:
   SIGNAL_LOSS_WEIGHT: "1.0"
   LEARNING_RATE: "0.05"
   NO_GUARDRAILS: "0"
+  # BYO_SIGNAL_CONVERTER: shell command run once per rollout instead of the
+  # in-process critique->reward converter. Contract: it reads the VLM evaluation
+  # JSON from $NPA_SIM2REAL_EVALUATION_JSON and writes an
+  # npa.sim2real.rl_signal.v1 document to $NPA_SIM2REAL_OUTPUT_JSON (object with a
+  # non-empty per_step list of {step, reward, advantage?, target?, error_tags?}).
+  # A failing/empty/non-conforming command fails the run; it never falls back.
   BYO_SIGNAL_CONVERTER: ""
+  # BYO_TRAINER_COMMAND: shell command run once per inner iteration instead of the
+  # in-process reference trainer. Contract: it reads the parsed signal batch from
+  # $NPA_SIM2REAL_SIGNAL_JSON and writes an update JSON to
+  # $NPA_SIM2REAL_OUTPUT_JSON containing at least reward_head_after,
+  # policy_output_after (list), and policy_delta_l2 (optional loss_before/after).
+  # The no-signal control always uses the in-process reference trainer so policy-
+  # delta attribution stays honest. A failing/empty/non-conforming command fails
+  # the run; it never falls back.
   BYO_TRAINER_COMMAND: ""
   BYO_VLM_COMMAND: ""
   BYO_EVAL_COMMAND: ""
+  # BYO_RERUN_COMMAND: optional shell command run instead of the in-process Rerun
+  # emitter. Contract: reads the run dir from $NPA_SIM2REAL_RUN_DIR and report from
+  # $NPA_SIM2REAL_REPORT_JSON, writes a non-empty .rrd to $NPA_SIM2REAL_OUTPUT_RRD.
+  BYO_RERUN_COMMAND: ""
+  # NPA_SIM2REAL_RERUN: "1" (default) emits reports/sim2real.rrd after the loop;
+  # "0" disables it. Degrades to a WARN if rerun-sdk is not installed locally.
+  NPA_SIM2REAL_RERUN: "1"
   NPA_SIM2REAL_K8S_NAMESPACE: "default"
   NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"
   NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
@@ -145,6 +166,7 @@ run: |
     --byo-trainer-command "${BYO_TRAINER_COMMAND:-}" \
     --byo-vlm-command "${BYO_VLM_COMMAND:-}" \
     --byo-eval-command "${BYO_EVAL_COMMAND:-}" \
+    --byo-rerun-command "${BYO_RERUN_COMMAND:-}" \
     --k8s-namespace "${NPA_SIM2REAL_K8S_NAMESPACE:-default}" \
     --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}" \
     --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}" \

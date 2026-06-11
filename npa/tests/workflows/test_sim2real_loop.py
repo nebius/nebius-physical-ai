@@ -7,9 +7,13 @@ from pathlib import Path
 
 import yaml
 
+import pytest
+
 import npa.workflows.sim2real_loop as loop_module
 from npa.sdk.workbench import cosmos2, cosmos3, sim2real
 from npa.workbench.lerobot.policy_container import (
+    PolicyContainerError,
+    VlmSignalUpdateResult,
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
 )
@@ -18,6 +22,7 @@ from npa.workflows.sim2real_loop import (
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
     Sim2RealLoopConfig,
+    Sim2RealLoopError,
     artifact_uris,
     build_config_from_env,
     convert_vlm_eval_to_rl_signal,
@@ -26,6 +31,7 @@ from npa.workflows.sim2real_loop import (
     generate_action_rollouts,
     run_full_loop,
     run_heldout_eval,
+    run_inner_loop,
 )
 
 
@@ -636,6 +642,324 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert "--k8s-service-account" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
+
+
+def _signal_converter_command(tmp_path: Path, *, valid: bool = True) -> str:
+    script = tmp_path / "byo_signal_converter.py"
+    body = (
+        '''
+import json, os
+from pathlib import Path
+
+ev = json.loads(Path(os.environ["NPA_SIM2REAL_EVALUATION_JSON"]).read_text())
+out = Path(os.environ["NPA_SIM2REAL_OUTPUT_JSON"])
+out.parent.mkdir(parents=True, exist_ok=True)
+marker = Path(os.environ["NPA_SIM2REAL_SWAP_MARKER"])
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write("signal_converter\\n")
+'''
+    )
+    if valid:
+        body += (
+            '''
+per_step = [
+    {
+        "step": int(s["step"]),
+        "reward": 0.5,
+        "advantage": 0.1,
+        "target": {"nl_correction": "byo correction", "action_delta": [0.0, 0.0, 0.0]},
+        "error_tags": s.get("error_tags", ["ok"]),
+    }
+    for s in ev["per_step"]
+]
+out.write_text(json.dumps({
+    "schema": os.environ["NPA_SIM2REAL_RL_SIGNAL_SCHEMA"],
+    "rollout_id": ev["rollout_id"],
+    "source": "byo-test",
+    "per_step": per_step,
+}))
+'''
+        )
+    else:
+        body += '\nout.write_text(json.dumps({"schema": "wrong.schema", "per_step": []}))\n'
+    script.write_text(body, encoding="utf-8")
+    return f"{sys.executable} {script}"
+
+
+def _trainer_command(tmp_path: Path, *, valid: bool = True) -> str:
+    script = tmp_path / "byo_trainer.py"
+    body = (
+        '''
+import json, os
+from pathlib import Path
+
+batch = json.loads(Path(os.environ["NPA_SIM2REAL_SIGNAL_JSON"]).read_text())
+out = Path(os.environ["NPA_SIM2REAL_OUTPUT_JSON"])
+out.parent.mkdir(parents=True, exist_ok=True)
+marker = Path(os.environ["NPA_SIM2REAL_SWAP_MARKER"])
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write("trainer\\n")
+n = len(batch.get("signals", []))
+'''
+    )
+    if valid:
+        body += (
+            '''
+out.write_text(json.dumps({
+    "reward_head_after": 0.25 + 0.01 * n,
+    "policy_output_after": [0.06, 0.0, -0.03],
+    "policy_delta_l2": 0.42,
+    "loss_before": 1.0,
+    "loss_after": 0.4,
+    "backend": "byo-test",
+}))
+'''
+        )
+    else:
+        body += '\nout.write_text(json.dumps({"reward_head_after": 0.1}))\n'
+    script.write_text(body, encoding="utf-8")
+    return f"{sys.executable} {script}"
+
+
+def test_byo_signal_converter_swap_invoked_and_recorded(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-signal-swap",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_signal_converter=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} {_signal_converter_command(tmp_path)}"
+        ),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["signal_converter_source"] == "byo_command"
+    assert evidence["trainer_source"] == "reference"
+    assert evidence["iterations"][0]["signal_converter_source"] == "byo_command"
+    assert "signal_converter" in marker.read_text(encoding="utf-8")
+    sample_signal = evidence["iterations"][0]["sample_signal"]
+    assert sample_signal["schema"] == SCHEMA_RL_SIGNAL
+    assert sample_signal["source"] == "byo-test"
+    # The BYO signal must remain parseable by the downstream trainer contract.
+    parse_vlm_signal_batch(sample_signal)
+
+
+def test_byo_signal_converter_malformed_raises_no_fallback(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-signal-bad",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_signal_converter=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} "
+            f"{_signal_converter_command(tmp_path, valid=False)}"
+        ),
+    )
+
+    with pytest.raises(Sim2RealLoopError, match="rl_signal"):
+        run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+
+def test_byo_trainer_command_swap_invoked_and_recorded(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-trainer-swap",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_trainer_command=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} {_trainer_command(tmp_path)}"
+        ),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["trainer_source"] == "byo_command"
+    assert evidence["signal_converter_source"] == "reference"
+    iteration = evidence["iterations"][0]
+    assert iteration["trainer_source"] == "byo_command"
+    update = iteration["update"]
+    assert update["reward_head_after"] == pytest.approx(0.26)
+    assert update["policy_output_after"] == [0.06, 0.0, -0.03]
+    assert update["policy_delta_l2"] == pytest.approx(0.42)
+    assert update["backend"] == "byo-test"
+    # The no-signal control still runs the in-process reference trainer.
+    assert iteration["no_signal_control"]["backend"] != "byo-test"
+    assert "trainer" in marker.read_text(encoding="utf-8")
+
+
+def test_byo_trainer_command_missing_fields_raises_no_fallback(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-trainer-bad",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_trainer_command=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} "
+            f"{_trainer_command(tmp_path, valid=False)}"
+        ),
+    )
+
+    with pytest.raises(Sim2RealLoopError, match="policy_output_after"):
+        run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+
+def test_default_inner_loop_provenance_is_reference(tmp_path: Path) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-default-prov",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=_component_command(tmp_path),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["trainer_source"] == "reference"
+    assert evidence["signal_converter_source"] == "reference"
+
+
+def test_full_loop_writes_rerun_recording_by_default(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-default",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    viz = report["visualization"]
+    assert viz["status"] == "written"
+    assert viz["source"] == "reference"
+    rrd = tmp_path / "reports" / "sim2real.rrd"
+    assert rrd.exists() and rrd.stat().st_size > 0
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "WORKS"
+
+
+def test_full_loop_rerun_disabled_toggle(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-off",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+        rerun_enabled=False,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["status"] == "disabled"
+    assert not (tmp_path / "reports" / "sim2real.rrd").exists()
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "SEAM"
+
+
+def test_full_loop_rerun_warns_when_sdk_missing(monkeypatch, tmp_path: Path) -> None:
+    import npa.workflows.sim2real_viz as viz_module
+
+    def _raise(**_kwargs):
+        raise viz_module.RerunUnavailableError("rerun-sdk is not installed")
+
+    monkeypatch.setattr(viz_module, "emit_sim2real_rerun", _raise)
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-warn",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["status"] == "skipped"
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "WARN"
+
+
+def test_vlm_signal_update_result_from_dict_defaults_and_required() -> None:
+    result = VlmSignalUpdateResult.from_dict(
+        {
+            "reward_head_after": 0.3,
+            "policy_output_after": [0.1, -0.2],
+            "policy_delta_l2": 0.5,
+        }
+    )
+
+    assert result.reward_head_after == 0.3
+    assert result.policy_output_after == [0.1, -0.2]
+    assert result.policy_delta_l2 == 0.5
+    # Safe defaults fill the rest.
+    assert result.policy_output_before == [0.0, 0.0]
+    assert result.backend == "byo_command"
+    assert result.status == "updated"
+    assert result.loss_integration_point == "byo_trainer_command"
+    assert result.to_dict()["policy_delta_l2"] == 0.5
+
+    for missing in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
+        payload = {
+            "reward_head_after": 0.3,
+            "policy_output_after": [0.1],
+            "policy_delta_l2": 0.5,
+        }
+        del payload[missing]
+        with pytest.raises(PolicyContainerError):
+            VlmSignalUpdateResult.from_dict(payload)
+
+    with pytest.raises(PolicyContainerError):
+        VlmSignalUpdateResult.from_dict(
+            {
+                "reward_head_after": 0.3,
+                "policy_output_after": [],
+                "policy_delta_l2": 0.5,
+            }
+        )
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
