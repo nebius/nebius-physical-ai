@@ -33,7 +33,7 @@ VALID_KINDS = {
     "build-import",
 }
 VALID_GPU = {"required", "optional", "none"}
-VALID_STATUS = {"ready", "gpu-gated", "blocked-on-upstream"}
+VALID_STATUS = {"ready", "gpu-gated", "blocked-on-upstream", "needs-image-update"}
 
 
 @dataclass(frozen=True)

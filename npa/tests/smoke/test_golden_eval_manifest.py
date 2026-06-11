@@ -121,9 +121,9 @@ def test_cli_show_emits_record() -> None:
 
 
 def test_cli_run_dry_run_prints_command() -> None:
-    result = runner.invoke(app, ["workbench", "golden-eval", "run", "fiftyone"])
+    result = runner.invoke(app, ["workbench", "golden-eval", "run", "lerobot"])
     assert result.exit_code == 0, strip_ansi(result.output)
-    assert "test_fiftyone_functional" in strip_ansi(result.output)
+    assert "test_lerobot_functional" in strip_ansi(result.output)
 
 
 def test_cli_run_rejects_unknown_container() -> None:

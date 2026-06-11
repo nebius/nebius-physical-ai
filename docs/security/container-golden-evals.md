@@ -63,7 +63,37 @@ The same logic is available as a script for CI:
 | `build-import` | import/compile proof that the heavy deps resolve |
 
 `status` is one of `ready` (runs on a normal runner), `gpu-gated` (needs a GPU
-host with the image), or `blocked-on-upstream` (B300/CUDA13 family).
+host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family), or
+`needs-image-update` (the published image cannot run its eval yet — see the
+validation results below).
+
+## Validation results (live serverless run)
+
+The golden evals were submitted to **Nebius Serverless AI Jobs** in their real
+container images. Results from the first live run:
+
+| container | GPU | result | detail |
+| --- | --- | --- | --- |
+| `lerobot` | H200 | **PASS 5/5** | version, 50-step PushT train, checkpoint, eval, eval output |
+| `groot` | H100 | **PASS 3/3** | inference script present, uv available, standalone GR00T inference |
+| `genesis` | H100 | FAIL | image runs Python 3.10 without `tomllib`/`tomli`; `npa.smoke._versions` import error |
+| `lancedb` | H100 | FAIL | published image flattens server modules into `/app` and does not bundle `npa.smoke` |
+| `detection-training` | H100 | FAIL | published image copies only `npa.workbench.detection_training`, not `npa.smoke` |
+| `fiftyone` | H100 | FAIL | published `fiftyone:1.15.0` predates the current Dockerfile and lacks `smoke_functional.py` |
+
+Two findings beyond the per-image gaps:
+
+- The two passing evals confirm the end-to-end serverless path (image pull →
+  GPU run → PASS/FAIL) works with no bespoke infrastructure.
+- The L40S serverless preset (`1gpu-40vcpu-160gb`) failed to schedule with
+  `NotEnoughResources`; H100/H200 scheduled reliably. The manifest's
+  `serverless_gpu` values reflect this (default `l40s` only for light evals; use
+  `--gpu h100`/`h200` to override when L40S is constrained).
+
+The four `needs-image-update` failures are **container packaging gaps the golden
+evals surfaced** — not framework bugs. Each is fixed by rebuilding the image to
+bundle `npa.smoke` (lancedb, detection-training), install `tomli` / bump Python
+(genesis), or republish from the current Dockerfile (fiftyone).
 
 ## Summary: safety + Physical AI usefulness
 
@@ -78,16 +108,16 @@ pipeline. Key safety notes are condensed below.
 | `lerobot` | LeRobot policy train/eval/serve | `container-smoke` | required | gpu-gated |
 | `lerobot-policy` | sim-to-real policy stage (serve/train/eval) | `build-import` | optional | gpu-gated |
 | `lerobot-vlm-rl` | VLM-reward RL step for sim-to-real | `workflow-smoke` | optional | gpu-gated |
-| `genesis` | Genesis physics sim + RL teacher + demos | `container-smoke` | required | gpu-gated |
+| `genesis` | Genesis physics sim + RL teacher + demos | `container-smoke` | required | needs-image-update |
 | `isaac-lab` | Isaac Lab RL sim (headless train/eval) | `container-smoke` | required | gpu-gated |
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `build-import` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
-| `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | ready |
-| `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
-| `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
+| `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | needs-image-update |
+| `lancedb` | vector store for AV/perception data | `server-smoke` | optional | needs-image-update |
+| `detection-training` | object-detection train/eval service | `server-smoke` | optional | needs-image-update |
 | `sim2real-envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
 | `sim2real-reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
 | `sim2real-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |

@@ -161,7 +161,9 @@ containers:
       external_fetch: [pypi]
       notes: >-
         Headless EGL/DRI rendering limits documented in genesis skill; no server
-        process by default.
+        process by default. NOTE: the published image runs Python 3.10 without
+        tomllib/tomli, so npa.smoke._versions fails to import; install tomli (or
+        bump Python) in the image before this eval can run.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_genesis_functional
@@ -170,7 +172,7 @@ containers:
       serverless_gpu: h100
       gpu: required
       timeout_seconds: 1200
-      status: gpu-gated
+      status: needs-image-update
 
   isaac-lab:
     image: npa-isaac-lab
@@ -336,15 +338,17 @@ containers:
       external_fetch: [pypi, huggingface, s3]
       notes: >-
         CPU-only; app should be exposed via controlled public-access path, not
-        bound to 0.0.0.0 without auth.
+        bound to 0.0.0.0 without auth. NOTE: the published fiftyone:1.15.0 image
+        predates the current Dockerfile and does not contain smoke_functional.py;
+        rebuild/republish the image before this eval can run.
     golden_eval:
+      # The fiftyone image ships standalone smoke scripts (it does not install
+      # the npa package), so the eval runs the in-image script directly.
       kind: container-smoke
-      module: npa.smoke.test_fiftyone_functional
-      env_module: npa.smoke.test_fiftyone_env
-      command: python -m npa.smoke.test_fiftyone_functional
+      command: python /opt/npa/docker/workbench/fiftyone/smoke_functional.py
       gpu: none
       timeout_seconds: 600
-      status: ready
+      status: needs-image-update
 
   lancedb:
     image: npa-lancedb
@@ -361,14 +365,16 @@ containers:
       external_fetch: [pypi, s3]
       notes: >-
         Server smoke runs entirely on a temp table; no external data required for
-        the health/roundtrip golden eval.
+        the health/roundtrip golden eval. NOTE: the published image flattens the
+        server modules into /app and does not bundle npa.smoke; rebuild the image
+        to include the smoke module before this eval can run.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_lancedb_functional
       command: python -m npa.smoke.test_lancedb_functional
       gpu: optional
       timeout_seconds: 600
-      status: ready
+      status: needs-image-update
 
   detection-training:
     image: npa-detection-training
@@ -385,14 +391,16 @@ containers:
       external_fetch: [pypi, lancedb, s3]
       notes: >-
         Golden eval exercises health + system-info only; no training run, so it
-        stays GPU-optional and fast.
+        stays GPU-optional and fast. NOTE: the published image copies only
+        npa.workbench.detection_training, not npa.smoke; rebuild the image to
+        include the smoke module before this eval can run.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_detection_training_functional
       command: python -m npa.smoke.test_detection_training_functional
       gpu: optional
       timeout_seconds: 300
-      status: ready
+      status: needs-image-update
 
   sim2real-envgen:
     image: npa-sim2real-envgen
