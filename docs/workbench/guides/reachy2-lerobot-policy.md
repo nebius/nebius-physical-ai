@@ -79,8 +79,10 @@ npa workbench lerobot list-checkpoints
 
 ## Go bigger
 
-- **Run serverless on Nebius:** add `--runtime serverless --gpu-type h200`
-  (or `b300` / `l40s`) and `train` submits a Nebius AI Job.
+- **Run serverless on Nebius:** add `--runtime serverless --project-id
+  <your-project-id> --gpu-type h200` (or `b300` / `l40s`) and `train` submits a
+  Nebius AI Job. (Serverless needs `--project-id`, or a project configured in
+  `~/.npa/config.yaml`.)
 - **Try a stronger policy:** `--policy-type smolvla` for a language-conditioned
   VLA baseline, or `diffusion` for smooth continuous actions.
 - **Close the loop:** feed your checkpoint into the
