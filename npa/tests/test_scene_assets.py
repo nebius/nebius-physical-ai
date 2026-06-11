@@ -22,6 +22,43 @@ from npa.genesis import scene_assets as sa
 # --------------------------------------------------------------------------- #
 
 
+def test_default_isaac_stock_scene_spec() -> None:
+    scene = sa.default_isaac_stock_scene_spec()
+    manip = scene.manipuland()
+    assert manip.asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
+    assert sa.ASSET_SOURCE_ISAAC_STOCK in sa.ASSET_SOURCES
+    assert manip.is_mesh() is False  # stock asset, not a downloadable mesh
+    prov = scene.provenance_block()
+    assert prov["objects"][0]["asset_source"] == "isaac_stock"
+    assert prov["objects"][0]["sha256"] == ""
+    assert prov["asset_fallback_used"] is False
+
+
+def test_parse_scene_spec_isaac_stock_object() -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "stock_cube",
+                "asset_source": "isaac_stock",
+                "role": "manipuland",
+                "builtin_path": "lift_cube",
+            }
+        ]
+    }
+    spec = sa.parse_scene_spec(doc)
+    manip = spec.manipuland()
+    assert manip.asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
+    assert manip.builtin_path == "lift_cube"
+
+
+def test_resolve_scene_assets_skips_isaac_stock(tmp_path: Path) -> None:
+    scene = sa.default_isaac_stock_scene_spec()
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=None)
+    # No download attempted; stock object has no local_path / sha256.
+    assert scene.manipuland().local_path == ""
+    assert scene.manipuland().sha256 == ""
+
+
 def test_parse_scene_spec_byo_mesh_object() -> None:
     doc = {
         "schema": sa.SCENE_SPEC_SCHEMA,

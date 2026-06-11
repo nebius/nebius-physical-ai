@@ -34,10 +34,15 @@ SCENE_SPEC_SCHEMA = "npa.sim2real.manip_scene_spec.v1"
 ASSET_SOURCE_BYO_MESH = "byo_mesh"
 ASSET_SOURCE_GENESIS_BUILTIN = "genesis_builtin"
 ASSET_SOURCE_PRIMITIVE = "primitive"
+# Isaac Lab / Isaac Sim stock asset (built-in lift-cube manipuland). No
+# download: it is materialized inside the Isaac image at rollout time. Recorded
+# in provenance as ``asset_source=isaac_stock`` (no sha256, no fallback).
+ASSET_SOURCE_ISAAC_STOCK = "isaac_stock"
 ASSET_SOURCES = (
     ASSET_SOURCE_BYO_MESH,
     ASSET_SOURCE_GENESIS_BUILTIN,
     ASSET_SOURCE_PRIMITIVE,
+    ASSET_SOURCE_ISAAC_STOCK,
 )
 
 ROLE_MANIPULAND = "manipuland"
@@ -227,6 +232,10 @@ def _object_from_dict(raw: dict[str, Any], index: int) -> ObjectSpec:
                 f"object[{index}] genesis_builtin requires builtin_path"
             )
         obj.builtin_path = builtin
+    elif asset_source == ASSET_SOURCE_ISAAC_STOCK:
+        # Optional reference to the stock Isaac asset (e.g. a task id or a
+        # built-in USD key); no download, materialized inside the Isaac image.
+        obj.builtin_path = str(raw.get("builtin_path") or raw.get("stock_asset") or "").strip()
     else:  # primitive
         primitive = str(raw.get("primitive") or PRIMITIVE_BOX).strip()
         if primitive not in PRIMITIVES:
@@ -344,6 +353,31 @@ def synthesize_scene_spec(
         goal_pos=goal_pos,
         goal_threshold=goal_threshold,
         source_uri=mesh_uri,
+    )
+
+
+def default_isaac_stock_scene_spec(*, stock_asset: str = "lift_cube") -> SceneSpec:
+    """Return the stock Isaac Lab scene (built-in lift-cube manipuland).
+
+    Used by the Isaac held-out rollout when no BYO mesh/SceneSpec is supplied.
+    Records ``asset_source=isaac_stock`` provenance (no sha256, no fallback).
+    """
+
+    return SceneSpec(
+        objects=[
+            ObjectSpec(
+                name="isaac_stock_cube",
+                asset_source=ASSET_SOURCE_ISAAC_STOCK,
+                role=ROLE_MANIPULAND,
+                builtin_path=stock_asset,
+                size=(DEFAULT_CUBE_SIZE, DEFAULT_CUBE_SIZE, DEFAULT_CUBE_SIZE),
+                pos=DEFAULT_CUBE_POS,
+                color=DEFAULT_COLOR,
+            )
+        ],
+        goal_pos=DEFAULT_TARGET_POS,
+        goal_threshold=DEFAULT_TARGET_THRESHOLD,
+        source_uri="isaac://stock/lift_cube",
     )
 
 
