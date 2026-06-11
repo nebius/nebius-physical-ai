@@ -484,6 +484,7 @@ def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -
         "npa.cli.workbench.detection_training.load_credentials",
         lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
     )
+    monkeypatch.setenv("DETECTION_TRAINING_TOKEN", "deploy-secret")
 
     result = runner.invoke(
         detection_training_app,
@@ -502,6 +503,39 @@ def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -
     deployment = [item for item in payload["items"] if item["kind"] == "Deployment"][0]
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["node.kubernetes.io/instance-type"] == "gpu-h100-sxm"
     assert deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    secret = [item for item in payload["items"] if item["kind"] == "Secret"][0]
+    assert secret["data"]["DETECTION_TRAINING_AUTH_MODE"] == "<redacted>"
+
+
+def test_deploy_defaults_to_token_auth_and_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.workbench.detection_training.load_credentials",
+        lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
+    )
+    monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
+
+    result = runner.invoke(
+        detection_training_app,
+        ["deploy", "--image", "registry/x:test", "--output-path", "s3://bucket/out", "--dry-run"],
+    )
+    assert result.exit_code != 0
+    assert "DETECTION_TRAINING_TOKEN is required" in result.output
+
+
+def test_deploy_insecure_no_auth_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.workbench.detection_training.load_credentials",
+        lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
+    )
+    monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
+
+    result = runner.invoke(
+        detection_training_app,
+        ["deploy", "--image", "registry/x:test", "--output-path", "s3://bucket/out", "--insecure-no-auth", "--dry-run"],
+    )
+    assert result.exit_code == 0, result.output
+    secret = [item for item in json.loads(result.output)["items"] if item["kind"] == "Secret"][0]
+    assert "DETECTION_TRAINING_TOKEN" not in secret["data"]
 
 
 def test_deploy_can_build_registry_pull_secret_from_docker_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

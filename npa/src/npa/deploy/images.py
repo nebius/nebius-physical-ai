@@ -9,8 +9,15 @@ import os
 from pathlib import Path
 from typing import Any
 
+# Primary public Workbench registry (eu-north1). A registry path is a public
+# locator, not a credential: pulls are still gated by the registry pull secret /
+# IAM token, which are never committed. Operators can override it with NPA_REGISTRY
+# or `container_registry` in ~/.npa/config.yaml.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
 DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+# Backup registry (us-central1) used for failover when the primary is
+# unavailable. Override with NPA_BACKUP_REGISTRY.
+BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/registry-u00gwj4vqcp98k7ph6"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
@@ -161,8 +168,51 @@ def container_image_for_tool(
             raise ValueError(f"Image variants are only defined for SONIC, got tool={tool!r}")
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
-    resolved_registry = registry or os.environ.get("NPA_REGISTRY") or DEFAULT_CONTAINER_REGISTRY
+    resolved_registry = registry or _primary_registry()
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
+
+
+def _primary_registry() -> str:
+    """Resolve the primary registry: NPA_REGISTRY, then NPA_REGISTRY_ID, then default."""
+    explicit = os.environ.get("NPA_REGISTRY", "").strip()
+    if explicit:
+        return explicit
+    registry_id = os.environ.get("NPA_REGISTRY_ID", "").strip()
+    if registry_id:
+        return f"cr.eu-north1.nebius.cloud/{registry_id}"
+    return DEFAULT_CONTAINER_REGISTRY
+
+
+def backup_container_registry() -> str:
+    """Resolve the backup registry override, or the committed default."""
+    return os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
+
+
+def container_image_candidates(
+    tool: str,
+    *,
+    registry: str | None = None,
+    tag: str | None = None,
+    gpu_target: str | None = None,
+    image_variant: str | None = None,
+) -> list[str]:
+    """Return image refs to try in order: primary first, then the backup registry.
+
+    Callers that support pull failover should iterate these. When the primary is
+    explicitly overridden, the backup is still appended unless it is identical.
+    """
+    primary = container_image_for_tool(
+        tool, registry=registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+    )
+    candidates = [primary]
+    backup_registry = backup_container_registry()
+    if backup_registry:
+        backup = container_image_for_tool(
+            tool, registry=backup_registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+        )
+        if backup != primary:
+            candidates.append(backup)
+    return candidates
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:
