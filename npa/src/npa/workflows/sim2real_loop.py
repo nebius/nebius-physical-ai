@@ -30,6 +30,7 @@ from npa.workbench.lerobot.policy_container import (
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""
 DEFAULT_PREFIX = "sim2real-b"
+DEFAULT_COSMOS2_TRANSFER_TAG = "2.5.0"
 DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
 DEFAULT_ENVGEN_TAG = "0.1.1"
 DEFAULT_REFERENCE_POLICY_TAG = "0.1.1"
@@ -120,7 +121,7 @@ class Sim2RealLoopConfig:
     heldout_envs_uri: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
-    augment_image: str = f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+    augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
     policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
@@ -205,6 +206,14 @@ def default_envgen_image(*, registry: str | None = None) -> str:
     if registry or os.environ.get("NPA_REGISTRY"):
         return container_image_for_tool("sim2real-envgen", registry=registry)
     return f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+
+
+def default_augment_image(*, registry: str | None = None) -> str:
+    """Return the reference Cosmos2 transfer image used by Stage 3."""
+
+    if registry or os.environ.get("NPA_REGISTRY"):
+        return container_image_for_tool("cosmos2-transfer", registry=registry)
+    return f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
 
 
 def default_policy_image(*, registry: str | None = None) -> str:
@@ -299,7 +308,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         augment_image=str(
             overrides.get("augment_image")
             or os.environ.get("AUGMENT_IMAGE")
-            or default_envgen_image(registry=registry or None)
+            or default_augment_image(registry=registry or None)
         ),
         policy_image=str(
             overrides.get("policy_image")
@@ -598,7 +607,8 @@ def run_full_loop(
                 "schema": "npa.sim2real.augment_manifest.v1",
                 "stage": 3,
                 "augment": "cosmos2-transfer",
-                "image": config.augment_image or "reference-cosmos2-transfer",
+                "image": config.augment_image
+                or f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}",
                 "assets_uri": config.assets_uri,
                 "output_uri": "augment/",
                 "status": "reference_manifest",

@@ -19,7 +19,9 @@ from npa.workflows.sim2real_loop import (
     SCHEMA_VLM_EVAL,
     Sim2RealLoopConfig,
     artifact_uris,
+    build_config_from_env,
     convert_vlm_eval_to_rl_signal,
+    default_augment_image,
     evaluate_rollout_with_vlm,
     generate_action_rollouts,
     run_full_loop,
@@ -174,9 +176,12 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     )
     assert decision["decision"] == "promote_checkpoint"
     trigger = json.loads((tmp_path / "stage_01_trigger" / "trigger.json").read_text())
+    augment = json.loads((tmp_path / "augment" / "manifest.json").read_text())
     retrigger = json.loads(
         (tmp_path / "stage_13_retrigger" / "retrigger.json").read_text()
     )
+    assert augment["augment"] == "cosmos2-transfer"
+    assert augment["image"] == "npa-cosmos2-transfer:2.5.0"
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
     )
@@ -567,6 +572,34 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     assert report["byo_seams"]["trigger_dataset_uri"] == "s3://bucket/triggers/pusht/"
 
 
+def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
+
+    assert default_augment_image() == "npa-cosmos2-transfer:2.5.0"
+
+    config = build_config_from_env(run_id="sim2real-images")
+
+    assert config.augment_image == "npa-cosmos2-transfer:2.5.0"
+    assert config.vlm_image == "npa-cosmos3-reason:3.0.1-genuine-sm120"
+    assert "cosmos3" not in config.augment_image
+
+
+def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/workbench")
+    monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
+
+    config = build_config_from_env(run_id="sim2real-images")
+
+    assert (
+        config.augment_image
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.0"
+    )
+    assert (
+        config.vlm_image == "registry.example/workbench/npa-cosmos3-reason:3.0.1-genuine-sm120"
+    )
+
+
 def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     docs = [
         doc
@@ -607,13 +640,22 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
-        input_uri="s3://bucket/input/", output_uri="s3://bucket/augment/"
+        input_uri="s3://bucket/input/",
+        output_uri="s3://bucket/augment/",
+        image="npa-cosmos2-transfer:2.5.0",
     )
     reason = cosmos3.reason(
-        input_uri="s3://bucket/rollouts/", output_uri="s3://bucket/vlm_eval/"
+        input_uri="s3://bucket/rollouts/",
+        output_uri="s3://bucket/vlm_eval/",
+        image="npa-cosmos3-reason:3.0.0",
     )
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
+    assert transfer["image"] == "npa-cosmos2-transfer:2.5.0"
+    assert reason["image"] == "npa-cosmos3-reason:3.0.0"
+    assert transfer["image"] != reason["image"]
+    assert "cosmos3" not in transfer["image"]
+    assert "cosmos2" not in reason["image"]
     assert "cosmos2-transfer" in COSMOS2_TRANSFER.read_text(encoding="utf-8")
     assert "cosmos3-reason" in COSMOS3_REASON.read_text(encoding="utf-8")
