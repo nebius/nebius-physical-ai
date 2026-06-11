@@ -11,7 +11,7 @@ resources:
   # image with npa plus upstream SONIC data_process scripts.
   image_id: "docker:${NPA_RETARGETING_IMAGE}"
 envs:
-  NPA_RETARGETING_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-retargeting:0.1.0"
+  NPA_RETARGETING_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
   NPA_RETARGETING_UPSTREAM_REF: "a9d20b2ac0949244d94461a1a3263f38c5027c4a"
   INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
   RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"

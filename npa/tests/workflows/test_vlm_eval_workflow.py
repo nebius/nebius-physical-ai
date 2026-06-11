@@ -8,7 +8,7 @@ from npa.workbench.vlm_eval import DEFAULT_MODEL
 
 
 ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_VLM_IMAGE = "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+EXPECTED_VLM_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
 VLM_EVAL_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "vlm-eval.yaml"
 VLM_EVAL_BENCHMARK_YAML = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "vlm-eval-benchmark.yaml"

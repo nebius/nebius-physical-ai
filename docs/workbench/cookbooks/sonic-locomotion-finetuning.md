@@ -37,7 +37,7 @@ Retargeting uses `NPA_RETARGETING_IMAGE`, which defaults to the CPU
 CPU Python dependencies, and the pinned upstream
 `NVlabs/GR00T-WholeBodyControl` data-process scripts. MJLab still uses
 `NPA_WORKBENCH_IMAGE`, which defaults to the pushed generic Workbench image
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6`.
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`.
 
 ## Tool Templates
 

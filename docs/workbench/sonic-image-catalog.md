@@ -90,19 +90,19 @@ sonic.submit_workflow(
 ## Related BYO Images
 
 The VLM eval workflows use `NPA_VLM_IMAGE` for the serving image. The committed
-default is `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9`,
+default is `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9`,
 a pushed CUDA/PyTorch Workbench image; set `NPA_VLM_IMAGE` to a prebuilt VLM or
 vLLM image when you need pinned serving dependencies.
 
 The retargeting workflow uses `NPA_RETARGETING_IMAGE` for the CPU preprocess
 image. The committed default is
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-retargeting:0.1.0`, a pushed
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0`, a pushed
 image that installs this repository's `npa` package, CPU preprocess
 dependencies, and pinned upstream SONIC data-process scripts.
 
 MJLab workflows use `NPA_WORKBENCH_IMAGE` for the generic Workbench CLI image.
 The committed default remains
-`cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6`.
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`.
 
 ## Build Commands
 

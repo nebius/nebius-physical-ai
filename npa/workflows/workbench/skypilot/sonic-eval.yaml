@@ -12,7 +12,7 @@ resources:
   # image that installs the npa CLI and this repository's Workbench package.
   image_id: "docker:${NPA_WORKBENCH_IMAGE}"
 envs:
-  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-genesis:0.4.6"
+  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
   NPA_PIPELINE_RUN_ID: "<run-id>"
   SONIC_ONNX: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.onnx"
   SONIC_METADATA: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.metadata.json"

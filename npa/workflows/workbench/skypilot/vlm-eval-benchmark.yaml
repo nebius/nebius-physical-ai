@@ -13,7 +13,7 @@ resources:
   # when you need pinned serving dependencies.
   image_id: "docker:${NPA_VLM_IMAGE}"
 envs:
-  NPA_VLM_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  NPA_VLM_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9"
   VLM_BENCHMARK_DATASET_URI: "s3://<your-bucket-name>/vlm-eval/benchmark/benchmark.json"
   VLM_EVAL_BENCHMARK_OUTPUT_URI: "s3://<your-bucket-name>/vlm-eval/benchmark/results/"
   VLM_BACKEND: "self-hosted"
