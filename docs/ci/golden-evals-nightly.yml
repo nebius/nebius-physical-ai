@@ -76,17 +76,28 @@ jobs:
           python npa/scripts/run_golden_evals.py run cosmos3-reason --execute
 
   gpu-evals:
-    name: GPU golden evals
+    name: Serverless GPU golden evals
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gpu_evals }}
-    runs-on: [self-hosted, gpu]
+    runs-on: ubuntu-latest
     needs: validate-manifest
     strategy:
       fail-fast: false
       matrix:
-        container: [lerobot, genesis, isaac-lab, cosmos, groot, sonic, fiftyone, lancedb, detection-training]
+        container: [lerobot, genesis, isaac-lab, cosmos, groot, sonic, fiftyone, lancedb, detection-training, retargeting]
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Run container golden eval
-        run: python npa/scripts/run_golden_evals.py run ${{ matrix.container }} --execute
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e "."
+
+      # Submits the golden eval to a Nebius Serverless Job in the real container
+      # image on a GPU and waits for the PASS/FAIL result. Requires Nebius +
+      # storage credentials (configured via ~/.npa/credentials.yaml or env).
+      - name: Run container golden eval (serverless)
+        run: python npa/scripts/run_golden_evals.py run ${{ matrix.container }} --serverless

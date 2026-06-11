@@ -45,6 +45,7 @@ containers:
     golden_eval:
       kind: build-import
       command: 'python -c "import torch; assert torch.cuda.is_available(); import flash_attn"'
+      serverless_gpu: b300
       gpu: required
       timeout_seconds: 120
       status: blocked-on-upstream
@@ -70,6 +71,7 @@ containers:
       module: npa.smoke.test_groot_functional
       env_module: npa.smoke.test_groot_env
       command: python -m npa.smoke.test_groot_functional
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -95,6 +97,7 @@ containers:
       module: npa.smoke.test_lerobot_functional
       env_module: npa.smoke.test_lerobot_env
       command: python -m npa.smoke.test_lerobot_functional
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -164,6 +167,7 @@ containers:
       module: npa.smoke.test_genesis_functional
       env_module: npa.smoke.test_genesis_env
       command: python -m npa.smoke.test_genesis_functional
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 1200
       status: gpu-gated
@@ -189,6 +193,7 @@ containers:
       module: npa.smoke.test_isaac_lab_functional
       env_module: npa.smoke.test_isaac_lab_env
       command: python -m npa.smoke.test_isaac_lab_functional
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -214,6 +219,7 @@ containers:
       module: npa.smoke.test_cosmos_functional
       env_module: npa.smoke.test_cosmos_env
       command: python -m npa.smoke.test_cosmos_functional
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -239,6 +245,7 @@ containers:
     golden_eval:
       kind: build-import
       command: python -c "import npa.workbench.cosmos2"
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 120
       status: gpu-gated
@@ -262,6 +269,7 @@ containers:
     golden_eval:
       kind: workflow-smoke
       command: python -m npa.workflows.sim2real_loop inner-loop --help
+      serverless_gpu: b300
       gpu: optional
       timeout_seconds: 120
       status: blocked-on-upstream

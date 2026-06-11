@@ -69,6 +69,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
     ge = spec.golden_eval
     print(f"{spec.name} ({spec.image}) golden eval: {ge.kind}, gpu={ge.gpu}")
     print(f"  $ {ge.command}")
+
+    if args.serverless:
+        from npa.smoke.serverless_runner import submit_golden_eval
+
+        result = submit_golden_eval(
+            args.container,
+            gpu_type=args.gpu or None,
+            timeout=args.timeout,
+            on_state_change=lambda job: print(f"  -> {getattr(job, 'status', '?')}"),
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 1
+
     if not args.execute:
         return 0
     try:
@@ -102,6 +115,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Execute the command (requires the container runtime); default prints it.",
     )
+    p_run.add_argument(
+        "--serverless",
+        action="store_true",
+        help="Run the eval in its container image on a Nebius Serverless GPU.",
+    )
+    p_run.add_argument("--gpu", default="", help="Serverless GPU type override.")
+    p_run.add_argument("--timeout", default="40m", help="Serverless job timeout.")
     p_run.set_defaults(func=_cmd_run)
 
     args = parser.parse_args(argv)

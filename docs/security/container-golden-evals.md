@@ -32,8 +32,22 @@ npa workbench golden-eval list              # table of every container + eval
 npa workbench golden-eval show lerobot      # full safety + eval record (JSON)
 npa workbench golden-eval validate          # offline completeness/consistency
 npa workbench golden-eval run cosmos        # print the eval command (dry run)
-npa workbench golden-eval run cosmos --execute   # run it (needs the runtime)
+npa workbench golden-eval run cosmos --execute       # run locally (needs runtime)
+npa workbench golden-eval run lerobot --serverless   # run on a Nebius GPU
+npa workbench golden-eval run genesis --serverless --gpu h100
 ```
+
+## Running on Nebius Serverless
+
+`--serverless` submits the golden eval as a **Nebius Serverless AI Job** that
+pulls the tool's real container image (resolved via
+`npa.deploy.images.container_image_for_tool`) and runs the eval command on a
+GPU, then waits for the PASS/FAIL result. This is the path the nightly GPU job
+uses — no self-hosted GPU runner required, only Nebius + storage credentials.
+
+Each eval's GPU is taken from `golden_eval.serverless_gpu` in the manifest
+(falling back to `l40s`, since Nebius Jobs always require a GPU preset) and can
+be overridden with `--gpu`. Implementation: `npa.smoke.serverless_runner`.
 
 The same logic is available as a script for CI:
 `python npa/scripts/run_golden_evals.py {validate,list,run}`.

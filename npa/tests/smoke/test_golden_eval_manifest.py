@@ -75,6 +75,21 @@ def test_safety_and_physical_ai_documented(name: str) -> None:
         assert spec.safety.get(field), f"{name} missing safety.{field}"
 
 
+def test_serverless_gpu_values_are_known() -> None:
+    known = {"h200", "h100", "l40s", "b300", "rtx6000", "b200"}
+    for name, spec in load_manifest().items():
+        gpu = spec.golden_eval.serverless_gpu
+        if gpu is not None:
+            assert gpu in known, f"{name}: unknown serverless_gpu {gpu!r}"
+
+
+def test_serverless_runner_imports() -> None:
+    # Import-safe: pulls in no GPU/framework deps.
+    from npa.smoke import serverless_runner
+
+    assert hasattr(serverless_runner, "submit_golden_eval")
+
+
 def test_referenced_smoke_modules_import() -> None:
     """Every module-backed golden eval points at an importable module."""
 

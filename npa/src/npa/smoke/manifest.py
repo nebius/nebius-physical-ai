@@ -48,6 +48,7 @@ class GoldenEval:
     module: str | None = None
     env_module: str | None = None
     artifact: str | None = None
+    serverless_gpu: str | None = None
 
     @property
     def runnable_in_ci(self) -> bool:
@@ -128,6 +129,7 @@ def load_manifest() -> dict[str, ContainerSpec]:
             module=eval_raw.get("module"),
             env_module=eval_raw.get("env_module"),
             artifact=eval_raw.get("artifact"),
+            serverless_gpu=eval_raw.get("serverless_gpu"),
         )
         specs[name] = ContainerSpec(
             name=name,

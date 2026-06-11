@@ -123,12 +123,22 @@ def run(
         "--execute/--dry-run",
         help="Execute the eval command locally (requires the container runtime).",
     ),
+    serverless: bool = typer.Option(
+        False,
+        "--serverless",
+        help="Run the golden eval in its container image on a Nebius Serverless GPU.",
+    ),
+    gpu: str = typer.Option(
+        "", "--gpu", help="Serverless GPU type override (e.g. h200, h100, l40s, b300)."
+    ),
+    timeout: str = typer.Option("40m", "--timeout", help="Serverless job timeout."),
 ) -> None:
-    """Print (or execute) a container's golden-eval command.
+    """Print, execute locally, or run on serverless a container's golden eval.
 
-    Without ``--execute`` this prints the command so it can be run inside the
-    appropriate container image. With ``--execute`` it runs the command in the
-    current environment, which only succeeds when that runtime is present.
+    - default: print the command (dry run).
+    - ``--execute``: run locally (only works where the runtime is present).
+    - ``--serverless``: submit the eval to a Nebius Serverless Job in the real
+      container image on a GPU, and wait for the PASS/FAIL result.
     """
 
     try:
@@ -140,6 +150,24 @@ def run(
     ge = spec.golden_eval
     console.print(f"[cyan]{spec.name}[/cyan] ({spec.image}) golden eval: {ge.kind}, gpu={ge.gpu}")
     console.print(f"  $ {ge.command}")
+
+    if serverless:
+        from npa.smoke.serverless_runner import submit_golden_eval
+
+        def _on_change(job: object) -> None:
+            err_console.print(f"  -> {getattr(job, 'status', '?')}")
+
+        result = submit_golden_eval(
+            name,
+            gpu_type=gpu or None,
+            timeout=timeout,
+            on_state_change=_on_change,
+        )
+        console.print_json(json.dumps(result))
+        if not result.get("ok"):
+            raise typer.Exit(code=1)
+        return
+
     if not execute:
         return
 
