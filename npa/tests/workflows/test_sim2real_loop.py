@@ -31,6 +31,12 @@ from npa.workflows.sim2real_loop import (
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+SIM2REAL_ACTIONS = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-actions.yaml"
+)
+SIM2REAL_ENVGEN_SPLIT = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-envgen-split.yaml"
+)
 COSMOS2_TRANSFER = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
 )
@@ -610,6 +616,8 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert len(docs) == 1
     task = docs[0]
     assert task["name"] == "sim2real-full-loop"
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert task["resources"]["accelerators"] == "RTX6000:1"
 
     # SkyPilot 0.12.2 does not interpolate ${VAR} inside `envs` or `image_id`.
     # The raw runbook must therefore carry materialized literals and expand env
@@ -634,8 +642,26 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
+    assert "--k8s-gpu-product" in task["run"]
+    assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
+
+
+def test_sim2real_component_workflows_target_rtx_pro_6000() -> None:
+    actions = [
+        doc
+        for doc in yaml.safe_load_all(SIM2REAL_ACTIONS.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
+    envgen = [
+        doc
+        for doc in yaml.safe_load_all(SIM2REAL_ENVGEN_SPLIT.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
+
+    assert actions[0]["resources"]["accelerators"] == "RTXPRO6000:1"
+    assert envgen[0]["resources"]["accelerators"] == "RTXPRO6000:1"
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
