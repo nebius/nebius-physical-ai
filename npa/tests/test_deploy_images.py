@@ -28,6 +28,14 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         container_image_for_tool("groot")
         == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-groot:0.1.0"
     )
+    assert (
+        container_image_for_tool("cosmos2-transfer")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos2-transfer:2.5.0"
+    )
+    assert (
+        container_image_for_tool("cosmos3-reason")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:3.0.1-genuine-sm120"
+    )
 
 
 def test_packaged_supported_tool_versions_match_pyproject() -> None:
