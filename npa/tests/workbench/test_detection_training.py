@@ -522,6 +522,29 @@ def test_deploy_can_build_registry_pull_secret_from_docker_auth(tmp_path: Path, 
     }
 
 
+def test_token_auth_rejects_missing_and_invalid_tokens() -> None:
+    from npa.workbench.detection_training.service import create_app
+
+    client = TestClient(create_app(auth_mode="token", token="s3cr3t"))
+
+    assert client.get("/health").status_code == 401
+    assert client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/health", headers={"Authorization": "s3cr3t"}).status_code == 401
+
+    ok = client.get("/health", headers={"Authorization": "Bearer s3cr3t"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "ok"
+
+
+def test_token_auth_mode_without_token_is_misconfiguration() -> None:
+    from npa.workbench.detection_training.service import create_app
+
+    client = TestClient(create_app(auth_mode="token", token=""))
+    response = client.get("/health", headers={"Authorization": "Bearer anything"})
+    assert response.status_code == 500
+    assert "not configured" in response.json()["detail"]
+
+
 @pytest.mark.skipif(os.environ.get("NPA_INTEGRATION_E2E") != "1", reason="Set NPA_INTEGRATION_E2E=1 to run detection-training e2e")
 def test_detection_training_e2e_placeholder() -> None:
     assert os.environ["NPA_INTEGRATION_E2E"] == "1"

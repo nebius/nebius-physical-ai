@@ -115,6 +115,13 @@ def deploy_cmd(
     if dry_run:
         typer.echo(json.dumps(_redact_manifest(manifest), indent=2, sort_keys=True))
         return
+    if auth_mode == "none":
+        typer.echo(
+            "Warning: --auth-mode none deploys detection-training without token auth. The service "
+            "drives GPU training and carries S3 credentials, and any pod in the cluster can reach it. "
+            "Use --auth-mode token with DETECTION_TRAINING_TOKEN set.",
+            err=True,
+        )
     if image_pull_secret:
         _ensure_image_pull_secret(
             image=resolved_image,

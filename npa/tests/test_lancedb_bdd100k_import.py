@@ -192,6 +192,27 @@ def test_bdd100k_sdk_service_mode_matches_http_endpoint(tmp_path: Path, monkeypa
     assert sdk_result.to_dict() == endpoint_payload
 
 
+def test_lancedb_token_auth_rejects_missing_and_invalid_tokens(tmp_path: Path) -> None:
+    app = create_app(storage_path=str(tmp_path / "auth-root"), auth_mode="token", token="s3cr3t")
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 401
+    assert client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/health", headers={"Authorization": "s3cr3t"}).status_code == 401
+
+    ok = client.get("/health", headers={"Authorization": "Bearer s3cr3t"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "ok"
+
+
+def test_lancedb_token_auth_mode_without_token_is_misconfiguration(tmp_path: Path) -> None:
+    app = create_app(storage_path=str(tmp_path / "auth-root"), auth_mode="token", token="")
+    client = TestClient(app)
+    response = client.get("/health", headers={"Authorization": "Bearer anything"})
+    assert response.status_code == 500
+    assert "not configured" in response.json()["detail"]
+
+
 def test_bdd100k_endpoint_rejects_invalid_split(tmp_path: Path) -> None:
     app = create_app(storage_path=str(tmp_path / "service-root"), auth_mode="none")
     client = TestClient(app)
