@@ -145,6 +145,13 @@ class Sim2RealLoopConfig:
     heldout_envs_uri: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
+    # BYO robot embodiment (alongside the object SceneSpec). ``robot_spec_uri``
+    # points at a RobotSpec JSON; ``robot_preset`` selects a built-in preset
+    # (franka/ur5e/ur10e/flexiv); ``robot_source`` selects a bare source. All
+    # empty => the default Franka Panda robot (no change to today's behavior).
+    robot_spec_uri: str = ""
+    robot_source: str = ""
+    robot_preset: str = ""
     augment_image: str = f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
     policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
@@ -347,6 +354,24 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         scene_spec_uri=str(
             overrides.get("scene_spec_uri") or os.environ.get("SCENE_SPEC_URI") or ""
         ),
+        robot_spec_uri=str(
+            overrides.get("robot_spec_uri")
+            or os.environ.get("ROBOT_SPEC_URI")
+            or os.environ.get("NPA_SIM2REAL_ROBOT_SPEC_URI")
+            or ""
+        ),
+        robot_source=str(
+            overrides.get("robot_source")
+            or os.environ.get("ROBOT_SOURCE")
+            or os.environ.get("NPA_SIM2REAL_ROBOT_SOURCE")
+            or ""
+        ).strip().lower(),
+        robot_preset=str(
+            overrides.get("robot_preset")
+            or os.environ.get("ROBOT_PRESET")
+            or os.environ.get("NPA_SIM2REAL_ROBOT_PRESET")
+            or ""
+        ).strip().lower(),
         augment_image=str(
             overrides.get("augment_image")
             or os.environ.get("AUGMENT_IMAGE")
@@ -1490,7 +1515,10 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
             "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-genesis}\" "
             "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
             "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\""
+            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
+            "--robot-spec-uri \"${NPA_SIM2REAL_ROBOT_SPEC_URI:-}\" "
+            "--robot-source \"${NPA_SIM2REAL_ROBOT_SOURCE:-}\" "
+            "--robot-preset \"${NPA_SIM2REAL_ROBOT_PRESET:-}\""
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
@@ -1950,6 +1978,9 @@ def run_heldout_eval(
             "NPA_SIM2REAL_ISAAC_TASK": config.isaac_task,
             "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
             "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
+            "NPA_SIM2REAL_ROBOT_SPEC_URI": config.robot_spec_uri,
+            "NPA_SIM2REAL_ROBOT_SOURCE": config.robot_source,
+            "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
         },
     )
     if config.byo_eval_command.strip():
@@ -2070,6 +2101,9 @@ def _normalize_heldout_report(
                 payload["asset_provenance"].get("asset_fallback_used", False),
             )
         )
+    if "robot_provenance" in payload:
+        report["robot_provenance"] = payload["robot_provenance"]
+        report["robot_fallback_used"] = bool(payload.get("robot_fallback_used", False))
     return report
 
 
@@ -2195,6 +2229,9 @@ def run_heldout_eval_component_from_s3(
     scene_spec_uri: str = "",
     assets_uri: str = "",
     byo_mesh_uri: str = "",
+    robot_spec_uri: str = "",
+    robot_source: str = "",
+    robot_preset: str = "",
     sim_backend: str = DEFAULT_SIM_BACKEND,
     isaac_task: str = DEFAULT_ISAAC_TASK,
 ) -> dict[str, Any]:
@@ -2243,11 +2280,19 @@ def run_heldout_eval_component_from_s3(
                 dest_dir=root / "assets",
                 client=client,
             )
+        robot = _resolve_heldout_robot(
+            robot_spec_uri=robot_spec_uri,
+            robot_source=robot_source,
+            robot_preset=robot_preset,
+            dest_dir=root / "robot",
+            client=client,
+        )
         payload = _component_heldout_payload(
             envs,
             inner_evidence=inner_evidence,
             threshold=threshold,
             scene=scene,
+            robot=robot,
             sim_backend=sim_backend,
             isaac_task=isaac_task,
         )
@@ -2260,6 +2305,13 @@ def run_heldout_eval_component_from_s3(
                 str(spec_path),
                 _sibling_uri(output_uri, "consumed-scene-spec.json"),
             )
+        if robot is not None:
+            robot_path = root / "consumed-robot-spec.json"
+            _write_json_artifact(robot_path, robot.provenance())
+            client.upload_file(
+                str(robot_path),
+                _sibling_uri(output_uri, "consumed-robot-spec.json"),
+            )
         print(
             json.dumps(
                 {
@@ -2268,6 +2320,9 @@ def run_heldout_eval_component_from_s3(
                     "env_count": len(payload["per_env"]),
                     "output_uri": output_uri,
                     "asset_fallback_used": payload.get("asset_fallback_used"),
+                    "robot_source": payload.get("robot_provenance", {}).get("robot_source")
+                    if payload.get("robot_provenance")
+                    else None,
                 },
                 sort_keys=True,
             )
@@ -2346,6 +2401,47 @@ def _resolve_isaac_scene(
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
     return scene
+
+
+def _resolve_heldout_robot(
+    *,
+    robot_spec_uri: str,
+    robot_source: str,
+    robot_preset: str,
+    dest_dir: Path,
+    client: Any,
+) -> Any:
+    """Download/synthesize and resolve a RobotSpec for the held-out rollout.
+
+    Returns a resolved ``RobotSpec`` (with local asset path + sha256 for BYO
+    robots) or ``None`` when no robot is requested (default Franka path). A BYO
+    robot that fails to download/validate raises — there is no silent fallback
+    to Franka.
+    """
+
+    from npa.genesis import robot_assets
+
+    robot_spec_uri = (robot_spec_uri or "").strip()
+    robot_source = (robot_source or "").strip().lower()
+    robot_preset = (robot_preset or "").strip().lower()
+    if not robot_spec_uri and not robot_source and not robot_preset:
+        return None
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if robot_spec_uri:
+        spec_local = dest_dir / "robot-spec.json"
+        client.download_path(robot_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        spec = robot_assets.parse_robot_spec(doc)
+    else:
+        spec = robot_assets.robot_spec_from_inputs(
+            robot_source=robot_source,
+            robot_preset=robot_preset,
+        )
+        if spec is None:
+            return None
+    robot_assets.resolve_robot_asset(spec, dest_dir=dest_dir, client=client)
+    return spec
 
 
 def _sibling_uri(uri: str, filename: str) -> str:
@@ -2451,6 +2547,7 @@ def _component_heldout_payload(
     inner_evidence: dict[str, Any],
     threshold: float,
     scene: Any = None,
+    robot: Any = None,
     sim_backend: str = DEFAULT_SIM_BACKEND,
     isaac_task: str = DEFAULT_ISAAC_TASK,
 ) -> dict[str, Any]:
@@ -2469,6 +2566,7 @@ def _component_heldout_payload(
             inner_evidence=inner_evidence,
             threshold=threshold,
             scene=scene,
+            robot=robot,
             isaac_task=isaac_task,
         )
         payload = {
@@ -2485,6 +2583,7 @@ def _component_heldout_payload(
             inner_evidence=inner_evidence,
             threshold=threshold,
             scene=scene,
+            robot=robot,
         )
         payload = {
             "schema": SCHEMA_HELDOUT_REPORT,
@@ -2494,6 +2593,14 @@ def _component_heldout_payload(
             "rollout_backend": "npa.genesis.env_pick_place.FrankaPickPlaceEnv",
             "policy_source": "inner_evidence_adapter",
         }
+    if robot is not None:
+        if robot.is_byo() and not robot.loaded:
+            raise Sim2RealLoopError(
+                f"BYO robot {robot.name!r} ({robot.robot_source}) was not loaded "
+                "into the simulator (no silent fallback to Franka is permitted)"
+            )
+        payload["robot_provenance"] = robot.provenance()
+        payload["robot_fallback_used"] = False
     if scene is not None:
         provenance = scene.provenance_block()
         manipuland = scene.manipuland()
@@ -2825,6 +2932,7 @@ def _run_genesis_heldout_rollouts(
     inner_evidence: dict[str, Any],
     threshold: float,
     scene: Any = None,
+    robot: Any = None,
 ) -> list[dict[str, Any]]:
     """Run the trained adapter policy through real Genesis held-out episodes.
 
@@ -2833,6 +2941,10 @@ def _run_genesis_heldout_rollouts(
     built from it (mesh / primitive) instead of the default red Box. The
     SceneSpec objects' ``loaded`` provenance flags are set as a side effect of
     building the env, so the caller can prove the requested mesh loaded.
+
+    When ``robot`` (a resolved ``npa.genesis.robot_assets.RobotSpec``) is
+    provided, the env loads that embodiment (URDF/MJCF/preset) instead of the
+    hardcoded Franka Panda; its ``loaded`` flag is set when the env builds it.
     """
 
     try:
@@ -2861,6 +2973,22 @@ def _run_genesis_heldout_rollouts(
                 sort_keys=True,
             )
         )
+    if robot is not None:
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "byo_robot_loading",
+                    "robot_source": robot.robot_source,
+                    "robot_name": robot.name,
+                    "ee_link": robot.ee_link,
+                    "dof_count": robot.dof_count,
+                    "local_path": robot.local_path,
+                    "sha256": robot.sha256,
+                },
+                sort_keys=True,
+            )
+        )
 
     adapter = _policy_adapter_from_inner_evidence(inner_evidence)
     batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_GENESIS_BATCH_SIZE", "16")))
@@ -2878,6 +3006,7 @@ def _run_genesis_heldout_rollouts(
             action_space="cartesian",
             action_scale=float(os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")),
             scene_spec=scene,
+            robot_spec=robot,
         )
         env = FrankaPickPlaceEnv(cfg)
         if scene is not None and start == 0:
@@ -2890,6 +3019,20 @@ def _run_genesis_heldout_rollouts(
                         "loaded_objects": [
                             obj.name for obj in scene.objects if obj.loaded
                         ],
+                    },
+                    sort_keys=True,
+                )
+            )
+        if robot is not None and start == 0:
+            print(
+                json.dumps(
+                    {
+                        "component": "heldout_eval",
+                        "event": "byo_robot_loaded",
+                        "robot_source": robot.robot_source,
+                        "robot_name": robot.name,
+                        "loaded": bool(robot.loaded),
+                        "robot_fallback_used": False,
                     },
                     sort_keys=True,
                 )
@@ -3041,6 +3184,72 @@ def _set_isaac_object_usd(env_cfg: Any, usd_path: str, *, scale: Any) -> None:
     )
 
 
+def _isaac_robot_usd_override(robot: Any) -> str:
+    """Resolve a BYO robot to a USD path for the Isaac lift task, or "".
+
+    Default / ``stock_franka`` robots keep the task's built-in Franka (returns
+    ""). A BYO URDF (or genesis_builtin URDF) is imported to USD via Isaac's
+    URDF converter; an explicit USD is used as-is. Marks the robot ``loaded``
+    on success. A robot that cannot be imported raises ``Sim2RealLoopError``
+    (no silent fallback to Franka). Isaac cannot import MJCF, so that raises.
+    """
+
+    if robot is None:
+        return ""
+    from npa.genesis import robot_assets
+
+    if robot.robot_source == robot_assets.ROBOT_SOURCE_STOCK_FRANKA:
+        robot.loaded = True
+        return ""
+    if robot.robot_source == robot_assets.ROBOT_SOURCE_BYO_MJCF:
+        raise Sim2RealLoopError(
+            "robot_source=byo_mjcf is not importable by the Isaac backend; "
+            "supply a URDF/USD robot, or run the Genesis backend (no fallback)."
+        )
+    if not robot.local_path:
+        raise Sim2RealLoopError(
+            f"BYO robot {robot.name!r} has no resolved local_path for Isaac import"
+        )
+    if robot.robot_source == robot_assets.ROBOT_SOURCE_BYO_USD:
+        usd = robot.local_path
+        if not Path(usd).is_file():
+            raise Sim2RealLoopError(f"BYO robot USD missing: {usd}")
+        robot.loaded = True
+        return usd
+    import tempfile as _tempfile
+
+    convert_dir = Path(_tempfile.mkdtemp(prefix="isaac-robot-usd-"))
+    usd = _isaac_import_mesh_to_usd(robot.local_path, work_dir=convert_dir)
+    robot.loaded = True
+    return usd
+
+
+def _set_isaac_robot_usd(env_cfg: Any, usd_path: str, robot: Any) -> None:
+    """Point the lift task's articulation spawn at a converted BYO robot USD.
+
+    Overrides the robot articulation's spawn USD and best-effort widens the
+    actuator joint-name expressions so a non-Franka arm's joints are actuated.
+    Full joint/actuator remapping for an arbitrary arm is a follow-up; this
+    establishes the BYO-robot import seam and proves the asset loads.
+    """
+
+    import isaaclab.sim as sim_utils
+
+    robot_cfg = env_cfg.scene.robot
+    spawn = getattr(robot_cfg, "spawn", None)
+    new_spawn = sim_utils.UsdFileCfg(usd_path=usd_path)
+    # Preserve articulation/rigid props from the task's spawn when available.
+    for attr in ("articulation_props", "rigid_props", "activate_contact_sensors"):
+        if hasattr(spawn, attr) and hasattr(new_spawn, attr):
+            setattr(new_spawn, attr, getattr(spawn, attr))
+    robot_cfg.spawn = new_spawn
+    actuators = getattr(robot_cfg, "actuators", None)
+    if isinstance(actuators, dict):
+        for actuator in actuators.values():
+            if hasattr(actuator, "joint_names_expr"):
+                actuator.joint_names_expr = [".*"]
+
+
 def _isaac_goal_distance(env_unwrapped: Any) -> Any:
     """Return per-env object->goal world distance for the lift task.
 
@@ -3100,6 +3309,7 @@ def _run_isaac_heldout_rollouts(
     inner_evidence: dict[str, Any],
     threshold: float,
     scene: Any = None,
+    robot: Any = None,
     isaac_task: str = DEFAULT_ISAAC_TASK,
 ) -> list[dict[str, Any]]:
     """Run the adapter policy through headless Isaac Lab held-out episodes.
@@ -3182,6 +3392,25 @@ def _run_isaac_heldout_rollouts(
                 )
             )
 
+    robot_usd_override = _isaac_robot_usd_override(robot)
+    if robot_usd_override:
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "isaac_byo_robot_imported",
+                    "robot_source": robot.robot_source,
+                    "robot_name": robot.name,
+                    "ee_link": robot.ee_link,
+                    "dof_count": robot.dof_count,
+                    "local_path": robot.local_path,
+                    "sha256": robot.sha256,
+                    "usd_path": robot_usd_override,
+                },
+                sort_keys=True,
+            )
+        )
+
     adapter = _policy_adapter_from_inner_evidence(inner_evidence)
     batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_BATCH_SIZE", "8")))
     max_steps = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_MAX_STEPS", "120")))
@@ -3195,6 +3424,8 @@ def _run_isaac_heldout_rollouts(
         env_cfg = parse_env_cfg(isaac_task, device=device, num_envs=len(batch))
         if usd_override:
             _set_isaac_object_usd(env_cfg, usd_override, scale=manip_scale)
+        if robot_usd_override:
+            _set_isaac_robot_usd(env_cfg, robot_usd_override, robot)
         env = gym.make(isaac_task, cfg=env_cfg)
         action_dim = int(env.action_space.shape[-1])
         obs, _ = env.reset()
@@ -3393,6 +3624,9 @@ def main(argv: list[str] | None = None) -> int:
     component_heldout.add_argument("--scene-spec-uri", default="")
     component_heldout.add_argument("--assets-uri", default="")
     component_heldout.add_argument("--byo-mesh-uri", default="")
+    component_heldout.add_argument("--robot-spec-uri", default="")
+    component_heldout.add_argument("--robot-source", default="")
+    component_heldout.add_argument("--robot-preset", default="")
     component_heldout.add_argument(
         "--sim-backend",
         default=os.environ.get("NPA_SIM2REAL_SIM_BACKEND", DEFAULT_SIM_BACKEND),
@@ -3427,6 +3661,9 @@ def main(argv: list[str] | None = None) -> int:
             scene_spec_uri=args.scene_spec_uri,
             assets_uri=args.assets_uri,
             byo_mesh_uri=args.byo_mesh_uri,
+            robot_spec_uri=args.robot_spec_uri,
+            robot_source=args.robot_source,
+            robot_preset=args.robot_preset,
             sim_backend=args.sim_backend,
             isaac_task=args.isaac_task,
         )
@@ -3445,6 +3682,9 @@ def main(argv: list[str] | None = None) -> int:
         heldout_envs_uri=args.heldout_envs_uri,
         assets_uri=args.assets_uri,
         scene_spec_uri=args.scene_spec_uri,
+        robot_spec_uri=args.robot_spec_uri,
+        robot_source=args.robot_source,
+        robot_preset=args.robot_preset,
         augment_image=args.augment_image,
         policy_image=args.policy_image,
         trainer_image=args.trainer_image,
@@ -3536,6 +3776,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--scene-spec-uri", default=os.environ.get("SCENE_SPEC_URI", "")
     )
+    parser.add_argument(
+        "--robot-spec-uri", default=os.environ.get("ROBOT_SPEC_URI", "")
+    )
+    parser.add_argument("--robot-source", default=os.environ.get("ROBOT_SOURCE", ""))
+    parser.add_argument("--robot-preset", default=os.environ.get("ROBOT_PRESET", ""))
     parser.add_argument("--augment-image", default=os.environ.get("AUGMENT_IMAGE", ""))
     parser.add_argument("--policy-image", default=os.environ.get("POLICY_IMAGE", ""))
     parser.add_argument("--trainer-image", default=os.environ.get("TRAINER_IMAGE", ""))

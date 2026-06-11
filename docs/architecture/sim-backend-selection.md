@@ -60,6 +60,49 @@ task scene. Every object records `{asset_source, sha256, loaded}`, and a
 requested mesh that fails to import or load raises rather than substituting the
 stock asset. This proves the customer asset was actually exercised.
 
+## Robot embodiment (BYO arm, not just BYO object)
+
+The robot is described by a simulator-agnostic `RobotSpec`
+(`npa.genesis.robot_assets`), a sibling of `SceneSpec`. It selects a
+`robot_source`:
+
+| `robot_source`    | Meaning                                              |
+| ----------------- | ---------------------------------------------------- |
+| `stock_franka`    | Default. Genesis built-in Franka Panda MJCF.         |
+| `byo_urdf`        | Customer arm as a URDF (+ meshes), downloaded + hashed. |
+| `byo_mjcf`        | Customer arm as MuJoCo MJCF (Genesis only).          |
+| `byo_usd`         | Customer arm as USD (Isaac only).                    |
+| `genesis_builtin` | An articulated robot shipped in the Genesis assets tree. |
+
+Selection points (all alongside the object SceneSpec):
+
+- CLI: `--robot-preset {franka|ur5e|ur10e|flexiv}`, `--robot-spec-uri <RobotSpec JSON>`,
+  or `--robot-source <source>`
+- env: `ROBOT_PRESET` / `ROBOT_SPEC_URI` / `ROBOT_SOURCE`
+  (threaded into the component as `NPA_SIM2REAL_ROBOT_*`)
+
+Presets ship for Franka (the current values, byte-for-byte), Universal
+Robots UR5e/UR10e (6-DOF, `tool0` end-effector, no integrated gripper), and
+Flexiv Rizon (7-DOF, `flange` end-effector). A customer can pick a preset or
+supply a full URDF plus a minimal `RobotSpec` JSON (end-effector link name,
+DOF count, gains, force ranges, home pose). The env's cached links, PD gains,
+force ranges, home pose, and the IK end-effector link all come from the
+`RobotSpec`; the no-spec / `stock_franka` path reproduces today's Franka
+behavior exactly.
+
+**The robot must be an articulated description (URDF / MJCF / USD).** UR and
+Flexiv publish these. A plain visual mesh (`.obj` / `.glb` / `.stl` / `.ply`)
+is only valid for a manipulated *object*, never the robot — supplying one as
+the robot raises a clear error. A BYO robot that fails to download, validate,
+or load raises rather than silently falling back to Franka, and the robot
+provenance (`{robot_source, robot_uri, sha256, loaded, robot_fallback_used}`)
+is written into `report.json` so a run can prove the customer arm was loaded.
+
+Gripper control for the UR/Flexiv presets is a follow-up: their published
+URDFs ship without an integrated gripper, so those presets run gripperless
+(the gripper action channel is ignored) until a customer attaches and
+configures one.
+
 ## Code injection into the Isaac image
 
 The Isaac Lab image ships Isaac Sim + Isaac Lab only under its bundled
