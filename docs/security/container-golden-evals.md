@@ -67,33 +67,56 @@ host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family), or
 `needs-image-update` (the published image cannot run its eval yet — see the
 validation results below).
 
-## Validation results (live serverless run)
+## Validation results
 
-The golden evals were submitted to **Nebius Serverless AI Jobs** in their real
-container images. Results from the first live run:
+The golden evals were first submitted to **Nebius Serverless AI Jobs** in their
+real published images. That run passed `lerobot` (H200, 5/5) and `groot`
+(H100, 3/3) and surfaced four packaging bugs, which are now **fixed** and
+re-verified by building the images from source and running the eval:
 
-| container | GPU | result | detail |
+| container | result | how verified | notes |
 | --- | --- | --- | --- |
-| `lerobot` | H200 | **PASS 5/5** | version, 50-step PushT train, checkpoint, eval, eval output |
-| `groot` | H100 | **PASS 3/3** | inference script present, uv available, standalone GR00T inference |
-| `genesis` | H100 | FAIL | image runs Python 3.10 without `tomllib`/`tomli`; `npa.smoke._versions` import error |
-| `lancedb` | H100 | FAIL | published image flattens server modules into `/app` and does not bundle `npa.smoke` |
-| `detection-training` | H100 | FAIL | published image copies only `npa.workbench.detection_training`, not `npa.smoke` |
-| `fiftyone` | H100 | FAIL | published `fiftyone:1.15.0` predates the current Dockerfile and lacks `smoke_functional.py` |
+| `lerobot` | **PASS 5/5** | live serverless H200 | version, 50-step PushT train, checkpoint, eval, output |
+| `groot` | **PASS 3/3** | live serverless H100 | inference script, uv, standalone GR00T inference |
+| `lancedb` | **PASS 4/4** | local rebuild + run | start server, create table, vector query, list tables |
+| `detection-training` | **PASS 2/2** | local rebuild + run | health + system-info |
+| `fiftyone` | **PASS 3/3** | local rebuild + run | import + version + CLI + app config (env smoke) |
+| `genesis` | fix verified | `_versions` unit test | py3.10 import fix; full GPU run still pending |
+| `isaac-lab` | command fixed | static + manifest | standalone-script command; GPU run pending |
 
-Two findings beyond the per-image gaps:
+### Bugs the golden evals surfaced (now fixed)
 
-- The two passing evals confirm the end-to-end serverless path (image pull →
-  GPU run → PASS/FAIL) works with no bespoke infrastructure.
+1. **genesis** — `npa.smoke._versions` did `import tomllib`/`tomli`; the genesis
+   py3.10 venv has neither. `_versions` is now stdlib-only (regression test:
+   `test_versions_helper_works_without_toml_library`).
+2. **lancedb** — the image flattens server modules into `/app` and does not
+   install `npa`; the smoke now ships as a standalone `/app/smoke_functional.py`
+   (`LANCEDB_SMOKE_APP=npa_lancedb_server:app`).
+3. **detection-training** — (a) the image did not bundle the smoke, and (b) its
+   service imports `npa.workbench.training_config`, which the image never copied,
+   so the service could not even start. Both files are now copied in.
+4. **fiftyone** — the published `:1.15.0` predated the current Dockerfile (no
+   smoke script at all); and the functional smoke needs a MongoDB the slim base
+   cannot provision, so the golden eval is the DB-free env smoke.
+5. **isaac-lab** — used a `python -m npa.smoke.*` command, but the image only
+   ships a standalone script (no `npa` package); command corrected to the script.
+
+### Regression guard
+
+`test_dockerfile_provides_golden_eval_entrypoint` statically checks, for every
+`container-smoke`/`server-smoke`, that the Dockerfile actually builds in the
+eval's module or script. This would have caught all of the above at update time.
+
+### Other findings
+
+- The end-to-end serverless path (image pull → GPU run → PASS/FAIL) works with
+  no bespoke infrastructure.
 - The L40S serverless preset (`1gpu-40vcpu-160gb`) failed to schedule with
   `NotEnoughResources`; H100/H200 scheduled reliably. The manifest's
-  `serverless_gpu` values reflect this (default `l40s` only for light evals; use
-  `--gpu h100`/`h200` to override when L40S is constrained).
-
-The four `needs-image-update` failures are **container packaging gaps the golden
-evals surfaced** — not framework bugs. Each is fixed by rebuilding the image to
-bundle `npa.smoke` (lancedb, detection-training), install `tomli` / bump Python
-(genesis), or republish from the current Dockerfile (fiftyone).
+  `serverless_gpu` values reflect this (override with `--gpu`).
+- The fixed images must be **rebuilt and republished** under their release tags
+  for the published-image golden evals to pass; the fixes were verified by
+  building from source locally.
 
 ## Summary: safety + Physical AI usefulness
 
