@@ -351,6 +351,8 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert payload["embodiment"] == "UNITREE_G1_SONIC"
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
+    assert "SONIC_RUN_REAL_TRAIN=1" in command
+    assert "/entrypoint.sh train" in command
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
     client.subnet_resolver.assert_called_once_with(

@@ -15,6 +15,7 @@ from npa.workbench import (
     mjlab,
     retargeting,
     sonic,
+    training_config,
     trigger,
     vlm_eval,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "mjlab",
     "retargeting",
     "sonic",
+    "training_config",
     "trigger",
     "vlm_eval",
 ]

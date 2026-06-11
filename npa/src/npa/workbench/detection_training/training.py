@@ -6,7 +6,9 @@ import hashlib
 import io
 import json
 import math
+import os
 import time
+from contextlib import contextmanager
 from typing import Any, Callable
 
 from .dataloader import make_dataloader
@@ -53,66 +55,75 @@ def train_detector(
     """Run Faster R-CNN training and persist checkpoints plus metrics."""
     manifest = compute_manifest_sha256("train", request.model_dump(mode="json"))
     resolved_run_id = run_id or make_run_id("train", manifest)
-    pattern = checkpoint_uri_pattern(request.output_uri, resolved_run_id)
-    metrics_path = metrics_uri(request.output_uri, resolved_run_id)
+    effective_output_uri = request.checkpoint_s3.uri or request.output_uri
+    pattern = checkpoint_uri_pattern(effective_output_uri, resolved_run_id)
+    metrics_path = metrics_uri(effective_output_uri, resolved_run_id)
     if status_callback:
         status_callback("running", 0, {}, None)
 
-    try:
-        import torch
-    except ImportError as exc:
-        raise DetectionTrainingError("torch is required for detection training") from exc
+    with _checkpoint_s3_environment(request):
+        try:
+            import torch
+        except ImportError as exc:
+            raise DetectionTrainingError("torch is required for detection training") from exc
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_classes = resolve_num_classes(request)
-    dataloader = make_dataloader(
-        lance_uri=request.lance_uri,
-        view=request.view,
-        batch_size=request.batch_size,
-        shuffle=True,
-        label_map=request.label_map,
-    )
-    model = build_fasterrcnn_resnet50_fpn_v2(num_classes=num_classes)
-    model.to(device)
-    optimizer = torch.optim.SGD(
-        [param for param in model.parameters() if getattr(param, "requires_grad", True)],
-        lr=request.learning_rate,
-        momentum=0.9,
-        weight_decay=0.0005,
-    )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
-    history: list[dict[str, Any]] = []
+        wandb_run = _start_wandb(request)
+        try:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            num_classes = resolve_num_classes(request)
+            dataloader = make_dataloader(
+                lance_uri=request.data_path or request.lance_uri,
+                view=request.view,
+                batch_size=request.batch_size,
+                shuffle=True,
+                label_map=request.label_map,
+            )
+            model = build_fasterrcnn_resnet50_fpn_v2(num_classes=num_classes)
+            model.to(device)
+            optimizer = torch.optim.SGD(
+                [param for param in model.parameters() if getattr(param, "requires_grad", True)],
+                lr=request.learning_rate,
+                momentum=0.9,
+                weight_decay=0.0005,
+            )
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+            history: list[dict[str, Any]] = []
 
-    for epoch in range(1, request.epochs + 1):
-        loss = train_one_epoch(model, dataloader, optimizer, device=device)
-        scheduler.step()
-        snapshot = {
-            "epoch": epoch,
-            "train_loss": loss,
-            "learning_rate": float(optimizer.param_groups[0]["lr"]),
-        }
-        history.append(snapshot)
-        checkpoint_uri = pattern.format(epoch=epoch)
-        save_checkpoint(
-            checkpoint_uri,
-            model=model,
-            optimizer=optimizer,
-            epoch=epoch,
-            manifest_sha256=manifest,
-            num_classes=num_classes,
-            request=request.model_dump(mode="json"),
-        )
-        write_json_uri(
-            metrics_path,
-            {
-                "run_id": resolved_run_id,
-                "manifest_sha256": manifest,
-                "status": "running" if epoch < request.epochs else "completed",
-                "epochs": history,
-            },
-        )
-        if status_callback:
-            status_callback("running" if epoch < request.epochs else "completed", epoch, snapshot, None)
+            for epoch in range(1, request.epochs + 1):
+                loss = train_one_epoch(model, dataloader, optimizer, device=device)
+                scheduler.step()
+                snapshot = {
+                    "epoch": epoch,
+                    "train_loss": loss,
+                    "learning_rate": float(optimizer.param_groups[0]["lr"]),
+                }
+                history.append(snapshot)
+                if wandb_run is not None:
+                    wandb_run.log(snapshot, step=epoch)
+                checkpoint_uri = pattern.format(epoch=epoch)
+                save_checkpoint(
+                    checkpoint_uri,
+                    model=model,
+                    optimizer=optimizer,
+                    epoch=epoch,
+                    manifest_sha256=manifest,
+                    num_classes=num_classes,
+                    request=request.model_dump(mode="json"),
+                )
+                write_json_uri(
+                    metrics_path,
+                    {
+                        "run_id": resolved_run_id,
+                        "manifest_sha256": manifest,
+                        "status": "running" if epoch < request.epochs else "completed",
+                        "epochs": history,
+                    },
+                )
+                if status_callback:
+                    status_callback("running" if epoch < request.epochs else "completed", epoch, snapshot, None)
+        finally:
+            if wandb_run is not None:
+                wandb_run.finish()
 
     return TrainResponse(
         run_id=resolved_run_id,
@@ -121,7 +132,60 @@ def train_detector(
         metrics_uri=metrics_path,
         total_epochs=request.epochs,
         manifest_sha256=manifest,
+        data_path=request.data_path or request.lance_uri,
+        training_config=_training_config_public_dict(request),
     )
+
+
+@contextmanager
+def _checkpoint_s3_environment(request: TrainRequest):
+    values = {
+        "AWS_ENDPOINT_URL": request.checkpoint_s3.endpoint_url,
+        "NEBIUS_S3_ENDPOINT": request.checkpoint_s3.endpoint_url,
+        "AWS_ACCESS_KEY_ID": request.checkpoint_s3.aws_access_key_id,
+        "AWS_SECRET_ACCESS_KEY": request.checkpoint_s3.aws_secret_access_key,
+    }
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        for key, value in values.items():
+            if value:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _start_wandb(request: TrainRequest) -> Any | None:
+    if not request.wandb.enabled:
+        return None
+    try:
+        import wandb
+    except ImportError as exc:
+        raise DetectionTrainingError("wandb is required when wandb.enabled=true") from exc
+    return wandb.init(
+        project=request.wandb.project or None,
+        name=request.wandb.run_name or None,
+        mode=request.wandb.mode or "offline",
+        config=request.model_dump(mode="json"),
+    )
+
+
+def _training_config_public_dict(request: TrainRequest) -> dict[str, Any]:
+    return {
+        "data_path": request.data_path or request.lance_uri,
+        "overrides": list(request.overrides),
+        "wandb": request.wandb.model_dump(mode="json"),
+        "checkpoint_s3": {
+            "uri": request.checkpoint_s3.uri,
+            "endpoint_url": request.checkpoint_s3.endpoint_url,
+            "aws_access_key_id": "set" if request.checkpoint_s3.aws_access_key_id else "",
+            "aws_secret_access_key": "set" if request.checkpoint_s3.aws_secret_access_key else "",
+        },
+    }
 
 
 def resolve_num_classes(request: TrainRequest) -> int:

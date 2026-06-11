@@ -57,6 +57,15 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    checkpoint_s3_uri as resolve_checkpoint_s3_uri,
+    overrides_to_mapping,
+    shell_env_exports,
+    upload_checkpoint_path,
+)
 
 app = typer.Typer(
     name="genesis",
@@ -168,38 +177,63 @@ def _genesis_serverless_train_teacher_command(
     max_iterations: int,
     action_space: str,
     seed: int,
+    training_config: TrainingConfig | None = None,
+    env_overrides: dict[str, Any] | None = None,
+    ppo_overrides: dict[str, Any] | None = None,
 ) -> str:
+    config = training_config or TrainingConfig()
     local_dir = "/tmp/npa-genesis-train-teacher"
+    training_env = shell_env_exports(config.env())
     script = f"""
 import json, os, pathlib, time
 
 out = pathlib.Path("{local_dir}")
 out.mkdir(parents=True, exist_ok=True)
+log_dir = out / "logs"
 started = time.time()
-try:
-    import genesis as gs  # noqa: F401
-    import_status = "available"
-except Exception as exc:
-    import_status = f"unavailable: {{type(exc).__name__}}: {{exc}}"
+from npa.genesis.train_teacher import PPOConfig, train_teacher
+
+ppo_cfg = PPOConfig()
+for key, value in {json.dumps(ppo_overrides or {}, sort_keys=True)}.items():
+    setattr(ppo_cfg, key, value)
+result = train_teacher(
+    n_envs={n_envs},
+    max_iterations={max_iterations},
+    output_dir=out,
+    device=os.environ.get("NPA_TRAINING_DEVICE", "cuda"),
+    log_dir=log_dir,
+    seed={seed},
+    ppo_cfg=ppo_cfg,
+    action_space={action_space!r},
+    env_overrides={json.dumps(env_overrides or {}, sort_keys=True)} or None,
+)
 summary = {{
-    "status": "success",
+    **result,
     "tool": "genesis",
-    "n_envs": {n_envs},
-    "max_iterations": {max_iterations},
-    "action_space": {action_space!r},
-    "seed": {seed},
-    "genesis_import": import_status,
     "job": os.environ.get("NPA_JOB_NAME", ""),
     "duration_seconds": round(time.time() - started, 3),
+    "data_path": os.environ.get("NPA_TRAINING_DATA_PATH", ""),
+    "overrides": json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]") or "[]"),
+    "wandb": {{
+        "enabled": os.environ.get("NPA_TRAINING_WANDB_ENABLED", "0") == "1",
+        "project": os.environ.get("NPA_TRAINING_WANDB_PROJECT", ""),
+        "run_name": os.environ.get("NPA_TRAINING_WANDB_RUN_NAME", ""),
+        "mode": os.environ.get("WANDB_MODE", ""),
+    }},
+    "checkpoint_s3_uri": os.environ.get("NPA_CHECKPOINT_S3_URI", ""),
 }}
 (out / "train_teacher_summary.json").write_text(json.dumps(summary, indent=2))
-(out / "model.pt").write_text(json.dumps({{"format": "npa_genesis_serverless_smoke_v1", **summary}}, indent=2))
+(out / "npa_genesis_checkpoint_manifest.json").write_text(json.dumps({{
+    "format": "npa_genesis_ppo_checkpoint_v1",
+    **summary,
+}}, indent=2))
 print("NPA_GENESIS_SERVERLESS_TRAIN_TEACHER_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
+        f'{training_env}\n'
         f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
     )
     return _remote_bash(body)
@@ -210,6 +244,9 @@ def _genesis_serverless_train_teacher(
     n_envs: int,
     max_iterations: int,
     output_path: str,
+    training_config: TrainingConfig,
+    env_overrides: dict[str, Any],
+    ppo_overrides: dict[str, Any],
     project_id: str,
     image: str,
     gpu_type: str,
@@ -254,9 +291,13 @@ def _genesis_serverless_train_teacher(
         out,
         {
             "NPA_JOB_NAME": name,
-            "GENESIS_SERVERLESS_SMOKE": "1",
+            "GENESIS_SERVERLESS_REAL_TRAIN": "1",
+            **training_config.env(),
         },
     )
+    merged_env = dict(env)
+    merged_env.update(extra_env)
+    env, extra_env = split_serverless_env(merged_env)
     client = ServerlessClient()
     try:
         existing = client.get_job(name, resolved_project_id)
@@ -271,7 +312,15 @@ def _genesis_serverless_train_teacher(
             project_id=resolved_project_id,
             name=name,
             image=image or container_image_for_tool("genesis", registry=resolve_container_registry(proj_alias)),
-            command=_genesis_serverless_train_teacher_command(n_envs=n_envs, max_iterations=max_iterations, action_space=action_space, seed=seed),
+            command=_genesis_serverless_train_teacher_command(
+                n_envs=n_envs,
+                max_iterations=max_iterations,
+                action_space=action_space,
+                seed=seed,
+                training_config=training_config,
+                env_overrides=env_overrides,
+                ppo_overrides=ppo_overrides,
+            ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
@@ -288,7 +337,16 @@ def _genesis_serverless_train_teacher(
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output_format)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+            "training_config": training_config.public_dict(),
+        },
+        output_format,
+    )
 
 
 def _parse_positive_int(value: str | None) -> int:
@@ -720,6 +778,11 @@ _RANGE_SHORTHANDS: dict[str, tuple[str, int]] = {
 _RANGE_DEFAULTS: dict[str, tuple] = {
     "friction_range": (0.3, 1.2),
 }
+_GENESIS_THRESHOLD_KEYS = {
+    "approach_threshold",
+    "lift_threshold",
+    "place_threshold",
+}
 
 
 def _expand_env_overrides(overrides: dict[str, object]) -> dict[str, object]:
@@ -729,8 +792,6 @@ def _expand_env_overrides(overrides: dict[str, object]) -> dict[str, object]:
     so callers that feed overrides directly to EnvConfig don't blow up.
     Returns a new dict.
     """
-    from npa.genesis.diagnose import _THRESHOLD_KEYS
-
     out: dict[str, object] = {}
     range_updates: dict[str, list] = {}  # field_name → [min, max]
 
@@ -741,7 +802,7 @@ def _expand_env_overrides(overrides: dict[str, object]) -> dict[str, object]:
                 default = _RANGE_DEFAULTS.get(field, (0.0, 1.0))
                 range_updates[field] = list(default)
             range_updates[field][idx] = float(value)
-        elif key in _THRESHOLD_KEYS:
+        elif key in _GENESIS_THRESHOLD_KEYS:
             # Keep as-is — callers that care (diagnose, tune) handle these.
             out[key] = value
         else:
@@ -751,6 +812,67 @@ def _expand_env_overrides(overrides: dict[str, object]) -> dict[str, object]:
         out[field] = tuple(vals)
 
     return out
+
+
+_GENESIS_RUNNER_OVERRIDE_KEYS = {"n_envs", "max_iterations", "seed", "action_space"}
+_GENESIS_PPO_OVERRIDE_KEYS = {
+    "actor_hidden_dims",
+    "critic_hidden_dims",
+    "activation",
+    "init_noise_std",
+    "learning_rate",
+    "num_learning_epochs",
+    "num_mini_batches",
+    "gamma",
+    "lam",
+    "clip_param",
+    "value_loss_coef",
+    "entropy_coef",
+    "max_grad_norm",
+    "use_clipped_value_loss",
+    "schedule",
+    "desired_kl",
+    "num_steps_per_env",
+    "save_interval",
+    "empirical_normalization",
+}
+
+
+def _split_genesis_training_overrides(
+    overrides: tuple[str, ...],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Route canonical overrides to runner, PPO, or EnvConfig settings."""
+
+    if not overrides:
+        return {}, {}, {}
+    runner: dict[str, Any] = {}
+    ppo: dict[str, Any] = {}
+    env: dict[str, Any] = {}
+    for raw_key, value in overrides_to_mapping(overrides).items():
+        key = raw_key.removeprefix("genesis.")
+        leaf = key.rsplit(".", 1)[-1]
+        if key in _GENESIS_RUNNER_OVERRIDE_KEYS:
+            runner[key] = value
+        elif leaf in _GENESIS_PPO_OVERRIDE_KEYS:
+            ppo[leaf] = value
+        elif key.startswith(("env.", "environment.")):
+            env[key.split(".", 1)[1]] = value
+        else:
+            env[key] = value
+    return runner, ppo, _expand_env_overrides(env)
+
+
+def _ppo_config_from_overrides(overrides: dict[str, Any]):
+    if not overrides:
+        return None
+    from npa.genesis.train_teacher import PPOConfig
+
+    config = PPOConfig()
+    for key, value in overrides.items():
+        if key not in _GENESIS_PPO_OVERRIDE_KEYS:
+            _fail(f"Unsupported Genesis PPO override: {key}")
+        setattr(config, key, value)
+    return config
 
 
 # ── train-teacher ───────────────────────────────────────────────────────
@@ -764,6 +886,20 @@ def train_teacher_cmd(
         "./checkpoints/teacher/", "--output", "-o", help="Checkpoint output directory."
     ),
     output_path: str = typer.Option("", "--output-path", help="S3 URI where serverless training artifacts are written."),
+    data_path: str = typer.Option("", "--data-path", help="Optional custom training data path recorded with the run."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic training override as KEY=VALUE. Repeat for PPO, EnvConfig, or runner keys.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging metadata for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
     image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
@@ -793,15 +929,47 @@ def train_teacher_cmd(
     ),
 ) -> None:
     """Train an RL teacher policy with PPO using privileged state in Genesis."""
+    try:
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+        runner_overrides, ppo_overrides, shared_env_overrides = _split_genesis_training_overrides(
+            training_config.overrides
+        )
+    except TrainingConfigError as exc:
+        _fail(str(exc))
+        return
+    if runner_overrides:
+        n_envs = int(runner_overrides.get("n_envs", n_envs))
+        max_iterations = int(runner_overrides.get("max_iterations", max_iterations))
+        seed = int(runner_overrides.get("seed", seed))
+        if runner_overrides.get("action_space"):
+            action_space = ActionSpace(str(runner_overrides["action_space"]))
     if n_envs <= 0:
         _fail(f"--n-envs must be positive, got {n_envs}")
     if max_iterations <= 0:
         _fail(f"--max-iterations must be positive, got {max_iterations}")
+    env_overrides = _expand_env_overrides(_parse_env_overrides(env_override))
+    env_overrides.update(shared_env_overrides)
+    checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
+    train_overrides = {k: v for k, v in env_overrides.items() if k not in _GENESIS_THRESHOLD_KEYS}
     if _is_serverless_runtime(runtime):
         _genesis_serverless_train_teacher(
             n_envs=n_envs,
             max_iterations=max_iterations,
-            output_path=output_path,
+            output_path=checkpoint_output_path,
+            training_config=training_config,
+            env_overrides=train_overrides,
+            ppo_overrides=ppo_overrides,
             project_id=project_id,
             image=image,
             gpu_type=gpu_type,
@@ -818,11 +986,8 @@ def train_teacher_cmd(
         )
         return
 
-    env_overrides = _expand_env_overrides(_parse_env_overrides(env_override))
-
     # Threshold keys are for diagnose, not training — strip them.
-    from npa.genesis.diagnose import _THRESHOLD_KEYS
-    train_overrides = {k: v for k, v in env_overrides.items() if k not in _THRESHOLD_KEYS}
+    ppo_cfg = _ppo_config_from_overrides(ppo_overrides)
 
     console.print("[bold]Training teacher (PPO)[/bold]")
     console.print(f"  n_envs={n_envs}  max_iterations={max_iterations}")
@@ -842,12 +1007,17 @@ def train_teacher_cmd(
             device=device,
             log_dir=Path(log_dir),
             seed=seed,
+            ppo_cfg=ppo_cfg,
             action_space=action_space.value,
             env_overrides=train_overrides if train_overrides else None,
         )
     except TrainingError as exc:
         _fail(str(exc))
         return
+    uploaded_checkpoint = upload_checkpoint_path(Path(output), training_config)
+    if uploaded_checkpoint:
+        result["checkpoint_s3_uri"] = uploaded_checkpoint
+    result["training_config"] = training_config.public_dict()
 
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))
@@ -1266,6 +1436,20 @@ def tune_cmd(
         "./checkpoints/tune/", "--output", "-o",
         help="Output directory for per-round checkpoints.",
     ),
+    data_path: str = typer.Option("", "--data-path", help="Optional custom training data path recorded with the run."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic training override as KEY=VALUE. Repeat for PPO, EnvConfig, or tune runner keys.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging metadata for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     log_dir: str = typer.Option(
         "./logs/tune/", "--log-dir", help="Tensorboard log directory.",
     ),
@@ -1309,7 +1493,38 @@ def tune_cmd(
     if not 0.0 <= min_success_rate <= 1.0:
         _fail(f"--min-success-rate must be in [0.0, 1.0], got {min_success_rate}")
 
+    try:
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+        runner_overrides, ppo_overrides, shared_env_overrides = _split_genesis_training_overrides(
+            training_config.overrides
+        )
+    except TrainingConfigError as exc:
+        _fail(str(exc))
+        return
+    if runner_overrides:
+        n_envs = int(runner_overrides.get("n_envs", n_envs))
+        seed = int(runner_overrides.get("seed", seed))
+        if runner_overrides.get("action_space"):
+            action_space = ActionSpace(str(runner_overrides["action_space"]))
+        if "max_iterations" in runner_overrides:
+            retrain_iterations = int(runner_overrides["max_iterations"])
+    if retrain_iterations <= 0:
+        _fail(f"--retrain-iterations must be positive, got {retrain_iterations}")
+    if n_envs <= 0:
+        _fail(f"--n-envs must be positive, got {n_envs}")
     env_overrides = _expand_env_overrides(_parse_env_overrides(env_override))
+    env_overrides.update(shared_env_overrides)
 
     console.print("[bold]Auto-tuning teacher policy[/bold]")
     console.print(f"  checkpoint: {ckpt}")
@@ -1335,11 +1550,16 @@ def tune_cmd(
             device=device,
             action_space=action_space.value,
             env_overrides=env_overrides if env_overrides else None,
+            ppo_overrides=ppo_overrides,
             min_success_rate=min_success_rate,
         )
     except TuneError as exc:
         _fail(str(exc))
         return
+    uploaded_checkpoint = upload_checkpoint_path(Path(output), training_config)
+    if uploaded_checkpoint:
+        result["checkpoint_s3_uri"] = uploaded_checkpoint
+    result["training_config"] = training_config.public_dict()
 
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2))

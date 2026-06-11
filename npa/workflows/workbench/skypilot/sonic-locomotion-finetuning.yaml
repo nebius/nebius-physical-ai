@@ -81,6 +81,7 @@ envs:
   SONIC_DATA_PATH: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
   SONIC_TRAIN_MODE: "finetune"
   SONIC_RUN_REAL_TRAIN: "1"
+  NPA_TRAINING_OVERRIDES_JSON: "[]"
   SONIC_RESUME: "False"
   SONIC_CHECKPOINT: "nvidia/GEAR-SONIC:sonic_release/last.pt"
   SONIC_CHECKPOINT_PATH: "sonic_release/last.pt"
@@ -213,6 +214,8 @@ run: |
       -e SONIC_SAVE_LAST_FREQUENCY \
       -e SONIC_SAVE_FREQUENCY \
       -e SONIC_RUNTIME_INSTALL_TRAINING_DEPS \
+      -e NPA_TRAINING_OVERRIDES_JSON \
+      -e NPA_TRAINING_OVERRIDES \
       -e WANDB_MODE \
       -e WANDB_DISABLED \
       -e WANDB_SILENT \
