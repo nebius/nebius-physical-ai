@@ -21,6 +21,7 @@ from npa.cli.workbench.sim2real import app as sim2real_app
 from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.cli.workbench.detection_training import app as detection_training_app
+from npa.cli.workbench.token_factory import app as token_factory_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
 from npa.cli.workbench.workflow import app as workflow_app
 from npa.cli.workbench.trigger import app as trigger_app
@@ -58,5 +59,6 @@ app.add_typer(retargeting_app, name="retargeting")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")
+app.add_typer(token_factory_app, name="token-factory")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(trigger_app, name="trigger")

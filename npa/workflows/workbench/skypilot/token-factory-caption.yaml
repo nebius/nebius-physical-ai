@@ -1,0 +1,50 @@
+# What:   Caption a folder of images with Nebius Token Factory (zero-GPU).
+# Guide:  docs/workbench/token-factory.md
+# Runner: npa workbench token-factory caption
+# Index:  npa/workflows/workbench/skypilot/README.md
+#
+# Inference is hosted by Token Factory over its OpenAI-compatible API, so this
+# job runs on CPU only. Provide the API key as a SkyPilot secret at launch:
+#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#     --secret AWS_SECRET_ACCESS_KEY token-factory-caption.yaml
+name: token-factory-caption
+execution: serial
+---
+name: token-factory-caption
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  # NPA_TOKEN_FACTORY_IMAGE just needs npa + httpx + pillow; the default is the
+  # first-party Workbench image with npa baked at /opt/nebius-physical-ai/npa.
+  image_id: "docker:${NPA_TOKEN_FACTORY_IMAGE}"
+envs:
+  NPA_TOKEN_FACTORY_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  INPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/images/"
+  OUTPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/captions/"
+  MODEL: "Qwen/Qwen2-VL-7B-Instruct"
+  INSTRUCTION: "Describe this image in one or two sentences. Focus on the objects, the scene, and any action taking place. Be concrete and factual."
+  MAX_IMAGES: "50"
+  MAX_TOKENS: "512"
+  # Optional override; defaults to https://api.tokenfactory.nebius.com/v1/.
+  NEBIUS_TOKEN_FACTORY_BASE_URL: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
+    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+    exit 1
+  fi
+  npa workbench token-factory caption \
+    --input-path "${INPUT_URI}" \
+    --output-path "${OUTPUT_URI}" \
+    --model "${MODEL}" \
+    --instruction "${INSTRUCTION}" \
+    --max-images "${MAX_IMAGES}" \
+    --max-tokens "${MAX_TOKENS}" \
+    --output json

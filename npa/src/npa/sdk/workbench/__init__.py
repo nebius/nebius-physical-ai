@@ -15,6 +15,7 @@ from . import (
     sim2real,
     sim2real_envgen,
     sonic,
+    token_factory,
     trigger,
     vlm_eval,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "sim2real",
     "sim2real_envgen",
     "sonic",
+    "token_factory",
     "trigger",
     "vlm_eval",
 ]

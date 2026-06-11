@@ -102,6 +102,7 @@ def test_configure_interactive_writes_credentials_and_config(monkeypatch, tmp_pa
     answers = "\n".join(
         [
             "hf_secret_token",   # HF token
+            "nebius_secret_key", # Nebius Token Factory API key
             "AKIAEXAMPLE",       # S3 access key id
             "s3secretvalue",     # S3 secret access key
             "",                  # S3 endpoint (default)
@@ -118,6 +119,7 @@ def test_configure_interactive_writes_credentials_and_config(monkeypatch, tmp_pa
     assert result.exit_code == 0, result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
+    assert creds["tokens"]["NEBIUS_API_KEY"] == "nebius_secret_key"
     assert creds["storage"]["aws_access_key_id"] == "AKIAEXAMPLE"
     assert creds["storage"]["aws_secret_access_key"] == "s3secretvalue"
     assert creds["storage"]["endpoint_url"] == "https://storage.eu-north1.nebius.cloud"
@@ -146,7 +148,7 @@ def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_pat
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
 
     # Skip every field; only the defaulted endpoint/registry/region remain.
-    answers = "\n".join([""] * 9) + "\n"
+    answers = "\n".join([""] * 10) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output

@@ -67,6 +67,9 @@ BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
+  # Nebius Token Factory API key (OpenAI-compatible hosted inference).
+  # Get one at https://tokenfactory.nebius.com/ -> API keys.
+  NEBIUS_API_KEY: nebius_REPLACE_ME
 ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
@@ -190,6 +193,7 @@ def _run_interactive_configure() -> None:
         ).strip()
 
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
+    nebius_api_key = ask("Nebius Token Factory API key (NEBIUS_API_KEY)", secret=True)
     s3_access_key = ask("S3 access key id (AWS_ACCESS_KEY_ID)", secret=True)
     s3_secret_key = ask("S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True)
     s3_endpoint = ask("S3 endpoint URL", default=DEFAULT_STORAGE_ENDPOINT)
@@ -201,7 +205,7 @@ def _run_interactive_configure() -> None:
 
     credentials_path = write_credentials_file(
         {
-            "tokens": {"HF_TOKEN": hf_token},
+            "tokens": {"HF_TOKEN": hf_token, "NEBIUS_API_KEY": nebius_api_key},
             "storage": {
                 "aws_access_key_id": s3_access_key,
                 "aws_secret_access_key": s3_secret_key,

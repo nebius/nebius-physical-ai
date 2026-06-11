@@ -223,6 +223,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "retargeting",
         "sim2real",
         "sim2real-envgen",
+        "token-factory",
         "workflow",
     }
     discovered = registered_workbench_tools()
