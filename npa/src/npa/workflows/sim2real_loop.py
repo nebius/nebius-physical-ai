@@ -55,6 +55,11 @@ SIM_BACKENDS = (SIM_BACKEND_GENESIS, SIM_BACKEND_ISAAC)
 DEFAULT_SIM_BACKEND = SIM_BACKEND_ISAAC
 # Default headless Isaac Lab manipulation task for the stock held-out rollout.
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
+
+# Holds the live Isaac Sim app between the rollout and the report upload.
+# Isaac Sim's SimulationApp.close() hard-terminates the process, so it is closed
+# only after the held-out report.json has been uploaded. See _close_isaac_app.
+_ISAAC_SIMULATION_APP: Any = None
 DEFAULT_THRESHOLD = 0.75
 DEFAULT_INNER_ITERATIONS = 2
 DEFAULT_OUTER_ITERATIONS = 1
@@ -2267,6 +2272,11 @@ def run_heldout_eval_component_from_s3(
                 sort_keys=True,
             )
         )
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # report.json is uploaded above; closing Isaac Sim hard-terminates the
+        # process, so it must come last (no-op for the Genesis backend).
+        _close_isaac_app()
         return payload
 
 
@@ -3103,6 +3113,11 @@ def _run_isaac_heldout_rollouts(
         ) from exc
 
     simulation_app = AppLauncher(headless=True).app
+    # Isaac Sim's SimulationApp.close() hard-terminates the process, so it must
+    # NOT be called here (the held-out report has to be uploaded first). The
+    # handle is stashed and closed by the component entrypoint after upload.
+    global _ISAAC_SIMULATION_APP
+    _ISAAC_SIMULATION_APP = simulation_app
     try:
         import torch
         import gymnasium as gym  # noqa: PLC0415
@@ -3164,7 +3179,7 @@ def _run_isaac_heldout_rollouts(
     reward_norm = float(os.environ.get("NPA_SIM2REAL_ISAAC_REWARD_NORM", "20.0"))
     success_dist = float(os.environ.get("NPA_SIM2REAL_ISAAC_SUCCESS_DIST", "0.05"))
     per_env: list[dict[str, Any]] = []
-    try:
+    if True:
         for start in range(0, len(envs), batch_size):
             batch = envs[start : start + batch_size]
             seed = int(batch[0].get("seed") or (42 + start))
@@ -3238,12 +3253,24 @@ def _run_isaac_heldout_rollouts(
                     }
                 )
             env.close()
-    finally:
+    return per_env
+
+
+def _close_isaac_app() -> None:
+    """Close the stashed Isaac Sim app, if any (hard-terminates the process).
+
+    Called by the component entrypoint only after the held-out report has been
+    written and uploaded. No-op for the Genesis backend.
+    """
+
+    global _ISAAC_SIMULATION_APP
+    app = _ISAAC_SIMULATION_APP
+    _ISAAC_SIMULATION_APP = None
+    if app is not None:
         try:
-            simulation_app.close()
+            app.close()
         except Exception:  # noqa: BLE001
             pass
-    return per_env
 
 
 def _policy_adapter_from_inner_evidence(inner_evidence: dict[str, Any]) -> dict[str, Any]:
