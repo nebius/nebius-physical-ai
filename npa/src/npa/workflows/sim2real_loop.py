@@ -1555,7 +1555,18 @@ fi
 "$PYBIN" -m npa.workflows.sim2real_loop {subcommand}
 """
     return f"""set -euo pipefail
-if [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
+if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
+  python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
+import os, sys, tarfile, urllib.parse, boto3
+u = urllib.parse.urlparse(sys.argv[1])
+ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
+boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
+with tarfile.open("/tmp/npa-src.tgz") as tar:
+    tar.extractall("/tmp/npa-source")
+PYB
+  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
+elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
   rm -rf /tmp/npa-source
   git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
   export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
