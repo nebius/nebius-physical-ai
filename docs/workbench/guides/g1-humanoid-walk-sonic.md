@@ -38,7 +38,7 @@ Meet the tool and check routing first:
 
 ```bash
 npa workbench sonic list
-npa workbench sonic system-info
+npa workbench sonic status
 ```
 
 Submit the fine-tune + MuJoCo-eval workflow on H100 spot (docker-payload mode):
