@@ -621,6 +621,7 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
             "nebius_secret_key=secret",
             "--skip-model-check",
             "--verify-env",
+            "--no-auto-serve",
         ],
     )
 
@@ -649,6 +650,97 @@ def test_groot_byovm_deploy_injects_s3_credentials_into_env(mocker) -> None:
     ):
         assert key in audited_keys
     assert "Warning: NGC credentials not configured" in result.output
+
+
+def test_groot_deploy_auto_serve_loads_model(mocker) -> None:
+    """A healthy deploy with auto-serve (default on) and a real embodiment issues a
+    /serve model load so the server is ready without a manual serve."""
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.return_value = (0, "GROOT_SERVE_READY\n", "")
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.groot.provisioner.init")
+    mocker.patch("npa.cli.groot.provisioner.apply")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.write_config")
+    mocker.patch("npa.cli.groot.update_workbench_app_status")
+    mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
+    mocker.patch("npa.cli.groot.write_manifest")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "-p", "proj", "-n", "groot", "deploy",
+            "--runtime", "byovm",
+            "--host", "203.0.113.10",
+            "--ssh-key", "~/.ssh/byovm",
+            "--region", "eu-north1",
+            "--server-port", "8081",
+            "--skip-model-check",
+            "--robot-embodiment", "REAL_G1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    load_calls = [
+        call.args[0]
+        for call in ssh.run_or_raise.call_args_list
+        if "-X POST" in call.args[0] and "/serve" in call.args[0]
+    ]
+    assert load_calls, "auto-serve should issue a /serve model-load command"
+    assert any("8081" in cmd for cmd in load_calls)
+    assert any("REAL_G1" in cmd for cmd in load_calls), (
+        "auto-serve should carry the supplied embodiment tag"
+    )
+
+
+def test_groot_deploy_auto_serve_skips_without_real_embodiment(mocker) -> None:
+    """Auto-serve is skipped (with guidance) when only the NEW_EMBODIMENT
+    fine-tuning tag is available, since the base model cannot load with it."""
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.return_value = (0, "GROOT_SERVE_READY\n", "")
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.groot.provisioner.init")
+    mocker.patch("npa.cli.groot.provisioner.apply")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.write_config")
+    mocker.patch("npa.cli.groot.update_workbench_app_status")
+    mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
+    mocker.patch("npa.cli.groot.write_manifest")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench", "groot", "-p", "proj", "-n", "groot", "deploy",
+            "--runtime", "byovm",
+            "--host", "203.0.113.10",
+            "--ssh-key", "~/.ssh/byovm",
+            "--region", "eu-north1",
+            "--server-port", "8081",
+            "--skip-model-check",
+        ],
+    )
+
+    assert result.exit_code == 0
+    load_calls = [
+        call.args[0]
+        for call in ssh.run_or_raise.call_args_list
+        if "-X POST" in call.args[0] and "/serve" in call.args[0]
+    ]
+    assert not load_calls, "auto-serve must not load the base model with NEW_EMBODIMENT"
+    assert "Skipping auto-serve" in result.output
+    assert "--robot-embodiment" in result.output
 
 
 def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
@@ -701,6 +793,7 @@ def test_groot_byovm_deploy_injects_ngc_credentials_into_env(mocker) -> None:
             "eu-north1",
             "--skip-model-check",
             "--verify-env",
+            "--no-auto-serve",
         ],
     )
 

@@ -1581,7 +1581,8 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    cmd = ssh.run_or_raise.call_args.args[0]
+    # first SSH call restarts the service with the refreshed server.py/env
+    cmd = ssh.run_or_raise.call_args_list[0].args[0]
     assert "COSMOS_MODEL_ID=nvidia/Cosmos-Test" in cmd
     assert "COSMOS_SERVER_PORT=9090" in cmd
     assert "COSMOS_DISABLE_SAFETY=0" in cmd
@@ -1591,6 +1592,10 @@ def test_cosmos_serve_builds_remote_restart_command(mocker) -> None:
     assert "HF_TOKEN=%s" in cmd
     assert "sudo tee -a /etc/npa-cosmos-server/env >/dev/null" in cmd
     assert "sudo systemctl restart npa-cosmos-server" in cmd
+    # second SSH call loads the model so `serve` actually pre-warms it on vm runtime
+    load_cmd = ssh.run_or_raise.call_args_list[1].args[0]
+    assert "/serve" in load_cmd
+    assert "nvidia/Cosmos-Test" in load_cmd
 
 
 def test_cosmos_serve_allows_explicit_guardrail_opt_out(mocker) -> None:
@@ -1612,7 +1617,7 @@ def test_cosmos_serve_allows_explicit_guardrail_opt_out(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    cmd = ssh.run_or_raise.call_args.args[0]
+    cmd = ssh.run_or_raise.call_args_list[0].args[0]
     assert "COSMOS_DISABLE_SAFETY=1" in cmd
 
 
@@ -2192,6 +2197,7 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
             "--server-port",
             "8081",
             "--skip-model-check",
+            "--no-auto-serve",
         ],
     )
 
@@ -2214,6 +2220,54 @@ def test_cosmos_byovm_deploy_fallback_then_status_uses_ssh_strategy(
     endpoint.assert_called_once()
     assert endpoint.call_args.args[0].endpoint_strategy == "ssh_fallback"
     http_cls.assert_called_once_with("http://127.0.0.1:19081", timeout=10.0, retries=1)
+
+
+def test_cosmos_deploy_auto_serve_loads_model(tmp_path: Path, monkeypatch, mocker) -> None:
+    """A healthy deploy with auto-serve (default on) issues a /serve model load so
+    the server is ready without a manual serve."""
+    cfg_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    for env_var in config_module.ENV_MAP.values():
+        monkeypatch.delenv(env_var, raising=False)
+
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.return_value = (0, "ok", "")
+    mocker.patch("npa.cli.cosmos.SSHClient", return_value=ssh)
+    mocker.patch(
+        "npa.cli.cosmos.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    mocker.patch("npa.cli.cosmos.write_manifest")
+    mocker.patch("npa.cli.cosmos.health_check_auto", return_value=(True, ""))
+
+    deploy = runner.invoke(
+        app,
+        [
+            "workbench", "cosmos", "-p", "proj", "-n", "cosmos", "deploy",
+            "--runtime", "byovm",
+            "--host", "203.0.113.10",
+            "--ssh-key", "~/.ssh/byovm",
+            "--region", "eu-north1",
+            "--gpu-type", "gpu-h200-sxm",
+            "--gpu-preset", "8gpu-160vcpu-1792gb",
+            "--server-port", "8081",
+            "--skip-model-check",
+        ],
+    )
+
+    assert deploy.exit_code == 0
+    load_calls = [
+        call.args[0]
+        for call in ssh.run_or_raise.call_args_list
+        if "/serve" in call.args[0]
+    ]
+    assert load_calls, "auto-serve should issue a /serve model-load command"
+    assert any("8081" in cmd for cmd in load_calls)
 
 
 def test_cosmos_status_reports_degraded_when_model_not_loaded(mocker) -> None:

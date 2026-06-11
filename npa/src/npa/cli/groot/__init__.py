@@ -2366,10 +2366,24 @@ def deploy_cmd(
         "--verify-env/--no-verify-env",
         help="Audit deployed shared credentials after app deploy.",
     ),
+    auto_serve: bool = typer.Option(
+        True,
+        "--auto-serve/--no-auto-serve",
+        help=(
+            "After a healthy deploy, load the model so the server is ready "
+            "(status: healthy) without a manual serve. Use --no-auto-serve to "
+            "leave the model cold."
+        ),
+    ),
     model: str = typer.Option(
         DEFAULT_MODEL,
         "--model",
         help="Hugging Face GR00T model ID to validate and record.",
+    ),
+    robot_embodiment: str = typer.Option(
+        DEFAULT_EMBODIMENT_TAG,
+        "--robot-embodiment",
+        help="Embodiment tag to auto-serve (e.g. REAL_G1, UNITREE_G1, LIBERO_PANDA).",
     ),
     server_port: int = typer.Option(
         DEFAULT_SERVER_PORT, "--server-port", help="GR00T HTTP server port on the VM."
@@ -3063,6 +3077,34 @@ def deploy_cmd(
             else:
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
+
+            if auto_serve:
+                serve_tag = _normalize_embodiment_tag(robot_embodiment)
+                if serve_tag == DEFAULT_EMBODIMENT_TAG:
+                    console.print(
+                        "    [yellow]Skipping auto-serve:[/yellow] pass "
+                        "--robot-embodiment (e.g. REAL_G1) to load the model, or run "
+                        "`groot serve --robot-embodiment <tag>` later."
+                    )
+                else:
+                    console.print(
+                        f"    Loading model {model} with embodiment {serve_tag} so the "
+                        "server is ready (auto-serve)..."
+                    )
+                    try:
+                        ssh.run_or_raise(
+                            _build_container_serve_command(
+                                model, serve_tag, server_port
+                            ),
+                            stream=True,
+                        )
+                        console.print("    Model loaded; server is ready.")
+                    except SSHError as exc:
+                        console.print(
+                            "    [yellow]Warning:[/yellow] auto-serve could not load "
+                            f"the model: {exc}\n    The server is deployed; run `groot "
+                            "serve` to load it."
+                        )
 
         step += 1
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
