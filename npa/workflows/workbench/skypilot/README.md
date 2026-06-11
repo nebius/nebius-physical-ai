@@ -42,8 +42,13 @@ truth; the top-level `README.md` shows only a few common entry points.)
 | Stage the Cosmos3 framework + checkpoints | [`cosmos3-ea-fetch.yaml`](./cosmos3-ea-fetch.yaml) | `npa workbench cosmos` | CPU | [cosmos3-setup SKILL](../../../../.agents/skills/cosmos3-setup/SKILL.md) |
 | Run Cosmos3 Reason inference | [`cosmos3-reason.yaml`](./cosmos3-reason.yaml) | `npa workbench cosmos` | RTX PRO 6000 | [inference SKILL](../../../../.agents/skills/inference/SKILL.md) |
 | Run a Cosmos2 transfer (video-to-world) stage | [`cosmos2-transfer.yaml`](./cosmos2-transfer.yaml) | `npa workbench cosmos` | RTX PRO 6000 | [cosmos SKILL](../../../../.agents/skills/workbench/cosmos/SKILL.md) |
-| **Roll out on a k8s GPU, then judge it with hosted Token Factory** | [`tokenfactory-rollout-judge.yaml`](./tokenfactory-rollout-judge.yaml) | `npa workbench workflow submit` | L40S (judge stage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
+| **Roll out on a k8s GPU, then judge it with hosted Token Factory** | [`tokenfactory-rollout-judge.yaml`](./tokenfactory-rollout-judge.yaml) | `npa workbench workflow submit` | H100 (judge stage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
+| **Reason over a scene, roll out on a k8s GPU, then judge vs. the plan** | [`tokenfactory-scene-to-rollout-judge.yaml`](./tokenfactory-scene-to-rollout-judge.yaml) | `npa workbench workflow submit` | H100 (reason + judge stages CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
 | Train on a serverless GPU, then triage the run with Token Factory | _(runner script)_ | [`run_tokenfactory_train_triage.py`](../../../scripts/run_tokenfactory_train_triage.py) | serverless GPU (triage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
+| Design a sweep, run N serverless GPU trains, then rank them with Token Factory | _(runner script)_ | [`run_tokenfactory_sim_sweep.py`](../../../scripts/run_tokenfactory_sim_sweep.py) | serverless GPU ×N (design + rank CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
+
+To compose your own combo, read
+[composing-cloud-and-token-factory.md](../../../../docs/workbench/composing-cloud-and-token-factory.md).
 
 The Cosmos guides are agent skills under `.agents/skills/`; everything else
 links to a human-facing guide under `docs/`.

@@ -88,11 +88,24 @@ network/storage calls live in the runner and existing tool modules.
   unless the workbench config supplies a project and
   `storage.checkpoint_bucket`. `--render-only` previews with no infra;
   `--from-output-path` triages an existing prefix without launching a GPU Job.
+- `npa/scripts/run_tokenfactory_sim_sweep.py` (**serverless fan-out**): a text
+  model designs the sweep, a deterministic `--steps` grid launches one LeRobot
+  serverless GPU train per variant, then a text model ranks the completed runs.
+  `--render-only` previews; `--rank-existing a,b` ranks existing prefixes with no
+  GPU spend. `lerobot train` has no `--seed`, so the grid varies `--steps`.
 - `npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml`
   (**kubernetes**): stage 1 renders a `lerobot-eval` rollout on a k8s GPU and
   uploads videos to S3; stage 2 is CPU `vlm-eval --backend api` judging via a
   hosted VLM. Two serial docs, two images (lerobot GPU, then token-factory CPU).
+- `npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml`
+  (**kubernetes**): three serial stages — `token-factory reason` over scene
+  images (CPU) → `lerobot-eval` rollout (k8s GPU) → `vlm-eval --backend api`
+  judging the rollout against the reasoner's plan (CPU). The hackathon
+  physical-common-sense loop end to end.
 
-Guide: `docs/workbench/cookbooks/tokenfactory-compute-combos.md`. Both are
-smoke-sized to stay cheap. The runner exports `~/.npa/credentials.yaml` into the
-environment itself because it is launched as a plain script, not via the CLI.
+Guide: `docs/workbench/cookbooks/tokenfactory-compute-combos.md`. To compose new
+combos (the contract, both tokens, the two styles), see
+`docs/workbench/composing-cloud-and-token-factory.md` and the
+`compose-cloud-tokenfactory` skill. All combos are smoke-sized to stay cheap.
+The runners export `~/.npa/credentials.yaml` into the environment themselves
+because they are launched as plain scripts, not via the CLI.

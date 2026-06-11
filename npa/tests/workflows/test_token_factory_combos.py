@@ -9,12 +9,20 @@ import pytest
 import yaml
 
 from npa.workflows.token_factory_combos import (
+    DEFAULT_SWEEP_DESIGN_SYSTEM_PROMPT,
+    DEFAULT_SWEEP_RANKING_SYSTEM_PROMPT,
+    DEFAULT_SWEEP_STEPS,
     DEFAULT_TRIAGE_SYSTEM_PROMPT,
+    build_ranking_prompt,
+    build_sweep_design_prompt,
     build_triage_prompt,
+    default_sweep_run_id,
     default_triage_run_id,
     join_uri,
     render_triage_prompts_jsonl,
     summarize_run_artifacts,
+    sweep_variant_output_uri,
+    sweep_variants,
     triage_job_name,
     triage_prompt_record,
     triage_report_uri,
@@ -22,16 +30,27 @@ from npa.workflows.token_factory_combos import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-ROLLOUT_JUDGE_YAML = ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "tokenfactory-rollout-judge.yaml"
+SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
+ROLLOUT_JUDGE_YAML = SKYPILOT / "tokenfactory-rollout-judge.yaml"
+SCENE_JUDGE_YAML = SKYPILOT / "tokenfactory-scene-to-rollout-judge.yaml"
 TRIAGE_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_train_triage.py"
+SWEEP_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_sim_sweep.py"
 
 
-def _load_runner():
-    spec = importlib.util.spec_from_file_location("run_tokenfactory_train_triage", TRIAGE_RUNNER)
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_runner():
+    return _load_module("run_tokenfactory_train_triage", TRIAGE_RUNNER)
+
+
+def _load_sweep_runner():
+    return _load_module("run_tokenfactory_sim_sweep", SWEEP_RUNNER)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -190,5 +209,145 @@ def test_rollout_judge_is_two_stage_gpu_then_hosted_judge() -> None:
 
 def test_rollout_judge_has_no_hardcoded_infra_ids() -> None:
     text = ROLLOUT_JUDGE_YAML.read_text(encoding="utf-8")
+    assert "<your-registry-id>" in text
+    assert "<your-bucket-name>" in text
+
+
+# --- sim-sweep pure helpers ----------------------------------------------
+
+
+def test_sweep_run_id_and_variants_are_deterministic() -> None:
+    moment = datetime(2026, 6, 11, 18, 30, 5, tzinfo=timezone.utc)
+    assert default_sweep_run_id(moment) == "tf-sim-sweep-20260611T183005Z"
+
+    variants = sweep_variants(2)
+    assert [v["id"] for v in variants] == ["v0-steps50", "v1-steps100"]
+    assert [v["steps"] for v in variants] == [50, 100]
+
+
+def test_sweep_variants_clamps_to_grid_bounds() -> None:
+    assert len(sweep_variants(0)) == 1  # clamps up to at least one
+    assert len(sweep_variants(99)) == len(DEFAULT_SWEEP_STEPS)  # clamps down to grid
+    with pytest.raises(ValueError):
+        sweep_variants(2, steps_grid=[])
+
+
+def test_sweep_variant_output_uri_nests_under_variants() -> None:
+    uri = sweep_variant_output_uri("s3://b/sweep", "v0-steps50")
+    assert uri == "s3://b/sweep/variants/v0-steps50"
+
+
+def test_build_sweep_design_prompt_lists_only_grid_variants() -> None:
+    variants = sweep_variants(2)
+    prompt = build_sweep_design_prompt(
+        objective="maximize success",
+        dataset="lerobot/pusht",
+        policy_type="act",
+        variants=variants,
+    )
+    assert "maximize success" in prompt
+    assert "v0-steps50" in prompt and "steps=50" in prompt
+    assert "v1-steps100" in prompt
+    assert "v2-" not in prompt  # only the two requested variants
+
+
+def test_build_ranking_prompt_includes_each_run_digest() -> None:
+    prompt = build_ranking_prompt(
+        objective="best policy",
+        runs=[
+            {"id": "v0", "uri": "s3://b/v0/", "digest": "### train.log\nloss 0.3"},
+            {"id": "v1", "uri": "s3://b/v1/", "digest": "### train.log\nloss 0.9"},
+        ],
+    )
+    assert "best policy" in prompt
+    assert "Variant v0" in prompt and "Variant v1" in prompt
+    assert "loss 0.3" in prompt and "loss 0.9" in prompt
+
+
+def test_build_ranking_prompt_handles_no_runs() -> None:
+    assert "no completed variants" in build_ranking_prompt(objective="x", runs=[])
+
+
+def test_sweep_system_prompts_are_grounded() -> None:
+    assert "only use facts" in DEFAULT_SWEEP_RANKING_SYSTEM_PROMPT.lower()
+    assert "do not invent" in DEFAULT_SWEEP_DESIGN_SYSTEM_PROMPT.lower()
+
+
+# --- sim-sweep runner (render-only, no infrastructure) --------------------
+
+
+def test_sweep_runner_render_only_full_sweep() -> None:
+    module = _load_sweep_runner()
+    args = module._parse_args(
+        ["--run-id", "demo", "--num-variants", "2", "--bucket", "s3://b/tf-sim-sweep"]
+    )
+    plan = module.build_plan(args)
+    assert plan["mode"] == "full-sweep"
+    assert plan["compute"] == "nebius-serverless-gpu"
+    assert plan["hosted_inference"] == "nebius-token-factory"
+    assert len(plan["variants"]) == 2
+    cmd = plan["variants"][0]["train_command"]
+    assert cmd[:3] == ["workbench", "lerobot", "train"]
+    assert "--runtime" in cmd and "serverless" in cmd
+    assert "--steps" in cmd
+    assert "--seed" not in cmd  # lerobot train has no --seed flag
+    assert plan["variants"][0]["output_uri"].endswith("variants/v0-steps50")
+    assert "Design the rationale" in plan["design_prompt"]
+
+
+def test_sweep_runner_rank_existing_skips_design_and_gpu() -> None:
+    module = _load_sweep_runner()
+    args = module._parse_args(["--rank-existing", "s3://b/runA/, s3://b/runB/"])
+    plan = module.build_plan(args)
+    assert plan["mode"] == "rank-existing"
+    assert plan["variant_uris"] == ["s3://b/runA/", "s3://b/runB/"]
+    assert "variants" not in plan
+    assert "design_prompt" not in plan
+
+
+def test_sweep_runner_disambiguates_colliding_run_labels() -> None:
+    module = _load_sweep_runner()
+    # Distinct last segments keep their names...
+    runs = module._label_existing_runs(["s3://b/runA/", "s3://b/runB/"])
+    assert [r["id"] for r in runs] == ["runA", "runB"]
+    # ...colliding last segments are suffixed by position.
+    collide = module._label_existing_runs(
+        ["s3://b/r1/checkpoints/pretrained_model/", "s3://b/r2/checkpoints/pretrained_model/"]
+    )
+    assert [r["id"] for r in collide] == ["pretrained_model-0", "pretrained_model-1"]
+    assert len({r["id"] for r in collide}) == 2
+
+
+# --- scene-to-rollout-judge SkyPilot YAML (reason -> k8s GPU -> VLM judge) -
+
+
+def test_scene_judge_is_three_stage_reason_gpu_judge() -> None:
+    docs = _docs(SCENE_JUDGE_YAML)
+    assert docs[0] == {"name": "tokenfactory-scene-to-rollout-judge", "execution": "serial"}
+    reason_stage, gpu_stage, judge_stage = docs[1], docs[2], docs[3]
+
+    # Stage 1: hosted reasoner, zero-GPU.
+    assert reason_stage["name"] == "scene-reason"
+    assert "accelerators" not in reason_stage["resources"]
+    assert "npa workbench token-factory reason" in reason_stage["run"]
+    assert reason_stage["envs"]["PLAN_URI"].startswith("s3://")
+
+    # Stage 2: genuine Nebius k8s GPU rollout.
+    assert gpu_stage["name"] == "rollout-gpu"
+    assert gpu_stage["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" in gpu_stage["resources"]
+    assert "lerobot-eval" in gpu_stage["run"]
+
+    # Stage 3: hosted VLM judge that consumes the plan and the rollout.
+    assert judge_stage["name"] == "scene-judge"
+    assert "accelerators" not in judge_stage["resources"]
+    assert "npa workbench vlm-eval run" in judge_stage["run"]
+    assert "--backend api" in judge_stage["run"]
+    assert judge_stage["envs"]["PLAN_URI"] == reason_stage["envs"]["PLAN_URI"]
+    assert judge_stage["envs"]["ROLLOUTS_URI"] == gpu_stage["envs"]["ROLLOUTS_URI"]
+
+
+def test_scene_judge_has_no_hardcoded_infra_ids() -> None:
+    text = SCENE_JUDGE_YAML.read_text(encoding="utf-8")
     assert "<your-registry-id>" in text
     assert "<your-bucket-name>" in text

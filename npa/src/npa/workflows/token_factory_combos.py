@@ -11,11 +11,19 @@ Factory inference* (zero-GPU on the client side):
    Nebius **Managed Kubernetes GPU**; ``vlm-eval --backend api`` then scores the
    rollout with a hosted VLM, with no local VLM serving stage. Workflow:
    ``npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml``.
+3. **sim-sweep (serverless fan-out).** A hosted text model designs an experiment
+   sweep, a deterministic grid launches one LeRobot **serverless GPU Job** per
+   variant, and a hosted text model ranks the completed runs from their real
+   artifacts. Runner: ``npa/scripts/run_tokenfactory_sim_sweep.py``.
+4. **scene-to-rollout-judge (kubernetes).** A hosted reasoner extracts a plan
+   from scene images, a Nebius **Managed Kubernetes GPU** rolls out a policy, and
+   a hosted VLM judges the rollout against that plan. Workflow:
+   ``npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml``.
 
-This module holds only pure logic (digesting artifacts, building the triage
-prompt, deriving run IDs / job names / URIs) so it is unit-testable without SSH,
-S3, Nebius, or GPUs. All network, storage, and Token Factory calls live in the
-runner script and the existing client/tool modules.
+This module holds only pure logic (digesting artifacts, building prompts,
+deriving run IDs / job names / URIs / variant grids) so it is unit-testable
+without SSH, S3, Nebius, or GPUs. All network, storage, and Token Factory calls
+live in the runner scripts and the existing client/tool modules.
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 DEFAULT_TRIAGE_SYSTEM_PROMPT = (
     "You are a senior robot-learning engineer triaging a training run for a "
@@ -209,3 +217,122 @@ def render_triage_prompts_jsonl(records: Iterable[dict[str, str]]) -> str:
     """Serialize prompt records to JSONL text for the generate tool."""
 
     return "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
+
+
+# ---------------------------------------------------------------------------
+# sim-sweep combo: Token Factory design -> N serverless GPU trains -> ranking.
+#
+# Pure logic for the "experiment sweep" composition: a hosted text model
+# proposes an experiment rationale, a deterministic grid defines the actual
+# hyper-parameters launched on Nebius GPUs (so the GPU stage never depends on
+# parsing free-form model output), and a hosted text model finally ranks the
+# completed runs from their real artifacts. All network/storage/GPU work lives
+# in ``npa/scripts/run_tokenfactory_sim_sweep.py``.
+# ---------------------------------------------------------------------------
+
+DEFAULT_SWEEP_DESIGN_SYSTEM_PROMPT = (
+    "You are a robot-learning research lead designing a small training sweep for "
+    "a physical-AI team. You are given an objective and the concrete variant grid "
+    "that will actually run on GPUs. For each variant, write one or two sentences "
+    "stating the hypothesis it tests and what signal would confirm or refute it. "
+    "Be specific and grounded in the given hyper-parameters; do not invent "
+    "variants that are not in the grid."
+)
+
+DEFAULT_SWEEP_RANKING_SYSTEM_PROMPT = (
+    "You are a senior robot-learning engineer reviewing the results of a training "
+    "sweep. You are given the sweep objective and, for each completed variant, its "
+    "configuration and log artifacts. Produce a report with: (1) Ranking — order "
+    "the variants best-to-worst with a one-line justification each, citing concrete "
+    "numbers from the artifacts; (2) Winner — the variant you would promote and why; "
+    "(3) Caveats — what the artifacts do not tell you. Only use facts present in the "
+    "artifacts; if a metric is missing, say so rather than inventing it."
+)
+
+# Training-step counts used as the deterministic sweep knob. ``lerobot train``
+# exposes ``--steps`` (but no ``--seed``), so steps give a real, comparable axis.
+DEFAULT_SWEEP_STEPS = (50, 100, 150, 200)
+
+
+def default_sweep_run_id(now: datetime | None = None) -> str:
+    return f"tf-sim-sweep-{utc_stamp(now)}"
+
+
+def sweep_variants(
+    num_variants: int,
+    *,
+    steps_grid: Iterable[int] = DEFAULT_SWEEP_STEPS,
+) -> list[dict[str, Any]]:
+    """Return a deterministic variant grid (one dict per GPU train Job).
+
+    The grid varies ``--steps`` so the GPU stage is fully defined by code, never
+    by model output. ``num_variants`` is clamped to ``[1, len(steps_grid)]``.
+    """
+
+    grid = [int(value) for value in steps_grid]
+    if not grid:
+        raise ValueError("steps_grid must be non-empty")
+    count = max(1, min(int(num_variants), len(grid)))
+    return [
+        {"index": index, "id": f"v{index}-steps{grid[index]}", "steps": grid[index]}
+        for index in range(count)
+    ]
+
+
+def sweep_variant_output_uri(sweep_root: str, variant_id: str) -> str:
+    return join_uri(sweep_root, "variants", variant_id)
+
+
+def build_sweep_design_prompt(
+    *,
+    objective: str,
+    dataset: str,
+    policy_type: str,
+    variants: Iterable[dict[str, Any]],
+) -> str:
+    """Compose the prompt asking the text model to design the sweep rationale."""
+
+    lines = [
+        "Design the rationale for this robot-policy training sweep.",
+        f"- Objective: {objective.strip() or '(none given)'}",
+        f"- Dataset: {dataset}",
+        f"- Policy type: {policy_type}",
+        "- Variant grid (these exact runs will launch on Nebius GPUs):",
+    ]
+    for variant in variants:
+        extras = ", ".join(
+            f"{key}={value}" for key, value in variant.items() if key not in {"index", "id"}
+        )
+        lines.append(f"  - {variant['id']}: {extras}" if extras else f"  - {variant['id']}")
+    lines.append("")
+    lines.append("Write the per-variant hypotheses described in your instructions.")
+    return "\n".join(lines) + "\n"
+
+
+def build_ranking_prompt(
+    *,
+    objective: str,
+    runs: Iterable[dict[str, str]],
+) -> str:
+    """Compose the prompt that ranks completed sweep runs from their artifacts.
+
+    Each run is ``{"id", "uri", "digest"}`` where ``digest`` is the bounded
+    textual artifact digest produced by :func:`summarize_run_artifacts`.
+    """
+
+    header = [
+        "Rank the completed training-sweep variants below.",
+        f"- Objective: {objective.strip() or '(none given)'}",
+        "",
+        "Each variant's artifacts (configs and logs) follow. Base your report only",
+        "on these.",
+        "",
+    ]
+    blocks: list[str] = []
+    for run in runs:
+        blocks.append(
+            f"## Variant {run['id']}\n- Artifacts location: {run.get('uri', '')}\n\n{run.get('digest', '')}"
+        )
+    if not blocks:
+        blocks.append("(no completed variants were provided)")
+    return "\n".join(header) + "\n\n".join(blocks) + "\n"
