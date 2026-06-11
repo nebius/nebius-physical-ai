@@ -21,10 +21,21 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
-from npa.workbench.lerobot.policy_container import (
-    parse_vlm_signal_batch,
-    run_vlm_signal_training_step,
-)
+
+# npa.workbench.lerobot.policy_container is imported lazily inside the inner
+# loop (see _signal_training_imports). Importing it at module load pulls the
+# full npa.workbench tool tree (lancedb/fiftyone/etc.), which is intentionally
+# absent from the Isaac Lab held-out image; the Isaac rollout path never needs
+# it. Keeping the import lazy lets sim2real_loop run on a minimal interpreter.
+
+
+def _signal_training_imports():
+    from npa.workbench.lerobot.policy_container import (
+        parse_vlm_signal_batch,
+        run_vlm_signal_training_step,
+    )
+
+    return parse_vlm_signal_batch, run_vlm_signal_training_step
 
 
 DEFAULT_S3_ENDPOINT = ""
@@ -962,6 +973,7 @@ def run_inner_loop(
         _write_json_artifact(
             signal_batch_path, {"schema": SCHEMA_RL_SIGNAL, "signals": signals}
         )
+        parse_vlm_signal_batch, run_vlm_signal_training_step = _signal_training_imports()
         parsed_signals = parse_vlm_signal_batch({"signals": signals})
         update = run_vlm_signal_training_step(
             parsed_signals,
@@ -1485,6 +1497,7 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     # boto3 is installed to a writable target dir for the S3 client.
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
         return f"""set -euo pipefail
+export NPA_SKIP_EAGER_IMPORTS=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
