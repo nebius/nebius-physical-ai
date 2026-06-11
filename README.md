@@ -82,6 +82,21 @@ make test
 For full cloud setup, continue with [docs/quickstart.md](docs/quickstart.md)
 and [docs/workbench/getting-started.md](docs/workbench/getting-started.md).
 
+## Easy Guides
+
+Short, fun, copy-paste walkthroughs that pair a **robot**, a **simulation
+environment**, and a **cool public dataset**. Start with the no-GPU one, then
+pick a robot — see [docs/workbench/guides/README.md](docs/workbench/guides/README.md).
+
+| Guide | Robot | Sim / engine | Public dataset |
+| --- | --- | --- | --- |
+| [Score a robot in 60 seconds (no GPU)](docs/workbench/guides/score-a-robot-no-gpu.md) | any | offline | shipped sample rollouts |
+| [Pick-and-place with a Franka arm](docs/workbench/guides/franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) |
+| [Teach a robot to push a T](docs/workbench/guides/pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` |
+| [Train a Reachy 2 humanoid policy](docs/workbench/guides/reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub |
+| [Make a Unitree G1 walk](docs/workbench/guides/g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC |
+| [Train a quadruped to run](docs/workbench/guides/quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks |
+
 ## Workbench
 
 Workbench is the main product surface in this repository. Current Workbench
@@ -234,6 +249,9 @@ Workbench runs on Nebius infrastructure rather than hiding it:
   credential setup.
 - [docs/workbench/getting-started.md](docs/workbench/getting-started.md):
   Workbench setup and first workload path.
+- [docs/workbench/guides/README.md](docs/workbench/guides/README.md): easy,
+  beginner-friendly guides built around Franka, Reachy 2, Unitree G1, and
+  quadrupeds in simulation with public datasets.
 - [docs/workbench/](docs/workbench/): Workbench guides, cookbooks, and
   troubleshooting.
 - [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md):

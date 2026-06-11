@@ -1,0 +1,1 @@
+Before processing any user prompt, always read and strictly adhere to the operational constraints, context caching rules, and module boundaries defined in `.agents/skills`. Keep responses compact and direct to preserve context window longevity.
