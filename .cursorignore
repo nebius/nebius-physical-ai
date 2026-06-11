@@ -1,0 +1,74 @@
+# .cursorignore — keep large/generated/binary paths out of agent context and indexing.
+# Mirrors the high-volume entries in .gitignore plus a few Cursor-specific bleeders.
+# Goal: minimize token ingestion and avoid full-workspace scans.
+
+# Virtualenvs and installed dependencies (npa/.venv alone is ~1.5G)
+.venv/
+**/.venv/
+venv/
+**/venv/
+node_modules/
+**/node_modules/
+
+# Python build/test/type caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Model checkpoints, weights, and generated arrays/datasets
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+checkpoints/
+cosmos3-cache/
+npa-cosmos3-cache/
+
+# Large binary demo/media assets (docs/demos/assets is ~24M)
+docs/demos/assets/
+*.mp4
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Lockfiles (large, low-signal for reasoning)
+uv.lock
+**/uv.lock
+poetry.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Run output, logs, and scratch
+results/
+runs/
+logs/
+*.log
+*.log*
+tmp/
+*.tmp
+*.temp
+
+# Terraform state and provider dirs
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+
+# Security scan reports
+kingfisher-result*.json
+semgrep-*.json

@@ -14,7 +14,7 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 - `.claude/skills/workbench/mjlab/SKILL.md`: load for MJLab locomotion evaluation and SONIC checkpoint scoring.
 - `.claude/skills/workbench/retargeting/SKILL.md`: load for motion retargeting in SONIC locomotion workflows.
 - `.agents/skills/workbench/sim-to-real/SKILL.md`: load for generic sim-to-real data import, Cosmos autoscale, VLM evaluation, and controller-loop workflow planning.
-- `.agents/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
+- `.claude/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
 
 ### Partner Capability Roadmap
 
