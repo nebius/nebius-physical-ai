@@ -80,8 +80,11 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 ## Go bigger
 
 - **Run it serverless on Nebius** instead of locally — `train-teacher` takes
-  `--runtime serverless --gpu-type l40s --output-path s3://<bucket>/...` and
-  submits a Nebius AI Job for you.
+  `--runtime serverless --project-id <your-project-id> --gpu-type l40s
+  --output-path s3://<bucket>/...` and submits a Nebius AI Job for you.
+  (Serverless needs `--project-id`, or a project configured in
+  `~/.npa/config.yaml`.) Inspect the artifacts it writes with
+  `npa workbench data list --input-path s3://<bucket>/.../`.
 - **Scale up:** the defaults are `--n-envs 4096 --max-iterations 500`. More envs
   and iterations give a stronger teacher.
 - **Tune rewards** without editing code via repeatable overrides, e.g.
