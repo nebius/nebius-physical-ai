@@ -1,4 +1,10 @@
 # BDD100K reproduction pipeline.
+#
+# Guide:   docs/workbench/cookbooks/bdd100k-pipeline.md (prerequisites, run, verify)
+# Demo:    docs/demos/bdd100k-lancedb-demo.md
+# Runner:  npa/scripts/run_bdd100k_pipeline.py (renders run-scoped S3 paths)
+# Index:   npa/workflows/workbench/skypilot/README.md
+#
 # SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but
 # not mixed dependency graphs in one YAML. Training and evaluation therefore
 # run serially here; split them into separate parallel job groups only when the

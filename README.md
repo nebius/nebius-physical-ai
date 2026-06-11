@@ -236,6 +236,9 @@ Workbench runs on Nebius infrastructure rather than hiding it:
   Workbench setup and first workload path.
 - [docs/workbench/](docs/workbench/): Workbench guides, cookbooks, and
   troubleshooting.
+- [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md):
+  end-to-end cookbooks, including the
+  [BDD100K + LanceDB pipeline](docs/workbench/cookbooks/bdd100k-pipeline.md).
 - [docs/cli/README.md](docs/cli/README.md): generated CLI reference.
 - [docs/architecture/solutions-model.md](docs/architecture/solutions-model.md):
   solution namespace model.
