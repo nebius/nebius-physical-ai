@@ -10,11 +10,38 @@ header. NPA reads it from the `NEBIUS_API_KEY` environment variable (or
 `~/.npa/credentials.yaml`). The default endpoint is
 `https://api.tokenfactory.nebius.com/v1/`.
 
-## 1. Get an API key
+## 1. Register and get an API key
 
-1. Sign in at <https://tokenfactory.nebius.com/>.
-2. Open **API keys** → **Create API key**.
-3. Copy the key now — it cannot be shown again.
+Token Factory has its own console, separate from the main Nebius cloud console.
+Registering and minting a key takes about two minutes:
+
+1. **Create an account / sign in.** Go to <https://tokenfactory.nebius.com/> and
+   sign up (Google/GitHub/email all work) or sign in. New accounts land in a
+   default organization and project.
+2. **Make sure the project has credit.** Token Factory is pay-per-token. New
+   accounts usually get trial credit; otherwise open **Billing** and add a
+   payment method or redeem credits. A project with no balance returns
+   `402`/`403` on inference calls. If your team already has a Token Factory
+   project, just confirm you're switched into it (top-left project switcher).
+3. **Create the API key.** In the left nav open **API keys** → **Create API
+   key**, give it a name (e.g. `npa-hackathon`), and click **Create**.
+4. **Copy it now.** The key is shown **once** and cannot be reopened later. It's
+   a long opaque Bearer token. Store it somewhere safe (a password manager) —
+   you'll paste it into NPA in step 2.
+
+> Tip: each Token Factory project also has an **AI project ID** (looks like
+> `aiproject-...`, visible in the project switcher / settings). You don't need
+> it for normal use — the API key already scopes requests to its project — but
+> it's handy when filtering models by project in the console.
+
+Optional 10-second self-test from your own terminal (proves the key works and
+shows the served catalog, including whether `nvidia/Cosmos3-Super-Reasoner` is
+enabled for you):
+
+```bash
+curl -s https://api.tokenfactory.nebius.com/v1/models \
+  -H "Authorization: Bearer <PASTE_KEY>" | head
+```
 
 ## 2. Give the key to NPA
 
