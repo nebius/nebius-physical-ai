@@ -348,19 +348,24 @@ class FrankaPickPlaceEnv:
             return entity
 
         source = spec.robot_source
+        # Preserve the configured end-effector + finger links even when they are
+        # attached by a fixed joint (the UR `tool0` / Flexiv `flange` convention).
+        # Genesis merges fixed-joint links into their parent by default, which
+        # would hide the IK/ee link; ``links_to_keep`` keeps them resolvable.
+        links_to_keep = [name for name in (spec.ee_link, *spec.finger_links) if name]
         if source in (ROBOT_SOURCE_BYO_URDF, ROBOT_SOURCE_GENESIS_BUILTIN):
             if not spec.local_path:
                 raise RobotSpecError(
                     f"robot {spec.name!r} ({source}) has no resolved local_path; "
                     "the robot asset must be downloaded/resolved before building"
                 )
-            morph = gs.morphs.URDF(file=spec.local_path, fixed=True)
+            morph = self._urdf_morph(gs, spec.local_path, links_to_keep)
         elif source == ROBOT_SOURCE_BYO_MJCF:
             if not spec.local_path:
                 raise RobotSpecError(
                     f"robot {spec.name!r} ({source}) has no resolved local_path"
                 )
-            morph = gs.morphs.MJCF(file=spec.local_path)
+            morph = self._mjcf_morph(gs, spec.local_path, links_to_keep)
         elif source == ROBOT_SOURCE_BYO_USD:
             # Genesis loads robots from URDF/MJCF, not USD. USD robots are an
             # Isaac-backend capability; fail loudly rather than silently using
@@ -383,6 +388,27 @@ class FrankaPickPlaceEnv:
         spec.loaded = True
         self.robot_provenance = spec.provenance()
         return entity
+
+    @staticmethod
+    def _urdf_morph(gs: Any, file: str, links_to_keep: list[str]) -> Any:
+        """Build a URDF morph, keeping named fixed links when supported.
+
+        ``links_to_keep`` is a Genesis convenience for preserving fixed-joint
+        links (e.g. a tool flange) so they stay resolvable for IK/contacts.
+        Falls back gracefully on Genesis builds that lack the kwarg.
+        """
+
+        try:
+            return gs.morphs.URDF(file=file, fixed=True, links_to_keep=links_to_keep)
+        except TypeError:
+            return gs.morphs.URDF(file=file, fixed=True)
+
+    @staticmethod
+    def _mjcf_morph(gs: Any, file: str, links_to_keep: list[str]) -> Any:
+        try:
+            return gs.morphs.MJCF(file=file, links_to_keep=links_to_keep)
+        except TypeError:
+            return gs.morphs.MJCF(file=file)
 
     def _build_scene_objects(self, gs: Any, spec: SceneSpec) -> Any:
         """Add every SceneSpec object; return the manipuland entity.
