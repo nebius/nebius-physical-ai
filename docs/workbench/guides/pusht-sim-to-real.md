@@ -47,7 +47,15 @@ print(report.status)
 ```
 
 This validates the data split, the eval backend, the feedback object, and the
-Rerun recording wiring without provisioning anything.
+Rerun recording wiring without provisioning anything. It downloads and inspects
+the public `lerobot/pusht` metadata (≈206 episodes, ≈25k frames) on the fly.
+
+The report is **tiered**, so read `report.status` and the per-component tiers
+literally. In a plain `pip install -e npa` environment the `LeRobotDataset`
+import isn't present, so the dataset component reports `PARTIAL`/`BLOCKED` and
+`report.status` is `blocked` — that's expected. Install the LeRobot extra (so
+`import lerobot` works) for a fully green local smoke; the live H100 run below
+uses the policy image and doesn't need LeRobot on your laptop.
 
 ## The one-command live run
 
