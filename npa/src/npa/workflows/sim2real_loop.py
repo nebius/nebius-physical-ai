@@ -2996,7 +2996,6 @@ def _isaac_import_mesh_to_usd(local_path: str, *, work_dir: Path) -> str:
                 usd_dir=str(work_dir),
                 usd_file_name=f"{src.stem}.usd",
                 force_usd_conversion=True,
-                collision_approximation="convexHull",
                 mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(),
                 collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
