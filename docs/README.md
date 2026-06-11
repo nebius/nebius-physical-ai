@@ -8,6 +8,7 @@ Nebius Physical AI.
 | Path | Purpose |
 | --- | --- |
 | [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
+| [workbench/kubernetes.md](workbench/kubernetes.md) | User setup and operational guide for running Workbench on managed Kubernetes |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart |
@@ -22,6 +23,7 @@ Nebius Physical AI.
 | Reader | Start with |
 | --- | --- |
 | Customer running a first Workbench workload | [workbench/getting-started.md](workbench/getting-started.md) |
+| Operator connecting Workbench to Kubernetes | [workbench/kubernetes.md](workbench/kubernetes.md) |
 | Developer adding a solution | [architecture/solutions-model.md](architecture/solutions-model.md) |
 | SDK integrator or agent author | [sdk/errors.md](sdk/errors.md) |
 | Internal engineer triaging a failure | [cli-errors.md](cli-errors.md) |
