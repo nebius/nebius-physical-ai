@@ -10,6 +10,7 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 
 ## Codex Skills
 
+- `.agents/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
 - `.agents/skills/platform/quickstart/SKILL.md`: first-time setup, zero-credential first run, install, Nebius auth, and the contributor dev/test loop.
 - `.agents/skills/workbench/cookbooks/SKILL.md`: working end-to-end cookbooks mapped to their validated entrypoints (BDD100K, sim-to-real, VLM-eval loop, LeRobot benchmarks, Isaac Lab BYOF).
 - `.agents/skills/workbench/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
