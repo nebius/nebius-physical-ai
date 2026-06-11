@@ -574,31 +574,47 @@ def run_full_loop(
         )
     )
 
-    stage_records.append(
-        _write_stage(
-            local_dir,
-            2,
-            "assets",
-            {
-                "schema": "npa.sim2real.external_stub.v1",
-                "stage": 2,
-                "name": "external real assets and SceneSpec",
-                "status": "documented_external_stub",
-                "assets_uri": config.assets_uri,
-                "scene_spec_uri": config.scene_spec_uri,
-                "next_action": "CONTINUE",
-            },
-            filename="external_stub.json",
+    if config.scene_spec_uri or config.assets_uri:
+        consumed = _consume_stage_assets(config, local_dir)
+        stage_records.append(consumed["stage_record"])
+        components.append(
+            ComponentRecord(
+                "stage_02_assets",
+                "WORKS",
+                (
+                    "Downloaded and validated the BYO mesh/SceneSpec and emitted a "
+                    "consumed scene spec with per-object provenance for the "
+                    "held-out Genesis rollout."
+                ),
+                {"local": consumed["consumed_spec_path"]},
+            )
         )
-    )
-    components.append(
-        ComponentRecord(
-            "stage_02_assets",
-            "SEAM",
-            "External assets and SceneSpec are documented BYO inputs for this reference run.",
-            {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
+    else:
+        stage_records.append(
+            _write_stage(
+                local_dir,
+                2,
+                "assets",
+                {
+                    "schema": "npa.sim2real.external_stub.v1",
+                    "stage": 2,
+                    "name": "external real assets and SceneSpec",
+                    "status": "documented_external_stub",
+                    "assets_uri": config.assets_uri,
+                    "scene_spec_uri": config.scene_spec_uri,
+                    "next_action": "CONTINUE",
+                },
+                filename="external_stub.json",
+            )
         )
-    )
+        components.append(
+            ComponentRecord(
+                "stage_02_assets",
+                "SEAM",
+                "External assets and SceneSpec are documented BYO inputs for this reference run.",
+                {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
+            )
+        )
 
     stage_records.append(
         _write_json_artifact(
@@ -1410,7 +1426,9 @@ def _component_job_script(component: str) -> str:
             "--inner-evidence-uri \"${NPA_SIM2REAL_INNER_EVIDENCE_URI}\" "
             "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
             "--threshold \"${NPA_SIM2REAL_THRESHOLD}\" "
-            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\""
+            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\" "
+            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
+            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\""
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
@@ -1833,6 +1851,8 @@ def run_heldout_eval(
             "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
             "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
             "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
+            "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
+            "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         },
     )
     if config.byo_eval_command.strip():
@@ -1926,7 +1946,7 @@ def _normalize_heldout_report(
             }
         )
     success_rate = passed / float(len(per_env))
-    return {
+    report = {
         "schema": SCHEMA_HELDOUT_REPORT,
         "stage": 10,
         "outer_iteration": outer_iteration,
@@ -1940,6 +1960,15 @@ def _normalize_heldout_report(
         "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
+    if "asset_provenance" in payload:
+        report["asset_provenance"] = payload["asset_provenance"]
+        report["asset_fallback_used"] = bool(
+            payload.get(
+                "asset_fallback_used",
+                payload["asset_provenance"].get("asset_fallback_used", False),
+            )
+        )
+    return report
 
 
 def threshold_decision(
@@ -2061,8 +2090,17 @@ def run_heldout_eval_component_from_s3(
     output_uri: str,
     threshold: float = DEFAULT_THRESHOLD,
     limit: int = 0,
+    scene_spec_uri: str = "",
+    assets_uri: str = "",
+    byo_mesh_uri: str = "",
 ) -> dict[str, Any]:
-    """Run the image-local held-out eval contract against env records in S3."""
+    """Run the image-local held-out eval contract against env records in S3.
+
+    When ``scene_spec_uri`` (a SceneSpec JSON) or ``assets_uri`` /
+    ``byo_mesh_uri`` (a bare mesh URI) is provided, the scene's manipulated
+    object(s) are downloaded, validated, and loaded into the Genesis sim, and
+    per-object asset provenance is recorded into the report.
+    """
 
     with tempfile.TemporaryDirectory(prefix="sim2real-heldout-component-") as tmp:
         root = Path(tmp)
@@ -2078,24 +2116,138 @@ def run_heldout_eval_component_from_s3(
             envs = envs[:limit]
         if not envs:
             raise Sim2RealLoopError("held-out component found no env records")
+        scene = _resolve_heldout_scene(
+            scene_spec_uri=scene_spec_uri,
+            assets_uri=assets_uri,
+            byo_mesh_uri=byo_mesh_uri,
+            dest_dir=root / "assets",
+            client=client,
+        )
         payload = _component_heldout_payload(
             envs,
             inner_evidence=inner_evidence,
             threshold=threshold,
+            scene=scene,
         )
         _write_json_artifact(output_path, payload)
         client.upload_file(str(output_path), output_uri)
+        if scene is not None:
+            spec_path = root / "consumed-scene-spec.json"
+            _write_json_artifact(spec_path, scene.provenance_block())
+            client.upload_file(
+                str(spec_path),
+                _sibling_uri(output_uri, "consumed-scene-spec.json"),
+            )
         print(
             json.dumps(
                 {
                     "component": "heldout_eval",
                     "env_count": len(payload["per_env"]),
                     "output_uri": output_uri,
+                    "asset_fallback_used": payload.get("asset_fallback_used"),
                 },
                 sort_keys=True,
             )
         )
         return payload
+
+
+def _resolve_heldout_scene(
+    *,
+    scene_spec_uri: str,
+    assets_uri: str,
+    byo_mesh_uri: str,
+    dest_dir: Path,
+    client: Any,
+) -> Any:
+    """Download/synthesize and resolve a SceneSpec for the held-out rollout.
+
+    Returns a resolved ``SceneSpec`` (with local asset paths + sha256) or
+    ``None`` when no BYO scene/asset URIs are provided (documented-stub path).
+    """
+
+    from npa.genesis import scene_assets
+
+    scene_spec_uri = (scene_spec_uri or "").strip()
+    mesh_uri = (byo_mesh_uri or assets_uri or "").strip()
+    if not scene_spec_uri and not mesh_uri:
+        return None
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if scene_spec_uri:
+        spec_local = dest_dir / "scene-spec.json"
+        client.download_path(scene_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+    else:
+        scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+    scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
+    return scene
+
+
+def _sibling_uri(uri: str, filename: str) -> str:
+    base = uri.rsplit("/", 1)[0] if "/" in uri else uri
+    return f"{base.rstrip('/')}/{filename}"
+
+
+def _consume_stage_assets(
+    config: Sim2RealLoopConfig, local_dir: Path
+) -> dict[str, Any]:
+    """Stage 2: download + validate BYO mesh/SceneSpec and write a consumed spec.
+
+    Unlike the documented stub, this actually fetches the asset(s) referenced by
+    ``scene_spec_uri`` / ``assets_uri`` and records per-object provenance
+    (sha256, asset_source, downloaded). byo_mesh objects are downloaded and
+    validated here; genesis_builtin objects are resolved at rollout time inside
+    the GPU image. A failed download raises (no silent fallback).
+    """
+
+    from npa.genesis import scene_assets
+
+    stage_dir = local_dir / "stage_02_assets"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    client = _storage_client(config)
+    scene_spec_uri = (config.scene_spec_uri or "").strip()
+    mesh_uri = (config.assets_uri or "").strip()
+    if scene_spec_uri:
+        spec_local = stage_dir / "scene-spec.json"
+        client.download_path(scene_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+    else:
+        scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+
+    assets_dir = stage_dir / "assets"
+    for obj in scene.objects:
+        if obj.asset_source == scene_assets.ASSET_SOURCE_BYO_MESH:
+            local = scene_assets.download_asset(
+                obj.uri,
+                assets_dir / obj.name,
+                client=client,
+                endpoint_url=config.s3_endpoint,
+            )
+            obj.local_path = str(local)
+            obj.sha256 = scene_assets.sha256_file(local)
+
+    consumed = {
+        "schema": "npa.sim2real.consumed_scene_spec.v1",
+        "stage": 2,
+        "name": "external real assets and SceneSpec",
+        "status": "consumed",
+        "assets_uri": config.assets_uri,
+        "scene_spec_uri": config.scene_spec_uri,
+        "scene_spec": scene.to_dict(),
+        "asset_provenance": scene.provenance_block(),
+        "next_action": "CONTINUE",
+    }
+    stage_record = _write_stage(
+        local_dir, 2, "assets", consumed, filename="consumed_scene_spec.json"
+    )
+    return {
+        "stage_record": stage_record,
+        "consumed_spec_path": str(stage_dir / "consumed_scene_spec.json"),
+        "scene": scene,
+    }
 
 
 def _component_vlm_payload(
@@ -2135,19 +2287,32 @@ def _component_heldout_payload(
     *,
     inner_evidence: dict[str, Any],
     threshold: float,
+    scene: Any = None,
 ) -> dict[str, Any]:
     per_env = _run_genesis_heldout_rollouts(
         envs,
         inner_evidence=inner_evidence,
         threshold=threshold,
+        scene=scene,
     )
-    return {
+    payload = {
         "schema": SCHEMA_HELDOUT_REPORT,
         "per_env": per_env,
         "component_source": "genesis_rollout",
         "rollout_backend": "npa.genesis.env_pick_place.FrankaPickPlaceEnv",
         "policy_source": "inner_evidence_adapter",
     }
+    if scene is not None:
+        provenance = scene.provenance_block()
+        manipuland = scene.manipuland()
+        if manipuland.is_mesh() and not manipuland.loaded:
+            raise Sim2RealLoopError(
+                "BYO scene manipuland mesh was not loaded into the simulator "
+                "(no silent fallback is permitted)"
+            )
+        payload["asset_provenance"] = provenance
+        payload["asset_fallback_used"] = provenance["asset_fallback_used"]
+    return payload
 
 
 def _rollout_image_paths(rollout_root: Path, observations: list[Any]) -> list[Path]:
@@ -2467,8 +2632,16 @@ def _run_genesis_heldout_rollouts(
     *,
     inner_evidence: dict[str, Any],
     threshold: float,
+    scene: Any = None,
 ) -> list[dict[str, Any]]:
-    """Run the trained adapter policy through real Genesis held-out episodes."""
+    """Run the trained adapter policy through real Genesis held-out episodes.
+
+    When ``scene`` (a parsed ``npa.genesis.scene_assets.SceneSpec`` with
+    resolved local asset paths) is provided, the manipulated object(s) are
+    built from it (mesh / primitive) instead of the default red Box. The
+    SceneSpec objects' ``loaded`` provenance flags are set as a side effect of
+    building the env, so the caller can prove the requested mesh loaded.
+    """
 
     try:
         import torch
@@ -2479,6 +2652,23 @@ def _run_genesis_heldout_rollouts(
         ) from exc
     if not torch.cuda.is_available():
         raise Sim2RealLoopError("Genesis rollout eval requires a CUDA GPU")
+
+    if scene is not None:
+        manip = scene.manipuland()
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "byo_scene_loading",
+                    "asset_source": manip.asset_source,
+                    "manipuland": manip.name,
+                    "local_path": manip.local_path,
+                    "sha256": manip.sha256,
+                    "object_count": len(scene.objects),
+                },
+                sort_keys=True,
+            )
+        )
 
     adapter = _policy_adapter_from_inner_evidence(inner_evidence)
     batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_GENESIS_BATCH_SIZE", "16")))
@@ -2495,8 +2685,23 @@ def _run_genesis_heldout_rollouts(
             max_episode_steps=max_steps,
             action_space="cartesian",
             action_scale=float(os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")),
+            scene_spec=scene,
         )
         env = FrankaPickPlaceEnv(cfg)
+        if scene is not None and start == 0:
+            print(
+                json.dumps(
+                    {
+                        "component": "heldout_eval",
+                        "event": "byo_scene_loaded",
+                        "asset_fallback_used": scene.asset_fallback_used,
+                        "loaded_objects": [
+                            obj.name for obj in scene.objects if obj.loaded
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
         obs = env.reset()
         active = torch.ones(len(batch), device="cuda", dtype=torch.bool)
         success = torch.zeros(len(batch), device="cuda", dtype=torch.bool)
@@ -2673,6 +2878,9 @@ def main(argv: list[str] | None = None) -> int:
     component_heldout.add_argument("--output-uri", required=True)
     component_heldout.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     component_heldout.add_argument("--limit", type=int, default=0)
+    component_heldout.add_argument("--scene-spec-uri", default="")
+    component_heldout.add_argument("--assets-uri", default="")
+    component_heldout.add_argument("--byo-mesh-uri", default="")
     args = parser.parse_args(argv)
 
     if args.command == "convert-signal":
@@ -2695,6 +2903,9 @@ def main(argv: list[str] | None = None) -> int:
             output_uri=args.output_uri,
             threshold=args.threshold,
             limit=args.limit,
+            scene_spec_uri=args.scene_spec_uri,
+            assets_uri=args.assets_uri,
+            byo_mesh_uri=args.byo_mesh_uri,
         )
         return 0
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 import npa.workflows.sim2real_loop as loop_module
@@ -515,8 +516,9 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
     ]
     captured = {}
 
-    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold):
+    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold, scene=None):
         captured["envs"] = env_payload
+        captured["scene"] = scene
         captured["inner_evidence"] = inner_evidence
         captured["threshold"] = threshold
         return [
@@ -550,6 +552,203 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
     assert payload["rollout_backend"] == "npa.genesis.env_pick_place.FrankaPickPlaceEnv"
     assert payload["policy_source"] == "inner_evidence_adapter"
     assert "synthetic_signature" not in payload
+
+
+class _FakeMeshClient:
+    """Fake StorageClient that writes JSON/mesh bytes for download_path."""
+
+    def __init__(self, *, spec_doc: dict | None = None, mesh: bytes = b"MESH") -> None:
+        self.spec_doc = spec_doc
+        self.mesh = mesh
+        self.downloads: list[tuple[str, str]] = []
+        self.uploads: list[tuple[str, str]] = []
+
+    def download_path(self, uri: str, local_path: str) -> str:
+        self.downloads.append((uri, local_path))
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith(".json"):
+            Path(local_path).write_text(json.dumps(self.spec_doc or {}))
+        else:
+            Path(local_path).write_bytes(self.mesh)
+        return local_path
+
+    def upload_file(self, local_file: str, bucket_uri: str) -> str:
+        self.uploads.append((local_file, bucket_uri))
+        return bucket_uri
+
+
+def test_resolve_heldout_scene_byo_mesh_records_provenance(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="",
+        assets_uri="s3://bucket/run/object.obj",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert scene is not None
+    obj = scene.manipuland()
+    assert obj.asset_source == sa.ASSET_SOURCE_BYO_MESH
+    assert obj.sha256 == sa.sha256_file(obj.local_path)
+    assert scene.provenance_block()["asset_fallback_used"] is False
+
+
+def test_resolve_heldout_scene_none_without_uris(tmp_path: Path) -> None:
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=_FakeMeshClient(),
+    )
+    assert scene is None
+
+
+def test_resolve_heldout_scene_from_scene_spec_json(tmp_path: Path) -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "widget",
+                "asset_source": "byo_mesh",
+                "uri": "s3://bucket/run/widget.glb",
+            }
+        ],
+        "goal_pos": [0.5, 0.3, 0.04],
+    }
+    client = _FakeMeshClient(spec_doc=doc)
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="s3://bucket/run/scene-spec.json",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert scene is not None
+    assert scene.manipuland().uri.endswith("widget.glb")
+    assert scene.manipuland().sha256
+
+
+def test_component_heldout_payload_with_scene_attaches_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+        # Simulate the env building the mesh and marking it loaded.
+        if scene is not None:
+            for obj in scene.objects:
+                obj.loaded = True
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        scene=scene,
+    )
+    assert payload["asset_fallback_used"] is False
+    prov = payload["asset_provenance"]
+    assert prov["objects"][0]["asset_source"] == "byo_mesh"
+    assert prov["objects"][0]["loaded"] is True
+    assert prov["objects"][0]["sha256"] == scene.manipuland().sha256
+
+
+def test_component_heldout_payload_raises_when_mesh_not_loaded(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._component_heldout_payload(
+            [{"env_id": "heldout-0000", "seed": 1}],
+            inner_evidence={},
+            threshold=0.75,
+            scene=scene,
+        )
+
+
+def test_normalize_heldout_report_propagates_provenance() -> None:
+    payload = {
+        "per_env": [{"env_id": "h-0", "score": 0.9, "success": True}],
+        "asset_provenance": {
+            "schema": "npa.sim2real.asset_provenance.v1",
+            "asset_fallback_used": False,
+            "objects": [{"name": "widget", "asset_source": "byo_mesh", "loaded": True}],
+        },
+        "asset_fallback_used": False,
+    }
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.5)
+    report = loop_module._normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["asset_fallback_used"] is False
+    assert report["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
+
+
+def test_run_heldout_eval_component_from_s3_writes_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    monkeypatch.setattr(
+        loop_module.StorageClient, "from_environment", staticmethod(lambda **kw: client)
+    )
+
+    # Seed the env records the component downloads.
+    def download_path(uri, local_path):
+        client.downloads.append((uri, local_path))
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith("heldout/"):
+            Path(local_path).mkdir(parents=True, exist_ok=True)
+            (Path(local_path) / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n"
+            )
+        elif uri.endswith(".json"):
+            Path(local_path).write_text(json.dumps({"reward_trend": [0.2, 0.6]}))
+        else:
+            Path(local_path).write_bytes(b"OBJ-BYTES")
+        return local_path
+
+    monkeypatch.setattr(client, "download_path", download_path)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+        if scene is not None:
+            for obj in scene.objects:
+                obj.loaded = True
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+
+    payload = loop_module.run_heldout_eval_component_from_s3(
+        heldout_envs_uri="s3://bucket/run/heldout/",
+        inner_evidence_uri="s3://bucket/run/inner-evidence.json",
+        output_uri="s3://bucket/run/output/report.json",
+        threshold=0.75,
+        assets_uri="s3://bucket/run/object.obj",
+    )
+    assert payload["asset_fallback_used"] is False
+    assert payload["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
+    # A consumed scene spec is uploaded alongside the report.
+    uploaded = [u[1] for u in client.uploads]
+    assert any(u.endswith("consumed-scene-spec.json") for u in uploaded)
 
 
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:

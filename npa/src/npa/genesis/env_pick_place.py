@@ -19,6 +19,16 @@ from typing import Any
 import numpy as np
 import torch
 
+from npa.genesis.scene_assets import (
+    PRIMITIVE_BOX,
+    PRIMITIVE_CYLINDER,
+    PRIMITIVE_SPHERE,
+    ROLE_MANIPULAND,
+    ObjectSpec,
+    SceneSpec,
+    SceneSpecError,
+)
+
 
 @dataclass
 class EnvConfig:
@@ -48,6 +58,10 @@ class EnvConfig:
     # Target zone
     target_pos: tuple[float, float, float] = (0.5, 0.3, 0.04)
     target_threshold: float = 0.05
+    # BYO scene: when set, the manipulated object(s) are built from this parsed
+    # SceneSpec (mesh / primitive) instead of the hardcoded red Box. When None,
+    # the default Franka + red-Box scene is reproduced exactly.
+    scene_spec: SceneSpec | None = None
     # Domain randomization ranges
     cube_pos_noise: float = 0.1
     friction_range: tuple[float, float] = (0.3, 1.2)
@@ -69,6 +83,22 @@ class EnvConfig:
 
 # Franka Panda home joint configuration (ready pose)
 FRANKA_HOME = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785, 0.04, 0.04]
+
+
+def _euler_deg_to_quat_wxyz(
+    euler_deg: tuple[float, float, float],
+) -> tuple[float, float, float, float]:
+    """Convert extrinsic x-y-z Euler degrees to a (w, x, y, z) quaternion."""
+
+    rx, ry, rz = (np.deg2rad(float(a)) for a in euler_deg)
+    cx, sx = np.cos(rx / 2.0), np.sin(rx / 2.0)
+    cy, sy = np.cos(ry / 2.0), np.sin(ry / 2.0)
+    cz, sz = np.cos(rz / 2.0), np.sin(rz / 2.0)
+    w = cx * cy * cz + sx * sy * sz
+    x = sx * cy * cz - cx * sy * sz
+    y = cx * sy * cz + sx * cy * sz
+    z = cx * cy * sz - sx * sy * cz
+    return (float(w), float(x), float(y), float(z))
 
 
 class FrankaPickPlaceEnv:
@@ -107,6 +137,14 @@ class FrankaPickPlaceEnv:
         else:
             self._n_actions = 8  # delta joints (7) + gripper (1)
 
+        # When a BYO SceneSpec is supplied, derive the manipuland init pose,
+        # primitive cube size, and target zone from it so the existing reset /
+        # reward / success logic operates on the spec's manipulated object.
+        self._manip_quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+        self.scene_provenance: dict[str, Any] | None = None
+        if self.cfg.scene_spec is not None:
+            self._apply_scene_spec(self.cfg.scene_spec)
+
         self._step_count: torch.Tensor | None = None
         self._scene = None
         self._robot = None
@@ -129,8 +167,20 @@ class FrankaPickPlaceEnv:
                 3, device=self.device, dtype=torch.float32,
             ).unsqueeze(0)  # (1, 3, 3) — broadcasts over n_envs
 
+    def _apply_scene_spec(self, spec: SceneSpec) -> None:
+        """Derive cube/target config from a BYO SceneSpec before building."""
+
+        manip = spec.manipuland()
+        self.cfg.cube_init_pos = tuple(manip.pos)
+        self._manip_quat = _euler_deg_to_quat_wxyz(manip.euler)
+        if manip.asset_source == "primitive" and manip.primitive == PRIMITIVE_BOX:
+            # Keep the scalar cube_size contract in sync for the primitive path.
+            self.cfg.cube_size = float(manip.size[0])
+        self.cfg.target_pos = tuple(spec.goal_pos)
+        self.cfg.target_threshold = float(spec.goal_threshold)
+
     def _build_scene(self) -> None:
-        """Construct the Genesis scene with robot, cube, cameras."""
+        """Construct the Genesis scene with robot, manipulated object, cameras."""
         import genesis as gs
 
         if not gs._initialized:
@@ -166,14 +216,24 @@ class FrankaPickPlaceEnv:
             ),
         )
 
-        # Cube to pick and place
-        self._cube = self._scene.add_entity(
-            gs.morphs.Box(
-                size=(self.cfg.cube_size, self.cfg.cube_size, self.cfg.cube_size),
-                pos=self.cfg.cube_init_pos,
-            ),
-            surface=gs.surfaces.Rough(color=(1.0, 0.0, 0.0)),
-        )
+        if self.cfg.scene_spec is not None:
+            # BYO scene: build each object from the parsed SceneSpec. The
+            # manipuland entity replaces self._cube so all downstream reset /
+            # reward / contact / success logic operates on it unchanged.
+            self._cube = self._build_scene_objects(gs, self.cfg.scene_spec)
+        else:
+            # Default scene (unchanged): a 4cm red Box primitive.
+            self._cube = self._scene.add_entity(
+                gs.morphs.Box(
+                    size=(
+                        self.cfg.cube_size,
+                        self.cfg.cube_size,
+                        self.cfg.cube_size,
+                    ),
+                    pos=self.cfg.cube_init_pos,
+                ),
+                surface=gs.surfaces.Rough(color=(1.0, 0.0, 0.0)),
+            )
 
         # Cameras (only if needed — rendering slows simulation significantly)
         if self.cfg.enable_cameras:
@@ -220,6 +280,74 @@ class FrankaPickPlaceEnv:
             FRANKA_HOME, device=self.device, dtype=torch.float32,
         )
 
+    def _build_scene_objects(self, gs: Any, spec: SceneSpec) -> Any:
+        """Add every SceneSpec object; return the manipuland entity.
+
+        Records per-object provenance (loaded=true once add_entity succeeds)
+        and a scene-level asset_fallback_used flag. A requested mesh that fails
+        to load raises SceneSpecError — there is NO silent primitive fallback.
+        """
+
+        manipuland_entity = None
+        for obj in spec.objects:
+            entity = self._add_object_entity(gs, obj)
+            if obj.role == ROLE_MANIPULAND and manipuland_entity is None:
+                manipuland_entity = entity
+        if manipuland_entity is None:
+            raise SceneSpecError("SceneSpec produced no manipuland entity")
+        self.scene_provenance = spec.provenance_block()
+        return manipuland_entity
+
+    def _add_object_entity(self, gs: Any, obj: ObjectSpec) -> Any:
+        """Build one Genesis entity from an ObjectSpec, honoring source/pose."""
+
+        if obj.is_mesh():
+            if not obj.local_path:
+                raise SceneSpecError(
+                    f"object {obj.name!r} ({obj.asset_source}) has no resolved "
+                    "local_path; assets must be downloaded before building"
+                )
+            morph = gs.morphs.Mesh(
+                file=obj.local_path,
+                scale=obj.scale,
+                pos=tuple(obj.pos),
+                euler=tuple(obj.euler),
+                fixed=obj.fixed,
+            )
+        elif obj.primitive == PRIMITIVE_BOX:
+            morph = gs.morphs.Box(
+                size=tuple(obj.size),
+                pos=tuple(obj.pos),
+                euler=tuple(obj.euler),
+                fixed=obj.fixed,
+            )
+        elif obj.primitive == PRIMITIVE_SPHERE:
+            morph = gs.morphs.Sphere(
+                radius=obj.radius,
+                pos=tuple(obj.pos),
+                fixed=obj.fixed,
+            )
+        elif obj.primitive == PRIMITIVE_CYLINDER:
+            morph = gs.morphs.Cylinder(
+                radius=obj.radius,
+                height=obj.height,
+                pos=tuple(obj.pos),
+                euler=tuple(obj.euler),
+                fixed=obj.fixed,
+            )
+        else:  # pragma: no cover - parser restricts primitive values
+            raise SceneSpecError(f"unsupported primitive {obj.primitive!r}")
+
+        kwargs: dict[str, Any] = {"surface": gs.surfaces.Rough(color=tuple(obj.color))}
+        if obj.friction is not None:
+            try:
+                kwargs["material"] = gs.materials.Rigid(friction=float(obj.friction))
+            except Exception:  # noqa: BLE001 - material is best-effort physics
+                pass
+        entity = self._scene.add_entity(morph, **kwargs)
+        obj.loaded = True
+        return entity
+
     def reset(self, env_ids: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """Reset environments and return initial observations.
 
@@ -255,7 +383,7 @@ class FrankaPickPlaceEnv:
             cube_pos += noise
 
         cube_quat = torch.tensor(
-            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32,
+            list(self._manip_quat), device=self.device, dtype=torch.float32,
         ).unsqueeze(0).expand(n, -1)
         self._cube.set_pos(cube_pos, envs_idx=env_ids)
         self._cube.set_quat(cube_quat, envs_idx=env_ids)
