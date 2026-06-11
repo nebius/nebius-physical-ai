@@ -124,6 +124,32 @@ flagship walkthrough in
 
 ---
 
+## 🪙 Zero-GPU hosted inference: Nebius Token Factory
+
+[Nebius Token Factory](https://tokenfactory.nebius.com/) is an OpenAI-compatible
+hosted-inference API for open text and vision models. NPA uses it natively so
+several workbench tools run with **no GPU and no server to manage** — you only
+need a `NEBIUS_API_KEY`. This includes physical-AI scene reasoning with
+`nvidia/Cosmos3-Super-Reasoner` (image/video → scene understanding + plan).
+
+```bash
+# 1. Get a key at https://tokenfactory.nebius.com/ -> API keys, then:
+npa configure                       # stores NEBIUS_API_KEY in ~/.npa/credentials.yaml
+npa workbench token-factory verify  # confirms auth + lists served models
+
+# 2. Use it (zero GPU):
+npa workbench token-factory reason   --input-path ./scene  --output-path /tmp/plan      # Cosmos reasoner
+npa workbench token-factory caption  --input-path ./frames --output-path /tmp/captions  # vision
+npa workbench token-factory generate --input-path ./prompts.jsonl --output-path /tmp/gen # text
+npa workbench vlm-eval run --backend api --api-key-env NEBIUS_API_KEY \
+  --input-path ./rollout --output-path /tmp/eval                                        # score rollouts
+```
+
+Full register-and-use walkthrough, SkyPilot workflows, and a physical-reasoning
+hackathon challenge: [docs/workbench/token-factory.md](docs/workbench/token-factory.md).
+
+---
+
 ## ☁️ Running on Nebius
 
 To go from the local loop to real GPUs, authenticate with the Nebius CLI and
