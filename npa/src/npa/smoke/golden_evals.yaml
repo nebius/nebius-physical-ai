@@ -1,0 +1,450 @@
+# Container golden-eval manifest — single source of truth for the per-container
+# "golden eval" / "hello world" tested rerun.
+#
+# Every Workbench container image (see npa.deploy.images.CONTAINER_IMAGE_NAMES)
+# must have exactly one entry here. Each entry records:
+#   - physical_ai: whether/why the container is useful for Physical AI work.
+#   - safety:      the safety posture of the image (runtime user, network, fetches).
+#   - golden_eval: the minimal "does this container actually work" rerun.
+#
+# Consumers:
+#   - npa.smoke.manifest          loads and validates this file.
+#   - npa workbench golden-eval   lists / validates / runs entries.
+#   - npa/scripts/run_golden_evals.py   nightly CI driver.
+#   - npa/tests/smoke/test_golden_eval_manifest.py   completeness/consistency gate.
+#
+# golden_eval.kind values:
+#   container-smoke  module run inside the built image (env + functional smoke).
+#   server-smoke     start the FastAPI service, poll /health, do one real op.
+#   entrypoint-smoke container ENTRYPOINT mode that self-reports a result artifact.
+#   workflow-smoke   workflow module entrypoint (CLI contract / help) proof.
+#   build-import     import/compile proof that the heavy deps resolve.
+#
+# golden_eval.gpu values: required | optional | none
+# golden_eval.status values: ready | gpu-gated | blocked-on-upstream
+format: npa_golden_evals_v1
+
+containers:
+  base-cuda13-b300:
+    image: npa-base
+    foundation: true
+    dockerfile: npa/docker/workbench/base/cuda13-b300/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Shared CUDA 13 / PyTorch 2.9 foundation image for B300 (Blackwell)
+        derivatives (cosmos3-reason, sim2real-*). Not a tool itself.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:13.0.1-cudnn-devel-ubuntu22.04
+      network: none
+      external_fetch: [pypi, pytorch-cu130, flash-attn-cute]
+      notes: >-
+        No runtime entrypoint or open ports; build-time only. Pinned digestless
+        CUDA base tracked by the weekly Trivy base-image CVE scan.
+    golden_eval:
+      kind: build-import
+      command: 'python -c "import torch; assert torch.cuda.is_available(); import flash_attn"'
+      gpu: required
+      timeout_seconds: 120
+      status: blocked-on-upstream
+
+  groot:
+    image: npa-groot
+    dockerfile: npa/docker/workbench/groot/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        NVIDIA Isaac-GR00T foundation-model deployment and inference for
+        humanoid/manipulation policies.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+      network: inference + /health endpoints (internal)
+      external_fetch: [github-isaac-gr00t, pypi, huggingface]
+      notes: >-
+        Pulls Isaac-GR00T at a pinned commit; inference server should stay on the
+        internal workbench namespace, not public ingress.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_groot_functional
+      env_module: npa.smoke.test_groot_env
+      command: python -m npa.smoke.test_groot_functional
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
+  lerobot:
+    image: npa-lerobot
+    dockerfile: npa/docker/workbench/lerobot/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        LeRobot policy training/eval/serving (ACT, pusht, libero) — core robot
+        manipulation policy workflow.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+      network: FastAPI policy server on :8080
+      external_fetch: [pypi, huggingface-datasets]
+      notes: >-
+        Build-time env smoke baked in (RUN python -m npa.smoke.test_lerobot_env).
+        Telemetry disabled (HF_HUB_DISABLE_TELEMETRY, WANDB_DISABLED) in smokes.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_lerobot_functional
+      env_module: npa.smoke.test_lerobot_env
+      command: python -m npa.smoke.test_lerobot_functional
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
+  lerobot-policy:
+    image: npa-lerobot-policy
+    dockerfile: npa/docker/workbench/lerobot-policy/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Sim-to-real policy container (serve/train/eval/validate-checkpoint) used
+        as the policy stage of the sim-to-real loop.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+      network: policy serve endpoint
+      external_fetch: [pypi]
+      notes: >-
+        entrypoint.sh exposes check-import/serve/train/eval/validate-checkpoint;
+        build asserts lerobot importability.
+    golden_eval:
+      kind: build-import
+      command: python -m npa.workbench.lerobot.policy_container check-import
+      gpu: optional
+      timeout_seconds: 300
+      status: gpu-gated
+
+  lerobot-vlm-rl:
+    image: npa-lerobot-vlm-rl
+    dockerfile: npa/docker/workbench/lerobot-vlm-rl/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        VLM-reward-signal RL step for the sim-to-real loop (parses VLM eval
+        batches into RL training signals).
+    safety:
+      runs_as: ubuntu
+      base_image: npa-genesis (sm80/sm90/sm120)
+      network: none
+      external_fetch: [pypi]
+      notes: Build asserts parse_vlm_signal_batch import; no open ports.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workbench.lerobot.policy_container vlm-signal-step --help
+      gpu: optional
+      timeout_seconds: 120
+      status: gpu-gated
+
+  genesis:
+    image: npa-genesis
+    dockerfile: npa/docker/workbench/genesis/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Genesis physics simulation + RL teacher training + visual demo
+        generation; foundation for sim2real-* images.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+      network: none (interactive bash)
+      external_fetch: [pypi]
+      notes: >-
+        Headless EGL/DRI rendering limits documented in genesis skill; no server
+        process by default.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_genesis_functional
+      env_module: npa.smoke.test_genesis_env
+      command: python -m npa.smoke.test_genesis_functional
+      gpu: required
+      timeout_seconds: 1200
+      status: gpu-gated
+
+  isaac-lab:
+    image: npa-isaac-lab
+    dockerfile: npa/docker/workbench/isaac-lab/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Isaac Lab RL simulation (headless training/eval), e.g. Isaac-Reach-Franka;
+        customer custom-fork support.
+    safety:
+      runs_as: root (Isaac Sim base)
+      base_image: nvcr.io/nvidia/isaac-lab:2.3.2
+      network: none (interactive bash)
+      external_fetch: [pypi, nvcr.io]
+      notes: >-
+        NGC base image requires registry auth; RT-core/headless routing handled
+        by the workbench. Runs as root inside the NVIDIA base.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_isaac_lab_functional
+      env_module: npa.smoke.test_isaac_lab_env
+      command: python -m npa.smoke.test_isaac_lab_functional
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
+  cosmos:
+    image: npa-cosmos
+    dockerfile: npa/docker/workbench/cosmos/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Cosmos world-model serving (text2world video generation) for synthetic
+        data / world simulation; default self-hosted VLM workflow image.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.6.3-devel-ubuntu22.04
+      network: FastAPI server on :8080 (/health, /infer, /jobs)
+      external_fetch: [pypi, huggingface]
+      notes: >-
+        Ships content-safety guardrail; COSMOS_DISABLE_SAFETY must stay "0" in
+        production. Smoke defaults to safety enabled.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_cosmos_functional
+      env_module: npa.smoke.test_cosmos_env
+      command: python -m npa.smoke.test_cosmos_functional
+      gpu: required
+      timeout_seconds: 1800
+      status: gpu-gated
+
+  cosmos2-transfer:
+    image: npa-cosmos2-transfer
+    external_build: true
+    dockerfile: ""
+    physical_ai:
+      useful: true
+      role: >-
+        Cosmos-Transfer2 video-to-video world transfer for sim-to-real
+        synthetic data augmentation.
+    safety:
+      runs_as: ubuntu
+      base_image: cosmos transfer runtime (built outside this repo)
+      network: transfer/serve endpoint
+      external_fetch: [huggingface, s3]
+      notes: >-
+        Image is built and published outside this repo; pinned via
+        supported-tools (2.5.0). Golden eval proves the CLI/transfer contract
+        loads; a full eval needs the published image on a GPU host.
+    golden_eval:
+      kind: build-import
+      command: python -c "import npa.workbench.cosmos2"
+      gpu: required
+      timeout_seconds: 120
+      status: gpu-gated
+
+  cosmos3-reason:
+    image: npa-cosmos3-reason
+    dockerfile: npa/docker/workbench/cosmos3-reason/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Cosmos-Reason1 VLM reasoning stage of the sim-to-real inner loop
+        (rollout scoring / reasoning).
+    safety:
+      runs_as: ubuntu
+      base_image: npa-base:cuda13-b300
+      network: none (workflow entrypoint)
+      external_fetch: [pypi, huggingface]
+      notes: >-
+        B300/CUDA13 family currently blocked-on-upstream; inherits base-image
+        posture.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workflows.sim2real_loop inner-loop --help
+      gpu: optional
+      timeout_seconds: 120
+      status: blocked-on-upstream
+
+  sonic:
+    image: npa-sonic
+    dockerfile: npa/docker/workbench/sonic/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        SONIC whole-body humanoid locomotion policy training/eval/export/serve
+        (GR00T-WholeBodyControl).
+    safety:
+      runs_as: root (Isaac Sim base)
+      base_image: nvcr.io/nvidia/isaac-lab:2.3.2
+      network: serve endpoint (when in serve mode)
+      external_fetch: [github-gear-sonic, pypi, nvcr.io]
+      notes: >-
+        Self-reporting entrypoint modes; smoke mode writes sonic_smoke_result.json
+        and GPU/image-pull proofs. GPU routing guardrails enforced.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: /entrypoint.sh smoke
+      artifact: sonic_smoke_result.json
+      gpu: required
+      timeout_seconds: 900
+      status: gpu-gated
+
+  retargeting:
+    image: npa-retargeting
+    dockerfile: npa/docker/workbench/retargeting/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        CPU motion retargeting / motion-lib conversion for SONIC whole-body
+        locomotion (GR00T-WholeBodyControl data_process).
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11-slim
+      network: none (interactive bash)
+      external_fetch: [github-gear-sonic, pypi]
+      notes: >-
+        CPU-only preprocess image; clones a pinned GR00T-WholeBodyControl ref at
+        build (auto-fetch disabled at runtime).
+    golden_eval:
+      kind: build-import
+      command: python -c "import npa.workbench.retargeting"
+      gpu: none
+      timeout_seconds: 120
+      status: ready
+
+  fiftyone:
+    image: npa-fiftyone
+    dockerfile: npa/docker/workbench/fiftyone/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        FiftyOne dataset curation and visualization for perception/AV datasets
+        (BDD100K, LeRobot episodes).
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie
+      network: FiftyOne app on :5151
+      external_fetch: [pypi, huggingface, s3]
+      notes: >-
+        CPU-only; app should be exposed via controlled public-access path, not
+        bound to 0.0.0.0 without auth.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_fiftyone_functional
+      env_module: npa.smoke.test_fiftyone_env
+      command: python -m npa.smoke.test_fiftyone_functional
+      gpu: none
+      timeout_seconds: 600
+      status: ready
+
+  lancedb:
+    image: npa-lancedb
+    dockerfile: npa/docker/workbench/lancedb/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        LanceDB vector store for AV/perception data (BDD100K import, CLIP
+        embeddings, materialized views) feeding curation + detection training.
+    safety:
+      runs_as: root
+      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+      network: FastAPI server on :8686 (/health, /tables, /query)
+      external_fetch: [pypi, s3]
+      notes: >-
+        Server smoke runs entirely on a temp table; no external data required for
+        the health/roundtrip golden eval.
+    golden_eval:
+      kind: server-smoke
+      module: npa.smoke.test_lancedb_functional
+      command: python -m npa.smoke.test_lancedb_functional
+      gpu: optional
+      timeout_seconds: 600
+      status: ready
+
+  detection-training:
+    image: npa-detection-training
+    dockerfile: npa/docker/workbench/detection-training/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Object-detection training/eval service (torchvision + pycocotools) on
+        curated AV data; BDD100K perception pipeline stage.
+    safety:
+      runs_as: root
+      base_image: pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+      network: FastAPI service on :8790 (/health, /system-info, /train, /eval)
+      external_fetch: [pypi, lancedb, s3]
+      notes: >-
+        Golden eval exercises health + system-info only; no training run, so it
+        stays GPU-optional and fast.
+    golden_eval:
+      kind: server-smoke
+      module: npa.smoke.test_detection_training_functional
+      command: python -m npa.smoke.test_detection_training_functional
+      gpu: optional
+      timeout_seconds: 300
+      status: ready
+
+  sim2real-envgen:
+    image: npa-sim2real-envgen
+    dockerfile: npa/docker/workbench/sim2real-envgen/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Generates randomized Genesis sim environments for the sim-to-real data
+        pipeline.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-genesis
+      network: none
+      external_fetch: [pypi]
+      notes: Build py_compiles sim2real_envgen; no open ports.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workflows.sim2real_envgen --help
+      gpu: optional
+      timeout_seconds: 120
+      status: gpu-gated
+
+  sim2real-reference-policy:
+    image: npa-sim2real-reference-policy
+    dockerfile: npa/docker/workbench/sim2real-reference-policy/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Reference policy contract for the sim-to-real loop (policy-contract
+        subcommand) atop the envgen image.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-sim2real-envgen
+      network: none
+      external_fetch: [pypi]
+      notes: Thin label layer over envgen; inherits its posture.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workflows.sim2real_envgen policy-contract --help
+      gpu: optional
+      timeout_seconds: 120
+      status: gpu-gated
+
+  sim2real-eval:
+    image: npa-sim2real-eval
+    dockerfile: npa/docker/workbench/sim2real-eval/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Sim-to-real full-loop evaluation entrypoint (FrankaPickPlace env)
+        orchestrating envgen + policy + VLM eval.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-genesis
+      network: none (workflow entrypoint)
+      external_fetch: [pypi]
+      notes: Build validates FrankaPickPlaceEnv import.
+    golden_eval:
+      kind: workflow-smoke
+      command: python -m npa.workflows.sim2real_loop full-loop --help
+      gpu: optional
+      timeout_seconds: 120
+      status: gpu-gated

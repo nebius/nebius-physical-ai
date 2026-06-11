@@ -21,6 +21,7 @@ from npa.cli.workbench.sim2real import app as sim2real_app
 from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.cli.workbench.detection_training import app as detection_training_app
+from npa.cli.workbench.golden_eval import app as golden_eval_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
 from npa.cli.workbench.workflow import app as workflow_app
 from npa.cli.workbench.trigger import app as trigger_app
@@ -62,3 +63,4 @@ app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(trigger_app, name="trigger")
 app.add_typer(health_app, name="health")
+app.add_typer(golden_eval_app, name="golden-eval")
