@@ -25,6 +25,7 @@ from npa.clients.config import (
     APP_STATUS_INSTALLING,
     APP_STATUS_PROVISIONED,
     ConfigError,
+    SSHConfig,
     default_project_name,
     default_workbench_name,
     resolve_config,
@@ -41,6 +42,17 @@ from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, supported_tool_version
 from npa.serverless_common import SubnetResolutionError, resolve_subnet
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    checkpoint_s3_uri as resolve_checkpoint_s3_uri,
+    overrides_to_mapping,
+    render_overrides,
+    shell_env_exports,
+    upload_checkpoint_path,
+    wandb_overrides,
+)
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -112,6 +124,36 @@ def is_serverless_runtime(runtime: WorkbenchRuntime | str) -> bool:
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
+
+
+def _training_storage_tokens(cfg: Any, training_config: TrainingConfig) -> dict[str, str]:
+    tokens: dict[str, str] = {}
+    storage = getattr(cfg, "storage", None)
+    if storage is not None:
+        if endpoint_url := getattr(storage, "endpoint_url", ""):
+            tokens["AWS_ENDPOINT_URL"] = endpoint_url
+            tokens["NEBIUS_S3_ENDPOINT"] = endpoint_url
+        if access_key := getattr(storage, "aws_access_key_id", ""):
+            tokens["AWS_ACCESS_KEY_ID"] = access_key
+        if secret_key := getattr(storage, "aws_secret_access_key", ""):
+            tokens["AWS_SECRET_ACCESS_KEY"] = secret_key
+    tokens.update(training_config.env())
+    return {key: value for key, value in tokens.items() if value}
+
+
+def _ssh_client_for_training(cfg: Any, training_config: TrainingConfig) -> Any:
+    from npa.clients.ssh import SSHClient
+
+    tokens = dict(getattr(cfg.ssh, "tokens", {}) or {})
+    tokens.update(_training_storage_tokens(cfg, training_config))
+    return SSHClient(
+        SSHConfig(
+            host=cfg.ssh.host,
+            user=cfg.ssh.user,
+            key_path=cfg.ssh.key_path,
+            tokens=tokens,
+        )
+    )
 
 
 @app.callback()
@@ -666,19 +708,22 @@ def _lerobot_train_container_command(
     env_task: str = "",
     device: str = "cuda",
     smoke: bool = False,
+    training_config: TrainingConfig | None = None,
 ) -> str:
+    config = training_config or TrainingConfig()
     effective_steps = 50 if smoke else steps
     effective_batch = 4 if smoke else batch_size
     output_dir = "/tmp/lerobot_output"
     dataset_setup_cmd = ""
-    if input_path:
-        if _is_s3_uri(input_path):
-            resolved_dataset = f"/tmp/lerobot_dataset/{_path_name(input_path)}"
-            dataset_setup_cmd = _remote_download_dir_cmd(input_path, resolved_dataset) + " && "
+    data_path = config.data_path or input_path
+    if data_path:
+        if _is_s3_uri(data_path):
+            resolved_dataset = f"/tmp/lerobot_dataset/{_path_name(data_path)}"
+            dataset_setup_cmd = _remote_download_dir_cmd(data_path, resolved_dataset) + " && "
         else:
-            resolved_dataset = input_path
+            resolved_dataset = data_path
         dataset_arg = (
-            f"--dataset.repo_id={shlex.quote(_path_name(input_path))} "
+            f"--dataset.repo_id={shlex.quote(_path_name(data_path))} "
             f"--dataset.root={shlex.quote(resolved_dataset)} "
         )
     else:
@@ -686,11 +731,18 @@ def _lerobot_train_container_command(
     env_type_arg = f"--env.type={shlex.quote(env_type)} " if env_type else ""
     env_task_arg = f"--env.task={shlex.quote(env_task)} " if env_task else ""
     num_workers_arg = f"--num_workers={num_workers} " if num_workers >= 0 else ""
+    wandb_args = shlex.join(wandb_overrides(config.wandb, style="cli"))
+    override_args = render_overrides(config.overrides, style="cli")
+    extra_args = " ".join(arg for arg in (wandb_args, override_args) if arg)
+    extra_args = f"{extra_args} " if extra_args else ""
+    training_env = shell_env_exports(config.wandb.env())
+    training_env = f"{training_env} " if training_env else ""
     command = (
         "set -euo pipefail && "
         "cd /opt/lerobot && "
         "source /opt/lerobot/venv/bin/activate && "
         "if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi && "
+        f"{training_env}"
         "mkdir -p /tmp/hf_home && "
         f"{dataset_setup_cmd}"
         f"lerobot-train "
@@ -707,7 +759,8 @@ def _lerobot_train_container_command(
         f"--batch_size={effective_batch} "
         f"--policy.device={shlex.quote(device)} "
         f"--eval.batch_size=1 "
-        f"--eval.n_episodes=1 && "
+        f"--eval.n_episodes=1 "
+        f"{extra_args}&& "
         f"{_serverless_upload_output_cmd(output_dir)} && "
         "echo NPA_TRAIN_COMPLETE"
     )
@@ -847,11 +900,13 @@ def _train_serverless(
     poll_interval: float,
     wait_timeout: int,
     output: OutputFormat,
+    training_config: TrainingConfig,
 ) -> None:
     if num_workers < -1:
         _fail(f"--num-workers must be -1 (omit) or >= 0, got {num_workers}")
     if gpu_count < 0:
         _fail(f"--gpu-count must be 0 (default 1 for serverless) or positive, got {gpu_count}")
+    input_path = training_config.data_path or input_path
     dataset_ref = input_path or dataset
     if not dataset_ref:
         _fail("Provide --dataset or --input-path.")
@@ -903,12 +958,13 @@ def _train_serverless(
     s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
-        s3_access_key,
-        s3_secret_key,
+        training_config.checkpoint_s3.aws_access_key_id or s3_access_key,
+        training_config.checkpoint_s3.aws_secret_access_key or s3_secret_key,
         out,
-        s3_endpoint=s3_endpoint,
+        s3_endpoint=training_config.checkpoint_s3.endpoint_url or s3_endpoint,
     )
     env["NPA_JOB_NAME"] = name
+    env.update(training_config.env())
     safe_env, extra_env = _split_serverless_env(env)
     submitted_at = datetime.now(timezone.utc).isoformat()
     try:
@@ -934,6 +990,7 @@ def _train_serverless(
                 env_task=env_task,
                 device=device,
                 smoke=smoke,
+                training_config=training_config,
             ),
             gpu_type=platform,
             gpu_count=gpu_count or 1,
@@ -1157,10 +1214,15 @@ def _profile_train_serverless(
 def train(
     policy_type: str = typer.Option(..., "--policy-type", help="Policy type (act, diffusion, smolvla)."),
     dataset: str = typer.Option("", "--dataset", help="HF dataset repo ID."),
+    data_path: str = typer.Option(
+        "",
+        "--data-path",
+        help="Canonical local or S3 training data path. Overrides --dataset and compatibility --input-path.",
+    ),
     input_path: str = typer.Option(
         "",
         "--input-path",
-        help="S3 URI for a LeRobotDataset. Overrides --dataset.",
+        help="Compatibility alias for --data-path.",
     ),
     job_name: str = typer.Option(..., "--job-name", help="Unique name for this training run."),
     steps: int = typer.Option(5000, "--steps", help="Training steps."),
@@ -1173,8 +1235,21 @@ def train(
     output_path: str = typer.Option(
         "",
         "--output-path",
-        help="S3 URI where the checkpoint output is written.",
+        help="Compatibility checkpoint output URI. Prefer --checkpoint-s3-uri for BYO S3.",
     ),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic Hydra override as KEY=VALUE. Repeat for learning rate, clip params, terminations, or any trainer key.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime backend: vm, container, byovm, or serverless."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID override for serverless Jobs."),
     image: str = typer.Option("", "--image", help="Container image override for serverless Jobs."),
@@ -1188,6 +1263,24 @@ def train(
 ) -> None:
     """Run lerobot-train on the VM via SSH, stream logs."""
     try:
+        training_config = build_training_config(
+            data_path=data_path or input_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+    except TrainingConfigError as exc:
+        _fail(str(exc))
+        return
+    input_path = training_config.data_path
+    checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
+    try:
         if input_path:
             input_path = validate_read_path(
                 input_path,
@@ -1195,14 +1288,29 @@ def train(
                 option="--input-path",
                 allow_hf=False,
             )
-        output_path = validate_write_path(output_path, tool="LeRobot train")
+            training_config = build_training_config(
+                data_path=input_path,
+                overrides=override,
+                wandb_enabled=wandb_enabled,
+                wandb_project=wandb_project,
+                wandb_run_name=wandb_run_name,
+                wandb_mode=wandb_mode,
+                checkpoint_s3_uri=checkpoint_s3_uri,
+                checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+                checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+                checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+            )
+        checkpoint_output_path = validate_write_path(checkpoint_output_path, tool="LeRobot train")
     except PathContractError as exc:
+        _fail(str(exc))
+        return
+    except TrainingConfigError as exc:
         _fail(str(exc))
         return
 
     dataset_ref = input_path or dataset
     if not dataset_ref:
-        _fail("Provide --dataset or --input-path.")
+        _fail("Provide --dataset or --data-path.")
         return
 
     if is_serverless_runtime(runtime):
@@ -1221,7 +1329,7 @@ def train(
             device=device,
             env_type=env_type,
             env_task=env_task,
-            output_path=output_path,
+            output_path=checkpoint_output_path,
             image=image,
             gpu_type=gpu_type,
             subnet_id=subnet_id,
@@ -1230,19 +1338,20 @@ def train(
             poll_interval=poll_interval,
             wait_timeout=wait_timeout,
             output=output,
+            training_config=training_config,
         )
         return
 
     cfg = _get_config()
 
-    from npa.clients.ssh import SSHClient, SSHError
+    from npa.clients.ssh import SSHError
 
-    ssh = SSHClient(cfg.ssh)
+    ssh = _ssh_client_for_training(cfg, training_config)
     stream_logs = output != OutputFormat.json
 
-    output_is_s3 = _is_s3_uri(output_path)
+    output_is_s3 = _is_s3_uri(checkpoint_output_path)
     checkpoint_dir = (
-        output_path if output_path and not output_is_s3 else f"/opt/lerobot/checkpoints/{job_name}"
+        checkpoint_output_path if checkpoint_output_path and not output_is_s3 else f"/opt/lerobot/checkpoints/{job_name}"
     )
     status_dir = "/opt/lerobot/job_status"
 
@@ -1251,17 +1360,17 @@ def train(
         return
 
     dataset_setup_cmd = ""
-    if input_path:
-        if _is_s3_uri(input_path):
-            resolved_dataset = _remote_cache_dir("dataset", input_path)
+    if training_config.data_path:
+        if _is_s3_uri(training_config.data_path):
+            resolved_dataset = _remote_cache_dir("dataset", training_config.data_path)
             dataset_setup_cmd = (
-                _remote_download_dir_cmd(input_path, resolved_dataset, cfg.storage.endpoint_url)
+                _remote_download_dir_cmd(training_config.data_path, resolved_dataset, cfg.storage.endpoint_url)
                 + " && "
             )
         else:
-            resolved_dataset = input_path
+            resolved_dataset = training_config.data_path
         dataset_arg = (
-            f"--dataset.repo_id={_path_name(input_path)} "
+            f"--dataset.repo_id={_path_name(training_config.data_path)} "
             f"--dataset.root={resolved_dataset} "
         )
     else:
@@ -1283,11 +1392,18 @@ def train(
         )
     else:
         train_launcher = "lerobot-train"
+    wandb_args = shlex.join(wandb_overrides(training_config.wandb, style="cli"))
+    override_args = render_overrides(training_config.overrides, style="cli")
+    extra_train_args = " ".join(arg for arg in (wandb_args, override_args) if arg)
+    extra_train_args = f"{extra_train_args} " if extra_train_args else ""
+    training_env = shell_env_exports(training_config.wandb.env())
+    training_env = f"{training_env} " if training_env else ""
 
     cmd = (
         f"source /opt/lerobot/venv/bin/activate && "
         f"set -a && source /opt/lerobot/.env && set +a && "
         f"export CUDA_VISIBLE_DEVICES={visible_devices} && "
+        f"{training_env}"
         f"mkdir -p {status_dir} && "
         f"{dataset_setup_cmd}"
         f"START_TS=$(date +%s) && "
@@ -1305,7 +1421,8 @@ def train(
         f"--batch_size={batch_size} "
         f"--policy.device={device} "
         f"--eval.batch_size=1 "
-        f"--eval.n_episodes=1 && "
+        f"--eval.n_episodes=1 "
+        f"{extra_train_args}&& "
         f"END_TS=$(date +%s) && "
         f"DURATION=$((END_TS - START_TS)) && "
         f"echo '{{\"status\": \"success\", \"job_name\": \"{job_name}\", "
@@ -1333,23 +1450,24 @@ def train(
         "job_name": job_name,
         "checkpoint_path": ckpt_path if exit_code == 0 else None,
         "duration_seconds": duration,
+        "training_config": training_config.public_dict(),
     }
 
     if exit_code != 0:
         result["stderr"] = stderr.strip()[-500:] if stderr else ""
 
-    if exit_code == 0 and output_path:
+    if exit_code == 0 and checkpoint_output_path:
         if output_is_s3:
             if stream_logs:
-                console.print(f"[bold]Uploading checkpoint to {output_path}...[/bold]")
+                console.print(f"[bold]Uploading checkpoint to {checkpoint_output_path}...[/bold]")
             upload_cmd = (
                 f"source /opt/lerobot/venv/bin/activate && "
                 f"set -a && source /opt/lerobot/.env && set +a && "
-                f"{_remote_upload_dir_cmd(ckpt_path, output_path, cfg.storage.endpoint_url)}"
+                f"{_remote_upload_dir_cmd(ckpt_path, checkpoint_output_path, training_config.checkpoint_s3.endpoint_url or cfg.storage.endpoint_url)}"
             )
             up_code, up_out, up_err = ssh.run(_runtime_exec_cmd(cfg, upload_cmd))
             if up_code == 0:
-                result["output_path"] = output_path.rstrip("/") + "/"
+                result["output_path"] = checkpoint_output_path.rstrip("/") + "/"
             else:
                 result["status"] = "failed"
                 result["exit_code"] = up_code or 1
@@ -3007,6 +3125,20 @@ def train_student_cmd(
         "--input-path",
         help="S3 URI for a LeRobotDataset v3 directory. Overrides --dataset.",
     ),
+    data_path: str = typer.Option("", "--data-path", help="Custom LeRobotDataset v3 directory path."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic trainer override as KEY=VALUE. Repeat for any LeRobot training key.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     policy: str = typer.Option("act", "--policy", help="Policy type (act, diffusion)."),
     epochs: int = typer.Option(100, "--epochs", help="Number of training epochs."),
     batch_size: int = typer.Option(64, "--batch-size", help="Batch size."),
@@ -3028,20 +3160,39 @@ def train_student_cmd(
     The student sees only camera observations and joint state — never privileged
     simulator state.
     """
-    dataset_ref = input_path or dataset
+    try:
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+    except TrainingConfigError as exc:
+        _fail(str(exc))
+        return
+    dataset_ref = training_config.data_path or input_path or dataset
     if not dataset_ref:
-        _fail("Provide --dataset or --input-path.")
+        _fail("Provide --data-path, --dataset, or --input-path.")
         return
     try:
-        if input_path:
-            input_path = validate_read_path(
-                input_path,
+        if training_config.data_path or input_path:
+            resolved_input = validate_read_path(
+                training_config.data_path or input_path,
                 tool="LeRobot train-student",
-                option="--input-path",
+                option="--data-path",
                 allow_hf=False,
             )
-            dataset_ref = input_path
-        output_path = validate_write_path(output_path, tool="LeRobot train-student")
+            dataset_ref = resolved_input
+        output_path = validate_write_path(
+            resolve_checkpoint_s3_uri(training_config, output_path),
+            tool="LeRobot train-student",
+        )
     except PathContractError as exc:
         _fail(str(exc))
         return
@@ -3088,6 +3239,12 @@ def train_student_cmd(
             console.print(f"  output: {output_path or output_dir}")
 
         from npa.lerobot.train_student import StudentTrainingError, train_student
+        extra_args = {key: str(value) for key, value in overrides_to_mapping(training_config.overrides).items()}
+        extra_args["wandb.enable"] = "true" if training_config.wandb.enabled else "false"
+        if training_config.wandb.project:
+            extra_args["wandb.project"] = training_config.wandb.project
+        if training_config.wandb.run_name:
+            extra_args["wandb.name"] = training_config.wandb.run_name
 
         try:
             result = train_student(
@@ -3098,6 +3255,7 @@ def train_student_cmd(
                 batch_size=batch_size,
                 device=device,
                 num_workers=num_workers,
+                extra_args=extra_args,
                 stream=stream_logs,
             )
         except StudentTrainingError as exc:
@@ -3106,18 +3264,21 @@ def train_student_cmd(
 
         if output_path:
             if output_is_s3:
-                from npa.clients.storage import StorageClient
-
                 checkpoint_path = Path(
                     result.get("checkpoint_path")
                     or local_output_dir / "checkpoints" / "last" / "pretrained_model"
                 )
-                uploaded = StorageClient.from_environment().upload_directory(
-                    str(checkpoint_path), output_path
-                )
+                uploaded = upload_checkpoint_path(checkpoint_path, training_config)
+                if not uploaded:
+                    from npa.clients.storage import StorageClient
+
+                    uploaded = StorageClient.from_environment().upload_directory(
+                        str(checkpoint_path), output_path
+                    )
                 result["output_path"] = uploaded
             else:
                 result["output_path"] = result.get("checkpoint_path")
+        result["training_config"] = training_config.public_dict()
 
         if output == OutputFormat.json:
             typer.echo(json.dumps(result, indent=2))

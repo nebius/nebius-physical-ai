@@ -30,6 +30,7 @@ def tune_teacher(
     device: str = "cuda",
     action_space: str = "cartesian",
     env_overrides: dict[str, Any] | None = None,
+    ppo_overrides: dict[str, Any] | None = None,
     min_success_rate: float = 0.0,
 ) -> dict[str, Any]:
     """Run the diagnose → adjust → retrain loop.
@@ -193,6 +194,7 @@ def tune_teacher(
                 device=device,
                 seed=round_seed,
                 env_overrides=retrain_overrides,
+                ppo_overrides=ppo_overrides or {},
                 action_space=action_space,
             )
         except TrainingError as exc:
@@ -261,6 +263,7 @@ def _retrain_with_overrides(
     device: str,
     seed: int,
     env_overrides: dict[str, Any],
+    ppo_overrides: dict[str, Any] | None = None,
     action_space: str = "cartesian",
 ) -> dict[str, Any]:
     """Train teacher with modified EnvConfig parameters.
@@ -310,6 +313,10 @@ def _retrain_with_overrides(
         raise TrainingError(f"Failed to create Genesis environment: {exc}") from exc
 
     ppo_cfg = PPOConfig()
+    for key, value in (ppo_overrides or {}).items():
+        if key not in PPOConfig.__dataclass_fields__:
+            raise TrainingError(f"Unsupported Genesis PPO override: {key}")
+        setattr(ppo_cfg, key, value)
     train_cfg = ppo_cfg.to_train_cfg()
     config_for_save = _copy.deepcopy(train_cfg)
 
