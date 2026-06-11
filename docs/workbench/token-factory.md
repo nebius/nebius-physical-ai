@@ -71,7 +71,7 @@ Caption a folder of images (local or S3):
 npa workbench token-factory caption \
   --input-path ./frames \
   --output-path /tmp/captions \
-  --model Qwen/Qwen2-VL-7B-Instruct \
+  --model Qwen/Qwen2.5-VL-72B-Instruct \
   --output json
 ```
 

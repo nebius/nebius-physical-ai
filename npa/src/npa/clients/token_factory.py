@@ -24,7 +24,7 @@ DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 DEFAULT_API_KEY_ENV = "NEBIUS_API_KEY"
 DEFAULT_TIMEOUT_S = 120.0
 DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-DEFAULT_VISION_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
+DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 # NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
 # Confirm availability for your key with `npa workbench token-factory models`.
 DEFAULT_REASONER_MODEL = "nvidia/Cosmos3-Super-Reasoner"

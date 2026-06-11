@@ -24,7 +24,7 @@ envs:
   VLM_EVAL_OUTPUT_URI: "s3://<your-bucket-name>/sim-to-real/<run-id>/vlm-eval-token-factory/"
   VLM_EVAL_TASK: "sim-to-real"
   VLM_BACKEND: "api"
-  VLM_MODEL: "Qwen/Qwen2-VL-7B-Instruct"
+  VLM_MODEL: "Qwen/Qwen2.5-VL-72B-Instruct"
   VLM_FRAME_SELECTION: "keyframes"
   VLM_MAX_FRAMES: "4"
   VLM_SUCCESS_THRESHOLD: "0.8"

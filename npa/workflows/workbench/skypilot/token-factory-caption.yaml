@@ -22,7 +22,7 @@ envs:
   NPA_TOKEN_FACTORY_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
   INPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/images/"
   OUTPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/captions/"
-  MODEL: "Qwen/Qwen2-VL-7B-Instruct"
+  MODEL: "Qwen/Qwen2.5-VL-72B-Instruct"
   INSTRUCTION: "Describe this image in one or two sentences. Focus on the objects, the scene, and any action taking place. Be concrete and factual."
   MAX_IMAGES: "50"
   MAX_TOKENS: "512"
