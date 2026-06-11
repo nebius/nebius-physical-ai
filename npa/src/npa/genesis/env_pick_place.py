@@ -19,6 +19,16 @@ from typing import Any
 import numpy as np
 import torch
 
+from npa.genesis.robot_assets import (
+    ROBOT_SOURCE_BYO_MJCF,
+    ROBOT_SOURCE_BYO_URDF,
+    ROBOT_SOURCE_BYO_USD,
+    ROBOT_SOURCE_GENESIS_BUILTIN,
+    ROBOT_SOURCE_STOCK_FRANKA,
+    STOCK_FRANKA_MJCF,
+    RobotSpec,
+    RobotSpecError,
+)
 from npa.genesis.scene_assets import (
     PRIMITIVE_BOX,
     PRIMITIVE_CYLINDER,
@@ -62,6 +72,11 @@ class EnvConfig:
     # SceneSpec (mesh / primitive) instead of the hardcoded red Box. When None,
     # the default Franka + red-Box scene is reproduced exactly.
     scene_spec: SceneSpec | None = None
+    # BYO robot: when set, the robot embodiment (URDF/MJCF/USD/preset) is built
+    # from this parsed RobotSpec instead of the hardcoded Franka Panda, and the
+    # cached links, gains, force ranges, home pose, and IK end-effector link are
+    # taken from it. When None, the default Franka Panda is reproduced exactly.
+    robot_spec: RobotSpec | None = None
     # Domain randomization ranges
     cube_pos_noise: float = 0.1
     friction_range: tuple[float, float] = (0.3, 1.2)
@@ -126,6 +141,20 @@ class FrankaPickPlaceEnv:
         self.n_envs = self.cfg.n_envs
         self.device: str = "cuda"
 
+        # Robot embodiment. When no RobotSpec is supplied the env reproduces the
+        # hardcoded Franka Panda exactly (class-level N_* constants stay 7/2/9).
+        # When a RobotSpec is supplied, the DOF counts, gripper width, end-
+        # effector link, gains, force ranges, and home pose come from it.
+        self._robot_spec: RobotSpec | None = self.cfg.robot_spec
+        self.robot_provenance: dict[str, Any] | None = None
+        if self._robot_spec is not None:
+            self._robot_spec.validate()
+            self.N_JOINTS = self._robot_spec.n_arm_joints
+            self.N_GRIPPER = self._robot_spec.n_gripper_joints
+            self.N_DOFS = self._robot_spec.dof_count
+            self.N_PRIV_OBS = self.N_DOFS + 13  # joints + gripper(1)+pose(7)+contacts(2)+goal(3)
+            self.N_STATE = self.N_DOFS + 1
+
         if self.cfg.action_space not in ("joint", "cartesian"):
             raise ValueError(
                 f"action_space must be 'joint' or 'cartesian', "
@@ -135,7 +164,7 @@ class FrankaPickPlaceEnv:
         if self.cfg.action_space == "cartesian":
             self._n_actions = 4  # delta xyz (3) + gripper (1)
         else:
-            self._n_actions = 8  # delta joints (7) + gripper (1)
+            self._n_actions = self.N_JOINTS + 1  # delta joints + gripper (1)
 
         # When a BYO SceneSpec is supplied, derive the manipuland init pose,
         # primitive cube size, and target zone from it so the existing reset /
@@ -154,7 +183,8 @@ class FrankaPickPlaceEnv:
         self._wrist_cam = None
 
         # Link references (populated after build)
-        self._hand_link = None
+        self._ee_link = None
+        self._finger_links: list[Any] = []
         self._left_finger_link = None
         self._right_finger_link = None
 
@@ -209,12 +239,9 @@ class FrankaPickPlaceEnv:
         # Ground plane
         self._scene.add_entity(gs.morphs.Plane())
 
-        # Franka Panda robot (MJCF from Genesis built-in assets)
-        self._robot = self._scene.add_entity(
-            gs.morphs.MJCF(
-                file="xml/franka_emika_panda/panda.xml",
-            ),
-        )
+        # Robot embodiment. The default (no RobotSpec) path is the Franka Panda
+        # MJCF from Genesis built-in assets, byte-for-byte identical to before.
+        self._robot = self._add_robot_entity(gs)
 
         if self.cfg.scene_spec is not None:
             # BYO scene: build each object from the parsed SceneSpec. The
@@ -254,19 +281,39 @@ class FrankaPickPlaceEnv:
         # Build scene with parallel environments
         self._scene.build(n_envs=self.n_envs)
 
-        # Cache link references (must be after build)
-        self._hand_link = self._robot.get_link("hand")
-        self._left_finger_link = self._robot.get_link("left_finger")
-        self._right_finger_link = self._robot.get_link("right_finger")
+        # Cache link references (must be after build). The end-effector link and
+        # the optional gripper finger links come from the RobotSpec; the default
+        # path keeps the Franka "hand"/"left_finger"/"right_finger" lookups.
+        spec = self._robot_spec
+        ee_name = spec.ee_link if spec is not None else "hand"
+        finger_names = (
+            spec.finger_links if spec is not None else ("left_finger", "right_finger")
+        )
+        self._ee_link = self._robot.get_link(ee_name)
+        self._finger_links = [self._robot.get_link(name) for name in finger_names]
+        # Preserve the historical left/right finger handles for the default path.
+        self._left_finger_link = self._finger_links[0] if self._finger_links else None
+        self._right_finger_link = (
+            self._finger_links[1]
+            if len(self._finger_links) > 1
+            else (self._finger_links[0] if self._finger_links else None)
+        )
 
         # Set PD gains (must be after build, per Genesis docs)
-        self._robot.set_dofs_kp(list(self.cfg.kp))
-        self._robot.set_dofs_kv(list(self.cfg.kv))
-
-        # Set force limits for Franka
-        lower = [-87, -87, -87, -87, -12, -12, -12, -100, -100]
-        upper = [87, 87, 87, 87, 12, 12, 12, 100, 100]
-        self._robot.set_dofs_force_range(lower, upper)
+        if spec is not None:
+            kp, kv = list(spec.kp), list(spec.kv)
+            force_lower = list(spec.force_lower)
+            force_upper = list(spec.force_upper)
+            home_qpos = list(spec.home_qpos)
+        else:
+            kp, kv = list(self.cfg.kp), list(self.cfg.kv)
+            # Default Franka force limits (unchanged).
+            force_lower = [-87, -87, -87, -87, -12, -12, -12, -100, -100]
+            force_upper = [87, 87, 87, 87, 12, 12, 12, 100, 100]
+            home_qpos = FRANKA_HOME
+        self._robot.set_dofs_kp(kp)
+        self._robot.set_dofs_kv(kv)
+        self._robot.set_dofs_force_range(force_lower, force_upper)
 
         # Target positions per env (may be randomized)
         self._target_pos = torch.tensor(
@@ -277,8 +324,91 @@ class FrankaPickPlaceEnv:
 
         # Precompute home position tensor
         self._home_qpos = torch.tensor(
-            FRANKA_HOME, device=self.device, dtype=torch.float32,
+            home_qpos, device=self.device, dtype=torch.float32,
         )
+
+    def _add_robot_entity(self, gs: Any) -> Any:
+        """Add the robot embodiment from the RobotSpec (default: Franka MJCF).
+
+        Dispatches on ``robot_source``. The default / ``stock_franka`` path adds
+        the Genesis built-in Franka Panda MJCF unchanged. BYO robots load the
+        downloaded articulated description via ``gs.morphs.URDF`` / ``MJCF``; a
+        BYO robot that fails to load raises ``RobotSpecError`` (no fallback to
+        Franka). Records robot provenance with ``loaded=True`` on success.
+        """
+
+        spec = self._robot_spec
+        if spec is None or spec.robot_source == ROBOT_SOURCE_STOCK_FRANKA:
+            entity = self._scene.add_entity(
+                gs.morphs.MJCF(file=STOCK_FRANKA_MJCF),
+            )
+            if spec is not None:
+                spec.loaded = True
+                self.robot_provenance = spec.provenance()
+            return entity
+
+        source = spec.robot_source
+        # Preserve the configured end-effector + finger links even when they are
+        # attached by a fixed joint (the UR `tool0` / Flexiv `flange` convention).
+        # Genesis merges fixed-joint links into their parent by default, which
+        # would hide the IK/ee link; ``links_to_keep`` keeps them resolvable.
+        links_to_keep = [name for name in (spec.ee_link, *spec.finger_links) if name]
+        if source in (ROBOT_SOURCE_BYO_URDF, ROBOT_SOURCE_GENESIS_BUILTIN):
+            if not spec.local_path:
+                raise RobotSpecError(
+                    f"robot {spec.name!r} ({source}) has no resolved local_path; "
+                    "the robot asset must be downloaded/resolved before building"
+                )
+            morph = self._urdf_morph(gs, spec.local_path, links_to_keep)
+        elif source == ROBOT_SOURCE_BYO_MJCF:
+            if not spec.local_path:
+                raise RobotSpecError(
+                    f"robot {spec.name!r} ({source}) has no resolved local_path"
+                )
+            morph = self._mjcf_morph(gs, spec.local_path, links_to_keep)
+        elif source == ROBOT_SOURCE_BYO_USD:
+            # Genesis loads robots from URDF/MJCF, not USD. USD robots are an
+            # Isaac-backend capability; fail loudly rather than silently using
+            # Franka so the operator routes the run to the Isaac backend.
+            raise RobotSpecError(
+                "robot_source=byo_usd is not supported by the Genesis backend; "
+                "use the Isaac backend for USD robots, or supply a URDF/MJCF "
+                "for Genesis (no silent fallback to Franka)."
+            )
+        else:  # pragma: no cover - validate() restricts robot_source
+            raise RobotSpecError(f"unsupported robot_source {source!r}")
+
+        try:
+            entity = self._scene.add_entity(morph)
+        except Exception as exc:  # noqa: BLE001 - surface loader failures loudly
+            raise RobotSpecError(
+                f"failed to load BYO robot {spec.name!r} from {spec.local_path!r} "
+                f"({source}): {exc}"
+            ) from exc
+        spec.loaded = True
+        self.robot_provenance = spec.provenance()
+        return entity
+
+    @staticmethod
+    def _urdf_morph(gs: Any, file: str, links_to_keep: list[str]) -> Any:
+        """Build a URDF morph, keeping named fixed links when supported.
+
+        ``links_to_keep`` is a Genesis convenience for preserving fixed-joint
+        links (e.g. a tool flange) so they stay resolvable for IK/contacts.
+        Falls back gracefully on Genesis builds that lack the kwarg.
+        """
+
+        try:
+            return gs.morphs.URDF(file=file, fixed=True, links_to_keep=links_to_keep)
+        except TypeError:
+            return gs.morphs.URDF(file=file, fixed=True)
+
+    @staticmethod
+    def _mjcf_morph(gs: Any, file: str, links_to_keep: list[str]) -> Any:
+        try:
+            return gs.morphs.MJCF(file=file, links_to_keep=links_to_keep)
+        except TypeError:
+            return gs.morphs.MJCF(file=file)
 
     def _build_scene_objects(self, gs: Any, spec: SceneSpec) -> Any:
         """Add every SceneSpec object; return the manipuland entity.
@@ -437,16 +567,25 @@ class FrankaPickPlaceEnv:
         current_pos = self._robot.get_dofs_position()  # (n_envs, 9)
         joint_targets = current_pos[:, :self.N_JOINTS] + joint_deltas
 
-        # Gripper: cmd > 0 → open (0.04), cmd <= 0 → close (0.0)
-        gripper_val = torch.where(
-            gripper_cmd > 0,
-            torch.full_like(gripper_cmd, 0.04),
-            torch.zeros_like(gripper_cmd),
-        )
-        gripper_targets = gripper_val.expand(-1, self.N_GRIPPER)
+        if self.N_GRIPPER > 0:
+            # Gripper: cmd > 0 → open, cmd <= 0 → close. Open/close widths come
+            # from the RobotSpec (Franka default 0.04 / 0.0).
+            spec = self._robot_spec
+            open_val = spec.gripper_open if spec is not None else 0.04
+            close_val = spec.gripper_close if spec is not None else 0.0
+            gripper_val = torch.where(
+                gripper_cmd > 0,
+                torch.full_like(gripper_cmd, open_val),
+                torch.full_like(gripper_cmd, close_val),
+            )
+            gripper_targets = gripper_val.expand(-1, self.N_GRIPPER)
+            targets = torch.cat([joint_targets, gripper_targets], dim=-1)
+        else:
+            # Gripperless arm (e.g. UR/Flexiv base URDF): the gripper command
+            # channel is ignored and only arm joints are position-controlled.
+            targets = joint_targets
 
         # Apply PD position control
-        targets = torch.cat([joint_targets, gripper_targets], dim=-1)
         self._robot.control_dofs_position(targets)
 
         # Step physics
@@ -484,8 +623,8 @@ class FrankaPickPlaceEnv:
                 (ee_pos is NOT included in flat to preserve the 22-dim
                 policy interface and checkpoint compatibility)
         """
-        joint_pos = self._robot.get_dofs_position()  # (n_envs, 9)
-        gripper_state = joint_pos[:, self.N_JOINTS:].mean(dim=-1, keepdim=True)
+        joint_pos = self._robot.get_dofs_position()  # (n_envs, n_dofs)
+        gripper_state = self._gripper_state(joint_pos)
 
         cube_pos = self._cube.get_pos()  # (n_envs, 3)
         cube_quat = self._cube.get_quat()  # (n_envs, 4) — (w,x,y,z)
@@ -494,7 +633,7 @@ class FrankaPickPlaceEnv:
         # Contact detection between gripper fingers and cube
         contact_flags = self._get_contact_flags()  # (n_envs, 2)
 
-        ee_pos = self._hand_link.get_pos()  # (n_envs, 3)
+        ee_pos = self._ee_link.get_pos()  # (n_envs, 3)
 
         obs = {
             "joint_pos": joint_pos,
@@ -541,7 +680,7 @@ class FrankaPickPlaceEnv:
             wr_list.append(np.asarray(wr_rgb))
 
         joint_pos = self._robot.get_dofs_position()
-        gripper_state = joint_pos[:, self.N_JOINTS:].mean(dim=-1, keepdim=True)
+        gripper_state = self._gripper_state(joint_pos)
 
         return {
             "workspace": np.stack(ws_list),
@@ -572,15 +711,17 @@ class FrankaPickPlaceEnv:
             envs_idx=env_ids,
         )
 
-        # Randomize friction on robot fingers
-        finger_friction = lo + torch.rand(n, 2, device=self.device) * (hi - lo)
-        left_idx = self._left_finger_link.idx_local
-        right_idx = self._right_finger_link.idx_local
-        self._robot.set_friction_ratio(
-            finger_friction,
-            links_idx_local=[left_idx, right_idx],
-            envs_idx=env_ids,
-        )
+        # Randomize friction on robot fingers (skipped for gripperless arms).
+        if self._finger_links:
+            finger_idx = [link.idx_local for link in self._finger_links]
+            finger_friction = lo + torch.rand(
+                n, len(finger_idx), device=self.device
+            ) * (hi - lo)
+            self._robot.set_friction_ratio(
+                finger_friction,
+                links_idx_local=finger_idx,
+                envs_idx=env_ids,
+            )
 
     def _compute_reward(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Pick-and-place reward function.
@@ -591,7 +732,7 @@ class FrankaPickPlaceEnv:
             3. Place: negative distance from cube to target
             4. Success: large bonus when cube is at target and stable
         """
-        ee_pos = self._hand_link.get_pos()  # (n_envs, 3)
+        ee_pos = self._ee_link.get_pos()  # (n_envs, 3)
         cube_pos = self._cube.get_pos()  # (n_envs, 3)
 
         # 1. Approach reward
@@ -643,14 +784,24 @@ class FrankaPickPlaceEnv:
 
         return at_target & stable
 
+    def _gripper_state(self, joint_pos: torch.Tensor) -> torch.Tensor:
+        """Mean gripper opening as (n_envs, 1); zeros for gripperless arms."""
+
+        if self.N_GRIPPER > 0:
+            return joint_pos[:, self.N_JOINTS:].mean(dim=-1, keepdim=True)
+        return torch.zeros(joint_pos.shape[0], 1, device=joint_pos.device, dtype=joint_pos.dtype)
+
     def _get_contact_flags(self) -> torch.Tensor:
         """Detect contact between gripper fingers and the cube.
 
         Uses net contact force magnitude on finger links as a proxy for
-        binary contact detection.
-
-        Returns (n_envs, 2) tensor with left/right finger contact floats.
+        binary contact detection. Returns a (n_envs, 2) tensor with left/right
+        finger contact floats. Gripperless arms (no finger links) report zeros
+        so the observation schema stays fixed across embodiments.
         """
+        if not self._finger_links:
+            return torch.zeros(self.n_envs, 2, device=self.device)
+
         # Get net contact force on all robot links: (n_envs, n_links, 3)
         net_forces = self._robot.get_links_net_contact_force()
 
@@ -681,9 +832,9 @@ class FrankaPickPlaceEnv:
         Returns:
             (n_envs, 7) joint position deltas in radians.
         """
-        # Get full Jacobian for the hand link: (n_envs, 6, n_dofs)
+        # Get full Jacobian for the end-effector link: (n_envs, 6, n_dofs)
         # Rows 0-2 are the position Jacobian, rows 3-5 are orientation.
-        J_full = self._robot.get_jacobian(link=self._hand_link)
+        J_full = self._robot.get_jacobian(link=self._ee_link)
         J_pos = J_full[:, :3, :self.N_JOINTS]  # (n_envs, 3, 7)
 
         # Damped least-squares: J^T (J J^T + λ²I)^{-1} Δx

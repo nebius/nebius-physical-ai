@@ -70,6 +70,19 @@ def run_command(
     scene_spec_uri: str = typer.Option(
         "", "--scene-spec-uri", help="BYO SceneSpec URI."
     ),
+    robot_spec_uri: str = typer.Option(
+        "", "--robot-spec-uri", help="BYO RobotSpec JSON URI (robot embodiment)."
+    ),
+    robot_source: str = typer.Option(
+        "",
+        "--robot-source",
+        help="BYO robot source: stock_franka/byo_urdf/byo_mjcf/byo_usd/genesis_builtin.",
+    ),
+    robot_preset: str = typer.Option(
+        "",
+        "--robot-preset",
+        help="Built-in robot preset: franka/ur5e/ur10e/flexiv.",
+    ),
     augment_image: str = typer.Option(
         "", "--augment-image", help="BYO augmentation image."
     ),
@@ -196,6 +209,9 @@ def run_command(
         heldout_envs_uri=heldout_envs_uri,
         assets_uri=assets_uri,
         scene_spec_uri=scene_spec_uri,
+        robot_spec_uri=robot_spec_uri,
+        robot_source=robot_source,
+        robot_preset=robot_preset,
         augment_image=augment_image,
         policy_image=policy_image,
         trainer_image=trainer_image,

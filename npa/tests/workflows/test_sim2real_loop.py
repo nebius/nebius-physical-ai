@@ -526,7 +526,7 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
     ]
     captured = {}
 
-    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold, scene=None):
+    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold, scene=None, robot=None):
         captured["envs"] = env_payload
         captured["scene"] = scene
         captured["inner_evidence"] = inner_evidence
@@ -650,7 +650,7 @@ def test_component_heldout_payload_with_scene_attaches_provenance(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
         # Simulate the env building the mesh and marking it loaded.
         if scene is not None:
             for obj in scene.objects:
@@ -681,7 +681,7 @@ def test_component_heldout_payload_raises_when_mesh_not_loaded(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
     monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
@@ -693,6 +693,117 @@ def test_component_heldout_payload_raises_when_mesh_not_loaded(
             scene=scene,
             sim_backend="genesis",
         )
+
+
+def test_resolve_heldout_robot_none_without_inputs(tmp_path: Path) -> None:
+    robot = loop_module._resolve_heldout_robot(
+        robot_spec_uri="",
+        robot_source="",
+        robot_preset="",
+        dest_dir=tmp_path,
+        client=_FakeMeshClient(),
+    )
+    assert robot is None
+
+
+def test_resolve_heldout_robot_byo_urdf_records_provenance(tmp_path: Path) -> None:
+    from npa.genesis import robot_assets as ra
+
+    doc = {
+        "preset": "ur5e",
+        "robot_source": "byo_urdf",
+        "robot_uri": "s3://bucket/robots/ur5e.urdf",
+    }
+    client = _FakeMeshClient(spec_doc=doc, mesh=b"<robot>urdf</robot>")
+    robot = loop_module._resolve_heldout_robot(
+        robot_spec_uri="s3://bucket/robots/robot-spec.json",
+        robot_source="",
+        robot_preset="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert robot is not None
+    assert robot.robot_source == ra.ROBOT_SOURCE_BYO_URDF
+    assert robot.ee_link == "tool0"
+    assert robot.sha256 == ra.sha256_file(robot.local_path)
+    assert robot.provenance()["robot_fallback_used"] is False
+
+
+def test_component_heldout_payload_with_robot_attaches_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import robot_assets as ra
+
+    client = _FakeMeshClient(mesh=b"<robot>urdf</robot>")
+    robot = ra.robot_spec_from_preset("ur5e")
+    robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
+    ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        if robot is not None:
+            robot.loaded = True  # env builds it
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        robot=robot,
+        sim_backend="genesis",
+    )
+    assert payload["robot_fallback_used"] is False
+    prov = payload["robot_provenance"]
+    assert prov["robot_source"] == "byo_urdf"
+    assert prov["loaded"] is True
+    assert prov["ee_link"] == "tool0"
+
+
+def test_component_heldout_payload_raises_when_byo_robot_not_loaded(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import robot_assets as ra
+
+    client = _FakeMeshClient(mesh=b"<robot>urdf</robot>")
+    robot = ra.robot_spec_from_preset("ur5e")
+    robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
+    ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._component_heldout_payload(
+            [{"env_id": "heldout-0000", "seed": 1}],
+            inner_evidence={},
+            threshold=0.75,
+            robot=robot,
+            sim_backend="genesis",
+        )
+
+
+def test_normalize_heldout_report_propagates_robot_provenance() -> None:
+    payload = {
+        "per_env": [{"env_id": "h-0", "score": 0.9, "success": True}],
+        "robot_provenance": {
+            "schema": "npa.sim2real.robot_provenance.v1",
+            "robot_source": "byo_urdf",
+            "loaded": True,
+            "robot_fallback_used": False,
+        },
+        "robot_fallback_used": False,
+    }
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.5)
+    report = loop_module._normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["robot_provenance"]["robot_source"] == "byo_urdf"
+    assert report["robot_fallback_used"] is False
 
 
 def test_normalize_heldout_report_propagates_provenance() -> None:
@@ -742,7 +853,7 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
 
     monkeypatch.setattr(client, "download_path", download_path)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
         if scene is not None:
             for obj in scene.objects:
                 obj.loaded = True
@@ -880,7 +991,7 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
     envs = [{"env_id": "heldout-0000", "seed": 1}]
     captured = {}
 
-    def fake_isaac(env_payload, *, inner_evidence, threshold, scene=None, isaac_task):
+    def fake_isaac(env_payload, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         captured["isaac_called"] = True
         captured["isaac_task"] = isaac_task
         return [{"env_id": "heldout-0000", "score": 0.7, "success": False, "details": {}}]
@@ -907,7 +1018,7 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
 
 
 def test_component_heldout_payload_genesis_backend_unchanged(monkeypatch) -> None:
-    def fake_genesis(env_payload, *, inner_evidence, threshold, scene=None):
+    def fake_genesis(env_payload, *, inner_evidence, threshold, scene=None, robot=None):
         return [{"env_id": "heldout-0000", "score": 0.8, "success": True, "details": {}}]
 
     def fake_isaac(*args, **kwargs):
@@ -987,7 +1098,7 @@ def test_isaac_payload_stock_scene_provenance(monkeypatch) -> None:
 
     scene = sa.default_isaac_stock_scene_spec()
 
-    def fake_isaac(envs, *, inner_evidence, threshold, scene=None, isaac_task):
+    def fake_isaac(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         # Stock manipuland is materialized by the task env (marks loaded).
         if scene is not None:
             scene.manipuland().loaded = True
