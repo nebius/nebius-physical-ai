@@ -1,0 +1,55 @@
+# Workspace Rules — Context & Token Efficiency
+
+Highest priority: minimize context ingestion, avoid full-workspace scans, and keep
+multi-turn chat memory lean. Apply these rules on every turn.
+
+## 1. Context Minimization & Boundaries
+
+- NEVER read unrequested files or entire directories. Read only what the current
+  task requires. Cross-module changes are the only justification for widening scope,
+  and even then read the specific touched symbols, not whole trees.
+- Prefer targeted symbol matching (a named class, type, function, or constant) over
+  reading full files. Use grep/symbol search to jump to the relevant lines, then read
+  a tight range around them.
+- If a file exceeds 500 lines, do NOT ingest it whole. Ask for the specific snippet,
+  function, or module breakdown you need, or use a search to locate the exact region.
+- Do not re-read a file you already have in context. Reuse what you've seen unless it
+  changed.
+- Avoid speculative exploration. If you're unsure a file is relevant, ask before
+  reading it.
+
+## 2. State & Memory Management
+
+- Maintain an ultra-lean structural log (e.g. `todo.md` or `agents.md`) that tracks
+  ONLY: active architectural state, current task blocks, and breaking changes.
+- The memory file must stay high-level. Strictly forbidden: code dumps, raw logs,
+  full stack traces, command output, or copied file contents. Summarize in one line
+  instead (e.g. "auth flow refactored to use middleware; token refresh pending").
+- When a localized sub-task is completed, advise me to clear the chat history or open
+  a fresh thread before starting the next unrelated task. A clean thread is cheaper
+  and more accurate than a long one.
+
+## 3. DRY / Modular Code Principles
+
+- Enforce high modularity and strong separation of concerns. One responsibility per
+  file/module.
+- Keep files small and single-purpose. Smaller, isolated files keep automatic context
+  ingestion small and make targeted reads possible.
+- Favor shallow nesting and flat, predictable structure over deep hierarchies.
+- Eliminate duplication: extract shared logic into reusable functions/modules rather
+  than copy-pasting.
+
+## 4. Tool & Model Routing
+
+Use a fast/medium model for:
+- Minor syntax fixes and formatting
+- Boilerplate generation and scaffolding
+- Basic unit tests and simple, single-file edits
+
+Escalate to a deep-reasoning model for:
+- Complex orchestration or control-flow logic
+- Heavy multi-file debugging and refactors
+- Architectural decisions and cross-module design
+
+When in doubt, start with the cheaper model and escalate only if the task proves to
+need deeper reasoning.
