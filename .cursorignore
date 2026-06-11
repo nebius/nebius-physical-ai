@@ -1,8 +1,8 @@
 # .cursorignore — keep large/generated/binary paths out of agent context and indexing.
 # Mirrors the high-volume entries in .gitignore plus a few Cursor-specific bleeders.
-# Goal: minimize token ingestion and avoid full-workspace scans.
+# Goal: minimize token ingestion, protect prompt-cache stability, avoid full scans.
 
-# Virtualenvs and installed dependencies (npa/.venv alone is ~1.5G)
+# --- Dependency directories ---
 .venv/
 **/.venv/
 venv/
@@ -10,7 +10,16 @@ venv/
 node_modules/
 **/node_modules/
 
-# Python build/test/type caches
+# --- Build targets, distribution binaries, temp caches ---
+dist/
+build/
+.eggs/
+*.egg-info/
+.turbo/
+.cache/
+**/.cache/
+.next/
+.parcel-cache/
 __pycache__/
 **/__pycache__/
 *.py[cod]
@@ -19,12 +28,19 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
-.eggs/
-*.egg-info/
-dist/
-build/
+tmp/
+*.tmp
+*.temp
 
-# Model checkpoints, weights, and generated arrays/datasets
+# --- Heavy lockfiles (large, low-signal for reasoning) ---
+uv.lock
+**/uv.lock
+poetry.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# --- Model checkpoints, weights, and generated arrays ---
 *.safetensors
 *.pt
 *.pth
@@ -35,7 +51,27 @@ checkpoints/
 cosmos3-cache/
 npa-cosmos3-cache/
 
-# Large binary demo/media assets (docs/demos/assets is ~24M)
+# --- Massive data arrays / synthetic data / simulation logs (root-anchored to
+#     avoid hiding source packages like npa/src/npa/workbench/data/) ---
+/data/
+/datasets/
+/synthetic/
+/synthetic_data/
+/sim_logs/
+/rollouts/
+/outputs/
+/artifacts/
+wandb/
+**/wandb/
+
+# --- Run output, logs, scratch ---
+results/
+runs/
+logs/
+*.log
+*.log*
+
+# --- Large binary demo/media assets (docs/demos/assets is ~24M) ---
 docs/demos/assets/
 *.mp4
 *.webm
@@ -44,31 +80,13 @@ docs/demos/assets/
 *.jpeg
 *.gif
 
-# Lockfiles (large, low-signal for reasoning)
-uv.lock
-**/uv.lock
-poetry.lock
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-
-# Run output, logs, and scratch
-results/
-runs/
-logs/
-*.log
-*.log*
-tmp/
-*.tmp
-*.temp
-
-# Terraform state and provider dirs
+# --- Terraform state and provider dirs ---
 .terraform/
 *.tfstate
 *.tfstate.*
 tfplan
 *.tfplan
 
-# Security scan reports
+# --- Security scan reports ---
 kingfisher-result*.json
 semgrep-*.json

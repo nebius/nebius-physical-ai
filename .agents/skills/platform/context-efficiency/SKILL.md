@@ -1,24 +1,38 @@
 ---
 name: context-efficiency
-description: Apply on every turn to minimize context ingestion, keep multi-turn chat memory lean, avoid full-workspace scans, and route work to the right model. Use when deciding how much to read, how to track state, how to structure code for small reads, and which model tier to use.
+description: Single source of truth for behavioral constraints. Apply on every turn to protect prompt-cache prefix stability, minimize context ingestion, keep multi-turn chat memory lean, avoid full-workspace scans, and route work to the right model. Use when deciding how much to read, how to track state, how to structure code for small reads, and which model tier to use.
 ---
 
 # Context & Token Efficiency
 
-Highest priority: minimize context ingestion, avoid full-workspace scans, and
-keep multi-turn chat memory lean. Apply these rules on every turn.
+Highest priority: protect the cached prompt prefix, minimize context ingestion,
+avoid full-workspace scans, and keep multi-turn chat memory lean. Apply these
+rules on every turn.
+
+## 0. Prompt Caching & Prefix Stability
+
+- Treat this file, the system instructions, and the repo index files
+  (`AGENTS.md`, `CLAUDE.md`) as a permanent, static prefix. Do not restate,
+  paraphrase, or re-emit them — doing so invalidates the prompt cache and taxes
+  every subsequent turn.
+- Never emit repetitive explanations, long greetings, restated task summaries,
+  or structural boilerplate that shifts prompt layout between turns. Stable
+  layout keeps the cache warm.
+- Keep responses compact and direct. Lead with the action or answer; omit
+  preamble and filler. Brevity preserves context-window longevity.
 
 ## 1. Context Minimization & Boundaries
 
 - NEVER read unrequested files or entire directories. Read only what the current
   task requires. Cross-module changes are the only justification for widening
   scope, and even then read the specific touched symbols, not whole trees.
-- Prefer targeted symbol matching (a named class, type, function, or constant)
-  over reading full files. Use grep/symbol search to jump to the relevant lines,
-  then read a tight range around them.
-- If a file exceeds 500 lines, do NOT ingest it whole. Ask for the specific
-  snippet, function, or module breakdown you need, or use a search to locate the
-  exact region.
+- Enforce targeted symbol isolation. Prefer a named class, type, function, or
+  constant over reading full files; request specific file lines or exact symbol
+  names via `@`-references (e.g. `@path/to/file.py` then a symbol/line range).
+  Use grep/symbol search to jump to the relevant lines, then read a tight range.
+- If a file exceeds 500 lines, refuse to read it whole. Request the specific
+  snippet, symbol, function, or module chunk you need, or use a search to locate
+  the exact region first.
 - Do not re-read a file you already have in context. Reuse what you've seen
   unless it changed.
 - Avoid speculative exploration. If you're unsure a file is relevant, ask before
