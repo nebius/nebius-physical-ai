@@ -17,6 +17,7 @@ from . import (
     sonic,
     trigger,
     vlm_eval,
+    workflow,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "training_config",
     "trigger",
     "vlm_eval",
+    "workflow",
 ]
