@@ -124,17 +124,64 @@ sky launch -y --infra kubernetes/<context-name> -c vlm-eval-benchmark /tmp/vlm-e
 sky launch -y --infra kubernetes/<context-name> -c vlm-eval /tmp/vlm-eval.yaml
 ```
 
-## Rights Notes
+## Gated Hugging Face models
 
-- `nvidia/Cosmos3-Nano`: accept the model terms on Hugging Face and provide
-  `HF_TOKEN` when the repo requires authenticated access. Set `NGC_API_KEY`
-  only when the workflow requires NGC or when rebuilding NGC-derived images.
-- `nvidia/GEAR-SONIC`: accept the NVIDIA Hugging Face terms for the checkpoint
-  repo and provide `HF_TOKEN` for authenticated downloads.
-- `Qwen/Qwen2-VL-7B-Instruct`: Apache-2.0 public model. `HF_TOKEN` is optional
-  for the default model and becomes required only for private/gated overrides
-  or organization policy.
-- YAMLs with no HF model or dataset reference should list HF as `None`.
+Many workflows pass an `HF_TOKEN` so a runtime can download model weights or
+datasets from Hugging Face. A token alone is **not** enough for *gated* repos:
+you must also open the repo page once while signed in with the same account and
+accept its license/usage terms (NVIDIA repos may also require a request form),
+or the download fails with `403 Gated`. Public repos need no acceptance and the
+token is optional (it only helps avoid anonymous rate limits).
+
+The table below lists, per workflow, the repos you must accept before the run
+can fetch weights. Gated repos are marked **(gated — accept license)**.
+
+| Workflow YAML | Hugging Face repos to accept | Notes |
+| --- | --- | --- |
+| `sonic-train-standalone.yaml` | `nvidia/GEAR-SONIC` **(gated — accept license)** | Default `SONIC_CHECKPOINT=nvidia/GEAR-SONIC:sonic_release/last.pt`. |
+| `sonic-locomotion-finetuning.yaml` | `nvidia/GEAR-SONIC` **(gated — accept license)** | Fine-tune stage downloads the released checkpoint; the MuJoCo-eval stage consumes the S3 checkpoint and needs no HF access. |
+| `cosmos3-ea-fetch.yaml` | `nvidia/Cosmos3-Nano` **(gated — early-access, accept license)** | `NPA_COSMOS3_MODEL_ID` default; override for a BYO checkpoint. |
+| `cosmos3-text-to-image-inference.yaml` | `nvidia/Cosmos3-Nano` **(gated — early-access, accept license)** | Same `NPA_COSMOS3_MODEL_ID` default; also needs `GITHUB_TOKEN` for the source repo. |
+| `cosmos3-reason.yaml` | `nvidia/Cosmos-Reason1-7B` **(gated — accept license)** when the reasoning image runs | The YAML only emits a contract manifest recording `COSMOS3_REASON_MODEL` (default `nvidia/Cosmos-Reason1-7B`); the reasoning image that consumes it downloads the gated weights. |
+| `cosmos2-transfer.yaml` | NVIDIA Cosmos diffusion weights **(gated — accept license)** when the transfer image runs | The YAML only emits a transfer manifest; `COSMOS2_TRANSFER_IMAGE` downloads the gated weights (the `npa workbench cosmos` default is `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`). |
+| `vlm-eval.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODEL` default. Apache-2.0; token optional, not gated. |
+| `vlm-eval-benchmark.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODELS` default. Token optional, not gated. |
+| `sim-to-real-loop.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | Self-hosted vLLM default `MODEL`. Token optional, not gated. |
+| `sim-to-real-pipeline.yaml` | `lerobot/pusht` (public dataset) | Default `LEROBOT_DATASET_REPO_ID`; default `VLM_EVAL_BACKEND=stub` pulls no VLM. |
+| `sim-to-real-trigger.yaml` | `lerobot/pusht` (public dataset) | Watches/retriggers `sim-to-real-pipeline.yaml`; same public dataset. |
+| `bdd100k-pipeline.yaml` | None | CLIP embeddings run inside the first-party LanceDB image; BDD100K dataset access is separate from HF. |
+| `isaac-lab-rl-train.yaml`, `isaac-lab-rl-sweep.yaml` | None | Isaac Lab RSL-RL training pulls no HF weights. |
+| `sonic-export.yaml`, `sonic-export-eval.yaml`, `sonic-eval.yaml` | None | Operate on already-trained checkpoints staged in S3 (unless an input points at an HF checkpoint). |
+| `mjlab-eval.yaml`, `retargeting.yaml` | None | Consume S3 artifacts; no HF download. |
+| `sim2real-actions.yaml`, `sim2real-envgen-split.yaml` | None | Env generation / action conditioning use BYO container images, not HF repos. |
+
+The self-contained Sim2Real runbook (`../sim2real/runbook.yaml`) defaults to
+`nvidia/Cosmos-Reason1-7B` **(gated — accept license)** for its VLM and the
+public `lerobot/pusht` dataset.
+
+### Gated repos not surfaced by a workflow YAML
+
+Each workbench tool is a containerized service that can be driven by CLI/SDK as
+well as the YAMLs above, so the entrypoint does not change which repo is gated.
+Two gated repos still aren't visible from the per-workflow table:
+
+- **GR00T has no SkyPilot YAML in this directory** — it is driven only by
+  `npa workbench groot` (CLI/SDK). It needs `nvidia/GR00T-N1.7-3B` **and**
+  `nvidia/Cosmos-Reason2-2B`, both **gated — accept license**.
+- **Driving the Cosmos tool directly** (`npa workbench cosmos ...`) defaults to a
+  different repo than the `cosmos3-*` YAMLs above:
+  `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` **(gated — accept license)**.
+
+### How to accept a gated repo
+
+1. Sign in to Hugging Face with the account whose token you set as `HF_TOKEN`.
+2. Open the repo page (for example `https://huggingface.co/nvidia/GEAR-SONIC`)
+   and accept the license / "Agree and access repository" prompt, completing any
+   NVIDIA request form.
+3. Confirm the token can reach the repo before a long run. `npa workbench cosmos
+   check` and `npa workbench groot` validate gated-model access for those tools;
+   for other workflows a quick `huggingface-cli download <repo> --revision main`
+   smoke check works.
 
 ## Cleanup Rules
 
