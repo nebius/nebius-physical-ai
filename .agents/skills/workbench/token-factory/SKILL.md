@@ -63,13 +63,36 @@ scoring with no vLLM serving stage.
 
 ## Workflows
 
-In `npa/workflows/workbench/skypilot/` (all CPU-only, `cloud: kubernetes`, no
-`accelerators`):
+Zero-GPU workflows in `npa/workflows/workbench/skypilot/` (CPU-only,
+`cloud: kubernetes`, no `accelerators`):
 
 - `token-factory-caption.yaml`
 - `token-factory-generate.yaml`
+- `token-factory-cosmos-reason.yaml`
 - `vlm-eval-token-factory.yaml`
 
 Pass the key as a SkyPilot secret at launch:
 `sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY <yaml>`.
 Each `run` block fails fast if `NEBIUS_API_KEY` is unset.
+
+## Compute Combos (Nebius GPU + Token Factory)
+
+Two workflows deliberately pair **real Nebius GPU compute** with the hosted
+Token Factory stage, so the pipeline exercises both. Pure logic lives in
+`npa/src/npa/workflows/token_factory_combos.py` (infra-free, unit-tested);
+network/storage calls live in the runner and existing tool modules.
+
+- `npa/scripts/run_tokenfactory_train_triage.py` (**serverless**): a LeRobot
+  serverless GPU Job writes run artifacts to S3, then `token-factory generate`
+  has a text model write a triage report. Needs `--project-id` + `--output-path`
+  unless the workbench config supplies a project and
+  `storage.checkpoint_bucket`. `--render-only` previews with no infra;
+  `--from-output-path` triages an existing prefix without launching a GPU Job.
+- `npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml`
+  (**kubernetes**): stage 1 renders a `lerobot-eval` rollout on a k8s GPU and
+  uploads videos to S3; stage 2 is CPU `vlm-eval --backend api` judging via a
+  hosted VLM. Two serial docs, two images (lerobot GPU, then token-factory CPU).
+
+Guide: `docs/workbench/cookbooks/tokenfactory-compute-combos.md`. Both are
+smoke-sized to stay cheap. The runner exports `~/.npa/credentials.yaml` into the
+environment itself because it is launched as a plain script, not via the CLI.

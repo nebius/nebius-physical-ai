@@ -1,0 +1,129 @@
+# What:   Roll out a policy on a Nebius k8s GPU, then judge it with Token Factory.
+# Guide:  docs/workbench/cookbooks/tokenfactory-compute-combos.md
+# Runner: npa workbench workflow submit (two-stage serial pipeline)
+# Index:  npa/workflows/workbench/skypilot/README.md
+#
+# A "combo" workflow: real Nebius cloud compute + hosted Token Factory inference.
+#   Stage 1 (Nebius Managed Kubernetes GPU): lerobot-eval rolls out a policy and
+#           renders rollout videos, then uploads them to S3.
+#   Stage 2 (CPU, zero-GPU): vlm-eval --backend api scores the rollout with a
+#           hosted Token Factory VLM. No local VLM serving stage is needed.
+# Provide the API key (and S3 creds) as SkyPilot secrets at launch:
+#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#     --secret AWS_SECRET_ACCESS_KEY tokenfactory-rollout-judge.yaml
+name: tokenfactory-rollout-judge
+execution: serial
+---
+# Stage 1: render a rollout on a Nebius Managed Kubernetes GPU.
+name: rollout-gpu
+resources:
+  cloud: kubernetes
+  accelerators: H100:1
+  cpus: 8
+  memory: 32
+  # GPU defaults to H100:1. Change resources.accelerators to L40S:1 or H200:1 to
+  # match your cluster's capacity before launch. NPA_LEROBOT_IMAGE is
+  # BYO-overridable.
+  image_id: "docker:${NPA_LEROBOT_IMAGE}"
+envs:
+  NPA_LEROBOT_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:0.5.1"
+  # Public LeRobot checkpoint + environment for an out-of-the-box smoke rollout.
+  CHECKPOINT: "lerobot/diffusion_pusht"
+  ENV_TYPE: "pusht"
+  ENV_TASK: ""
+  EPISODES: "2"
+  # Where the rendered rollout videos are written and read by the judge stage.
+  ROLLOUTS_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/rollouts/"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+run: |
+  set -euo pipefail
+  if [[ "${ROLLOUTS_URI}" != s3://* ]]; then
+    echo "ROLLOUTS_URI must be an s3:// URI" >&2
+    exit 1
+  fi
+  source /opt/lerobot/venv/bin/activate
+  if [ -f /opt/lerobot/.env ]; then set -a && source /opt/lerobot/.env && set +a; fi
+
+  rollout_dir="/tmp/npa-rollout"
+  rm -rf "${rollout_dir}"
+  env_task_arg=""
+  if [[ -n "${ENV_TASK}" ]]; then env_task_arg="--env.task=${ENV_TASK}"; fi
+
+  lerobot-eval \
+    --policy.path="${CHECKPOINT}" \
+    --env.type="${ENV_TYPE}" \
+    ${env_task_arg} \
+    --eval.n_episodes="${EPISODES}" \
+    --eval.batch_size=1 \
+    --output_dir="${rollout_dir}"
+
+  # Upload the rendered rollout (videos + eval_info.json) to S3 for the judge.
+  python3 - "${rollout_dir}" "${ROLLOUTS_URI}" <<'PY'
+  import os
+  import pathlib
+  import sys
+  from urllib.parse import urlparse
+
+  import boto3
+
+  local = pathlib.Path(sys.argv[1])
+  parsed = urlparse(sys.argv[2])
+  prefix = parsed.path.strip("/")
+  prefix = (prefix + "/") if prefix else ""
+  s3 = boto3.client(
+      "s3",
+      endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+  )
+  uploaded = 0
+  for path in local.rglob("*"):
+      if path.is_file():
+          s3.upload_file(str(path), parsed.netloc, prefix + str(path.relative_to(local)))
+          uploaded += 1
+  print(f"NPA_ROLLOUT_UPLOADED {uploaded} files -> {sys.argv[2]}", flush=True)
+  PY
+---
+# Stage 2: judge the rollout with a hosted Token Factory VLM (zero-GPU).
+name: tokenfactory-judge
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  image_id: "docker:${NPA_TOKEN_FACTORY_IMAGE}"
+envs:
+  NPA_TOKEN_FACTORY_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  ROLLOUTS_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/rollouts/"
+  JUDGE_URI: "s3://<your-bucket-name>/tokenfactory/<run-id>/vlm-judge/"
+  VLM_EVAL_TASK: "sim-to-real"
+  VLM_MODEL: "Qwen/Qwen2.5-VL-72B-Instruct"
+  VLM_FRAME_SELECTION: "keyframes"
+  VLM_MAX_FRAMES: "4"
+  VLM_SUCCESS_THRESHOLD: "0.8"
+  VLM_REQUEST_TIMEOUT_S: "240"
+  # Optional override; defaults to https://api.tokenfactory.nebius.com/v1/.
+  NEBIUS_TOKEN_FACTORY_BASE_URL: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
+    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+    exit 1
+  fi
+  npa workbench vlm-eval run \
+    --input-path "${ROLLOUTS_URI}" \
+    --output-path "${JUDGE_URI}" \
+    --task "${VLM_EVAL_TASK}" \
+    --backend api \
+    --model "${VLM_MODEL}" \
+    --api-key-env NEBIUS_API_KEY \
+    --frame-selection "${VLM_FRAME_SELECTION}" \
+    --max-frames "${VLM_MAX_FRAMES}" \
+    --success-threshold "${VLM_SUCCESS_THRESHOLD}" \
+    --timeout-s "${VLM_REQUEST_TIMEOUT_S}" \
+    --output json
