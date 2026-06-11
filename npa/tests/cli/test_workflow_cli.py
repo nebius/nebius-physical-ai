@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -9,6 +12,7 @@ import yaml
 from npa.cli.main import app
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
 from npa.orchestration.skypilot.workflow import WorkflowResult
+from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 from npa.workflows.distill import DistillationError
 from npa.workflows.distill_two_vm import TwoVMDistillError
 
@@ -19,13 +23,71 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize(
     "command",
-    ["submit", "run", "status", "logs", "teardown", "distill"],
+    ["submit", "run", "list", "status", "logs", "artifacts", "cancel", "teardown", "distill"],
 )
 def test_workflow_command_help(command: str) -> None:
     result = runner.invoke(app, ["workbench", "workflow", command, "--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+class FakeWorkflowS3:
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str = "") -> None:
+        del ContentType
+        self.objects[(Bucket, Key)] = Body if isinstance(Body, bytes) else str(Body).encode("utf-8")
+
+    def get_object(self, *, Bucket: str, Key: str):
+        return {"Body": BytesIO(self.objects[(Bucket, Key)])}
+
+    def get_paginator(self, name: str):
+        assert name == "list_objects_v2"
+        client = self
+
+        class Paginator:
+            def paginate(self, *, Bucket: str, Prefix: str):
+                contents = [
+                    {"Key": key, "Size": len(body)}
+                    for (bucket, key), body in sorted(client.objects.items())
+                    if bucket == Bucket and key.startswith(Prefix)
+                ]
+                yield {"Contents": contents}
+
+        return Paginator()
+
+
+def _patch_workflow_s3(monkeypatch: pytest.MonkeyPatch, fake_s3: FakeWorkflowS3) -> None:
+    monkeypatch.setattr("npa.orchestration.skypilot.workflow_state.boto3.client", lambda *args, **kwargs: fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(checkpoint_bucket="", endpoint_url=""),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.load_credentials",
+        lambda: SimpleNamespace(
+            s3_access_key_id="test-access",
+            s3_secret_access_key="test-secret",
+            s3_endpoint="https://storage.example",
+            s3_bucket="",
+        ),
+    )
+
+
+def test_workflow_s3_config_uses_nebius_mount_for_nebius_endpoint() -> None:
+    state = WorkflowS3Config(
+        bucket="bucket",
+        prefix="run-1",
+        endpoint_url="https://storage.eu-north1.nebius.cloud",
+        aws_access_key_id="access",
+        aws_secret_access_key="secret",
+    )
+
+    assert state.uri == "s3://bucket/run-1"
+    assert state.sky_mount_source == "nebius://bucket"
+    assert state.sky_mount_store == "NEBIUS"
 
 
 def test_workflow_run_dispatches(mocker) -> None:
@@ -86,6 +148,60 @@ def test_workbench_workflow_submit_dispatches_skypilot(mocker, tmp_path) -> None
     assert submit_mock.call_args.args == (yaml_path, "run-1")
     assert submit_mock.call_args.kwargs["timeout"] == 30
     assert submit_mock.call_args.kwargs["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
+
+
+def test_workbench_workflow_submit_instruments_durable_s3(monkeypatch, mocker, tmp_path) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nexecution: serial\n---\nname: train\nresources:\n  cloud: kubernetes\nrun: |\n  echo HF_TOKEN=hf_testsecret123456\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_submit_workflow(path, run_id, **kwargs):
+        captured["content"] = path.read_text(encoding="utf-8")
+        captured["run_id"] = run_id
+        captured["kwargs"] = kwargs
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow", side_effect=fake_submit_workflow)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "run-1",
+            "--durable-s3",
+            "--s3-bucket",
+            "bucket",
+            "--s3-endpoint",
+            "https://storage.example",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "run_prefix_uri: s3://bucket/run-1" in result.output
+    assert captured["run_id"] == "run-1"
+    kwargs = captured["kwargs"]
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "test-access"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "test-secret"
+    assert "AWS_ACCESS_KEY_ID" in kwargs["secret_envs"]
+    assert "AWS_SECRET_ACCESS_KEY" in kwargs["secret_envs"]
+    docs = [doc for doc in yaml.safe_load_all(str(captured["content"])) if doc]
+    task = docs[1]
+    assert task["file_mounts"]["/mnt/npa-workflow-state"]["source"] == "s3://bucket"
+    assert task["file_mounts"]["/mnt/npa-workflow-state"]["mode"] == "MOUNT"
+    assert task["envs"]["NPA_WORKFLOW_RUN_PREFIX_URI"] == "s3://bucket/run-1"
+    assert "npa_workflow_redact_stream" in task["run"]
+    manifest = json.loads(fake_s3.objects[("bucket", "run-1/manifest.json")].decode("utf-8"))
+    assert manifest["sky_job_id"] == "42"
+    assert manifest["stages"]["train"]["log_uri"] == "s3://bucket/run-1/logs/train/run.log"
 
 
 def test_workbench_workflow_submit_substitutes_vars(mocker, tmp_path) -> None:
@@ -399,6 +515,67 @@ def test_workflow_logs_prints_stage_logs(mocker) -> None:
 
     assert result.exit_code == 0
     assert "stage log text" in result.output
+
+
+def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    manifest = {
+        "schema_version": 1,
+        "run_id": "run-1",
+        "workflow_name": "demo",
+        "run_prefix_uri": "s3://bucket/run-1",
+        "sky_job_id": "42",
+        "stages": {
+            "train": {
+                "name": "train",
+                "sky_job_id": "42",
+                "log_uri": "s3://bucket/run-1/logs/train/run.log",
+                "status_uri": "s3://bucket/run-1/logs/train/status.json",
+                "artifact_uri": "s3://bucket/run-1/artifacts/train/",
+            }
+        },
+    }
+    status = {
+        "schema_version": 1,
+        "run_id": "run-1",
+        "stage": "train",
+        "state": "SUCCEEDED",
+        "tier": "WORKS",
+        "start_time": "2026-06-07T00:00:00Z",
+        "end_time": "2026-06-07T00:00:01Z",
+        "sky_job_id": "42",
+        "sky_task_id": "0",
+        "artifact_uri": "s3://bucket/run-1/artifacts/train/",
+        "log_uri": "s3://bucket/run-1/logs/train/run.log",
+        "error_summary": "",
+    }
+    fake_s3.put_object(Bucket="bucket", Key="run-1/manifest.json", Body=json.dumps(manifest).encode("utf-8"))
+    fake_s3.put_object(Bucket="bucket", Key="run-1/logs/train/status.json", Body=json.dumps(status).encode("utf-8"))
+    fake_s3.put_object(Bucket="bucket", Key="run-1/logs/train/run.log", Body=b"training complete\n")
+    fake_s3.put_object(Bucket="bucket", Key="run-1/artifacts/train/model.bin", Body=b"model")
+
+    status_result = runner.invoke(
+        app,
+        ["workbench", "workflow", "status", "s3://bucket/run-1", "--json"],
+    )
+    logs_result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", "s3://bucket/run-1", "--stage", "train"],
+    )
+    artifacts_result = runner.invoke(
+        app,
+        ["workbench", "workflow", "artifacts", "s3://bucket/run-1"],
+    )
+
+    assert status_result.exit_code == 0
+    payload = json.loads(status_result.output)
+    assert payload["status"] == "SUCCEEDED"
+    assert payload["stages"]["train"]["tier"] == "WORKS"
+    assert logs_result.exit_code == 0
+    assert "training complete" in logs_result.output
+    assert artifacts_result.exit_code == 0
+    assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
 
 
 def test_workflow_logs_maps_distillation_error(mocker) -> None:

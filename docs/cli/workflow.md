@@ -12,8 +12,11 @@ Options
 Commands
 submit  Submit a SkyPilot workflow YAML through the NPA controller convention.
 run  Run a named workflow end-to-end.
+list  List durable S3 workflow runs.
 status  Check the status of a workflow run.
 logs  Show logs for a specific stage of a workflow run.
+artifacts  List durable S3 artifact URIs for a workflow run.
+cancel  Cancel a managed workflow job and explicitly tear down its cluster.
 teardown  Destroy both VMs from a distill workflow run.
 distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 ```
@@ -30,8 +33,11 @@ distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 | --- | --- |
 | `submit` | Submit a SkyPilot workflow YAML through the NPA controller convention. |
 | `run` | Run a named workflow end-to-end. |
+| `list` | List durable S3 workflow runs. |
 | `status` | Check the status of a workflow run. |
 | `logs` | Show logs for a specific stage of a workflow run. |
+| `artifacts` | List durable S3 artifact URIs for a workflow run. |
+| `cancel` | Cancel a managed workflow job and explicitly tear down its cluster. |
 | `teardown` | Destroy both VMs from a distill workflow run. |
 | `distill` | Run expert distillation: L40S (Genesis) + H100 (LeRobot). |
 
@@ -41,6 +47,62 @@ distill  Run expert distillation: L40S (Genesis) + H100 (LeRobot).
 npa workbench workflow --help
 npa workbench workflow submit --help
 ```
+
+## Durable S3 Monitoring
+
+`submit --durable-s3` instruments a SkyPilot workflow with a writable S3
+MOUNT-mode `file_mount`, redacted per-stage log teeing, and small JSON state
+files. The storage location is resolved from `--workflow-s3-uri`,
+`--workflow-s3-prefix`, `--s3-bucket`, project storage, or
+`~/.npa/credentials.yaml`. S3-compatible endpoint and credentials come from the
+same NPA storage config used by BYO S3 workflows; users do not need `aws
+configure`, and they do not need to call `sky` to inspect completed runs.
+
+```bash
+npa workbench workflow submit \
+  npa/workflows/workbench/skypilot/<workflow>.yaml \
+  --run-id "$RUN_ID" \
+  --durable-s3 \
+  --workflow-s3-uri "s3://<bucket>/workflows/$RUN_ID/" \
+  --s3-endpoint "https://storage.eu-north1.nebius.cloud" \
+  --infra "k8s/<context>"
+```
+
+The run prefix is the source of truth:
+
+```text
+s3://<bucket>/<run-id>/
+  manifest.json
+  logs/<stage>/run.log
+  logs/<stage>/status.json
+  artifacts/<stage>/...
+```
+
+`manifest.json` maps the run to stages, SkyPilot job IDs, status URIs, log
+URIs, and artifact URIs. Each stage `status.json` includes `state`, `tier`,
+`start`, `end`, `sky_job_id`, `artifact_uri`, `log_uri`, and `error_summary`.
+Logs are scrubbed for common access-key and token patterns before they are
+written to S3.
+
+Monitor commands read the durable S3 state:
+
+```bash
+npa workbench workflow list --workflow-s3-uri "s3://<bucket>/workflows/"
+npa workbench workflow status "s3://<bucket>/workflows/$RUN_ID/" --watch
+npa workbench workflow logs "s3://<bucket>/workflows/$RUN_ID/" --stage train
+npa workbench workflow artifacts "s3://<bucket>/workflows/$RUN_ID/"
+npa workbench workflow cancel "s3://<bucket>/workflows/$RUN_ID/"
+```
+
+`status` opportunistically checks `sky jobs queue` when a SkyPilot binary and
+job ID are available, but completed-run status, logs, and artifacts come from
+S3. `logs --follow` tails live SkyPilot logs while the job is still running and
+falls back to the durable S3 log when the live stream is unavailable.
+
+Durable workflow state has no TTL in v1. Configure an S3 lifecycle policy on
+the workflow prefix when retention needs are known, for example deleting
+`logs/` and `artifacts/` objects after 30 or 90 days while keeping
+`manifest.json` longer for audit history.
 
 ## `submit` Materialization
 
