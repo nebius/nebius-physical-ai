@@ -34,14 +34,14 @@ npa-published runtime images use two tag families:
 
 - `cuda12`: CUDA 12.x runtime for H200, L40S, A100, and earlier supported GPUs.
   This is the production tag family for current H200/L40S validation.
-- `cuda13-b300`: CUDA 13.x runtime for future B300/Blackwell GPUs. This is not
-  production-ready until upstream Taichi and flash-attn Blackwell support is
-  stable and the target fleet has a CUDA 13-compatible host driver.
+- `cuda13-b300`: CUDA 13.x runtime for Blackwell validation images, including
+  B300 and RTX PRO 6000 `sm_120` targets. Production readiness still depends on
+  each upstream framework and the target fleet's CUDA 13-compatible host driver.
 
 Customers should select the tag family by target GPU:
 
 - H200 / L40S: `cuda12`
-- Future B300: `cuda13-b300` when that path is declared stable
+- B300 / RTX PRO 6000 Blackwell: `cuda13-b300` when that path is declared stable
 
 The canonical mapping is maintained in `npa/docker/workbench/tags.yaml`, and CI runs
 `npa/docker/workbench/check_tag_consistency.py` to reject tag-family drift.
