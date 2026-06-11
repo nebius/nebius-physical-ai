@@ -8,6 +8,7 @@ Nebius Physical AI.
 | Path | Purpose |
 | --- | --- |
 | [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
+| [../npa/workflows/workbench/skypilot/README.md](../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart |
@@ -21,6 +22,7 @@ Nebius Physical AI.
 
 | Reader | Start with |
 | --- | --- |
+| Salesperson or evaluator | [Workflow catalog](../npa/workflows/workbench/skypilot/README.md) to see what the platform runs |
 | Customer running a first Workbench workload | [workbench/getting-started.md](workbench/getting-started.md) |
 | Developer adding a solution | [architecture/solutions-model.md](architecture/solutions-model.md) |
 | SDK integrator or agent author | [sdk/errors.md](sdk/errors.md) |
