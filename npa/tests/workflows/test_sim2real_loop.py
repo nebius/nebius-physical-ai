@@ -998,13 +998,30 @@ class _FakeMeshConverter:
 def _install_fake_isaac_converters(monkeypatch, *, kind: dict) -> None:
     import types
 
+    # Fake isaaclab.sim providing the spawn/property cfg classes the mesh
+    # converter path references (real module needs the Isaac Sim runtime / pxr).
+    root_mod = types.ModuleType("isaaclab")
+    monkeypatch.setitem(sys.modules, "isaaclab", root_mod)
+    sim_mod = types.ModuleType("isaaclab.sim")
+
+    class _Cfg:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    sim_mod.MassPropertiesCfg = _Cfg
+    sim_mod.RigidBodyPropertiesCfg = _Cfg
+    sim_mod.CollisionPropertiesCfg = _Cfg
+    sim_mod.UsdFileCfg = _Cfg
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim_mod)
+
     mod = types.ModuleType("isaaclab.sim.converters")
 
     class MeshConverterCfg:
-        def __init__(self, *, asset_path, usd_dir, usd_file_name, force_usd_conversion=True):
+        def __init__(self, *, asset_path, usd_dir, usd_file_name, force_usd_conversion=True, **kwargs):
             self.asset_path = asset_path
             self.usd_dir = usd_dir
             self.usd_file_name = usd_file_name
+            self.__dict__.update(kwargs)
 
     class UrdfConverterCfg(MeshConverterCfg):
         pass
