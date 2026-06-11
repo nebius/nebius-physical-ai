@@ -21,10 +21,21 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
-from npa.workbench.lerobot.policy_container import (
-    parse_vlm_signal_batch,
-    run_vlm_signal_training_step,
-)
+
+# npa.workbench.lerobot.policy_container is imported lazily inside the inner
+# loop (see _signal_training_imports). Importing it at module load pulls the
+# full npa.workbench tool tree (lancedb/fiftyone/etc.), which is intentionally
+# absent from the Isaac Lab held-out image; the Isaac rollout path never needs
+# it. Keeping the import lazy lets sim2real_loop run on a minimal interpreter.
+
+
+def _signal_training_imports():
+    from npa.workbench.lerobot.policy_container import (
+        parse_vlm_signal_batch,
+        run_vlm_signal_training_step,
+    )
+
+    return parse_vlm_signal_batch, run_vlm_signal_training_step
 
 
 DEFAULT_S3_ENDPOINT = ""
@@ -36,6 +47,20 @@ DEFAULT_ENVGEN_TAG = "0.1.1"
 DEFAULT_REFERENCE_POLICY_TAG = "0.1.1"
 DEFAULT_TRAINER_TAG = "0.1.0"
 DEFAULT_EVAL_TAG = "0.1.1-genuine-sm120"
+DEFAULT_ISAAC_TAG = "2.3.2.post1"
+# Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
+# (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).
+SIM_BACKEND_GENESIS = "genesis"
+SIM_BACKEND_ISAAC = "isaac"
+SIM_BACKENDS = (SIM_BACKEND_GENESIS, SIM_BACKEND_ISAAC)
+DEFAULT_SIM_BACKEND = SIM_BACKEND_ISAAC
+# Default headless Isaac Lab manipulation task for the stock held-out rollout.
+DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
+
+# Holds the live Isaac Sim app between the rollout and the report upload.
+# Isaac Sim's SimulationApp.close() hard-terminates the process, so it is closed
+# only after the held-out report.json has been uploaded. See _close_isaac_app.
+_ISAAC_SIMULATION_APP: Any = None
 DEFAULT_THRESHOLD = 0.75
 DEFAULT_INNER_ITERATIONS = 2
 DEFAULT_OUTER_ITERATIONS = 1
@@ -126,6 +151,9 @@ class Sim2RealLoopConfig:
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
     eval_image: str = f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
+    isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
+    sim_backend: str = DEFAULT_SIM_BACKEND
+    isaac_task: str = DEFAULT_ISAAC_TASK
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
     threshold: float = DEFAULT_THRESHOLD
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
@@ -183,6 +211,21 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
         if self.heldout_eval_limit < 0:
             raise Sim2RealLoopError("heldout_eval_limit must be non-negative")
+        if self.sim_backend not in SIM_BACKENDS:
+            raise Sim2RealLoopError(
+                f"sim_backend must be one of {SIM_BACKENDS}, got {self.sim_backend!r}"
+            )
+
+    def heldout_backend_image(self) -> str:
+        """Return the container image that runs the held-out rollout backend.
+
+        Genesis runs inside the reference eval image; Isaac runs inside the
+        Isaac Lab image (Isaac Sim headless, RT cores required).
+        """
+
+        if self.sim_backend == SIM_BACKEND_ISAAC:
+            return self.isaac_image
+        return self.eval_image
 
 
 def new_run_id(prefix: str = "sim2real-b") -> str:
@@ -238,6 +281,14 @@ def default_eval_image(*, registry: str | None = None) -> str:
     if registry or os.environ.get("NPA_REGISTRY"):
         return container_image_for_tool("sim2real-eval", registry=registry)
     return f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
+
+
+def default_isaac_image(*, registry: str | None = None) -> str:
+    """Return the Isaac Lab held-out rollout image (Isaac Sim headless)."""
+
+    if registry or os.environ.get("NPA_REGISTRY"):
+        return container_image_for_tool("isaac-lab", registry=registry)
+    return f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
 
 
 def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
@@ -329,6 +380,21 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("eval_image")
             or os.environ.get("EVAL_IMAGE")
             or default_eval_image(registry=registry or None)
+        ),
+        isaac_image=str(
+            overrides.get("isaac_image")
+            or os.environ.get("ISAAC_IMAGE")
+            or default_isaac_image(registry=registry or None)
+        ),
+        sim_backend=str(
+            overrides.get("sim_backend")
+            or os.environ.get("NPA_SIM2REAL_SIM_BACKEND")
+            or DEFAULT_SIM_BACKEND
+        ).strip().lower(),
+        isaac_task=str(
+            overrides.get("isaac_task")
+            or os.environ.get("NPA_SIM2REAL_ISAAC_TASK")
+            or DEFAULT_ISAAC_TASK
         ),
         vlm_model=str(
             overrides.get("vlm_model")
@@ -523,6 +589,9 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "trainer_image": config.trainer_image,
         "vlm_image": config.vlm_image,
         "eval_image": config.eval_image,
+        "isaac_image": config.isaac_image,
+        "sim_backend": config.sim_backend,
+        "isaac_task": config.isaac_task,
         "threshold": config.threshold,
         "inner_iterations": config.inner_iterations,
         "outer_iterations": config.outer_iterations,
@@ -574,31 +643,47 @@ def run_full_loop(
         )
     )
 
-    stage_records.append(
-        _write_stage(
-            local_dir,
-            2,
-            "assets",
-            {
-                "schema": "npa.sim2real.external_stub.v1",
-                "stage": 2,
-                "name": "external real assets and SceneSpec",
-                "status": "documented_external_stub",
-                "assets_uri": config.assets_uri,
-                "scene_spec_uri": config.scene_spec_uri,
-                "next_action": "CONTINUE",
-            },
-            filename="external_stub.json",
+    if config.scene_spec_uri or config.assets_uri:
+        consumed = _consume_stage_assets(config, local_dir)
+        stage_records.append(consumed["stage_record"])
+        components.append(
+            ComponentRecord(
+                "stage_02_assets",
+                "WORKS",
+                (
+                    "Downloaded and validated the BYO mesh/SceneSpec and emitted a "
+                    "consumed scene spec with per-object provenance for the "
+                    "held-out Genesis rollout."
+                ),
+                {"local": consumed["consumed_spec_path"]},
+            )
         )
-    )
-    components.append(
-        ComponentRecord(
-            "stage_02_assets",
-            "SEAM",
-            "External assets and SceneSpec are documented BYO inputs for this reference run.",
-            {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
+    else:
+        stage_records.append(
+            _write_stage(
+                local_dir,
+                2,
+                "assets",
+                {
+                    "schema": "npa.sim2real.external_stub.v1",
+                    "stage": 2,
+                    "name": "external real assets and SceneSpec",
+                    "status": "documented_external_stub",
+                    "assets_uri": config.assets_uri,
+                    "scene_spec_uri": config.scene_spec_uri,
+                    "next_action": "CONTINUE",
+                },
+                filename="external_stub.json",
+            )
         )
-    )
+        components.append(
+            ComponentRecord(
+                "stage_02_assets",
+                "SEAM",
+                "External assets and SceneSpec are documented BYO inputs for this reference run.",
+                {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
+            )
+        )
 
     stage_records.append(
         _write_json_artifact(
@@ -848,6 +933,7 @@ def run_inner_loop(
     iteration_records: list[dict[str, Any]] = []
     reward_trend: list[float] = []
     policy_deltas: list[float] = []
+    all_signals: list[dict[str, Any]] = []
     quality = float(initial_quality)
     reward_head = 0.0
     action_bias = 0.0
@@ -892,6 +978,7 @@ def run_inner_loop(
             _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
             evals.append(evaluation)
             signals.append(signal)
+            all_signals.append(signal)
         signal_batch_path = (
             local_dir
             / "inner_loop"
@@ -901,6 +988,7 @@ def run_inner_loop(
         _write_json_artifact(
             signal_batch_path, {"schema": SCHEMA_RL_SIGNAL, "signals": signals}
         )
+        parse_vlm_signal_batch, run_vlm_signal_training_step = _signal_training_imports()
         parsed_signals = parse_vlm_signal_batch({"signals": signals})
         update = run_vlm_signal_training_step(
             parsed_signals,
@@ -959,11 +1047,25 @@ def run_inner_loop(
             }
         )
 
+    signal_diversity = _signal_diversity_report(all_signals)
+    if signal_diversity["degenerate"] and _bool_value(
+        os.environ.get("NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY", "0")
+    ):
+        raise Sim2RealLoopError(
+            "VLM->RL signal is degenerate: "
+            f"{signal_diversity['distinct_scores']} distinct score(s) and "
+            f"{signal_diversity['distinct_mean_rewards']} distinct mean-reward(s) "
+            f"across {signal_diversity['total_rollouts']} rollout(s) "
+            f"(scores={signal_diversity['score_values']}). "
+            "Unset NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY to downgrade this gate to a "
+            "diagnostic."
+        )
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": outer_iteration,
         "status": "closed",
         "reward_trend": reward_trend,
+        "signal_diversity": signal_diversity,
         "policy_delta_vs_no_signal_control": policy_deltas,
         "attribution": (
             "The reference update and no-signal control share initial adapter state. "
@@ -1267,6 +1369,7 @@ def _run_kubernetes_image_component(
         "mode": "kubernetes_job",
         "component": component,
         "image": image,
+        "image_digests": pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "pod": pod_info,
@@ -1313,9 +1416,9 @@ def _component_job_manifest(
             {
                 "name": "component",
                 "image": image,
-                "imagePullPolicy": "IfNotPresent",
+                "imagePullPolicy": _image_pull_policy(image),
                 "command": ["bash", "-lc"],
-                "args": [_component_job_script(component)],
+                "args": [_component_job_script(component, sim_backend=config.sim_backend)],
                 "env": [
                     {"name": key, "value": value}
                     for key, value in sorted(env_values.items())
@@ -1376,7 +1479,7 @@ def _component_job_manifest(
     }
 
 
-def _component_job_script(component: str) -> str:
+def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND) -> str:
     if component == "vlm_eval":
         subcommand = (
             "component-vlm-eval "
@@ -1393,10 +1496,46 @@ def _component_job_script(component: str) -> str:
             "--inner-evidence-uri \"${NPA_SIM2REAL_INNER_EVIDENCE_URI}\" "
             "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
             "--threshold \"${NPA_SIM2REAL_THRESHOLD}\" "
-            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\""
+            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\" "
+            "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-genesis}\" "
+            "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
+            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
+            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\""
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
+    # The Isaac Lab image ships Isaac Sim + isaaclab only under its bundled
+    # interpreter (/isaac-sim/python.sh) and bakes no npa code. Branch npa code
+    # is injected at start either from an S3 source tarball
+    # (NPA_SIM2REAL_SOURCE_TARBALL_URI, using the pod's mounted S3 creds) or via
+    # a git clone (NPA_SOURCE_REPO/NPA_SOURCE_REF when the repo is reachable).
+    # boto3 is installed to a writable target dir for the S3 client.
+    if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
+        return f"""set -euo pipefail
+export NPA_SKIP_EAGER_IMPORTS=1
+PYBIN=/isaac-sim/python.sh
+if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
+DEPS=/tmp/npa-pydeps
+"$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
+export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
+if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
+  "$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
+import os, sys, tarfile, urllib.parse, boto3
+u = urllib.parse.urlparse(sys.argv[1])
+ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
+boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
+with tarfile.open("/tmp/npa-src.tgz") as tar:
+    tar.extractall("/tmp/npa-source")
+PYB
+  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
+elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
+  rm -rf /tmp/npa-source
+  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
+  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
+fi
+"$PYBIN" -m npa.workflows.sim2real_loop {subcommand}
+"""
     return f"""set -euo pipefail
 if [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
   rm -rf /tmp/npa-source
@@ -1485,20 +1624,27 @@ def _component_pod_info(
     container = (pod.get("spec", {}).get("containers") or [{}])[0]
     resources = container.get("resources", {})
     statuses = pod.get("status", {}).get("containerStatuses") or []
+    container_statuses = [
+        {
+            "name": item.get("name", ""),
+            "ready": item.get("ready", False),
+            "restart_count": item.get("restartCount", 0),
+            "image": item.get("image", ""),
+            "image_id": item.get("imageID", ""),
+            "state": item.get("state", {}),
+        }
+        for item in statuses
+    ]
+    image_digests = [
+        status["image_id"] for status in container_statuses if status["image_id"]
+    ]
     return {
         "name": pod.get("metadata", {}).get("name", ""),
         "node_name": pod.get("spec", {}).get("nodeName", ""),
         "phase": pod.get("status", {}).get("phase", ""),
         "resources": resources,
-        "container_statuses": [
-            {
-                "name": item.get("name", ""),
-                "ready": item.get("ready", False),
-                "restart_count": item.get("restartCount", 0),
-                "state": item.get("state", {}),
-            }
-            for item in statuses
-        ],
+        "container_statuses": container_statuses,
+        "image_digests": image_digests,
     }
 
 
@@ -1809,6 +1955,11 @@ def run_heldout_eval(
             "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
             "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
             "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
+            "NPA_SIM2REAL_ISAAC_IMAGE": config.isaac_image,
+            "NPA_SIM2REAL_SIM_BACKEND": config.sim_backend,
+            "NPA_SIM2REAL_ISAAC_TASK": config.isaac_task,
+            "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
+            "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         },
     )
     if config.byo_eval_command.strip():
@@ -1850,7 +2001,7 @@ def run_heldout_eval(
         env["NPA_SIM2REAL_OUTPUT_URI"] = output_uri
         env["NPA_SIM2REAL_HELDOUT_EVAL_LIMIT"] = str(config.heldout_eval_limit)
         invocation = _run_image_component(
-            config.eval_image,
+            config.heldout_backend_image(),
             component="heldout_eval",
             env=env,
             output_json=output_path,
@@ -1902,7 +2053,7 @@ def _normalize_heldout_report(
             }
         )
     success_rate = passed / float(len(per_env))
-    return {
+    report = {
         "schema": SCHEMA_HELDOUT_REPORT,
         "stage": 10,
         "outer_iteration": outer_iteration,
@@ -1911,11 +2062,25 @@ def _normalize_heldout_report(
         "threshold": config.threshold,
         "per_env": per_env,
         "eval_image": config.eval_image,
+        "sim_backend": str(payload.get("sim_backend") or config.sim_backend),
+        "heldout_backend_image": config.heldout_backend_image(),
         "byo_eval_command": _redact_command(config.byo_eval_command),
         "inner_evidence_uri": inner_evidence_uri,
         "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
+    for key in ("component_source", "rollout_backend"):
+        if payload.get(key):
+            report[key] = payload[key]
+    if "asset_provenance" in payload:
+        report["asset_provenance"] = payload["asset_provenance"]
+        report["asset_fallback_used"] = bool(
+            payload.get(
+                "asset_fallback_used",
+                payload["asset_provenance"].get("asset_fallback_used", False),
+            )
+        )
+    return report
 
 
 def threshold_decision(
@@ -2037,9 +2202,27 @@ def run_heldout_eval_component_from_s3(
     output_uri: str,
     threshold: float = DEFAULT_THRESHOLD,
     limit: int = 0,
+    scene_spec_uri: str = "",
+    assets_uri: str = "",
+    byo_mesh_uri: str = "",
+    sim_backend: str = DEFAULT_SIM_BACKEND,
+    isaac_task: str = DEFAULT_ISAAC_TASK,
 ) -> dict[str, Any]:
-    """Run the image-local held-out eval contract against env records in S3."""
+    """Run the image-local held-out eval contract against env records in S3.
 
+    Dispatches on ``sim_backend`` (``genesis`` or ``isaac``). When
+    ``scene_spec_uri`` (a SceneSpec JSON) or ``assets_uri`` / ``byo_mesh_uri``
+    (a bare mesh URI) is provided, the scene's manipulated object(s) are
+    downloaded, validated, and loaded into the simulator, and per-object asset
+    provenance is recorded into the report. For the Isaac backend with no BYO
+    inputs the stock Isaac Lab scene is used (``asset_source=isaac_stock``).
+    """
+
+    sim_backend = (sim_backend or DEFAULT_SIM_BACKEND).strip().lower()
+    if sim_backend not in SIM_BACKENDS:
+        raise Sim2RealLoopError(
+            f"sim_backend must be one of {SIM_BACKENDS}, got {sim_backend!r}"
+        )
     with tempfile.TemporaryDirectory(prefix="sim2real-heldout-component-") as tmp:
         root = Path(tmp)
         env_dir = root / "heldout"
@@ -2054,24 +2237,190 @@ def run_heldout_eval_component_from_s3(
             envs = envs[:limit]
         if not envs:
             raise Sim2RealLoopError("held-out component found no env records")
+        if sim_backend == SIM_BACKEND_ISAAC:
+            scene = _resolve_isaac_scene(
+                scene_spec_uri=scene_spec_uri,
+                assets_uri=assets_uri,
+                byo_mesh_uri=byo_mesh_uri,
+                dest_dir=root / "assets",
+                client=client,
+            )
+        else:
+            scene = _resolve_heldout_scene(
+                scene_spec_uri=scene_spec_uri,
+                assets_uri=assets_uri,
+                byo_mesh_uri=byo_mesh_uri,
+                dest_dir=root / "assets",
+                client=client,
+            )
         payload = _component_heldout_payload(
             envs,
             inner_evidence=inner_evidence,
             threshold=threshold,
+            scene=scene,
+            sim_backend=sim_backend,
+            isaac_task=isaac_task,
         )
         _write_json_artifact(output_path, payload)
         client.upload_file(str(output_path), output_uri)
+        if scene is not None:
+            spec_path = root / "consumed-scene-spec.json"
+            _write_json_artifact(spec_path, scene.provenance_block())
+            client.upload_file(
+                str(spec_path),
+                _sibling_uri(output_uri, "consumed-scene-spec.json"),
+            )
         print(
             json.dumps(
                 {
                     "component": "heldout_eval",
+                    "sim_backend": sim_backend,
                     "env_count": len(payload["per_env"]),
                     "output_uri": output_uri,
+                    "asset_fallback_used": payload.get("asset_fallback_used"),
                 },
                 sort_keys=True,
             )
         )
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # report.json is uploaded above; closing Isaac Sim hard-terminates the
+        # process, so it must come last (no-op for the Genesis backend).
+        _close_isaac_app()
         return payload
+
+
+def _resolve_heldout_scene(
+    *,
+    scene_spec_uri: str,
+    assets_uri: str,
+    byo_mesh_uri: str,
+    dest_dir: Path,
+    client: Any,
+) -> Any:
+    """Download/synthesize and resolve a SceneSpec for the held-out rollout.
+
+    Returns a resolved ``SceneSpec`` (with local asset paths + sha256) or
+    ``None`` when no BYO scene/asset URIs are provided (documented-stub path).
+    """
+
+    from npa.genesis import scene_assets
+
+    scene_spec_uri = (scene_spec_uri or "").strip()
+    mesh_uri = (byo_mesh_uri or assets_uri or "").strip()
+    if not scene_spec_uri and not mesh_uri:
+        return None
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if scene_spec_uri:
+        spec_local = dest_dir / "scene-spec.json"
+        client.download_path(scene_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+    else:
+        scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+    scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
+    return scene
+
+
+def _resolve_isaac_scene(
+    *,
+    scene_spec_uri: str,
+    assets_uri: str,
+    byo_mesh_uri: str,
+    dest_dir: Path,
+    client: Any,
+) -> Any:
+    """Resolve the Isaac held-out scene (stock or BYO mesh).
+
+    With no BYO URIs the stock Isaac Lab lift-cube scene is returned
+    (``asset_source=isaac_stock``). When a SceneSpec JSON or a bare mesh URI is
+    given, the manipuland is downloaded + hashed (``asset_source=byo_mesh``) so
+    the Isaac rollout can import it to USD and prove it loaded (no fallback).
+    """
+
+    from npa.genesis import scene_assets
+
+    scene_spec_uri = (scene_spec_uri or "").strip()
+    mesh_uri = (byo_mesh_uri or assets_uri or "").strip()
+    if not scene_spec_uri and not mesh_uri:
+        return scene_assets.default_isaac_stock_scene_spec()
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if scene_spec_uri:
+        spec_local = dest_dir / "scene-spec.json"
+        client.download_path(scene_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+    else:
+        scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+    scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
+    return scene
+
+
+def _sibling_uri(uri: str, filename: str) -> str:
+    base = uri.rsplit("/", 1)[0] if "/" in uri else uri
+    return f"{base.rstrip('/')}/{filename}"
+
+
+def _consume_stage_assets(
+    config: Sim2RealLoopConfig, local_dir: Path
+) -> dict[str, Any]:
+    """Stage 2: download + validate BYO mesh/SceneSpec and write a consumed spec.
+
+    Unlike the documented stub, this actually fetches the asset(s) referenced by
+    ``scene_spec_uri`` / ``assets_uri`` and records per-object provenance
+    (sha256, asset_source, downloaded). byo_mesh objects are downloaded and
+    validated here; genesis_builtin objects are resolved at rollout time inside
+    the GPU image. A failed download raises (no silent fallback).
+    """
+
+    from npa.genesis import scene_assets
+
+    stage_dir = local_dir / "stage_02_assets"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    client = _storage_client(config)
+    scene_spec_uri = (config.scene_spec_uri or "").strip()
+    mesh_uri = (config.assets_uri or "").strip()
+    if scene_spec_uri:
+        spec_local = stage_dir / "scene-spec.json"
+        client.download_path(scene_spec_uri, str(spec_local))
+        doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+    else:
+        scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+
+    assets_dir = stage_dir / "assets"
+    for obj in scene.objects:
+        if obj.asset_source == scene_assets.ASSET_SOURCE_BYO_MESH:
+            local = scene_assets.download_asset(
+                obj.uri,
+                assets_dir / obj.name,
+                client=client,
+                endpoint_url=config.s3_endpoint,
+            )
+            obj.local_path = str(local)
+            obj.sha256 = scene_assets.sha256_file(local)
+
+    consumed = {
+        "schema": "npa.sim2real.consumed_scene_spec.v1",
+        "stage": 2,
+        "name": "external real assets and SceneSpec",
+        "status": "consumed",
+        "assets_uri": config.assets_uri,
+        "scene_spec_uri": config.scene_spec_uri,
+        "scene_spec": scene.to_dict(),
+        "asset_provenance": scene.provenance_block(),
+        "next_action": "CONTINUE",
+    }
+    stage_record = _write_stage(
+        local_dir, 2, "assets", consumed, filename="consumed_scene_spec.json"
+    )
+    return {
+        "stage_record": stage_record,
+        "consumed_spec_path": str(stage_dir / "consumed_scene_spec.json"),
+        "scene": scene,
+    }
 
 
 def _component_vlm_payload(
@@ -2111,19 +2460,61 @@ def _component_heldout_payload(
     *,
     inner_evidence: dict[str, Any],
     threshold: float,
+    scene: Any = None,
+    sim_backend: str = DEFAULT_SIM_BACKEND,
+    isaac_task: str = DEFAULT_ISAAC_TASK,
 ) -> dict[str, Any]:
-    per_env = _run_genesis_heldout_rollouts(
-        envs,
-        inner_evidence=inner_evidence,
-        threshold=threshold,
-    )
-    return {
-        "schema": SCHEMA_HELDOUT_REPORT,
-        "per_env": per_env,
-        "component_source": "genesis_rollout",
-        "rollout_backend": "npa.genesis.env_pick_place.FrankaPickPlaceEnv",
-        "policy_source": "inner_evidence_adapter",
-    }
+    """Run the held-out rollout on the selected backend and shape report.json.
+
+    Both backends emit the identical ``npa.sim2real.heldout_eval.v1`` schema
+    (``per_env`` with ``env_id``/``score``/``success``/``details``) so the
+    outer-loop gate and report stay backend-agnostic. The Genesis path
+    (PR #92) is preserved unchanged for ``sim_backend=genesis``.
+    """
+
+    sim_backend = (sim_backend or DEFAULT_SIM_BACKEND).strip().lower()
+    if sim_backend == SIM_BACKEND_ISAAC:
+        per_env = _run_isaac_heldout_rollouts(
+            envs,
+            inner_evidence=inner_evidence,
+            threshold=threshold,
+            scene=scene,
+            isaac_task=isaac_task,
+        )
+        payload = {
+            "schema": SCHEMA_HELDOUT_REPORT,
+            "per_env": per_env,
+            "sim_backend": SIM_BACKEND_ISAAC,
+            "component_source": "isaac_rollout",
+            "rollout_backend": f"isaaclab:{isaac_task}",
+            "policy_source": "inner_evidence_adapter",
+        }
+    else:
+        per_env = _run_genesis_heldout_rollouts(
+            envs,
+            inner_evidence=inner_evidence,
+            threshold=threshold,
+            scene=scene,
+        )
+        payload = {
+            "schema": SCHEMA_HELDOUT_REPORT,
+            "per_env": per_env,
+            "sim_backend": SIM_BACKEND_GENESIS,
+            "component_source": "genesis_rollout",
+            "rollout_backend": "npa.genesis.env_pick_place.FrankaPickPlaceEnv",
+            "policy_source": "inner_evidence_adapter",
+        }
+    if scene is not None:
+        provenance = scene.provenance_block()
+        manipuland = scene.manipuland()
+        if manipuland.is_mesh() and not manipuland.loaded:
+            raise Sim2RealLoopError(
+                "BYO scene manipuland mesh was not loaded into the simulator "
+                "(no silent fallback is permitted)"
+            )
+        payload["asset_provenance"] = provenance
+        payload["asset_fallback_used"] = provenance["asset_fallback_used"]
+    return payload
 
 
 def _rollout_image_paths(rollout_root: Path, observations: list[Any]) -> list[Path]:
@@ -2328,11 +2719,16 @@ def _parse_cosmos_reason_output(
             or model_text
         ).strip()
         tags = payload.get("error_tags") or _tags_from_text(critique)
+        # The model returned no per-step breakdown, so the single summary critique
+        # is broadcast across every action step. Mark it as such so a degenerate
+        # (all-identical) per-step signal is visible rather than masquerading as
+        # genuine per-step granularity.
         raw_steps = [
             {
                 "step": int(action.get("step", index)),
                 "critique_text": critique,
                 "error_tags": tags,
+                "critique_source": "summary_broadcast",
                 "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
             }
             for index, action in enumerate(actions)
@@ -2438,8 +2834,16 @@ def _run_genesis_heldout_rollouts(
     *,
     inner_evidence: dict[str, Any],
     threshold: float,
+    scene: Any = None,
 ) -> list[dict[str, Any]]:
-    """Run the trained adapter policy through real Genesis held-out episodes."""
+    """Run the trained adapter policy through real Genesis held-out episodes.
+
+    When ``scene`` (a parsed ``npa.genesis.scene_assets.SceneSpec`` with
+    resolved local asset paths) is provided, the manipulated object(s) are
+    built from it (mesh / primitive) instead of the default red Box. The
+    SceneSpec objects' ``loaded`` provenance flags are set as a side effect of
+    building the env, so the caller can prove the requested mesh loaded.
+    """
 
     try:
         import torch
@@ -2450,6 +2854,23 @@ def _run_genesis_heldout_rollouts(
         ) from exc
     if not torch.cuda.is_available():
         raise Sim2RealLoopError("Genesis rollout eval requires a CUDA GPU")
+
+    if scene is not None:
+        manip = scene.manipuland()
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "byo_scene_loading",
+                    "asset_source": manip.asset_source,
+                    "manipuland": manip.name,
+                    "local_path": manip.local_path,
+                    "sha256": manip.sha256,
+                    "object_count": len(scene.objects),
+                },
+                sort_keys=True,
+            )
+        )
 
     adapter = _policy_adapter_from_inner_evidence(inner_evidence)
     batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_GENESIS_BATCH_SIZE", "16")))
@@ -2466,8 +2887,23 @@ def _run_genesis_heldout_rollouts(
             max_episode_steps=max_steps,
             action_space="cartesian",
             action_scale=float(os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")),
+            scene_spec=scene,
         )
         env = FrankaPickPlaceEnv(cfg)
+        if scene is not None and start == 0:
+            print(
+                json.dumps(
+                    {
+                        "component": "heldout_eval",
+                        "event": "byo_scene_loaded",
+                        "asset_fallback_used": scene.asset_fallback_used,
+                        "loaded_objects": [
+                            obj.name for obj in scene.objects if obj.loaded
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
         obs = env.reset()
         active = torch.ones(len(batch), device="cuda", dtype=torch.bool)
         success = torch.zeros(len(batch), device="cuda", dtype=torch.bool)
@@ -2512,7 +2948,9 @@ def _run_genesis_heldout_rollouts(
             env_success = bool(success[index].detach().item())
             distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
             reward_score = max(0.0, min(1.0, reward_value / 10.0))
-            score = 1.0 if env_success else round(0.7 * distance_score + 0.3 * reward_score, 6)
+            score = _heldout_env_score(
+                distance_score, reward_score, env_success=env_success
+            )
             per_env.append(
                 {
                     "env_id": str(env_record.get("env_id") or f"heldout-{start + index:04d}"),
@@ -2531,6 +2969,326 @@ def _run_genesis_heldout_rollouts(
                 }
             )
     return per_env
+
+
+def _isaac_import_mesh_to_usd(local_path: str, *, work_dir: Path) -> str:
+    """Convert a BYO mesh/URDF to USD using Isaac Lab's offline converters.
+
+    Returns the resolved USD path. Raises ``Sim2RealLoopError`` if conversion
+    does not produce a USD file (no silent fallback to the stock asset).
+    """
+
+    src = Path(local_path)
+    if not src.is_file() or src.stat().st_size == 0:
+        raise Sim2RealLoopError(f"BYO asset missing/empty for Isaac import: {src}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    suffix = src.suffix.lower()
+    try:
+        if suffix == ".urdf":
+            from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg
+
+            cfg = UrdfConverterCfg(
+                asset_path=str(src),
+                usd_dir=str(work_dir),
+                usd_file_name=f"{src.stem}.usd",
+                force_usd_conversion=True,
+            )
+            converter = UrdfConverter(cfg)
+        else:
+            import isaaclab.sim as sim_utils
+            from isaaclab.sim.converters import MeshConverter, MeshConverterCfg
+
+            # Bake RigidBody/Collision/Mass APIs into the converted USD so the
+            # mesh spawns as a physics rigid body (Isaac Lab's RigidObject
+            # requires 'USD RigidBodyAPI' on the prim).
+            cfg = MeshConverterCfg(
+                asset_path=str(src),
+                usd_dir=str(work_dir),
+                usd_file_name=f"{src.stem}.usd",
+                force_usd_conversion=True,
+                mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            )
+            converter = MeshConverter(cfg)
+    except Exception as exc:  # noqa: BLE001 - surface converter import/runtime errors
+        raise Sim2RealLoopError(
+            f"Isaac mesh->USD conversion failed for {src.name}: {exc}"
+        ) from exc
+    usd_path = getattr(converter, "usd_path", "")
+    if not usd_path or not Path(usd_path).is_file():
+        raise Sim2RealLoopError(
+            f"Isaac mesh->USD conversion produced no USD for {src.name}"
+        )
+    return usd_path
+
+
+def _set_isaac_object_usd(env_cfg: Any, usd_path: str, *, scale: Any) -> None:
+    """Point the lift task's manipuland spawn at a converted BYO USD asset."""
+
+    import isaaclab.sim as sim_utils
+
+    if isinstance(scale, (int, float)):
+        usd_scale = (float(scale), float(scale), float(scale))
+    elif isinstance(scale, (list, tuple)) and len(scale) == 3:
+        usd_scale = tuple(float(v) for v in scale)
+    else:
+        usd_scale = (1.0, 1.0, 1.0)
+    obj_cfg = env_cfg.scene.object
+    obj_cfg.spawn = sim_utils.UsdFileCfg(
+        usd_path=usd_path,
+        scale=usd_scale,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            solver_position_iteration_count=16,
+            solver_velocity_iteration_count=1,
+            max_angular_velocity=1000.0,
+            max_linear_velocity=1000.0,
+            max_depenetration_velocity=5.0,
+            disable_gravity=False,
+        ),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+        collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+    )
+
+
+def _isaac_goal_distance(env_unwrapped: Any) -> Any:
+    """Return per-env object->goal world distance for the lift task.
+
+    Uses the command manager's desired object pose (robot-base frame) combined
+    with the robot root pose to get the world goal, then the object's world
+    position. Returns a 1-D CUDA tensor.
+    """
+
+    import torch
+
+    scene = env_unwrapped.scene
+    object_pos_w = scene["object"].data.root_pos_w[:, :3]
+    command = env_unwrapped.command_manager.get_command("object_pose")
+    robot = scene["robot"]
+    root_pos_w = robot.data.root_state_w[:, :3]
+    root_quat_w = robot.data.root_state_w[:, 3:7]
+    try:
+        from isaaclab.utils.math import combine_frame_transforms
+
+        des_pos_w, _ = combine_frame_transforms(
+            root_pos_w, root_quat_w, command[:, :3], command[:, 3:7]
+        )
+    except Exception:  # noqa: BLE001 - fall back to base-frame offset
+        des_pos_w = root_pos_w + command[:, :3]
+    return torch.norm(object_pos_w - des_pos_w, dim=-1)
+
+
+def _isaac_adapter_actions(action_dim: int, adapter: dict[str, Any], *, n_envs: int, step: int, device: str):
+    """Deterministic adapter-biased actions for the Isaac manipulation rollout.
+
+    The inner-loop adapter bias steers the arm action; a small seeded,
+    decaying exploration term keeps the rollout non-degenerate. The gripper
+    channel closes progressively, mirroring the Genesis adapter contract.
+    """
+
+    import torch
+
+    bias_values = adapter.get("action_bias") or [0.0, 0.0, 0.0]
+    bias = torch.zeros(action_dim, device=device, dtype=torch.float32)
+    for i in range(min(action_dim, len(bias_values))):
+        bias[i] = float(bias_values[i])
+    actions = bias.unsqueeze(0).repeat(n_envs, 1)
+    decay = 1.0 / (1.0 + 0.05 * step)
+    explore = 0.15 * decay * torch.sin(
+        torch.arange(action_dim, device=device, dtype=torch.float32) * (step + 1) * 0.37
+    )
+    actions = actions + explore.unsqueeze(0)
+    if action_dim >= 1:
+        # Last channel = gripper: open early, close as the episode progresses.
+        actions[:, -1] = 1.0 if step < 30 else -1.0
+    return torch.clamp(actions, -1.0, 1.0)
+
+
+def _run_isaac_heldout_rollouts(
+    envs: list[dict[str, Any]],
+    *,
+    inner_evidence: dict[str, Any],
+    threshold: float,
+    scene: Any = None,
+    isaac_task: str = DEFAULT_ISAAC_TASK,
+) -> list[dict[str, Any]]:
+    """Run the adapter policy through headless Isaac Lab held-out episodes.
+
+    Mirrors ``_run_genesis_heldout_rollouts``: it returns the identical
+    per-env metric schema (``env_id``/``score``/``success``/``details``) so
+    ``report.json`` stays backend-agnostic. Stock runs use the built-in Isaac
+    lift-cube manipuland (``asset_source=isaac_stock``); BYO runs import the
+    customer mesh/URDF to USD and load it into the task (``asset_source=
+    byo_mesh``). A BYO mesh that fails to import raises (no silent fallback).
+    """
+
+    from npa.genesis.scene_assets import ASSET_SOURCE_ISAAC_STOCK
+
+    try:
+        from isaaclab.app import AppLauncher
+    except Exception as exc:  # noqa: BLE001
+        raise Sim2RealLoopError(
+            f"Isaac rollout eval requires isaaclab/Isaac Sim in the image: {exc}"
+        ) from exc
+
+    simulation_app = AppLauncher(headless=True).app
+    # Isaac Sim's SimulationApp.close() hard-terminates the process, so it must
+    # NOT be called here (the held-out report has to be uploaded first). The
+    # handle is stashed and closed by the component entrypoint after upload.
+    global _ISAAC_SIMULATION_APP
+    _ISAAC_SIMULATION_APP = simulation_app
+    try:
+        import torch
+        import gymnasium as gym  # noqa: PLC0415
+        import isaaclab_tasks  # noqa: F401, PLC0415
+        from isaaclab_tasks.utils import parse_env_cfg
+    except Exception as exc:  # noqa: BLE001
+        raise Sim2RealLoopError(
+            f"Isaac rollout eval requires gymnasium and isaaclab_tasks: {exc}"
+        ) from exc
+    if not torch.cuda.is_available():
+        raise Sim2RealLoopError("Isaac rollout eval requires a CUDA GPU")
+    device = "cuda:0"
+
+    usd_override = ""
+    manip_scale: Any = 1.0
+    if scene is not None:
+        manip = scene.manipuland()
+        manip_scale = manip.scale
+        if manip.asset_source == ASSET_SOURCE_ISAAC_STOCK:
+            manip.loaded = True
+            print(
+                json.dumps(
+                    {
+                        "component": "heldout_eval",
+                        "event": "isaac_scene_loading",
+                        "asset_source": manip.asset_source,
+                        "isaac_task": isaac_task,
+                        "stock_asset": manip.builtin_path,
+                    },
+                    sort_keys=True,
+                )
+            )
+        elif manip.is_mesh():
+            import tempfile as _tempfile
+
+            convert_dir = Path(_tempfile.mkdtemp(prefix="isaac-usd-"))
+            usd_override = _isaac_import_mesh_to_usd(
+                manip.local_path, work_dir=convert_dir
+            )
+            manip.loaded = True
+            print(
+                json.dumps(
+                    {
+                        "component": "heldout_eval",
+                        "event": "isaac_byo_mesh_imported",
+                        "asset_source": manip.asset_source,
+                        "manipuland": manip.name,
+                        "local_path": manip.local_path,
+                        "sha256": manip.sha256,
+                        "usd_path": usd_override,
+                    },
+                    sort_keys=True,
+                )
+            )
+
+    adapter = _policy_adapter_from_inner_evidence(inner_evidence)
+    batch_size = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_BATCH_SIZE", "8")))
+    max_steps = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_MAX_STEPS", "120")))
+    reward_norm = float(os.environ.get("NPA_SIM2REAL_ISAAC_REWARD_NORM", "20.0"))
+    success_dist = float(os.environ.get("NPA_SIM2REAL_ISAAC_SUCCESS_DIST", "0.05"))
+    per_env: list[dict[str, Any]] = []
+    for start in range(0, len(envs), batch_size):
+        batch = envs[start : start + batch_size]
+        seed = int(batch[0].get("seed") or (42 + start))
+        torch.manual_seed(seed)
+        env_cfg = parse_env_cfg(isaac_task, device=device, num_envs=len(batch))
+        if usd_override:
+            _set_isaac_object_usd(env_cfg, usd_override, scale=manip_scale)
+        env = gym.make(isaac_task, cfg=env_cfg)
+        action_dim = int(env.action_space.shape[-1])
+        obs, _ = env.reset()
+        n = len(batch)
+        max_reward = torch.full((n,), -1.0e9, device=device)
+        final_distance = torch.full((n,), 1.0e9, device=device)
+        for step in range(max_steps):
+            actions = _isaac_adapter_actions(
+                action_dim, adapter, n_envs=n, step=step, device=device
+            )
+            obs, reward, terminated, truncated, _ = env.step(actions)
+            reward_t = torch.as_tensor(reward, device=device, dtype=torch.float32).reshape(-1)
+            max_reward = torch.maximum(max_reward, reward_t)
+            final_distance = _isaac_goal_distance(env.unwrapped).reshape(-1).detach()
+            done = torch.as_tensor(terminated, device=device).reshape(-1) | torch.as_tensor(
+                truncated, device=device
+            ).reshape(-1)
+            if bool(done.all()):
+                break
+        success = final_distance < success_dist
+        batch_successes = int(success.sum().item())
+        print(
+            json.dumps(
+                {
+                    "component": "heldout_eval",
+                    "event": "isaac_rollout_batch_complete",
+                    "batch_start": start,
+                    "env_count": n,
+                    "successes": batch_successes,
+                    "max_steps": max_steps,
+                    "isaac_task": isaac_task,
+                },
+                sort_keys=True,
+            )
+        )
+        for index, env_record in enumerate(batch):
+            dist = float(final_distance[index].detach().item())
+            reward_value = float(max_reward[index].detach().item())
+            env_success = bool(success[index].detach().item())
+            distance_score = max(0.0, min(1.0, 1.0 - dist / 0.5))
+            reward_score = max(0.0, min(1.0, reward_value / reward_norm))
+            score = _heldout_env_score(
+                distance_score, reward_score, env_success=env_success
+            )
+            per_env.append(
+                {
+                    "env_id": str(
+                        env_record.get("env_id") or f"heldout-{start + index:04d}"
+                    ),
+                    "score": score,
+                    "success": env_success,
+                    "details": {
+                        "source": "isaac_lift_env_goal_distance",
+                        "sim_backend": SIM_BACKEND_ISAAC,
+                        "isaac_task": isaac_task,
+                        "seed": env_record.get("seed"),
+                        "target_threshold": success_dist,
+                        "final_target_distance": round(dist, 6),
+                        "max_reward": round(reward_value, 6),
+                        "steps": max_steps,
+                        "policy_adapter": adapter,
+                        "threshold": threshold,
+                    },
+                }
+            )
+        env.close()
+    return per_env
+
+
+def _close_isaac_app() -> None:
+    """Close the stashed Isaac Sim app, if any (hard-terminates the process).
+
+    Called by the component entrypoint only after the held-out report has been
+    written and uploaded. No-op for the Genesis backend.
+    """
+
+    global _ISAAC_SIMULATION_APP
+    app = _ISAAC_SIMULATION_APP
+    _ISAAC_SIMULATION_APP = None
+    if app is not None:
+        try:
+            app.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _policy_adapter_from_inner_evidence(inner_evidence: dict[str, Any]) -> dict[str, Any]:
@@ -2642,6 +3400,18 @@ def main(argv: list[str] | None = None) -> int:
     component_heldout.add_argument("--output-uri", required=True)
     component_heldout.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     component_heldout.add_argument("--limit", type=int, default=0)
+    component_heldout.add_argument("--scene-spec-uri", default="")
+    component_heldout.add_argument("--assets-uri", default="")
+    component_heldout.add_argument("--byo-mesh-uri", default="")
+    component_heldout.add_argument(
+        "--sim-backend",
+        default=os.environ.get("NPA_SIM2REAL_SIM_BACKEND", DEFAULT_SIM_BACKEND),
+        choices=list(SIM_BACKENDS),
+    )
+    component_heldout.add_argument(
+        "--isaac-task",
+        default=os.environ.get("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK),
+    )
     args = parser.parse_args(argv)
 
     if args.command == "convert-signal":
@@ -2664,6 +3434,11 @@ def main(argv: list[str] | None = None) -> int:
             output_uri=args.output_uri,
             threshold=args.threshold,
             limit=args.limit,
+            scene_spec_uri=args.scene_spec_uri,
+            assets_uri=args.assets_uri,
+            byo_mesh_uri=args.byo_mesh_uri,
+            sim_backend=args.sim_backend,
+            isaac_task=args.isaac_task,
         )
         return 0
 
@@ -2685,6 +3460,9 @@ def main(argv: list[str] | None = None) -> int:
         trainer_image=args.trainer_image,
         vlm_image=args.vlm_image,
         eval_image=args.eval_image,
+        isaac_image=args.isaac_image,
+        sim_backend=args.sim_backend,
+        isaac_task=args.isaac_task,
         vlm_model=args.vlm_model,
         threshold=args.threshold,
         inner_iterations=args.inner_iterations,
@@ -2773,6 +3551,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--trainer-image", default=os.environ.get("TRAINER_IMAGE", ""))
     parser.add_argument("--vlm-image", default=os.environ.get("VLM_IMAGE", ""))
     parser.add_argument("--eval-image", default=os.environ.get("EVAL_IMAGE", ""))
+    parser.add_argument("--isaac-image", default=os.environ.get("ISAAC_IMAGE", ""))
+    parser.add_argument(
+        "--sim-backend",
+        default=os.environ.get("NPA_SIM2REAL_SIM_BACKEND", DEFAULT_SIM_BACKEND),
+        choices=list(SIM_BACKENDS),
+    )
+    parser.add_argument(
+        "--isaac-task",
+        default=os.environ.get("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK),
+    )
     parser.add_argument(
         "--vlm-model", default=os.environ.get("VLM_MODEL", DEFAULT_REFERENCE_VLM_MODEL)
     )
@@ -2999,6 +3787,68 @@ def _signal_mean_reward(signal: dict[str, Any]) -> float:
     return sum(float(step["reward"]) for step in steps) / float(len(steps))
 
 
+def _heldout_env_score(
+    distance_score: float, reward_score: float, *, env_success: bool
+) -> float:
+    """Map per-env distance/reward to a continuous held-out score.
+
+    Successful and failed envs occupy separate bands, but the score stays
+    continuous in the env's own distance/reward so the held-out report keeps a
+    gradient instead of collapsing to a flat ``1.0`` across every env (which
+    produced an uninformative, incoherent signal).
+    """
+
+    quality = max(0.0, min(1.0, 0.7 * distance_score + 0.3 * reward_score))
+    if env_success:
+        return round(0.75 + 0.25 * quality, 6)
+    return round(0.6 * quality, 6)
+
+
+def _signal_diversity_report(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize cross-rollout diversity of the VLM->RL signal.
+
+    A genuine signal varies across rollouts; a single distinct score/reward
+    across every rollout is the degenerate ("hollow") pattern. These metrics
+    (``distinct_scores``, ``coherent``) are emitted into loop evidence so a run
+    is self-describing instead of requiring an external validator to infer them.
+    """
+
+    scores = [round(float(signal.get("score") or 0.0), 4) for signal in signals]
+    mean_rewards = [round(_signal_mean_reward(signal), 4) for signal in signals]
+    distinct_scores = sorted({score for score in scores})
+    distinct_rewards = sorted({reward for reward in mean_rewards})
+    total = len(signals)
+    coherent = total > 1 and len(distinct_scores) > 1 and len(distinct_rewards) > 1
+    return {
+        "total_rollouts": total,
+        "distinct_scores": len(distinct_scores),
+        "distinct_mean_rewards": len(distinct_rewards),
+        "score_values": distinct_scores,
+        "mean_reward_values": distinct_rewards,
+        "coherent": coherent,
+        "degenerate": not coherent,
+    }
+
+
+def _image_pull_policy(image: str) -> str:
+    """Choose the imagePullPolicy for a sibling component image.
+
+    Provenance-sensitive ``-genuine-`` builds are pulled fresh so a stale image
+    cached under the same tag cannot silently masquerade as the genuine build.
+    A digest-pinned reference (``@sha256:``) is already immutable.
+    """
+
+    override = os.environ.get("NPA_SIM2REAL_IMAGE_PULL_POLICY", "").strip()
+    if override:
+        return override
+    if "@sha256:" in image:
+        return "IfNotPresent"
+    tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else ""
+    if "genuine" in tag:
+        return "Always"
+    return "IfNotPresent"
+
+
 def _write_ppm(path: Path, *, red: int, green: int, blue: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     width = 32
@@ -3044,6 +3894,10 @@ __all__ = [
     "SCHEMA_THRESHOLD_DECISION",
     "SCHEMA_VLM_EVAL",
     "DEFAULT_LEROBOT_DATASET_ID",
+    "DEFAULT_ISAAC_TASK",
+    "SIM_BACKENDS",
+    "SIM_BACKEND_GENESIS",
+    "SIM_BACKEND_ISAAC",
     "Sim2RealLoopConfig",
     "Sim2RealLoopError",
     "artifact_uris",
@@ -3052,6 +3906,7 @@ __all__ = [
     "convert_vlm_eval_to_rl_signal",
     "default_envgen_image",
     "default_eval_image",
+    "default_isaac_image",
     "default_policy_image",
     "default_trainer_image",
     "default_vlm_image",

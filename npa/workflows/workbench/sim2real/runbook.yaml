@@ -51,6 +51,9 @@ envs:
   TRAINER_IMAGE: ""
   VLM_IMAGE: ""
   EVAL_IMAGE: ""
+  ISAAC_IMAGE: ""
+  NPA_SIM2REAL_SIM_BACKEND: "isaac"
+  NPA_SIM2REAL_ISAAC_TASK: "Isaac-Lift-Cube-Franka-v0"
   VLM_MODEL: "nvidia/Cosmos-Reason1-7B"
   SUCCESS_THRESHOLD: "0.75"
   INNER_ITERATIONS: "2"
@@ -131,6 +134,9 @@ run: |
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}" \
     --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}" \
     --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}" \
+    --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}" \
+    --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}" \
+    --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}" \
     --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}" \
     --threshold "${SUCCESS_THRESHOLD:-0.75}" \
     --inner-iterations "${INNER_ITERATIONS:-2}" \

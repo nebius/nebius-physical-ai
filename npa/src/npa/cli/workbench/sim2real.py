@@ -79,6 +79,19 @@ def run_command(
     ),
     vlm_image: str = typer.Option("", "--vlm-image", help="BYO VLM image."),
     eval_image: str = typer.Option("", "--eval-image", help="BYO held-out eval image."),
+    isaac_image: str = typer.Option(
+        "", "--isaac-image", help="Isaac Lab held-out rollout image (Isaac Sim headless)."
+    ),
+    sim_backend: str = typer.Option(
+        "isaac",
+        "--sim-backend",
+        help="Held-out sim backend: 'isaac' (default) or 'genesis'.",
+    ),
+    isaac_task: str = typer.Option(
+        "Isaac-Lift-Cube-Franka-v0",
+        "--isaac-task",
+        help="Isaac Lab manipulation task id for the stock held-out rollout.",
+    ),
     vlm_model: str = typer.Option(
         "nvidia/Cosmos-Reason1-7B", "--vlm-model", help="VLM model id/name."
     ),
@@ -188,6 +201,9 @@ def run_command(
         trainer_image=trainer_image,
         vlm_image=vlm_image,
         eval_image=eval_image,
+        isaac_image=isaac_image,
+        sim_backend=sim_backend,
+        isaac_task=isaac_task,
         vlm_model=vlm_model,
         threshold=threshold,
         inner_iterations=inner_iterations,

@@ -7,7 +7,7 @@ the public API reaches v1 stability.
 
 from __future__ import annotations
 
-from npa import convert, demo, errors, network, rerun, workflow, workbench
+import os as _os
 
 __all__ = [
     "convert",
@@ -18,3 +18,15 @@ __all__ = [
     "workflow",
     "workbench",
 ]
+
+# Opt-in light import for minimal interpreters (e.g. the Isaac Lab held-out
+# eval image, which lacks the full npa dependency set such as pyarrow / lancedb
+# / fiftyone). When NPA_SKIP_EAGER_IMPORTS is set, the SDK convenience
+# submodules are not eagerly imported; ``import npa.<submodule>`` still works on
+# demand. Default behavior (flag unset) eagerly imports the SDK surface.
+if _os.environ.get("NPA_SKIP_EAGER_IMPORTS", "").strip().lower() not in (
+    "1",
+    "true",
+    "yes",
+):
+    from npa import convert, demo, errors, network, rerun, workflow, workbench
