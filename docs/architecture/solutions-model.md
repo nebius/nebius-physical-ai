@@ -1,6 +1,6 @@
 # Solutions Model
 
-> Last updated: 2026-05-26
+> Last updated: 2026-06-11
 
 Nebius Physical AI is organized as a platform with one or more solutions. The
 platform owns the shared command model, repository conventions, architecture
@@ -18,7 +18,8 @@ The current solution is Workbench:
 - User model: containerized workbench tools that can be deployed, queried, and
   invoked from the CLI or SDK
 - Documentation: [docs/workbench/](../workbench/)
-- Reference commands: `npa workbench <tool> <verb>`
+- Reference commands: `npa workbench <tool> <verb>` for deployable tools;
+  `npa workbench workflow submit <yaml>` for multi-stage pipelines
 
 A solution is not just a directory or a label. It must define who it serves, the
 tools it exposes, the contracts those tools honor, how operators validate it,
@@ -152,6 +153,24 @@ Tools that pass data between stages should use object storage paths, not direct
 tool-to-tool data transfer. Workbench commands use S3-style `--input-path` and
 `--output-path` options for pipeline data flow so one tool's artifacts can
 become the next tool's inputs.
+
+## Workbench Namespace Layout
+
+Everything Workbench-related stays under `npa workbench`. Only platform
+infrastructure (`npa configure`, `npa cluster`, `npa skypilot`, …) sits
+directly on `npa`.
+
+| Surface | Examples | Purpose |
+| --- | --- | --- |
+| **Tools** (slot 3) | `lerobot`, `sonic`, `lancedb`, `vlm-eval` | Deployable capabilities with `deploy` / `run` / `status` |
+| **Tool subcommands** | `npa workbench sonic retargeting run` | Job-shaped steps scoped to a parent tool |
+| **Workflows** | `npa workbench workflow submit <yaml>` | Multi-stage SkyPilot pipelines (sim-to-real, BDD100K, SONIC finetuning) |
+| **Workflow helpers** | `npa workbench workflow trigger watch` | Long-running watchers that resubmit pipeline YAML |
+| **Hidden compat** | `npa workbench data` (hidden) | S3 bridge for scripts/SDK; not advertised in `--help` |
+
+Do not register pipeline orchestrators (`sim2real`, `sim2real-envgen`) or
+operator tooling as top-level workbench tools. Use workflow YAML + cookbooks
+instead.
 
 Tool docs should state:
 

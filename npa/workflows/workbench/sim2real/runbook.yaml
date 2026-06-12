@@ -1,8 +1,8 @@
 # Standalone Sim2Real VLM-to-RL full-loop runbook.
 #
 # This is the raw-SkyPilot tier of the three-tier example set. It is meant to be
-# read and run without npa in the loop. The SDK (sim2real.run) and CLI
-# (npa workbench sim2real run) wrap the same workflow; they do not gate it.
+# read and run without npa in the loop. The SDK (sim2real.run) and
+# `npa workbench workflow submit` wrap the same workflow; they do not gate it.
 #
 # SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
 # `image_id` at submission time. So every value below is a materialized literal,

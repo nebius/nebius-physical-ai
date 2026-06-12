@@ -258,7 +258,7 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
     ]
     assert sonic_docs[1]["resources"]["cloud"] == "kubernetes"
     assert sonic_docs[1]["envs"]["AWS_PROFILE"] == "nebius"
-    assert "npa workbench retargeting run" in sonic_docs[1]["run"]
+    assert "npa workbench sonic retargeting run" in sonic_docs[1]["run"]
     assert sonic_docs[2]["resources"]["accelerators"] == "H100:1"
     assert sonic_docs[2]["resources"]["use_spot"] is True
     assert sonic_docs[2]["resources"]["region"] == "eu-north1"
@@ -270,7 +270,7 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
     assert "mujoco-eval" in sonic_docs[3]["run"]
 
     assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench retargeting run" in retarget_docs[1]["run"]
+    assert "npa workbench sonic retargeting run" in retarget_docs[1]["run"]
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
     assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
     assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
@@ -298,9 +298,9 @@ def test_e2e_cli_smoke_surfaces_for_pipeline_tools() -> None:
         ["workbench", "data", "--help"],
         ["workbench", "vlm-eval", "status", "--output", "json"],
         ["workbench", "vlm-eval", "list", "--output", "json"],
-        ["workbench", "retargeting", "status", "--output", "json"],
-        ["workbench", "retargeting", "list", "--output", "json"],
-        ["workbench", "retargeting", "workflow", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "status", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "list", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "workflow", "--output", "json"],
         ["workbench", "mjlab", "status", "--output", "json"],
         ["workbench", "mjlab", "list", "--output", "json"],
         ["workbench", "mjlab", "workflow", "--output", "json"],
