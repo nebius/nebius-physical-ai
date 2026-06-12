@@ -1102,10 +1102,20 @@ def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:
     if endpoint_url:
         return endpoint_url
     if backend == "api":
+        from npa.clients.token_factory import (
+            BASE_URL_ENV_KEYS,
+            DEFAULT_BASE_URL as TOKEN_FACTORY_BASE_URL,
+        )
+
+        token_factory_base = next(
+            (os.environ[key] for key in BASE_URL_ENV_KEYS if os.environ.get(key)),
+            "",
+        )
         return (
             os.environ.get("VLM_EVAL_API_BASE_URL")
             or os.environ.get("OPENAI_BASE_URL")
-            or DEFAULT_ENDPOINT_URL
+            or token_factory_base
+            or TOKEN_FACTORY_BASE_URL
         )
     return (
         os.environ.get("VLM_EVAL_ENDPOINT_URL")
@@ -1117,10 +1127,15 @@ def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:
 def _resolve_api_key(*, backend: str, api_key_env: str) -> str:
     key = os.environ.get(api_key_env or DEFAULT_API_KEY_ENV, "")
     if backend == "api":
-        key = key or os.environ.get("OPENAI_API_KEY", "")
+        key = (
+            key
+            or os.environ.get("NEBIUS_API_KEY", "")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
         if not key:
             raise VlmEvalError(
-                f"--backend api requires an API key in {api_key_env or DEFAULT_API_KEY_ENV} or OPENAI_API_KEY"
+                f"--backend api requires an API key in {api_key_env or DEFAULT_API_KEY_ENV}, "
+                "NEBIUS_API_KEY, or OPENAI_API_KEY"
             )
     return key
 
