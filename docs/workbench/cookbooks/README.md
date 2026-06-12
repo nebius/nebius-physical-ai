@@ -3,6 +3,10 @@
 Technical recipes for reproducing benchmark, demo, and customer evaluation
 workflows with Nebius Physical AI Workbench.
 
+> Looking for the SkyPilot YAML behind a cookbook? The
+> [workflow catalog](../../../npa/workflows/workbench/skypilot/README.md) maps
+> every workflow YAML to its command and guide.
+
 ## Available Cookbooks
 
 - [BDD100K SkyPilot Pipeline](bdd100k-pipeline.md): provision the object store,
@@ -14,6 +18,10 @@ workflows with Nebius Physical AI Workbench.
   behind the one-command H100 quickstart.
 - [VLM-Eval Loop Runbook](vlm-eval-loop-runbook.md): serve a VLM with vLLM,
   score rollout directories with `vlm-eval`, and write a task-success report.
+- [Token Factory + Nebius compute combos](tokenfactory-compute-combos.md): two
+  workflows that pair real Nebius GPU compute with hosted Token Factory
+  inference — a serverless GPU train run triaged by a text model, and a
+  Kubernetes GPU rollout judged by a hosted VLM.
 - [LeRobot GPU Benchmarks](lerobot-gpu-benchmarks.md): reproduce the May 2026
   LeRobot GPU benchmark research across L40S, H200, B300, and RTX PRO 6000.
 - [LeRobot GPU Benchmarks Runbook](lerobot-gpu-benchmarks-runbook.md): exact

@@ -71,6 +71,9 @@ user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
+  # Nebius Token Factory API key (OpenAI-compatible hosted inference).
+  # Get one at https://tokenfactory.nebius.com/ -> API keys.
+  NEBIUS_API_KEY: nebius_REPLACE_ME
 ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
@@ -179,7 +182,7 @@ def _endpoint_for_region(region: str) -> str:
 
 
 def _gb_to_bytes(value: str) -> int:
-    """Parse a GB amount into bytes; non-positive or invalid means unlimited (0)."""
+    """Parse a GB amount into bytes; non-negative or invalid means unlimited (0)."""
     try:
         gb = float(str(value).strip())
     except (TypeError, ValueError):
@@ -207,27 +210,16 @@ def _provision_object_storage(
     tenant_id: str,
     region: str,
 ) -> dict[str, str] | None:
-    """Auto-create the S3 bucket + access key for the project.
-
-    Prompts for the bucket name (the customer's choice, defaulting to a
-    deterministic suggestion) and, for a new bucket, whether to apply a size
-    limit and how large. Returns a ``storage`` dict on success, or ``None``
-    when provisioning is not possible (no project/tenant, missing profile,
-    insufficient IAM) so the caller can fall back to manual entry.
-    """
+    """Auto-create the S3 bucket + access key for the project."""
     if not (project_id and tenant_id):
         return None
 
     suggested_bucket = nebius_client.bucket_name_for(tenant_id, project_id)
     bucket_name = ask("Object-storage bucket name", default=suggested_bucket) or suggested_bucket
 
-    # Only offer a size cap when a brand-new bucket will be created; an
-    # existing bucket is reused unchanged.
     try:
         already_exists = nebius_client.bucket_exists(project_id, bucket_name)
     except Exception:
-        # Existence unknown (CLI/profile issue); bootstrap is idempotent, so
-        # proceed and let the create step no-op if the bucket already exists.
         already_exists = False
 
     bucket_max_size_bytes = 0
@@ -260,7 +252,7 @@ def _provision_object_storage(
     except nebius_client.NebiusError as exc:
         typer.echo(f"  Could not auto-provision object storage: {exc}")
         return None
-    except Exception as exc:  # defensive: CLI/OS errors must not abort setup
+    except Exception as exc:  # noqa: BLE001
         typer.echo(f"  Could not auto-provision object storage: {exc}")
         return None
 
@@ -281,13 +273,7 @@ def _provision_object_storage(
 
 
 def _run_interactive_configure(*, provision: bool = True) -> None:
-    """Prompt for credentials/config and write the NPA dotfiles.
-
-    When *provision* is true and an authenticated Nebius profile is available,
-    the S3 bucket and access key are created automatically so the operator only
-    supplies tenant/project/region (often pre-filled from the profile) plus the
-    external Hugging Face and NGC tokens, which cannot be derived from Nebius.
-    """
+    """Prompt for credentials/config and write the NPA dotfiles."""
 
     from npa.clients.config import CONFIG_PATH, write_config
     from npa.clients.credentials import write_credentials_file
@@ -308,8 +294,6 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         ).strip()
 
-    # Pre-fill the Nebius environment from the active CLI profile so the
-    # operator can accept tenant/project/region with Enter.
     project_id = ask("Nebius project id", default=nebius_client.current_project_id())
     tenant_id = ask("Nebius tenant id", default=nebius_client.current_tenant_id())
     region = ask("Region", default=DEFAULT_REGION)
@@ -319,7 +303,6 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         or DEFAULT_CONTAINER_REGISTRY,
     )
 
-    # Auto-provision object storage when possible; otherwise prompt for it.
     storage: dict[str, str] | None = None
     if provision and project_id and tenant_id:
         storage = _provision_object_storage(
@@ -346,13 +329,13 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             "bucket": ask("S3 bucket (e.g. s3://my-bucket/)"),
         }
 
-    # External third-party tokens are never derivable from Nebius.
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
+    nebius_api_key = ask("Nebius Token Factory API key (NEBIUS_API_KEY)", secret=True)
     ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
 
     credentials_path = write_credentials_file(
         {
-            "tokens": {"HF_TOKEN": hf_token},
+            "tokens": {"HF_TOKEN": hf_token, "NEBIUS_API_KEY": nebius_api_key},
             "ngc": {"api_key": ngc_api_key},
             "storage": storage,
         }

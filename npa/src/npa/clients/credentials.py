@@ -13,7 +13,8 @@ import yaml
 
 CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
-KNOWN_TOKEN_KEYS = ("HF_TOKEN", *NGC_ENV_KEYS)
+TOKEN_FACTORY_ENV_KEY = "NEBIUS_API_KEY"
+KNOWN_TOKEN_KEYS = ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, *NGC_ENV_KEYS)
 HF_TOKEN_MISSING_WARNING = (
     "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
     "Gated model downloads will fail."
@@ -47,6 +48,10 @@ class CredentialsConfig:
     @property
     def hf_token(self) -> str:
         return self.tokens.get("HF_TOKEN", "")
+
+    @property
+    def nebius_api_key(self) -> str:
+        return self.tokens.get(TOKEN_FACTORY_ENV_KEY, "")
 
     @property
     def ngc_api_key(self) -> str:
@@ -334,7 +339,7 @@ def shared_credential_env(credentials: CredentialsConfig) -> dict[str, str]:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     tokens = getattr(credentials, "tokens", {}) or {}
-    for key in NGC_ENV_KEYS:
+    for key in (TOKEN_FACTORY_ENV_KEY, *NGC_ENV_KEYS):
         value = tokens.get(key, "")
         if value:
             env[key] = value

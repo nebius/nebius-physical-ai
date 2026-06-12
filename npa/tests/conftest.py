@@ -22,6 +22,7 @@ _LIVE_MARKERS = frozenset(
         "gpu",
         "multi_gpu",
         "ngc_e2e",
+        "token_factory_e2e",
     }
 )
 
@@ -47,6 +48,10 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_REGISTRY_ID",
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
+    "NEBIUS_API_KEY",
+    "NEBIUS_TOKEN_FACTORY_API_KEY",
+    "NEBIUS_TOKEN_FACTORY_BASE_URL",
+    "NEBIUS_BASE_URL",
     "NGC_API_KEY",
     "NGC_ORG",
     "NGC_TEAM",
@@ -88,6 +93,7 @@ def block_live_huggingface_http(monkeypatch, request):
         "gpu",
         "multi_gpu",
         "ngc_e2e",
+        "token_factory_e2e",
     }
     if any(request.node.get_closest_marker(marker) for marker in live_markers):
         return

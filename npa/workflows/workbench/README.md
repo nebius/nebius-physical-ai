@@ -4,11 +4,22 @@ This directory contains Workbench reference workflows for robotics,
 simulation, perception, eval, and synthetic-data workloads. SkyPilot is the
 workflow orchestrator for these templates.
 
+## ➡️ Start here: the workflow catalog
+
+**[`skypilot/README.md`](skypilot/README.md)** is the catalog of every runnable
+workflow. It has a "Find your workflow" table that maps *what you want to do* →
+the YAML → the command to run it → its guide. Start there to pick a pipeline.
+
+As a companion convention, each YAML should open with a short header comment
+carrying the same pointers (`What`, `Guide`, `Runner`, `Index`) so you can jump
+from any file to its guide and back to the catalog.
+
 ## Layout
 
-- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines. See
-  `skypilot/README.md` for the index that maps each YAML to its guide in `docs/`
-  and its submission wrapper in `npa/scripts/`.
+- `skypilot/`: runnable SkyPilot YAMLs for reference pipelines, plus the
+  [workflow catalog](skypilot/README.md) that maps each YAML to its guide in
+  `docs/` and its submission wrapper in `npa/scripts/`.
+- `sim2real/`: the self-contained Sim2Real runbook (guide + YAML colocated).
 - `schemas/`: conventions for parameters, artifacts, naming, and runtime
   constraints.
 - `steps/` and `templates/`: legacy placeholders kept for compatibility with

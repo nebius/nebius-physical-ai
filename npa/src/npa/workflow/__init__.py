@@ -2,7 +2,48 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from npa._sdk import call_cli_callback
+
+
+def submit(
+    yaml_path: str | Path,
+    *,
+    run_id: str = "",
+    var: list[str] | None = None,
+    secret_env: list[str] | None = None,
+    controller_backend: str = "kubernetes",
+    sky_bin: str = "",
+    submit_timeout: int = 1800,
+    require_controller_up: bool = False,
+    output_format: str = "text",
+) -> None:
+    """Submit a SkyPilot workflow YAML (e.g. a Token Factory + GPU combo).
+
+    Drives ``npa workbench workflow submit`` from Python. ``var`` entries are
+    ``KEY=VALUE`` substitutions and ``secret_env`` are environment-variable names
+    (e.g. ``NEBIUS_API_KEY``, ``AWS_ACCESS_KEY_ID``) forwarded to SkyPilot as
+    secrets. Use this to launch the ``tokenfactory-*`` combo YAMLs.
+    """
+    from npa.cli.workbench.workflow import (
+        ControllerBackendOption,
+        OutputFormat,
+        submit_cmd,
+    )
+
+    return call_cli_callback(
+        submit_cmd,
+        yaml_path=Path(yaml_path),
+        run_id=run_id,
+        var=list(var or []),
+        secret_env=list(secret_env or []),
+        controller_backend=ControllerBackendOption(controller_backend),
+        sky_bin=sky_bin,
+        submit_timeout=submit_timeout,
+        require_controller_up=require_controller_up,
+        output_format=OutputFormat(output_format),
+    )
 
 
 def run(
@@ -64,4 +105,4 @@ def distill(**kwargs):
     return call_cli_callback(distill_cmd, **kwargs)
 
 
-__all__ = ["run", "status", "logs", "teardown", "distill"]
+__all__ = ["submit", "run", "status", "logs", "teardown", "distill"]
