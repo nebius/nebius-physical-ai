@@ -33,8 +33,12 @@ ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
 ROLLOUT_JUDGE_YAML = SKYPILOT / "tokenfactory-rollout-judge.yaml"
 SCENE_JUDGE_YAML = SKYPILOT / "tokenfactory-scene-to-rollout-judge.yaml"
+TRAIN_TRIAGE_YAML = SKYPILOT / "tokenfactory-train-triage.yaml"
 TRIAGE_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_train_triage.py"
 SWEEP_RUNNER = ROOT / "npa" / "scripts" / "run_tokenfactory_sim_sweep.py"
+
+# Every combo workflow that has a submittable SkyPilot YAML form.
+COMBO_YAMLS = [ROLLOUT_JUDGE_YAML, SCENE_JUDGE_YAML, TRAIN_TRIAGE_YAML]
 
 
 def _load_module(name: str, path: Path):
@@ -351,3 +355,90 @@ def test_scene_judge_has_no_hardcoded_infra_ids() -> None:
     text = SCENE_JUDGE_YAML.read_text(encoding="utf-8")
     assert "<your-registry-id>" in text
     assert "<your-bucket-name>" in text
+
+
+# --- train-triage SkyPilot YAML (k8s GPU train -> hosted Token Factory triage) -
+
+
+def test_train_triage_yaml_is_two_stage_gpu_then_hosted_triage() -> None:
+    docs = _docs(TRAIN_TRIAGE_YAML)
+    assert docs[0] == {"name": "tokenfactory-train-triage", "execution": "serial"}
+    gpu_stage, triage_stage = docs[1], docs[2]
+
+    # Stage 1: a genuine Nebius k8s GPU training run.
+    assert gpu_stage["name"] == "train-gpu"
+    assert gpu_stage["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" in gpu_stage["resources"]
+    assert "lerobot-train" in gpu_stage["run"]
+    assert gpu_stage["envs"]["ARTIFACTS_URI"].startswith("s3://")
+
+    # Stage 2: zero-GPU hosted Token Factory triage over what the GPU stage wrote.
+    assert triage_stage["name"] == "tokenfactory-triage"
+    assert "accelerators" not in triage_stage["resources"]
+    assert "npa workbench token-factory generate" in triage_stage["run"]
+    assert "summarize_run_artifacts" in triage_stage["run"]
+    assert triage_stage["envs"]["ARTIFACTS_URI"] == gpu_stage["envs"]["ARTIFACTS_URI"]
+
+
+def test_train_triage_yaml_has_no_hardcoded_infra_ids() -> None:
+    text = TRAIN_TRIAGE_YAML.read_text(encoding="utf-8")
+    assert "<your-registry-id>" in text
+    assert "<your-bucket-name>" in text
+
+
+# --- CLI / SDK / YAML support matrix for the combos -----------------------
+
+
+def test_all_combo_yamls_are_well_formed_serial_pipelines() -> None:
+    """Every combo YAML is a serial multi-doc with named stages and a GPU stage."""
+    for path in COMBO_YAMLS:
+        docs = _docs(path)
+        assert docs[0]["execution"] == "serial", f"{path.name} is not serial"
+        stages = docs[1:]
+        assert len(stages) >= 2, f"{path.name} should have >=2 stages"
+        assert all(stage.get("name") for stage in stages), f"{path.name} has an unnamed stage"
+        # At least one GPU stage (Nebius compute) and at least one fail-fast on the key.
+        assert any("accelerators" in stage.get("resources", {}) for stage in stages), (
+            f"{path.name} has no GPU compute stage"
+        )
+        full_text = path.read_text(encoding="utf-8")
+        assert "NEBIUS_API_KEY" in full_text, f"{path.name} never references the Token Factory key"
+
+
+def test_sdk_exposes_workflow_submit_for_combo_yamls() -> None:
+    """The SDK can submit the combo YAMLs via npa.workflow.submit."""
+    from npa import workflow
+
+    assert "submit" in workflow.__all__
+    assert callable(workflow.submit)
+
+
+def test_sdk_workflow_submit_delegates_to_orchestrator(mocker) -> None:
+    """npa.workflow.submit forwards a combo YAML to the SkyPilot orchestrator."""
+    import types
+
+    from npa import workflow
+
+    fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
+    submit_mock = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow", return_value=fake
+    )
+
+    workflow.submit(
+        ROLLOUT_JUDGE_YAML,
+        run_id="rj-test",
+        secret_env=["NEBIUS_API_KEY", "AWS_ACCESS_KEY_ID"],
+    )
+
+    submit_mock.assert_called_once()
+    assert submit_mock.call_args.args[1] == "rj-test"
+    assert "NEBIUS_API_KEY" in submit_mock.call_args.kwargs["secret_envs"]
+
+
+def test_sdk_exposes_token_factory_and_vlm_eval_building_blocks() -> None:
+    """The hosted Token Factory stages are SDK-callable building blocks."""
+    from npa.sdk.workbench import token_factory, vlm_eval
+
+    for name in ("generate", "reason", "caption", "verify"):
+        assert callable(getattr(token_factory, name))
+    assert hasattr(vlm_eval, "run") or hasattr(vlm_eval, "benchmark")

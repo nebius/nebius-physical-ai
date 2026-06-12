@@ -194,16 +194,50 @@ sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
 Worked examples: `tokenfactory-rollout-judge.yaml` (GPU rollout → VLM judge) and
 `tokenfactory-scene-to-rollout-judge.yaml` (reason → GPU rollout → VLM judge).
 
-## Step 4 — the four shipped combos (study these)
+## Step 4 — the shipped combos (study these)
 
-| Workflow | Style | Compute (AI Cloud) | Token Factory | Entry point |
-| --- | --- | --- | --- | --- |
-| train-triage | runner | serverless GPU LeRobot train | text triage report | `run_tokenfactory_train_triage.py` |
-| sim-sweep | runner | N serverless GPU trains (fan-out) | text design + ranking | `run_tokenfactory_sim_sweep.py` |
-| rollout-judge | YAML | k8s GPU rollout | VLM judge | `tokenfactory-rollout-judge.yaml` |
-| scene-to-rollout-judge | YAML | k8s GPU rollout | reason → VLM judge | `tokenfactory-scene-to-rollout-judge.yaml` |
+| Workflow | Compute (AI Cloud) | Token Factory | CLI | SDK | YAML |
+| --- | --- | --- | --- | --- | --- |
+| train-triage | serverless GPU LeRobot train | text triage report | runner | — | `tokenfactory-train-triage.yaml` (k8s) |
+| sim-sweep | N serverless GPU trains (fan-out) | text design + ranking | runner | — | — (fan-out: runner only) |
+| rollout-judge | k8s GPU rollout | VLM judge | `workflow submit` | `npa.workflow.submit` | `tokenfactory-rollout-judge.yaml` |
+| scene-to-rollout-judge | k8s GPU rollout | reason → VLM judge | `workflow submit` | `npa.workflow.submit` | `tokenfactory-scene-to-rollout-judge.yaml` |
 
 How to run each: [cookbooks/tokenfactory-compute-combos.md](./cookbooks/tokenfactory-compute-combos.md).
+
+### CLI / SDK / YAML — all three interfaces
+
+The hosted **building blocks** are exposed in all three interfaces, so any combo
+stage is reachable however you drive it:
+
+- **CLI**: `npa workbench token-factory generate|reason|caption`,
+  `npa workbench vlm-eval run`, `npa workbench lerobot train`.
+- **SDK**: `npa.workbench.token_factory.*`, `npa.workbench.vlm_eval.*`,
+  `npa.workbench.lerobot.*` (same callables, no Typer leakage).
+- **YAML**: the `tokenfactory-*.yaml` SkyPilot pipelines.
+
+The **YAML combos** are submittable from the SDK too, via `npa.workflow.submit`:
+
+```python
+from npa import workflow
+
+workflow.submit(
+    "npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml",
+    run_id="rollout-judge",
+    var=[
+        "NPA_LEROBOT_IMAGE=cr.eu-north1.nebius.cloud/<registry>/npa-lerobot:0.5.1",
+        "ROLLOUTS_URI=s3://your-bucket/tokenfactory/run-1/rollouts/",
+        "JUDGE_URI=s3://your-bucket/tokenfactory/run-1/vlm-judge/",
+    ],
+    secret_env=["NEBIUS_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+)
+```
+
+> The two **serverless-fan-out** combos (`train-triage`, `sim-sweep`) ship as
+> Python runners because they need cross-stage orchestration — await a Job,
+> download artifacts, build prompts, fan out N variants — that a single serial
+> SkyPilot YAML cannot express. `train-triage` also has an equivalent **k8s
+> YAML** form (`tokenfactory-train-triage.yaml`) for the declarative path.
 
 ## Checklist for your own combo
 
