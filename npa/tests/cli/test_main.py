@@ -232,8 +232,8 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # No size prompt is shown when the bucket already exists.
-    # proj, tenant, region, registry, bucket name (default), hf, ngc
-    answers = "\n".join(["", "", "", "", "", "", ""]) + "\n"
+    # proj, tenant, region, registry, bucket name (default), hf, token factory, ngc
+    answers = "\n".join(["", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -277,6 +277,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "",                  # S3 endpoint (default-by-region)
             "s3://manual-bucket/",  # S3 bucket (fallback)
             "hf_tok",            # HF token
+            "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
         ]
     ) + "\n"
@@ -323,6 +324,7 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
             "",                  # S3 endpoint (default-by-region)
             "s3://b/",           # S3 bucket
             "",                  # HF token
+            "",                  # Token Factory API key
             "",                  # NGC API key
         ]
     ) + "\n"
@@ -353,7 +355,7 @@ def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_pat
 
     # Skip every field. With no project/tenant, provisioning is skipped and the
     # manual object-storage prompts run; only the defaulted endpoint remains.
-    answers = "\n".join([""] * 10) + "\n"
+    answers = "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
