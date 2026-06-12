@@ -163,6 +163,7 @@ def eval_cmd(
             env=env,
             output=output_path,
             container_image=resolved_container_image,
+            container_gpu_target=container_gpu_target,
             container_runtime=container_runtime,
             container_gpus=container_gpus,
             container_driver_capabilities=container_driver_capabilities,
