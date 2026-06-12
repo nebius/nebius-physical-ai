@@ -1,4 +1,4 @@
-"""npa workbench data - S3 data bridge commands."""
+"""npa workbench data - hidden S3 data bridge for pipeline scripts and SDK."""
 
 from __future__ import annotations
 

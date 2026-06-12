@@ -13,6 +13,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from npa.cli.workbench.trigger import app as trigger_app
+
 app = typer.Typer(
     name="workflow",
     help="Multi-stage training workflow orchestration.",
@@ -1198,3 +1200,6 @@ def distill_cmd(
             status = info.get("status", "unknown")
             tag = "[green]OK[/green]" if status == "success" else "[red]FAILED[/red]"
             console.print(f"  {stage}: {tag}")
+
+
+app.add_typer(trigger_app, name="trigger")
