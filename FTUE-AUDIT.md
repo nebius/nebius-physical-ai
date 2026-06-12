@@ -73,7 +73,7 @@ a "non-default S3-compatible endpoint."
   `CapabilityContract`). Promoting the seams to explicit keyword parameters would
   change the public SDK signature; deferred.
 - **`sim2real` name collision.** Two surfaces share the "sim2real" name: the
-  13-stage VLM-to-RL loop (`npa workbench sim2real run`) and the separate
+  13-stage VLM-to-RL loop (`npa workbench workflow submit` on the sim2real runbook) and the separate
   sim-to-real H100 quickstart/pipeline. A first-time user cannot tell which is
   canonical. Naming reconciliation is deferred.
 - **Deeper GPU gate.** The cluster check counts schedulable `nvidia.com/gpu`; it

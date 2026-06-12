@@ -13,10 +13,10 @@ real motion-lib PKL schema consumed by SONIC locomotion training.
 CLI:
 
 ```bash
-npa workbench retargeting run
-npa workbench retargeting workflow
-npa workbench retargeting status
-npa workbench retargeting list
+npa workbench sonic retargeting run
+npa workbench sonic retargeting workflow
+npa workbench sonic retargeting status
+npa workbench sonic retargeting list
 ```
 
 SkyPilot YAML:

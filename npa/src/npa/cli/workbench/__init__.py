@@ -10,20 +10,16 @@ from npa.cli.workbench.cosmos3 import app as cosmos3_app
 from npa.cli.workbench.data import app as data_app
 from npa.cli.workbench.lerobot import app as lerobot_app
 from npa.cli.workbench.mjlab import app as mjlab_app
-from npa.cli.workbench.retargeting import app as retargeting_app
 from npa.cli.cosmos import app as cosmos_app
 from npa.cli.fiftyone import app as fiftyone_app
 from npa.cli.genesis import app as genesis_app
 from npa.cli.groot import app as groot_app
 from npa.cli.isaac_lab import app as isaac_lab_app
 from npa.cli.workbench.sonic import app as sonic_app
-from npa.cli.workbench.sim2real import app as sim2real_app
-from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.cli.workbench.detection_training import app as detection_training_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
 from npa.cli.workbench.workflow import app as workflow_app
-from npa.cli.workbench.trigger import app as trigger_app
 from npa.cli.workbench.health import app as health_app
 
 app = typer.Typer(
@@ -43,7 +39,6 @@ def main() -> None:
 
 
 app.add_typer(lerobot_app, name="lerobot")
-app.add_typer(data_app, name="data")
 app.add_typer(cosmos_app, name="cosmos")
 app.add_typer(cosmos2_app, name="cosmos2")
 app.add_typer(cosmos3_app, name="cosmos3")
@@ -52,13 +47,11 @@ app.add_typer(genesis_app, name="genesis")
 app.add_typer(groot_app, name="groot")
 app.add_typer(isaac_lab_app, name="isaac-lab")
 app.add_typer(sonic_app, name="sonic")
-app.add_typer(sim2real_app, name="sim2real")
-app.add_typer(sim2real_envgen_app, name="sim2real-envgen")
 app.add_typer(mjlab_app, name="mjlab")
-app.add_typer(retargeting_app, name="retargeting")
 app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(workflow_app, name="workflow")
-app.add_typer(trigger_app, name="trigger")
 app.add_typer(health_app, name="health")
+# Backward-compatible S3 bridge; not advertised in workbench --help.
+app.add_typer(data_app, name="data", hidden=True)

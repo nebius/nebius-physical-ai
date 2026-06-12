@@ -1,4 +1,4 @@
-"""npa workbench retargeting - motion retargeting commands."""
+"""npa workbench sonic retargeting - motion retargeting commands."""
 
 from __future__ import annotations
 
