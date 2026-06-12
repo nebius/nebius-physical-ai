@@ -1,0 +1,92 @@
+# .cursorignore — keep large/generated/binary paths out of agent context and indexing.
+# Mirrors the high-volume entries in .gitignore plus a few Cursor-specific bleeders.
+# Goal: minimize token ingestion, protect prompt-cache stability, avoid full scans.
+
+# --- Dependency directories ---
+.venv/
+**/.venv/
+venv/
+**/venv/
+node_modules/
+**/node_modules/
+
+# --- Build targets, distribution binaries, temp caches ---
+dist/
+build/
+.eggs/
+*.egg-info/
+.turbo/
+.cache/
+**/.cache/
+.next/
+.parcel-cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tmp/
+*.tmp
+*.temp
+
+# --- Heavy lockfiles (large, low-signal for reasoning) ---
+uv.lock
+**/uv.lock
+poetry.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# --- Model checkpoints, weights, and generated arrays ---
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+checkpoints/
+cosmos3-cache/
+npa-cosmos3-cache/
+
+# --- Massive data arrays / synthetic data / simulation logs (root-anchored to
+#     avoid hiding source packages like npa/src/npa/workbench/data/) ---
+/data/
+/datasets/
+/synthetic/
+/synthetic_data/
+/sim_logs/
+/rollouts/
+/outputs/
+/artifacts/
+wandb/
+**/wandb/
+
+# --- Run output, logs, scratch ---
+results/
+runs/
+logs/
+*.log
+*.log*
+
+# --- Large binary demo/media assets (docs/demos/assets is ~24M) ---
+docs/demos/assets/
+*.mp4
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# --- Terraform state and provider dirs ---
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+
+# --- Security scan reports ---
+kingfisher-result*.json
+semgrep-*.json

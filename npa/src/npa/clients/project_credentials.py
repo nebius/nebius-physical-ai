@@ -9,6 +9,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from npa.clients.config import StorageConfig, list_projects, resolve_project_storage
+from npa.clients.credentials import load_credentials
 from npa.clients.storage import StorageClient
 from npa.errors import ScopedCredentialError
 
@@ -68,6 +69,24 @@ def resolve_credentials(
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
         )
+
+    # Fall back to the user credential file (~/.npa/credentials.yaml) that the
+    # rest of npa uses for S3 access. These are host-level credentials, so use
+    # them for the default project or when the caller opts in with
+    # allow_host_creds.
+    if normalized is None or allow_host_creds:
+        user_creds = load_credentials()
+        host_endpoint = endpoint_url or user_creds.s3_endpoint
+        host_access = access_key or user_creds.s3_access_key_id
+        host_secret = secret_key or user_creds.s3_secret_access_key
+        if host_endpoint and host_access and host_secret:
+            return CredentialPair(
+                project=normalized,
+                endpoint_url=host_endpoint,
+                aws_access_key_id=host_access,
+                aws_secret_access_key=host_secret,
+                uses_host_credentials=True,
+            )
 
     if allow_host_creds and endpoint_url:
         return CredentialPair(
