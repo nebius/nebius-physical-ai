@@ -860,13 +860,26 @@ def _jsonable(value: Any) -> Any:
 
 
 from npa.workbench.sonic.eval import evaluate_onnx_policy  # noqa: E402
+from npa.workbench.sonic.routing import (  # noqa: E402
+    SonicRoutingError,
+    classify_gpu_target,
+    is_datacenter_headless_target,
+    is_rt_core_target,
+    validate_gpu_routing,
+    validate_render_gpu_target,
+)
 
 
 __all__ = [
     "SonicExportResult",
     "SonicParityResult",
+    "classify_gpu_target",
     "evaluate_onnx_policy",
     "export_onnx",
+    "is_datacenter_headless_target",
+    "is_rt_core_target",
     "load_export_metadata",
+    "validate_gpu_routing",
     "validate_onnx_parity",
+    "validate_render_gpu_target",
 ]
