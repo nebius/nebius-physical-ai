@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from npa.workbench.training_config import TrainingConfigError, overrides_to_mapping
 
 DEFAULT_LANCE_URI = "s3://<your-bucket>/lancedb/bdd100k/"
 DEFAULT_NUM_CLASSES = 10
@@ -16,6 +18,28 @@ DEFAULT_TOKEN_ENV = "DETECTION_TRAINING_TOKEN"
 RunStatus = Literal["queued", "running", "completed", "failed"]
 
 
+class WandbSettings(BaseModel):
+    """Canonical W&B settings for training surfaces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    project: str = ""
+    run_name: str = ""
+    mode: str = "offline"
+
+
+class CheckpointS3Settings(BaseModel):
+    """Canonical BYO S3 checkpoint destination."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str = ""
+    endpoint_url: str = ""
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+
+
 class TrainRequest(BaseModel):
     """Request body for starting a detector fine-tuning run."""
 
@@ -24,6 +48,10 @@ class TrainRequest(BaseModel):
     view: str = Field(..., min_length=1)
     lance_uri: str = DEFAULT_LANCE_URI
     output_uri: str = Field(..., min_length=1)
+    data_path: str = ""
+    overrides: list[str] = Field(default_factory=list)
+    wandb: WandbSettings = Field(default_factory=WandbSettings)
+    checkpoint_s3: CheckpointS3Settings = Field(default_factory=CheckpointS3Settings)
     num_classes: int | None = Field(None, ge=2)
     label_map: dict[str, int] | None = None
     epochs: int = Field(DEFAULT_EPOCHS, ge=1)
@@ -38,6 +66,47 @@ class TrainRequest(BaseModel):
         if not resolved:
             raise ValueError("value must not be empty")
         return resolved
+
+    @field_validator("data_path")
+    @classmethod
+    def _strip_data_path(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _apply_overrides(self) -> "TrainRequest":
+        try:
+            parsed = overrides_to_mapping(self.overrides)
+        except TrainingConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        supported = {
+            "num_classes",
+            "epochs",
+            "batch_size",
+            "learning_rate",
+            "validation_filter_sql",
+            "data_path",
+            "lance_uri",
+            "view",
+            "output_uri",
+        }
+        aliases = {
+            "train.num_classes": "num_classes",
+            "train.epochs": "epochs",
+            "train.batch_size": "batch_size",
+            "train.learning_rate": "learning_rate",
+            "optimizer.learning_rate": "learning_rate",
+            "lr": "learning_rate",
+            "dataset.path": "data_path",
+            "data.path": "data_path",
+        }
+        for raw_key, value in parsed.items():
+            key = aliases.get(raw_key, raw_key)
+            if key not in supported:
+                raise ValueError(f"unsupported detection-training override: {raw_key}")
+            setattr(self, key, value)
+        if self.data_path:
+            self.lance_uri = self.data_path
+        return self
 
     @field_validator("validation_filter_sql")
     @classmethod
@@ -77,6 +146,8 @@ class TrainResponse(BaseModel):
     metrics_uri: str
     total_epochs: int
     manifest_sha256: str
+    data_path: str = ""
+    training_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvalRequest(BaseModel):

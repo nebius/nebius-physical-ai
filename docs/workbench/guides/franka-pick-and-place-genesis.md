@@ -79,12 +79,18 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 
 ## Go bigger
 
-- **Run it serverless on Nebius** instead of locally — `train-teacher` takes
-  `--runtime serverless --project-id <your-project-id> --gpu-type l40s
-  --output-path s3://<bucket>/...` and submits a Nebius AI Job for you.
-  (Serverless needs `--project-id`, or a project configured in
-  `~/.npa/config.yaml`.) Inspect the artifacts it writes with
-  `npa workbench data list --input-path s3://<bucket>/.../`.
+- **Full training runs locally or on a workbench VM.** `train-teacher` (and
+  `generate-demos` / `eval-teacher`) run on your GPU box, or on a Workbench VM
+  when you pass `-p <project> -n <workbench>` (forwarded over SSH). This is where
+  real Franka PPO training happens.
+- **Validate serverless first.** `train-teacher --runtime serverless --project-id
+  <your-project-id> --gpu-type l40s --output-path s3://<bucket>/...` submits a
+  Nebius AI Job, but the serverless Genesis path is a **smoke** (it checks the
+  Genesis import and writes a placeholder checkpoint, verified end to end). Use
+  it to prove credentials, image pull, and S3 output before committing GPU time;
+  inspect what it wrote with
+  `npa workbench data list --input-path s3://<bucket>/.../`. (Serverless needs
+  `--project-id`, or a project configured in `~/.npa/config.yaml`.)
 - **Scale up:** the defaults are `--n-envs 4096 --max-iterations 500`. More envs
   and iterations give a stronger teacher.
 - **Tune rewards** without editing code via repeatable overrides, e.g.

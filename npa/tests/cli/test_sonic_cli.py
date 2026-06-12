@@ -259,6 +259,7 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         env="locomotion-smoke",
         output=str(output_path),
         container_image="registry.example/sonic-eval:latest",
+        container_gpu_target="",
         container_runtime="podman",
         container_gpus="all",
         container_driver_capabilities="graphics,compute,utility,display",
@@ -271,6 +272,75 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         container_output_path="/eval/out/result.json",
         container_args=["--verbose"],
     )
+
+
+def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
+    onnx = tmp_path / "policy.onnx"
+    onnx.write_bytes(b"onnx")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            str(onnx),
+            "--backend",
+            "container",
+            "--container-image",
+            "registry.example/sonic-eval:latest",
+            "--container-gpu-target",
+            "h100",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "RT-core" in result.output
+    assert "h100" in result.output.lower()
+
+
+def test_sonic_eval_container_render_allows_rt_core_target(mocker, tmp_path) -> None:
+    onnx = tmp_path / "policy.onnx"
+    onnx.write_bytes(b"onnx")
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={
+            "format": "npa_sonic_eval_result_v1",
+            "status": "completed",
+            "backend": "container",
+            "mode": "container",
+            "smoke_level": False,
+            "result_uri": "",
+            "policy": {},
+            "eval": {},
+            "metrics": {},
+            "episodes": [],
+            "warnings": [],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            str(onnx),
+            "--backend",
+            "container",
+            "--container-image",
+            "registry.example/sonic-eval:latest",
+            "--container-gpu-target",
+            "l40s",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert evaluate.call_args.kwargs["container_gpu_target"] == "l40s"
 
 
 def test_sonic_deploy_runtime_validation() -> None:
@@ -351,6 +421,8 @@ def test_sonic_train_default_embodiment_is_unitree_g1(mocker) -> None:
     assert payload["embodiment"] == "UNITREE_G1_SONIC"
     command = client.create_job.call_args.kwargs["command"]
     assert "UNITREE_G1_SONIC" in command
+    assert "SONIC_RUN_REAL_TRAIN=1" in command
+    assert "/entrypoint.sh train" in command
     assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
     assert client.create_job.call_args.kwargs["preset"] == "1gpu-40vcpu-160gb"
     client.subnet_resolver.assert_called_once_with(
@@ -535,21 +607,39 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     build_script = (PACKAGE_ROOT / "docker/workbench/sonic/build.sh").read_text()
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
+    assert "ARG BASE_IMAGE=" in dockerfile
+    assert "ARG INSTALL_ISAACSIM_EXTRA=0" in dockerfile
+    assert "ARG REQUIRE_TORCH_SM120=0" in dockerfile
     assert "ARG INSTALL_NVIDIA_DRIVER_USERSPACE=1" in dockerfile
     assert "ARG NPA_DRIVER_PROVISIONING=baked" in dockerfile
+    assert 'npa.cuda_architectures="${NPA_CUDA_ARCHITECTURES}"' in dockerfile
     assert 'npa.version="${SONIC_VERSION}"' in dockerfile
     assert 'npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}"' in dockerfile
+    assert '"isaaclab[all]==${ISAAC_LAB_VERSION}"' in dockerfile
+    assert "npa-torch-constraints.txt" in dockerfile
+    assert '"isaacsim-kernel==${ISAAC_SIM_VERSION}"' in dockerfile
+    assert "--no-deps --ignore-installed" in dockerfile
+    assert "_cuda_getArchFlags" in dockerfile
+    assert '"sm_120" not in arches' in dockerfile
     assert "COPY docker/workbench/sonic/requirements.txt" in dockerfile
     assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
-    assert 'rm -rf "${SONIC_HOME}/.git" "${SONIC_HOME}/docs"' in dockerfile
+    assert 'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
+    assert "git sparse-checkout set" in dockerfile
+    assert '"/gear_sonic/**"' in dockerfile
+    assert 'rm -rf "${SONIC_HOME}/.git"' in dockerfile
     assert 'data["tool"]["npa"]["supported-tools"]["sonic"]' in build_script
     assert "--platform linux/amd64" in build_script
     assert "--variant" in build_script
     assert "--push" in build_script
+    assert "--base-image" in build_script
+    assert "cuda13-b300-sm80-sm90-sm120-latest" in build_script
+    assert 'TAG_SUFFIX="-k8s-runtime"' in build_script
+    assert 'REQUIRE_TORCH_SM120=1' in build_script
     assert "NPA_BUILDX_BUILDER" in build_script
     assert "--driver docker-container" in build_script
     assert 'docker buildx build --builder "$BUILDX_BUILDER"' in build_script
-    assert 'docker build "${BUILD_ARGS[@]}" -t "$LOCAL_IMAGE"' in build_script
     assert 'IMAGE_NAME="npa-sonic"' in build_script
     assert 'IMAGE_NAME="npa-sonic-mujoco"' in build_script
     assert 'LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"' in build_script
+    assert 'docker build "${BUILD_ARGS[@]}" "${LOCAL_BUILD_TAGS[@]}" "$NPA_ROOT"' in build_script
+    assert 'REGISTRY_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"' in build_script

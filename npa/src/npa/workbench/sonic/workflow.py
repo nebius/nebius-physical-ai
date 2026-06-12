@@ -20,6 +20,7 @@ from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypi
 
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
+DEFAULT_AWS_PROFILE = "nebius"
 DEFAULT_GPU_TARGET = "l40s"
 DEFAULT_SONIC_WORKFLOW_PREFIX = "sonic-locomotion"
 UNRESOLVED_SUBMIT_TOKENS = (
@@ -27,6 +28,7 @@ UNRESOLVED_SUBMIT_TOKENS = (
     "<sonic-image-tag>",
     "<npa-image-tag>",
     "${NPA_WORKBENCH_IMAGE}",
+    "${NPA_RETARGETING_IMAGE}",
     "example.invalid",
 )
 SKYPILOT_DOCKER_USERNAME = "SKYPILOT_DOCKER_USERNAME"
@@ -47,8 +49,10 @@ class SonicWorkflowPlan:
     run_id: str
     policy_image: str
     npa_image: str
+    retargeting_image: str
     gpu_target: str
     image_variant: str
+    aws_profile: str
     s3_endpoint: str
     s3_bucket: str
     s3_prefix: str
@@ -82,6 +86,7 @@ def materialize_sonic_workflow(
     registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
+    aws_profile: str = "",
     s3_endpoint: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
@@ -107,7 +112,9 @@ def materialize_sonic_workflow(
         gpu_target=resolved_gpu_target or None,
         image_variant=resolved_variant,
     )
+    resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
     resolved_npa_image = npa_image
+    resolved_aws_profile = aws_profile or os.environ.get("AWS_PROFILE", "") or DEFAULT_AWS_PROFILE
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
@@ -142,8 +149,10 @@ def materialize_sonic_workflow(
                 run_id=resolved_run_id,
                 policy_image=resolved_policy_image,
                 npa_image=resolved_npa_image,
+                retargeting_image=resolved_retargeting_image,
                 gpu_target=resolved_gpu_target,
                 image_variant=resolved_variant,
+                aws_profile=resolved_aws_profile,
                 s3_endpoint=resolved_endpoint,
                 s3_bucket=resolved_bucket,
                 s3_prefix=resolved_prefix,
@@ -161,8 +170,10 @@ def materialize_sonic_workflow(
         run_id=resolved_run_id,
         policy_image=resolved_policy_image,
         npa_image=resolved_npa_image,
+        retargeting_image=resolved_retargeting_image,
         gpu_target=resolved_gpu_target,
         image_variant=resolved_variant,
+        aws_profile=resolved_aws_profile,
         s3_endpoint=resolved_endpoint,
         s3_bucket=resolved_bucket,
         s3_prefix=resolved_prefix,
@@ -189,6 +200,7 @@ def submit_sonic_workflow(
     registry_server: str = "",
     gpu_target: str = DEFAULT_GPU_TARGET,
     image_variant: str = "",
+    aws_profile: str = "",
     s3_endpoint: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
@@ -219,6 +231,7 @@ def submit_sonic_workflow(
         registry_server=registry_server,
         gpu_target=gpu_target,
         image_variant=image_variant,
+        aws_profile=aws_profile,
         s3_endpoint=s3_endpoint,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
@@ -345,8 +358,10 @@ def _materialize_task_doc(
     run_id: str,
     policy_image: str,
     npa_image: str,
+    retargeting_image: str,
     gpu_target: str,
     image_variant: str,
+    aws_profile: str,
     s3_endpoint: str,
     s3_bucket: str,
     s3_prefix: str,
@@ -361,6 +376,10 @@ def _materialize_task_doc(
     resources = doc.get("resources")
     if not isinstance(envs, dict) or not isinstance(resources, dict):
         return
+
+    if "NPA_RETARGETING_IMAGE" in envs:
+        resources["image_id"] = f"docker:{retargeting_image}"
+        envs["NPA_RETARGETING_IMAGE"] = retargeting_image
 
     payload_mode = str(
         env_overrides.get("SONIC_PAYLOAD_MODE", envs.get("SONIC_PAYLOAD_MODE", "direct"))
@@ -396,6 +415,8 @@ def _materialize_task_doc(
     for key in ("SONIC_IMAGE_VARIANT", "CONTAINER_IMAGE_VARIANT", "SONIC_EVAL_CONTAINER_IMAGE_VARIANT"):
         if key in envs and has_sonic_env:
             envs[key] = image_variant
+    if "AWS_PROFILE" in envs:
+        envs["AWS_PROFILE"] = aws_profile
     for key in ("S3_ENDPOINT_URL", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
         if key in envs:
             envs[key] = s3_endpoint

@@ -1,6 +1,6 @@
 """Infra-free helpers for the Token Factory + Nebius-compute combo workflows.
 
-Two hackathon workflows compose *real Nebius GPU compute* with *hosted Token
+Four combo workflows compose *real Nebius GPU compute* with *hosted Token
 Factory inference* (zero-GPU on the client side):
 
 1. **train-triage (serverless).** A LeRobot **serverless GPU Job** trains/evals a

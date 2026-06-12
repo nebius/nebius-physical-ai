@@ -24,7 +24,7 @@ Registering and minting a key takes about two minutes:
    `402`/`403` on inference calls. If your team already has a Token Factory
    project, just confirm you're switched into it (top-left project switcher).
 3. **Create the API key.** In the left nav open **API keys** → **Create API
-   key**, give it a name (e.g. `npa-hackathon`), and click **Create**.
+   key**, give it a name (e.g. `npa-workbench`), and click **Create**.
 4. **Copy it now.** The key is shown **once** and cannot be reopened later. It's
    a long opaque Bearer token. Store it somewhere safe (a password manager) —
    you'll paste it into NPA in step 2.

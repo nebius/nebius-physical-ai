@@ -9,6 +9,10 @@ workflows with Nebius Physical AI Workbench.
 
 ## Available Cookbooks
 
+- [BDD100K SkyPilot Pipeline](bdd100k-pipeline.md): provision the object store,
+  Kubernetes cluster, GPU node groups, and in-cluster LanceDB/detection-training
+  services, then run the BDD100K ingest, UDF backfill, CLIP embedding,
+  materialized-view, training, and evaluation pipeline.
 - [Sim-To-Real Pipeline](sim-to-real-pipeline.md): CLI, SDK, raw SkyPilot, BYO
   policy image, BYO S3 endpoint, eval, feedback, artifact, and teardown details
   behind the one-command H100 quickstart.

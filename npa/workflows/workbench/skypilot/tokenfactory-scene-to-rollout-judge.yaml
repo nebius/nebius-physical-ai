@@ -11,7 +11,7 @@
 #           uploads rollout videos to S3.
 #   Stage 3 (CPU, zero-GPU): vlm-eval --backend api judges the rollout against
 #           the Stage 1 plan with a hosted Token Factory VLM.
-# This is the hackathon "physical common-sense" loop: walk a robot to a scene,
+# Physical common-sense loop: walk a robot to a scene,
 # ask the reasoner what to do, execute, and have a VLM grade the attempt.
 # Provide the API key (and S3 creds) as SkyPilot secrets at launch:
 #   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \

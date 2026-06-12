@@ -14,6 +14,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    format_override,
+    upload_checkpoint_path,
+    wandb_overrides,
+)
+
 
 DEFAULT_POLICY_CHECKPOINT = "lerobot/diffusion_pusht"
 DEFAULT_ACTION_DIM = 2
@@ -105,6 +114,60 @@ class VlmSignalUpdateResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> VlmSignalUpdateResult:
+        """Parse a BYO trainer-command JSON result into a structured update.
+
+        Required fields (a BYO trainer-command MUST emit these): ``reward_head_after``,
+        ``policy_output_after`` (non-empty list), and ``policy_delta_l2``. Every other
+        field falls back to a safe default so a minimal customer trainer hook still
+        produces a usable, attributable update record.
+        """
+
+        if not isinstance(payload, dict):
+            raise PolicyContainerError(
+                "VlmSignalUpdateResult.from_dict requires a JSON object payload"
+            )
+        for required in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
+            if required not in payload:
+                raise PolicyContainerError(
+                    f"trainer update payload missing required field: {required}"
+                )
+        policy_output_after = payload["policy_output_after"]
+        if not isinstance(policy_output_after, list) or not policy_output_after:
+            raise PolicyContainerError(
+                "trainer update policy_output_after must be a non-empty list"
+            )
+        policy_output_after = [float(item) for item in policy_output_after]
+        raw_before = payload.get("policy_output_before")
+        if isinstance(raw_before, list) and raw_before:
+            policy_output_before = [float(item) for item in raw_before]
+        else:
+            policy_output_before = [0.0 for _ in policy_output_after]
+        loss_before = float(payload.get("loss_before", 0.0))
+        loss_after = float(payload.get("loss_after", loss_before))
+        return cls(
+            status=str(payload.get("status", "updated")),
+            backend=str(payload.get("backend", "byo_command")),
+            steps=int(payload.get("steps", 1)),
+            loss_before=loss_before,
+            loss_after=loss_after,
+            reward_head_before=float(payload.get("reward_head_before", 0.0)),
+            reward_head_after=float(payload["reward_head_after"]),
+            policy_output_before=policy_output_before,
+            policy_output_after=policy_output_after,
+            policy_delta_l2=float(payload["policy_delta_l2"]),
+            mean_reward=float(payload.get("mean_reward", 0.0)),
+            mean_advantage=float(payload.get("mean_advantage", 0.0)),
+            checkpoint_path=str(payload.get("checkpoint_path", "")),
+            signal_count=int(payload.get("signal_count", 0)),
+            control=bool(payload.get("control", False)),
+            loss_integration_point=str(
+                payload.get("loss_integration_point", "byo_trainer_command")
+            ),
+            duration_ms=float(payload.get("duration_ms", 0.0)),
+        )
 
 
 @dataclass(frozen=True)
@@ -234,9 +297,11 @@ def build_lerobot_train_command(
     log_freq: int = DEFAULT_TRAIN_LOG_FREQ,
     resume: bool = False,
     extra_args: list[str] | None = None,
+    training_config: TrainingConfig | None = None,
 ) -> list[str]:
     """Build a real `lerobot-train` command for a local LeRobotDataset."""
 
+    config = training_config or TrainingConfig()
     if steps <= 0:
         raise PolicyContainerError(f"steps must be positive, got {steps}")
     if batch_size <= 0:
@@ -261,12 +326,13 @@ def build_lerobot_train_command(
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
-        "--wandb.enable=false",
     ]
+    cmd.extend(wandb_overrides(config.wandb, style="cli"))
     if resume:
         cmd.append("--resume=true")
     if extra_args:
         cmd.extend(extra_args)
+    cmd.extend(format_override(override, style="cli") for override in config.overrides)
     return cmd
 
 
@@ -284,9 +350,11 @@ def run_lerobot_training(
     log_path: Path | str | None = None,
     timeout_seconds: int = DEFAULT_TRAIN_TIMEOUT_SECONDS,
     extra_args: list[str] | None = None,
+    training_config: TrainingConfig | None = None,
 ) -> LeRobotTrainingResult:
     """Run real LeRobot policy training and validate the resulting checkpoint."""
 
+    config = training_config or TrainingConfig()
     assert_lerobot_importable()
     if shutil.which("lerobot-train") is None:
         raise PolicyContainerError("lerobot-train was not found on PATH")
@@ -311,6 +379,7 @@ def run_lerobot_training(
         save_freq=steps,
         resume=resume,
         extra_args=extra_args,
+        training_config=config,
     )
     start = time.time()
     with log.open("w", encoding="utf-8") as handle:
@@ -334,6 +403,7 @@ def run_lerobot_training(
             f"lerobot-train failed or did not produce loadable real weights "
             f"(exit={proc.returncode}, checkpoint={checkpoint}, log={log})"
         )
+    upload_checkpoint_path(checkpoint, config)
     return LeRobotTrainingResult(
         status="success",
         command=command,
@@ -934,7 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
     import_cmd = subparsers.add_parser("check-import", help="Import LeRobot and LeRobotDataset.")
     import_cmd.set_defaults(_command_name="check-import")
     train_cmd = subparsers.add_parser("train", help="Run real LeRobot policy training.")
-    train_cmd.add_argument("--dataset-path", type=Path, required=True)
+    train_cmd.add_argument("--dataset-path", type=Path, default=None)
     train_cmd.add_argument("--dataset-repo-id", default="local/lerobot-dataset")
     train_cmd.add_argument("--output-dir", type=Path, required=True)
     train_cmd.add_argument("--steps", type=int, required=True)
@@ -945,6 +1015,16 @@ def main(argv: list[str] | None = None) -> int:
     train_cmd.add_argument("--resume", action="store_true")
     train_cmd.add_argument("--log-path", type=Path, default=None)
     train_cmd.add_argument("--timeout-seconds", type=int, default=DEFAULT_TRAIN_TIMEOUT_SECONDS)
+    train_cmd.add_argument("--data-path", default="")
+    train_cmd.add_argument("--override", action="append", default=[])
+    train_cmd.add_argument("--wandb", action="store_true")
+    train_cmd.add_argument("--wandb-project", default="")
+    train_cmd.add_argument("--wandb-run-name", default="")
+    train_cmd.add_argument("--wandb-mode", default="offline")
+    train_cmd.add_argument("--checkpoint-s3-uri", default="")
+    train_cmd.add_argument("--checkpoint-s3-endpoint-url", default="")
+    train_cmd.add_argument("--checkpoint-s3-access-key-id", default="")
+    train_cmd.add_argument("--checkpoint-s3-secret-access-key", default="")
     eval_cmd = subparsers.add_parser("eval", help="Run measured LeRobot rollout eval.")
     eval_cmd.add_argument("--checkpoint-path", type=Path, required=True)
     eval_cmd.add_argument("--output-dir", type=Path, required=True)
@@ -975,8 +1055,26 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(assert_lerobot_importable().to_dict(), indent=2, sort_keys=True))
         return 0
     if args.command == "train":
+        try:
+            training_config = build_training_config(
+                data_path=args.data_path,
+                overrides=args.override,
+                wandb_enabled=args.wandb,
+                wandb_project=args.wandb_project,
+                wandb_run_name=args.wandb_run_name,
+                wandb_mode=args.wandb_mode,
+                checkpoint_s3_uri=args.checkpoint_s3_uri,
+                checkpoint_s3_endpoint_url=args.checkpoint_s3_endpoint_url,
+                checkpoint_s3_access_key_id=args.checkpoint_s3_access_key_id,
+                checkpoint_s3_secret_access_key=args.checkpoint_s3_secret_access_key,
+            )
+        except TrainingConfigError as exc:
+            raise PolicyContainerError(str(exc)) from exc
+        dataset_path = training_config.data_path or args.dataset_path
+        if not dataset_path:
+            raise PolicyContainerError("--data-path or --dataset-path is required")
         result = run_lerobot_training(
-            dataset_path=args.dataset_path,
+            dataset_path=dataset_path,
             dataset_repo_id=args.dataset_repo_id,
             output_dir=args.output_dir,
             steps=args.steps,
@@ -987,6 +1085,7 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume,
             log_path=args.log_path,
             timeout_seconds=args.timeout_seconds,
+            training_config=training_config,
         )
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
         return 0

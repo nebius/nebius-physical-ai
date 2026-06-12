@@ -64,8 +64,9 @@ credentials — the report shape never changes.
 - **Real judge, self-hosted:** serve a VLM with vLLM and score real rollout
   directories — see the
   [VLM-Eval Loop Runbook](../cookbooks/vlm-eval-loop-runbook.md).
-- **Real judge, hosted API:** use Nebius Token Factory as the backend with no
-  GPU of your own — see [../token-factory.md](../token-factory.md).
+- **Real judge, hosted API:** point the `api` backend at a hosted, OpenAI-
+  compatible VLM (such as Nebius Token Factory) to score with no GPU of your own
+  — see the [VLM-Eval Loop Runbook](../cookbooks/vlm-eval-loop-runbook.md).
 - **In a pipeline:** `vlm-eval` is the scorer inside the
   [sim-to-real loop](pusht-sim-to-real.md), where it grades a freshly trained
   policy.

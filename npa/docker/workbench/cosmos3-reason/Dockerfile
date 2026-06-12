@@ -16,6 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /workspace
 
+USER root
+
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
@@ -31,7 +33,7 @@ RUN mkdir -p /models/cosmos-reason1 \
       "transformers>=4.51,<5" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
-    && chown -R ubuntu:ubuntu /workspace /models/cosmos-reason1
+    && chown -R ubuntu:ubuntu /workspace /models/cosmos-reason1 /opt/npa/src /opt/npa/pyproject.toml
 
 USER ubuntu
 

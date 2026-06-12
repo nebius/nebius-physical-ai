@@ -3,9 +3,8 @@
 Most Token Factory workflows are **zero-GPU** — they only call the hosted API.
 These two **combo** workflows are different: each pairs *real Nebius cloud
 compute* (a GPU job) with *hosted Token Factory inference*. The GPU stage
-produces artifacts; the hosted, zero-GPU stage reasons over them. They were
-built for the hackathon to show Token Factory working alongside Nebius compute,
-not just on its own.
+produces artifacts; the hosted, zero-GPU stage reasons over them. They show
+Token Factory working alongside Nebius compute, not just on its own.
 
 | Workflow | Nebius compute | Token Factory stage | Entry point |
 | --- | --- | --- | --- |
@@ -122,7 +121,7 @@ the design notes under `<sweep-root>/design/` and per-variant artifacts under
 
 ## 4. scene-to-rollout-judge (Token Factory reason → k8s GPU → Token Factory VLM)
 
-The hackathon physical-common-sense loop as one serial SkyPilot pipeline. Stage
+The physical-common-sense loop as one serial SkyPilot pipeline. Stage
 1 (zero-GPU) runs `token-factory reason` over scene images with
 `nvidia/Cosmos3-Super-Reasoner` and writes a plan of action. Stage 2 rolls out a
 policy on a Nebius **Managed Kubernetes GPU**. Stage 3 (zero-GPU) folds the

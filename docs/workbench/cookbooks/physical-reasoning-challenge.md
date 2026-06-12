@@ -1,6 +1,6 @@
 # Physical Reasoning Challenge (Token Factory + Cosmos3-Super-Reasoner)
 
-A zero-GPU hackathon challenge built on Nebius Token Factory's hosted
+A zero-GPU challenge built on Nebius Token Factory's hosted
 `nvidia/Cosmos3-Super-Reasoner`. Teams walk a robot (or just a phone camera) to
 different scenes around campus, capture images, and use the reasoner to extract
 **scene understanding** and a **plan of action** for a task at that scene.

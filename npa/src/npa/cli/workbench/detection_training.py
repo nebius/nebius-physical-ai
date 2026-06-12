@@ -21,8 +21,10 @@ from npa.workbench.detection_training.schemas import (
     DEFAULT_LANCE_URI,
     DEFAULT_PORT,
     DEFAULT_TOKEN_ENV,
+    CheckpointS3Settings,
     EvalRequest,
     TrainRequest,
+    WandbSettings,
 )
 
 app = typer.Typer(
@@ -141,8 +143,22 @@ def deploy_cmd(
 
 def train_cmd(
     view: str = typer.Option(..., "--view", help="Lance materialized view name."),
-    output_uri: str = typer.Option(..., "--output-uri", "--output-path", help="S3/local output URI."),
-    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="LanceDB URI."),
+    output_uri: str = typer.Option("", "--output-uri", "--output-path", help="S3/local output URI."),
+    data_path: str = typer.Option("", "--data-path", help="Custom LanceDB training data URI."),
+    lance_uri: str = typer.Option(DEFAULT_LANCE_URI, "--lance-uri", "--input-path", help="Compatibility alias for --data-path."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic override as KEY=VALUE. Supported keys map to detection-training request fields.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     num_classes: int = typer.Option(10, "--num-classes", help="Detector class count."),
     epochs: int = typer.Option(10, "--epochs", help="Training epochs."),
     batch_size: int = typer.Option(8, "--batch-size", help="Training batch size."),
@@ -154,10 +170,28 @@ def train_cmd(
     output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
 ) -> None:
     """Start a detection-training run."""
+    checkpoint_s3 = CheckpointS3Settings(
+        uri=checkpoint_s3_uri,
+        endpoint_url=checkpoint_s3_endpoint_url,
+        aws_access_key_id=checkpoint_s3_access_key_id,
+        aws_secret_access_key=checkpoint_s3_secret_access_key,
+    )
+    effective_output_uri = output_uri or checkpoint_s3.uri
+    if not effective_output_uri:
+        fail("--output-uri or --checkpoint-s3-uri is required")
     payload = TrainRequest(
         view=view,
-        lance_uri=lance_uri,
-        output_uri=output_uri,
+        lance_uri=data_path or lance_uri,
+        data_path=data_path,
+        output_uri=effective_output_uri,
+        overrides=override,
+        wandb=WandbSettings(
+            enabled=wandb_enabled,
+            project=wandb_project,
+            run_name=wandb_run_name,
+            mode=wandb_mode,
+        ),
+        checkpoint_s3=checkpoint_s3,
         num_classes=num_classes,
         epochs=epochs,
         batch_size=batch_size,

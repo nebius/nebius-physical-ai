@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from npa.workbench import lancedb
+from npa.workbench import lancedb, training_config
 
 from . import (
     cosmos,
@@ -18,6 +18,7 @@ from . import (
     token_factory,
     trigger,
     vlm_eval,
+    workflow,
 )
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     "sim2real_envgen",
     "sonic",
     "token_factory",
+    "training_config",
     "trigger",
     "vlm_eval",
+    "workflow",
 ]

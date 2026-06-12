@@ -5,8 +5,8 @@ description: Use when working on Workbench motion retargeting, SONIC retargeted 
 
 # Retargeting
 
-Retargeting converts source motion artifacts into the embodiment schema consumed
-by SONIC locomotion training.
+Retargeting converts already-retargeted SOMA/G1/Bones motion artifacts into the
+real motion-lib PKL schema consumed by SONIC locomotion training.
 
 ## Interfaces
 
@@ -34,7 +34,14 @@ Inputs and outputs use S3 paths:
 - `--output-path`: retargeted motion output prefix.
 - `--retarget-map`: optional map artifact.
 
-The result artifact is `retargeting_manifest.json`.
+The result artifacts are real `.pkl` motion-lib files plus
+`retargeting_result.json` metadata. Do not replace this with a manifest-only
+shim.
+
+Raw BVH inputs can be converted to upstream SONIC SOMA skeleton PKLs with
+`extract_soma_joints_from_bvh.py`, but upstream SONIC does not bundle a raw
+BVH-to-G1 robot retargeter. Use external SOMA Retargeter/GMR before the final
+SONIC motion-lib conversion when starting from raw BVH.
 
 ## Workflow Constraint
 

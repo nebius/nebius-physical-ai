@@ -35,7 +35,7 @@ export AWS_ENDPOINT_URL=<default-platform-s3-endpoint>
 export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.0
 
 # 4. Reference image defaults. Override only if you have a newer pushed image.
-export AUGMENT_IMAGE=<registry>/npa-sim2real-envgen:0.1.1
+export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.0
 export POLICY_IMAGE=<registry>/npa-sim2real-reference-policy:0.1.1
 export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.1-genuine-sm120
 export EVAL_IMAGE=<registry>/npa-sim2real-eval:0.1.1-genuine-sm120
@@ -90,6 +90,7 @@ eval/heldout/
 outer_loop/decision.json
 stage_13_retrigger/retrigger.json
 reports/sim2real-report.json
+reports/sim2real.rrd
 ```
 
 ## Prerequisites
@@ -97,6 +98,7 @@ reports/sim2real-report.json
 - Python 3.11 or newer and this package installed in `npa/.venv`.
 - A Kubernetes GPU cluster with schedulable RTX PRO 6000 class `sm_120` GPUs.
 - Pushed reference images:
+  - `npa-cosmos2-transfer:2.5.0`
   - `npa-sim2real-envgen:0.1.1`
   - `npa-sim2real-reference-policy:0.1.1`
   - `npa-cosmos3-reason:3.0.1-genuine-sm120`
@@ -108,9 +110,94 @@ reports/sim2real-report.json
 - S3-compatible storage credentials and endpoint configured through environment
   variables, project config, or Kubernetes secrets.
 
+## Preflight First
+
+Before launching anything, run the preflight. It validates the config and
+surfaces the recurring blockers (S3 reachability, image pull / `agent-sa` path,
+HF/NGC tokens, kube context, schedulable-GPU count, and three-tier coherence) as
+PASS/WARN/FAIL/SKIP so you hit them up front instead of mid-pipeline:
+
+```bash
+npa workbench health sim2real \
+  --s3-bucket <bucket> \
+  --s3-endpoint <your-s3-compatible-endpoint> \
+  --trigger-dataset-uri s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/ \
+  --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
+  --policy-image <registry>/npa-sim2real-reference-policy:0.1.1
+```
+
+Use `--checks config,coherence` for an infra-free static check, `--json` for
+machine-readable output, and `--warn-only` to report without failing the exit
+code.
+
+## One BYO Seam, One Value
+
+Each seam is one value you set the same way across all three tiers: the CLI
+flag, the SDK keyword argument, and the raw-YAML env are all wired to the same
+config field. Set what you need; the rest fall back to reference defaults.
+
+| BYO seam | CLI flag | SDK keyword | Raw-YAML env |
+| --- | --- | --- | --- |
+| S3 endpoint | `--s3-endpoint` | `s3_endpoint=` | `AWS_ENDPOINT_URL` |
+| S3 bucket (required) | `--s3-bucket` | `s3_bucket=` | `NPA_SIM2REAL_BUCKET` |
+| Run prefix | `--s3-prefix` | `s3_prefix=` | `NPA_SIM2REAL_PREFIX` |
+| Trigger path | `--trigger-dataset-uri` | `trigger_dataset_uri=` | `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
+| Source dataset id | `--trigger-dataset-id` | `trigger_dataset_id=` | `NPA_SIM2REAL_TRIGGER_DATASET_ID` |
+| Sim-asset source path | `--assets-uri` | `assets_uri=` | `ASSETS_URI` |
+| SceneSpec path | `--scene-spec-uri` | `scene_spec_uri=` | `SCENE_SPEC_URI` |
+| Augment image | `--augment-image` | `augment_image=` | `AUGMENT_IMAGE` |
+| Policy image | `--policy-image` | `policy_image=` | `POLICY_IMAGE` |
+| Trainer image | `--trainer-image` | `trainer_image=` | `TRAINER_IMAGE` |
+| VLM image | `--vlm-image` | `vlm_image=` | `VLM_IMAGE` |
+| Eval image | `--eval-image` | `eval_image=` | `EVAL_IMAGE` |
+| Success threshold | `--threshold` | `threshold=` | `SUCCESS_THRESHOLD` |
+| Inner-loop cap | `--inner-iterations` | `inner_iterations=` | `INNER_ITERATIONS` |
+| Outer-loop cap | `--outer-iterations` | `outer_iterations=` | `OUTER_ITERATIONS` |
+| Loop-of-loops cap | `--loop-of-loops-iterations` | `loop_of_loops_iterations=` | `LOOP_OF_LOOPS_ITERATIONS` |
+| Rollout count | `--rollout-count` | `rollout_count=` | `ROLLOUT_COUNT` |
+| Steps per rollout | `--steps-per-rollout` | `steps_per_rollout=` | `STEPS_PER_ROLLOUT` |
+| Held-out env count | `--heldout-env-count` | `heldout_env_count=` | `HELDOUT_ENV_COUNT` |
+| VLM command swap | `--byo-vlm-command` | `byo_vlm_command=` | `BYO_VLM_COMMAND` |
+| Signal-converter swap | `--byo-signal-converter` | `byo_signal_converter=` | `BYO_SIGNAL_CONVERTER` |
+| Trainer command swap | `--byo-trainer-command` | `byo_trainer_command=` | `BYO_TRAINER_COMMAND` |
+| Held-out eval swap | `--byo-eval-command` | `byo_eval_command=` | `BYO_EVAL_COMMAND` |
+| Rerun viz toggle | `--rerun` / `--no-rerun` | `rerun_enabled=` | `NPA_SIM2REAL_RERUN` |
+| Rerun command swap | `--byo-rerun-command` | `byo_rerun_command=` | `BYO_RERUN_COMMAND` |
+
+### Command-Swap I/O Contracts
+
+Each `byo_*_command` is a shell command the loop runs at the matching seam. They
+all share the same convention: inputs arrive as JSON file paths in environment
+variables, and the command writes its result JSON to `NPA_SIM2REAL_OUTPUT_JSON`.
+A command that exits non-zero, writes nothing, or emits a non-conforming /empty
+document fails the run loudly — the loop never silently falls back to the
+reference implementation. Each run records which path executed
+(`trainer_source` / `signal_converter_source` = `byo_command` | `reference`) in
+the inner-loop evidence so a run can prove the customer hook actually ran.
+
+| Seam | Reads | Writes (`NPA_SIM2REAL_OUTPUT_JSON`) |
+| --- | --- | --- |
+| `byo_vlm_command` | `NPA_SIM2REAL_ROLLOUT_DIR`, `NPA_SIM2REAL_ROLLOUT_MANIFEST` | `npa.sim2real.vlm_eval.v1` (score + per_step critiques) |
+| `byo_signal_converter` | `NPA_SIM2REAL_EVALUATION_JSON` | `npa.sim2real.rl_signal.v1` (non-empty `per_step` of `{step, reward, advantage?, target?, error_tags?}`) |
+| `byo_trainer_command` | `NPA_SIM2REAL_SIGNAL_JSON` (+ `NPA_SIM2REAL_INITIAL_REWARD_HEAD`, `NPA_SIM2REAL_INITIAL_ACTION_BIAS`, `NPA_SIM2REAL_LEARNING_RATE`, `NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT`) | trainer update with at least `reward_head_after`, `policy_output_after` (list), `policy_delta_l2` (optional `loss_before`/`loss_after`) |
+| `byo_eval_command` | `NPA_SIM2REAL_HELDOUT_ENVS_DIR`, `NPA_SIM2REAL_INNER_EVIDENCE_JSON` | `npa.sim2real.heldout_eval.v1` (non-empty `per_env`) |
+| `byo_rerun_command` | `NPA_SIM2REAL_RUN_DIR`, `NPA_SIM2REAL_REPORT_JSON` | non-empty `.rrd` at `NPA_SIM2REAL_OUTPUT_RRD` |
+
+When a `byo_trainer_command` is set, the per-iteration no-signal **control** still
+runs the in-process reference trainer. This keeps the policy-delta attribution
+honest: the BYO trainer produces the signal-driven update, and the reference
+control provides the shared-initial-state, no-signal baseline that the delta is
+measured against.
+
 ## Run All Three Tiers
 
-Raw SkyPilot:
+Each tier is independently usable. The raw YAML runs without npa in the loop;
+the SDK and CLI wrap the same workflow without gating it.
+
+Raw SkyPilot — `runbook.yaml` is materialized with literal defaults because
+SkyPilot 0.12.2 does **not** interpolate `${VAR}` inside the YAML `envs` block or
+in `image_id`. Override the literals at submit time with `--env` / `--secret`,
+and edit `image_id` to your own registry:
 
 ```bash
 cat > /tmp/sim2real-skypilot-k8s.yaml <<'YAML'
@@ -123,9 +210,16 @@ kubernetes:
             name: hf-ngc-tokens
 YAML
 
+# Reaching GPUs: raw `sky jobs launch` against this YAML is currently blocked by
+# the SkyPilot 0.12.2 pre-setup getcwd() bug. Until that is fixed upstream, reach
+# GPUs through the materialized-runbook / direct-Kubernetes route: render the
+# run-block command (literal endpoint, bucket, and images already in place) into
+# a Kubernetes Job that uses the agent-sa pull path and the hf-ngc-tokens secret.
 sky jobs launch \
   --config /tmp/sim2real-skypilot-k8s.yaml \
   --infra k8s/<cluster-name> \
+  --env NPA_SIM2REAL_BUCKET=<bucket> \
+  --env AWS_ENDPOINT_URL=<your-s3-compatible-endpoint> \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
   npa/workflows/workbench/sim2real/runbook.yaml
@@ -200,6 +294,32 @@ npa workbench sim2real inner-loop \
     `stage_12_external_validation/external_stub.json`.
 13. Retrigger: writes `stage_13_retrigger/retrigger.json`, targeting Stage 1
     when a new real-world LeRobot dataset lands in the trigger path.
+14. Rerun visualization: writes `reports/sim2real.rrd` (a single Rerun recording)
+    from the completed run's artifacts. Default on (`NPA_SIM2REAL_RERUN=1` /
+    `--rerun`); set `NPA_SIM2REAL_RERUN=0` / `--no-rerun` to skip. Degrades to a
+    WARN (not a hard failure) when `rerun-sdk` is not installed locally, but
+    always produces the `.rrd` when it is available.
+
+### Rerun Visualization
+
+The `.rrd` reuses the repo's existing Rerun capability (the same `rerun-sdk`
+recording API the LeRobot/GR00T adapters build on) and logs, on a shared
+`frame_time` timeline:
+
+- `rollouts/iter_NN/<rollout_id>/camera` — rollout camera frames as image streams.
+- `rollouts/iter_NN/<rollout_id>/critique` — per-step VLM critique text + error
+  tags as a text document overlay.
+- `rollouts/iter_NN/<rollout_id>/score` — the VLM success score.
+- `signal/reward` and `signal/advantage` — the per-step VLM->RL signal as scalar
+  timeseries, plus `signal/reward_trend` across iterations.
+- `heldout/scores` and `heldout/per_env/<env_id>` — held-out per-env scores as a
+  scalar/bar view.
+
+Open it with `rerun reports/sim2real.rrd`, or load it headlessly with
+`rerun.recording.load_recording(...)` to inspect entity counts. Set
+`NPA_SIM2REAL_RERUN_MP4=1` to also emit best-effort per-rollout `rollout.mp4`
+files (skipped when `ffmpeg` is not on PATH). When `--upload-artifacts` is set,
+the `.rrd` uploads with the rest of the run tree.
 
 ## Loops
 
@@ -279,6 +399,7 @@ options:
 - `byo_signal_converter`
 - `trainer_image`, `byo_trainer_command`
 - `eval_image`, `byo_eval_command`
+- `rerun_enabled`, `byo_rerun_command`
 - `threshold`
 - `inner_iterations`, `outer_iterations`, `loop_of_loops_iterations`
 - `rollout_count`, `steps_per_rollout`, `heldout_env_count`

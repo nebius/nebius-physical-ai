@@ -1,4 +1,10 @@
 # BDD100K reproduction pipeline.
+#
+# Guide:   docs/workbench/cookbooks/bdd100k-pipeline.md (prerequisites, run, verify)
+# Demo:    docs/demos/bdd100k-lancedb-demo.md
+# Runner:  npa/scripts/run_bdd100k_pipeline.py (renders run-scoped S3 paths)
+# Index:   npa/workflows/workbench/skypilot/README.md
+#
 # SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but
 # not mixed dependency graphs in one YAML. Training and evaluation therefore
 # run serially here; split them into separate parallel job groups only when the
@@ -398,11 +404,19 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
     --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
@@ -514,11 +528,19 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
     --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))
@@ -630,11 +652,19 @@ run: |
     --arg view "${VIEW_NAME}" \
     --arg lance_uri "${LANCE_URI}" \
     --arg output_uri "${TRAIN_OUTPUT_URI}" \
+    --arg data_path "${NPA_TRAINING_DATA_PATH:-${LANCE_URI}}" \
+    --argjson overrides "${NPA_TRAINING_OVERRIDES_JSON:-[]}" \
+    --arg wandb_enabled "${NPA_TRAINING_WANDB_ENABLED:-0}" \
+    --arg wandb_project "${NPA_TRAINING_WANDB_PROJECT:-}" \
+    --arg wandb_run_name "${NPA_TRAINING_WANDB_RUN_NAME:-}" \
+    --arg wandb_mode "${WANDB_MODE:-disabled}" \
+    --arg checkpoint_s3_uri "${NPA_CHECKPOINT_S3_URI:-${TRAIN_OUTPUT_URI}}" \
+    --arg checkpoint_s3_endpoint_url "${NPA_CHECKPOINT_S3_ENDPOINT_URL:-${AWS_ENDPOINT_URL:-}}" \
     --argjson label_map "${BDD100K_LABEL_MAP}" \
     --argjson epochs "${TRAIN_EPOCHS}" \
     --argjson batch_size "${TRAIN_BATCH_SIZE}" \
     --argjson learning_rate "${TRAIN_LEARNING_RATE}" \
-    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
+    '{view: $view, lance_uri: $lance_uri, output_uri: $output_uri, data_path: $data_path, overrides: $overrides, wandb: {enabled: ($wandb_enabled == "1"), project: $wandb_project, run_name: $wandb_run_name, mode: $wandb_mode}, checkpoint_s3: {uri: $checkpoint_s3_uri, endpoint_url: $checkpoint_s3_endpoint_url}, label_map: $label_map, epochs: $epochs, batch_size: $batch_size, learning_rate: $learning_rate}')
   post_detection "/train" "${payload}" train-response.json
   run_id=$(jq -r '.run_id' train-response.json)
   deadline=$((SECONDS + TRAIN_TIMEOUT_SECONDS))

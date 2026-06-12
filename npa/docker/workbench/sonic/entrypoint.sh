@@ -5,6 +5,8 @@ PYTHON_BIN="${NPA_PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
   if [ -x /isaac-sim/python.sh ]; then
     PYTHON_BIN=/isaac-sim/python.sh
+  elif [ -x /opt/npa/venv/bin/python ]; then
+    PYTHON_BIN=/opt/npa/venv/bin/python
   elif [ -x /opt/isaac-lab/venv/bin/python ]; then
     PYTHON_BIN=/opt/isaac-lab/venv/bin/python
   else
@@ -190,6 +192,71 @@ summary = {
 (out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
 print("NPA_SONIC_CONTAINER_SMOKE_DONE", out / "sonic_smoke_result.json", flush=True)
 sys.exit(0 if ok else 1)
+PY
+}
+
+write_train_summary() {
+  local command="$1"
+  local rc="$2"
+  "$PYTHON_BIN" <<PY
+import json
+import os
+import pathlib
+import shutil
+import time
+
+out = pathlib.Path(${OUTPUT_DIR@Q})
+out.mkdir(parents=True, exist_ok=True)
+roots = [
+    pathlib.Path("/opt/sonic/runs"),
+    pathlib.Path("/opt/sonic/outputs"),
+    pathlib.Path("/opt/sonic/logs"),
+    out,
+]
+checkpoint_suffixes = (".pt", ".pth", ".safetensors", ".ckpt")
+checkpoints = []
+for root in roots:
+    if not root.exists():
+        continue
+    checkpoints.extend(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix in checkpoint_suffixes
+    )
+checkpoints = sorted(checkpoints, key=lambda path: (path.stat().st_mtime, str(path)))
+latest = checkpoints[-1] if checkpoints else None
+stable = out / f"sonic_checkpoint{latest.suffix if latest else '.pt'}"
+if latest is not None and latest != stable:
+    shutil.copy2(latest, stable)
+summary = {
+    "status": "success" if int(${rc@Q}) == 0 and latest is not None else "failed",
+    "exit_code": int(${rc@Q}),
+    "tool": "sonic",
+    "command": ${command@Q},
+    "embodiment": os.environ.get("SONIC_EMBODIMENT", "UNITREE_G1_SONIC"),
+    "checkpoint": os.environ.get("SONIC_CHECKPOINT", "nvidia/GEAR-SONIC:sonic_release/last.pt"),
+    "data_path": os.environ.get("NPA_TRAINING_DATA_PATH") or os.environ.get("SONIC_DATA_PATH", ""),
+    "overrides": json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]")),
+    "sample_data": os.environ.get("SONIC_SAMPLE_DATA", "1") == "1",
+    "num_envs": int(os.environ.get("SONIC_NUM_ENVS", "16")),
+    "steps": int(os.environ.get("SONIC_STEPS", os.environ.get("SONIC_MAX_ITERATIONS", "5"))),
+    "wandb": {
+        "enabled": os.environ.get("NPA_TRAINING_WANDB_ENABLED", "0") == "1",
+        "project": os.environ.get("NPA_TRAINING_WANDB_PROJECT", ""),
+        "run_name": os.environ.get("NPA_TRAINING_WANDB_RUN_NAME", ""),
+        "mode": os.environ.get("WANDB_MODE", ""),
+    },
+    "checkpoint_path": str(latest) if latest is not None else "",
+    "stable_checkpoint_path": str(stable) if latest is not None else "",
+    "checkpoint_s3_uri": os.environ.get("NPA_CHECKPOINT_S3_URI", os.environ.get("NPA_OUTPUT_PATH", "")),
+    "timestamp": int(time.time()),
+}
+manifest = {"format": "npa_sonic_training_checkpoint_v1", **summary}
+(out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
+(out / "npa_sonic_checkpoint_manifest.json").write_text(json.dumps(manifest, indent=2))
+print("NPA_SONIC_CONTAINER_TRAIN_DONE", out / "sonic_train_summary.json", flush=True)
+if summary["status"] != "success":
+    raise SystemExit(summary["exit_code"] or 3)
 PY
 }
 
@@ -398,6 +465,24 @@ run_real_train() {
   fi
   if [ -n "$smpl_motion_file" ]; then
     hydra_args+=("++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file=${smpl_motion_file}")
+  fi
+  if [ -n "${SONIC_DATA_PATH:-}" ]; then
+    hydra_args+=("+data_path=${SONIC_DATA_PATH}")
+  fi
+  if [ -n "${NPA_TRAINING_OVERRIDES_JSON:-}" ]; then
+    while IFS= read -r override; do
+      [ -n "$override" ] && hydra_args+=("$override")
+    done < <("$PYTHON_BIN" - <<'PY'
+import json
+import os
+
+for item in json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]")):
+    print(item)
+PY
+)
+  elif [ -n "${NPA_TRAINING_OVERRIDES:-}" ]; then
+    read -r -a extra_hydra_args <<< "${NPA_TRAINING_OVERRIDES}"
+    hydra_args+=("${extra_hydra_args[@]}")
   fi
   printf 'NPA_SONIC_REAL_TRAIN mode=%s checkpoint=%s iterations=%s num_envs=%s\n' \
     "$train_mode" "$checkpoint_path" "${SONIC_MAX_ITERATIONS:-5}" "${SONIC_NUM_ENVS:-16}"

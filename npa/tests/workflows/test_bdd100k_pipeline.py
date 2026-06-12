@@ -29,7 +29,7 @@ EXPECTED_TASK_ORDER = [
     "bdd100k-eval-distant",
     "bdd100k-fiftyone-app",
 ]
-EXPECTED_YAML_SHA256 = "7ccbfa2a56934766fb1746e5c9a8768f28ecea6edcfa0fdc0c1ab5f0246b5edd"
+EXPECTED_YAML_SHA256 = "2a723d1ee61dad9ef14f951fdffe3a71be6355a60803e66f6a66e8a9bc69a13b"
 EXPECTED_LANCEDB_IMAGE = "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
 EXPECTED_DETECTION_IMAGE = (
     "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"

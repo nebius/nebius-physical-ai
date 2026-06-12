@@ -56,14 +56,18 @@ app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
-DEFAULT_STORAGE_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
 DEFAULT_REGION = "eu-north1"
+# Recommended default cap for an auto-created object-storage bucket.
+RECOMMENDED_BUCKET_SIZE_GB = 50
 
 _SETUP_GUIDANCE = """Credential setup
 
-Run `npa configure` in a terminal for an interactive setup, or create
-~/.npa/credentials.yaml by hand for user-level tokens, object storage, and
-BYOVM SSH defaults:
+Run `npa configure` in a terminal for an interactive setup. With an
+authenticated Nebius profile it auto-creates your S3 bucket and access key, so
+you only supply tenant/project/region (pre-filled from the profile) plus the
+Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
+existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
+user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
@@ -171,11 +175,109 @@ def _ensure_nebius_profile() -> None:
         )
 
 
-def _run_interactive_configure() -> None:
+def _endpoint_for_region(region: str) -> str:
+    """Return the Nebius S3-compatible storage endpoint URL for *region*."""
+    reg = (region or DEFAULT_REGION).strip() or DEFAULT_REGION
+    return f"https://storage.{reg}.nebius.cloud"
+
+
+def _gb_to_bytes(value: str) -> int:
+    """Parse a GB amount into bytes; non-negative or invalid means unlimited (0)."""
+    try:
+        gb = float(str(value).strip())
+    except (TypeError, ValueError):
+        gb = float(RECOMMENDED_BUCKET_SIZE_GB)
+    if gb <= 0:
+        return 0
+    return int(gb * 1024**3)
+
+
+def _as_bucket_uri(name: str) -> str:
+    """Normalize a bucket name to an ``s3://<name>/`` URI."""
+    value = (name or "").strip()
+    if not value:
+        return ""
+    if value.startswith("s3://"):
+        return value
+    return f"s3://{value.rstrip('/')}/"
+
+
+def _provision_object_storage(
+    nebius_client,
+    ask: Callable[..., str],
+    *,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+) -> dict[str, str] | None:
+    """Auto-create the S3 bucket + access key for the project."""
+    if not (project_id and tenant_id):
+        return None
+
+    suggested_bucket = nebius_client.bucket_name_for(tenant_id, project_id)
+    bucket_name = ask("Object-storage bucket name", default=suggested_bucket) or suggested_bucket
+
+    try:
+        already_exists = nebius_client.bucket_exists(project_id, bucket_name)
+    except Exception:
+        already_exists = False
+
+    bucket_max_size_bytes = 0
+    if already_exists:
+        typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
+    elif typer.confirm(
+        f"Set a size limit on new bucket '{bucket_name}'?", default=True
+    ):
+        bucket_max_size_bytes = _gb_to_bytes(
+            ask(
+                f"Bucket size limit in GB (recommended {RECOMMENDED_BUCKET_SIZE_GB})",
+                default=str(RECOMMENDED_BUCKET_SIZE_GB),
+            )
+        )
+        if bucket_max_size_bytes == 0:
+            typer.echo("  Using no size limit (unlimited, up to quota).")
+    else:
+        typer.echo("  Creating bucket without a size limit (unlimited, up to quota).")
+
+    try:
+        typer.echo("Provisioning Nebius object storage (bucket + access key)...")
+        creds = nebius_client.bootstrap_environment(
+            project_id,
+            tenant_id,
+            region,
+            bucket_name=bucket_name,
+            bucket_max_size_bytes=bucket_max_size_bytes,
+            on_status=lambda msg: typer.echo(f"  - {msg}"),
+        )
+    except nebius_client.NebiusError as exc:
+        typer.echo(f"  Could not auto-provision object storage: {exc}")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"  Could not auto-provision object storage: {exc}")
+        return None
+
+    access_key = creds.get("nebius_api_key", "")
+    secret_key = creds.get("nebius_secret_key", "")
+    if not (access_key and secret_key):
+        typer.echo("  Provisioning did not return usable S3 credentials.")
+        return None
+
+    bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
+    typer.echo(f"  Provisioned bucket {bucket} and an S3 access key.")
+    return {
+        "aws_access_key_id": access_key,
+        "aws_secret_access_key": secret_key,
+        "endpoint_url": creds.get("s3_endpoint", "") or _endpoint_for_region(region),
+        "bucket": bucket,
+    }
+
+
+def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
     from npa.clients.config import CONFIG_PATH, write_config
     from npa.clients.credentials import write_credentials_file
+    from npa.clients import nebius as nebius_client
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
     typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
@@ -192,26 +294,50 @@ def _run_interactive_configure() -> None:
             )
         ).strip()
 
+    project_id = ask("Nebius project id", default=nebius_client.current_project_id())
+    tenant_id = ask("Nebius tenant id", default=nebius_client.current_tenant_id())
+    region = ask("Region", default=DEFAULT_REGION)
+    registry = ask(
+        "Container registry",
+        default=nebius_client.discover_container_registry(project_id)
+        or DEFAULT_CONTAINER_REGISTRY,
+    )
+
+    storage: dict[str, str] | None = None
+    if provision and project_id and tenant_id:
+        storage = _provision_object_storage(
+            nebius_client,
+            ask,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+        )
+        if storage is None:
+            typer.echo(
+                "\nFalling back to manual object-storage entry. "
+                "Provide existing S3 credentials or press Enter to skip."
+            )
+    if storage is None:
+        storage = {
+            "aws_access_key_id": ask(
+                "S3 access key id (AWS_ACCESS_KEY_ID)", secret=True
+            ),
+            "aws_secret_access_key": ask(
+                "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
+            ),
+            "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
+            "bucket": ask("S3 bucket (e.g. s3://my-bucket/)"),
+        }
+
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
     nebius_api_key = ask("Nebius Token Factory API key (NEBIUS_API_KEY)", secret=True)
-    s3_access_key = ask("S3 access key id (AWS_ACCESS_KEY_ID)", secret=True)
-    s3_secret_key = ask("S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True)
-    s3_endpoint = ask("S3 endpoint URL", default=DEFAULT_STORAGE_ENDPOINT)
-    s3_bucket = ask("S3 bucket (e.g. s3://my-bucket/)")
-    registry = ask("Container registry", default=DEFAULT_CONTAINER_REGISTRY)
-    project_id = ask("Nebius project id")
-    tenant_id = ask("Nebius tenant id")
-    region = ask("Region", default=DEFAULT_REGION)
+    ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
 
     credentials_path = write_credentials_file(
         {
             "tokens": {"HF_TOKEN": hf_token, "NEBIUS_API_KEY": nebius_api_key},
-            "storage": {
-                "aws_access_key_id": s3_access_key,
-                "aws_secret_access_key": s3_secret_key,
-                "endpoint_url": s3_endpoint,
-                "bucket": s3_bucket,
-            },
+            "ngc": {"api_key": ngc_api_key},
+            "storage": storage,
         }
     )
 
@@ -242,7 +368,9 @@ def _run_interactive_configure() -> None:
     typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
 
 
-def _configure_impl(*, show: bool, interactive: Optional[bool]) -> None:
+def _configure_impl(
+    *, show: bool, interactive: Optional[bool], provision: bool = True
+) -> None:
     if show:
         typer.echo(_SETUP_GUIDANCE)
         return
@@ -251,7 +379,7 @@ def _configure_impl(*, show: bool, interactive: Optional[bool]) -> None:
         typer.echo(_SETUP_GUIDANCE)
         return
     try:
-        _run_interactive_configure()
+        _run_interactive_configure(provision=provision)
     except (EOFError, typer.Abort):
         typer.echo("\n")
         typer.echo(_SETUP_GUIDANCE)
@@ -273,9 +401,17 @@ def configure(
         "--interactive/--no-interactive",
         help="Force or disable interactive prompting (defaults to auto-detect TTY).",
     ),
+    provision: bool = typer.Option(
+        True,
+        "--provision/--no-provision",
+        help=(
+            "Auto-create the Nebius S3 bucket and access key from your profile "
+            "(default). Use --no-provision to enter existing S3 credentials."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
-    _configure_impl(show=show, interactive=interactive)
+    _configure_impl(show=show, interactive=interactive, provision=provision)
 
 
 @app.command(
@@ -294,9 +430,17 @@ def init(
         "--interactive/--no-interactive",
         help="Force or disable interactive prompting (defaults to auto-detect TTY).",
     ),
+    provision: bool = typer.Option(
+        True,
+        "--provision/--no-provision",
+        help=(
+            "Auto-create the Nebius S3 bucket and access key from your profile "
+            "(default). Use --no-provision to enter existing S3 credentials."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
-    _configure_impl(show=show, interactive=interactive)
+    _configure_impl(show=show, interactive=interactive, provision=provision)
 
 
 def app_entry() -> None:

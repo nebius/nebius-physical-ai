@@ -91,6 +91,14 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    checkpoint_s3_uri as resolve_checkpoint_s3_uri,
+    shell_env_exports,
+    upload_checkpoint_path,
+)
 
 app = typer.Typer(
     name="isaac-lab",
@@ -229,6 +237,7 @@ def _isaac_lab_serverless_train_command(
     steps: int,
     *,
     run_name: str = "npa-serverless",
+    training_config: TrainingConfig | None = None,
 ) -> str:
     local_dir = "/tmp/npa-isaac-lab-train"
     upload = build_serverless_output_upload_cmd(local_dir, "")
@@ -244,6 +253,7 @@ def _isaac_lab_serverless_train_command(
             local_dir,
             run_name=run_name,
             python_bin="${NPA_PYTHON_BIN}",
+            training_config=training_config,
         )
         + f'\necho "NPA_ISAAC_LAB_SERVERLESS_TRAIN_DONE ${{NPA_OUTPUT_PATH:-}}"\n{upload}'
     )
@@ -267,6 +277,7 @@ def _isaac_lab_serverless_train(
     poll_interval: float,
     timeout: float,
     output_format: OutputFormat,
+    training_config: TrainingConfig,
 ) -> None:
     if not output_path:
         _fail("Isaac Lab train --runtime serverless requires --output-path.")
@@ -303,6 +314,9 @@ def _isaac_lab_serverless_train(
             "ISAAC_LAB_TASK": task,
         },
     )
+    env.update(training_config.env())
+    safe_env, secret_env = split_serverless_env(env)
+    extra_env.update(secret_env)
     client = ServerlessClient()
     try:
         existing = client.get_job(name, resolved_project_id)
@@ -322,13 +336,14 @@ def _isaac_lab_serverless_train(
                 num_envs,
                 steps,
                 run_name=name,
+                training_config=training_config,
             ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
             subnet_id=subnet,
             output_path=out,
-            env=env,
+            env=safe_env,
             extra_env=extra_env,
         )
         if not submit_only:
@@ -356,6 +371,28 @@ def _is_s3_uri(path: str) -> bool:
     return path.startswith("s3://")
 
 
+def _ssh_client_for_training(cfg: Any, training_config: TrainingConfig) -> SSHClient:
+    tokens = dict(getattr(cfg.ssh, "tokens", {}) or {})
+    storage = getattr(cfg, "storage", None)
+    if storage is not None:
+        if endpoint_url := getattr(storage, "endpoint_url", ""):
+            tokens["AWS_ENDPOINT_URL"] = endpoint_url
+            tokens["NEBIUS_S3_ENDPOINT"] = endpoint_url
+        if access_key := getattr(storage, "aws_access_key_id", ""):
+            tokens["AWS_ACCESS_KEY_ID"] = access_key
+        if secret_key := getattr(storage, "aws_secret_access_key", ""):
+            tokens["AWS_SECRET_ACCESS_KEY"] = secret_key
+    tokens.update(training_config.env())
+    return SSHClient(
+        SSHConfig(
+            host=cfg.ssh.host,
+            user=cfg.ssh.user,
+            key_path=cfg.ssh.key_path,
+            tokens={key: value for key, value in tokens.items() if value},
+        )
+    )
+
+
 def _storage_client(
     cfg,
     *,
@@ -381,6 +418,7 @@ def _upload_remote_directory_to_s3(
     output_path: str,
     *,
     target_project: str | None = None,
+    training_config: TrainingConfig | None = None,
 ) -> str:
     archive_remote = f"/tmp/npa-isaac-lab-output-{int(time.time() * 1000)}.tgz"
     with tempfile.TemporaryDirectory(prefix="npa-isaac-lab-output-") as tmp:
@@ -398,6 +436,8 @@ def _upload_remote_directory_to_s3(
         extract_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_local, "r:gz") as archive:
             archive.extractall(extract_dir, filter="data")
+        if training_config and training_config.checkpoint_s3.uri:
+            return upload_checkpoint_path(extract_dir, training_config)
         return _storage_client(cfg, project=target_project).upload_directory(
             str(extract_dir), output_path
         )
@@ -687,7 +727,9 @@ def _build_rsl_rl_train_shell(
     *,
     run_name: str,
     python_bin: str,
+    training_config: TrainingConfig | None = None,
 ) -> str:
+    config = training_config or TrainingConfig()
     task_q = shlex.quote(task)
     num_envs_q = shlex.quote(str(num_envs))
     iterations_q = shlex.quote(str(iterations))
@@ -695,12 +737,21 @@ def _build_rsl_rl_train_shell(
     run_name_q = shlex.quote(run_name)
     python_bin_q = shlex.quote(python_bin)
     train_rel_q = shlex.quote(ISAAC_LAB_RSL_RL_TRAIN_REL)
-    return (
+    training_env = shell_env_exports(config.wandb.env())
+    wandb_args: list[str] = []
+    if config.wandb.enabled:
+        wandb_args.extend(["--logger", "wandb"])
+        if config.wandb.project:
+            wandb_args.extend(["--log_project_name", config.wandb.project])
+    hydra_args = ["agent.save_interval=1", *config.overrides]
+    extra_cmd_lines = "".join(f"  {shlex.quote(arg)}\n" for arg in [*wandb_args, *hydra_args])
+    script = (
         f"""\
-export PYTHONUNBUFFERED=1
-TASK={task_q}
-NUM_ENVS={num_envs_q}
-MAX_ITERATIONS={iterations_q}
+	export PYTHONUNBUFFERED=1
+	{training_env}
+	TASK={task_q}
+	NUM_ENVS={num_envs_q}
+	MAX_ITERATIONS={iterations_q}
 OUTPUT_DIR={output_dir_q}
 RUN_NAME={run_name_q}
 EXPERIMENT_NAME=npa_isaac_lab
@@ -944,11 +995,11 @@ cmd=(
   --task "$TASK"
   --num_envs "$NUM_ENVS"
   --max_iterations "$MAX_ITERATIONS"
-  --headless
-  --experiment_name "$EXPERIMENT_NAME"
-  --run_name "$RUN_NAME"
-  agent.save_interval=1
-)
+	  --headless
+	  --experiment_name "$EXPERIMENT_NAME"
+	  --run_name "$RUN_NAME"
+	{extra_cmd_lines.rstrip()}
+	)
 printf 'ISAAC_LAB_RSL_RL_COMMAND'
 printf ' %q' "${cmd[@]}"
 printf '\\n'
@@ -981,6 +1032,15 @@ manifest = {
     "format": "npa_isaac_lab_rsl_rl_checkpoint_v1",
     "tool": "isaac_lab",
     "framework": "rsl_rl",
+    "data_path": os.environ.get("NPA_TRAINING_DATA_PATH", ""),
+    "overrides": json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]")),
+    "wandb": {
+        "enabled": os.environ.get("NPA_TRAINING_WANDB_ENABLED", "0") == "1",
+        "project": os.environ.get("NPA_TRAINING_WANDB_PROJECT", ""),
+        "run_name": os.environ.get("NPA_TRAINING_WANDB_RUN_NAME", ""),
+        "mode": os.environ.get("WANDB_MODE", ""),
+    },
+    "checkpoint_s3_uri": os.environ.get("NPA_CHECKPOINT_S3_URI", ""),
     "task": os.environ["NPA_ISAAC_LAB_TASK"],
     "num_envs": int(os.environ["NPA_ISAAC_LAB_NUM_ENVS"]),
     "max_iterations": int(os.environ["NPA_ISAAC_LAB_MAX_ITERATIONS"]),
@@ -1022,9 +1082,10 @@ set -e
 if [ "$train_rc" -ne 0 ]; then
   exit "$train_rc"
 fi
-exit "$summary_rc"
-"""
+	exit "$summary_rc"
+	"""
     )
+    return script.replace("{extra_cmd_lines.rstrip()}", extra_cmd_lines.rstrip())
 
 def _build_eval_script(
     task: str, checkpoint: str, num_episodes: int, output_dir: str
@@ -2252,10 +2313,24 @@ def train_cmd(
         "",
         "--output-path",
         "-o",
-        help="S3 URI where training artifacts are written.",
+        help="Compatibility S3 URI where training artifacts are written. Prefer --checkpoint-s3-uri for BYO S3.",
     ),
     # Deprecated path alias: keep --output-dir working for existing scripts.
     output_dir: str = typer.Option("", "--output-dir", hidden=True),
+    data_path: str = typer.Option("", "--data-path", help="Canonical training data path metadata or mounted dataset URI."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic Hydra override as KEY=VALUE. Repeat for learning rate, clip params, terminations, or any trainer key.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
     image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
@@ -2272,16 +2347,32 @@ def train_cmd(
     ),
 ) -> None:
     """Run Isaac Lab training on the VM via SSH."""
+    try:
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+    except TrainingConfigError as exc:
+        _fail(str(exc))
     if num_envs <= 0:
         _fail(f"--num-envs must be positive, got {num_envs}")
     if steps <= 0:
         _fail(f"--steps must be positive, got {steps}")
+    checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
     if _is_serverless_runtime(runtime):
         _isaac_lab_serverless_train(
             task=task,
             num_envs=num_envs,
             steps=steps,
-            output_path=output_path,
+            output_path=checkpoint_output_path,
             project_id=project_id,
             image=image,
             gpu_type=gpu_type,
@@ -2293,18 +2384,19 @@ def train_cmd(
             poll_interval=poll_interval,
             timeout=timeout,
             output_format=output_format,
+            training_config=training_config,
         )
         return
 
     cfg = _get_ssh_config()
     try:
-        if output_path:
-            output_path = validate_write_path(output_path, tool="Isaac Lab train")
+        if checkpoint_output_path:
+            checkpoint_output_path = validate_write_path(checkpoint_output_path, tool="Isaac Lab train")
     except PathContractError as exc:
         _fail(str(exc))
         return
-    ssh = SSHClient(cfg.ssh)
-    target_output = output_path or output_dir or f"{ISAAC_LAB_HOME}/runs"
+    ssh = _ssh_client_for_training(cfg, training_config)
+    target_output = checkpoint_output_path or output_dir or f"{ISAAC_LAB_HOME}/runs"
     output_is_s3 = _is_s3_uri(target_output)
     remote_output_dir = (
         f"{ISAAC_LAB_HOME}/runs/npa-train-{int(time.time())}"
@@ -2325,6 +2417,7 @@ def train_cmd(
             remote_output_dir,
             run_name=run_name,
             python_bin=python_bin,
+            training_config=training_config,
         ),
     )
     stream_logs = output_format != OutputFormat.json
@@ -2353,6 +2446,7 @@ def train_cmd(
         "output_path": target_output,
         "output_dir": remote_output_dir,
         "duration_seconds": round(time.time() - start, 1),
+        "training_config": training_config.public_dict(),
     }
     if exit_code != 0:
         result["stderr"] = stderr.strip()[-500:] if stderr else ""
@@ -2361,7 +2455,11 @@ def train_cmd(
             try:
                 try:
                     result["output_path"] = _upload_remote_directory_to_s3(
-                        ssh, cfg, remote_output_dir, target_output
+                        ssh,
+                        cfg,
+                        remote_output_dir,
+                        target_output,
+                        training_config=training_config,
                     )
                     result["upload_mode"] = "local"
                 except Exception as local_exc:

@@ -10,11 +10,13 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 
 ## Codex Skills
 
+- `.agents/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
 - `.agents/skills/platform/quickstart/SKILL.md`: first-time setup, zero-credential first run, install, Nebius auth, and the contributor dev/test loop.
 - `.agents/skills/workbench/cookbooks/SKILL.md`: working end-to-end cookbooks mapped to their validated entrypoints (BDD100K, sim-to-real, VLM-eval loop, LeRobot benchmarks, Isaac Lab BYOF).
 - `.agents/skills/workbench/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
 - `.agents/skills/platform/skypilot-workflows/SKILL.md`: SkyPilot workflow authoring, runner scripts, limitations, and cleanup.
 - `.agents/skills/platform/nebius-infra/SKILL.md`: cluster, storage, registry, credential, GPU routing, and namespace facts.
+- `.agents/skills/platform/cluster/SKILL.md`: NPA Workbench cluster targets and GPU/CPU node-group management (add, add-cpu, remove, status, list).
 - `.agents/skills/platform/testing-conventions/SKILL.md`: pytest, ruff, gates, expected baseline, and known failures.
 - `.agents/skills/platform/super-prompt-patterns/SKILL.md`: repo super-prompt phase, dirty-tree, NOVEL_ISSUE, and commit-lock conventions.
 - `.agents/skills/workbench/lerobot/SKILL.md`: LeRobot policy training, serving, inference, datasets, and validation.

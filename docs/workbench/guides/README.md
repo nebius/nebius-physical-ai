@@ -49,6 +49,27 @@ The no-GPU guide needs nothing else. The GPU guides assume you have completed
 [../getting-started.md](../getting-started.md) (Nebius auth, an S3 bucket, and
 `npa configure`). Each guide calls out exactly when credentials are required.
 
+## What's been validated on real backends
+
+These guides were exercised against live Nebius (via `npa`), not just read:
+
+| Path | Backend | Result |
+| --- | --- | --- |
+| `vlm-eval benchmark/run` (stub) | local, offline | works (`accuracy: 1.0`) |
+| `lerobot train --runtime serverless --smoke` | Nebius AI Job (H200) | works — produced a real ACT checkpoint (`model.safetensors`) in S3 |
+| `genesis train-teacher --runtime serverless` | Nebius AI Job (H100) | works, but is a **smoke** (import check + placeholder checkpoint); real Genesis training is local/VM |
+| `sim_to_real.local_smoke` | local, no cluster | runs the spine; reports `blocked` unless `lerobot` is installed locally |
+| `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-a`) | **capacity-blocked** — `NotEnoughResources` / VM schedule timeout |
+| `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-d`) | job schedules and completes; minimal run produced no artifact yet (small step budget / `W9-isaac-lab-e2e-fix`) |
+
+Isaac Lab needs RT cores, and serverless RT-core capacity varies by SKU: the
+default `gpu-l40s-a` pool failed to schedule, while `gpu-l40s-d` had capacity and
+ran to completion. `gpu-rtx6000` is **not** a serverless platform (use the
+managed-Kubernetes path). For real Isaac Lab training prefer an RT-core VM /
+managed-K8s + BYOF; for a serverless capacity retry use `--gpu-type gpu-l40s-d`.
+
+SONIC G1 (MuJoCo) is documented from its cookbook and not yet re-run here.
+
 ## Bring your own everything
 
 These guides use public datasets and the shipped robots so you can reproduce

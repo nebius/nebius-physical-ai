@@ -1,169 +1,197 @@
-# Workbench SkyPilot Workflow Catalog
+# Raw SkyPilot Workbench YAMLs
 
-**This is the index of every runnable Workbench workflow YAML.** Each YAML is a
-SkyPilot pipeline you can submit with `npa workbench workflow submit`. The
-narrative walkthroughs (prerequisites, run, verify) live in `docs/`, and thin
-submission wrappers live in `npa/scripts/`.
+This directory contains standalone SkyPilot task YAMLs for Workbench
+reference paths. The supported first path is the Python wrapper or `npa`
+CLI for each workflow because wrappers inject secrets, validate image
+overrides, and clean up owned clusters. Use these raw YAMLs when you need to
+inspect or operate the underlying SkyPilot task directly.
 
-Use the catalog below to find a workflow by what you want to do. As a companion
-convention, each YAML should open with a short header comment carrying the same
-four pointers, so you can navigate from a file back to its guide and this index:
+## Run Pattern
 
-```text
-# What:   one-line description of the pipeline
-# Guide:  docs/... walkthrough
-# Runner: how to submit it (CLI command or npa/scripts/ wrapper)
-# Index:  npa/workflows/workbench/skypilot/README.md  (this file)
-```
+All examples assume SkyPilot 0.12.2.
 
-## Find your workflow
+1. Configure SkyPilot for the target infrastructure and verify the GPU aliases
+   used by the YAML are schedulable.
 
-Pick the row that matches what you want to do. (This catalog is the source of
-truth; the top-level `README.md` shows only a few common entry points.)
+   ```bash
+   sky show-gpus --infra kubernetes --all
+   ```
 
-| I want to… | Workflow YAML | Run it with | GPU | Guide |
-| --- | --- | --- | --- | --- |
-| **Score robot rollouts with a VLM, no GPU/credentials** | [`vlm-eval.yaml`](./vlm-eval.yaml) | `npa workbench vlm-eval` | H100 (or `stub` locally) | [vlm-eval-loop-runbook.md](../../../../docs/workbench/cookbooks/vlm-eval-loop-runbook.md) |
-| Sweep eval thresholds / rubrics / models and rank them | [`vlm-eval-benchmark.yaml`](./vlm-eval-benchmark.yaml) | `npa workbench vlm-eval benchmark` | H100 | [vlm-eval-loop-runbook.md](../../../../docs/workbench/cookbooks/vlm-eval-loop-runbook.md) |
-| Run the full sim-to-real train → eval pipeline | [`sim-to-real-pipeline.yaml`](./sim-to-real-pipeline.yaml) | [`run_sim_to_real_pipeline.py`](../../../scripts/run_sim_to_real_pipeline.py) | H100 | [sim-to-real-pipeline.md](../../../../docs/workbench/cookbooks/sim-to-real-pipeline.md) |
-| Run the sim-to-real VLM-eval feedback loop | [`sim-to-real-loop.yaml`](./sim-to-real-loop.yaml) | [`run_sim_to_real_pipeline.py`](../../../scripts/run_sim_to_real_pipeline.py) | H100 | [vlm-eval-loop-runbook.md](../../../../docs/workbench/cookbooks/vlm-eval-loop-runbook.md) |
-| Re-trigger sim-to-real when new data lands in S3 | [`sim-to-real-trigger.yaml`](./sim-to-real-trigger.yaml) | [`run_sim_to_real_pipeline.py`](../../../scripts/run_sim_to_real_pipeline.py) | CPU | [sim-to-real-pipeline.md](../../../../docs/workbench/cookbooks/sim-to-real-pipeline.md) |
-| Curate + train an AV perception model (BDD100K) | [`bdd100k-pipeline.yaml`](./bdd100k-pipeline.yaml) | [`run_bdd100k_pipeline.py`](../../../scripts/run_bdd100k_pipeline.py) | H100 | [bdd100k-pipeline.md](../../../../docs/workbench/cookbooks/bdd100k-pipeline.md) |
-| Train one Isaac Lab RL policy | [`isaac-lab-rl-train.yaml`](./isaac-lab-rl-train.yaml) | [`run_isaac_lab_rl.py`](../../../scripts/run_isaac_lab_rl.py) | L40S | [byof-isaac-lab/README.md](../../../../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
-| Sweep many Isaac Lab RL configs in parallel | [`isaac-lab-rl-sweep.yaml`](./isaac-lab-rl-sweep.yaml) | [`run_isaac_lab_rl.py`](../../../scripts/run_isaac_lab_rl.py) | L40S | [workbench-yaml-guide.md](../../../../docs/workbench-yaml-guide.md#isaac-lab-rl-training) |
-| Fine-tune a SONIC G1 locomotion policy + MuJoCo eval | [`sonic-locomotion-finetuning.yaml`](./sonic-locomotion-finetuning.yaml) | `npa workbench sonic` | H100 / L40S | [sonic-locomotion-finetuning.md](../../../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) |
-| Run a SONIC training smoke job | [`sonic-train-standalone.yaml`](./sonic-train-standalone.yaml) | `npa workbench sonic train` | L40S | [sonic-train-runbook.md](../../../../docs/workbench/cookbooks/sonic-train-runbook.md) |
-| Export a trained SONIC checkpoint to ONNX | [`sonic-export.yaml`](./sonic-export.yaml) | `npa workbench sonic export` | L40S | [sonic-eval-runbook.md](../../../../docs/workbench/cookbooks/sonic-eval-runbook.md) |
-| Export then evaluate a SONIC policy in one run | [`sonic-export-eval.yaml`](./sonic-export-eval.yaml) | `npa workbench sonic` | L40S | [sonic-eval-runbook.md](../../../../docs/workbench/cookbooks/sonic-eval-runbook.md) |
-| Evaluate an exported SONIC ONNX policy | [`sonic-eval.yaml`](./sonic-eval.yaml) | `npa workbench sonic eval` | L40S | [sonic-eval-runbook.md](../../../../docs/workbench/cookbooks/sonic-eval-runbook.md) |
-| Score a SONIC checkpoint with MJLab metrics | [`mjlab-eval.yaml`](./mjlab-eval.yaml) | `npa workbench mjlab eval` | H100 | [sonic-locomotion-finetuning.md](../../../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) |
-| Retarget source motion to the SONIC embodiment | [`retargeting.yaml`](./retargeting.yaml) | `npa workbench retargeting run` | CPU | [sonic-locomotion-finetuning.md](../../../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) |
-| Generate synthetic frames with Cosmos3 (text → image) | [`cosmos3-text-to-image-inference.yaml`](./cosmos3-text-to-image-inference.yaml) | `npa workbench cosmos` | H100 | [inference SKILL](../../../../.agents/skills/inference/SKILL.md) |
-| Stage the Cosmos3 framework + checkpoints | [`cosmos3-ea-fetch.yaml`](./cosmos3-ea-fetch.yaml) | `npa workbench cosmos` | CPU | [cosmos3-setup SKILL](../../../../.agents/skills/cosmos3-setup/SKILL.md) |
-| Run Cosmos3 Reason inference | [`cosmos3-reason.yaml`](./cosmos3-reason.yaml) | `npa workbench cosmos` | RTX PRO 6000 | [inference SKILL](../../../../.agents/skills/inference/SKILL.md) |
-| Run a Cosmos2 transfer (video-to-world) stage | [`cosmos2-transfer.yaml`](./cosmos2-transfer.yaml) | `npa workbench cosmos` | RTX PRO 6000 | [cosmos SKILL](../../../../.agents/skills/workbench/cosmos/SKILL.md) |
-| **Roll out on a k8s GPU, then judge it with hosted Token Factory** | [`tokenfactory-rollout-judge.yaml`](./tokenfactory-rollout-judge.yaml) | `npa workbench workflow submit` | H100 (judge stage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
-| **Reason over a scene, roll out on a k8s GPU, then judge vs. the plan** | [`tokenfactory-scene-to-rollout-judge.yaml`](./tokenfactory-scene-to-rollout-judge.yaml) | `npa workbench workflow submit` | H100 (reason + judge stages CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
-| **Train on a k8s GPU, then triage the run with Token Factory** | [`tokenfactory-train-triage.yaml`](./tokenfactory-train-triage.yaml) | `npa workbench workflow submit` | H100 (triage stage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
-| Train on a serverless GPU, then triage the run with Token Factory | _(runner script)_ | [`run_tokenfactory_train_triage.py`](../../../scripts/run_tokenfactory_train_triage.py) | serverless GPU (triage CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
-| Design a sweep, run N serverless GPU trains, then rank them with Token Factory | _(runner script)_ | [`run_tokenfactory_sim_sweep.py`](../../../scripts/run_tokenfactory_sim_sweep.py) | serverless GPU ×N (design + rank CPU) | [tokenfactory-compute-combos.md](../../../../docs/workbench/cookbooks/tokenfactory-compute-combos.md) |
+2. Copy the YAML to a temporary path and replace only the template values in
+   `envs:` and `resources.image_id`. SkyPilot 0.12.2 does not interpolate
+   `${VAR}` placeholders inside `envs:`, so do not submit a file that still
+   contains placeholders such as `${NPA_S3_BUCKET}` or `docker:${IMAGE}`.
+   Avoid blindly running `envsubst` over the whole file because many `run:`
+   blocks intentionally contain shell variables.
 
-To compose your own combo, read
-[composing-cloud-and-token-factory.md](../../../../docs/workbench/composing-cloud-and-token-factory.md).
+3. Provide S3-compatible credentials to the pod through SkyPilot secrets,
+   Kubernetes secrets referenced by the cluster config, or another supported
+   secret mechanism. The YAMLs expect ordinary AWS-compatible variables such as
+   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, and the
+   workflow-specific `s3://...` inputs and outputs listed below.
 
-The Cosmos guides are agent skills under `.agents/skills/`; everything else
-links to a human-facing guide under `docs/`.
+4. Launch the rendered YAML.
 
-[`sim2real-actions.yaml`](./sim2real-actions.yaml) and
-[`sim2real-envgen-split.yaml`](./sim2real-envgen-split.yaml) are step components
-of the self-contained Sim2Real runbook at
-[`../sim2real/README.md`](../sim2real/README.md) — the one workflow that keeps
-its guide and YAML colocated because it is a single CLI/SDK-driven chain rather
-than a docs-site cookbook.
+   ```bash
+   sky launch -y --infra kubernetes/<context-name> -c <cluster-name> /tmp/rendered.yaml
+   ```
 
-## How to submit a workflow
+   YAMLs that declare `cloud: nebius` can be submitted with the corresponding
+   Nebius SkyPilot infra target instead of a Kubernetes context.
+
+5. Collect status and logs, then tear down explicitly. Do not rely on
+   autodown for these workflows.
+
+   ```bash
+   sky queue <cluster-name>
+   sky logs <cluster-name>
+   sky down -y <cluster-name>
+
+   while sky status --refresh | grep -q "<cluster-name>"; do
+     sleep 10
+   done
+   ```
+
+## Common Inputs
+
+- `NPA_S3_BUCKET`, `S3_BUCKET`, `S3_PREFIX`, `PIPELINE_ROOT_URI`, and
+  workflow-specific `*_URI` values select the S3-compatible input and output
+  locations. Use a dedicated run prefix for every launch.
+- `AWS_ENDPOINT_URL` or workflow-specific endpoint variables select the S3
+  endpoint. Keep the endpoint configurable for BYO S3-compatible storage.
+- `HF_TOKEN` is needed only for workflows that fetch a gated or private
+  Hugging Face repo, or when your organization requires authenticated
+  downloads for public repos.
+- `NGC_API_KEY` is needed only where the YAML says NGC is required or when you
+  rebuild/pull images that depend on NVIDIA NGC entitlement.
+- Private registry images require the cluster image-pull secret configured by
+  the operator. The raw YAMLs intentionally use placeholder registry IDs where
+  the user must supply their own image.
+
+## Per-YAML Reference
+
+| YAML | Description | Target | S3 I/O | HF rights | NGC entitlement |
+| --- | --- | --- | --- | --- | --- |
+| `bdd100k-pipeline.yaml` | Multi-stage BDD100K ingest, LanceDB backfill, materialized views, detector training, detector eval, and optional FiftyOne app. | Kubernetes CPU plus `H100:1` train/eval stages. | Reads `BDD100K_SOURCE_URI`; writes `PIPELINE_ROOT_URI`, `LANCE_URI`, `TRAIN_OUTPUT_URI`, and `EVAL_OUTPUT_URI` under `s3://<bucket>/bdd100k-pipeline/<run-id>/`. | None. BDD100K dataset access is separate from HF. | None for the workflow; registry access is still required for private images. |
+| `cosmos2-transfer.yaml` | Runs a Cosmos2 transfer/augment stage from input assets and scene spec. | Kubernetes `RTXPRO6000:1`. | Reads `NPA_INPUT_URI`, `NPA_ASSETS_URI`, and `NPA_SCENE_SPEC_URI`; writes `NPA_OUTPUT_URI`. | None in the YAML. | Required when pulling or rebuilding Cosmos/NGC-derived images; otherwise registry access for `COSMOS2_TRANSFER_IMAGE`. |
+| `cosmos3-ea-fetch.yaml` | Fetches the Cosmos3 framework source and `nvidia/Cosmos3-Nano` checkpoint into node-local cache as an access check. | Kubernetes CPU, `8+` CPUs, `32+` GB memory, large disk. | No durable S3 output by default; cache is node-local. | Required for `nvidia/Cosmos3-Nano` if Hugging Face access approval or authenticated download is needed. Set the token named by `NPA_COSMOS3_HF_TOKEN_ENV`. | Optional by default because `NPA_COSMOS3_REQUIRE_NGC=0`; required when set to `1`. |
+| `cosmos3-reason.yaml` | Runs the Cosmos3 reasoning image over a prompt/input bundle. | Kubernetes `RTXPRO6000:1`. | Reads `NPA_INPUT_URI`; writes `NPA_OUTPUT_URI`. | None by default; follow the selected model's HF terms if `COSMOS3_REASON_MODEL` is changed to an HF-hosted model. | Required when pulling or rebuilding Cosmos/NGC-derived images; otherwise registry access for `COSMOS3_REASON_IMAGE`. |
+| `cosmos3-text-to-image-inference.yaml` | Clones NVIDIA Cosmos3, downloads `nvidia/Cosmos3-Nano`, and runs a text-to-image smoke/inference command. | Kubernetes `H100:1`, `16+` CPUs, `128+` GB memory, large disk. | Optional upload to `NPA_COSMOS3_OUTPUT_S3_URI`; local output otherwise. | Required for `nvidia/Cosmos3-Nano` if Hugging Face access approval or authenticated download is needed. Set the token named by `NPA_COSMOS3_HF_TOKEN_ENV`. | Optional by default because `NPA_COSMOS3_REQUIRE_NGC=0`; required when set to `1`. |
+| `isaac-lab-rl-sweep.yaml` | Runs four Isaac Lab RSL-RL training variants as a learning-rate and entropy sweep. | Kubernetes `L40S:1` per variant. | Writes run logs and summaries to `S3_OUTPUT_PREFIX`. | None. | Required for Isaac Sim/Isaac Lab image entitlement when pulling or rebuilding NGC-derived images. |
+| `isaac-lab-rl-train.yaml` | Runs one Isaac Lab RSL-RL training job. | Kubernetes `L40S:1`. | Writes run logs and summaries to `S3_OUTPUT_PREFIX`. | None. | Required for Isaac Sim/Isaac Lab image entitlement when pulling or rebuilding NGC-derived images. |
+| `mjlab-eval.yaml` | Evaluates a SONIC checkpoint through the MJLab evaluation helper. | Kubernetes `H100:1`. | Reads `EVAL_INPUT_URI` and `SONIC_CHECKPOINT_URI`; writes `MJLAB_OUTPUT_URI`. | None. | Image-specific only; required if the selected image depends on NGC content. |
+| `retargeting.yaml` | Retargets a source motion to the configured SONIC embodiment. | Kubernetes CPU. | Reads `INPUT_MOTION_URI` and optional `RETARGET_MAP_URI`; writes `RETARGETED_MOTION_URI`. | None. | Image-specific only; required if the selected image depends on NGC content. |
+| `sim-to-real-loop.yaml` | Runs the VLM evaluation loop over rollout results using the self-hosted VLM image. | Kubernetes `H100:1`. | Reads rollout input configured in the task payload; writes `OUTPUT_DIR`, commonly a run-local or S3-backed output path. | Optional for public `Qwen/Qwen2-VL-7B-Instruct` downloads; required only for private/gated overrides. | Image-specific only; required if the selected VLM image depends on NGC content. |
+| `sim-to-real-pipeline.yaml` | Runs the full Sim2Real pipeline: dataset input, env generation, split, policy training, VLM eval hooks, checkpointing, and reporting. | Kubernetes failover across `H100:1`, `H200:1`, and `L40S:1`. | Reads `INPUT_DATA_URI`/`LEROBOT_DATASET_URI`; writes `PIPELINE_ROOT_URI`, env splits, checkpoints, and visualization artifacts under the configured S3 prefix. | Optional for public `lerobot/pusht`; required for private/gated dataset or model overrides. | Required for any selected Cosmos, SONIC, Isaac, or other NGC-derived image in the pipeline. |
+| `sim-to-real-trigger.yaml` | Polls an S3-compatible trigger prefix and submits the Sim2Real pipeline when new input arrives. | Kubernetes CPU. | Reads trigger bucket/prefix and watermark URI; submits pipeline with the configured pipeline S3 bucket, prefix, and input URI. | None. | None. |
+| `sim2real-actions.yaml` | Generates action-conditioned rollouts from train environments with a policy image. | Kubernetes `RTXPRO6000:1`. | Reads `NPA_TRAIN_ENVS_URI`; writes `NPA_ACTIONS_URI` and `NPA_OUTPUT_URI`. | None. | Image-specific only; required if `POLICY_IMAGE` depends on NGC content. |
+| `sim2real-envgen-split.yaml` | Splits generated Sim2Real environments into train and held-out shards. | Kubernetes `RTXPRO6000:1`. | Reads `NPA_AUGMENTED_FRAMES_URI`; writes `NPA_OUTPUT_URI`. | None. | Image-specific only; required if `ENVGEN_IMAGE` depends on NGC content. |
+| `sonic-eval.yaml` | Evaluates an exported SONIC ONNX policy, including containerized render/eval options. | Nebius `L40S:1`. | Reads `SONIC_ONNX` and `SONIC_METADATA`; writes `SONIC_EVAL_OUTPUT`. | None. | Required for SONIC/Isaac image entitlement when pulling or rebuilding NGC-derived images. |
+| `sonic-export-eval.yaml` | Exports a SONIC checkpoint to ONNX and evaluates the exported policy. | Nebius `L40S:1`. | Reads `POLICY_CKPT`; writes `OUTPUT_DIR` and eval artifacts. | None unless `POLICY_CKPT` points at an HF checkpoint. | Required for SONIC/Isaac image entitlement when pulling or rebuilding NGC-derived images. |
+| `sonic-export.yaml` | Exports a SONIC checkpoint to ONNX metadata and policy artifacts. | Kubernetes `L40S:1`. | Reads `SONIC_CHECKPOINT`; writes `SONIC_OUTPUT` and `SONIC_METADATA`. | None unless `SONIC_CHECKPOINT` points at an HF checkpoint. | Required for SONIC/Isaac image entitlement when pulling or rebuilding NGC-derived images. |
+| `sonic-locomotion-finetuning.yaml` | Retargets motion, fine-tunes SONIC, and runs MJLab evaluation. | Kubernetes CPU, `L40S:1` fine-tune, and `H100:1` eval stages. | Reads motion input and optional checkpoint URI; writes retargeted motion, `SONIC_TRAIN_OUTPUT_URI`, and `MJLAB_OUTPUT_URI`. | Required for the default `nvidia/GEAR-SONIC:sonic_release` checkpoint. | Required for SONIC/Isaac image entitlement when pulling or rebuilding NGC-derived images. |
+| `sonic-train-standalone.yaml` | Runs a standalone SONIC training smoke using docker-run payload mode. | Nebius `L40S:1`. | Requires `S3_ENDPOINT_URL` and `S3_BUCKET`; writes to `s3://<bucket>/<SONIC_OUTPUT_PREFIX>/`. | Required for the default `nvidia/GEAR-SONIC:sonic_release/last.pt` checkpoint. | Required for SONIC/Isaac image entitlement when pulling or rebuilding NGC-derived images. |
+| `token-factory-caption.yaml` | Batch-captions images with a hosted Token Factory vision model. | CPU only (zero-GPU). | Reads `INPUT_URI`; writes `OUTPUT_URI` with `generations.jsonl`. | None. | None. |
+| `token-factory-generate.yaml` | Batch text generation from a JSONL prompt file via Token Factory. | CPU only (zero-GPU). | Reads `INPUT_URI`; writes `OUTPUT_URI` with `generations.jsonl`. | None. | None. |
+| `token-factory-cosmos-reason.yaml` | Scene reasoning with `nvidia/Cosmos3-Super-Reasoner` over images/video. | CPU only (zero-GPU). | Reads `INPUT_URI`; writes `OUTPUT_URI` with scene reasoning JSON. | None. | None. |
+| `tokenfactory-rollout-judge.yaml` | LeRobot eval rollout on k8s GPU, then hosted VLM judging via `vlm-eval --backend api`. | Kubernetes GPU + CPU judge stage. | Reads rollout config; writes rollout videos and `VLM_EVAL_OUTPUT_URI`. | None. | None. |
+| `tokenfactory-scene-to-rollout-judge.yaml` | Reason over scene images, roll out a policy on k8s GPU, judge against the plan. | CPU reason + k8s GPU rollout + CPU judge. | Reads `SCENE_URI`; writes plan, rollouts, and judge report under configured S3 prefixes. | None. | None. |
+| `vlm-eval-token-factory.yaml` | Scores rollout artifacts with a hosted Token Factory VLM (no local vLLM). | CPU only (zero-GPU). | Reads `EVAL_INPUT_URI`; writes `VLM_EVAL_OUTPUT_URI`. | None. | None. |
+| `vlm-eval-benchmark.yaml` | Runs a self-hosted VLM benchmark over a benchmark dataset. | Kubernetes `H100:1`. | Reads `VLM_BENCHMARK_DATASET_URI`; writes `VLM_EVAL_BENCHMARK_OUTPUT_URI`. | Optional for public `Qwen/Qwen2-VL-7B-Instruct`; required only for private/gated overrides. | Image-specific only; required if the selected VLM image depends on NGC content. |
+| `vlm-eval.yaml` | Runs self-hosted VLM evaluation for one task/input set. | Kubernetes `H100:1`. | Reads `EVAL_INPUT_URI`; writes `VLM_EVAL_OUTPUT_URI`. | Optional for public `Qwen/Qwen2-VL-7B-Instruct`; required only for private/gated overrides. | Image-specific only; required if the selected VLM image depends on NGC content. |
+
+## Standalone Launch Commands
+
+After rendering placeholders into `/tmp/<yaml-name>.yaml`, each YAML can be
+launched directly. Use stable, run-specific cluster names so cleanup is
+unambiguous.
 
 ```bash
-# 1. Bootstrap SkyPilot once.
-npa skypilot bootstrap
-export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
-
-# 2a. Submit a YAML directly.
-npa workbench workflow submit \
-  npa/workflows/workbench/skypilot/vlm-eval.yaml --run-id vlm-eval
-
-# 2b. Or use a thin wrapper when a workflow needs run-scoped S3 paths,
-#     secret-env injection, GPU validation, or cleanup.
-npa/.venv/bin/python npa/scripts/run_sim_to_real_pipeline.py --help
-npa/.venv/bin/python npa/scripts/run_isaac_lab_rl.py --help
-npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py --help
-
-# 3. Track and tear down.
-npa workbench workflow status <run-id>
-npa workbench workflow logs <run-id> <task-name>
-npa workbench workflow teardown <run-id>
+sky launch -y --infra kubernetes/<context-name> -c bdd100k-pipeline /tmp/bdd100k-pipeline.yaml
+sky launch -y --infra kubernetes/<context-name> -c cosmos2-transfer /tmp/cosmos2-transfer.yaml
+sky launch -y --infra kubernetes/<context-name> -c cosmos3-ea-fetch /tmp/cosmos3-ea-fetch.yaml
+sky launch -y --infra kubernetes/<context-name> -c cosmos3-reason /tmp/cosmos3-reason.yaml
+sky launch -y --infra kubernetes/<context-name> -c cosmos3-t2i /tmp/cosmos3-text-to-image-inference.yaml
+sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-sweep /tmp/isaac-lab-rl-sweep.yaml
+sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-train /tmp/isaac-lab-rl-train.yaml
+sky launch -y --infra kubernetes/<context-name> -c mjlab-eval /tmp/mjlab-eval.yaml
+sky launch -y --infra kubernetes/<context-name> -c retargeting /tmp/retargeting.yaml
+sky launch -y --infra kubernetes/<context-name> -c sim-to-real-loop /tmp/sim-to-real-loop.yaml
+sky launch -y --infra kubernetes/<context-name> -c sim-to-real-pipeline /tmp/sim-to-real-pipeline.yaml
+sky launch -y --infra kubernetes/<context-name> -c sim-to-real-trigger /tmp/sim-to-real-trigger.yaml
+sky launch -y --infra kubernetes/<context-name> -c sim2real-actions /tmp/sim2real-actions.yaml
+sky launch -y --infra kubernetes/<context-name> -c sim2real-envgen-split /tmp/sim2real-envgen-split.yaml
+sky launch -y --infra nebius -c sonic-eval /tmp/sonic-eval.yaml
+sky launch -y --infra nebius -c sonic-export-eval /tmp/sonic-export-eval.yaml
+sky launch -y --infra kubernetes/<context-name> -c sonic-export /tmp/sonic-export.yaml
+sky launch -y --infra kubernetes/<context-name> -c sonic-locomotion-finetuning /tmp/sonic-locomotion-finetuning.yaml
+sky launch -y --infra nebius -c sonic-train-standalone /tmp/sonic-train-standalone.yaml
+sky launch -y --infra kubernetes/<context-name> -c vlm-eval-benchmark /tmp/vlm-eval-benchmark.yaml
+sky launch -y --infra kubernetes/<context-name> -c vlm-eval /tmp/vlm-eval.yaml
 ```
-
-`submit` supports `--controller-backend kubernetes`, `--controller-backend
-nebius`, `--run-id`, and repeated `--var KEY=VALUE` substitutions.
 
 ## Gated Hugging Face models
 
-Several workflows pass an `HF_TOKEN` so a runtime can download model weights or
+Many workflows pass an `HF_TOKEN` so a runtime can download model weights or
 datasets from Hugging Face. A token alone is **not** enough for *gated* repos:
-you must also visit the model page once while signed in with the same account
-and accept its license/usage terms, or the download returns `403 Gated`.
+you must also open the repo page once while signed in with the same account and
+accept its license/usage terms (NVIDIA repos may also require a request form),
+or the download fails with `403 Gated`. Public repos need no acceptance and the
+token is optional (it only helps avoid anonymous rate limits).
 
-<details>
-<summary>Per-workflow gated-repo table (operators)</summary>
-
-"None" means the workflow either uses no Hugging Face repo or only public ones
-(a token is optional and only helps avoid anonymous rate limits). Gated repos
-are marked **(gated — accept license)**.
+The table below lists, per workflow, the repos you must accept before the run
+can fetch weights. Gated repos are marked **(gated — accept license)**.
 
 | Workflow YAML | Hugging Face repos to accept | Notes |
 | --- | --- | --- |
 | `sonic-train-standalone.yaml` | `nvidia/GEAR-SONIC` **(gated — accept license)** | Default `SONIC_CHECKPOINT=nvidia/GEAR-SONIC:sonic_release/last.pt`. |
-| `sonic-locomotion-finetuning.yaml` | `nvidia/GEAR-SONIC` **(gated — accept license)** | Fine-tune stage downloads the released SONIC checkpoint; the MuJoCo-eval stage consumes the S3 checkpoint and needs no HF access. |
+| `sonic-locomotion-finetuning.yaml` | `nvidia/GEAR-SONIC` **(gated — accept license)** | Fine-tune stage downloads the released checkpoint; the MuJoCo-eval stage consumes the S3 checkpoint and needs no HF access. |
 | `cosmos3-ea-fetch.yaml` | `nvidia/Cosmos3-Nano` **(gated — early-access, accept license)** | `NPA_COSMOS3_MODEL_ID` default; override for a BYO checkpoint. |
 | `cosmos3-text-to-image-inference.yaml` | `nvidia/Cosmos3-Nano` **(gated — early-access, accept license)** | Same `NPA_COSMOS3_MODEL_ID` default; also needs `GITHUB_TOKEN` for the source repo. |
-| `cosmos3-reason.yaml` | `nvidia/Cosmos-Reason1-7B` **(gated — accept license)** | `COSMOS3_REASON_MODEL` default. |
-| `cosmos2-transfer.yaml` | NVIDIA Cosmos diffusion weights baked into `COSMOS2_TRANSFER_IMAGE` **(gated — accept license)** | The repo depends on the chosen image; the `npa workbench cosmos` default is `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`. |
-| `vlm-eval.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODEL` default. Token optional; not gated. |
-| `vlm-eval-benchmark.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODELS` default. Token optional; not gated. |
-| `sim-to-real-loop.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | Self-hosted vLLM default `MODEL`. Token optional; not gated. |
-| `sim-to-real-pipeline.yaml` | `lerobot/pusht` (public dataset) | Default `LEROBOT_DATASET_REPO_ID`; the default `VLM_EVAL_BACKEND=stub` pulls no VLM. Token optional. |
+| `cosmos3-reason.yaml` | `nvidia/Cosmos-Reason1-7B` **(gated — accept license)** when the reasoning image runs | The YAML only emits a contract manifest recording `COSMOS3_REASON_MODEL` (default `nvidia/Cosmos-Reason1-7B`); the reasoning image that consumes it downloads the gated weights. |
+| `cosmos2-transfer.yaml` | NVIDIA Cosmos diffusion weights **(gated — accept license)** when the transfer image runs | The YAML only emits a transfer manifest; `COSMOS2_TRANSFER_IMAGE` downloads the gated weights (the `npa workbench cosmos` default is `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`). |
+| `vlm-eval.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODEL` default. Apache-2.0; token optional, not gated. |
+| `vlm-eval-benchmark.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | `VLM_MODELS` default. Token optional, not gated. |
+| `sim-to-real-loop.yaml` | `Qwen/Qwen2-VL-7B-Instruct` (public) | Self-hosted vLLM default `MODEL`. Token optional, not gated. |
+| `sim-to-real-pipeline.yaml` | `lerobot/pusht` (public dataset) | Default `LEROBOT_DATASET_REPO_ID`; default `VLM_EVAL_BACKEND=stub` pulls no VLM. |
 | `sim-to-real-trigger.yaml` | `lerobot/pusht` (public dataset) | Watches/retriggers `sim-to-real-pipeline.yaml`; same public dataset. |
-| `../sim2real/runbook.yaml` | `nvidia/Cosmos-Reason1-7B` **(gated — accept license)**; `lerobot/pusht` (public dataset) | Default `--vlm-model nvidia/Cosmos-Reason1-7B` and `--trigger-dataset-id lerobot/pusht`. |
-| `bdd100k-pipeline.yaml` | None | CLIP embeddings run inside the first-party LanceDB image; no gated HF repo. |
+| `bdd100k-pipeline.yaml` | None | CLIP embeddings run inside the first-party LanceDB image; BDD100K dataset access is separate from HF. |
 | `isaac-lab-rl-train.yaml`, `isaac-lab-rl-sweep.yaml` | None | Isaac Lab RSL-RL training pulls no HF weights. |
-| `sonic-export.yaml`, `sonic-export-eval.yaml`, `sonic-eval.yaml` | None | Operate on already-trained checkpoints staged in S3. |
+| `sonic-export.yaml`, `sonic-export-eval.yaml`, `sonic-eval.yaml` | None | Operate on already-trained checkpoints staged in S3 (unless an input points at an HF checkpoint). |
 | `mjlab-eval.yaml`, `retargeting.yaml` | None | Consume S3 artifacts; no HF download. |
 | `sim2real-actions.yaml`, `sim2real-envgen-split.yaml` | None | Env generation / action conditioning use BYO container images, not HF repos. |
-| `../templates/curate-augment-train.yaml` | None | Placeholder Argo steps; no HF download. |
 
-### Workbench tools driven by the CLI (not YAML)
+The self-contained Sim2Real runbook (`../sim2real/runbook.yaml`) defaults to
+`nvidia/Cosmos-Reason1-7B` **(gated — accept license)** for its VLM and the
+public `lerobot/pusht` dataset.
 
-These are launched through `npa workbench ...` rather than a SkyPilot YAML, but
-they also require accepting gated repos before they can download weights:
+### Gated repos not surfaced by a workflow YAML
 
-- GR00T (`npa workbench groot ...`): `nvidia/GR00T-N1.7-3B` and
-  `nvidia/Cosmos-Reason2-2B` — both **gated — accept license**.
-- Cosmos (`npa workbench cosmos ...`): the configured model, default
-  `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` — **gated — accept license**.
+Each workbench tool is a containerized service that can be driven by CLI/SDK as
+well as the YAMLs above, so the entrypoint does not change which repo is gated.
+Two gated repos still aren't visible from the per-workflow table:
 
-</details>
+- **GR00T has no SkyPilot YAML in this directory** — it is driven only by
+  `npa workbench groot` (CLI/SDK). It needs `nvidia/GR00T-N1.7-3B` **and**
+  `nvidia/Cosmos-Reason2-2B`, both **gated — accept license**.
+- **Driving the Cosmos tool directly** (`npa workbench cosmos ...`) defaults to a
+  different repo than the `cosmos3-*` YAMLs above:
+  `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` **(gated — accept license)**.
 
 ### How to accept a gated repo
 
 1. Sign in to Hugging Face with the account whose token you set as `HF_TOKEN`.
-2. Open the model page (for example `https://huggingface.co/nvidia/GEAR-SONIC`)
-   and accept the license / "Agree and access repository" prompt. NVIDIA repos
-   may also require completing a request form.
-3. Confirm the token can reach the repo before launching a long run.
-   `npa workbench cosmos check` and `npa workbench groot` validate gated-model
-   access for those tools; for other workflows a quick
-   `huggingface-cli download <repo> --revision main` smoke check works.
+2. Open the repo page (for example `https://huggingface.co/nvidia/GEAR-SONIC`)
+   and accept the license / "Agree and access repository" prompt, completing any
+   NVIDIA request form.
+3. Confirm the token can reach the repo before a long run. `npa workbench cosmos
+   check` and `npa workbench groot` validate gated-model access for those tools;
+   for other workflows a quick `huggingface-cli download <repo> --revision main`
+   smoke check works.
 
-## Why the guides live in `docs/` and not next to each YAML
+## Cleanup Rules
 
-The guide-to-YAML relationship is many-to-many, so guides are not colocated 1:1:
-
-- One guide often drives several YAMLs (the SONIC locomotion cookbook uses
-  `sonic-locomotion-finetuning.yaml`, `retargeting.yaml`, and `mjlab-eval.yaml`).
-- One YAML is often referenced by several guides (`bdd100k-pipeline.yaml` is used
-  by its cookbook, the demo writeup, and `docs/workbench-yaml-guide.md`).
-- Guides are customer-facing product documentation that cross-link to the
-  quickstart, getting-started, architecture, and CLI references. They belong in
-  the navigable `docs/` tree rooted at `docs/README.md`.
-
-The header comment on each YAML and the catalog above keep both directions easy
-to traverse. **Update both ends when you add or rename a workflow.**
-
-## Conventions
-
-- Shared parameter, artifact, naming, GPU, and safety rules:
-  [`../schemas/workflow-conventions.md`](../schemas/workflow-conventions.md).
-- General YAML structure (label maps, env vars, endpoints, S3 paths):
-  [`../../../../docs/workbench-yaml-guide.md`](../../../../docs/workbench-yaml-guide.md).
-- Submission, SkyPilot runtime, and cleanup pattern: [`../README.md`](../README.md).
+Raw SkyPilot launches are user-owned. Always keep the cluster name and run
+prefix together in your run notes, cancel failed managed jobs explicitly, run
+`sky down -y <cluster-name>`, and poll `sky status --refresh` until the cluster
+is gone. For Nebius-backed launches, do not rely on autodown.

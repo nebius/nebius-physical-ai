@@ -100,7 +100,7 @@ network/storage calls live in the runner and existing tool modules.
 - `npa/workflows/workbench/skypilot/tokenfactory-scene-to-rollout-judge.yaml`
   (**kubernetes**): three serial stages — `token-factory reason` over scene
   images (CPU) → `lerobot-eval` rollout (k8s GPU) → `vlm-eval --backend api`
-  judging the rollout against the reasoner's plan (CPU). The hackathon
+  judging the rollout against the reasoner's plan (CPU). The full
   physical-common-sense loop end to end.
 
 Guide: `docs/workbench/cookbooks/tokenfactory-compute-combos.md`. To compose new

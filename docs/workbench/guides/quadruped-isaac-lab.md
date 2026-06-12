@@ -65,10 +65,16 @@ npa workbench isaac-lab eval \
 
 ## Go bigger
 
-- **Run serverless on Nebius:** add `--runtime serverless --project-id
-  <your-project-id> --gpu-type l40s` and `train` submits a Nebius AI Job. (Keep
-  it on an RT-core GPU type. Serverless needs `--project-id`, or a project
-  configured in `~/.npa/config.yaml`.)
+- **Serverless works, but mind RT-core capacity.** `--runtime serverless
+  --project-id <your-project-id> --gpu-type l40s` submits a Nebius AI Job.
+  Isaac Lab needs RT cores, and capacity is SKU-specific: the default
+  `gpu-l40s-a` pool can fail to schedule (`NotEnoughResources` / VM schedule
+  timeout). If that happens, retry on the other L40S SKU with
+  `--gpu-type gpu-l40s-d`, which scheduled and ran to completion in our testing.
+  Note `gpu-rtx6000` is **not** a serverless platform (it's the managed-
+  Kubernetes path). End-to-end checkpoint production over serverless is still
+  being hardened (`W9-isaac-lab-e2e-fix`), so for real training prefer the
+  RT-core VM / managed-Kubernetes + BYOF flow below.
 - **Try other robots:** the same `--task` flag covers arms (e.g.
   `Isaac-Reach-Franka-v0`), humanoids, and more — Isaac Lab's whole task
   registry is available.

@@ -24,7 +24,14 @@ from npa.serverless_common import (
     build_serverless_output_upload_cmd,
     resolve_gpu_platform,
     resolve_subnet,
+    split_serverless_env,
     validate_output_path,
+)
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    checkpoint_s3_uri as resolve_checkpoint_s3_uri,
 )
 import typer
 
@@ -39,63 +46,37 @@ def build_sonic_serverless_train_command(
     headless: bool,
     max_iterations: int,
     isaac_lab_version: str,
+    training_config: TrainingConfig | None = None,
 ) -> str:
-    """Build the remote command for a SONIC serverless smoke/train job."""
+    """Build the remote command for a real SONIC serverless train job."""
 
+    config = training_config or TrainingConfig()
     local_dir = "/tmp/npa-sonic-train"
-    script = f"""
-import importlib
-import json
-import os
-import pathlib
-import sys
-import time
-
-out = pathlib.Path("{local_dir}")
-out.mkdir(parents=True, exist_ok=True)
-started = time.time()
-
-def import_state(name):
-    try:
-        importlib.import_module(name)
-        return "available"
-    except Exception as exc:
-        return f"unavailable: {{type(exc).__name__}}: {{exc}}"
-
-gear_sonic_import = import_state("gear_sonic")
-isaaclab_import = import_state("isaaclab")
-isaaclab_app_import = import_state("isaaclab.app")
-ok = all(value == "available" for value in (gear_sonic_import, isaaclab_import, isaaclab_app_import))
-summary = {{
-    "status": "success" if ok else "failed",
-    "tool": "sonic",
-    "embodiment": {embodiment!r},
-    "checkpoint": {checkpoint!r},
-    "data_path": {data_path!r},
-    "sample_data": {sample_data},
-    "num_envs": {num_envs},
-    "headless": {headless},
-    "max_iterations": {max_iterations},
-    "isaac_lab_version": {isaac_lab_version!r},
-    "gear_sonic_import": gear_sonic_import,
-    "isaaclab_import": isaaclab_import,
-    "isaaclab_app_import": isaaclab_app_import,
-    "job": os.environ.get("NPA_JOB_NAME", ""),
-    "duration_seconds": round(time.time() - started, 3),
-}}
-(out / "sonic_smoke_result.json").write_text(json.dumps(summary, indent=2))
-(out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
-(out / "checkpoint_smoke.json").write_text(json.dumps({{"format": "npa_sonic_serverless_smoke_v1", **summary}}, indent=2))
-print("NPA_SONIC_SERVERLESS_TRAIN_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), flush=True)
-sys.exit(0 if ok else 1)
-""".strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
+    training_env = config.env()
+    env_lines = "\n".join(f"export {key}={value!r}" for key, value in training_env.items())
     body = (
         'if [ -x /isaac-sim/python.sh ]; then NPA_PYTHON_BIN=/isaac-sim/python.sh; '
         'elif [ -x /opt/isaac-lab/venv/bin/python ]; then NPA_PYTHON_BIN=/opt/isaac-lab/venv/bin/python; '
         'else NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"; fi\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\nsonic_rc=$?\n{upload}\nexit "$sonic_rc"'
+        f"{env_lines}\n"
+        f"export NPA_LOCAL_OUTPUT_DIR={local_dir!r}\n"
+        "export SONIC_RUN_REAL_TRAIN=1\n"
+        f"export SONIC_CHECKPOINT={checkpoint!r}\n"
+        f"export SONIC_CHECKPOINT_PATH={checkpoint!r}\n"
+        f"export SONIC_DATA_PATH={(config.data_path or data_path)!r}\n"
+        f"export SONIC_SAMPLE_DATA={'1' if sample_data else '0'}\n"
+        f"export SONIC_EMBODIMENT={embodiment!r}\n"
+        f"export SONIC_NUM_ENVS={str(num_envs)!r}\n"
+        f"export SONIC_HEADLESS={'True' if headless else 'False'}\n"
+        f"export SONIC_MAX_ITERATIONS={str(max_iterations)!r}\n"
+        f"export SONIC_ISAAC_LAB_VERSION={isaac_lab_version!r}\n"
+        'if [ -x /entrypoint.sh ]; then /entrypoint.sh train; '
+        'else echo "/entrypoint.sh not found in SONIC image" >&2; exit 127; fi\n'
+        "sonic_rc=$?\n"
+        f"{upload}\n"
+        'exit "$sonic_rc"'
     )
     return remote_bash(body)
 
@@ -123,6 +104,7 @@ def _run_serverless_train(
     poll_interval: float,
     timeout: float,
     output_format: OutputFormat,
+    training_config: TrainingConfig,
 ) -> None:
     if not output_path:
         fail("SONIC train --runtime serverless requires --output-path.")
@@ -164,6 +146,9 @@ def _run_serverless_train(
             "SONIC_CHECKPOINT": checkpoint,
         },
     )
+    env.update(training_config.env())
+    safe_env, secret_env = split_serverless_env(env)
+    extra_env.update(secret_env)
     client = ServerlessClient()
     try:
         existing = client.get_job(name, resolved_project_id)
@@ -183,6 +168,7 @@ def _run_serverless_train(
                     "job_name": info.name,
                     "job_status": info.status,
                     "output_path": out,
+                    "training_config": training_config.public_dict(),
                 },
                 output_format,
             )
@@ -200,13 +186,14 @@ def _run_serverless_train(
                 headless=headless,
                 max_iterations=max_iterations,
                 isaac_lab_version=isaac_lab_version,
+                training_config=training_config,
             ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
             subnet_id=subnet,
             output_path=out,
-            env=env,
+            env=safe_env,
             extra_env=extra_env,
         )
         if not submit_only:
@@ -224,6 +211,7 @@ def _run_serverless_train(
             "job_name": info.name,
             "output_path": out,
             "embodiment": embodiment,
+            "training_config": training_config.public_dict(),
         },
         output_format,
     )
@@ -234,6 +222,19 @@ def train_cmd(
     checkpoint: str = typer.Option(DEFAULT_CHECKPOINT, "--checkpoint", help="Checkpoint ref or path."),
     data_path: str = typer.Option("", "--data-path", help="Training data path or URI."),
     sample_data: bool = typer.Option(False, "--sample-data", help="Use SONIC sample data for smoke."),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic Hydra override as KEY=VALUE. Repeat for learning rate, clip params, terminations, or any trainer key.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     embodiment: str = typer.Option(DEFAULT_EMBODIMENT, "--embodiment", help="SONIC embodiment tag."),
     num_envs: int = typer.Option(16, "--num-envs", help="Number of Isaac Lab environments."),
     headless: bool = typer.Option(True, "--headless/--no-headless", help="Run Isaac Lab headless."),
@@ -262,13 +263,30 @@ def train_cmd(
 ) -> None:
     """Run SONIC Isaac Lab training or smoke validation."""
 
+    try:
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+    except TrainingConfigError as exc:
+        fail(str(exc))
     runtime_value = enum_value(runtime)
     if num_envs <= 0:
         fail(f"--num-envs must be positive, got {num_envs}")
     if max_iterations <= 0:
         fail(f"--max-iterations/--steps must be positive, got {max_iterations}")
     embodiment_tag = normalize_embodiment(embodiment)
+    data_path = training_config.data_path
     effective_sample_data = sample_data or not data_path
+    checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
     if runtime_value == "serverless":
         _run_serverless_train(
             checkpoint=checkpoint,
@@ -279,7 +297,7 @@ def train_cmd(
             headless=headless,
             max_iterations=max_iterations,
             isaac_lab_version=isaac_lab_version,
-            output_path=output_path,
+            output_path=checkpoint_output_path,
             project_id=project_id,
             image=image,
             image_variant=image_variant,
@@ -292,6 +310,7 @@ def train_cmd(
             poll_interval=poll_interval,
             timeout=timeout,
             output_format=output_format,
+            training_config=training_config,
         )
         return
     output(
@@ -306,7 +325,8 @@ def train_cmd(
             "headless": headless,
             "max_iterations": max_iterations,
             "hf_token_env": hf_token_env,
-            "output_path": output_path,
+            "output_path": checkpoint_output_path,
+            "training_config": training_config.public_dict(),
         },
         output_format,
     )

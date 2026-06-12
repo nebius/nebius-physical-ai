@@ -15,6 +15,7 @@ Claude Code should treat this file as an index. Load the relevant skill before m
 - `.claude/skills/workbench/retargeting/SKILL.md`: load for motion retargeting in SONIC locomotion workflows.
 - `.agents/skills/workbench/sim-to-real/SKILL.md`: load for generic sim-to-real data import, Cosmos autoscale, VLM evaluation, and controller-loop workflow planning.
 - `.agents/skills/workbench/token-factory/SKILL.md`: load for native Nebius Token Factory workflows — the hosted-inference client, the token-factory tool (caption/generate), the vlm-eval api backend, and the zero-GPU Token Factory SkyPilot workflows.
+- `.claude/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
 
 ### Partner Capability Roadmap
 
