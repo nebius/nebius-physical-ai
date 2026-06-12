@@ -11,7 +11,8 @@ agent, and (3) plug in your own LeRobot-based training container.
 
 - Workflow file: `npa/workflows/workbench/sim2real/runbook.yaml`
 - Reference: `npa/workflows/workbench/sim2real/README.md`
-- CLI: `npa workbench sim2real run`
+- Submit: `npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
+- SDK/local debug: `npa.sdk.workbench.sim2real.run()` or `python -m npa.workflows.sim2real_loop full-loop`
 
 ---
 
@@ -72,18 +73,19 @@ All checks should report PASS (an optional `config` WARN for unset
 
 ## 3. Run the workflow
 
+Submit the runbook YAML (preferred):
+
 ```bash
-npa workbench sim2real run \
+npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id pusht-demo \
-  --s3-bucket <your-bucket> \
-  --s3-prefix sim2real \
-  --s3-endpoint <your-s3-endpoint> \
-  --trigger-dataset-id lerobot/pusht \
-  --sim-backend genesis \
-  --inner-iterations 2 --outer-iterations 1 \
-  --rollout-count 3 --steps-per-rollout 4 --heldout-env-count 8 \
-  --upload-artifacts
+  --var NPA_SIM2REAL_RUN_ID=pusht-demo \
+  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht \
+  --var AWS_ENDPOINT_URL=<your-s3-endpoint>
 ```
+
+Or launch with raw SkyPilot (see `npa/workflows/workbench/sim2real/README.md`).
 
 What you get back: a task-success / held-out report, an RL-signal diversity
 block, image-digest provenance proving the genuine VLM/eval images ran, and a
@@ -91,7 +93,7 @@ Rerun recording (see §6). Outputs land under `s3://<your-bucket>/sim2real/<run-
 
 > **Trigger on new data instead of running manually:** drop a LeRobot dataset at
 > a watched S3 prefix and let the trigger launch the run:
-> `npa workbench trigger watch --s3-bucket <your-bucket> --s3-prefix <trigger-prefix> ...`
+> `npa workbench workflow trigger watch --s3-bucket <your-bucket> --s3-prefix <trigger-prefix> ...`
 
 ---
 
@@ -103,16 +105,14 @@ LeRobot in **two ways**, both pure flags — no change to NPA:
 ### Option A — swap the trainer *image* (runs as a sibling K8s job)
 
 ```bash
-npa workbench sim2real run ... \
-  --trainer-image <your-registry>/<your-lerobot-trainer>:<tag>
+# Set TRAINER_IMAGE in runbook env / --var when submitting workflow YAML.
+export TRAINER_IMAGE=<your-registry>/<your-lerobot-trainer>:<tag>
 ```
 
 ### Option B — swap the trainer *command* (runs in-process in your base image)
 
-```bash
-npa workbench sim2real run ... \
-  --byo-trainer-command "python -m your_pkg.train_from_vlm_signal"
-```
+Set `BYO_TRAINER_COMMAND` in the runbook env (or pass `--byo-trainer-command` via SDK
+for local `sim2real_loop` runs).
 
 **The contract your container/command must honor** (this is all it needs to do):
 

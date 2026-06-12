@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from npa.cli.workbench.retargeting import app as retargeting_app
 from npa.cli.workbench.sonic import (
     deploy,
     eval as eval_mod,
@@ -42,3 +43,4 @@ app.command("eval")(eval_mod.eval_cmd)
 app.command("serve")(serve.serve_cmd)
 app.command("status")(status.status_cmd)
 app.command("list")(list_mod.list_cmd)
+app.add_typer(retargeting_app, name="retargeting")

@@ -48,22 +48,23 @@ export ROLLOUT_COUNT=3
 export STEPS_PER_ROLLOUT=4
 export HELDOUT_ENV_COUNT=8
 
-npa workbench sim2real run \
+npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id "${NPA_SIM2REAL_RUN_ID}" \
-  --s3-bucket "${NPA_SIM2REAL_BUCKET}" \
-  --s3-prefix "${NPA_SIM2REAL_PREFIX}" \
-  --s3-endpoint "${AWS_ENDPOINT_URL}" \
-  --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI}" \
-  --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID}" \
-  --assets-uri "${ASSETS_URI}" \
-  --scene-spec-uri "${SCENE_SPEC_URI}" \
-  --inner-iterations "${INNER_ITERATIONS}" \
-  --outer-iterations "${OUTER_ITERATIONS}" \
-  --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS}" \
-  --rollout-count "${ROLLOUT_COUNT}" \
-  --steps-per-rollout "${STEPS_PER_ROLLOUT}" \
-  --heldout-env-count "${HELDOUT_ENV_COUNT}" \
-  --upload-artifacts
+  --var NPA_SIM2REAL_RUN_ID="${NPA_SIM2REAL_RUN_ID}" \
+  --var NPA_SIM2REAL_BUCKET="${NPA_SIM2REAL_BUCKET}" \
+  --var NPA_SIM2REAL_PREFIX="${NPA_SIM2REAL_PREFIX}" \
+  --var AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID="${NPA_SIM2REAL_TRIGGER_DATASET_ID}" \
+  --var ASSETS_URI="${ASSETS_URI}" \
+  --var SCENE_SPEC_URI="${SCENE_SPEC_URI}" \
+  --var INNER_ITERATIONS="${INNER_ITERATIONS}" \
+  --var OUTER_ITERATIONS="${OUTER_ITERATIONS}" \
+  --var LOOP_OF_LOOPS_ITERATIONS="${LOOP_OF_LOOPS_ITERATIONS}" \
+  --var ROLLOUT_COUNT="${ROLLOUT_COUNT}" \
+  --var STEPS_PER_ROLLOUT="${STEPS_PER_ROLLOUT}" \
+  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}"
 ```
 
 Canonical S3 layout for the quickstart:
@@ -246,26 +247,27 @@ report = sim2real.run(
 print(report["outer_loop"]["latest_decision"])
 ```
 
-CLI:
+Workflow submit:
 
 ```bash
-npa workbench sim2real run \
+npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id pusht-cli-demo \
-  --s3-bucket <bucket> \
-  --s3-prefix pusht-cli-demo \
-  --trigger-dataset-uri s3://<bucket>/sim2real-triggers/pusht-cli-demo/lerobot-pusht/ \
-  --trigger-dataset-id lerobot/pusht \
-  --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
-  --scene-spec-uri s3://<bucket>/sim2real-assets/pusht/scene-spec.json \
-  --inner-iterations 2 \
-  --outer-iterations 1 \
-  --upload-artifacts
+  --var NPA_SIM2REAL_RUN_ID=pusht-cli-demo \
+  --var NPA_SIM2REAL_BUCKET=<bucket> \
+  --var NPA_SIM2REAL_PREFIX=pusht-cli-demo \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/pusht-cli-demo/lerobot-pusht/ \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht \
+  --var ASSETS_URI=s3://<bucket>/sim2real-assets/pusht/ \
+  --var SCENE_SPEC_URI=s3://<bucket>/sim2real-assets/pusht/scene-spec.json \
+  --var INNER_ITERATIONS=2 \
+  --var OUTER_ITERATIONS=1
 ```
 
-Inner loop only:
+Inner loop only (local SDK / module — no top-level workbench CLI):
 
 ```bash
-npa workbench sim2real inner-loop \
+npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
   --run-id sim2real-inner-example \
   --output-dir /tmp/sim2real-inner-example \
   --inner-iterations 2
