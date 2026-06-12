@@ -4,7 +4,8 @@ Closed loop on Nebius GPUs: simulation rollouts → VLM critique → RL signal �
 update → held-out eval → threshold gate → Rerun observability.
 
 **Canonical workflow file:** `npa/workflows/workbench/sim2real/runbook.yaml`  
-**Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`
+**Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`  
+**Architecture (as implemented):** [sim2real-architecture.md](./sim2real-architecture.md)
 
 ---
 
