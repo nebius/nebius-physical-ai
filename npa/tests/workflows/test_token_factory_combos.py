@@ -309,6 +309,31 @@ def test_sweep_runner_rank_existing_skips_design_and_gpu() -> None:
     assert "design_prompt" not in plan
 
 
+def test_sweep_runner_full_mode_resolves_rank_root_without_keyerror(monkeypatch) -> None:
+    """Regression: full-sweep mode must derive rank_root from sweep_root, not variant_uris."""
+    module = _load_sweep_runner()
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr(module, "_hydrate_credentials", lambda: None)
+    monkeypatch.setattr(module, "_design_sweep", lambda *a, **k: {"status": "completed"})
+    monkeypatch.setattr(
+        module,
+        "_launch_variants",
+        lambda variants: [{"id": v["id"], "uri": v["output_uri"]} for v in variants],
+    )
+
+    def _fake_rank(*, objective, runs, rank_root, model, max_tokens):
+        captured["rank_root"] = rank_root
+        return {"status": "completed", "ranked_variants": [r["id"] for r in runs]}
+
+    monkeypatch.setattr(module, "_rank_runs", _fake_rank)
+
+    args = module._parse_args(["--run-id", "demo", "--num-variants", "2", "--bucket", "s3://b/sweeps"])
+    plan = module.build_plan(args)
+    assert module._run(args, plan) == 0
+    assert captured["rank_root"] == "s3://b/sweeps/demo/ranking"
+
+
 def test_sweep_runner_disambiguates_colliding_run_labels() -> None:
     module = _load_sweep_runner()
     # Distinct last segments keep their names...

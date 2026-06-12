@@ -160,15 +160,17 @@ def _run(args: argparse.Namespace, plan: dict[str, Any]) -> int:
 
     if plan["mode"] == "rank-existing":
         completed = _label_existing_runs(plan["variant_uris"])
+        default_rank_base = plan["variant_uris"][0]
     else:
         summary["design"] = _design_sweep(plan, model=plan["design_model"], max_tokens=args.max_tokens)
         completed = _launch_variants(plan["variants"])
         summary["variants"] = completed
+        default_rank_base = plan["sweep_root"]
 
     ranking = _rank_runs(
         objective=args.objective,
         runs=completed,
-        rank_root=args.rank_root or join_uri(plan.get("sweep_root", plan["variant_uris"][0]), "ranking"),
+        rank_root=args.rank_root or join_uri(default_rank_base, "ranking"),
         model=plan["ranking_model"],
         max_tokens=args.max_tokens,
     )
