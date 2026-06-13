@@ -2055,3 +2055,33 @@ def test_wait_kubernetes_job_honors_required_successes(monkeypatch) -> None:
         )
         == "complete"
     )
+
+
+def test_cosmos2_transfer_component_uploads_result_json_to_explicit_uri(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.workflows.sim2real.engine import run_cosmos2_transfer_component_from_s3
+
+    uploads: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def upload_file(self, local_file: str, bucket_uri: str) -> str:
+            uploads.append((Path(local_file).name, bucket_uri))
+            return bucket_uri
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: FakeClient(),
+    )
+
+    result_uri = "s3://bucket/run/augment/cosmos2-transfer-result.json"
+    run_cosmos2_transfer_component_from_s3(
+        input_uri="s3://bucket/trigger/",
+        output_uri=result_uri,
+        augmented_frames_uri="s3://bucket/run/augment/frames/",
+    )
+
+    assert ("cosmos2-transfer-result.json", result_uri) in uploads
+    manifest_uploads = [uri for name, uri in uploads if name == "cosmos2-transfer-manifest.json"]
+    assert manifest_uploads
+    assert manifest_uploads[0].endswith("/augment/manifest.json")

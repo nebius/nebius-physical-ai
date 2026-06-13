@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import uuid
@@ -938,9 +939,12 @@ def run_cosmos2_transfer_component(
         filename="transfer.json",
     )
     frames_uri = _normalized_s3_prefix(f"{output_uri.rstrip('/')}/frames/")
+    augment_prefix = output_uri.rstrip("/") + "/"
+    result_uri = f"{augment_prefix}cosmos2-transfer-result.json"
     env = {
         "NPA_SIM2REAL_INPUT_URI": input_uri,
-        "NPA_SIM2REAL_OUTPUT_URI": output_uri.rstrip("/") + "/",
+        "NPA_SIM2REAL_OUTPUT_URI": result_uri,
+        "NPA_SIM2REAL_AUGMENT_PREFIX": augment_prefix,
         "NPA_SIM2REAL_AUGMENTED_FRAMES_URI": frames_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
@@ -948,7 +952,6 @@ def run_cosmos2_transfer_component(
         "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
     }
     output_json = local_dir / "cosmos2-transfer-result.json"
-    result_uri = f"{output_uri.rstrip('/')}/cosmos2-transfer-result.json"
     invocation = _run_image_component(
         config.augment_image,
         component="cosmos2_transfer",
@@ -1194,6 +1197,47 @@ def _wait_kubernetes_job(
     return "timeout"
 
 
+def _npa_package_root() -> Path | None:
+    """Return the checkout ``npa/`` directory when running from source."""
+
+    candidate = Path(__file__).resolve().parents[4]
+    if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
+        return candidate
+    return None
+
+
+def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
+    """Upload a minimal npa source tarball so sibling Jobs run current code."""
+
+    npa_root = _npa_package_root()
+    if npa_root is None or not config.s3_bucket:
+        return ""
+    with tempfile.TemporaryDirectory(prefix="npa-sibling-src-") as tmp:
+        tarball = Path(tmp) / "npa-source.tgz"
+        with tarfile.open(tarball, "w:gz") as archive:
+            archive.add(npa_root / "src", arcname="npa/src")
+            archive.add(npa_root / "pyproject.toml", arcname="npa/pyproject.toml")
+        destination = (
+            f"{_artifact_root_uri(config).rstrip('/')}/source/"
+            f"npa-{_safe_slug(config.run_id)[:40]}.tgz"
+        )
+        return _storage_client(config).upload_file(str(tarball), destination)
+
+
+def _ensure_sibling_source_env(
+    config: Sim2RealLoopConfig, env: dict[str, str]
+) -> dict[str, str]:
+    """Inject git clone or source tarball env for sibling Jobs when needed."""
+
+    merged = dict(env)
+    if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI") or (config.source_repo or "").strip():
+        return merged
+    tarball_uri = _stage_sibling_source_tarball(config)
+    if tarball_uri:
+        merged["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = tarball_uri
+    return merged
+
+
 def _run_kubernetes_indexed_image_component(
     image: str,
     *,
@@ -1206,6 +1250,7 @@ def _run_kubernetes_indexed_image_component(
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     job_name = _k8s_job_name(config.run_id, component)
+    env = _ensure_sibling_source_env(config, env)
     manifest = _indexed_component_job_manifest(
         image,
         component=component,
@@ -1308,6 +1353,7 @@ def _run_kubernetes_image_component(
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     job_name = _k8s_job_name(config.run_id, component)
+    env = _ensure_sibling_source_env(config, env)
     manifest = _component_job_manifest(
         image,
         component=component,
@@ -1606,7 +1652,7 @@ elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
   git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
   export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
 fi
-"$PYBIN" -m npa.workflows.sim2real_loop {subcommand}
+"$PYBIN" -m npa.workflows.sim2real {subcommand}
 """
     return f"""set -euo pipefail
 if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
@@ -1625,7 +1671,7 @@ elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
   git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
   export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
 fi
-python -m npa.workflows.sim2real_loop {subcommand}
+python -m npa.workflows.sim2real {subcommand}
 """
 
 
@@ -4010,6 +4056,10 @@ def run_cosmos2_transfer_component_from_s3(
     from npa.workflows.sim2real_stages import resolve_augment_frame_count
 
     client = StorageClient.from_environment()
+    result_uri = output_uri.rstrip("/")
+    if result_uri.endswith("/"):
+        result_uri = f"{result_uri}cosmos2-transfer-result.json"
+    augment_prefix = result_uri.rsplit("/", 1)[0] + "/"
     frames_root = augmented_frames_uri.rstrip("/") + "/"
     frame_count = resolve_augment_frame_count()
     index: list[dict[str, str]] = []
@@ -4037,7 +4087,7 @@ def run_cosmos2_transfer_component_from_s3(
     manifest = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
             input_uri=input_uri,
-            output_uri=output_uri,
+            output_uri=augment_prefix,
             assets_uri=assets_uri,
             scene_spec_uri=scene_spec_uri,
             image=image,
@@ -4049,11 +4099,11 @@ def run_cosmos2_transfer_component_from_s3(
     manifest["frame_count"] = frame_count
     manifest_local = Path("/tmp/cosmos2-transfer-manifest.json")
     manifest_local.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    client.upload_file(str(manifest_local), f"{output_uri.rstrip('/')}/manifest.json")
+    client.upload_file(str(manifest_local), f"{augment_prefix}manifest.json")
     result = {"manifest": manifest, "augmented_frames_uri": frames_root}
     result_local = Path("/tmp/cosmos2-transfer-result.json")
     result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    client.upload_file(str(result_local), output_uri)
+    client.upload_file(str(result_local), result_uri)
     return result
 
 
