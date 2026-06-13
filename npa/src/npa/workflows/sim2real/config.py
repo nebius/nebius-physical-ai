@@ -17,6 +17,8 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
+    DEFAULT_REASON2_MODEL,
+    DEFAULT_REASON3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -174,6 +176,18 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
+        vlm_reason2_image=str(
+            overrides.get("vlm_reason2_image")
+            or os.environ.get("VLM_REASON2_IMAGE")
+            or os.environ.get("VLM_IMAGE")
+            or default_vlm_image(registry=registry or None)
+        ),
+        vlm_reason3_image=str(
+            overrides.get("vlm_reason3_image")
+            or os.environ.get("VLM_REASON3_IMAGE")
+            or os.environ.get("VLM_IMAGE")
+            or default_vlm_image(registry=registry or None)
+        ),
         eval_image=str(
             overrides.get("eval_image")
             or os.environ.get("EVAL_IMAGE")
@@ -198,6 +212,24 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("vlm_model")
             or os.environ.get("VLM_MODEL")
             or DEFAULT_REFERENCE_VLM_MODEL
+        ),
+        vlm_reason2_model=str(
+            overrides.get("vlm_reason2_model")
+            or os.environ.get("VLM_REASON2_MODEL")
+            or os.environ.get("VLM_MODEL")
+            or DEFAULT_REASON2_MODEL
+        ),
+        vlm_reason3_model=str(
+            overrides.get("vlm_reason3_model")
+            or os.environ.get("VLM_REASON3_MODEL")
+            or os.environ.get("NPA_COSMOS_REASON3_MODEL_ID")
+            or DEFAULT_REASON3_MODEL
+        ),
+        vlm_dual_reason=_bool_value(
+            overrides.get(
+                "vlm_dual_reason",
+                os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1"),
+            )
         ),
         threshold=float(
             overrides.get(
