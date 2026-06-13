@@ -84,15 +84,24 @@ demo_preflight() {
     echo "ERROR: k8s_context not set — add storage.k8s_context to ~/.npa/config.yaml" >&2
     missing=1
   fi
-  local kubeconfig="${KUBECONFIG:-${HOME}/.npa/clusters/${k8s_context}/kubeconfig}"
-  if [ ! -f "${kubeconfig}" ]; then
-    echo "ERROR: kubeconfig not found: ${kubeconfig}" >&2
-    echo "       Cluster runs on Nebius; laptop needs kubeconfig to submit/monitor." >&2
-    missing=1
-  fi
-  if ! command -v kubectl >/dev/null; then
-    echo "ERROR: kubectl not on PATH" >&2
-    missing=1
+  if [ "${missing}" = "0" ]; then
+    local src_kube="${HOME}/.npa/clusters/${k8s_context}/kubeconfig"
+    if [ ! -f "${src_kube}" ] && { [ -z "${KUBECONFIG:-}" ] || [ ! -f "${KUBECONFIG}" ]; }; then
+      echo "ERROR: kubeconfig not found: ${src_kube}" >&2
+      echo "       Cluster runs on Nebius; laptop needs kubeconfig to submit/monitor." >&2
+      missing=1
+    fi
+    if ! command -v kubectl >/dev/null; then
+      echo "ERROR: kubectl not on PATH" >&2
+      missing=1
+    elif ! operator_export_kubeconfig "${k8s_context}" "${root}"; then
+      missing=1
+    elif ! kubectl --context "${k8s_context}" get nodes --request-timeout=15s >/dev/null 2>&1; then
+      echo "ERROR: kubectl cannot reach cluster ${k8s_context}" >&2
+      echo "       Install Nebius CLI: brew install nebius/tap/nebius" >&2
+      echo "       Then: nebius profile create npa-mk8s  (or use setup from operator pack)" >&2
+      missing=1
+    fi
   fi
   if ! "${py}" -c "import rerun" 2>/dev/null; then
     echo "ERROR: rerun-sdk not installed — re-run script to bootstrap venv" >&2

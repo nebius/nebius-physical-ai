@@ -95,3 +95,9 @@ def test_submit_passes_trigger_dataset_uri() -> None:
     content = (OPS / "submit-k8s-staged-job.sh").read_text()
     assert "NPA_SIM2REAL_TRIGGER_DATASET_URI" in content
     assert "--trigger-dataset-uri" in content
+
+
+def test_operator_exports_kubeconfig_helper() -> None:
+    content = (LIB / "operator-config.sh").read_text()
+    assert "operator_export_kubeconfig" in content
+    assert "operator_find_nebius_cli" in content

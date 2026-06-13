@@ -12,7 +12,8 @@ ready and when to run.
 ## Prerequisites (once per machine)
 
 1. **Python 3.10+** and **kubectl** (`brew install python@3.12 kubectl` on Mac)
-2. **NPA checkout** on branch `feat/sim2real-mandatory-stages`
+2. **Nebius CLI** for mk8s auth (`brew install nebius/tap/nebius`) — kubeconfig uses `nebius mk8s … get-token`
+3. **NPA checkout** on branch `feat/sim2real-mandatory-stages`
 3. **`npa configure`** → writes:
    - `~/.npa/config.yaml` — `storage.bucket`, `storage.registry`, `storage.endpoint_url`
    - `~/.npa/credentials.yaml` — S3 keys (and HF/NGC if needed by images)
@@ -138,6 +139,8 @@ VISUALIZE=0 RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
 | `config.yaml missing` | `npa configure` or private `setup-npa-local.sh` |
 | Job failed | `./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>` |
 | Mac venv path error | `git pull` latest branch |
+| `fork/exec /usr/local/bin/nebius: no such file` | `brew install nebius/tap/nebius`; scripts patch kubeconfig to your `nebius` path |
+| `kubectl cannot reach cluster` | `nebius profile list` — need profile `npa-mk8s` from operator pack |
 
 ---
 

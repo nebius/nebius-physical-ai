@@ -19,6 +19,7 @@ if [ -z "${CTX}" ]; then
   exit 1
 fi
 export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
+operator_export_kubeconfig "${CTX}" "${ROOT}" || exit 1
 RUN_ID="${RUN_ID:-sim2real-staged-$(date -u +%Y%m%dT%H%M%Sz | tr '[:upper:]' '[:lower:]')}"
 if [ -z "${BUCKET}" ]; then
   echo "Set S3_BUCKET or configure storage.bucket in ~/.npa/config.yaml" >&2
