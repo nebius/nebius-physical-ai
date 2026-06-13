@@ -3147,9 +3147,8 @@ def run_heldout_eval_component_from_s3(
         )
         sys.stdout.flush()
         sys.stderr.flush()
-        # report.json is uploaded above; closing Isaac Sim hard-terminates the
-        # process, so it must come last (no-op for the Genesis backend).
-        _close_isaac_app()
+        # Do not call _close_isaac_app() here: SimulationApp.close() hard-terminates
+        # the process and can race S3 upload visibility in sibling Jobs.
         return payload
 
 
