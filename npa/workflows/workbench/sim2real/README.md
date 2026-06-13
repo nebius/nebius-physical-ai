@@ -64,7 +64,7 @@ export HELDOUT_ENV_COUNT=8
 
 # 6. Self-hosted dual VLM models (accept on Hugging Face — see operator guide).
 export VLM_REASON2_MODEL=nvidia/Cosmos-Reason2-8B
-export VLM_REASON3_MODEL=nvidia/Cosmos-Reason1-7B
+export VLM_REASON3_MODEL=nvidia/Cosmos-Reason2-2B
 export NPA_SIM2REAL_VLM_DUAL_REASON=1
 # Mirror HF_TOKEN into cluster secret hf-ngc-tokens before GPU sibling Jobs run.
 
@@ -130,7 +130,7 @@ reports/sim2real.rrd
   - `npa-sim2real-eval:0.1.1-genuine-sm120`
 - Gated model repository access accepted where required by the VLM image.
   Self-hosted dual VLM defaults: `nvidia/Cosmos-Reason2-8B` (Reason2) and
-  `nvidia/Cosmos-Reason1-7B` (Reason3). Accept both on Hugging Face before launch.
+  `nvidia/Cosmos-Reason2-2B` (Reason3 sibling). Accept both on Hugging Face before launch.
   `nvidia/Cosmos3-Super-Reasoner` is Token Factory–hosted only — not an HF repo.
   See [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md#hugging-face-model-access-self-hosted-workbench).
 - `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a

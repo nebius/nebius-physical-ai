@@ -84,7 +84,7 @@ Sim2Real stage 8 evaluates rollouts with **two** workbench-hosted Cosmos Reason
 models in parallel sibling GPU jobs — not Token Factory:
 
 - `nvidia/Cosmos-Reason2-8B` (`vlm_eval_reason2`)
-- `nvidia/Cosmos-Reason1-7B` (`vlm_eval_reason3`, self-hosted default)
+- `nvidia/Cosmos-Reason2-2B` (`vlm_eval_reason3`, self-hosted default second checkpoint)
 
 `nvidia/Cosmos3-Super-Reasoner` is a **Token Factory hosted** model id only
 (no Hugging Face repo). Use `npa workbench token-factory reason` for that path;
