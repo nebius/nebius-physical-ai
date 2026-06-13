@@ -1598,12 +1598,13 @@ def run_cosmos2_transfer_component(
         "NPA_SIM2REAL_AUGMENT_IMAGE": config.augment_image,
     }
     output_json = local_dir / "cosmos2-transfer-result.json"
+    result_uri = f"{output_uri.rstrip('/')}/cosmos2-transfer-result.json"
     invocation = _run_image_component(
         config.augment_image,
         component="cosmos2_transfer",
         env=env,
         output_json=output_json,
-        output_uri=manifest_uri,
+        output_uri=result_uri,
         config=config,
     )
     payload = _read_component_json(output_json, invocation)
