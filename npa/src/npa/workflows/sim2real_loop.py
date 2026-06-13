@@ -11,6 +11,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import uuid
@@ -1841,6 +1842,56 @@ def _wait_kubernetes_job(
     return "timeout"
 
 
+def _npa_package_root() -> Path | None:
+    """Return the checkout ``npa/`` directory when running from source."""
+
+    candidate = Path(__file__).resolve().parents[4]
+    if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
+        return candidate
+    return None
+
+
+def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
+    """Upload a minimal npa source tarball so sibling Jobs run current code."""
+
+    npa_root = _npa_package_root()
+    if npa_root is None or not config.s3_bucket:
+        return ""
+    with tempfile.TemporaryDirectory(prefix="npa-sibling-src-") as tmp:
+        tarball = Path(tmp) / "npa-source.tgz"
+        with tarfile.open(tarball, "w:gz") as archive:
+            archive.add(npa_root / "src", arcname="npa/src")
+            archive.add(npa_root / "pyproject.toml", arcname="npa/pyproject.toml")
+        destination = (
+            f"{_artifact_root_uri(config).rstrip('/')}/source/"
+            f"npa-{_safe_slug(config.run_id)[:40]}.tgz"
+        )
+        return _storage_client(config).upload_file(str(tarball), destination)
+
+
+def _ensure_sibling_source_env(
+    config: Sim2RealLoopConfig, env: dict[str, str]
+) -> dict[str, str]:
+    """Inject a source tarball for sibling Jobs when the orchestrator runs from source."""
+
+    merged = dict(env)
+    if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI"):
+        return merged
+    tarball_uri = _stage_sibling_source_tarball(config)
+    if tarball_uri:
+        merged["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = tarball_uri
+    return merged
+
+
+def _sibling_container_exit_code(pod_info: dict[str, Any]) -> int | None:
+    for status in pod_info.get("container_statuses") or []:
+        state = status.get("state") or {}
+        terminated = state.get("terminated") or {}
+        if terminated.get("exitCode") is not None:
+            return int(terminated["exitCode"])
+    return None
+
+
 def _run_kubernetes_image_component(
     image: str,
     *,
@@ -1853,6 +1904,7 @@ def _run_kubernetes_image_component(
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     job_name = _k8s_job_name(config.run_id, component)
+    env = _ensure_sibling_source_env(config, env)
     manifest = _component_job_manifest(
         image,
         component=component,
@@ -1916,11 +1968,21 @@ def _run_kubernetes_image_component(
             f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
             f"{events_excerpt}"
         )
+    exit_code = _sibling_container_exit_code(pod_info)
+    if exit_code is not None and exit_code != 0:
+        raise Sim2RealLoopError(
+            f"{component} Kubernetes Job {job_name} container exitCode={exit_code} "
+            f"{_component_excerpt(logs_result.stdout or logs_result.stderr)}"
+        )
     if component == "heldout_eval":
         grace = int(os.environ.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "20"))
         if grace > 0:
             time.sleep(grace)
-    _download_component_output(config, output_uri, output_json)
+    try:
+        _download_component_output(config, output_uri, output_json)
+    except Sim2RealLoopError as exc:
+        log_hint = _component_excerpt(logs_result.stdout or logs_result.stderr, limit=4000)
+        raise Sim2RealLoopError(f"{exc} sibling_logs={log_hint}") from exc
     return {
         "mode": "kubernetes_job",
         "component": component,

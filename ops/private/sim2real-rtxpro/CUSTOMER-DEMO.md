@@ -79,6 +79,14 @@ Each batch = one explicit trigger. No background watcher required.
 
 ---
 
+## Stock Franka setup (no mesh / robot upload)
+
+Leave `ASSETS_URI`, `SCENE_SPEC_URI`, and `ROBOT_SPEC_URI` unset. Stage 2 uses
+built-in Franka Panda + Isaac lift-cube tabletop. You only upload the LeRobot trigger.
+
+Full operator walkthrough (Mac paths, stage checklist, S3 + jq + Rerun):
+**[FRANKA-STOCK-GUIDE.md](./FRANKA-STOCK-GUIDE.md)**
+
 ## Demo / rehearsal (stock trigger)
 
 For a smoke run without your own upload (uses default pusht path under your bucket):

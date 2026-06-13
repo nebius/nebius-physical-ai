@@ -1230,7 +1230,7 @@ def _ensure_sibling_source_env(
     """Inject git clone or source tarball env for sibling Jobs when needed."""
 
     merged = dict(env)
-    if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI") or (config.source_repo or "").strip():
+    if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI"):
         return merged
     tarball_uri = _stage_sibling_source_tarball(config)
     if tarball_uri:
