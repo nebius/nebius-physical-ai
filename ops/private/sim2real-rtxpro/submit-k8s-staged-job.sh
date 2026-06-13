@@ -4,12 +4,12 @@
 # Credentials: cluster secretRef only — never embedded in generated manifests.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
+ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 
-readarray -t _npa_cfg < <(operator_read_config "${ROOT}")
+npa_read_lines _npa_cfg operator_read_config "${ROOT}"
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
 REG="${REGISTRY:-${_npa_cfg[2]:-}}"

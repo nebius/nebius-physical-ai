@@ -1,47 +1,30 @@
 # Sim2Real — Customer asset handoff
 
-**Audience:** Platform operators and robotics teams wiring a first production run  
-**Companion docs:** [sim2real-workflow.md](./sim2real-workflow.md) (operator guide),
-[sim2real-architecture.md](./sim2real-architecture.md) (stage map),
-[sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md) (Monday walkthrough)
+**Audience:** What the customer **uploads** (trigger, scene, robot) vs NPA stock smoke paths.
 
-This guide answers what a customer **brings** versus what NPA **ships stock** for the
-13-stage sim-to-real loop. Language is generic — no project-specific names.
+**Data types (schemas, LeRobot vs NPA JSON):** [sim2real-data-contracts.md](./sim2real-data-contracts.md) — read that first if URIs are confusing.
+
+**Also:** [sim2real-workflow.md](./sim2real-workflow.md) · [sim2real-architecture.md](./sim2real-architecture.md) · [sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md)
 
 ---
 
-## Monday default: stock Franka tabletop
+## Stock smoke vs customer production
 
-For a first cluster run, supply **only the trigger dataset**. Leave scene and robot
-asset URIs empty; Stage 2 materializes stock specs automatically.
-
-| Category | Monday plan | Formats (when you BYO later) |
+| Path | Robot | Purpose |
 | --- | --- | --- |
-| **1. Robot / embodiment** | **Stock** — Franka Emika Panda (`ROBOT_PRESET=franka`, default) | Later: UR5e / UR10e / Flexiv presets + articulated URDF, or full `RobotSpec` JSON |
-| **2. Manipulated objects** | **Stock** — tabletop manipuland bundled with the sim backend | Later: OBJ / STL / GLB / PLY / USD per object + dimensions / mass |
-| **3. Scene / environment** | **Stock** — table + simple workspace (Genesis or Isaac defaults) | Later: fixture meshes or `SceneSpec` JSON / USD layout |
-| **4. Cameras / sensors** | **Stock** — workspace overhead + wrist EE-mounted (640×480) | Later: custom poses / intrinsics in `SceneSpec` |
+| **Stock smoke** | NPA default Franka (empty `ROBOT_PRESET`) | Platform validation; supply **only** the LeRobot trigger |
+| **Customer production** | `ROBOT_PRESET=ur5e` / `flexiv` + `ROBOT_SPEC_URI` (URDF) | Real embodiment — not Franka |
 
-**Sim backend** (`NPA_SIM2REAL_SIM_BACKEND`): default is `isaac` (Isaac stock tabletop,
-`lift_cube`). Set `genesis` for the Genesis primitive tabletop. Both write the same
-consumed-spec schema for downstream envgen and held-out eval.
+| Category | Stock smoke | Customer BYO later |
+| --- | --- | --- |
+| **Robot** | Franka preset (built-in) | UR5e / UR10e / Flexiv URDF + `npa.sim2real.robot_spec.v1` |
+| **Objects** | Tabletop manipuland from sim backend | OBJ / STL / GLB / PLY / USD |
+| **Scene** | Stock Isaac or Genesis tabletop | Fixture meshes or `SceneSpec` JSON |
+| **Cameras** | Stock workspace + wrist (640×480) | Custom poses in `SceneSpec` |
 
----
+**Sim backend:** default `isaac` (RT-core held-out). `genesis` remains supported as legacy.
 
-## What you submit vs what the workflow writes
-
-Two URIs are often confused. They are **not interchangeable**.
-
-| URI | Who sets it | When | What it is |
-| --- | --- | --- | --- |
-| **`NPA_SIM2REAL_TRIGGER_DATASET_URI`** | **Customer / operator** | At workflow submit | LeRobot-format **real-robot demonstration data** that starts the run. Example layout: `s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/` |
-| **`TRAIN_ENVS_URI`** (`train_envs_uri` in state) | **Workflow** (Stages 4–6) | After envgen + 80/20 split | **Synthetic simulation environments** (~8K train shard when `NPA_ENV_COUNT=10000`). Written to `state/workflow_state.json` and `envs/train/` — **not** a robot asset. |
-
-**Rule of thumb:** you land data in the **trigger** path; the loop generates **train
-envs** and feeds them (among other artifacts) into Stage 7 policy rollouts.
-
-Optional operator override: set `TRAIN_ENVS_URI` only when resuming or replaying a
-prior run's train shard — not for initial customer onboarding.
+Customer trigger URI and train-env URI definitions: [data contracts § Customer input](./sim2real-data-contracts.md#customer-input-vs-workflow-output).
 
 ---
 
@@ -146,19 +129,9 @@ registry-qualified Cosmos Transfer image.
 
 ---
 
-## Canonical S3 layout (generic)
+## S3 layout
 
-```text
-s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/   # INPUT: customer trigger
-s3://<bucket>/sim2real-assets/<task>/                       # OPTIONAL: BYO meshes / specs
-s3://<bucket>/<prefix>/<run-id>/                            # OUTPUT: per-run artifact tree
-  stage_02_assets/consumed_scene_spec.json
-  stage_02_assets/consumed_robot_spec.json
-  envs/train/                    # ~8K train shard (NPA_ENV_COUNT=10000)
-  envs/heldout/
-  actions/train/outer-XX/iter-YY/
-  reports/sim2real-report.json
-```
+See [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#artifact-paths).
 
 ---
 
@@ -212,11 +185,8 @@ Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.
 
 ## Customer onboarding checklist
 
-1. **Trigger** — Land a LeRobot dataset at `NPA_SIM2REAL_TRIGGER_DATASET_URI`.
-2. **Stock run** — Omit `ASSETS_URI` / `SCENE_SPEC_URI`; keep `ROBOT_PRESET=franka`.
-3. **Images** — Push registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`,
-   `TRAINER_IMAGE`, `EVAL_IMAGE` (or accept **SEAM** reference fallbacks for policy/augment).
-4. **Scale** — Set `NPA_ENV_COUNT=10000`, `NPA_TRAIN_FRACTION=0.8` for production envgen.
-5. **Later BYO** — Add scene meshes or `SceneSpec`; add UR/Flexiv URDF when ready.
-6. **Inspect** — After preamble, open `consumed_*_spec.json` and confirm
-   `train_envs_uri` in `state/workflow_state.json` before the outer loop starts.
+1. **Trigger** — Land a **LeRobot dataset** at `NPA_SIM2REAL_TRIGGER_DATASET_URI` (only customer input that is LeRobot-native).
+2. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
+3. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc. (or accept **SEAM** reference fallbacks).
+4. **Scale** — `NPA_ENV_COUNT=10000`, `NPA_TRAIN_FRACTION=0.8` (JSON env catalog, not 10K sim instances).
+5. **Inspect** — `consumed_*_spec.json` + `train_envs_uri` in `state/workflow_state.json` after preamble.

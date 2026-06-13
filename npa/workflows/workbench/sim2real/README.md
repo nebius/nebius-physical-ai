@@ -1,11 +1,17 @@
 # Sim2Real VLM-to-RL Runbook
 
+**Docs:** [data contracts](../../../docs/workbench/guides/sim2real-data-contracts.md) ·
+[operator guide](../../../docs/workbench/guides/sim2real-workflow.md) ·
+[customer assets](../../../docs/workbench/guides/sim2real-customer-assets.md) ·
+[architecture](../../../docs/workbench/guides/sim2real-architecture.md)
+
 This workflow runs the full Sim2Real chain as one inspectable pipeline:
 
 `LeRobot dataset trigger -> augment -> env generation -> train/held-out split -> action rollouts -> VLM critique -> RL signal -> trainer update -> held-out eval -> promote or loop back -> external validation stub -> retrigger`.
 
-Steps 2 and 12 are documented external stubs. Every other step writes local
-artifacts and, when `--upload-artifacts` is set, uploads the run tree to S3.
+Steps 12 and 13 are documented external seams. Stage 2 materializes stock or BYO
+scene and robot specs. Every step writes local artifacts and, when
+`--upload-artifacts` is set, uploads the run tree to S3.
 
 Canonical operator routing after CLI namespace cleanup: use
 `npa workbench workflow submit` for cluster execution, module CLI staged
@@ -307,8 +313,9 @@ npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
 
 1. Trigger: consumes `--trigger-dataset-uri` and writes
    `stage_01_trigger/trigger.json`.
-2. External assets and SceneSpec: documented BYO stub at
-   `stage_02_assets/external_stub.json`.
+2. Sim assets: writes `stage_02_assets/consumed_scene_spec.json` and
+   `consumed_robot_spec.json` (stock Franka + tabletop by default; BYO via
+   `ASSETS_URI` / `SCENE_SPEC_URI` / `ROBOT_SPEC_URI`).
 3. Augmentation: writes `augment/manifest.json`.
 4. Environment generation: writes `envs/raw/manifest.json`.
 5. Train and held-out split: writes `envs/train/manifest.json` and
