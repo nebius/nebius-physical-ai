@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from npa.workflows.sim2real_loop import Sim2RealLoopConfig, run_preamble
 from npa.workflows.sim2real_stages import (
     DEFAULT_ENV_COUNT,
