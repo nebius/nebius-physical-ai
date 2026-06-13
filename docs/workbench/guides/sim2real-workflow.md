@@ -114,7 +114,24 @@ Open **`npa/workflows/workbench/sim2real/runbook.yaml`**. The `run:` block is th
 
 ### Inspect stage progress during a run
 
-On the cluster pod or after a local run, tail artifacts:
+**Staged cluster runs** (RTX operator pack / direct K8s Job):
+
+```bash
+python -m npa.workflows.sim2real status <run-id> --watch
+```
+
+SDK:
+
+```python
+from npa.sdk.workbench import sim2real
+
+sim2real.status(run_id="<run-id>", watch=True)
+```
+
+`npa workbench workflow status` is for SkyPilot durable-S3 workflows only — not
+Sim2Real staged runs.
+
+On the cluster pod or after a local smoke run, tail artifacts:
 
 ```bash
 RUN=/tmp/npa-sim2real-<run-id>

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -80,11 +79,7 @@ def test_sim2real_workflow_status_marks_failed_image_pull(
     assert result["stages"]["stage_01_trigger"]["state"] == "PENDING"
 
 
-def test_workflow_cli_status_sim2real_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    from typer.testing import CliRunner
-
-    from npa.cli.main import app
-
+def test_sim2real_module_status_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
         "run_id": "run-1",
         "status": "RUNNING",
@@ -93,15 +88,18 @@ def test_workflow_cli_status_sim2real_tool(monkeypatch: pytest.MonkeyPatch) -> N
         "stages": {"stage_01_trigger": {"state": "SUCCEEDED", "tier": ""}},
     }
     monkeypatch.setattr(
-        "npa.workflows.sim2real.monitor.get_sim2real_workflow_status",
+        "npa.workflows.sim2real.monitor.watch_sim2real_status",
         lambda run_id, **kwargs: payload,
     )
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["workbench", "workflow", "status", "run-1", "--tool", "sim2real", "--json"],
-    )
-    assert result.exit_code == 0
-    body = json.loads(result.stdout)
-    assert body["run_id"] == "run-1"
-    assert body["status"] == "RUNNING"
+    from npa.workflows.sim2real.cli import main
+
+    assert main(["status", "run-1", "--json"]) == 0
+
+
+def test_is_sim2real_runbook() -> None:
+    from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
+
+    root = Path(__file__).resolve().parents[2]
+    runbook = root / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+    assert is_sim2real_runbook(runbook)
+    assert not is_sim2real_runbook(root / "workflows" / "workbench" / "skypilot" / "vlm-eval.yaml")

@@ -321,6 +321,66 @@ def _current_stage(stages: dict[str, dict[str, Any]]) -> str:
     return names[min(idx + 1, len(names) - 1)]
 
 
+def status_is_terminal(status: str) -> bool:
+    normalized = status.upper()
+    return normalized == "SUCCEEDED" or normalized.startswith("FAILED")
+
+
+def emit_sim2real_status(result: dict[str, Any], *, json_output: bool = False) -> None:
+    """Print status in the same shape as durable workflow monitors."""
+
+    if json_output:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"run_id: {result.get('run_id')}")
+    print(f"status: {result.get('status')}")
+    if result.get("current_stage"):
+        print(f"current_stage: {result.get('current_stage')}")
+    if result.get("k8s_job"):
+        print(f"k8s_job: {result.get('k8s_job')}")
+    if result.get("pod_reason"):
+        print(f"pod_reason: {result.get('pod_reason')}")
+    print(f"run_prefix_uri: {result.get('run_prefix_uri')}")
+    stages = result.get("stages", {})
+    if isinstance(stages, dict):
+        for stage, info in stages.items():
+            state = info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            tier = info.get("tier", "") if isinstance(info, dict) else ""
+            suffix = f" ({tier})" if tier else ""
+            print(f"{stage}: {state}{suffix}")
+    siblings = result.get("sibling_jobs")
+    if isinstance(siblings, list) and siblings:
+        print("sibling_jobs:")
+        for row in siblings:
+            if isinstance(row, dict):
+                print(
+                    f"  {row.get('name')}: "
+                    f"active={row.get('active', 0)} "
+                    f"succeeded={row.get('succeeded', 0)} "
+                    f"failed={row.get('failed', 0)}"
+                )
+
+
+def watch_sim2real_status(
+    run_id: str,
+    *,
+    watch: bool = False,
+    interval: float = 10.0,
+    json_output: bool = False,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Poll staged run progress until terminal or one-shot."""
+
+    import time
+
+    while True:
+        result = get_sim2real_workflow_status(run_id, **kwargs)
+        emit_sim2real_status(result, json_output=json_output)
+        if not watch or status_is_terminal(str(result.get("status", ""))):
+            return result
+        time.sleep(interval)
+
+
 def get_sim2real_workflow_status(
     run_id: str,
     *,

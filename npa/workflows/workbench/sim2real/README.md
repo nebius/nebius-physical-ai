@@ -14,9 +14,12 @@ scene and robot specs. Every step writes local artifacts and, when
 `--upload-artifacts` is set, uploads the run tree to S3.
 
 Canonical operator routing after CLI namespace cleanup: use
-`npa workbench workflow submit` for cluster execution, module CLI staged
-subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
-and `npa workbench health sim2real` for preflight checks.
+`npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
+for cluster execution (auto-routes to the direct K8s staged Job when SkyPilot is
+unavailable), `python -m npa.workflows.sim2real status <run-id> --watch` for live
+progress, module CLI staged subcommands (`preamble`, `outer-iteration`,
+`finalize`) for manual progression, and `npa workbench health sim2real` for
+preflight checks. The SDK (`npa.sdk.workbench.sim2real`) mirrors run/status.
 
 ## Easy-Parameters Quickstart
 
