@@ -99,6 +99,22 @@ Set via environment before `run-demo.sh` (same as cluster submit):
 
 ---
 
+## Security — credentials never in git
+
+| Secret | Where it lives | Never |
+| --- | --- | --- |
+| S3 keys, HF/NGC tokens | `~/.npa/credentials.yaml` (chmod 600) | Committed files, YAML env blocks, logs |
+| Kubeconfig | `~/.npa/clusters/<context>/kubeconfig` | Repo or walkthrough docs |
+| Bucket / registry / cluster | `~/.npa/config.yaml` | Hardcoded in scripts (read at runtime) |
+
+Cluster submit uses **Kubernetes `secretRef`** (`hf-ngc-tokens`, `npa-storage-credentials`) —
+credentials are not embedded in generated Job manifests.
+
+Generated gitignored files (`env.local`, `*.local.md`) may contain your bucket/registry
+from config — do not commit them.
+
+---
+
 ## What is NOT this workflow
 
 **Reference rehearsal** (no cluster, laptop simulates stages) is for unit tests only —

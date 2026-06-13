@@ -7,14 +7,14 @@
 
 ```bash
 # 1. Machine config (shareable — no secrets)
-cp /path/to/rtxpro-cluster-config.yaml ~/.npa/config.yaml
+npa configure   # writes ~/.npa/config.yaml (bucket, registry, k8s_context)
 
 # 2. Secrets (never commit)
-npa configure   # writes ~/.npa/credentials.yaml
+# credentials.yaml is written by npa configure alongside config.yaml
 
-# 3. Kubeconfig
-export KUBECONFIG=~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
-kubectl --context npa-rtxpro-mk8s get nodes
+# 3. Kubeconfig (never commit)
+export KUBECONFIG=~/.npa/clusters/<your-k8s-context>/kubeconfig
+kubectl --context <your-k8s-context> get nodes
 
 # 4. Generate local operator files (gitignored)
 ./ops/private/sim2real-rtxpro/setup-local-operator.sh
@@ -72,10 +72,10 @@ K8s deployment inventory (placeholders): [sim2real-architecture.md](../../../doc
 
 ## Direct Kubernetes submit (RTX PRO)
 
-SkyPilot on `npa-rtxpro-mk8s` is blocked by kubeconfig context mismatch. Use:
+SkyPilot kubeconfig context mismatch on some clusters. Use direct submit:
 
 ```bash
-export KUBECONFIG=~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
+export KUBECONFIG=~/.npa/clusters/<your-k8s-context>/kubeconfig
 INNER_ITERATIONS=2 OUTER_ITERATIONS=2 \
   ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
 # Submit preflights registry-qualified images (orchestrator + sibling stages).

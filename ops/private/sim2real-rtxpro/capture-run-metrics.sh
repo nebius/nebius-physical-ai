@@ -5,28 +5,20 @@ set -euo pipefail
 
 RUN_ID="${1:?usage: capture-run-metrics.sh <run-id>}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-export KUBECONFIG="${KUBECONFIG:-$HOME/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
-CTX="${KUBECONTEXT:-npa-rtxpro-mk8s}"
-NS="${KUBENS:-default}"
-BUCKET="${S3_BUCKET:-}"
-PREFIX="${S3_PREFIX:-sim2real-b}"
-if [ -z "${BUCKET}" ]; then
-  readarray -t _npa_cfg < <("${ROOT}/npa/.venv/bin/python" - <<'PY'
-import yaml
-from pathlib import Path
-cfg = yaml.safe_load(Path.home().joinpath(".npa/config.yaml").read_text())
-storage = cfg.get("storage") or {}
-bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
-endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
-print(bucket)
-print(endpoint)
-PY
-)
-  BUCKET="${_npa_cfg[0]:-}"
-  ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
-else
-  ENDPOINT="${S3_ENDPOINT:-https://storage.eu-north1.nebius.cloud}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
+readarray -t _npa_cfg < <(operator_read_config "${ROOT}" 2>/dev/null || true)
+CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
+if [ -z "${CTX}" ]; then
+  echo "Set k8s_context in ~/.npa/config.yaml" >&2
+  exit 1
 fi
+export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
+NS="${KUBENS:-default}"
+BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
+ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
+PREFIX="${S3_PREFIX:-sim2real-b}"
 if [ -z "${BUCKET}" ]; then
   echo "Set S3_BUCKET or configure storage.bucket in ~/.npa/config.yaml" >&2
   exit 1

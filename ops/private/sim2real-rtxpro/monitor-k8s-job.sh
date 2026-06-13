@@ -5,8 +5,17 @@
 set -euo pipefail
 
 JOB="${1:?usage: monitor-k8s-job.sh <job-name>}"
-export KUBECONFIG="${KUBECONFIG:-$HOME/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
-CTX="${KUBECONTEXT:-npa-rtxpro-mk8s}"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
+readarray -t _npa_cfg < <(operator_read_config "${ROOT}" 2>/dev/null || true)
+CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
+if [ -z "${CTX}" ]; then
+  echo "Set k8s_context in ~/.npa/config.yaml" >&2
+  exit 1
+fi
+export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
 NS="${KUBENS:-default}"
 TIMEOUT_S="${MONITOR_TIMEOUT_S:-7200}"
 POLL_S="${MONITOR_POLL_S:-30}"

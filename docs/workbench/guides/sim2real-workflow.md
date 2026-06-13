@@ -3,9 +3,12 @@
 Closed loop on Nebius GPUs: simulation rollouts → VLM critique → RL signal → policy
 update → held-out eval → threshold gate → Rerun observability.
 
+**Doc map:** [sim2real-data-contracts.md](./sim2real-data-contracts.md) (formats & schemas) ·
+[sim2real-customer-assets.md](./sim2real-customer-assets.md) (uploads) ·
+[sim2real-architecture.md](./sim2real-architecture.md) (K8s & control flow)
+
 **Canonical workflow file:** `npa/workflows/workbench/sim2real/runbook.yaml`  
-**Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`  
-**Architecture (as implemented):** [sim2real-architecture.md](./sim2real-architecture.md)
+**Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`
 
 ---
 
@@ -16,7 +19,7 @@ You can read the entire loop in the runbook `run:` block — no hidden orchestra
 ```mermaid
 flowchart LR
   S1[1 Trigger] --> S2[2 Assets]
-  S2 --> S3[3 Augment stub]
+  S2 --> S3[3 Augment]
   S3 --> S4[4-6 Envgen + split]
   S4 --> S7[7-9 Inner loop]
   S7 --> S10[10 Held-out eval]
@@ -25,18 +28,19 @@ flowchart LR
   S11 -->|loop back| S7
 ```
 
-| Stage | What happens | Where to look after a run |
+| Stage | What happens | Primary artifact types |
 | --- | --- | --- |
-| **1** Trigger | Consume LeRobot dataset trigger path | `stage_01_trigger/trigger.json` |
-| **2** Assets | BYO mesh / SceneSpec (or documented stub) | `stage_02_assets/` |
-| **3** Augment | Cosmos transfer manifest (external stub seam) | `augment/manifest.json` |
-| **4–6** Envgen | Raw envs + train/held-out split + tokens | `envs/raw/`, `envs/train/`, `envs/heldout/` |
-| **7–9** Inner loop | Rollouts → VLM → RL signal → trainer update | `vlm_eval/`, `training_signal/`, `inner_loop/outer-XX/evidence.json` |
-| **10** Held-out | Eval on held-out envs | `eval/heldout/report.json` |
-| **11** Gate | Promote checkpoint or loop back | `outer_loop/decision.json` |
-| **12–13** Finish | External validation stub + retrigger record | `stage_12_*`, `stage_13_retrigger/` |
-| **Report** | E2E summary + optional S3 upload | `reports/sim2real-report.json` |
-| **Rerun** | Timeline viz (when enabled) | `reports/sim2real.rrd` |
+| **1** Trigger | Consume LeRobot dataset trigger path | LeRobot + `npa.sim2real.trigger.v1` |
+| **2** Assets | Stock or BYO scene + robot specs | `consumed_*_spec.json` |
+| **3** Augment | Cosmos Transfer sibling Job (or reference) | augment manifest + frames |
+| **4–6** Envgen | Raw envs + train/held-out split | `npa.sim2real.raw_env.v1` JSONL |
+| **7–9** Inner loop | Rollouts → VLM → RL signal → trainer | rollouts, VLM eval, RL signal JSON |
+| **10** Held-out | Isaac (default) or Genesis eval | `npa.sim2real.heldout_eval.v1` |
+| **11** Gate | Promote checkpoint or loop back | threshold decision JSON |
+| **12–13** Finish | External validation stub + retrigger | SEAM stubs |
+| **Report** | E2E summary + optional S3 upload | `npa.sim2real.e2e_report.v1` |
+
+Full schema list and S3 layout: [sim2real-data-contracts.md](./sim2real-data-contracts.md).
 
 **State between stages:** `state/workflow_state.json` (quality, outer history, latest decision).
 
@@ -73,8 +77,8 @@ Preflight first:
 npa workbench health sim2real \
   --s3-bucket <your-bucket> \
   --s3-endpoint <your-endpoint> \
-  --k8s-context npa-rtxpro-mk8s \
-  --k8s-kubeconfig ~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
+  --k8s-context <your-k8s-context> \
+  --k8s-kubeconfig ~/.npa/clusters/<your-k8s-context>/kubeconfig
 ```
 
 > Top-level `npa workbench sim2real` was removed. Use **`workflow submit`**, module CLI
@@ -106,7 +110,7 @@ python -m npa.workflows.sim2real_loop finalize ... --upload-artifacts
 | --- | --- | --- |
 | Scale the loop | `envs:` headline block | `INNER_ITERATIONS`, `ROLLOUT_COUNT`, `HELDOUT_ENV_COUNT` |
 | Change success bar | `SUCCESS_THRESHOLD` | `0.75` → `0.85` |
-| Swap sim engine | `NPA_SIM2REAL_SIM_BACKEND` | `genesis` or `isaac` |
+| Swap sim engine | `NPA_SIM2REAL_SIM_BACKEND` | `isaac` (default) or `genesis` |
 | Swap trainer / VLM images | `TRAINER_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE` | your registry tags |
 | BYO trainer | `BYO_TRAINER_COMMAND` | shell command honoring § contracts below |
 | Add a second outer pass | `OUTER_ITERATIONS` + the bash `for` loop (already there) | `OUTER_ITERATIONS=2` |
@@ -143,8 +147,9 @@ npa/.venv/bin/python -m npa.workflows.sim2real_loop finalize \
   --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
 ```
 
-Without `s3_bucket`, VLM/held-out use **local reference** mode (CPU smoke). With `s3_bucket`
-set, sibling K8s GPU jobs run the genuine images.
+Without `s3_bucket`, VLM/held-out use **local reference** mode (CPU smoke). With
+`s3_bucket`, sibling K8s GPU jobs run augment (Stage 3), policy (Stage 7), VLM
+(Stage 8), and held-out eval (Stage 10) when images are registry-qualified.
 
 SDK equivalent:
 
@@ -161,7 +166,9 @@ sim2real.finalize(run_id="sdk", output_dir="/tmp/s2r-sdk")
 
 ## Custom LeRobot trainer (§ contract)
 
-Set `TRAINER_IMAGE` (sibling K8s job) or `BYO_TRAINER_COMMAND` (in-process).
+Set `BYO_TRAINER_COMMAND` for an in-process shell hook, or rely on the reference
+trainer in the orchestrator pod (`TRAINER_IMAGE` is recorded in the report; it is
+not a sibling Job by default).
 
 Your command must read `NPA_SIM2REAL_SIGNAL_JSON` and write `NPA_SIM2REAL_OUTPUT_JSON`
 with `reward_head_after`, `policy_output_after`, `policy_delta_l2`.
@@ -184,11 +191,12 @@ Toggle: `NPA_SIM2REAL_RERUN=0` or `--no-rerun`.
 
 ## Simulation assets & robots
 
-- **Objects:** mesh + SceneSpec via `ASSETS_URI` / `SCENE_SPEC_URI`
-- **Robot:** Franka default; UR/Flexiv URDF presets via robot env vars
-- **Backend:** `genesis` (default, no Isaac license) or `isaac` (RT-core GPUs)
+- **Trigger data:** LeRobot dataset only (Stage 1) — see [data contracts](./sim2real-data-contracts.md#not-everything-is-lerobot)
+- **Objects / scene:** mesh + SceneSpec via `ASSETS_URI` / `SCENE_SPEC_URI`
+- **Robot:** customer UR/Flexiv via `ROBOT_SPEC_URI`; stock Franka is platform smoke only
+- **Backend:** `isaac` (default, RT-core held-out) or `genesis` (legacy)
 
-See `npa/workflows/workbench/sim2real/README.md` for S3 layout and cluster submit details.
+Asset handoff and scorecard: [sim2real-customer-assets.md](./sim2real-customer-assets.md)
 
 ---
 

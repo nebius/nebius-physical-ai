@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
-# Direct Kubernetes submit for sim2real staged runbook on npa-rtxpro-mk8s.
-# Bypasses SkyPilot kubeconfig mismatch (workbench vs rtxpro contexts).
+# Direct Kubernetes submit for sim2real staged runbook.
+# Bypasses SkyPilot kubeconfig mismatch (workbench vs cluster contexts).
+# Credentials: cluster secretRef only — never embedded in generated manifests.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-export KUBECONFIG="${KUBECONFIG:-$HOME/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
-CTX="${KUBECONTEXT:-npa-rtxpro-mk8s}"
-RUN_ID="${RUN_ID:-rtxpro-staged-$(date -u +%Y%m%dT%H%M%Sz | tr '[:upper:]' '[:lower:]')}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
 
-# Resolve bucket/registry/endpoint from env or ~/.npa/config.yaml (no hardcoded tenant values).
-readarray -t _npa_cfg < <("${ROOT}/npa/.venv/bin/python" - <<'PY'
-import yaml
-from pathlib import Path
-
-cfg = yaml.safe_load(Path.home().joinpath(".npa/config.yaml").read_text())
-storage = cfg.get("storage") or {}
-bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
-endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
-registry = storage.get("registry", cfg.get("registry", "")).rstrip("/")
-print(bucket)
-print(endpoint)
-print(registry)
-PY
-)
+readarray -t _npa_cfg < <(operator_read_config "${ROOT}")
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
 REG="${REGISTRY:-${_npa_cfg[2]:-}}"
+CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
+if [ -z "${CTX}" ]; then
+  echo "Set k8s_context in ~/.npa/config.yaml (storage or projects.<alias>)" >&2
+  exit 1
+fi
+export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
+RUN_ID="${RUN_ID:-sim2real-staged-$(date -u +%Y%m%dT%H%M%Sz | tr '[:upper:]' '[:lower:]')}"
 if [ -z "${BUCKET}" ]; then
   echo "Set S3_BUCKET or configure storage.bucket in ~/.npa/config.yaml" >&2
   exit 1
@@ -76,27 +70,17 @@ PY
 LOG="/tmp/sim2real-cluster/${RUN_ID}.log"
 mkdir -p /tmp/sim2real-cluster
 
-# Load secrets into env for job env vars (never log values).
-eval "$("${ROOT}/npa/.venv/bin/python" - <<'PY'
-import yaml
-from pathlib import Path
-c = yaml.safe_load(Path.home().joinpath(".npa/credentials.yaml").read_text())
-s = c.get("storage") or {}
-for key, env in (
-    ("aws_access_key_id", "AWS_ACCESS_KEY_ID"),
-    ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
-):
-    val = s.get(key, "")
-    if val:
-        print(f"export {env}={val!r}")
-tok = (c.get("tokens") or {}).get("HF_TOKEN", "")
-if tok:
-    print(f"export HF_TOKEN={tok!r}")
-ngc = (c.get("ngc") or {}).get("api_key", "")
-if ngc:
-    print(f"export NGC_API_KEY={ngc!r}")
-PY
-)"
+K8S_ENV_SECRETS="${K8S_ENV_SECRETS:-hf-ngc-tokens,npa-storage-credentials}"
+# Build envFrom secretRef blocks — credentials stay in cluster secrets, never in this manifest.
+ENV_FROM_YAML=""
+IFS=',' read -ra _secret_names <<< "${K8S_ENV_SECRETS}"
+for _secret in "${_secret_names[@]}"; do
+  _secret="${_secret// /}"
+  [ -z "${_secret}" ] && continue
+  ENV_FROM_YAML="${ENV_FROM_YAML}
+            - secretRef:
+                name: ${_secret}"
+done
 
 JOB="sim2real-${RUN_ID}"
 MANIFEST="/tmp/sim2real-cluster/${JOB}.yaml"
@@ -174,7 +158,9 @@ spec:
             - name: ROLLOUT_COUNT
               value: "2"
             - name: HELDOUT_ENV_COUNT
-              value: "4"
+              value: "${HELDOUT_ENV_COUNT:-4}"
+            - name: NPA_SIM2REAL_HELDOUT_EVAL_LIMIT
+              value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-${HELDOUT_ENV_COUNT:-4}}"
             - name: SUCCESS_THRESHOLD
               value: "0.45"
             - name: NPA_SOURCE_REPO
@@ -185,14 +171,7 @@ spec:
               value: "default"
             - name: NPA_SIM2REAL_K8S_SERVICE_ACCOUNT
               value: "agent-sa"
-            - name: AWS_ACCESS_KEY_ID
-              value: "${AWS_ACCESS_KEY_ID:-}"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "${AWS_SECRET_ACCESS_KEY:-}"
-            - name: HF_TOKEN
-              value: "${HF_TOKEN:-}"
-            - name: NGC_API_KEY
-              value: "${NGC_API_KEY:-}"
+          envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
             - |
@@ -219,6 +198,7 @@ spec:
                 --outer-iterations "\${OUTER_ITERATIONS:-1}"
                 --rollout-count "\${ROLLOUT_COUNT:-2}"
                 --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
+                --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-4}}"
                 --threshold "\${SUCCESS_THRESHOLD:-0.45}"
                 --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
                 --isaac-image "\${ISAAC_IMAGE}"
@@ -250,6 +230,8 @@ spec:
       nodeSelector:
         nvidia.com/gpu.product: NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition
 YAML
+
+chmod 600 "${MANIFEST}"
 
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"

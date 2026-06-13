@@ -36,13 +36,12 @@ storage = cfg.get("storage") or {}
 bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
 endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
 registry = str(storage.get("registry", cfg.get("registry", ""))).rstrip("/")
-projects = cfg.get("projects") or {}
-# First project alias with k8s_context, else env default applied by caller.
-k8s_context = ""
-for _alias, proj in projects.items():
-    if isinstance(proj, dict) and proj.get("k8s_context"):
-        k8s_context = str(proj["k8s_context"])
-        break
+k8s_context = str(storage.get("k8s_context", "") or "")
+if not k8s_context:
+    for proj in (cfg.get("projects") or {}).values():
+        if isinstance(proj, dict) and proj.get("k8s_context"):
+            k8s_context = str(proj["k8s_context"])
+            break
 print(bucket)
 print(endpoint)
 print(registry)
@@ -54,6 +53,7 @@ demo_preflight() {
   local root="$1"
   local py="${root}/npa/.venv/bin/python"
   local missing=0
+  local k8s_context="${KUBECONTEXT:-}"
 
   if [ ! -f "${HOME}/.npa/config.yaml" ]; then
     echo "ERROR: ~/.npa/config.yaml missing — run: npa configure" >&2
@@ -63,7 +63,15 @@ demo_preflight() {
     echo "ERROR: ~/.npa/credentials.yaml missing — run: npa configure" >&2
     missing=1
   fi
-  local kubeconfig="${KUBECONFIG:-${HOME}/.npa/clusters/${KUBECONTEXT:-npa-rtxpro-mk8s}/kubeconfig}"
+  if [ -z "${k8s_context}" ] && [ -f "${HOME}/.npa/config.yaml" ]; then
+    readarray -t _ctx_cfg < <(demo_read_storage_config "${root}" 2>/dev/null || true)
+    k8s_context="${_ctx_cfg[3]:-}"
+  fi
+  if [ -z "${k8s_context}" ]; then
+    echo "ERROR: k8s_context not set — add storage.k8s_context to ~/.npa/config.yaml" >&2
+    missing=1
+  fi
+  local kubeconfig="${KUBECONFIG:-${HOME}/.npa/clusters/${k8s_context}/kubeconfig}"
   if [ ! -f "${kubeconfig}" ]; then
     echo "ERROR: kubeconfig not found: ${kubeconfig}" >&2
     echo "       Cluster runs on Nebius; laptop needs kubeconfig to submit/monitor." >&2
