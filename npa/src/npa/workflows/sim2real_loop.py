@@ -2091,8 +2091,15 @@ def _kubernetes_component_env(
     for key, value in env.items():
         if key.startswith("NPA_SIM2REAL"):
             safe[key] = value
-    safe["AWS_ENDPOINT_URL"] = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "")
-    safe["S3_ENDPOINT_URL"] = config.s3_endpoint or env.get("S3_ENDPOINT_URL", "")
+    endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
+        "AWS_ENDPOINT_URL", ""
+    )
+    safe["AWS_ENDPOINT_URL"] = endpoint
+    safe["S3_ENDPOINT_URL"] = endpoint
+    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        value = str(env.get(key) or os.environ.get(key) or "").strip()
+        if value:
+            safe[key] = value
     safe["NPA_SOURCE_REPO"] = config.source_repo or env.get("NPA_SOURCE_REPO", "")
     safe["NPA_SOURCE_REF"] = config.source_ref or env.get("NPA_SOURCE_REF", "")
     return safe
@@ -2782,15 +2789,28 @@ def run_heldout_eval(
             config, "heldout_eval", f"outer-{outer_iteration:02d}"
         )
         if config.heldout_envs_uri:
-            heldout_envs_uri = _normalized_s3_prefix(config.heldout_envs_uri)
-        else:
-            heldout_envs_uri = _upload_component_directory(
-                config,
-                local_dir / "envs" / "heldout",
-                component="heldout_eval",
-                attempt_id=attempt_id,
-                name="heldout-envs",
+            heldout_envs_uri = _resolve_env_records_s3_uri(
+                _normalized_s3_prefix(config.heldout_envs_uri)
             )
+        else:
+            local_heldout = local_dir / "envs" / "heldout"
+            jsonl_path = local_heldout / "envs.jsonl"
+            if jsonl_path.is_file():
+                heldout_envs_uri = _upload_component_file(
+                    config,
+                    jsonl_path,
+                    component="heldout_eval",
+                    attempt_id=attempt_id,
+                    name="heldout-envs.jsonl",
+                )
+            else:
+                heldout_envs_uri = _upload_component_directory(
+                    config,
+                    local_heldout,
+                    component="heldout_eval",
+                    attempt_id=attempt_id,
+                    name="heldout-envs",
+                )
         inner_evidence_uri = _upload_component_file(
             config,
             inner_path,
@@ -3043,15 +3063,25 @@ def run_heldout_eval_component_from_s3(
         env_dir.mkdir(parents=True, exist_ok=True)
         inner_path = root / "inner-evidence.json"
         output_path = root / "report.json"
-        client = StorageClient.from_environment()
-        client.download_path(heldout_envs_uri, str(env_dir))
-        client.download_path(inner_evidence_uri, str(inner_path))
-        inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
-        envs = _read_component_env_records(env_dir)
+        client = StorageClient.from_environment(
+            endpoint_url=os.environ.get("AWS_ENDPOINT_URL", "")
+            or os.environ.get("S3_ENDPOINT_URL", "")
+        )
+        records_path = env_dir / "envs.jsonl"
+        _download_s3_env_records(client, heldout_envs_uri, records_path)
+        inner_local = Path(
+            client.download_path(inner_evidence_uri, str(inner_path))
+        )
+        inner_evidence = json.loads(inner_local.read_text(encoding="utf-8"))
+        envs = _read_component_env_records(records_path)
         if limit > 0:
             envs = envs[:limit]
         if not envs:
-            raise Sim2RealLoopError("held-out component found no env records")
+            raise Sim2RealLoopError(
+                f"held-out component found no env records for {heldout_envs_uri} "
+                f"(resolved={_resolve_env_records_s3_uri(heldout_envs_uri)}, "
+                f"local={records_path})"
+            )
         if sim_backend == SIM_BACKEND_ISAAC:
             scene = _resolve_isaac_scene(
                 scene_spec_uri=scene_spec_uri,
@@ -4338,6 +4368,53 @@ def _adapter_policy_actions(obs: dict[str, Any], adapter: dict[str, Any], *, ste
         torch.full_like(dist_to_cube, 1.0),
     )
     return torch.cat([delta_xyz, gripper], dim=-1)
+
+
+def _resolve_env_records_s3_uri(uri: str) -> str:
+    """Normalize train/heldout env URIs to the envs.jsonl object key."""
+
+    uri = str(uri or "").strip()
+    if not uri.startswith("s3://"):
+        return uri
+    if uri.endswith(".jsonl"):
+        return uri
+    base = uri.rstrip("/")
+    leaf = base.rsplit("/", 1)[-1]
+    if leaf in {"heldout", "train", "raw"} or uri.endswith("/"):
+        return f"{base}/envs.jsonl"
+    return uri
+
+
+def _download_s3_env_records(
+    client: StorageClient,
+    uri: str,
+    dest_path: Path,
+    *,
+    attempts: int | None = None,
+) -> None:
+    """Download sibling env records with retries and a stable local filename."""
+
+    resolved = _resolve_env_records_s3_uri(uri)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    max_attempts = max(
+        1,
+        int(
+            attempts
+            if attempts is not None
+            else os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12")
+        ),
+    )
+    for attempt in range(max_attempts):
+        if dest_path.exists():
+            dest_path.unlink()
+        client.download_path(resolved, str(dest_path))
+        if dest_path.exists() and dest_path.stat().st_size > 0:
+            return
+        if attempt + 1 < max_attempts:
+            time.sleep(min(2**attempt, 8))
+    raise Sim2RealLoopError(
+        f"env records not available at {resolved} after {max_attempts} download attempts"
+    )
 
 
 def _find_component_input_file(root: Path, filename: str) -> Path:

@@ -160,7 +160,7 @@ spec:
             - name: HELDOUT_ENV_COUNT
               value: "${HELDOUT_ENV_COUNT:-4}"
             - name: NPA_SIM2REAL_HELDOUT_EVAL_LIMIT
-              value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-${HELDOUT_ENV_COUNT:-4}}"
+              value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
             - name: SUCCESS_THRESHOLD
               value: "0.45"
             - name: NPA_SOURCE_REPO
@@ -198,7 +198,7 @@ spec:
                 --outer-iterations "\${OUTER_ITERATIONS:-1}"
                 --rollout-count "\${ROLLOUT_COUNT:-2}"
                 --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
-                --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-4}}"
+                --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
                 --threshold "\${SUCCESS_THRESHOLD:-0.45}"
                 --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
                 --isaac-image "\${ISAAC_IMAGE}"
