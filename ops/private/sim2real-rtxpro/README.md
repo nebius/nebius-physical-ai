@@ -43,3 +43,16 @@ cat reports/sim2real-report.json | jq '.outer_loop.latest_decision'
 ```
 
 See **`RUNBOOK.local.md`** (generated) for asset URIs, trigger paths, and accuracy baselines.
+
+## Direct Kubernetes submit (RTX PRO)
+
+SkyPilot on `npa-rtxpro-mk8s` is blocked by kubeconfig context mismatch. Use:
+
+```bash
+export KUBECONFIG=~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
+INNER_ITERATIONS=2 OUTER_ITERATIONS=2 \
+  ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>
+```
+
+Logs: `/tmp/sim2real-cluster/`. The job clones `NPA_SOURCE_REF` (default: branch under test).
