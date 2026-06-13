@@ -233,7 +233,7 @@ def run_policy_rollouts(
     outer_iteration: int,
     iteration: int,
 ) -> list[Path]:
-    """Stage 7: swappable LeRobot/Cortex policy container or local reference rollouts."""
+    """Stage 7: swappable LeRobot policy container or local reference rollouts."""
 
     from npa.workflows.sim2real_loop import generate_action_rollouts
 

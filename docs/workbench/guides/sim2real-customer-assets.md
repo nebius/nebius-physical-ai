@@ -1,4 +1,4 @@
-# Sim2Real — Customer asset handoff (Sereact)
+# Sim2Real — Customer asset handoff
 
 Per-category plan for initial stock setup; custom UR/Flexiv OBJ uploads later.
 
@@ -26,25 +26,25 @@ Those URIs flow into envgen (`build_envgen_scene_spec`) and each env record carr
 
 ---
 
-## Production handoff scorecard (13-step Sereact story)
+## Production handoff scorecard (13-step reference pipeline)
 
 Tier key: **WORKS** = executable on Nebius today; **PARTIAL** = orchestrated but not full vendor fidelity; **SEAM** = documented plug point, not live integration.
 
-| Step | Sereact stage | NPA fit | Notes |
+| Step | Pipeline stage | NPA fit | Notes |
 | --- | --- | --- | --- |
 | 1 | LeRobot trigger | **WORKS** | S3 URI consumed at submit |
 | 2 | LanceDB curation | **SEAM** | Trigger path only; no LanceDB stage |
 | 3 | Cosmos augment | **WORKS** | Cosmos Transfer 2.5 sibling K8s job (PR #110) |
-| 4 | Lightwheel / sim assets | **PARTIAL** | Stock SceneSpec + Franka; BYO mesh/SceneSpec/RobotSpec; not Lightwheel catalog |
+| 4 | Sim assets / catalog | **PARTIAL** | Stock SceneSpec + Franka; BYO mesh/SceneSpec/RobotSpec |
 | 5 | 10K envgen | **WORKS** | `NPA_ENV_COUNT=10000` via `sim2real_envgen` |
 | 6 | 80/20 split | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries `train_envs_uri` / `heldout_envs_uri` |
-| 7 | Cortex / policy actions | **WORKS** | Swappable `POLICY_IMAGE` K8s job; `BYO_POLICY_COMMAND` seam |
+| 7 | Policy action rollouts | **WORKS** | Swappable `POLICY_IMAGE` K8s job; `BYO_POLICY_COMMAND` seam |
 | 8–9 | VLM + RL trainer | **WORKS** | Cosmos3 Reason + LeRobot VLM-signal trainer on cluster |
-| 10 | Held-out eval | **PARTIAL** | Isaac Lab or Genesis rollouts; not Lightwheel eval harness |
+| 10 | Held-out eval | **PARTIAL** | Isaac Lab or Genesis rollouts |
 | 11 | Threshold gate | **WORKS** | Promote vs loop-back |
 | 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` |
 | 13 | Retrigger | **SEAM** | Record only; no auto S3 watcher |
 
-**Overall:** ~**80%** as an NPA orchestration framework customers can run on RTX PRO; ~**20%** as the full Sereact vendor stack (LanceDB, Lightwheel, Cortex-native, real-world loop).
+**Overall:** ~**80%** as an NPA orchestration framework on RTX PRO; ~**20%** gap is third-party catalog, LanceDB stage, and live real-world loop.
 
 **PR stack:** [#109](https://github.com/nebius/nebius-physical-ai/pull/109) staged runbook + K8s ops; [#110](https://github.com/nebius/nebius-physical-ai/pull/110) mandatory stages + Stage 2 asset materialization (this branch).
