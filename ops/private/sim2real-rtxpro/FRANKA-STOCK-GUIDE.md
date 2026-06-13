@@ -82,10 +82,10 @@ export TRIGGER_DATASET_URI=s3://lerobot-d87cf691/sim2real-triggers/trigger-valid
   --var "OUTER_ITERATIONS=2"
 ```
 
-**Monitor live stages** (not `npa workbench workflow status`):
+**Monitor live stages:**
 
 ```bash
-./npa/.venv/bin/python -m npa.workflows.sim2real status <RUN_ID> --watch
+./npa/.venv/bin/npa workbench workflow status <RUN_ID> --watch
 ```
 
 Private operator wrapper (preflight + submit + wait + sync + Rerun):
@@ -155,13 +155,13 @@ kubectl --context npa-rtxpro-mk8s get jobs -n default --sort-by=.metadata.creati
 
 ```bash
 cd ~/npa-sim2real-demo/nebius-physical-ai
-./npa/.venv/bin/python -m npa.workflows.sim2real status sim2real-staged-<RUN_ID> --watch
+./npa/.venv/bin/npa workbench workflow status sim2real-staged-<RUN_ID> --watch
 ```
 
 One-shot (no watch):
 
 ```bash
-./npa/.venv/bin/python -m npa.workflows.sim2real status <RUN_ID>
+./npa/.venv/bin/npa workbench workflow status <RUN_ID>
 ```
 
 Operator shortcut:

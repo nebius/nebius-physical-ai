@@ -91,7 +91,7 @@ def _kube_runner_factory(context: str, kubeconfig: str):
     return _run
 
 
-@app.command("sim2real")
+@app.command("sim2real", hidden=True)
 def sim2real_command(
     run_id: str = typer.Option("sim2real-doctor", "--run-id", help="Run id for the probed config."),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket for artifact upload."),
@@ -129,7 +129,11 @@ def sim2real_command(
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
-    """Validate a sim2real config and check the recurring blockers up front."""
+    """Validate a sim2real config and check the recurring blockers up front.
+
+    Deprecated: use ``npa workbench workflow submit`` on the sim2real runbook for
+    preflight and ``npa workbench workflow status <run-id>`` for live progress.
+    """
 
     overrides: dict[str, object] = {
         "run_id": run_id,
