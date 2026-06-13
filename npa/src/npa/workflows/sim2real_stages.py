@@ -62,6 +62,16 @@ class Sim2RealStageError(RuntimeError):
 Sim2RealLoopError = Sim2RealStageError
 
 
+def k8s_image_ready(image: str) -> bool:
+    """Return true when an image reference is registry-qualified (not a placeholder)."""
+
+    from npa.guardrails.skypilot import unresolved_image_placeholders
+    from npa.workflows.sim2real_health import _looks_registry_qualified
+
+    ref = str(image or "").strip()
+    return bool(ref) and _looks_registry_qualified(ref) and not unresolved_image_placeholders(ref)
+
+
 def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
     """Stage 3: run Cosmos Transfer 2.5 (K8s sibling job when bucket set, else local reference)."""
 
@@ -70,7 +80,7 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
     input_uri = (config.trigger_dataset_uri or "").strip()
     if not input_uri:
         input_uri = f"local://{local_dir / 'stage_01_trigger' / 'trigger.json'}"
-    if config.s3_bucket:
+    if config.s3_bucket and k8s_image_ready(config.augment_image):
         output_uri = f"{artifact_output_uri(config)}/augment/"
         from npa.workflows import sim2real_loop as loop
 
@@ -88,8 +98,15 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
         manifest, augmented_frames_uri = _reference_augment_local(
             config, local_dir, input_uri=input_uri
         )
-        tier = "WORKS"
-        evidence = "Executed reference Cosmos Transfer augmentation locally (no s3_bucket)."
+        if config.s3_bucket:
+            tier = "SEAM"
+            evidence = (
+                "Augment image is an operator placeholder or bare tag; executed reference "
+                "Cosmos Transfer locally until AUGMENT_IMAGE is registry-qualified."
+            )
+        else:
+            tier = "WORKS"
+            evidence = "Executed reference Cosmos Transfer augmentation locally (no s3_bucket)."
     _write_json(augment_dir / "manifest.json", manifest)
     return {
         "manifest": manifest,
@@ -108,6 +125,8 @@ def run_envgen_split_stage(
     local_dir: Path,
     *,
     augmented_frames_uri: str,
+    scene_spec_uri: str = "",
+    robot_spec_uri: str = "",
 ) -> dict[str, Any]:
     """Stages 4–6: generate raw envs, 80/20 split, token manifest."""
 
@@ -117,10 +136,13 @@ def run_envgen_split_stage(
     if train_count + heldout_count != env_count:
         raise Sim2RealStageError("train + heldout counts must equal env_count")
 
-    scene = build_scene_spec(
-        byo_mesh_uri=config.assets_uri,
+    from npa.workflows.sim2real_assets import build_envgen_scene_spec
+
+    scene = build_envgen_scene_spec(
+        config,
+        scene_spec_uri=scene_spec_uri or str(local_dir / "stage_02_assets" / "consumed_scene_spec.json"),
+        robot_spec_uri=robot_spec_uri or str(local_dir / "stage_02_assets" / "consumed_robot_spec.json"),
         augmented_frames_uri=augmented_frames_uri,
-        notes=[f"robot_preset={config.robot_preset or 'franka-stock'}"],
     )
     env_root = local_dir / "envs"
     env_root.mkdir(parents=True, exist_ok=True)
@@ -216,7 +238,11 @@ def run_policy_rollouts(
     from npa.workflows.sim2real_loop import generate_action_rollouts
 
     train_uri = (config.train_envs_uri or "").strip()
-    if config.s3_bucket and train_uri.startswith("s3://"):
+    if (
+        config.s3_bucket
+        and train_uri.startswith("s3://")
+        and k8s_image_ready(config.policy_image)
+    ):
         from npa.workflows import sim2real_loop as loop
 
         return loop.run_policy_rollout_component(
@@ -269,10 +295,10 @@ def _reference_augment_local(
         },
     )
     output_uri = str(frames_dir)
-    if config.s3_bucket:
-        from npa.clients.storage import StorageClient
+    if config.s3_bucket and config.s3_endpoint.strip():
+        from npa.workflows.sim2real_loop import _storage_client
 
-        client = StorageClient.from_environment()
+        client = _storage_client(config)
         root = f"{artifact_output_uri(config)}/augment/frames/"
         for item in index:
             client.upload_file(item["local"], f"{root}{Path(item['local']).name}")

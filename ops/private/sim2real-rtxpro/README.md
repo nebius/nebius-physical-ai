@@ -52,7 +52,13 @@ SkyPilot on `npa-rtxpro-mk8s` is blocked by kubeconfig context mismatch. Use:
 export KUBECONFIG=~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
 INNER_ITERATIONS=2 OUTER_ITERATIONS=2 \
   ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
-./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>
+# Monitor auto-starts in tmux session sim2real-cluster-live
+tmux attach -t sim2real-cluster-live
+# Or read logs:
+tail -f /tmp/sim2real-cluster/sim2real-<run-id>-monitor.log
 ```
+
+Held-out rollouts use **Isaac Lab** (`NPA_SIM2REAL_SIM_BACKEND=isaac`, `ISAAC_IMAGE`).
+Override with `NPA_SIM2REAL_SIM_BACKEND=genesis` only for legacy debugging.
 
 Logs: `/tmp/sim2real-cluster/`. The job clones `NPA_SOURCE_REF` (default: branch under test).

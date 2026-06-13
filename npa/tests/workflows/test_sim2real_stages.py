@@ -13,6 +13,8 @@ from npa.workflows.sim2real_stages import (
     effective_env_count,
     effective_heldout_count,
     effective_train_count,
+    k8s_image_ready,
+    run_augment_stage,
 )
 
 
@@ -49,10 +51,38 @@ def test_preamble_executes_augment_and_envgen_locally(tmp_path: Path) -> None:
         env_count=0,
         rollout_count=2,
         heldout_env_count=4,
+        sim_backend="isaac",
     )
     state = run_preamble(config)
     augment = json.loads((tmp_path / "augment" / "manifest.json").read_text())
+    assets = json.loads(
+        (tmp_path / "stage_02_assets" / "consumed_scene_spec.json").read_text()
+    )
     assert augment["status"] in {"executed_reference", "executed"}
+    assert assets["sim_backend"] == "isaac"
     assert state["train_env_count"] == 2
     assert state["heldout_env_count"] == 4
     assert state["env_count"] == 6
+
+
+def test_k8s_image_ready_rejects_bare_tags_and_placeholders() -> None:
+    assert not k8s_image_ready("npa-cosmos2-transfer:2.5.0")
+    assert not k8s_image_ready("cr.eu-north1.nebius.cloud/<your-registry-id>/npa:tag")
+    assert k8s_image_ready(
+        "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos2-transfer:2.5.0"
+    )
+
+
+def test_augment_stage_uses_seam_reference_for_placeholder_image(tmp_path: Path) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="seam-augment",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        s3_endpoint="",
+        trigger_dataset_uri="s3://bucket/triggers/pusht/",
+        augment_image="npa-cosmos2-transfer:2.5.0",
+    )
+    result = run_augment_stage(config, tmp_path)
+    assert result["component"]["tier"] == "SEAM"
+    assert result["manifest"]["status"] == "executed_reference"
+    assert (tmp_path / "augment" / "frames" / "index.json").exists()
