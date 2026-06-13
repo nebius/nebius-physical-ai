@@ -106,7 +106,9 @@ def run_command(
         help="Isaac Lab manipulation task id for the stock held-out rollout.",
     ),
     vlm_model: str = typer.Option(
-        "nvidia/Cosmos-Reason1-7B", "--vlm-model", help="VLM model id/name."
+        "nvidia/Cosmos-Reason2-8B",
+        "--vlm-model",
+        help="Legacy single-VLM model id when dual Reason eval is disabled.",
     ),
     threshold: float = typer.Option(
         DEFAULT_THRESHOLD, "--threshold", help="Held-out success threshold."

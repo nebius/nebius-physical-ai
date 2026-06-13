@@ -1149,6 +1149,12 @@ def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
     assert "--k8s-gpu-product" in task["run"]
     assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
+    assert "--vlm-dual-reason" in task["run"]
+    assert "--vlm-reason2-model" in task["run"]
+    assert "--vlm-reason3-model" in task["run"]
+    assert task["envs"]["VLM_REASON2_MODEL"] == "nvidia/Cosmos-Reason2-8B"
+    assert task["envs"]["VLM_REASON3_MODEL"] == "nvidia/Cosmos-Reason1-7B"
+    assert "nvidia/Cosmos-Reason1-7B" not in task["run"].split("--vlm-model")[1].split("\n")[0]
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
 
 

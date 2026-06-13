@@ -62,6 +62,12 @@ export ROLLOUT_COUNT=3
 export STEPS_PER_ROLLOUT=4
 export HELDOUT_ENV_COUNT=8
 
+# 6. Self-hosted dual VLM models (accept on Hugging Face — see operator guide).
+export VLM_REASON2_MODEL=nvidia/Cosmos-Reason2-8B
+export VLM_REASON3_MODEL=nvidia/Cosmos-Reason1-7B
+export NPA_SIM2REAL_VLM_DUAL_REASON=1
+# Mirror HF_TOKEN into cluster secret hf-ngc-tokens before GPU sibling Jobs run.
+
 npa workbench workflow submit \
   npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id "${NPA_SIM2REAL_RUN_ID}" \
@@ -78,7 +84,10 @@ npa workbench workflow submit \
   --var LOOP_OF_LOOPS_ITERATIONS="${LOOP_OF_LOOPS_ITERATIONS}" \
   --var ROLLOUT_COUNT="${ROLLOUT_COUNT}" \
   --var STEPS_PER_ROLLOUT="${STEPS_PER_ROLLOUT}" \
-  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}"
+  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}" \
+  --var VLM_REASON2_MODEL="${VLM_REASON2_MODEL}" \
+  --var VLM_REASON3_MODEL="${VLM_REASON3_MODEL}" \
+  --var NPA_SIM2REAL_VLM_DUAL_REASON="${NPA_SIM2REAL_VLM_DUAL_REASON:-1}"
 ```
 
 Canonical S3 layout for the quickstart:

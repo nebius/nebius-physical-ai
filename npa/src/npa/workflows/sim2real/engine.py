@@ -44,6 +44,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_SIM_BACKEND,
     DEFAULT_THRESHOLD,
+    DEFAULT_VLM_SEAM_EVIDENCE,
     ERROR_SEVERITY,
     REFERENCE_VLM_ALIASES,
     SCHEMA_E2E_REPORT,
@@ -340,7 +341,8 @@ def run_finalize(
                 ComponentRecord(
                     "vlm_byo_seam",
                     "WORKS",
-                    "VLM image/command are runtime-configurable; default model is nvidia/Cosmos-Reason1-7B.",
+                    "VLM image/command are runtime-configurable; "
+                    f"{DEFAULT_VLM_SEAM_EVIDENCE}",
                     {"image": config.vlm_image},
                 )
             ),
