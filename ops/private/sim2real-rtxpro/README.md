@@ -38,7 +38,7 @@ npa workbench workflow submit \
 
 ```bash
 # Offline walkthrough (sync golden run from S3)
-./ops/private/sim2real-rtxpro/prestage-offline-run.sh
+./ops/private/sim2real-rtxpro/prestage-offline-run.sh <run-id>
 rerun /tmp/sim2real-prestage/<run-id>/reports/sim2real.rrd
 
 # After live run — sync from S3 or read pod /tmp
