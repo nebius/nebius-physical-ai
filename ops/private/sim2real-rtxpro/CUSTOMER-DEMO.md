@@ -3,7 +3,9 @@
 **Laptop = interface only.** All pipeline compute runs on your Nebius Kubernetes
 GPU cluster. Artifacts land on S3; your machine syncs and opens Rerun.
 
-This is the same workflow customers use in production: **submit → cluster → S3 → inspect**.
+**Trigger model:** upload a complete LeRobot batch to S3, then **explicitly**
+start the pipeline. There is **no S3 polling** — you decide when the batch is
+ready and when to run.
 
 ---
 
@@ -16,45 +18,95 @@ This is the same workflow customers use in production: **submit → cluster → 
    - `~/.npa/credentials.yaml` — S3 keys (and HF/NGC if needed by images)
 4. **Kubeconfig** for your cluster → `~/.npa/clusters/<context>/kubeconfig`
 
+**Operator shortcut (private repo):** if you have access to the private walkthrough
+repo, run `./setup-npa-local.sh` once — it installs `config.yaml`, `credentials.yaml`,
+and kubeconfig into `~/.npa/` (mode 600). Otherwise use `npa configure` manually.
+
 ---
 
-## Run the demo (one command)
+## Production flow (upload → trigger)
+
+### 1. Upload LeRobot data to S3
+
+Upload a **complete** LeRobot dataset tree, for example:
+
+```text
+s3://<bucket>/sim2real-triggers/<batch-id>/lerobot-<task>/
+  meta/info.json
+  meta/episodes.jsonl
+  data/…/*.parquet
+  videos/…/*.mp4
+```
+
+Use your bucket credentials (`~/.npa/credentials.yaml`). Wait until the full
+batch is uploaded before triggering — partial uploads are not detected automatically.
+
+### 2. Trigger the pipeline
 
 ```bash
-git clone --branch feat/sim2real-mandatory-stages \
-  https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
-./ops/private/sim2real-rtxpro/run-demo.sh
+export TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/<batch-id>/lerobot-<task>/
+./ops/private/sim2real-rtxpro/trigger-pipeline.sh
+```
+
+Optional:
+
+```bash
+export TRIGGER_DATASET_ID=lerobot/<task>
+export RUN_ID=<batch-id>          # ties run artifacts to your batch name
+WAIT=0 ./ops/private/sim2real-rtxpro/trigger-pipeline.sh   # submit only
 ```
 
 What happens:
 
 | Step | Where | What |
 | --- | --- | --- |
-| 1 | Laptop | Bootstrap `npa/.venv`, preflight config/creds/kubeconfig |
-| 2 | **Nebius cluster** | Submit K8s Job — orchestrator + GPU sibling Jobs (Cosmos VLM, Isaac held-out, …) |
-| 3 | **Nebius cluster** | Staged CLI: `preamble` → `outer-iteration` × N → `finalize` |
-| 4 | **Nebius S3** | Full artifact tree uploaded (`--upload-artifacts`) |
-| 5 | Laptop | Sync `reports/sim2real.rrd` + stage JSON from S3 |
-| 6 | Laptop | Open **Rerun web viewer** — walk the timeline |
+| 1 | Laptop | S3 preflight (`meta/info.json` or `data/*.parquet`) |
+| 2 | Laptop | Bootstrap `npa/.venv`, preflight config/creds/kubeconfig |
+| 3 | **Nebius cluster** | Submit K8s Job — orchestrator + GPU sibling Jobs |
+| 4 | **Nebius cluster** | Staged CLI: `preamble` → `outer-iteration` × N → `finalize` |
+| 5 | **Nebius S3** | Full artifact tree uploaded (`--upload-artifacts`) |
+| 6 | Laptop | Sync `reports/sim2real.rrd` + stage JSON from S3 |
+| 7 | Laptop | Open **Rerun web viewer** |
+
+### 3. Next batch (real-world flywheel)
+
+1. Deploy promoted checkpoint on your robot (**customer BYO** — Stage 12 seam)
+2. Collect new teleop → upload new LeRobot batch to a **new or versioned** S3 prefix
+3. Export new `TRIGGER_DATASET_URI` and run `trigger-pipeline.sh` again
+
+Each batch = one explicit trigger. No background watcher required.
+
+---
+
+## Demo / rehearsal (stock trigger)
+
+For a smoke run without your own upload (uses default pusht path under your bucket):
+
+```bash
+./ops/private/sim2real-rtxpro/run-demo.sh
+```
+
+Reuse a completed cluster run (sync + Rerun only):
+
+```bash
+RUN_ID=<your-run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
+```
 
 ---
 
 ## Modes
 
 ```bash
-# Full flow: submit + wait + sync + Rerun (~15–30 min on cluster)
-./ops/private/sim2real-rtxpro/run-demo.sh
+# Full flow: preflight + submit + wait + sync + Rerun
+./ops/private/sim2real-rtxpro/trigger-pipeline.sh
 
-# Re-open a completed Nebius run (presentation / rehearsal)
-RUN_ID=<your-run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
+# Submit only — monitor separately
+WAIT=0 ./ops/private/sim2real-rtxpro/trigger-pipeline.sh
 
-# Submit only — monitor separately (long jobs)
-WAIT=0 ./ops/private/sim2real-rtxpro/run-demo.sh
-# later:
+# Sync + Rerun for a completed run
 RUN_ID=<run-id> SUBMIT=0 ./ops/private/sim2real-rtxpro/run-demo.sh
 
-# Sync + artifacts only, no browser
+# No browser
 VISUALIZE=0 RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
 ```
 
@@ -62,27 +114,17 @@ VISUALIZE=0 RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
 
 ---
 
-## Rerun walkthrough (~30 s)
-
-Open the URL printed by the script. In the viewer:
-
-1. **rollouts/…/camera** — action rollouts (Stage 7)
-2. **Critique overlays** — VLM scores (Stage 8, Cosmos on cluster)
-3. **signal/reward** — RL signal (Stage 9)
-4. **heldout/scores** — held-out eval (Stage 10, Isaac on cluster)
-
----
-
 ## Configuration knobs
-
-Set via environment before `run-demo.sh` (same as cluster submit):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `TRIGGER_DATASET_URI` | required for `trigger-pipeline.sh` | Uploaded LeRobot prefix on S3 |
+| `TRIGGER_DATASET_ID` | `lerobot/pusht` | LeRobot dataset id metadata |
+| `RUN_ID` | auto on submit | Pipeline run id (S3 artifact prefix) |
 | `KUBECONTEXT` | from `~/.npa/config.yaml` | Kubernetes context |
 | `INNER_ITERATIONS` | `1` | Inner loop depth |
 | `OUTER_ITERATIONS` | `2` | Outer loop / loop-back |
-| `S3_PREFIX` | `sim2real-b` | S3 prefix parent |
+| `S3_PREFIX` | `sim2real-b` | S3 prefix parent for run outputs |
 | `SUCCESS_THRESHOLD` | `0.45` | Held-out promote threshold |
 
 ---
@@ -91,35 +133,23 @@ Set via environment before `run-demo.sh` (same as cluster submit):
 
 | Issue | Fix |
 | --- | --- |
-| `config.yaml missing` | `npa configure` |
-| `kubeconfig not found` | Install cluster kubeconfig under `~/.npa/clusters/<context>/` |
+| `no LeRobot batch at …` | Finish upload; need `meta/info.json` or `data/*.parquet` |
+| `TRIGGER_DATASET_URI` missing | Export S3 path before `trigger-pipeline.sh` |
+| `config.yaml missing` | `npa configure` or private `setup-npa-local.sh` |
 | Job failed | `./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>` |
-| No `.rrd` on S3 | Check `stage_14_rerun_viz` tier in `reports/sim2real-report.json` |
-| Mac: `ops/npa does not appear to be a Python project` | `git pull` latest branch — fixes repo-root detection in `lib/demo-common.sh` |
-| Mac: first run slow | Script bootstraps `npa/.venv` once (~2–5 min); needs network for `pip install -e npa` |
+| Mac venv path error | `git pull` latest branch |
 
 ---
 
 ## Security — credentials never in git
 
-| Secret | Where it lives | Never |
-| --- | --- | --- |
-| S3 keys, HF/NGC tokens | `~/.npa/credentials.yaml` (chmod 600) | Committed files, YAML env blocks, logs |
-| Kubeconfig | `~/.npa/clusters/<context>/kubeconfig` | Repo or walkthrough docs |
-| Bucket / registry / cluster | `~/.npa/config.yaml` | Hardcoded in scripts (read at runtime) |
+| Secret | Where it lives |
+| --- | --- |
+| S3 keys, HF/NGC tokens | `~/.npa/credentials.yaml` (chmod 600) |
+| Kubeconfig | `~/.npa/clusters/<context>/kubeconfig` |
+| Bucket / registry / cluster | `~/.npa/config.yaml` |
 
-Cluster submit uses **Kubernetes `secretRef`** (`hf-ngc-tokens`, `npa-storage-credentials`) —
-credentials are not embedded in generated Job manifests.
-
-Generated gitignored files (`env.local`, `*.local.md`) may contain your bucket/registry
-from config — do not commit them.
-
----
-
-## What is NOT this workflow
-
-**Reference rehearsal** (no cluster, laptop simulates stages) is for unit tests only —
-not the customer path. Do not use for production demos.
+Cluster submit uses Kubernetes `secretRef` — credentials are not embedded in Job YAML.
 
 ---
 
@@ -127,8 +157,9 @@ not the customer path. Do not use for production demos.
 
 | Script | Role |
 | --- | --- |
-| `run-demo.sh` | **Customer entrypoint** (this doc) |
-| `submit-k8s-staged-job.sh` | Cluster submit (called by run-demo) |
+| **`trigger-pipeline.sh`** | **Customer entrypoint** — upload then trigger |
+| `run-demo.sh` | Demo/rehearsal or sync-only |
+| `submit-k8s-staged-job.sh` | Cluster submit (called internally) |
 | `monitor-k8s-job.sh` | Poll job until complete |
 | `prestage-offline-run.sh` | S3 → local sync |
 | `setup-local-operator.sh` | Generate `env.local` from config |

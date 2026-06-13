@@ -75,6 +75,8 @@ _submit_and_wait() {
     REGISTRY="${REGISTRY}" \
     S3_ENDPOINT="${ENDPOINT}" \
     KUBECONTEXT="${KUBECONTEXT}" \
+    NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-}}" \
+    NPA_SIM2REAL_TRIGGER_DATASET_ID="${NPA_SIM2REAL_TRIGGER_DATASET_ID:-${TRIGGER_DATASET_ID:-}}" \
     "${OPS}/submit-k8s-staged-job.sh" 2>&1 | tee -a "${submit_log}"
 
   RUN_ID="$(grep -oE 'run_id=[^ ]+' "${submit_log}" | tail -1 | cut -d= -f2)"

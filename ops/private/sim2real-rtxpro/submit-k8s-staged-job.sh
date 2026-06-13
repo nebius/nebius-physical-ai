@@ -29,6 +29,13 @@ if [ -z "${REG}" ]; then
   exit 1
 fi
 
+TRIGGER_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-s3://${BUCKET}/sim2real-triggers/${RUN_ID}/lerobot-pusht/}}"
+TRIGGER_ID="${NPA_SIM2REAL_TRIGGER_DATASET_ID:-${TRIGGER_DATASET_ID:-lerobot/pusht}}"
+# Normalize trailing slash for S3 prefix semantics.
+if [ -n "${TRIGGER_URI}" ] && [[ "${TRIGGER_URI}" != */ ]]; then
+  TRIGGER_URI="${TRIGGER_URI}/"
+fi
+
 # Preflight: every image must be registry-qualified before we apply the Job.
 TRAINER_IMAGE="${TRAINER_IMAGE:-${REG}/npa-lerobot-vlm-rl:0.1.0}"
 VLM_IMAGE="${VLM_IMAGE:-${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120}"
@@ -175,6 +182,10 @@ spec:
               value: "default"
             - name: NPA_SIM2REAL_K8S_SERVICE_ACCOUNT
               value: "agent-sa"
+            - name: NPA_SIM2REAL_TRIGGER_DATASET_URI
+              value: "${TRIGGER_URI}"
+            - name: NPA_SIM2REAL_TRIGGER_DATASET_ID
+              value: "${TRIGGER_ID}"
           envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
@@ -216,6 +227,8 @@ spec:
                 --trainer-image "\${TRAINER_IMAGE}"
                 --k8s-namespace "\${NPA_SIM2REAL_K8S_NAMESPACE:-default}"
                 --k8s-service-account "\${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}"
+                --trigger-dataset-uri "\${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
+                --trigger-dataset-id "\${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}"
                 --upload-artifacts
               )
               python3 -m npa.workflows.sim2real_loop preamble "\${common_args[@]}"
@@ -240,6 +253,7 @@ chmod 600 "${MANIFEST}"
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"
 echo "run_id=${RUN_ID} job=${JOB} manifest=${MANIFEST} log=${LOG}"
+echo "trigger_uri=${TRIGGER_URI} trigger_id=${TRIGGER_ID}"
 echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} env_count=${NPA_ENV_COUNT:-10000} isaac_image=${ISAAC_IMAGE} augment_image=${AUGMENT_IMAGE}"
 
 MONITOR_SCRIPT="$(cd "$(dirname "$0")" && pwd)/monitor-k8s-job.sh"
