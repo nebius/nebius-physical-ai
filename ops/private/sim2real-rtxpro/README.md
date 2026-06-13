@@ -20,9 +20,20 @@ kubectl --context npa-rtxpro-mk8s get nodes
 ./ops/private/sim2real-rtxpro/setup-local-operator.sh
 ```
 
-This writes **`RUNBOOK.local.md`** and **`env.local`** with your bucket, registry,
-and cluster context filled from `~/.npa/config.yaml`. Credentials are referenced
-by path only.
+This writes **`RUNBOOK.local.md`**, **`DEMO-WALKTHROUGH.local.md`**, and **`env.local`**
+with your bucket, registry, and cluster context filled from `~/.npa/config.yaml`.
+Credentials are referenced by path only.
+
+## Run locally (no cluster)
+
+Rehearse the full 13-stage artifact tree on **this machine only** (~1 s). No GPU, no S3, no kubeconfig.
+
+```bash
+./ops/private/sim2real-rtxpro/run-local-demo.sh
+# → runs pipeline, verifies .rrd, starts local Rerun web viewer URL
+```
+
+See **`LOCAL-DEMO.md`** for the local walkthrough. Cluster/S3 paths are optional (appendix in private repo).
 
 ## Run staged workflow
 
@@ -53,6 +64,8 @@ rerun-sdk) or **SEAM** (`NPA_SIM2REAL_RERUN=0`) means the object is absent — n
 an upload bug.
 
 See **`RUNBOOK.local.md`** (generated) for asset URIs, trigger paths, and accuracy baselines.
+
+K8s deployment inventory (placeholders): [sim2real-architecture.md](../../../docs/workbench/guides/sim2real-architecture.md#kubernetes-deployment-inventory).
 
 ## Direct Kubernetes submit (RTX PRO)
 

@@ -96,7 +96,136 @@ rerun /tmp/sim2real-prestage/rtxpro-staged-2x2-20260613t011356z/reports/sim2real
 Reproduce: `/tmp/run_staged_twice.sh` on nebius-dev-vm (see PR validation log).
 """
 (out / "RUNBOOK.local.md").write_text(md, encoding="utf-8")
-print(f"Wrote {out}/env.local and {out}/RUNBOOK.local.md")
+
+golden_run = "rtxpro-staged-2x2-20260613t011356z"
+reg_display = registry.rstrip("/") if registry else "<configure storage.registry>"
+bucket_display = bucket or "YOUR-BUCKET"
+repo_root = out.resolve().parents[2]
+walkthrough = f"""# Sim2Real Demo — Private Walkthrough (generated)
+
+> Machine-specific notes. **Gitignored.** Regenerate: `./ops/private/sim2real-rtxpro/setup-local-operator.sh`
+
+## Local demo first (no cluster)
+
+```bash
+cd {repo_root}
+./ops/private/sim2real-rtxpro/run-local-demo.sh
+# → prints local Rerun web viewer URL; open in browser
+```
+
+No kubeconfig, no S3, no credentials. See `{repo_root}/ops/private/sim2real-rtxpro/LOCAL-DEMO.md`.
+
+---
+
+## Infrastructure (cluster — optional)
+
+| Item | Value |
+| --- | --- |
+| Cluster context | `npa-rtxpro-mk8s` |
+| Kubeconfig | `~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig` |
+| Bucket | `{bucket_display}` |
+| S3 endpoint | `{endpoint}` |
+| Artifact prefix | `sim2real-b/<run-id>/` |
+| Registry | `{reg_display}` |
+| Project | `{rtx.get('project_id', '')}` |
+| Golden pre-staged run | `{golden_run}` |
+
+Canonical S3 root for a run:
+
+```text
+s3://{bucket_display}/sim2real-b/<run-id>/
+```
+
+Golden Rerun recording:
+
+```text
+s3://{bucket_display}/sim2real-b/{golden_run}/reports/sim2real.rrd
+```
+
+## Three ways to run the demo
+
+### 1. Local reference (**default for walkthrough**)
+
+```bash
+cd {repo_root}
+./ops/private/sim2real-rtxpro/run-local-demo.sh
+```
+
+Opens local Rerun web viewer. Artifacts: `/tmp/sim2real-local/<run-id>/`
+
+### 2. Cluster live (GPU siblings)
+
+```bash
+export KUBECONFIG=~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig
+INNER_ITERATIONS=1 OUTER_ITERATIONS=2 \\
+  ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+tmux attach -t sim2real-cluster-live
+```
+
+Images (from registry):
+
+- Orchestrator: `{reg_display}/npa-lerobot-vlm-rl:0.1.0`
+- VLM: `{reg_display}/npa-cosmos3-reason:3.0.1-genuine-sm120`
+- Held-out Isaac: `{reg_display}/npa-isaac-lab:2.3.2.post1`
+- Augment: `{reg_display}/npa-cosmos2-transfer:2.5.0`
+
+### 3. Offline walkthrough (pre-staged S3 — fallback if live job slow)
+
+```bash
+./ops/private/sim2real-rtxpro/prestage-offline-run.sh {golden_run}
+{repo_root}/npa/.venv/bin/rerun \\
+  /tmp/sim2real-prestage/{golden_run}/reports/sim2real.rrd
+```
+
+Headless VM → browser URL:
+
+```bash
+cd {repo_root}
+npa/.venv/bin/npa rerun host \\
+  /tmp/sim2real-prestage/{golden_run}/reports/sim2real.rrd \\
+  --allow-host-creds
+```
+
+## Visualize locally
+
+After **local demo** (web viewer URL printed by script) or **prestage sync**:
+
+```bash
+RUN_DIR=/tmp/sim2real-local/<run-id>
+{repo_root}/npa/.venv/bin/rerun "$RUN_DIR/reports/sim2real.rrd" --web-viewer
+```
+
+| `stage_14_rerun_viz` tier | `.rrd` present? |
+| --- | --- |
+| WORKS | Yes — open with `rerun` |
+| WARN | No — install `rerun-sdk` in orchestrator |
+| SEAM | No — `NPA_SIM2REAL_RERUN=0` |
+
+## Demo scale knobs
+
+| Knob | Local default | Cluster submit |
+| --- | --- | --- |
+| `INNER_ITERATIONS` | 1 | 1 |
+| `OUTER_ITERATIONS` | 2 | 1–2 |
+| `ROLLOUT_COUNT` | 2 | 2 |
+| `HELDOUT_ENV_COUNT` | 4 | 4 |
+| `NPA_ENV_COUNT` | 0 (fast) | 10000 |
+| `SUCCESS_THRESHOLD` | 0.45 | 0.45 |
+
+## Presentation checklist
+
+1. `./ops/private/sim2real-rtxpro/prestage-offline-run.sh` — Rerun tab ready
+2. Optional live submit 15–30 min before room
+3. Public script: `docs/workbench/guides/sim2real-demo-script-10min.md`
+4. Verify tier: `jq '.components[] | select(.name==\"stage_14_rerun_viz\")' reports/sim2real-report.json`
+
+## Secrets (never copy here)
+
+- `~/.npa/credentials.yaml` — S3, HF, NGC
+- `~/.npa/clusters/npa-rtxpro-mk8s/kubeconfig`
+"""
+(out / "DEMO-WALKTHROUGH.local.md").write_text(walkthrough, encoding="utf-8")
+print(f"Wrote {out}/env.local, {out}/RUNBOOK.local.md, and {out}/DEMO-WALKTHROUGH.local.md")
 PY
 
 chmod 600 "${OUT_DIR}/env.local" 2>/dev/null || true
