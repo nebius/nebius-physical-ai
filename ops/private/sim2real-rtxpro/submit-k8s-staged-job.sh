@@ -161,6 +161,10 @@ spec:
               value: "${HELDOUT_ENV_COUNT:-4}"
             - name: NPA_SIM2REAL_HELDOUT_EVAL_LIMIT
               value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-${HELDOUT_ENV_COUNT:-4}}"
+            - name: NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES
+              value: "${NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES:-24}"
+            - name: NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S
+              value: "${NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S:-20}"
             - name: SUCCESS_THRESHOLD
               value: "0.45"
             - name: NPA_SOURCE_REPO
