@@ -94,9 +94,20 @@ chmod +x ~/npa-sim2real-demo/run.sh
 Then from `~/npa-sim2real-demo`:
 
 ```bash
-./run.sh trigger          # submit to cluster (prints monitor cmd)
-./run.sh status <RUN_ID>  # live kubectl + S3 checklist
-./run.sh sync <RUN_ID>    # pull artifacts + Rerun viz
+# Full customer replication (reset → submit)
+./run.sh demo
+
+# Or step by step:
+./run.sh cleanup              # clear local tmp + finished K8s jobs
+./run.sh trigger              # submit to cluster (prints monitor cmd)
+./run.sh status <RUN_ID>      # live kubectl + S3 checklist
+./run.sh sync <RUN_ID>        # pull artifacts + Rerun viz
+```
+
+Remove a specific failed run (including S3 artifacts):
+
+```bash
+./run.sh cleanup --run-id sim2real-staged-20260613t144824z --s3
 ```
 
 No `npa workbench workflow status` or git pull required on the laptop — scripts use

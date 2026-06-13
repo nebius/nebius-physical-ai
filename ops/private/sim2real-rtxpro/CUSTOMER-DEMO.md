@@ -44,6 +44,17 @@ batch is uploaded before triggering — partial uploads are not detected automat
 
 ### 2. Trigger the pipeline
 
+**Operator pack (Mac — recommended):**
+
+```bash
+cd ~/npa-sim2real-demo
+./run.sh demo          # cleanup + submit (customer replication from scratch)
+./run.sh status <RUN_ID>
+./run.sh sync <RUN_ID>
+```
+
+**From repo checkout:**
+
 ```bash
 export TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/<batch-id>/lerobot-<task>/
 ./ops/private/sim2real-rtxpro/trigger-pipeline.sh
