@@ -93,9 +93,9 @@ def run_augment_stage(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, 
         input_uri = f"local://{local_dir / 'stage_01_trigger' / 'trigger.json'}"
     if config.s3_bucket and k8s_image_ready(config.augment_image):
         output_uri = f"{artifact_output_uri(config)}/augment/"
-        from npa.workflows import sim2real_loop as loop
+        from npa.workflows.sim2real.engine import run_cosmos2_transfer_component
 
-        result = loop.run_cosmos2_transfer_component(
+        result = run_cosmos2_transfer_component(
             config,
             input_uri=input_uri,
             output_uri=output_uri,
