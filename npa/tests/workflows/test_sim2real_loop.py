@@ -313,13 +313,14 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
 
     def fake_run(cmd, **kwargs):
         calls.append({"cmd": cmd, "input": kwargs.get("input")})
-        if "apply" in cmd:
+        cmd_text = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        if "apply" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
-        if "wait" in cmd:
+        if "wait" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling condition met\n", "")
-        if "get" in cmd and "job" in cmd and "jsonpath" in cmd:
+        if "get" in cmd_text and "job" in cmd_text and "jsonpath" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "1 0", "")
-        if "get" in cmd and "pods" in cmd:
+        if "get" in cmd_text and "pods" in cmd_text:
             return subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -356,13 +357,14 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
                 ),
                 "",
             )
-        if "logs" in cmd:
+        if "logs" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, '{"component":"ok"}\n', "")
-        if "delete" in cmd:
+        if "delete" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch deleted\n", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(loop_module.time, "sleep", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         loop_module,
         "_wait_kubernetes_job",
