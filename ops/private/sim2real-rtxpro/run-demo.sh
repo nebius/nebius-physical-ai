@@ -27,8 +27,28 @@ PY="${ROOT}/npa/.venv/bin/python"
 LOG_DIR="/tmp/sim2real-demo"
 mkdir -p "${LOG_DIR}"
 
+RUN_ID="${RUN_ID:-}"
+WAIT="${WAIT:-1}"
+VISUALIZE="${VISUALIZE:-1}"
+SYNC_DIR="${SYNC_DIR:-/tmp/sim2real-demo/${RUN_ID:-pending}}"
+SUBMIT="${SUBMIT:-1}"
+
+if [ -n "${RUN_ID}" ] && [ "${SUBMIT}" != "0" ]; then
+  # RUN_ID set — reuse completed cluster run (sync + viz only)
+  SUBMIT=0
+fi
+
+SYNC_ONLY=0
+if [ "${SUBMIT}" = "0" ] && [ -n "${RUN_ID}" ]; then
+  SYNC_ONLY=1
+fi
+
 demo_bootstrap_venv "${ROOT}"
-demo_preflight "${ROOT}"
+if [ "${SYNC_ONLY}" = "1" ]; then
+  demo_preflight "${ROOT}" 0
+else
+  demo_preflight "${ROOT}" 1
+fi
 
 _cfg=()
 while IFS= read -r _line; do
@@ -38,30 +58,23 @@ BUCKET="${S3_BUCKET:-${_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
 REGISTRY="${REGISTRY:-${_cfg[2]:-}}"
 DEFAULT_CTX="${_cfg[3]:-}"
-if [ -z "${DEFAULT_CTX}" ]; then
-  echo "ERROR: k8s_context not set in ~/.npa/config.yaml" >&2
-  exit 1
-fi
-export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${KUBECONTEXT:-${DEFAULT_CTX}}")}"
-operator_export_kubeconfig "${KUBECONTEXT:-${DEFAULT_CTX}}" "${ROOT}" || exit 1
-export KUBECONTEXT="${KUBECONTEXT:-${DEFAULT_CTX}}"
-
-if [ -z "${BUCKET}" ] || [ -z "${REGISTRY}" ]; then
-  echo "ERROR: storage.bucket and storage.registry required in ~/.npa/config.yaml" >&2
-  exit 1
+if [ "${SYNC_ONLY}" != "1" ]; then
+  if [ -z "${DEFAULT_CTX}" ]; then
+    echo "ERROR: k8s_context not set in ~/.npa/config.yaml" >&2
+    exit 1
+  fi
+  export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${KUBECONTEXT:-${DEFAULT_CTX}}")}"
+  operator_export_kubeconfig "${KUBECONTEXT:-${DEFAULT_CTX}}" "${ROOT}" || exit 1
+  export KUBECONTEXT="${KUBECONTEXT:-${DEFAULT_CTX}}"
 fi
 
-RUN_ID="${RUN_ID:-}"
-WAIT="${WAIT:-1}"
-VISUALIZE="${VISUALIZE:-1}"
-SYNC_DIR="${SYNC_DIR:-/tmp/sim2real-demo/${RUN_ID:-pending}}"
-SUBMIT="${SUBMIT:-1}"
-
-if [ -n "${RUN_ID}" ] && [ "${SUBMIT}" = "0" ]; then
-  : # sync-only mode
-elif [ -n "${RUN_ID}" ] && [ "${SUBMIT}" != "0" ]; then
-  # RUN_ID set but SUBMIT not disabled — treat as sync-only (reuse completed run)
-  SUBMIT=0
+if [ -z "${BUCKET}" ]; then
+  echo "ERROR: storage.bucket required in ~/.npa/config.yaml" >&2
+  exit 1
+fi
+if [ "${SYNC_ONLY}" != "1" ] && [ -z "${REGISTRY}" ]; then
+  echo "ERROR: storage.registry required in ~/.npa/config.yaml for cluster submit" >&2
+  exit 1
 fi
 
 _submit_and_wait() {
@@ -109,7 +122,11 @@ _sync_from_s3() {
 }
 
 echo "=== Sim2Real customer demo (cluster compute, local Rerun interface) ==="
-echo "cluster=${KUBECONTEXT} bucket=${BUCKET}"
+if [ "${SYNC_ONLY}" = "1" ]; then
+  echo "mode=sync-only run_id=${RUN_ID} bucket=${BUCKET}"
+else
+  echo "cluster=${KUBECONTEXT} bucket=${BUCKET}"
+fi
 
 if [ "${SUBMIT}" = "1" ]; then
   _submit_and_wait
