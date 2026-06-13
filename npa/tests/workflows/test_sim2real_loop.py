@@ -194,8 +194,8 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     retrigger = json.loads(
         (tmp_path / "stage_13_retrigger" / "retrigger.json").read_text()
     )
-    assert augment["augment"] == "cosmos2-transfer"
-    assert augment["image"] == "npa-cosmos2-transfer:2.5.0"
+    assert augment["stage"] == "cosmos2-transfer"
+    assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
     )

@@ -112,12 +112,20 @@ spec:
               value: "${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120"
             - name: EVAL_IMAGE
               value: "${REG}/npa-sim2real-eval:0.1.1-genuine-sm120"
+            - name: ISAAC_IMAGE
+              value: "${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
+            - name: NPA_SIM2REAL_ISAAC_TASK
+              value: "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
             - name: NPA_SIM2REAL_SIM_BACKEND
-              value: "genesis"
+              value: "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
             - name: INNER_ITERATIONS
               value: "${INNER_ITERATIONS:-1}"
             - name: OUTER_ITERATIONS
               value: "${OUTER_ITERATIONS:-1}"
+            - name: NPA_ENV_COUNT
+              value: "${NPA_ENV_COUNT:-10000}"
+            - name: NPA_TRAIN_FRACTION
+              value: "${NPA_TRAIN_FRACTION:-0.8}"
             - name: ROLLOUT_COUNT
               value: "2"
             - name: HELDOUT_ENV_COUNT
@@ -127,7 +135,7 @@ spec:
             - name: NPA_SOURCE_REPO
               value: "https://github.com/nebius/nebius-physical-ai.git"
             - name: NPA_SOURCE_REF
-              value: "feat/sim2real-staged-runbook"
+              value: "feat/sim2real-mandatory-stages"
             - name: NPA_SIM2REAL_K8S_NAMESPACE
               value: "default"
             - name: NPA_SIM2REAL_K8S_SERVICE_ACCOUNT
@@ -167,7 +175,9 @@ spec:
                 --rollout-count "\${ROLLOUT_COUNT:-2}"
                 --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
                 --threshold "\${SUCCESS_THRESHOLD:-0.45}"
-                --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-genesis}"
+                --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
+                --isaac-image "\${ISAAC_IMAGE}"
+                --isaac-task "\${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
                 --vlm-image "\${VLM_IMAGE}"
                 --eval-image "\${EVAL_IMAGE}"
                 --trainer-image "\${TRAINER_IMAGE}"
@@ -195,3 +205,18 @@ YAML
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"
 echo "run_id=${RUN_ID} job=${JOB} manifest=${MANIFEST} log=${LOG}"
+echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} isaac_image=${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
+
+MONITOR_SCRIPT="$(cd "$(dirname "$0")" && pwd)/monitor-k8s-job.sh"
+MONITOR_SESSION="${MONITOR_TMUX_SESSION:-sim2real-cluster-live}"
+if [[ "${LAUNCH_MONITOR:-1}" == "1" ]] && command -v tmux >/dev/null; then
+  tmux kill-session -t "${MONITOR_SESSION}" 2>/dev/null || true
+  tmux new-session -d -s "${MONITOR_SESSION}" \
+    "bash -lc 'exec \"${MONITOR_SCRIPT}\" \"${JOB}\"; code=\$?; echo monitor_exit=\$code; exec bash'"
+  echo "MONITOR_TMUX=${MONITOR_SESSION} attach: tmux attach -t ${MONITOR_SESSION}"
+elif [[ "${LAUNCH_MONITOR:-1}" == "1" ]]; then
+  nohup bash -lc "exec \"${MONITOR_SCRIPT}\" \"${JOB}\"" \
+    >"/tmp/sim2real-cluster/${JOB}-monitor.nohup.log" 2>&1 &
+  echo "MONITOR_PID=$! log=/tmp/sim2real-cluster/${JOB}-monitor.nohup.log"
+fi
+echo "MONITOR_JOB=${JOB}"
