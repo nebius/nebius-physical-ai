@@ -11,7 +11,8 @@ This document describes **control flow**, K8s sibling jobs, and fallbacks.
 | Layer | Path |
 | --- | --- |
 | SkyPilot runbook | `npa/workflows/workbench/sim2real/runbook.yaml` (`run:` block) |
-| Stage CLI | `npa/src/npa/workflows/sim2real_loop.py` |
+| Workflow package | `npa/src/npa/workflows/sim2real/` (`runner`, `engine`, `state`) |
+| Stage CLI | `python -m npa.workflows.sim2real` |
 | SDK wrappers | `npa/src/npa/sdk/workbench/sim2real.py` |
 | Direct K8s submit | `ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh` |
 
@@ -120,15 +121,18 @@ flowchart LR
 policy rollouts route like Stage 3 augment: sibling K8s job when
 `s3_bucket` + registry-qualified `POLICY_IMAGE` + S3 `train_envs_uri`; else
 local reference rollouts in the orchestrator. Stages 8–9 (VLM, signal, trainer)
-always orchestrate from the parent pod; only VLM eval spawns sibling Jobs among
-the inner-loop GPU components.
+always orchestrate from the parent pod. Stage 8 VLM eval spawns sibling Jobs;
+when multiple rollouts are pending and `s3_bucket` is set, evaluations run in a
+bounded thread pool (`k8s_max_parallel_gpus`, default **2** in code; operator
+runbooks for the 16-GPU RTX Pro cluster set **16** via
+`NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS`).
 
 ```mermaid
 flowchart TD
   subgraph inner["run_inner_loop (per inner iteration)"]
     AR["7 run_policy_rollouts<br/>actions/train/outer-XX/iter-YY/"]
-    AR --> PER{"for each rollout"}
-    PER --> VLM["8 evaluate_rollout_with_vlm"]
+    AR --> PER{"rollouts (parallel when s3 + count>1)"}
+    PER --> VLM["8 evaluate_rollout_with_vlm<br/>(pool cap = k8s_max_parallel_gpus)"]
     VLM --> SIG["9 _convert_eval_to_signal"]
     SIG --> BATCH["signals-iter-YY.json"]
     BATCH --> TRAIN{"trainer path"}
@@ -148,7 +152,7 @@ Priority order (first match wins):
 | --- | --- | --- |
 | `BYO_VLM_COMMAND` set | `command` | Shell command reads rollout dir env vars |
 | `s3_bucket` empty | `local_reference` | `_reference_vlm_payload_from_rollout` (in-process) |
-| `s3_bucket` set | `kubernetes_job` | Upload rollout → sibling Job on `vlm_image` |
+| `s3_bucket` set | `kubernetes_job` | Upload rollout → sibling Job on `vlm_image` (parallel pool when rollout_count>1) |
 
 Sibling VLM job contract:
 
@@ -276,11 +280,13 @@ must have `kubectl` and cluster credentials.
 | Component key | Stage | Image env | When skipped |
 | --- | --- | --- | --- |
 | `cosmos2_transfer` | 3 | `AUGMENT_IMAGE` | Reference augment locally (**SEAM** tier) |
+| `envgen_raw_shard` | 4–6 | `ENVGEN_IMAGE` | Indexed Job (`envgen_shard_count` completions, parallelism capped); split manifest in orchestrator |
 | `policy_actions` | 7 | `POLICY_IMAGE` | Reference rollouts locally (**SEAM** tier) |
-| `vlm_eval` | 8 | `VLM_IMAGE` | One Job per rollout; never skipped with bucket set |
+| `vlm_eval` | 8 | `VLM_IMAGE` | One Job per rollout; pool capped at `k8s_max_parallel_gpus` |
 | `heldout_eval` | 10 | `ISAAC_IMAGE` or `EVAL_IMAGE` via `heldout_backend_image()` | Reference heuristic when image not ready |
 
-Trainer, signal converter, and envgen (Stages 4–6) run in the orchestrator pod.
+Trainer and signal converter run in the orchestrator pod. Envgen split/token manifest
+(Stages 5–6) also runs in the orchestrator after raw shards complete.
 
 ```mermaid
 sequenceDiagram

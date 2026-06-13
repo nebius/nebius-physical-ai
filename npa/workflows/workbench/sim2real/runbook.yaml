@@ -66,6 +66,8 @@ envs:
   ROLLOUT_COUNT: "3"
   STEPS_PER_ROLLOUT: "4"
   HELDOUT_ENV_COUNT: "8"
+  NPA_ENVGEN_SHARD_COUNT: "16"
+  NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS: "16"
   # Advanced defaults (leave unless tuning specific infra/runtime behavior)
   SIGNAL_LOSS_WEIGHT: "1.0"
   LEARNING_RATE: "0.05"
@@ -186,34 +188,14 @@ run: |
     --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}"
     --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
     --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-7200}"
+    --envgen-shard-count "${NPA_ENVGEN_SHARD_COUNT:-16}"
+    --k8s-max-parallel-gpus "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
     --source-repo "${NPA_SOURCE_REPO:-}"
     --source-ref "${NPA_SOURCE_REF:-}"
     --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
   )
 
-  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop preamble "${common_args[@]}"
-  state_json="${output_dir}/state/workflow_state.json"
-  current_quality="$(
-    ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${INITIAL_QUALITY:-0.38}"
-  )"
-
-  total_outer="${OUTER_ITERATIONS:-1}"
-  for outer_iteration in $(seq 1 "${total_outer}"); do
-    ./npa/.venv/bin/python -m npa.workflows.sim2real_loop outer-iteration \
-      "${common_args[@]}" \
-      --outer-iteration "${outer_iteration}" \
-      --initial-quality "${current_quality}"
-    current_quality="$(
-      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${current_quality}"
-    )"
-    decision="$(
-      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print((state.get("final_decision") or {}).get("decision", ""))' "${state_json}"
-    )"
-    if [ "${decision}" = "promote_checkpoint" ]; then
-      break
-    fi
-  done
-
-  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop finalize \
+  ./npa/.venv/bin/python -m npa.workflows.sim2real run \
     "${common_args[@]}" \
+    --initial-quality "${INITIAL_QUALITY:-0.38}" \
     --upload-artifacts

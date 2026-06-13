@@ -160,6 +160,7 @@ def run_envgen_split_stage(
 
     if config.s3_bucket:
         output_uri = artifact_output_uri(config)
+        shard_count = max(1, int(config.envgen_shard_count))
         envgen = EnvGenConfig(
             run_id=config.run_id,
             output_uri=output_uri,
@@ -167,22 +168,51 @@ def run_envgen_split_stage(
             train_fraction=config.train_fraction,
             seed=config.seed,
             shard_index=0,
-            shard_count=1,
+            shard_count=shard_count,
             scene_spec=scene,
         )
-        with tempfile.TemporaryDirectory(prefix="npa-envgen-") as tmp:
-            tmp_path = Path(tmp)
-            write_raw_shard(envgen, tmp_path)
-            split = write_split_manifest(envgen, tmp_path / "split")
+        if k8s_image_ready(config.envgen_image) and shard_count > 1:
+            from npa.workflows.sim2real.engine import run_envgen_sharded_component
+
+            run_envgen_sharded_component(config, envgen=envgen)
+            tier = "WORKS"
+            evidence = (
+                f"Generated {env_count} raw envs across {shard_count} indexed GPU "
+                f"shards (parallelism capped at {min(shard_count, config.k8s_max_parallel_gpus)}) "
+                f"with {train_count}/{heldout_count} train/heldout split via sim2real_envgen on S3."
+            )
+        else:
+            envgen_single = EnvGenConfig(
+                run_id=config.run_id,
+                output_uri=output_uri,
+                env_count=env_count,
+                train_fraction=config.train_fraction,
+                seed=config.seed,
+                shard_index=0,
+                shard_count=1,
+                scene_spec=scene,
+            )
+            with tempfile.TemporaryDirectory(prefix="npa-envgen-") as tmp:
+                tmp_path = Path(tmp)
+                write_raw_shard(envgen_single, tmp_path)
+            tier = "WORKS" if k8s_image_ready(config.envgen_image) else "SEAM"
+            if tier == "SEAM":
+                evidence = (
+                    f"Generated {env_count} raw envs with {train_count}/{heldout_count} "
+                    "train/heldout split via orchestrator in-process envgen because "
+                    "ENVGEN_IMAGE is not registry-qualified."
+                )
+            else:
+                evidence = (
+                    f"Generated {env_count} raw envs with {train_count}/{heldout_count} "
+                    "train/heldout split via orchestrator in-process envgen (single shard)."
+                )
+        with tempfile.TemporaryDirectory(prefix="npa-envgen-split-") as tmp:
+            split = write_split_manifest(envgen, Path(tmp) / "split")
         train_envs_uri = split["uploaded_train"]
         heldout_envs_uri = split["uploaded_heldout"]
         split_manifest_uri = split["uploaded_manifest"]
         _mirror_env_manifests(config, local_dir, envgen, split)
-        tier = "WORKS"
-        evidence = (
-            f"Generated {env_count} raw envs with {train_count}/{heldout_count} "
-            "train/heldout split via sim2real_envgen on S3."
-        )
     else:
         from npa.workflows.sim2real_loop import (
             _write_env_manifest,

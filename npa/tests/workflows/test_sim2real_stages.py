@@ -14,6 +14,7 @@ from npa.workflows.sim2real_stages import (
     k8s_image_ready,
     resolve_augment_frame_count,
     run_augment_stage,
+    run_envgen_split_stage,
 )
 
 
@@ -77,7 +78,7 @@ def test_k8s_image_ready_rejects_bare_tags_and_placeholders() -> None:
     assert not k8s_image_ready("npa-cosmos2-transfer:2.5.0")
     assert not k8s_image_ready("cr.eu-north1.nebius.cloud/<your-registry-id>/npa:tag")
     assert k8s_image_ready(
-        "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos2-transfer:2.5.0"
+        "cr.eu-north1.nebius.cloud/example-registry-id/npa-cosmos2-transfer:2.5.0"
     )
 
 
@@ -94,3 +95,53 @@ def test_augment_stage_uses_seam_reference_for_placeholder_image(tmp_path: Path)
     assert result["component"]["tier"] == "SEAM"
     assert result["manifest"]["status"] == "executed_reference"
     assert (tmp_path / "augment" / "frames" / "index.json").exists()
+
+
+def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[int] = []
+
+    def fake_sharded(config, *, envgen):
+        calls.append(envgen.shard_count)
+        return {"shard_count": envgen.shard_count, "parallelism": 2}
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.engine.run_envgen_sharded_component",
+        fake_sharded,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages.write_split_manifest",
+        lambda envgen, output_dir: {
+            "uploaded_train": "s3://bucket/run/envs/train/envs.jsonl",
+            "uploaded_heldout": "s3://bucket/run/envs/heldout/envs.jsonl",
+            "uploaded_manifest": "s3://bucket/run/envs/manifest/split-manifest.json",
+            "train_count": 8,
+            "heldout_count": 2,
+            "raw_count": 10,
+            "train_uri": "s3://bucket/run/envs/train/",
+            "heldout_uri": "s3://bucket/run/envs/heldout/",
+        },
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages._mirror_env_manifests",
+        lambda *args, **kwargs: None,
+    )
+
+    config = Sim2RealLoopConfig(
+        run_id="envgen-sharded",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        env_count=10,
+        train_fraction=0.8,
+        envgen_shard_count=4,
+        envgen_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-sim2real-envgen:0.1.1",
+    )
+    result = run_envgen_split_stage(
+        config,
+        tmp_path,
+        augmented_frames_uri="s3://bucket/run/augment/frames/",
+    )
+    assert calls == [4]
+    assert result["component"]["tier"] == "WORKS"
+    assert "indexed GPU shards" in result["component"]["evidence"]
