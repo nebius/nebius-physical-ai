@@ -1754,6 +1754,44 @@ def _run_image_component(
     )
 
 
+def _wait_kubernetes_job(
+    config: Sim2RealLoopConfig,
+    *,
+    namespace: str,
+    job_name: str,
+    timeout_s: int,
+) -> str:
+    """Poll a sibling Job until it succeeds, fails, or times out."""
+
+    poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        result = _kubectl(
+            config,
+            [
+                "get",
+                "job",
+                job_name,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.status.succeeded} {.status.failed}",
+            ],
+            timeout_s=30,
+            check=False,
+        )
+        if result.returncode == 0:
+            parts = (result.stdout or "").strip().split()
+            succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
+            failed = int(parts[1]) if len(parts) > 1 and str(parts[1]).isdigit() else 0
+            if succeeded >= 1:
+                return "complete"
+            if failed >= 1:
+                return "failed"
+        time.sleep(poll_s)
+    return "timeout"
+
+
 def _run_kubernetes_image_component(
     image: str,
     *,
@@ -1781,18 +1819,11 @@ def _run_kubernetes_image_component(
         stdin=json.dumps(manifest),
         timeout_s=120,
     )
-    wait_result = _kubectl(
+    wait_result = _wait_kubernetes_job(
         config,
-        [
-            "wait",
-            "--for=condition=complete",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            f"--timeout={timeout_s}s",
-        ],
-        timeout_s=timeout_s + 60,
-        check=False,
+        namespace=namespace,
+        job_name=job_name,
+        timeout_s=timeout_s,
     )
     pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
     logs_result = _kubectl(
@@ -1809,7 +1840,7 @@ def _run_kubernetes_image_component(
         check=False,
     )
     events_excerpt = ""
-    if wait_result.returncode != 0:
+    if wait_result != "complete":
         events = _kubectl(
             config,
             [
@@ -1829,10 +1860,10 @@ def _run_kubernetes_image_component(
     delete_result = _cleanup_component_job(
         config, namespace=namespace, job_name=job_name
     )
-    if wait_result.returncode != 0:
+    if wait_result != "complete":
         raise Sim2RealLoopError(
             f"{component} Kubernetes Job {job_name} did not complete: "
-            f"{_component_excerpt(wait_result.stderr or wait_result.stdout)} "
+            f"status={wait_result} "
             f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
             f"{events_excerpt}"
         )
@@ -1854,7 +1885,7 @@ def _run_kubernetes_image_component(
         "image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
         "env_secret_names": _split_csv(config.k8s_env_secret_names),
         "output_uri": output_uri,
-        "returncode": wait_result.returncode,
+        "returncode": 0 if wait_result == "complete" else 1,
         "apply_stdout_excerpt": _component_excerpt(apply_result.stdout),
         "stdout_excerpt": _component_excerpt(logs_result.stdout),
         "stderr_excerpt": _component_excerpt(logs_result.stderr),
@@ -3009,6 +3040,7 @@ def run_heldout_eval_component_from_s3(
     with tempfile.TemporaryDirectory(prefix="sim2real-heldout-component-") as tmp:
         root = Path(tmp)
         env_dir = root / "heldout"
+        env_dir.mkdir(parents=True, exist_ok=True)
         inner_path = root / "inner-evidence.json"
         output_path = root / "report.json"
         client = StorageClient.from_environment()
@@ -4318,6 +4350,15 @@ def _find_component_input_file(root: Path, filename: str) -> Path:
 
 
 def _read_component_env_records(root: Path) -> list[dict[str, Any]]:
+    if root.is_file():
+        if root.suffix == ".jsonl":
+            return _read_jsonl(root)
+        payload = json.loads(root.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("envs"), list):
+            return [dict(item) for item in payload["envs"]]
+        if isinstance(payload, list):
+            return [dict(item) for item in payload]
+        return []
     jsonl_files = sorted(root.rglob("*.jsonl"))
     if jsonl_files:
         records: list[dict[str, Any]] = []

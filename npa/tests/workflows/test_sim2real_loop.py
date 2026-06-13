@@ -913,6 +913,91 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
     assert any(u.endswith("consumed-scene-spec.json") for u in uploaded)
 
 
+def test_read_component_env_records_accepts_jsonl_file(tmp_path: Path) -> None:
+    path = tmp_path / "envs.jsonl"
+    path.write_text(json.dumps({"env_id": "e-0"}) + "\n", encoding="utf-8")
+    records = loop_module._read_component_env_records(path)
+    assert records[0]["env_id"] == "e-0"
+
+
+def test_run_heldout_eval_component_from_s3_reads_single_envs_jsonl(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    monkeypatch.setattr(
+        loop_module.StorageClient, "from_environment", staticmethod(lambda **kw: client)
+    )
+
+    def download_path(uri, local_path):
+        client.downloads.append((uri, local_path))
+        dest = Path(local_path)
+        if uri.endswith("envs.jsonl"):
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
+            )
+        elif uri.endswith(".json"):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(json.dumps({"reward_trend": [0.2, 0.6]}), encoding="utf-8")
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"OBJ-BYTES")
+        return local_path
+
+    monkeypatch.setattr(client, "download_path", download_path)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_isaac_heldout_rollouts",
+        lambda envs, **kw: [
+            {"env_id": envs[0]["env_id"], "score": 0.9, "success": True}
+        ],
+    )
+
+    payload = loop_module.run_heldout_eval_component_from_s3(
+        heldout_envs_uri="s3://bucket/run/envs/heldout/envs.jsonl",
+        inner_evidence_uri="s3://bucket/run/inner-evidence.json",
+        output_uri="s3://bucket/run/output/report.json",
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+    assert payload["per_env"][0]["env_id"] == "heldout-0000"
+
+
+def test_wait_kubernetes_job_returns_failed_without_waiting(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        loop_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "0 1", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=10
+        )
+        == "failed"
+    )
+
+
+def test_wait_kubernetes_job_returns_complete(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        loop_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "1 0", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=10
+        )
+        == "complete"
+    )
+
+
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     report = sim2real.run(
