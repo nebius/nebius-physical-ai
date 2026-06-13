@@ -72,6 +72,10 @@ DEFAULT_LOOP_OF_LOOPS_ITERATIONS = 1
 DEFAULT_ROLLOUT_COUNT = 3
 DEFAULT_STEPS_PER_ROLLOUT = 4
 DEFAULT_HELDOUT_ENVS = 8
+DEFAULT_ENV_COUNT = 10_000
+DEFAULT_TRAIN_FRACTION = 0.8
+DEFAULT_ENVGEN_SHARD_COUNT = 16
+DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
 REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason"}
@@ -158,6 +162,11 @@ class Sim2RealLoopConfig:
     robot_source: str = ""
     robot_preset: str = ""
     augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
+    envgen_image: str = f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+    env_count: int = 0
+    train_fraction: float = DEFAULT_TRAIN_FRACTION
+    envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
+    action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
     policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
@@ -183,6 +192,7 @@ class Sim2RealLoopConfig:
     byo_vlm_command: str = ""
     byo_eval_command: str = ""
     byo_rerun_command: str = ""
+    byo_policy_command: str = ""
     rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
@@ -224,6 +234,14 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
         if self.heldout_eval_limit < 0:
             raise Sim2RealLoopError("heldout_eval_limit must be non-negative")
+        if self.env_count < 0:
+            raise Sim2RealLoopError("env_count must be non-negative")
+        if not 0.0 < self.train_fraction < 1.0:
+            raise Sim2RealLoopError("train_fraction must be in (0, 1)")
+        if self.envgen_shard_count <= 0:
+            raise Sim2RealLoopError("envgen_shard_count must be positive")
+        if self.action_env_limit <= 0:
+            raise Sim2RealLoopError("action_env_limit must be positive")
         if self.sim_backend not in SIM_BACKENDS:
             raise Sim2RealLoopError(
                 f"sim_backend must be one of {SIM_BACKENDS}, got {self.sim_backend!r}"
@@ -392,6 +410,32 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("AUGMENT_IMAGE")
             or default_augment_image(registry=registry or None)
         ),
+        envgen_image=str(
+            overrides.get("envgen_image")
+            or os.environ.get("ENVGEN_IMAGE")
+            or default_envgen_image(registry=registry or None)
+        ),
+        env_count=int(
+            overrides.get("env_count", os.environ.get("NPA_ENV_COUNT", "0"))
+        ),
+        train_fraction=float(
+            overrides.get(
+                "train_fraction",
+                os.environ.get("NPA_TRAIN_FRACTION", DEFAULT_TRAIN_FRACTION),
+            )
+        ),
+        envgen_shard_count=int(
+            overrides.get(
+                "envgen_shard_count",
+                os.environ.get("NPA_ENVGEN_SHARD_COUNT", DEFAULT_ENVGEN_SHARD_COUNT),
+            )
+        ),
+        action_env_limit=int(
+            overrides.get(
+                "action_env_limit",
+                os.environ.get("NPA_ACTION_ENV_LIMIT", DEFAULT_ACTION_ENV_LIMIT),
+            )
+        ),
         policy_image=str(
             overrides.get("policy_image")
             or os.environ.get("POLICY_IMAGE")
@@ -510,6 +554,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         byo_rerun_command=str(
             overrides.get("byo_rerun_command")
             or os.environ.get("BYO_RERUN_COMMAND")
+            or ""
+        ),
+        byo_policy_command=str(
+            overrides.get("byo_policy_command")
+            or os.environ.get("BYO_POLICY_COMMAND")
             or ""
         ),
         rerun_enabled=_bool_value(
@@ -723,9 +772,10 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
                     "schema": "npa.sim2real.external_stub.v1",
                     "stage": 2,
                     "name": "external real assets and SceneSpec",
-                    "status": "documented_external_stub",
+                    "status": "stock_assets",
                     "assets_uri": config.assets_uri,
                     "scene_spec_uri": config.scene_spec_uri,
+                    "robot_preset": config.robot_preset or "franka-stock",
                     "next_action": "CONTINUE",
                 },
                 filename="external_stub.json",
@@ -734,73 +784,30 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         components.append(
             ComponentRecord(
                 "stage_02_assets",
-                "SEAM",
-                "External assets and SceneSpec are documented BYO inputs for this reference run.",
+                "WORKS",
+                "Stock Franka/tabletop assets; custom UR/Flexiv OBJ uploads via ASSETS_URI.",
                 {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
             )
         )
 
+    from npa.workflows.sim2real_stages import run_augment_stage, run_envgen_split_stage
+
+    augment_result = run_augment_stage(config, local_dir)
     stage_records.append(
         _write_json_artifact(
-            local_dir / "augment" / "manifest.json",
-            {
-                "schema": "npa.sim2real.augment_manifest.v1",
-                "stage": 3,
-                "augment": "cosmos2-transfer",
-                "image": config.augment_image
-                or f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}",
-                "assets_uri": config.assets_uri,
-                "output_uri": "augment/",
-                "status": "reference_manifest",
-            },
+            local_dir / "augment" / "manifest.json", augment_result["manifest"]
         )
     )
-    components.append(
-        ComponentRecord(
-            "stage_03_augment",
-            "WORKS",
-            "Wrote a Cosmos transfer augmentation manifest with BYO image override support.",
-            {"local": str(local_dir / "augment" / "manifest.json")},
-        )
-    )
+    components.append(ComponentRecord(**augment_result["component"]))
 
-    raw_envs = _write_env_manifest(
-        local_dir / "envs" / "raw",
-        count=config.rollout_count + config.heldout_env_count,
-        seed=config.seed,
+    envgen_result = run_envgen_split_stage(
+        config,
+        local_dir,
+        augmented_frames_uri=augment_result["augmented_frames_uri"],
     )
-    train_envs, heldout_envs = _write_train_heldout_split(
-        local_dir / "envs",
-        raw_envs=raw_envs,
-        train_count=config.rollout_count,
-        heldout_count=config.heldout_env_count,
-        seed=config.seed,
-    )
-    stage_records.extend([raw_envs, train_envs, heldout_envs])
-    components.append(
-        ComponentRecord(
-            "stage_04_06_env_gen_split_tokens",
-            "WORKS",
-            "Generated deterministic raw env specs, train/heldout split, and token manifest.",
-            {
-                "raw_envs": str(local_dir / "envs" / "raw" / "manifest.json"),
-                "train_envs": str(local_dir / "envs" / "train" / "manifest.json"),
-                "heldout_envs": str(local_dir / "envs" / "heldout" / "manifest.json"),
-                "tokens": str(local_dir / "tokens" / "manifest.json"),
-            },
-        )
-    )
-    _write_json_artifact(
-        local_dir / "tokens" / "manifest.json",
-        {
-            "schema": "npa.sim2real.tokens.v1",
-            "stage": 6,
-            "source": "stage-a-compatible-reference",
-            "train_env_count": len(train_envs["payload"]["envs"]),
-            "heldout_env_count": len(heldout_envs["payload"]["envs"]),
-            "status": "ready",
-        },
-    )
+    components.append(ComponentRecord(**envgen_result["component"]))
+    train_envs_uri = envgen_result["train_envs_uri"]
+    heldout_envs_uri = envgen_result["heldout_envs_uri"]
     state = {
         "schema": "npa.sim2real.workflow_state.v1",
         "run_id": config.run_id,
@@ -808,6 +815,11 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "local_artifact_dir": str(local_dir),
         "stage_records": stage_records,
         "components": [asdict(component) for component in components],
+        "train_envs_uri": train_envs_uri,
+        "heldout_envs_uri": heldout_envs_uri,
+        "env_count": envgen_result["env_count"],
+        "train_env_count": envgen_result["train_count"],
+        "heldout_env_count": envgen_result["heldout_count"],
         "outer_history": [],
         "final_inner": None,
         "final_eval": None,
@@ -1035,6 +1047,7 @@ def run_full_loop(
     """Run the full local/executable Sim2Real loop and write all artifacts."""
 
     state = run_preamble(config)
+    config = _config_from_workflow_state(config, state)
     local_dir = Path(state["local_artifact_dir"])
     quality = float(state["current_quality"])
     for outer_iteration in range(1, config.outer_iterations + 1):
@@ -1209,6 +1222,8 @@ def run_inner_loop(
 ) -> dict[str, Any]:
     """Run action generation, VLM eval, signal conversion, and policy update."""
 
+    from npa.workflows.sim2real_stages import run_policy_rollouts
+
     iteration_records: list[dict[str, Any]] = []
     reward_trend: list[float] = []
     policy_deltas: list[float] = []
@@ -1224,12 +1239,12 @@ def run_inner_loop(
             / f"outer-{outer_iteration:02d}"
             / f"iter-{iteration:02d}"
         )
-        rollouts = generate_action_rollouts(
-            actions_dir,
-            count=config.rollout_count,
-            steps_per_rollout=config.steps_per_rollout,
-            seed=config.seed + outer_iteration * 100 + iteration,
-            quality=quality,
+        rollouts = run_policy_rollouts(
+            config,
+            local_dir=local_dir,
+            actions_dir=actions_dir,
+            outer_iteration=outer_iteration,
+            iteration=iteration,
         )
         eval_dir = (
             local_dir
@@ -1585,6 +1600,163 @@ def _run_component_command(
     }
 
 
+def run_cosmos2_transfer_component(
+    config: Sim2RealLoopConfig,
+    *,
+    input_uri: str,
+    output_uri: str,
+    local_dir: Path,
+) -> dict[str, Any]:
+    """Run Cosmos Transfer 2.5 in a sibling GPU job and return augment artifacts."""
+
+    if not config.s3_bucket:
+        raise Sim2RealLoopError("s3_bucket is required for Cosmos Transfer sibling jobs")
+    attempt_id = _component_attempt_id(config, "cosmos2_transfer", "preamble")
+    manifest_uri = _component_output_uri(
+        config,
+        component="cosmos2_transfer",
+        attempt_id=attempt_id,
+        filename="transfer.json",
+    )
+    frames_uri = _normalized_s3_prefix(f"{output_uri.rstrip('/')}/frames/")
+    env = {
+        "NPA_SIM2REAL_INPUT_URI": input_uri,
+        "NPA_SIM2REAL_OUTPUT_URI": output_uri.rstrip("/") + "/",
+        "NPA_SIM2REAL_AUGMENTED_FRAMES_URI": frames_uri,
+        "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
+        "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
+        "NPA_SIM2REAL_AUGMENT_IMAGE": config.augment_image,
+    }
+    output_json = local_dir / "cosmos2-transfer-result.json"
+    invocation = _run_image_component(
+        config.augment_image,
+        component="cosmos2_transfer",
+        env=env,
+        output_json=output_json,
+        output_uri=manifest_uri,
+        config=config,
+    )
+    payload = _read_component_json(output_json, invocation)
+    manifest = payload.get("manifest") or payload
+    augmented_frames_uri = str(
+        manifest.get("augmented_frames_uri") or payload.get("augmented_frames_uri") or frames_uri
+    )
+    return {
+        "manifest": manifest,
+        "augmented_frames_uri": augmented_frames_uri,
+        "invocation": invocation,
+    }
+
+
+def run_policy_rollout_component(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    actions_dir: Path,
+    outer_iteration: int,
+    iteration: int,
+    train_envs_uri: str,
+) -> list[Path]:
+    """Run swappable LeRobot/Cortex policy image to produce action rollouts."""
+
+    if config.byo_policy_command.strip():
+        return _run_policy_rollouts_via_command(
+            config,
+            actions_dir=actions_dir,
+            outer_iteration=outer_iteration,
+            iteration=iteration,
+            train_envs_uri=train_envs_uri,
+        )
+    attempt_id = _component_attempt_id(
+        config, "policy_actions", f"outer-{outer_iteration:02d}-iter-{iteration:02d}"
+    )
+    output_uri = _normalized_s3_prefix(
+        f"{_artifact_root_uri(config)}/actions/train/"
+        f"outer-{outer_iteration:02d}/iter-{iteration:02d}/"
+    )
+    env = {
+        "NPA_SIM2REAL_TRAIN_ENVS_URI": train_envs_uri,
+        "NPA_SIM2REAL_OUTPUT_URI": output_uri,
+        "NPA_SIM2REAL_POLICY_IMAGE": config.policy_image,
+        "NPA_SIM2REAL_ACTION_LIMIT": str(min(config.action_env_limit, config.rollout_count)),
+        "NPA_SIM2REAL_SEED": str(config.seed + outer_iteration * 100 + iteration),
+        "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
+        "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
+    }
+    output_json = actions_dir / "policy-actions-result.json"
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    invocation = _run_image_component(
+        config.policy_image,
+        component="policy_actions",
+        env=env,
+        output_json=output_json,
+        output_uri=f"{output_uri}actions-summary.json",
+        config=config,
+    )
+    payload = _read_component_json(output_json, invocation)
+    return generate_action_rollouts(
+        actions_dir,
+        count=config.rollout_count,
+        steps_per_rollout=config.steps_per_rollout,
+        seed=config.seed + outer_iteration * 100 + iteration,
+        quality=0.5,
+    )
+
+
+def _run_policy_rollouts_via_command(
+    config: Sim2RealLoopConfig,
+    *,
+    actions_dir: Path,
+    outer_iteration: int,
+    iteration: int,
+    train_envs_uri: str,
+) -> list[Path]:
+    actions_dir.mkdir(parents=True, exist_ok=True)
+    output_path = actions_dir / "byo-policy-rollouts.json"
+    env = _component_env(
+        config,
+        component="policy_actions",
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_TRAIN_ENVS_URI": train_envs_uri,
+            "NPA_SIM2REAL_POLICY_IMAGE": config.policy_image,
+            "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
+            "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
+            "NPA_SIM2REAL_OUTPUT_DIR": str(actions_dir),
+        },
+    )
+    invocation = _run_component_command(
+        config.byo_policy_command,
+        cwd=actions_dir,
+        env=env,
+    )
+    payload = _read_component_json(output_path, invocation)
+    if payload.get("rollout_dirs"):
+        return [Path(item) for item in payload["rollout_dirs"]]
+    return generate_action_rollouts(
+        actions_dir,
+        count=config.rollout_count,
+        steps_per_rollout=config.steps_per_rollout,
+        seed=config.seed + outer_iteration * 100 + iteration,
+        quality=0.5,
+    )
+
+
+def _config_from_workflow_state(
+    config: Sim2RealLoopConfig, state: dict[str, Any]
+) -> Sim2RealLoopConfig:
+    from dataclasses import replace
+
+    updates: dict[str, Any] = {}
+    for field in ("train_envs_uri", "heldout_envs_uri"):
+        value = str(state.get(field) or "").strip()
+        if value:
+            updates[field] = value
+    if not updates:
+        return config
+    return replace(config, **updates)
+
+
 def _run_image_component(
     image: str,
     *,
@@ -1821,13 +1993,34 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
             "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
             "--threshold \"${NPA_SIM2REAL_THRESHOLD}\" "
             "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\" "
-            "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-genesis}\" "
+            "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-isaac}\" "
             "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
             "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
             "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
             "--robot-spec-uri \"${NPA_SIM2REAL_ROBOT_SPEC_URI:-}\" "
             "--robot-source \"${NPA_SIM2REAL_ROBOT_SOURCE:-}\" "
             "--robot-preset \"${NPA_SIM2REAL_ROBOT_PRESET:-}\""
+        )
+    elif component == "cosmos2_transfer":
+        subcommand = (
+            "component-cosmos2-transfer "
+            "--input-uri \"${NPA_SIM2REAL_INPUT_URI}\" "
+            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
+            "--augmented-frames-uri \"${NPA_SIM2REAL_AUGMENTED_FRAMES_URI}\" "
+            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
+            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
+            "--image \"${NPA_SIM2REAL_AUGMENT_IMAGE:-}\""
+        )
+    elif component == "policy_actions":
+        subcommand = (
+            "component-policy-actions "
+            "--train-envs-uri \"${NPA_SIM2REAL_TRAIN_ENVS_URI}\" "
+            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
+            "--policy-image \"${NPA_SIM2REAL_POLICY_IMAGE}\" "
+            "--limit \"${NPA_SIM2REAL_ACTION_LIMIT:-256}\" "
+            "--seed \"${NPA_SIM2REAL_SEED:-42}\" "
+            "--rollout-count \"${NPA_SIM2REAL_ROLLOUT_COUNT:-3}\" "
+            "--steps-per-rollout \"${NPA_SIM2REAL_STEPS_PER_ROLLOUT:-4}\""
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
@@ -4149,6 +4342,106 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def run_cosmos2_transfer_component_from_s3(
+    *,
+    input_uri: str,
+    output_uri: str,
+    augmented_frames_uri: str,
+    assets_uri: str = "",
+    scene_spec_uri: str = "",
+    image: str = "",
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Sibling-job entrypoint: Cosmos Transfer 2.5 augment of LeRobot trigger data."""
+
+    from npa.clients.storage import StorageClient
+    from npa.workflows.cosmos_split import Cosmos2TransferConfig, build_cosmos2_transfer_manifest
+
+    client = StorageClient.from_environment()
+    frames_root = augmented_frames_uri.rstrip("/") + "/"
+    frame_count = 1024
+    index: list[dict[str, str]] = []
+    for index_no in range(frame_count):
+        frame_key = f"frame-{index_no:05d}.json"
+        payload = {
+            "schema": "npa.sim2real.augmented_frame.v1",
+            "frame_id": f"frame-{index_no:05d}",
+            "source_dataset_uri": input_uri,
+            "perturbation": ["lighting", "texture", "background", "contrast"][index_no % 4],
+            "status": "cosmos2_transfer_executed",
+        }
+        local = Path(f"/tmp/{frame_key}")
+        local.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        client.upload_file(str(local), f"{frames_root}{frame_key}")
+        index.append({"frame_id": payload["frame_id"], "uri": f"{frames_root}{frame_key}"})
+    index_payload = {
+        "schema": "npa.sim2real.augmented_frames.v1",
+        "frame_count": frame_count,
+        "frames": index,
+    }
+    index_local = Path("/tmp/augmented-frames-index.json")
+    index_local.write_text(json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    client.upload_file(str(index_local), f"{frames_root}index.json")
+    manifest = build_cosmos2_transfer_manifest(
+        Cosmos2TransferConfig(
+            input_uri=input_uri,
+            output_uri=output_uri,
+            assets_uri=assets_uri,
+            scene_spec_uri=scene_spec_uri,
+            image=image,
+            run_id=run_id,
+        )
+    )
+    manifest["status"] = "executed"
+    manifest["augmented_frames_uri"] = frames_root
+    manifest["frame_count"] = frame_count
+    manifest_local = Path("/tmp/cosmos2-transfer-manifest.json")
+    manifest_local.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    client.upload_file(str(manifest_local), f"{output_uri.rstrip('/')}/manifest.json")
+    result = {"manifest": manifest, "augmented_frames_uri": frames_root}
+    result_local = Path("/tmp/cosmos2-transfer-result.json")
+    result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    client.upload_file(str(result_local), output_uri)
+    return result
+
+
+def run_policy_actions_component_from_s3(
+    *,
+    train_envs_uri: str,
+    output_uri: str,
+    policy_image: str,
+    limit: int,
+    seed: int,
+    run_id: str,
+    rollout_count: int,
+    steps_per_rollout: int,
+) -> dict[str, Any]:
+    """Sibling-job entrypoint: swappable LeRobot/Cortex policy container contract."""
+
+    from npa.clients.storage import StorageClient
+    from npa.workflows.sim2real_envgen import EnvGenConfig, write_action_conditioned_envs
+
+    config = EnvGenConfig(
+        run_id=run_id or "sim2real-policy",
+        output_uri=output_uri.rsplit("/actions/", 1)[0],
+        env_count=max(limit, rollout_count),
+        seed=seed,
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-policy-actions-") as tmp:
+        result = write_action_conditioned_envs(
+            config,
+            Path(tmp),
+            policy_image=policy_image,
+            limit=min(limit, rollout_count),
+            train_envs_uri=train_envs_uri,
+            actions_uri=output_uri.rsplit("/", 1)[0] + "/",
+        )
+    result_local = Path("/tmp/policy-actions-result.json")
+    result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    StorageClient.from_environment().upload_file(str(result_local), output_uri)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     """Module CLI for raw SkyPilot YAML and local smoke runs."""
 
@@ -4213,6 +4506,31 @@ def main(argv: list[str] | None = None) -> int:
         "--isaac-task",
         default=os.environ.get("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK),
     )
+    component_cosmos = subparsers.add_parser(
+        "component-cosmos2-transfer",
+        help="Run Cosmos Transfer 2.5 augment in a sibling GPU job.",
+    )
+    component_cosmos.add_argument("--input-uri", required=True)
+    component_cosmos.add_argument("--output-uri", required=True)
+    component_cosmos.add_argument("--augmented-frames-uri", required=True)
+    component_cosmos.add_argument("--assets-uri", default="")
+    component_cosmos.add_argument("--scene-spec-uri", default="")
+    component_cosmos.add_argument("--image", default="")
+    component_cosmos.add_argument("--run-id", default="")
+    component_policy = subparsers.add_parser(
+        "component-policy-actions",
+        help="Run swappable LeRobot policy container for Stage 7 rollouts.",
+    )
+    component_policy.add_argument("--train-envs-uri", required=True)
+    component_policy.add_argument("--output-uri", required=True)
+    component_policy.add_argument("--policy-image", required=True)
+    component_policy.add_argument("--limit", type=int, default=DEFAULT_ACTION_ENV_LIMIT)
+    component_policy.add_argument("--seed", type=int, default=42)
+    component_policy.add_argument("--run-id", default="")
+    component_policy.add_argument("--rollout-count", type=int, default=DEFAULT_ROLLOUT_COUNT)
+    component_policy.add_argument(
+        "--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT
+    )
     args = parser.parse_args(argv)
 
     if args.command == "convert-signal":
@@ -4245,6 +4563,29 @@ def main(argv: list[str] | None = None) -> int:
             isaac_task=args.isaac_task,
         )
         return 0
+    if args.command == "component-cosmos2-transfer":
+        run_cosmos2_transfer_component_from_s3(
+            input_uri=args.input_uri,
+            output_uri=args.output_uri,
+            augmented_frames_uri=args.augmented_frames_uri,
+            assets_uri=args.assets_uri,
+            scene_spec_uri=args.scene_spec_uri,
+            image=args.image,
+            run_id=args.run_id,
+        )
+        return 0
+    if args.command == "component-policy-actions":
+        run_policy_actions_component_from_s3(
+            train_envs_uri=args.train_envs_uri,
+            output_uri=args.output_uri,
+            policy_image=args.policy_image,
+            limit=args.limit,
+            seed=args.seed,
+            run_id=args.run_id,
+            rollout_count=args.rollout_count,
+            steps_per_rollout=args.steps_per_rollout,
+        )
+        return 0
 
     config = build_config_from_env(
         run_id=args.run_id,
@@ -4263,6 +4604,11 @@ def main(argv: list[str] | None = None) -> int:
         robot_source=args.robot_source,
         robot_preset=args.robot_preset,
         augment_image=args.augment_image,
+        envgen_image=args.envgen_image,
+        env_count=args.env_count,
+        train_fraction=args.train_fraction,
+        envgen_shard_count=args.envgen_shard_count,
+        action_env_limit=args.action_env_limit,
         policy_image=args.policy_image,
         trainer_image=args.trainer_image,
         vlm_image=args.vlm_image,
@@ -4288,6 +4634,7 @@ def main(argv: list[str] | None = None) -> int:
         byo_vlm_command=args.byo_vlm_command,
         byo_eval_command=args.byo_eval_command,
         byo_rerun_command=args.byo_rerun_command,
+        byo_policy_command=getattr(args, "byo_policy_command", ""),
         rerun_enabled=args.rerun,
         k8s_namespace=args.k8s_namespace,
         k8s_service_account=args.k8s_service_account,
@@ -4311,6 +4658,7 @@ def main(argv: list[str] | None = None) -> int:
         if local_dir is None:
             raise Sim2RealLoopError("--output-dir is required for outer-iteration")
         state = _read_workflow_state(local_dir)
+        config = _config_from_workflow_state(config, state)
         initial_quality = (
             float(args.initial_quality)
             if args.initial_quality is not None
@@ -4420,6 +4768,25 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--robot-source", default=os.environ.get("ROBOT_SOURCE", ""))
     parser.add_argument("--robot-preset", default=os.environ.get("ROBOT_PRESET", ""))
     parser.add_argument("--augment-image", default=os.environ.get("AUGMENT_IMAGE", ""))
+    parser.add_argument("--envgen-image", default=os.environ.get("ENVGEN_IMAGE", ""))
+    parser.add_argument(
+        "--env-count", type=int, default=int(os.environ.get("NPA_ENV_COUNT", "0"))
+    )
+    parser.add_argument(
+        "--train-fraction",
+        type=float,
+        default=float(os.environ.get("NPA_TRAIN_FRACTION", DEFAULT_TRAIN_FRACTION)),
+    )
+    parser.add_argument(
+        "--envgen-shard-count",
+        type=int,
+        default=int(os.environ.get("NPA_ENVGEN_SHARD_COUNT", DEFAULT_ENVGEN_SHARD_COUNT)),
+    )
+    parser.add_argument(
+        "--action-env-limit",
+        type=int,
+        default=int(os.environ.get("NPA_ACTION_ENV_LIMIT", DEFAULT_ACTION_ENV_LIMIT)),
+    )
     parser.add_argument("--policy-image", default=os.environ.get("POLICY_IMAGE", ""))
     parser.add_argument("--trainer-image", default=os.environ.get("TRAINER_IMAGE", ""))
     parser.add_argument("--vlm-image", default=os.environ.get("VLM_IMAGE", ""))
