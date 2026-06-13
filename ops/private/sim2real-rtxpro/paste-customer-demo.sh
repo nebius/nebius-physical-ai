@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# COPY-PASTE into a new Mac terminal (full customer replication from scratch).
-#
-# One-time setup (if run.sh is not installed yet):
-#   cp ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/mac-run.sh \
-#      ~/npa-sim2real-demo/run.sh && chmod +x ~/npa-sim2real-demo/run.sh
-#
-# Then paste this entire block:
+# Paste this entire block into a new Mac terminal.
+# Installs/updates ~/npa-sim2real-demo/run.sh then runs customer replication.
 # =============================================================================
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
@@ -17,16 +12,18 @@ if [[ -f "${HOME}/.npa/sim2real-operator.env" ]]; then
 fi
 
 DEMO="${HOME}/npa-sim2real-demo"
-cd "${DEMO}" || { echo "ERROR: missing ${DEMO}" >&2; exit 1; }
+REPO="${DEMO}/nebius-physical-ai"
+MAC_RUN="${REPO}/ops/private/sim2real-rtxpro/mac-run.sh"
 
-echo "=== 1/3 cleanup (reset for customer replay) ==="
-./run.sh cleanup
+if [[ ! -f "${MAC_RUN}" ]]; then
+  echo "ERROR: missing ${MAC_RUN}" >&2
+  echo "Pull nebius-physical-ai (branch feat/sim2real-mandatory-stages) first." >&2
+  exit 1
+fi
 
-echo ""
-echo "=== 2/3 trigger (submit to cluster) ==="
-./run.sh trigger
+cp "${MAC_RUN}" "${DEMO}/run.sh"
+chmod +x "${DEMO}/run.sh"
+echo "Installed ${DEMO}/run.sh (from mac-run.sh)"
 
-echo ""
-echo "=== 3/3 next steps (use RUN_ID from trigger output above) ==="
-echo "  ./run.sh status <RUN_ID>"
-echo "  ./run.sh sync <RUN_ID>"
+cd "${DEMO}" || exit 1
+exec ./run.sh demo
