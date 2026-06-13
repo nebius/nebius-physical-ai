@@ -316,6 +316,8 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
         if "wait" in cmd:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling condition met\n", "")
+        if "get" in cmd and "job" in cmd and "jsonpath" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "1 0", "")
         if "get" in cmd and "pods" in cmd:
             return subprocess.CompletedProcess(
                 cmd,
@@ -360,6 +362,11 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        loop_module,
+        "_wait_kubernetes_job",
+        lambda *args, **kwargs: "complete",
+    )
     return calls
 
 
@@ -876,17 +883,24 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
     # Seed the env records the component downloads.
     def download_path(uri, local_path):
         client.downloads.append((uri, local_path))
-        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-        if uri.endswith("heldout/"):
-            Path(local_path).mkdir(parents=True, exist_ok=True)
-            (Path(local_path) / "envs.jsonl").write_text(
-                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n"
+        dest = Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith("envs.jsonl"):
+            dest.write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
+            )
+        elif uri.endswith("heldout/"):
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
             )
         elif uri.endswith(".json"):
-            Path(local_path).write_text(json.dumps({"reward_trend": [0.2, 0.6]}))
+            dest.write_text(json.dumps({"reward_trend": [0.2, 0.6]}), encoding="utf-8")
         else:
-            Path(local_path).write_bytes(b"OBJ-BYTES")
-        return local_path
+            dest.write_bytes(b"OBJ-BYTES")
+        return str(dest)
 
     monkeypatch.setattr(client, "download_path", download_path)
 
