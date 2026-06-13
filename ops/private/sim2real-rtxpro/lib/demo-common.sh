@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
 # Shared helpers for sim2real customer demo scripts (source, do not execute).
+# shellcheck source=operator-config.sh
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=operator-config.sh
+source "${_LIB_DIR}/operator-config.sh"
+
 demo_common_root() {
-  cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd
+  npa_repo_root "${_LIB_DIR}"
 }
 
 demo_bootstrap_venv() {
   local root="$1"
   local py="${root}/npa/.venv/bin/python"
+  if [ ! -f "${root}/npa/pyproject.toml" ]; then
+    echo "ERROR: invalid repo root: ${root} (missing npa/pyproject.toml)" >&2
+    echo "       Run from the nebius-physical-ai checkout, not ops/ alone." >&2
+    return 1
+  fi
   if [ -x "${py}" ]; then
     return 0
   fi
-  echo "Creating npa/.venv (first run)..."
+  echo "Creating npa/.venv (first run — may take a few minutes on Mac)..."
   if ! command -v python3 >/dev/null; then
-    echo "python3 not found — install Python 3.10+ first." >&2
+    echo "python3 not found — install Python 3.10+ (brew install python@3.12)." >&2
     return 1
   fi
   python3 -m venv "${root}/npa/.venv"
@@ -64,7 +74,10 @@ demo_preflight() {
     missing=1
   fi
   if [ -z "${k8s_context}" ] && [ -f "${HOME}/.npa/config.yaml" ]; then
-    readarray -t _ctx_cfg < <(demo_read_storage_config "${root}" 2>/dev/null || true)
+    _ctx_cfg=()
+    while IFS= read -r _line; do
+      _ctx_cfg+=("${_line}")
+    done < <(demo_read_storage_config "${root}" 2>/dev/null || true)
     k8s_context="${_ctx_cfg[3]:-}"
   fi
   if [ -z "${k8s_context}" ]; then

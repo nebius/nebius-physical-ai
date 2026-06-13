@@ -3,11 +3,14 @@
 # Active (Running) jobs and sim2real-* orchestrator jobs are never touched.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
-readarray -t _npa_cfg < <(operator_read_config "${ROOT}" 2>/dev/null || true)
+ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
+_npa_cfg=()
+while IFS= read -r _line; do
+  _npa_cfg+=("${_line}")
+done < <(operator_read_config "${ROOT}" 2>/dev/null || true)
 CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
 if [ -z "${CTX}" ]; then
   echo "Set k8s_context in ~/.npa/config.yaml" >&2
@@ -52,7 +55,10 @@ should_keep() {
   return 1
 }
 
-mapfile -t rows < <(
+rows=()
+while IFS= read -r _row; do
+  rows+=("${_row}")
+done < <(
   kubectl --context "${CTX}" get jobs -n "${NS}" -o json 2>/dev/null \
     | python3 -c '
 import json, sys

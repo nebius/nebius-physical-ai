@@ -9,7 +9,7 @@ This is the same workflow customers use in production: **submit → cluster → 
 
 ## Prerequisites (once per machine)
 
-1. **Python 3.10+** and **kubectl**
+1. **Python 3.10+** and **kubectl** (`brew install python@3.12 kubectl` on Mac)
 2. **NPA checkout** on branch `feat/sim2real-mandatory-stages`
 3. **`npa configure`** → writes:
    - `~/.npa/config.yaml` — `storage.bucket`, `storage.registry`, `storage.endpoint_url`
@@ -95,7 +95,8 @@ Set via environment before `run-demo.sh` (same as cluster submit):
 | `kubeconfig not found` | Install cluster kubeconfig under `~/.npa/clusters/<context>/` |
 | Job failed | `./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>` |
 | No `.rrd` on S3 | Check `stage_14_rerun_viz` tier in `reports/sim2real-report.json` |
-| Mac: script not found | `git pull` latest `feat/sim2real-mandatory-stages` |
+| Mac: `ops/npa does not appear to be a Python project` | `git pull` latest branch — fixes repo-root detection in `lib/demo-common.sh` |
+| Mac: first run slow | Script bootstraps `npa/.venv` once (~2–5 min); needs network for `pip install -e npa` |
 
 ---
 

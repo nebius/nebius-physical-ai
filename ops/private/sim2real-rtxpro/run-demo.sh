@@ -30,7 +30,10 @@ mkdir -p "${LOG_DIR}"
 demo_bootstrap_venv "${ROOT}"
 demo_preflight "${ROOT}"
 
-readarray -t _cfg < <(demo_read_storage_config "${ROOT}")
+_cfg=()
+while IFS= read -r _line; do
+  _cfg+=("${_line}")
+done < <(demo_read_storage_config "${ROOT}")
 BUCKET="${S3_BUCKET:-${_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
 REGISTRY="${REGISTRY:-${_cfg[2]:-}}"
