@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,7 @@ DEFAULT_HELDOUT_ENVS = 8
 DEFAULT_ENV_COUNT = 10_000
 DEFAULT_TRAIN_FRACTION = 0.8
 DEFAULT_ENVGEN_SHARD_COUNT = 16
+DEFAULT_K8S_MAX_PARALLEL_GPUS = 2
 DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
@@ -204,6 +206,7 @@ class Sim2RealLoopConfig:
     k8s_kubeconfig: str = ""
     k8s_context: str = ""
     k8s_job_timeout_s: int = 7200
+    k8s_max_parallel_gpus: int = DEFAULT_K8S_MAX_PARALLEL_GPUS
     source_repo: str = ""
     source_ref: str = ""
     heldout_eval_limit: int = 0
@@ -233,6 +236,8 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("signal_loss_weight must be non-negative")
         if self.k8s_job_timeout_s <= 0:
             raise Sim2RealLoopError("k8s_job_timeout_s must be positive")
+        if self.k8s_max_parallel_gpus <= 0:
+            raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:
             raise Sim2RealLoopError("heldout_eval_limit must be non-negative")
         if self.env_count < 0:
@@ -613,6 +618,15 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get(
                 "k8s_job_timeout_s",
                 os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200"),
+            )
+        ),
+        k8s_max_parallel_gpus=int(
+            overrides.get(
+                "k8s_max_parallel_gpus",
+                os.environ.get(
+                    "NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS",
+                    DEFAULT_K8S_MAX_PARALLEL_GPUS,
+                ),
             )
         ),
         source_repo=str(
@@ -1236,21 +1250,56 @@ def run_inner_loop(
         signal_converter_source = (
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         )
-        for rollout in rollouts:
-            evaluation = evaluate_rollout_with_vlm(
-                rollout,
-                output_dir=eval_dir,
-                config=config,
-            )
-            signal = _convert_eval_to_signal(
-                evaluation,
-                config=config,
-                output_dir=signal_dir,
-            )
-            _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
-            evals.append(evaluation)
-            signals.append(signal)
-            all_signals.append(signal)
+        vlm_k8s_parallel = (
+            not config.byo_vlm_command.strip() and bool(config.s3_bucket.strip())
+        )
+        if vlm_k8s_parallel and len(rollouts) > 1:
+            max_workers = min(len(rollouts), max(1, int(config.k8s_max_parallel_gpus)))
+            evaluations: list[dict[str, Any] | None] = [None] * len(rollouts)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(
+                        evaluate_rollout_with_vlm,
+                        rollout,
+                        output_dir=eval_dir,
+                        config=config,
+                    ): index
+                    for index, rollout in enumerate(rollouts)
+                }
+                for future in as_completed(futures):
+                    index = futures[future]
+                    evaluations[index] = future.result()
+            ordered_evaluations = [
+                item for item in evaluations if item is not None
+            ]
+            if len(ordered_evaluations) != len(rollouts):
+                raise Sim2RealLoopError("parallel VLM eval did not return all rollouts")
+            for evaluation in ordered_evaluations:
+                signal = _convert_eval_to_signal(
+                    evaluation,
+                    config=config,
+                    output_dir=signal_dir,
+                )
+                _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
+                evals.append(evaluation)
+                signals.append(signal)
+                all_signals.append(signal)
+        else:
+            for rollout in rollouts:
+                evaluation = evaluate_rollout_with_vlm(
+                    rollout,
+                    output_dir=eval_dir,
+                    config=config,
+                )
+                signal = _convert_eval_to_signal(
+                    evaluation,
+                    config=config,
+                    output_dir=signal_dir,
+                )
+                _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
+                evals.append(evaluation)
+                signals.append(signal)
+                all_signals.append(signal)
         signal_batch_path = (
             local_dir
             / "inner_loop"
@@ -3182,7 +3231,11 @@ def _resolve_heldout_scene(
         spec_local = dest_dir / "scene-spec.json"
         client.download_path(scene_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
-        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+        from npa.workflows.sim2real_assets import scene_spec_doc_from_consumed
+
+        scene = scene_assets.parse_scene_spec(
+            scene_spec_doc_from_consumed(doc), source_uri=scene_spec_uri
+        )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
@@ -3217,7 +3270,11 @@ def _resolve_isaac_scene(
         spec_local = dest_dir / "scene-spec.json"
         client.download_path(scene_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
-        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+        from npa.workflows.sim2real_assets import scene_spec_doc_from_consumed
+
+        scene = scene_assets.parse_scene_spec(
+            scene_spec_doc_from_consumed(doc), source_uri=scene_spec_uri
+        )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
@@ -3253,6 +3310,11 @@ def _resolve_heldout_robot(
         spec_local = dest_dir / "robot-spec.json"
         client.download_path(robot_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
+        from npa.workflows.sim2real_assets import robot_spec_doc_from_consumed
+
+        doc = robot_spec_doc_from_consumed(doc)
+        if doc is None:
+            return None
         spec = robot_assets.parse_robot_spec(doc)
     else:
         spec = robot_assets.robot_spec_from_inputs(
@@ -4767,6 +4829,7 @@ def main(argv: list[str] | None = None) -> int:
         k8s_kubeconfig=args.k8s_kubeconfig,
         k8s_context=args.k8s_context,
         k8s_job_timeout_s=args.k8s_job_timeout_s,
+        k8s_max_parallel_gpus=args.k8s_max_parallel_gpus,
         source_repo=args.source_repo,
         source_ref=args.source_ref,
         heldout_eval_limit=args.heldout_eval_limit,
@@ -5013,6 +5076,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--k8s-job-timeout-s",
         type=int,
         default=int(os.environ.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", "7200")),
+    )
+    parser.add_argument(
+        "--k8s-max-parallel-gpus",
+        type=int,
+        default=int(
+            os.environ.get(
+                "NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS",
+                DEFAULT_K8S_MAX_PARALLEL_GPUS,
+            )
+        ),
     )
     parser.add_argument("--source-repo", default=os.environ.get("NPA_SOURCE_REPO", ""))
     parser.add_argument("--source-ref", default=os.environ.get("NPA_SOURCE_REF", ""))
