@@ -2,14 +2,14 @@
 
 **Audience:** Platform + robotics stakeholders  
 **Duration:** 10 minutes (includes ~30 s buffer)  
-**Branch under review:** `feat/sim2real-mandatory-stages` (stacked on mandatory-stages base PR)  
+**Data types & artifacts:** [sim2real-data-contracts.md](./sim2real-data-contracts.md)  
 **Runtime:** Direct Kubernetes staged job on RTX PRO cluster (SkyPilot bypass)
 
 Replace placeholders before rehearsal:
 
 | Placeholder | Example (operator pack) |
 | --- | --- |
-| `<cluster>` | `npa-rtxpro-mk8s` |
+| `<cluster>` | from `~/.npa/config.yaml` (`storage.k8s_context`) |
 | `<bucket>` | from `~/.npa/config.yaml` (`storage.bucket`) |
 | `<prefix>` | `sim2real-b` |
 | `<registry>` | from `~/.npa/config.yaml` (`storage.registry`) |
@@ -57,12 +57,12 @@ Use this table as the backbone of the demo. Every row is a file or prefix you ca
 | # | Stage | What happens | NPA artifact (under run root) | Live vs pre-staged |
 | --- | --- | --- | --- | --- |
 | 1 | **Trigger** | LeRobot dataset path consumed; run ID resolved | `stage_01_trigger/trigger.json` | Pre-staged: static. Live: written in `preamble` first seconds |
-| 2 | **Sim assets (BYO seam)** | Customer mesh/SceneSpec **or** documented stub | `stage_02_assets/external_stub.json` or consumed spec | **SEAM fallback:** no `ASSETS_URI` → stub status `documented_external_stub`, component `SEAM`. With Stage 2 assets wired: consumed spec + provenance |
-| 3 | **Augment** | Cosmos transfer manifest (reference image) | `augment/manifest.json` | Pre-staged OK; live identical shape |
+| 2 | **Sim assets** | Stock Isaac tabletop + Franka, or BYO mesh/SceneSpec/RobotSpec | `stage_02_assets/consumed_scene_spec.json`, `consumed_robot_spec.json` | **WORKS** with empty asset URIs (Monday default). BYO UR/Flexiv presets → **SEAM** until URDF uploaded |
+| 3 | **Augment** | Cosmos Transfer 2.5 sibling Job when `AUGMENT_IMAGE` qualified | `augment/manifest.json` | **SEAM** reference fallback if image is a placeholder |
 | 4 | **Env generation (raw)** | Synthetic env batch | `envs/raw/manifest.json` | Show env count in manifest |
 | 5 | **Train / held-out split** | 80/20 split | `envs/train/manifest.json`, `envs/heldout/manifest.json` | Point at held-out count (demo: 4) |
 | 6 | **Token manifest** | Stage-A-compatible reference tokens | `tokens/manifest.json` | Quick JSON peek |
-| 7 | **Action rollouts** | Reference policy rollouts (in orchestrator) | `actions/train/outer-01/iter-01/rollout-*/` | **Live highlight:** sibling path not used; files appear during outer loop |
+| 7 | **Action rollouts** | Policy sibling Job when `POLICY_IMAGE` qualified; else reference in orchestrator | `actions/train/outer-01/iter-01/rollout-*/` | **Live:** `kubectl get jobs -l sim2real.local/run-id=<live-run-id>` |
 | 8 | **VLM critique** | Cosmos-Reason sibling Job on GPU image | `vlm_eval/train/outer-01/iter-01/<rollout-id>.json` | **Live:** `kubectl get jobs -l run-id=<live-run-id>`; **pre-staged:** open one critique JSON |
 | 9 | **RL signal + trainer** | Critique → reward signal → policy update | `training_signal/train/...`, `inner_loop/outer-01/evidence.json` | Show `reward_trend` in evidence |
 | 10 | **Held-out eval** | Genesis or Isaac Lab sibling Job | `eval/heldout/report.json` | **Live:** longest stage; default Isaac task `Isaac-Lift-Cube-Franka-v0` when `sim_backend=isaac` |
@@ -114,8 +114,8 @@ Mention: RTX PRO cluster uses `submit-k8s-staged-job.sh` because SkyPilot kube c
 Open `s3://<bucket>/<prefix>/<pre-staged-run-id>/`.
 
 1. **Stage 1** — `stage_01_trigger/trigger.json`: trigger dataset URI, run ID.
-2. **Stage 2** — Either consumed assets **or** `external_stub.json`:
-   - *Talking point:* "Stage 2 is a **BYO seam**. Reference runs continue with a documented stub (`SEAM`); production teams drop URDF/mesh + SceneSpec here — no silent fallback to stock geometry."
+2. **Stage 2** — `consumed_scene_spec.json` + `consumed_robot_spec.json`:
+   - *Talking point:* "Stage 2 is **WORKS** with stock Franka + Isaac tabletop when asset URIs are empty. BYO meshes and UR/Flexiv URDF are documented seams — failed BYO loads fail loud, no silent stock fallback."
 3. **Stages 3–6** — Walk `augment/`, `envs/raw`, `envs/train`, `envs/heldout`, `tokens/` in ~60 s.
 
 > "Preamble finishes in one CLI call; state lands in `workflow_state.json` before any GPU-heavy work."
@@ -127,11 +127,13 @@ Open `s3://<bucket>/<prefix>/<pre-staged-run-id>/`.
 | Show | Path / command |
 | --- | --- |
 | Rollout frames | `actions/train/outer-01/iter-01/rollout-0000/` |
-| VLM Job spawned | `kubectl get jobs -l app=npa-sim2real,run-id=<live-run-id>` |
+| VLM Job spawned | `kubectl get jobs -l sim2real.local/run-id=<live-run-id>` |
 | Critique schema | `vlm_eval/.../rollout-0000.json` — `npa.sim2real.vlm_eval.v1` |
 | Trainer evidence | `inner_loop/outer-01/evidence.json` — policy delta, `reward_trend` |
 
-> "Inner loop is VLM → signal → trainer, repeated `INNER_ITERATIONS` times. Rollouts stay in-process; VLM and held-out eval spawn **sibling GPU Jobs** when a bucket is configured."
+> "Inner loop is VLM → signal → trainer, repeated `INNER_ITERATIONS` times. Policy,
+> VLM, and held-out eval spawn **sibling GPU Jobs** when a bucket is configured
+> and images are registry-qualified."
 
 If live job not ready: stay on pre-staged paths — same filenames.
 
@@ -182,7 +184,8 @@ grep -E 'outer=|decision=' /tmp/sim2real-cluster/<live-run-id>.log
 1. `stage_12_external_validation/external_stub.json` — real-robot validation hook.
 2. `stage_13_retrigger/retrigger.json` — next LeRobot drop in trigger path restarts Stage 1.
 
-> "Stages 2, 12, and 13 are **documented seams** — the reference pipeline proves the contract; customers swap their validation and asset pipelines without forking the orchestrator."
+> "Stages 12 and 13 are **documented seams** — real-world validation and retrigger.
+> Stage 2 BYO robot/scene paths are optional; stock assets are production-ready."
 
 ### 8:45–9:30 — Report + Rerun (the payoff)
 

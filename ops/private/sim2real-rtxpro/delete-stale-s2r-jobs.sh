@@ -3,8 +3,17 @@
 # Active (Running) jobs and sim2real-* orchestrator jobs are never touched.
 set -euo pipefail
 
-export KUBECONFIG="${KUBECONFIG:-$HOME/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
-CTX="${KUBECONTEXT:-npa-rtxpro-mk8s}"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
+readarray -t _npa_cfg < <(operator_read_config "${ROOT}" 2>/dev/null || true)
+CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
+if [ -z "${CTX}" ]; then
+  echo "Set k8s_context in ~/.npa/config.yaml" >&2
+  exit 1
+fi
+export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
 NS="${KUBENS:-default}"
 DRY_RUN=0
 KEEP_RUN_IDS=()

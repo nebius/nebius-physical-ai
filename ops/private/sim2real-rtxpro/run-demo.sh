@@ -18,6 +18,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/demo-common.sh
 source "${SCRIPT_DIR}/lib/demo-common.sh"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
 
 ROOT="$(demo_common_root)"
 OPS="${SCRIPT_DIR}"
@@ -32,8 +34,12 @@ readarray -t _cfg < <(demo_read_storage_config "${ROOT}")
 BUCKET="${S3_BUCKET:-${_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
 REGISTRY="${REGISTRY:-${_cfg[2]:-}}"
-DEFAULT_CTX="${_cfg[3]:-npa-rtxpro-mk8s}"
-export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/${KUBECONTEXT:-${DEFAULT_CTX}}/kubeconfig}"
+DEFAULT_CTX="${_cfg[3]:-}"
+if [ -z "${DEFAULT_CTX}" ]; then
+  echo "ERROR: k8s_context not set in ~/.npa/config.yaml" >&2
+  exit 1
+fi
+export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${KUBECONTEXT:-${DEFAULT_CTX}}")}"
 export KUBECONTEXT="${KUBECONTEXT:-${DEFAULT_CTX}}"
 
 if [ -z "${BUCKET}" ] || [ -z "${REGISTRY}" ]; then
