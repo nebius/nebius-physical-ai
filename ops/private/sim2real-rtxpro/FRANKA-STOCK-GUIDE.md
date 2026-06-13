@@ -93,21 +93,30 @@ cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 ```
 
-Then from `~/npa-sim2real-demo` — **new terminal, paste once** (installs `run.sh` + runs demo):
+Then from **any new Mac terminal** — paste this **one block** (pulls branch, installs `run.sh`, runs demo):
 
 ```bash
+bash <<'NPA_SIM2REAL_DEMO'
+set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
 export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
 [[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
-
-REPO="${HOME}/npa-sim2real-demo/nebius-physical-ai"
-cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${HOME}/npa-sim2real-demo/run.sh"
-chmod +x "${HOME}/npa-sim2real-demo/run.sh"
-cd ~/npa-sim2real-demo && ./run.sh demo
+DEMO="${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}"
+REPO="${NPA_SIM2REAL_REPO:-${DEMO}/nebius-physical-ai}"
+BRANCH="feat/sim2real-mandatory-stages"
+GIT="$(command -v git || echo /usr/bin/git)"
+[[ -d "${REPO}/.git" ]] || { echo "ERROR: clone nebius-physical-ai to ${REPO} first" >&2; exit 1; }
+echo "=== git pull ${BRANCH} ==="
+(cd "${REPO}" && "${GIT}" fetch origin "${BRANCH}" && "${GIT}" checkout "${BRANCH}" 2>/dev/null || "${GIT}" checkout -b "${BRANCH}" "origin/${BRANCH}" && "${GIT}" pull --ff-only origin "${BRANCH}")
+cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${DEMO}/run.sh"
+chmod +x "${DEMO}/run.sh"
+echo "=== cleanup + submit (customer demo) ==="
+cd "${DEMO}" && exec ./run.sh demo
+NPA_SIM2REAL_DEMO
 ```
 
-Or one file from repo (same behavior):
+Equivalent one-liner (if repo already has the script):
 
 ```bash
 bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh
