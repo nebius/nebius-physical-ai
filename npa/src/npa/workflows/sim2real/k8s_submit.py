@@ -123,3 +123,55 @@ def submit_sim2real_staged_job(
         log_path=log_path,
         manifest_path=manifest_path,
     )
+
+
+def is_sim2real_runbook(yaml_path: Path) -> bool:
+    """True when ``yaml_path`` is the staged Sim2Real runbook (direct K8s route)."""
+
+    path = str(yaml_path.resolve()).lower()
+    return "/sim2real/" in path and yaml_path.name.lower().startswith("runbook")
+
+
+def status_monitor_command(run_id: str) -> str:
+    return f"python -m npa.workflows.sim2real status {run_id} --watch"
+
+
+def submit_sim2real_from_workflow_vars(
+    *,
+    run_id: str,
+    substitutions: dict[str, str],
+    s3_bucket: str = "",
+    s3_prefix: str = DEFAULT_PREFIX,
+    s3_endpoint: str = "",
+) -> Sim2RealSubmitResult:
+    """Submit a staged Sim2Real run using workflow ``--var KEY=VALUE`` substitutions."""
+
+    trigger_uri = (
+        substitutions.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
+        or substitutions.get("TRIGGER_DATASET_URI")
+        or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
+        or os.environ.get("TRIGGER_DATASET_URI")
+        or ""
+    )
+    trigger_id = (
+        substitutions.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
+        or substitutions.get("TRIGGER_DATASET_ID")
+        or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
+        or os.environ.get("TRIGGER_DATASET_ID")
+        or "lerobot/pusht"
+    )
+    inner = substitutions.get("INNER_ITERATIONS")
+    outer = substitutions.get("OUTER_ITERATIONS")
+    env_count = substitutions.get("NPA_ENV_COUNT")
+    return submit_sim2real_staged_job(
+        run_id=run_id,
+        trigger_dataset_uri=trigger_uri,
+        trigger_dataset_id=trigger_id,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix or DEFAULT_PREFIX,
+        s3_endpoint=s3_endpoint,
+        inner_iterations=int(inner) if inner else None,
+        outer_iterations=int(outer) if outer else None,
+        env_count=int(env_count) if env_count else None,
+        launch_monitor=False,
+    )

@@ -356,8 +356,64 @@ def main(argv: list[str] | None = None) -> int:
     component_policy.add_argument(
         "--steps-per-rollout", type=int, default=DEFAULT_STEPS_PER_ROLLOUT
     )
+    status_cmd = subparsers.add_parser(
+        "status",
+        help="Live stage progress for a staged cluster run (S3 artifacts + kubectl).",
+    )
+    status_cmd.add_argument("run_id", help="Sim2Real run id.")
+    status_cmd.add_argument(
+        "--s3-bucket",
+        default=os.environ.get("NPA_SIM2REAL_BUCKET", os.environ.get("S3_BUCKET", "")),
+    )
+    status_cmd.add_argument(
+        "--s3-prefix",
+        default=os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX),
+    )
+    status_cmd.add_argument(
+        "--s3-endpoint",
+        default=os.environ.get("AWS_ENDPOINT_URL", DEFAULT_S3_ENDPOINT),
+    )
+    status_cmd.add_argument(
+        "--k8s-context",
+        default=os.environ.get("NPA_SIM2REAL_K8S_CONTEXT", ""),
+    )
+    status_cmd.add_argument(
+        "--k8s-namespace",
+        default=os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "default"),
+    )
+    status_cmd.add_argument(
+        "--watch",
+        action="store_true",
+        help="Refresh until the run reaches a terminal state.",
+    )
+    status_cmd.add_argument(
+        "--interval",
+        type=float,
+        default=10.0,
+        help="Watch refresh interval in seconds.",
+    )
+    status_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON.",
+    )
     args = parser.parse_args(argv)
 
+    if args.command == "status":
+        from npa.workflows.sim2real.monitor import watch_sim2real_status
+
+        watch_sim2real_status(
+            args.run_id,
+            watch=args.watch,
+            interval=args.interval,
+            json_output=args.json,
+            s3_bucket=args.s3_bucket,
+            s3_prefix=args.s3_prefix,
+            s3_endpoint=args.s3_endpoint,
+            k8s_context=args.k8s_context,
+            k8s_namespace=args.k8s_namespace,
+        )
+        return 0
     if args.command == "convert-signal":
         payload = json.loads(args.vlm_json.read_text(encoding="utf-8"))
         _write_json_artifact(args.output_json, convert_vlm_eval_to_rl_signal(payload))

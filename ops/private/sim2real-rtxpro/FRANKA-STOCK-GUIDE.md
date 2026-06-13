@@ -68,7 +68,7 @@ cd ~/npa-sim2real-demo
 
 ### B. Full pipeline — stock Franka on cluster
 
-**Submit** (canonical — uses direct K8s Job, not SkyPilot):
+**Submit** (runbook YAML — auto-routes to direct K8s on RTX clusters):
 
 ```bash
 cd ~/npa-sim2real-demo/nebius-physical-ai
@@ -76,17 +76,16 @@ export TRIGGER_DATASET_URI=s3://YOUR-BUCKET/sim2real-triggers/trigger-validate-2
 
 ./npa/.venv/bin/npa workbench workflow submit \
   npa/workflows/workbench/sim2real/runbook.yaml \
-  --tool sim2real \
   --run-id "sim2real-staged-$(date -u +%Y%m%dT%H%M%SZ | tr '[:upper:]' '[:lower:]')" \
   --var "NPA_SIM2REAL_TRIGGER_DATASET_URI=${TRIGGER_DATASET_URI}" \
   --var "INNER_ITERATIONS=1" \
   --var "OUTER_ITERATIONS=2"
 ```
 
-**Monitor live stages:**
+**Monitor live stages** (not `npa workbench workflow status`):
 
 ```bash
-./npa/.venv/bin/npa workbench workflow status <RUN_ID> --tool sim2real --watch
+./npa/.venv/bin/python -m npa.workflows.sim2real status <RUN_ID> --watch
 ```
 
 Private operator wrapper (preflight + submit + wait + sync + Rerun):
@@ -156,13 +155,13 @@ kubectl --context npa-rtxpro-mk8s get jobs -n default --sort-by=.metadata.creati
 
 ```bash
 cd ~/npa-sim2real-demo/nebius-physical-ai
-./npa/.venv/bin/npa workbench workflow status sim2real-staged-<RUN_ID> --tool sim2real --watch
+./npa/.venv/bin/python -m npa.workflows.sim2real status sim2real-staged-<RUN_ID> --watch
 ```
 
 One-shot (no watch):
 
 ```bash
-./npa/.venv/bin/npa workbench workflow status <RUN_ID> --tool sim2real
+./npa/.venv/bin/python -m npa.workflows.sim2real status <RUN_ID>
 ```
 
 Operator shortcut:

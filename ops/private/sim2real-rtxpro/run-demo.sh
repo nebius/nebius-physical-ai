@@ -95,7 +95,6 @@ _submit_and_wait() {
   _submit_vars+=(--var "OUTER_ITERATIONS=${OUTER_ITERATIONS:-2}")
 
   "${NPA}" workbench workflow submit "${runbook}" \
-    --tool sim2real \
     --run-id "${RUN_ID:-}" \
     --s3-bucket "${BUCKET}" \
     --s3-endpoint "${ENDPOINT}" \
@@ -119,14 +118,14 @@ _submit_and_wait() {
   if [ "${WAIT}" != "1" ]; then
     echo ""
     echo "WAIT=0 — job running on cluster. Monitor:"
-    echo "  ${NPA} workbench workflow status ${RUN_ID} --tool sim2real --watch"
+    echo "  ${PY} -m npa.workflows.sim2real status ${RUN_ID} --watch"
     echo "When complete:"
     echo "  RUN_ID=${RUN_ID} SUBMIT=0 ${OPS}/run-demo.sh"
     exit 0
   fi
 
   echo "=== Waiting for cluster job (GPU stages on Nebius) ==="
-  "${NPA}" workbench workflow status "${RUN_ID}" --tool sim2real --watch
+  "${PY}" -m npa.workflows.sim2real status "${RUN_ID}" --watch
 }
 
 _sync_from_s3() {

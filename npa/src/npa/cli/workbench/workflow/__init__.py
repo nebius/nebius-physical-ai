@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import tempfile
@@ -237,38 +236,20 @@ def submit_cmd(
     materializer = _resolve_materializer(tool, yaml_path)
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
 
-    if materializer == "sim2real":
-        from npa.workflows.sim2real.k8s_submit import submit_sim2real_staged_job
+    from npa.workflows.sim2real.k8s_submit import (
+        is_sim2real_runbook,
+        status_monitor_command,
+        submit_sim2real_from_workflow_vars,
+    )
 
-        trigger_uri = (
-            substitutions.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
-            or substitutions.get("TRIGGER_DATASET_URI")
-            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
-            or os.environ.get("TRIGGER_DATASET_URI")
-            or ""
-        )
-        trigger_id = (
-            substitutions.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
-            or substitutions.get("TRIGGER_DATASET_ID")
-            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
-            or os.environ.get("TRIGGER_DATASET_ID")
-            or "lerobot/pusht"
-        )
-        inner = substitutions.get("INNER_ITERATIONS")
-        outer = substitutions.get("OUTER_ITERATIONS")
-        env_count = substitutions.get("NPA_ENV_COUNT")
+    if is_sim2real_runbook(yaml_path):
         try:
-            result = submit_sim2real_staged_job(
+            result = submit_sim2real_from_workflow_vars(
                 run_id=resolved_run_id,
-                trigger_dataset_uri=trigger_uri,
-                trigger_dataset_id=trigger_id,
+                substitutions=substitutions,
                 s3_bucket=s3_bucket,
                 s3_prefix=s3_prefix or "sim2real-b",
                 s3_endpoint=s3_endpoint,
-                inner_iterations=int(inner) if inner else None,
-                outer_iterations=int(outer) if outer else None,
-                env_count=int(env_count) if env_count else None,
-                launch_monitor=False,
             )
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             _fail(str(exc))
@@ -290,10 +271,7 @@ def submit_cmd(
             typer.echo(f"job_id: {result.job_name}")
             typer.echo(f"k8s_context: {result.k8s_context}")
             typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(
-                "monitor: npa workbench workflow status "
-                f"{result.run_id} --tool sim2real --watch"
-            )
+            typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
         return
 
     submitted_yaml_path = yaml_path
@@ -447,13 +425,8 @@ def _parse_submit_vars(var: list[str]) -> dict[str, str]:
 def _resolve_materializer(tool: str, yaml_path: Path) -> str:
     requested = tool.strip().lower()
     if requested in {"", "auto"}:
-        path_lower = str(yaml_path).lower()
-        if "sim2real" in path_lower:
-            return "sim2real"
-        if "sonic" in yaml_path.name.lower():
-            return "sonic"
-        return ""
-    if requested not in {"sonic", "sim2real"}:
+        return "sonic" if "sonic" in yaml_path.name.lower() else ""
+    if requested != "sonic":
         _fail(f"Unsupported workflow materializer: {tool}")
     return requested
 
@@ -779,11 +752,6 @@ def run_cmd(
 @app.command("status")
 def status_cmd(
     run_id: str = typer.Argument(help="Run ID to check status of."),
-    tool: str = typer.Option(
-        "",
-        "--tool",
-        help="Workflow tool. Use sim2real for RTX staged K8s runs (S3 + kubectl).",
-    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -831,29 +799,6 @@ def status_cmd(
     ),
 ) -> None:
     """Check the status of a workflow run."""
-    if tool.strip().lower() == "sim2real" or (
-        workflow_s3_prefix.strip() == "sim2real-b" and not run_id.startswith("s3://")
-    ):
-        from npa.workflows.sim2real.monitor import get_sim2real_workflow_status
-
-        try:
-            while True:
-                result = get_sim2real_workflow_status(
-                    _display_run_id(run_id),
-                    s3_bucket=s3_bucket,
-                    s3_prefix=workflow_s3_prefix or "sim2real-b",
-                    s3_endpoint=s3_endpoint,
-                )
-                _emit_workflow_status(
-                    result, OutputFormat.json if json_output else output_format
-                )
-                if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
-                    return
-                time.sleep(interval)
-        except Exception as exc:
-            _fail(str(exc))
-            return
-
     if _uses_s3_monitor(
         run_id,
         project=project,
