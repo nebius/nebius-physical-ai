@@ -55,6 +55,8 @@ envs:
   ISAAC_IMAGE: ""
   NPA_SIM2REAL_SIM_BACKEND: "isaac"
   NPA_SIM2REAL_ISAAC_TASK: "Isaac-Lift-Cube-Franka-v0"
+  # Gated HF weights: accept nvidia/Cosmos-Reason2-8B, Cosmos-Reason1-7B, and
+  # Cosmos-Transfer2.5-2B on huggingface.co; mount HF_TOKEN via hf-ngc-tokens.
   VLM_MODEL: "nvidia/Cosmos-Reason2-8B"
   VLM_REASON2_MODEL: "nvidia/Cosmos-Reason2-8B"
   VLM_REASON3_MODEL: "nvidia/Cosmos-Reason1-7B"
@@ -167,7 +169,10 @@ run: |
     --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
     --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
     --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
-    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}"
+    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason2-8B}"
+    --vlm-reason2-model "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
+    --vlm-reason3-model "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason1-7B}"
+    --vlm-dual-reason
     --threshold "${SUCCESS_THRESHOLD:-0.75}"
     --inner-iterations "${INNER_ITERATIONS:-2}"
     --outer-iterations "${OUTER_ITERATIONS:-1}"

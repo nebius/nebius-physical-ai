@@ -44,6 +44,11 @@ DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
 REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
+DEFAULT_VLM_SEAM_EVIDENCE = (
+    f"Dual self-hosted VLM defaults: {DEFAULT_REASON2_MODEL} (Reason2) and "
+    f"{DEFAULT_REASON3_MODEL} (Reason3 sibling). Accept gated Hugging Face "
+    "licenses before launch; see sim2real-workflow.md."
+)
 SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"

@@ -1000,7 +1000,10 @@ def run_finalize(
                 ComponentRecord(
                     "vlm_byo_seam",
                     "WORKS",
-                    "VLM image/command are runtime-configurable; default model is nvidia/Cosmos-Reason1-7B.",
+                    "VLM image/command are runtime-configurable; "
+                    "dual self-hosted defaults: nvidia/Cosmos-Reason2-8B (Reason2) and "
+                    "nvidia/Cosmos-Reason1-7B (Reason3 sibling). Accept gated Hugging Face "
+                    "licenses before launch.",
                     {"image": config.vlm_image},
                 )
             ),

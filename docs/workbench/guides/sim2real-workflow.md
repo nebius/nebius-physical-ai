@@ -62,6 +62,8 @@ OUTER_ITERATIONS=1
 SUCCESS_THRESHOLD=0.75
 ```
 
+**Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
+
 Submit:
 
 ```bash
