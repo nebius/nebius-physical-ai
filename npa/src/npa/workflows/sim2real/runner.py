@@ -65,6 +65,9 @@ class Sim2RealWorkflow:
         state.next_outer_iteration = outer_iteration + 1
         state.status = "outer_iteration_completed"
         state.save()
+        from npa.workflows.sim2real.engine import sync_workflow_state_to_s3
+
+        sync_workflow_state_to_s3(self.config, self._local_dir)
         return state
 
     def run_finalize(self, *, upload: bool | None = None) -> dict[str, Any]:

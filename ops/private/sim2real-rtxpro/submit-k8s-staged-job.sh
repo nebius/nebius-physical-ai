@@ -199,7 +199,7 @@ spec:
               exec > >(tee -a /tmp/run.log) 2>&1
               git clone --depth 1 --branch "\${NPA_SOURCE_REF}" "\${NPA_SOURCE_REPO}" /tmp/npa-src
               export PYTHONPATH="/tmp/npa-src/npa/src:\${PYTHONPATH:-}"
-              python3 -c "import npa.workflows.sim2real_loop as m; print(m.__file__)"
+              python3 -c "import npa.workflows.sim2real as m; print(m.__file__)"
               if ! command -v kubectl >/dev/null; then
                 curl -fsSL -o /tmp/kubectl https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl
                 chmod +x /tmp/kubectl
@@ -238,18 +238,8 @@ spec:
                 --trigger-dataset-id "\${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}"
                 --upload-artifacts
               )
-              python3 -m npa.workflows.sim2real_loop preamble "\${common_args[@]}"
-              state_json="\${output_dir}/state/workflow_state.json"
-              current_quality=\$(python3 -c "import json; print(json.load(open('\${state_json}'))['current_quality'])")
-              for outer in \$(seq 1 "\${OUTER_ITERATIONS:-1}"); do
-                python3 -m npa.workflows.sim2real_loop outer-iteration "\${common_args[@]}" \
-                  --outer-iteration "\${outer}" --initial-quality "\${current_quality}"
-                current_quality=\$(python3 -c "import json; print(json.load(open('\${state_json}'))['current_quality'])")
-                decision=\$(python3 -c "import json; print(json.load(open('\${state_json}'))['final_decision']['decision'])")
-                echo "outer=\${outer} quality=\${current_quality} decision=\${decision}"
-                [ "\${decision}" = "promote_checkpoint" ] && break
-              done
-              python3 -m npa.workflows.sim2real_loop finalize "\${common_args[@]}"
+              python3 -m npa.workflows.sim2real run "\${common_args[@]}" \
+                --initial-quality "\${INITIAL_QUALITY:-0.38}"
               python3 -c "import json; from pathlib import Path; r=json.loads(Path('\${output_dir}/reports/sim2real-report.json').read_text()); print('CLUSTER_METRICS', json.dumps({'run_id': r['run_id'], 'decision': r['outer_loop']['latest_decision'], 'reward_trend': r['inner_loop']['reward_trend']}))"
       nodeSelector:
         nvidia.com/gpu.product: NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition
