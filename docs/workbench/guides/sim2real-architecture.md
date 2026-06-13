@@ -310,7 +310,7 @@ Local root: `{output_dir}` (default `/tmp/npa-sim2real-{run_id}`).
 | `stage_12_external_validation/` | Stage 12 stub |
 | `stage_13_retrigger/retrigger.json` | Stage 13 retrigger record |
 | `reports/sim2real-report.json` | E2E report |
-| `reports/sim2real.rrd` | Rerun recording (when enabled) |
+| `reports/sim2real.rrd` | Rerun recording (when `stage_14_rerun_viz` tier is WORKS) |
 
 S3 mirror (when uploaded): `s3://{NPA_SIM2REAL_BUCKET}/{NPA_SIM2REAL_PREFIX}/{run_id}/`
 — see `artifact_uris()` in `sim2real_loop.py` for canonical URIs.
