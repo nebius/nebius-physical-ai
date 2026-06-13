@@ -16,6 +16,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/demo-common.sh
 source "${SCRIPT_DIR}/lib/demo-common.sh"
 # shellcheck source=lib/operator-config.sh
@@ -80,35 +82,23 @@ fi
 
 _submit_and_wait() {
   local submit_log="${LOG_DIR}/submit.log"
-  local runbook="${ROOT}/npa/workflows/workbench/sim2real/runbook.yaml"
   echo "=== Submit sim2real job to cluster ${KUBECONTEXT} ===" | tee "${submit_log}"
   echo "bucket=${BUCKET} registry=${REGISTRY}" | tee -a "${submit_log}"
 
-  _submit_vars=()
-  if [ -n "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-}}" ]; then
-    _submit_vars+=(--var "NPA_SIM2REAL_TRIGGER_DATASET_URI=${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI}}")
+  export S3_BUCKET="${BUCKET}"
+  export S3_ENDPOINT="${ENDPOINT}"
+  export REGISTRY="${REGISTRY}"
+  export INNER_ITERATIONS="${INNER_ITERATIONS:-1}"
+  export OUTER_ITERATIONS="${OUTER_ITERATIONS:-2}"
+  export LAUNCH_MONITOR="${LAUNCH_MONITOR:-0}"
+  if [ -n "${RUN_ID:-}" ]; then
+    export RUN_ID
   fi
-  if [ -n "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-${TRIGGER_DATASET_ID:-}}" ]; then
-    _submit_vars+=(--var "NPA_SIM2REAL_TRIGGER_DATASET_ID=${NPA_SIM2REAL_TRIGGER_DATASET_ID:-${TRIGGER_DATASET_ID}}")
-  fi
-  _submit_vars+=(--var "INNER_ITERATIONS=${INNER_ITERATIONS:-1}")
-  _submit_vars+=(--var "OUTER_ITERATIONS=${OUTER_ITERATIONS:-2}")
 
-  "${NPA}" workbench workflow submit "${runbook}" \
-    --run-id "${RUN_ID:-}" \
-    --s3-bucket "${BUCKET}" \
-    --s3-endpoint "${ENDPOINT}" \
-    --workflow-s3-prefix "${S3_PREFIX:-sim2real-b}" \
-    "${_submit_vars[@]}" 2>&1 | tee -a "${submit_log}"
+  "${OPS}/submit-k8s-staged-job.sh" 2>&1 | tee -a "${submit_log}"
 
-  RUN_ID="$(grep -oE 'run_id: [^ ]+' "${submit_log}" | tail -1 | awk '{print $2}')"
-  if [ -z "${RUN_ID}" ]; then
-    RUN_ID="$(grep -oE 'run_id=[^ ]+' "${submit_log}" | tail -1 | cut -d= -f2)"
-  fi
-  JOB="$(grep -oE 'job_id: [^ ]+' "${submit_log}" | tail -1 | awk '{print $2}')"
-  if [ -z "${JOB}" ]; then
-    JOB="$(grep -oE 'job=[^ ]+' "${submit_log}" | tail -1 | cut -d= -f2)"
-  fi
+  RUN_ID="$(grep -oE 'run_id=[^ ]+' "${submit_log}" | tail -1 | cut -d= -f2)"
+  JOB="$(grep -oE 'job=[^ ]+' "${submit_log}" | tail -1 | cut -d= -f2)"
   if [ -z "${RUN_ID}" ]; then
     echo "ERROR: could not parse run_id from submit output" >&2
     exit 1
@@ -118,14 +108,14 @@ _submit_and_wait() {
   if [ "${WAIT}" != "1" ]; then
     echo ""
     echo "WAIT=0 — job running on cluster. Monitor:"
-    echo "  ${NPA} workbench workflow status ${RUN_ID} --watch"
+    echo "  ${OPS}/run.sh status ${RUN_ID}"
     echo "When complete:"
-    echo "  RUN_ID=${RUN_ID} SUBMIT=0 ${OPS}/run-demo.sh"
+    echo "  ${OPS}/run.sh sync ${RUN_ID}"
     exit 0
   fi
 
   echo "=== Waiting for cluster job (GPU stages on Nebius) ==="
-  "${NPA}" workbench workflow status "${RUN_ID}" --watch
+  "${OPS}/status-run-local.sh" "${RUN_ID}" --watch
 }
 
 _sync_from_s3() {

@@ -15,6 +15,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/demo-common.sh
 source "${SCRIPT_DIR}/lib/demo-common.sh"
 # shellcheck source=lib/trigger-preflight.sh

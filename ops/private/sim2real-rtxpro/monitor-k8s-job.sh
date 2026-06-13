@@ -6,6 +6,8 @@ set -euo pipefail
 
 JOB="${1:?usage: monitor-k8s-job.sh <job-name>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
