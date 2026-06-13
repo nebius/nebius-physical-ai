@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -2233,7 +2234,19 @@ def _download_component_output(
     config: Sim2RealLoopConfig, output_uri: str, output_json: Path
 ) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
-    _storage_client(config).download_path(output_uri, str(output_json))
+    client = _storage_client(config)
+    attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "5")))
+    for attempt in range(attempts):
+        if output_json.exists():
+            output_json.unlink()
+        client.download_path(output_uri, str(output_json))
+        if output_json.exists() and output_json.stat().st_size > 0:
+            return
+        if attempt + 1 < attempts:
+            time.sleep(min(2**attempt, 8))
+    raise Sim2RealLoopError(
+        f"component output not available at {output_uri} after {attempts} download attempts"
+    )
 
 
 def _storage_client(config: Sim2RealLoopConfig) -> StorageClient:
