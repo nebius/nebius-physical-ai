@@ -34,6 +34,10 @@ else
 fi
 
 OPS="${SCRIPT_DIR}"
+# shellcheck source=lib/operator-shell.sh
+source "${SCRIPT_DIR}/lib/operator-shell.sh"
+operator_bootstrap_shell "${NPA_SIM2REAL_REPO}"
+
 CMD="${1:-help}"
 shift || true
 
