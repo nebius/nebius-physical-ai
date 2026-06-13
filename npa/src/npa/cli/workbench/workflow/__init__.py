@@ -799,6 +799,7 @@ def status_cmd(
     ),
 ) -> None:
     """Check the status of a workflow run."""
+    resolved_run_id = _display_run_id(run_id)
     if _uses_s3_monitor(
         run_id,
         project=project,
@@ -819,6 +820,39 @@ def status_cmd(
                 )
                 _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
                 if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
+                    return
+                time.sleep(interval)
+        except Exception as exc:
+            _fail(str(exc))
+            return
+
+    from npa.workflows.sim2real.monitor import (
+        emit_sim2real_status,
+        get_sim2real_workflow_status,
+        sim2real_run_exists,
+        status_is_terminal,
+    )
+
+    prefix = workflow_s3_prefix or "sim2real-b"
+    if sim2real_run_exists(
+        resolved_run_id,
+        s3_bucket=s3_bucket,
+        s3_prefix=prefix,
+        s3_endpoint=s3_endpoint,
+    ):
+        try:
+            while True:
+                result = get_sim2real_workflow_status(
+                    resolved_run_id,
+                    s3_bucket=s3_bucket,
+                    s3_prefix=prefix,
+                    s3_endpoint=s3_endpoint,
+                )
+                if json_output or output_format == OutputFormat.json:
+                    emit_sim2real_status(result, json_output=True)
+                else:
+                    _emit_workflow_status(result, output_format)
+                if not watch or status_is_terminal(str(result.get("status", ""))):
                     return
                 time.sleep(interval)
         except Exception as exc:

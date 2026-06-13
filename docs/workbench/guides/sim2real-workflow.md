@@ -81,6 +81,74 @@ npa workbench health sim2real \
   --k8s-kubeconfig ~/.npa/clusters/<your-k8s-context>/kubeconfig
 ```
 
+---
+
+## Hugging Face model access (self-hosted workbench)
+
+Sim2real on Kubernetes downloads **gated NVIDIA Cosmos weights at runtime** inside
+GPU sibling Jobs. A Hugging Face token alone is not enough: you must **accept each
+model license** on https://huggingface.co while signed in with the same account
+that owns the token.
+
+### One-time setup
+
+1. Create a read token at https://huggingface.co/settings/tokens
+2. Accept the license on each repo page (click **Agree and access** when prompted)
+3. Add the token to `~/.npa/credentials.yaml`:
+
+   ```yaml
+   tokens:
+     HF_TOKEN: hf_...
+   ```
+
+4. Mirror credentials into the cluster (default namespace):
+
+   ```bash
+   # Registry pull secret (expires ~weekly — refresh when image pulls return 401)
+   export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig
+   npa/.venv/bin/python - <<'PY'
+   from npa.cli.workbench.detection_training import _ensure_image_pull_secret
+   reg = "<your-registry>/npa-cosmos3-reason:3.0.1-genuine-sm120"
+   for name in ("npa-nebius-registry", "agent-sa"):
+       _ensure_image_pull_secret(image=reg, secret_name=name, namespace="default",
+                                 kubeconfig="~/.npa/clusters/<context>/kubeconfig")
+   PY
+   ```
+
+   Ensure `hf-ngc-tokens` and `npa-storage-credentials` secrets exist in
+   `default` (S3 + `HF_TOKEN` for sibling Jobs). The runbook mounts them via
+   `NPA_SIM2REAL_K8S_ENV_SECRET_NAMES`.
+
+### Self-hosted sim2real VLM repos (dual Reason eval)
+
+| Hugging Face repo | Gated? | Role | Notes |
+| --- | --- | --- | --- |
+| `nvidia/Cosmos-Reason2-8B` | **Yes — accept license** | Reason2 sibling (`vlm_eval_reason2`) | Default `VLM_REASON2_MODEL` |
+| `nvidia/Cosmos-Reason1-7B` | **Yes — accept license** | Reason3 sibling (`vlm_eval_reason3`) | Default `VLM_REASON3_MODEL` for workbench GPU jobs |
+| `nvidia/Cosmos-Transfer2.5-2B` | **Yes — accept license** | Stage 3 augment (Cosmos Transfer image) | Downloaded inside `npa-cosmos2-transfer` |
+
+### Hosted-only (not for self-hosted VLM Jobs)
+
+| Model id | Where it runs | Notes |
+| --- | --- | --- |
+| `nvidia/Cosmos3-Super-Reasoner` | Nebius **Token Factory** API | No HF repo; use `npa workbench token-factory reason`. Do **not** set as `VLM_REASON3_MODEL` on cluster sim2real. |
+| `nvidia/Cosmos3-Super` | Hugging Face (64B omnimodel) | Datacenter scale (multi-GPU vLLM); not used by the 1-GPU sim2real sibling Job pattern. |
+
+### Verify access before launch
+
+```bash
+huggingface-cli whoami
+# Optional: probe a repo you accepted
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download('nvidia/Cosmos-Reason2-8B', 'config.json')"
+npa workbench health sim2real --checks tokens,registry,cluster
+```
+
+If a sibling Job fails with `GatedRepoError` or `403`, re-open the repo page,
+confirm access, and retry. If pulls fail with `401 Unauthorized`, refresh the
+`npa-nebius-registry` pull secret (see above).
+
+---
+
 > Top-level `npa workbench sim2real` was removed. Use **`workflow submit`**, module CLI
 > (`python -m npa.workflows.sim2real run …`), staged subcommands (`preamble`,
 > `outer-iteration`, `finalize`), or SDK (`npa.sdk.workbench.sim2real`).
@@ -114,13 +182,11 @@ Open **`npa/workflows/workbench/sim2real/runbook.yaml`**. The `run:` block is th
 
 ### Inspect stage progress during a run
 
-**Staged cluster runs** (RTX operator pack / direct K8s Job):
-
 ```bash
-python -m npa.workflows.sim2real status <run-id> --watch
+npa workbench workflow status <run-id> --watch
 ```
 
-SDK:
+SDK (same backend):
 
 ```python
 from npa.sdk.workbench import sim2real
@@ -128,10 +194,8 @@ from npa.sdk.workbench import sim2real
 sim2real.status(run_id="<run-id>", watch=True)
 ```
 
-`npa workbench workflow status` is for SkyPilot durable-S3 workflows only — not
-Sim2Real staged runs.
-
-On the cluster pod or after a local smoke run, tail artifacts:
+Module CLI (`python -m npa.workflows.sim2real status`) remains available for
+in-cluster/debug use; operators should prefer ``npa workbench workflow status``.
 
 ```bash
 RUN=/tmp/npa-sim2real-<run-id>

@@ -75,6 +75,23 @@ if bad:
 print("Preflight OK: all workflow images are registry-qualified.")
 PY
 
+# Refresh npa-nebius-registry before apply — stale IAM tokens cause ImagePullBackOff 401.
+"${ROOT}/npa/.venv/bin/python" - <<PY
+from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+ensure_registry_pull_secret_for_images(
+    "${ORCHESTRATOR_IMAGE}",
+    "${TRAINER_IMAGE}",
+    "${VLM_IMAGE}",
+    "${EVAL_IMAGE}",
+    "${AUGMENT_IMAGE}",
+    "${POLICY_IMAGE}",
+    "${ISAAC_IMAGE}",
+    kubeconfig="${KUBECONFIG}",
+    k8s_context="${CTX}",
+)
+print("Refreshed npa-nebius-registry pull secret.")
+PY
+
 LOG="/tmp/sim2real-cluster/${RUN_ID}.log"
 mkdir -p /tmp/sim2real-cluster
 
@@ -168,7 +185,13 @@ spec:
             - name: NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS
               value: "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
             - name: ROLLOUT_COUNT
-              value: "2"
+              value: "${ROLLOUT_COUNT:-8}"
+            - name: VLM_REASON2_MODEL
+              value: "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
+            - name: VLM_REASON3_MODEL
+              value: "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason1-7B}"
+            - name: NPA_SIM2REAL_VLM_DUAL_REASON
+              value: "${NPA_SIM2REAL_VLM_DUAL_REASON:-1}"
             - name: HELDOUT_ENV_COUNT
               value: "${HELDOUT_ENV_COUNT:-4}"
             - name: NPA_SIM2REAL_HELDOUT_EVAL_LIMIT
@@ -216,7 +239,10 @@ spec:
                 --s3-endpoint "\${AWS_ENDPOINT_URL}"
                 --inner-iterations "\${INNER_ITERATIONS:-1}"
                 --outer-iterations "\${OUTER_ITERATIONS:-1}"
-                --rollout-count "\${ROLLOUT_COUNT:-2}"
+                --rollout-count "\${ROLLOUT_COUNT:-8}"
+                --vlm-reason2-model "\${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
+                --vlm-reason3-model "\${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason1-7B}"
+                --vlm-dual-reason
                 --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
                 --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-4}}"
                 --threshold "\${SUCCESS_THRESHOLD:-0.45}"

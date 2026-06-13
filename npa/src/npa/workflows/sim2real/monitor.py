@@ -381,6 +381,48 @@ def watch_sim2real_status(
         time.sleep(interval)
 
 
+def looks_like_sim2real_run(run_id: str) -> bool:
+    normalized = run_id.strip().lower()
+    return normalized.startswith("sim2real") or "sim2real-" in normalized
+
+
+def sim2real_run_exists(
+    run_id: str,
+    *,
+    s3_bucket: str = "",
+    s3_prefix: str = DEFAULT_PREFIX,
+    s3_endpoint: str = "",
+    k8s_context: str = "",
+    kubeconfig: str | Path = "",
+) -> bool:
+    """Best-effort detection for ``npa workbench workflow status`` routing."""
+
+    if looks_like_sim2real_run(run_id):
+        return True
+    try:
+        operator = load_operator_config()
+    except ValueError:
+        operator = None
+    bucket = s3_bucket or (operator.bucket if operator else "")
+    endpoint = s3_endpoint or (operator.endpoint_url if operator else DEFAULT_S3_ENDPOINT)
+    context = k8s_context or (operator.k8s_context if operator else "")
+    if context:
+        kcfg = Path(kubeconfig) if kubeconfig else resolve_kubeconfig(context)
+        k8s = _k8s_orchestrator_status(
+            run_id=run_id,
+            context=context,
+            kubeconfig=kcfg,
+        )
+        if k8s.get("found"):
+            return True
+    if bucket:
+        client = StorageClient.from_environment(endpoint_url=endpoint)
+        prefix = f"{s3_prefix.rstrip('/')}/{run_id}/"
+        if _s3_prefix_nonempty(client, bucket, prefix):
+            return True
+    return False
+
+
 def get_sim2real_workflow_status(
     run_id: str,
     *,

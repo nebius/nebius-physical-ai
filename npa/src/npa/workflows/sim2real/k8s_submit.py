@@ -88,6 +88,19 @@ def submit_sim2real_staged_job(
     if env_count is not None:
         env["NPA_ENV_COUNT"] = str(env_count)
 
+    from npa.workflows.sim2real.monitor import resolve_kubeconfig
+    from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+
+    kubeconfig = str(resolve_kubeconfig(context))
+    trainer_image = os.environ.get("TRAINER_IMAGE") or f"{reg}/npa-lerobot-vlm-rl:0.1.0"
+    augment_image = os.environ.get("AUGMENT_IMAGE") or f"{reg}/npa-cosmos2-transfer:2.5.0"
+    ensure_registry_pull_secret_for_images(
+        trainer_image,
+        augment_image,
+        kubeconfig=kubeconfig,
+        k8s_context=context,
+    )
+
     proc = subprocess.run(
         ["bash", str(script)],
         cwd=str(root),
@@ -133,7 +146,7 @@ def is_sim2real_runbook(yaml_path: Path) -> bool:
 
 
 def status_monitor_command(run_id: str) -> str:
-    return f"python -m npa.workflows.sim2real status {run_id} --watch"
+    return f"npa workbench workflow status {run_id} --watch"
 
 
 def submit_sim2real_from_workflow_vars(

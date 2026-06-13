@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -94,6 +95,37 @@ def test_sim2real_module_status_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     from npa.workflows.sim2real.cli import main
 
     assert main(["status", "run-1", "--json"]) == 0
+
+
+def test_workflow_cli_status_sim2real_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from npa.cli.main import app
+
+    payload = {
+        "run_id": "sim2real-staged-run-1",
+        "status": "RUNNING",
+        "current_stage": "stage_03_augment",
+        "run_prefix_uri": "s3://demo-bucket/sim2real-b/sim2real-staged-run-1/",
+        "stages": {"stage_01_trigger": {"state": "SUCCEEDED", "tier": ""}},
+    }
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda run_id, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.get_sim2real_workflow_status",
+        lambda run_id, **kwargs: payload,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "status", "sim2real-staged-run-1", "--json"],
+    )
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["run_id"] == "sim2real-staged-run-1"
+    assert body["status"] == "RUNNING"
 
 
 def test_is_sim2real_runbook() -> None:
