@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
 # Resolve operator config from ~/.npa/config.yaml (no secrets, no hardcoded tenant IDs).
-# Usage: readarray -t cfg < <(operator_read_config) && BUCKET="${cfg[0]}" ...
+
+# Walk up from START until npa/pyproject.toml is found (works from lib/ or script dir).
+npa_repo_root() {
+  local start="${1:-.}"
+  local dir
+  dir="$(cd "${start}" && pwd)"
+  while [ "${dir}" != "/" ]; do
+    if [ -f "${dir}/npa/pyproject.toml" ]; then
+      printf '%s\n' "${dir}"
+      return 0
+    fi
+    dir="$(dirname "${dir}")"
+  done
+  echo "ERROR: repo root not found (expected npa/pyproject.toml above ${start})" >&2
+  return 1
+}
+
+# Bash 3.2 (macOS default) lacks readarray — capture command lines into ARRAY_NAME.
+npa_read_lines() {
+  local _arr="${1:?array name required}"
+  shift
+  local _line
+  eval "${_arr}=()"
+  while IFS= read -r _line; do
+    eval "${_arr}"'+=("${_line}")'
+  done < <("$@")
+}
+
 operator_read_config() {
   local root="${1:?root required}"
   "${root}/npa/.venv/bin/python" - <<'PY'

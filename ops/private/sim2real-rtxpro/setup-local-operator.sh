@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Generate gitignored operator files from ~/.npa/config.yaml (no secrets written).
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-OUT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-config.sh
+source "${SCRIPT_DIR}/lib/operator-config.sh"
+ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
+OUT_DIR="${SCRIPT_DIR}"
 PY="${ROOT}/npa/.venv/bin/python"
 
 "${PY}" - <<'PY' "${OUT_DIR}"

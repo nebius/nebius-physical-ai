@@ -4,12 +4,11 @@
 # Usage: prestage-offline-run.sh <run-id> [local-dir]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PY="${ROOT}/npa/.venv/bin/python"
-
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
+ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
+PY="${ROOT}/npa/.venv/bin/python"
 
 if [ ! -x "${PY}" ]; then
   if command -v python3 >/dev/null; then
@@ -26,7 +25,7 @@ RUN_ID="${1:?usage: prestage-offline-run.sh <run-id> [local-dir]}"
 LOCAL_DIR="${2:-/tmp/sim2real-prestage/${RUN_ID}}"
 PREFIX="${S3_PREFIX:-sim2real-b}"
 
-readarray -t _npa_cfg < <(operator_read_config "${ROOT}")
+npa_read_lines _npa_cfg operator_read_config "${ROOT}"
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
 if [ -z "${BUCKET}" ]; then
