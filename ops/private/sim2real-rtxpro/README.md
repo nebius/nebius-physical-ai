@@ -36,6 +36,9 @@ RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
 
 Full handoff doc: **`CUSTOMER-DEMO.md`**
 
+Stock Franka demo (no asset upload) + **how to view each stage from your Mac:**
+**`FRANKA-STOCK-GUIDE.md`**
+
 Requires `~/.npa/config.yaml`, `~/.npa/credentials.yaml`, and kubeconfig on the laptop.
 
 ## Run staged workflow (manual)
