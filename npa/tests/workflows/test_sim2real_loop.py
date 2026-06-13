@@ -290,6 +290,14 @@ class _FakeComponentStorage:
         payload = self.downloads.get(bucket_uri)
         if payload is None and "/vlm-eval/" in bucket_uri:
             payload = self.downloads.get("vlm_eval")
+        if payload is None and "vlm-eval-reason2" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_reason2") or self.downloads.get(
+                "vlm_eval"
+            )
+        if payload is None and "vlm-eval-reason3" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_reason3") or self.downloads.get(
+                "vlm_eval"
+            )
         if payload is None and "/heldout-eval/" in bucket_uri:
             payload = self.downloads.get("heldout_eval")
         if payload is None:
@@ -418,13 +426,14 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(monkeypatch, tmp_
         config=config,
     )
 
-    apply_call = next(call for call in calls if "apply" in call["cmd"])
-    manifest = json.loads(apply_call["input"])
+    apply_calls = [call for call in calls if "apply" in call["cmd"]]
+    assert len(apply_calls) == 2
+    manifest = json.loads(apply_calls[0]["input"])
     container = manifest["spec"]["template"]["spec"]["containers"][0]
 
     assert evaluation["score"] == 0.512345
-    assert evaluation["component_invocation"]["mode"] == "kubernetes_job"
-    assert evaluation["component_invocation"]["pod"]["node_name"] == "sm120-node"
+    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_dual_reason"
+    assert evaluation["component_invocation"]["reason2_image"]
     assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
     assert storage.uploaded_directories
     assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-sa"
@@ -535,11 +544,11 @@ def test_component_vlm_payload_uses_cosmos_reason_model_and_frames(
         rollout_id="rollout-0000",
     )
 
-    assert captured["model_id"] == "nvidia/Cosmos-Reason1-7B"
+    assert captured["model_id"] == "nvidia/Cosmos-Reason2-8B"
     assert captured["image_paths"] == [frame]
     assert captured["task_description"] == "Move the object to the target."
     assert payload["component_source"] == "cosmos_reason_vlm"
-    assert payload["model"] == "nvidia/Cosmos-Reason1-7B"
+    assert payload["model"] == "nvidia/Cosmos-Reason2-8B"
     assert payload["frame_count"] == 1
     assert "synthetic_signature" not in payload
 
@@ -1993,6 +2002,7 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(monkeypatch, tmp_path: P
         steps_per_rollout=1,
         inner_iterations=1,
         k8s_max_parallel_gpus=2,
+        vlm_dual_reason=False,
         k8s_namespace="default",
     )
     rollouts = generate_action_rollouts(

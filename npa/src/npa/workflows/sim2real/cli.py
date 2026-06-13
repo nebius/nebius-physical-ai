@@ -21,6 +21,8 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
+    DEFAULT_REASON2_MODEL,
+    DEFAULT_REASON3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -127,6 +129,25 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--vlm-model", default=os.environ.get("VLM_MODEL", DEFAULT_REFERENCE_VLM_MODEL)
+    )
+    parser.add_argument(
+        "--vlm-reason2-model",
+        default=os.environ.get("VLM_REASON2_MODEL", DEFAULT_REASON2_MODEL),
+    )
+    parser.add_argument(
+        "--vlm-reason3-model",
+        default=os.environ.get("VLM_REASON3_MODEL", DEFAULT_REASON3_MODEL),
+    )
+    parser.add_argument(
+        "--vlm-reason2-image", default=os.environ.get("VLM_REASON2_IMAGE", "")
+    )
+    parser.add_argument(
+        "--vlm-reason3-image", default=os.environ.get("VLM_REASON3_IMAGE", "")
+    )
+    parser.add_argument(
+        "--vlm-dual-reason",
+        action=argparse.BooleanOptionalAction,
+        default=_bool_value(os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1")),
     )
     parser.add_argument(
         "--threshold",
@@ -416,11 +437,16 @@ def main(argv: list[str] | None = None) -> int:
         policy_image=args.policy_image,
         trainer_image=args.trainer_image,
         vlm_image=args.vlm_image,
+        vlm_reason2_image=args.vlm_reason2_image,
+        vlm_reason3_image=args.vlm_reason3_image,
         eval_image=args.eval_image,
         isaac_image=args.isaac_image,
         sim_backend=args.sim_backend,
         isaac_task=args.isaac_task,
         vlm_model=args.vlm_model,
+        vlm_reason2_model=args.vlm_reason2_model,
+        vlm_reason3_model=args.vlm_reason3_model,
+        vlm_dual_reason=args.vlm_dual_reason,
         threshold=args.threshold,
         inner_iterations=args.inner_iterations,
         outer_iterations=args.outer_iterations,

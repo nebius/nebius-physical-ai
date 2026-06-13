@@ -27,6 +27,8 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_POLICY_TAG,
     DEFAULT_REFERENCE_VLM_MODEL,
+    DEFAULT_REASON2_MODEL,
+    DEFAULT_REASON3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -86,11 +88,16 @@ class Sim2RealLoopConfig:
     policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
+    vlm_reason2_image: str = ""
+    vlm_reason3_image: str = ""
     eval_image: str = f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
     isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
     sim_backend: str = DEFAULT_SIM_BACKEND
     isaac_task: str = DEFAULT_ISAAC_TASK
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
+    vlm_reason2_model: str = DEFAULT_REASON2_MODEL
+    vlm_reason3_model: str = DEFAULT_REASON3_MODEL
+    vlm_dual_reason: bool = True
     threshold: float = DEFAULT_THRESHOLD
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS

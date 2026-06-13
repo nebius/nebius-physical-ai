@@ -24,6 +24,13 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
+from npa.workbench.cosmos.reason import (
+    CosmosReasonError,
+    merge_dual_reason_evaluations,
+    resolve_cosmos_reason_model_id,
+    run_cosmos_reason_vlm,
+    task_description_from_manifest,
+)
 # npa.workbench.lerobot.policy_container is imported lazily inside the inner
 # loop (see _signal_training_imports) and inside the BYO signal/trainer helpers.
 # Importing it at module load pulls the full npa.workbench tool tree
@@ -80,10 +87,14 @@ DEFAULT_TRAIN_FRACTION = 0.8
 DEFAULT_ENVGEN_SHARD_COUNT = 16
 DEFAULT_K8S_MAX_PARALLEL_GPUS = 2
 DEFAULT_ACTION_ENV_LIMIT = 256
-DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason1-7B"
+DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
+DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
+DEFAULT_REASON3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
-REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason"}
-DEFAULT_COSMOS_REASON_CACHE = "/models/cosmos-reason1"
+REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
+DEFAULT_COSMOS_REASON_CACHE = "/models/cosmos-reason2"
+DEFAULT_COSMOS_REASON2_CACHE = "/models/cosmos-reason2"
+DEFAULT_COSMOS_REASON3_CACHE = "/models/cosmos-reason3"
 SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
@@ -174,11 +185,16 @@ class Sim2RealLoopConfig:
     policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
+    vlm_reason2_image: str = ""
+    vlm_reason3_image: str = ""
     eval_image: str = f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
     isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
     sim_backend: str = DEFAULT_SIM_BACKEND
     isaac_task: str = DEFAULT_ISAAC_TASK
     vlm_model: str = DEFAULT_REFERENCE_VLM_MODEL
+    vlm_reason2_model: str = DEFAULT_REASON2_MODEL
+    vlm_reason3_model: str = DEFAULT_REASON3_MODEL
+    vlm_dual_reason: bool = True
     threshold: float = DEFAULT_THRESHOLD
     inner_iterations: int = DEFAULT_INNER_ITERATIONS
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
@@ -460,6 +476,18 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
+        vlm_reason2_image=str(
+            overrides.get("vlm_reason2_image")
+            or os.environ.get("VLM_REASON2_IMAGE")
+            or os.environ.get("VLM_IMAGE")
+            or default_vlm_image(registry=registry or None)
+        ),
+        vlm_reason3_image=str(
+            overrides.get("vlm_reason3_image")
+            or os.environ.get("VLM_REASON3_IMAGE")
+            or os.environ.get("VLM_IMAGE")
+            or default_vlm_image(registry=registry or None)
+        ),
         eval_image=str(
             overrides.get("eval_image")
             or os.environ.get("EVAL_IMAGE")
@@ -484,6 +512,24 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             overrides.get("vlm_model")
             or os.environ.get("VLM_MODEL")
             or DEFAULT_REFERENCE_VLM_MODEL
+        ),
+        vlm_reason2_model=str(
+            overrides.get("vlm_reason2_model")
+            or os.environ.get("VLM_REASON2_MODEL")
+            or os.environ.get("VLM_MODEL")
+            or DEFAULT_REASON2_MODEL
+        ),
+        vlm_reason3_model=str(
+            overrides.get("vlm_reason3_model")
+            or os.environ.get("VLM_REASON3_MODEL")
+            or os.environ.get("NPA_COSMOS_REASON3_MODEL_ID")
+            or DEFAULT_REASON3_MODEL
+        ),
+        vlm_dual_reason=_bool_value(
+            overrides.get(
+                "vlm_dual_reason",
+                os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1"),
+            )
         ),
         threshold=float(
             overrides.get(
@@ -1254,8 +1300,14 @@ def run_inner_loop(
         vlm_k8s_parallel = (
             not config.byo_vlm_command.strip() and bool(config.s3_bucket.strip())
         )
+        jobs_per_rollout = (
+            2 if vlm_k8s_parallel and config.vlm_dual_reason else 1
+        )
         if vlm_k8s_parallel and len(rollouts) > 1:
-            max_workers = min(len(rollouts), max(1, int(config.k8s_max_parallel_gpus)))
+            max_workers = min(
+                len(rollouts),
+                max(1, int(config.k8s_max_parallel_gpus) // jobs_per_rollout),
+            )
             evaluations: list[dict[str, Any] | None] = [None] * len(rollouts)
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {
@@ -1484,7 +1536,7 @@ def evaluate_rollout_with_vlm(
     output_dir: Path,
     config: Sim2RealLoopConfig,
 ) -> dict[str, Any]:
-    """Invoke the configured VLM component and parse its structured judgment."""
+    """Invoke Reason2 + Reason3 (or a single model) and parse structured judgments."""
 
     manifest_path = rollout_dir / "manifest.json"
     if not manifest_path.exists():
@@ -1493,65 +1545,122 @@ def evaluate_rollout_with_vlm(
     rollout_id = str(manifest.get("rollout_id") or rollout_dir.name)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{rollout_id}.json"
-    env = _component_env(
-        config,
-        component="vlm_eval",
-        output_json=output_path,
-        extra={
-            "NPA_SIM2REAL_ROLLOUT_DIR": str(rollout_dir),
-            "NPA_SIM2REAL_ROLLOUT_ID": rollout_id,
-            "NPA_SIM2REAL_ROLLOUT_MANIFEST": str(manifest_path),
-            "NPA_SIM2REAL_VLM_MODEL": config.vlm_model,
-            "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
-            "NPA_SIM2REAL_VLM_IMAGE": config.vlm_image,
-        },
-    )
+
     if config.byo_vlm_command.strip():
+        env = _component_env(
+            config,
+            component="vlm_eval",
+            output_json=output_path,
+            extra={
+                "NPA_SIM2REAL_ROLLOUT_DIR": str(rollout_dir),
+                "NPA_SIM2REAL_ROLLOUT_ID": rollout_id,
+                "NPA_SIM2REAL_ROLLOUT_MANIFEST": str(manifest_path),
+                "NPA_SIM2REAL_VLM_MODEL": config.vlm_model,
+                "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
+                "NPA_SIM2REAL_VLM_IMAGE": config.vlm_image,
+            },
+        )
         invocation = _run_component_command(
             config.byo_vlm_command,
             cwd=rollout_dir,
             env=env,
             component="vlm_eval",
         )
+        payload = _read_component_json(output_path, invocation)
     elif not config.s3_bucket.strip():
-        payload = _reference_vlm_payload_from_rollout(
-            manifest,
-            rollout_dir=rollout_dir,
-            rollout_id=rollout_id,
-            config=config,
-        )
-        _write_json_artifact(output_path, payload)
+        if config.vlm_dual_reason:
+            reason2 = _reference_vlm_payload_from_rollout(
+                manifest,
+                rollout_dir=rollout_dir,
+                rollout_id=rollout_id,
+                config=config,
+            )
+            reason3 = _reference_vlm_payload_from_rollout(
+                manifest,
+                rollout_dir=rollout_dir,
+                rollout_id=rollout_id,
+                config=config,
+            )
+            reason2["model"] = config.vlm_reason2_model
+            reason3["model"] = config.vlm_reason3_model
+            payload = merge_dual_reason_evaluations(
+                reason2, reason3, threshold=config.threshold
+            )
+        else:
+            payload = _reference_vlm_payload_from_rollout(
+                manifest,
+                rollout_dir=rollout_dir,
+                rollout_id=rollout_id,
+                config=config,
+            )
         invocation = {
             "component": "vlm_eval",
             "mode": "local_reference",
             "image": config.vlm_image,
+            "dual_reason": config.vlm_dual_reason,
         }
+        _write_json_artifact(output_path, payload)
+    elif config.vlm_dual_reason:
+        reason2_image = (config.vlm_reason2_image or config.vlm_image).strip()
+        reason3_image = (config.vlm_reason3_image or config.vlm_image).strip()
+
+        def _run_reason2() -> dict[str, Any]:
+            evaluation, _ = _evaluate_reason_rollout_k8s(
+                rollout_dir,
+                manifest=manifest,
+                manifest_path=manifest_path,
+                rollout_id=rollout_id,
+                config=config,
+                model=config.vlm_reason2_model,
+                image=reason2_image,
+                component="vlm_eval_reason2",
+                output_dir=output_dir,
+            )
+            return evaluation
+
+        def _run_reason3() -> dict[str, Any]:
+            evaluation, _ = _evaluate_reason_rollout_k8s(
+                rollout_dir,
+                manifest=manifest,
+                manifest_path=manifest_path,
+                rollout_id=rollout_id,
+                config=config,
+                model=config.vlm_reason3_model,
+                image=reason3_image,
+                component="vlm_eval_reason3",
+                output_dir=output_dir,
+            )
+            return evaluation
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reason2_future = pool.submit(_run_reason2)
+            reason3_future = pool.submit(_run_reason3)
+            reason2_eval = reason2_future.result()
+            reason3_eval = reason3_future.result()
+        payload = merge_dual_reason_evaluations(
+            reason2_eval, reason3_eval, threshold=config.threshold
+        )
+        invocation = {
+            "component": "vlm_eval",
+            "mode": "kubernetes_job_dual_reason",
+            "reason2_image": reason2_image,
+            "reason3_image": reason3_image,
+        }
+        _write_json_artifact(output_path, payload)
     else:
-        attempt_id = _component_attempt_id(config, "vlm_eval", rollout_id)
-        rollout_uri = _upload_component_directory(
-            config,
+        payload, invocation = _evaluate_reason_rollout_k8s(
             rollout_dir,
-            component="vlm_eval",
-            attempt_id=attempt_id,
-            name="rollout",
-        )
-        output_uri = _component_output_uri(
-            config,
-            component="vlm_eval",
-            attempt_id=attempt_id,
-            filename=f"{rollout_id}.json",
-        )
-        env["NPA_SIM2REAL_ROLLOUT_URI"] = rollout_uri
-        env["NPA_SIM2REAL_OUTPUT_URI"] = output_uri
-        invocation = _run_image_component(
-            config.vlm_image,
-            component="vlm_eval",
-            env=env,
-            output_json=output_path,
-            output_uri=output_uri,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            rollout_id=rollout_id,
             config=config,
+            model=config.vlm_model,
+            image=config.vlm_image,
+            component="vlm_eval",
+            output_dir=output_dir,
         )
-    payload = _read_component_json(output_path, invocation)
+        _write_json_artifact(output_path, payload)
+
     evaluation = _normalize_vlm_evaluation(
         payload,
         manifest=manifest,
@@ -1561,6 +1670,68 @@ def evaluate_rollout_with_vlm(
     )
     _write_json_artifact(output_path, evaluation)
     return evaluation
+
+
+def _evaluate_reason_rollout_k8s(
+    rollout_dir: Path,
+    *,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    rollout_id: str,
+    config: Sim2RealLoopConfig,
+    model: str,
+    image: str,
+    component: str,
+    output_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    output_path = output_dir / f"{rollout_id}-{component}.json"
+    attempt_id = _component_attempt_id(config, component, rollout_id)
+    rollout_uri = _upload_component_directory(
+        config,
+        rollout_dir,
+        component=component,
+        attempt_id=attempt_id,
+        name="rollout",
+    )
+    output_uri = _component_output_uri(
+        config,
+        component=component,
+        attempt_id=attempt_id,
+        filename=f"{rollout_id}.json",
+    )
+    env = _component_env(
+        config,
+        component=component,
+        output_json=output_path,
+        extra={
+            "NPA_SIM2REAL_ROLLOUT_DIR": str(rollout_dir),
+            "NPA_SIM2REAL_ROLLOUT_ID": rollout_id,
+            "NPA_SIM2REAL_ROLLOUT_MANIFEST": str(manifest_path),
+            "NPA_SIM2REAL_ROLLOUT_URI": rollout_uri,
+            "NPA_SIM2REAL_OUTPUT_URI": output_uri,
+            "NPA_SIM2REAL_VLM_MODEL": model,
+            "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
+            "NPA_SIM2REAL_VLM_IMAGE": image,
+            "NPA_COSMOS_REASON_MODEL_ID": model,
+        },
+    )
+    invocation = _run_image_component(
+        image,
+        component=component,
+        env=env,
+        output_json=output_path,
+        output_uri=output_uri,
+        config=config,
+    )
+    payload = _read_component_json(output_path, invocation)
+    evaluation = _normalize_vlm_evaluation(
+        payload,
+        manifest=manifest,
+        rollout_id=rollout_id,
+        config=config,
+        invocation=invocation,
+    )
+    return evaluation, invocation
 
 
 def _component_env(
@@ -2098,7 +2269,7 @@ def _component_job_manifest(
 
 
 def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND) -> str:
-    if component == "vlm_eval":
+    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"}:
         subcommand = (
             "component-vlm-eval "
             "--input-uri \"${NPA_SIM2REAL_ROLLOUT_URI}\" "
@@ -3575,22 +3746,11 @@ def _rollout_image_paths(rollout_root: Path, observations: list[Any]) -> list[Pa
 
 
 def _resolve_cosmos_reason_model_id(model: str) -> str:
-    candidate = str(model or "").strip()
-    if candidate in REFERENCE_VLM_ALIASES:
-        candidate = os.environ.get("NPA_COSMOS_REASON_MODEL_ID", DEFAULT_REFERENCE_VLM_MODEL)
-    return candidate
+    return resolve_cosmos_reason_model_id(model, default=DEFAULT_REFERENCE_VLM_MODEL)
 
 
 def _task_description_from_manifest(manifest: dict[str, Any]) -> str:
-    for key in ("task_description", "task", "instruction", "prompt"):
-        value = str(manifest.get(key) or "").strip()
-        if value:
-            return value
-    return (
-        "Evaluate whether the robot rollout completes the manipulation task. "
-        "Use the camera frames and the listed actions to judge physical success, "
-        "stability, target alignment, and contact mistakes."
-    )
+    return task_description_from_manifest(manifest)
 
 
 def _run_cosmos_reason_vlm(
@@ -3602,273 +3762,17 @@ def _run_cosmos_reason_vlm(
     rollout_id: str,
     threshold: float,
 ) -> dict[str, Any]:
-    """Run real Cosmos-Reason1/Qwen-VL inference and parse its JSON judgment."""
-
     try:
-        import torch
-        from PIL import Image
-        from qwen_vl_utils import process_vision_info
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-    except Exception as exc:
-        raise Sim2RealLoopError(
-            "Cosmos-Reason1 VLM inference requires torch, Pillow, transformers, "
-            f"and qwen-vl-utils in the image: {exc}"
-        ) from exc
-
-    if not image_paths:
-        raise Sim2RealLoopError("Cosmos-Reason1 inference requires at least one frame")
-    if not torch.cuda.is_available():
-        raise Sim2RealLoopError("Cosmos-Reason1 inference requires a CUDA GPU")
-
-    cache_dir = os.environ.get("NPA_COSMOS_REASON_CACHE", DEFAULT_COSMOS_REASON_CACHE)
-    max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
-    selected_paths = image_paths[:max(1, max_frames)]
-    for path in selected_paths:
-        with Image.open(path) as img:
-            img.verify()
-
-    prompt = _cosmos_reason_prompt(
-        task_description=task_description,
-        actions=actions,
-        frame_names=[path.name for path in selected_paths],
-    )
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    content.extend({"type": "image", "image": str(path)} for path in selected_paths)
-    messages = [{"role": "user", "content": content}]
-
-    print(
-        json.dumps(
-            {
-                "component": "vlm_eval",
-                "event": "cosmos_reason_inference_start",
-                "model": model_id,
-                "frames": [path.name for path in selected_paths],
-            },
-            sort_keys=True,
+        return run_cosmos_reason_vlm(
+            model_id=model_id,
+            image_paths=image_paths,
+            actions=actions,
+            task_description=task_description,
+            rollout_id=rollout_id,
+            threshold=threshold,
         )
-    )
-    processor = AutoProcessor.from_pretrained(
-        model_id,
-        cache_dir=cache_dir,
-        trust_remote_code=True,
-    )
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    model = AutoModelForImageTextToText.from_pretrained(
-        model_id,
-        cache_dir=cache_dir,
-        torch_dtype=dtype,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    text = processor.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    first_device = next(model.parameters()).device
-    inputs = inputs.to(first_device)
-    max_new_tokens = int(os.environ.get("NPA_COSMOS_REASON_MAX_NEW_TOKENS", "768"))
-    with torch.inference_mode():
-        generated = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-        )
-    trimmed = [
-        output_ids[len(input_ids) :]
-        for input_ids, output_ids in zip(inputs.input_ids, generated, strict=False)
-    ]
-    model_text = processor.batch_decode(
-        trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )[0].strip()
-    payload = _parse_cosmos_reason_output(
-        model_text,
-        actions=actions,
-        rollout_id=rollout_id,
-        threshold=threshold,
-    )
-    payload["raw_model_output_excerpt"] = _component_excerpt(model_text, limit=900)
-    print(
-        json.dumps(
-            {
-                "component": "vlm_eval",
-                "event": "cosmos_reason_inference_complete",
-                "model": model_id,
-                "rollout_id": payload["rollout_id"],
-                "score": payload["score"],
-                "success": payload["success"],
-                "tags": sorted({tag for step in payload["per_step"] for tag in step["error_tags"]}),
-            },
-            sort_keys=True,
-        )
-    )
-    return payload
-
-
-def _cosmos_reason_prompt(
-    *,
-    task_description: str,
-    actions: list[dict[str, Any]],
-    frame_names: list[str],
-) -> str:
-    action_excerpt = json.dumps(actions[:16], sort_keys=True)
-    return (
-        "You are NVIDIA Cosmos-Reason1 evaluating a physical robot rollout.\n"
-        f"Task description: {task_description}\n"
-        f"Frame order: {frame_names}\n"
-        f"Actions by step: {action_excerpt}\n"
-        "Return JSON only. The JSON must contain: success (boolean), "
-        "score (number from 0 to 1), summary (natural-language critique), and "
-        "per_step (array of objects with step, critique_text, error_tags, "
-        "camera_observation). Use only these error tags when applicable: "
-        "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
-        "Judge actual visual rollout behavior, not metadata or requested actions."
-    )
-
-
-def _parse_cosmos_reason_output(
-    model_text: str,
-    *,
-    actions: list[dict[str, Any]],
-    rollout_id: str,
-    threshold: float,
-) -> dict[str, Any]:
-    payload = _json_object_from_text(model_text)
-    if payload is None:
-        payload = _parse_unstructured_vlm_output(model_text)
-    if "score" not in payload:
-        raise Sim2RealLoopError(
-            "Cosmos-Reason1 output did not include a numeric score"
-        )
-    score = max(0.0, min(1.0, float(payload["score"])))
-    success = bool(payload.get("success", score >= threshold))
-    raw_steps = payload.get("per_step") or payload.get("steps") or []
-    if not raw_steps:
-        critique = str(
-            payload.get("summary")
-            or payload.get("critique")
-            or payload.get("critique_text")
-            or model_text
-        ).strip()
-        tags = payload.get("error_tags") or _tags_from_text(critique)
-        # The model returned no per-step breakdown, so the single summary critique
-        # is broadcast across every action step. Mark it as such so a degenerate
-        # (all-identical) per-step signal is visible rather than masquerading as
-        # genuine per-step granularity.
-        raw_steps = [
-            {
-                "step": int(action.get("step", index)),
-                "critique_text": critique,
-                "error_tags": tags,
-                "critique_source": "summary_broadcast",
-                "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
-            }
-            for index, action in enumerate(actions)
-        ]
-    per_step: list[dict[str, Any]] = []
-    for index, raw in enumerate(raw_steps):
-        if not isinstance(raw, dict):
-            raw = {"critique_text": str(raw)}
-        step = int(raw.get("step", index))
-        tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(str(raw))
-        if isinstance(tags, str):
-            tags = [tags]
-        normalized_tags = _normalize_error_tags(tags)
-        critique = str(
-            raw.get("critique_text")
-            or raw.get("critique")
-            or raw.get("text")
-            or payload.get("summary")
-            or ""
-        ).strip()
-        if not critique:
-            raise Sim2RealLoopError("Cosmos-Reason1 per_step output lacks critique text")
-        per_step.append(
-            {
-                "step": step,
-                "critique_text": critique,
-                "error_tags": normalized_tags,
-                "action": actions[index].get("action", []) if index < len(actions) else [],
-                "camera_observation": str(
-                    raw.get("camera_observation") or f"camera-{step:03d}.ppm"
-                ),
-            }
-        )
-    return {
-        "schema": SCHEMA_VLM_EVAL,
-        "rollout_id": str(payload.get("rollout_id") or rollout_id),
-        "success": success,
-        "score": round(score, 6),
-        "per_step": per_step,
-        "summary": str(payload.get("summary") or payload.get("critique") or "").strip(),
-    }
-
-
-def _json_object_from_text(text: str) -> dict[str, Any] | None:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?", "", stripped, flags=re.IGNORECASE).strip()
-        stripped = re.sub(r"```$", "", stripped).strip()
-    try:
-        payload = json.loads(stripped)
-        return payload if isinstance(payload, dict) else None
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        payload = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _parse_unstructured_vlm_output(text: str) -> dict[str, Any]:
-    lowered = text.lower()
-    score_match = re.search(r"(?:score|confidence|rating)\D+([01](?:\.\d+)?)", lowered)
-    if not score_match:
-        raise Sim2RealLoopError("Cosmos-Reason1 output was not parseable JSON")
-    score = float(score_match.group(1))
-    if "success" in lowered or "pass" in lowered:
-        success = True
-    elif "fail" in lowered or "unsuccess" in lowered:
-        success = False
-    else:
-        success = score >= DEFAULT_THRESHOLD
-    return {
-        "success": success,
-        "score": score,
-        "summary": text.strip(),
-        "error_tags": _tags_from_text(text),
-    }
-
-
-def _tags_from_text(text: str) -> list[str]:
-    lowered = text.lower().replace("-", "_").replace(" ", "_")
-    tags = [tag for tag in ERROR_SEVERITY if tag != "ok" and tag in lowered]
-    if not tags and re.search(r"\b(ok|success|stable|complete)\b", text.lower()):
-        tags = ["ok"]
-    return tags or ["minor_alignment"]
-
-
-def _normalize_error_tags(tags: list[Any]) -> list[str]:
-    known = set(ERROR_SEVERITY)
-    normalized = []
-    for tag in tags:
-        value = str(tag).strip().lower().replace("-", "_").replace(" ", "_")
-        normalized.append(value if value in known else "minor_alignment")
-    return normalized or ["minor_alignment"]
+    except CosmosReasonError as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
 
 
 def _run_genesis_heldout_rollouts(
