@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Run the production Sim2Real VLM→RL loop locally with K8s sibling GPU jobs.
-# Logs to ~/sim2real-overnight-<run-id>.log — safe to detach from tmux.
+# Logs to ~/sim2real-<run-id>.log — safe to detach from tmux.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
-RUN_ID="${NPA_SIM2REAL_RUN_ID:-sim2real-overnight-$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN_ID="${NPA_SIM2REAL_RUN_ID:-sim2real-cluster-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_DIR="${NPA_SIM2REAL_OUTPUT_DIR:-/tmp/npa-sim2real-${RUN_ID}}"
-LOG="${NPA_SIM2REAL_LOG:-${HOME}/sim2real-overnight-${RUN_ID}.log}"
+LOG="${NPA_SIM2REAL_LOG:-${HOME}/sim2real-${RUN_ID}.log}"
 KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig}"
 
 export KUBECONFIG
@@ -43,7 +43,7 @@ if [[ -n "${SCENE_SPEC_URI:-}" ]]; then
 fi
 
 {
-  echo "=== Sim2Real overnight run ${RUN_ID} ==="
+  echo "=== Sim2Real cluster loop ${RUN_ID} ==="
   echo "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "output:  ${OUTPUT_DIR}"
   echo "kube:    ${KUBECONFIG}"

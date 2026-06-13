@@ -111,9 +111,9 @@ operator_export_kubeconfig() {
     cat >&2 <<'EOF'
 ERROR: Nebius CLI not found — required for mk8s kubeconfig auth on Mac.
 
-Install (pick one):
-  brew install nebius/tap/nebius
-  curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+Install:
+  curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+  export PATH="${HOME}/.nebius/bin:${PATH}"
 
 Then re-run. Ensure `nebius` is on PATH and profile `npa-mk8s` is configured:
   nebius mk8s cluster get-credentials --context npa-rtxpro-mk8s

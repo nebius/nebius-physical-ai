@@ -25,7 +25,8 @@ the package overview in [npa/README.md](../npa/README.md).
 
 - Python 3.10 or newer. The package metadata requires `>=3.10`.
 - Git, `python3 -m venv`, and `pip`.
-- macOS or Linux. Windows is not currently tested.
+- **macOS**, **Linux**, or **Windows via WSL2** (Ubuntu). Native Windows shells
+  (PowerShell, cmd) are not supported for `npa` workflows — use WSL2.
 - A Nebius AI Cloud account with billing enabled. Start with the Nebius signup
   guide: <https://docs.nebius.com/signup-billing/sign-up>.
 - The Nebius AI Cloud CLI. Install and configure it:
@@ -51,6 +52,80 @@ git --version
 nebius version
 nebius profile list
 terraform version
+```
+
+### Fast install by platform
+
+Copy-paste once per machine. All paths install the Nebius CLI, clone NPA, create
+a venv, and verify `npa`. Finish with `nebius profile create` and
+`npa configure` (Section 4).
+
+| Platform | Shell | Nebius CLI |
+| --- | --- | --- |
+| macOS (Intel or Apple Silicon) | Terminal / zsh | Official install script (see below) |
+| Linux (Debian/Ubuntu) | bash | `curl …/cli/install.sh \| bash` |
+| Windows | **WSL2 Ubuntu** only | same curl one-liner inside WSL |
+
+**macOS**
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc to persist
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e npa
+npa --version
+nebius profile create
+npa configure
+```
+
+Optional operator tools: `brew install python@3.12 kubectl terraform jq`.
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3 python3-venv python3-pip curl
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.bashrc to persist
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e npa
+npa --version
+nebius profile create
+npa configure
+```
+
+Optional: `sudo apt-get install -y kubectl terraform jq` (or install kubectl
+from the [Kubernetes docs](https://kubernetes.io/docs/tasks/tools/)).
+
+**Windows (WSL2)**
+
+In PowerShell (admin), install WSL once:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Restart if prompted, open **Ubuntu** from the Start menu, then run the **Linux**
+block above inside WSL. Keep the repo under your Linux home (for example
+`~/nebius-physical-ai`), not under `/mnt/c/…`, for faster I/O and fewer path
+issues.
+
+**Windows (native)** — not supported. Use WSL2 Ubuntu; do not run `npa` from
+PowerShell or Git Bash for cluster/S3 workflows.
+
+After install, activate the venv in every new shell:
+
+```bash
+cd nebius-physical-ai
+source .venv/bin/activate
 ```
 
 ## 3. Install npa

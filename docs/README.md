@@ -11,7 +11,7 @@ Nebius Physical AI.
 | [../npa/workflows/workbench/skypilot/README.md](../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
-| [quickstart.md](quickstart.md) | Full `npa` CLI quickstart |
+| [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
 | [cli/README.md](cli/README.md) | CLI command reference index |
 | [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
 | [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
