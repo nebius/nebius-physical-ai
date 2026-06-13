@@ -4,6 +4,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"

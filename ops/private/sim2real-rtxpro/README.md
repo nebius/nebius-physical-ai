@@ -34,9 +34,14 @@ Credentials are referenced by path only.
 cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 cd ~/npa-sim2real-demo
-./run.sh trigger
+
+# Customer replication from scratch:
+./run.sh demo
 ./run.sh status <run-id>
 ./run.sh sync <run-id>
+
+# Or stepwise:
+./run.sh cleanup && ./run.sh trigger
 ```
 
 Or from the repo directly:
