@@ -105,19 +105,19 @@ walkthrough = f"""# Sim2Real Demo — Private Walkthrough (generated)
 
 > Machine-specific notes. **Gitignored.** Regenerate: `./ops/private/sim2real-rtxpro/setup-local-operator.sh`
 
-## Local demo first (no cluster)
+## Customer demo (cluster compute, laptop = Rerun)
 
 ```bash
 cd {repo_root}
-./ops/private/sim2real-rtxpro/run-local-demo.sh
-# → prints local Rerun web viewer URL; open in browser
+./ops/private/sim2real-rtxpro/run-demo.sh
+RUN_ID={golden_run} ./ops/private/sim2real-rtxpro/run-demo.sh   # reuse completed run
 ```
 
-No kubeconfig, no S3, no credentials. See `{repo_root}/ops/private/sim2real-rtxpro/LOCAL-DEMO.md`.
+See `{repo_root}/ops/private/sim2real-rtxpro/CUSTOMER-DEMO.md`.
 
 ---
 
-## Infrastructure (cluster — optional)
+## Infrastructure
 
 | Item | Value |
 | --- | --- |
