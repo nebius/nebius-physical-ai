@@ -1656,18 +1656,13 @@ def run_policy_rollout_component(
     }
     output_json = actions_dir / "policy-actions-result.json"
     output_json.parent.mkdir(parents=True, exist_ok=True)
-    summary_uri = _component_output_uri(
-        config,
-        component="policy_actions",
-        attempt_id=attempt_id,
-        filename="actions-summary.json",
-    )
+    result_uri = f"{output_uri.rstrip('/')}/policy-actions-result.json"
     invocation = _run_image_component(
         config.policy_image,
         component="policy_actions",
         env=env,
         output_json=output_json,
-        output_uri=summary_uri,
+        output_uri=result_uri,
         config=config,
     )
     payload = _read_component_json(output_json, invocation)
