@@ -93,7 +93,9 @@ cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 ```
 
-Then from **any new Mac terminal** — paste this **one block** (pulls branch, installs `run.sh`, runs demo):
+Then from **any new Mac terminal** — paste the **full block** from
+`ops/private/sim2real-rtxpro/PASTE-NEW-TERMINAL.sh` (handles git missing, clone,
+wrong branch, dirty tree, ff-only failure → reset):
 
 ```bash
 bash <<'NPA_SIM2REAL_DEMO'
@@ -102,21 +104,64 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HO
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
 export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
 [[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
-DEMO="${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}"
-REPO="${NPA_SIM2REAL_REPO:-${DEMO}/nebius-physical-ai}"
+DEMO="${HOME}/npa-sim2real-demo"
+REPO="${DEMO}/nebius-physical-ai"
 BRANCH="feat/sim2real-mandatory-stages"
-GIT="$(command -v git || echo /usr/bin/git)"
-[[ -d "${REPO}/.git" ]] || { echo "ERROR: clone nebius-physical-ai to ${REPO} first" >&2; exit 1; }
-echo "=== git pull ${BRANCH} ==="
-(cd "${REPO}" && "${GIT}" fetch origin "${BRANCH}" && "${GIT}" checkout "${BRANCH}" 2>/dev/null || "${GIT}" checkout -b "${BRANCH}" "origin/${BRANCH}" && "${GIT}" pull --ff-only origin "${BRANCH}")
-cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${DEMO}/run.sh"
-chmod +x "${DEMO}/run.sh"
-echo "=== cleanup + submit (customer demo) ==="
-cd "${DEMO}" && exec ./run.sh demo
+REMOTE="origin"
+GIT=""
+find_git() {
+  for GIT in "$(command -v git 2>/dev/null || true)" /usr/bin/git /opt/homebrew/bin/git; do
+    [[ -n "${GIT}" && -x "${GIT}" ]] && return 0
+  done
+  echo "ERROR: git not found. Run: xcode-select --install" >&2
+  return 1
+}
+clone_if_missing() {
+  [[ -d "${REPO}/.git" ]] && return 0
+  find_git || return 1
+  echo "=== clone ${BRANCH} -> ${REPO} ==="
+  mkdir -p "${DEMO}"
+  if [[ -d "${REPO}" && ! -d "${REPO}/.git" ]]; then
+    echo "ERROR: ${REPO} exists but is not a git repo — move it aside and re-run" >&2
+    return 1
+  fi
+  "${GIT}" clone --branch "${BRANCH}" -- https://github.com/nebius/nebius-physical-ai.git "${REPO}"
+}
+sync_repo() {
+  find_git || return 1
+  clone_if_missing || return 1
+  cd "${REPO}"
+  echo "=== git fetch ${REMOTE} ${BRANCH} ==="
+  "${GIT}" fetch "${REMOTE}" "${BRANCH}"
+  "${GIT}" show-ref --verify --quiet "refs/remotes/${REMOTE}/${BRANCH}" || { echo "ERROR: remote branch missing" >&2; return 1; }
+  cur="$("${GIT}" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+  if [[ "${cur}" != "${BRANCH}" ]]; then
+    if "${GIT}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+      "${GIT}" checkout "${BRANCH}"
+    else
+      "${GIT}" checkout -b "${BRANCH}" "${REMOTE}/${BRANCH}"
+    fi
+  fi
+  if ! "${GIT}" diff-index --quiet HEAD -- 2>/dev/null; then
+    echo "WARN: dirty tree — auto-stashing"
+    "${GIT}" stash push -u -m "sim2real-operator-auto-stash $(date -u +%Y%m%dT%H%M%SZ)" || true
+  fi
+  if ! "${GIT}" pull --ff-only "${REMOTE}" "${BRANCH}"; then
+    echo "WARN: ff-only failed — reset to ${REMOTE}/${BRANCH}"
+    "${GIT}" reset --hard "${REMOTE}/${BRANCH}"
+  fi
+  "${GIT}" log -1 --oneline
+}
+install_run_sh() {
+  cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${DEMO}/run.sh"
+  chmod +x "${DEMO}/run.sh"
+  echo "Installed ${DEMO}/run.sh"
+}
+sync_repo && install_run_sh && cd "${DEMO}" && exec ./run.sh demo
 NPA_SIM2REAL_DEMO
 ```
 
-Equivalent one-liner (if repo already has the script):
+Shorter follow-up (repo already synced):
 
 ```bash
 bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh
