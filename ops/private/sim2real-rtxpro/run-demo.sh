@@ -43,6 +43,7 @@ if [ -z "${DEFAULT_CTX}" ]; then
   exit 1
 fi
 export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${KUBECONTEXT:-${DEFAULT_CTX}}")}"
+operator_export_kubeconfig "${KUBECONTEXT:-${DEFAULT_CTX}}" "${ROOT}" || exit 1
 export KUBECONTEXT="${KUBECONTEXT:-${DEFAULT_CTX}}"
 
 if [ -z "${BUCKET}" ] || [ -z "${REGISTRY}" ]; then

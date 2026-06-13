@@ -19,6 +19,7 @@ if [ -z "${CTX}" ]; then
   exit 1
 fi
 export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
+operator_export_kubeconfig "${CTX}" "${ROOT}" || exit 1
 NS="${KUBENS:-default}"
 TIMEOUT_S="${MONITOR_TIMEOUT_S:-7200}"
 POLL_S="${MONITOR_POLL_S:-30}"

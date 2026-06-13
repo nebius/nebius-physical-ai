@@ -65,3 +65,89 @@ operator_kubeconfig_path() {
   local path="${HOME}/.npa/clusters/${ctx}/kubeconfig"
   echo "${path}"
 }
+
+# Nebius mk8s kubeconfigs use exec auth via the Nebius CLI (path varies on Mac).
+operator_find_nebius_cli() {
+  local candidate
+  if candidate="$(command -v nebius 2>/dev/null)"; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+  for candidate in \
+    /opt/homebrew/bin/nebius \
+    /usr/local/bin/nebius \
+    "${HOME}/.nebius/bin/nebius"; do
+    if [ -x "${candidate}" ]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Patch exec.command in kubeconfig when the bundled path is wrong for this machine.
+operator_export_kubeconfig() {
+  local ctx="${1:?context required}"
+  local root="${2:-}"
+  local src resolved nebius py
+
+  if [ -n "${KUBECONFIG:-}" ] && [ -f "${KUBECONFIG}" ] && [ "${NPA_KUBECONFIG_PATCHED:-0}" != "1" ]; then
+    export KUBECONFIG
+    return 0
+  fi
+
+  src="$(operator_kubeconfig_path "${ctx}")"
+  if [ ! -f "${src}" ]; then
+    echo "ERROR: kubeconfig not found: ${src}" >&2
+    return 1
+  fi
+
+  if ! grep -q 'command:.*nebius' "${src}" 2>/dev/null; then
+    export KUBECONFIG="${src}"
+    return 0
+  fi
+
+  if ! nebius="$(operator_find_nebius_cli)"; then
+    cat >&2 <<'EOF'
+ERROR: Nebius CLI not found — required for mk8s kubeconfig auth on Mac.
+
+Install (pick one):
+  brew install nebius/tap/nebius
+  curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+
+Then re-run. Ensure `nebius` is on PATH and profile `npa-mk8s` is configured:
+  nebius mk8s cluster get-credentials --context npa-rtxpro-mk8s
+EOF
+    return 1
+  fi
+
+  resolved="${HOME}/.npa/clusters/${ctx}/kubeconfig.resolved"
+  mkdir -p "${HOME}/.npa/clusters/${ctx}"
+
+  if [ -n "${root}" ] && [ -x "${root}/npa/.venv/bin/python" ]; then
+    py="${root}/npa/.venv/bin/python"
+  elif command -v python3 >/dev/null; then
+    py="python3"
+  else
+    echo "ERROR: python3 required to patch kubeconfig" >&2
+    return 1
+  fi
+
+  "${py}" - "${src}" "${resolved}" "${nebius}" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+
+src, dst, nebius = sys.argv[1:4]
+cfg = yaml.safe_load(Path(src).read_text()) or {}
+for entry in cfg.get("users") or []:
+    user = entry.get("user") or {}
+    exec_cfg = user.get("exec")
+    if isinstance(exec_cfg, dict) and exec_cfg.get("command"):
+        exec_cfg["command"] = nebius
+Path(dst).write_text(yaml.safe_dump(cfg, default_flow_style=False), encoding="utf-8")
+PY
+  chmod 600 "${resolved}"
+  export KUBECONFIG="${resolved}"
+  export NPA_KUBECONFIG_PATCHED=1
+}
