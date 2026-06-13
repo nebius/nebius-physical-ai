@@ -24,18 +24,21 @@ This writes **`RUNBOOK.local.md`**, **`DEMO-WALKTHROUGH.local.md`**, and **`env.
 with your bucket, registry, and cluster context filled from `~/.npa/config.yaml`.
 Credentials are referenced by path only.
 
-## Run locally (no cluster)
+## Customer demo (handoff)
 
-Rehearse the full 13-stage artifact tree on **this machine only** (~1 s). No GPU, no S3, no kubeconfig.
+**Laptop = interface.** Compute on Nebius RTX cluster → S3 → sync → Rerun.
 
 ```bash
-./ops/private/sim2real-rtxpro/run-local-demo.sh
-# → runs pipeline, verifies .rrd, starts local Rerun web viewer URL
+./ops/private/sim2real-rtxpro/run-demo.sh
+# reuse completed run:
+RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
 ```
 
-See **`LOCAL-DEMO.md`** for the local walkthrough. Cluster/S3 paths are optional (appendix in private repo).
+Full handoff doc: **`CUSTOMER-DEMO.md`**
 
-## Run staged workflow
+Requires `~/.npa/config.yaml`, `~/.npa/credentials.yaml`, and kubeconfig on the laptop.
+
+## Run staged workflow (manual)
 
 ```bash
 source ops/private/sim2real-rtxpro/env.local

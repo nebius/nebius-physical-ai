@@ -148,7 +148,7 @@ s3://{bucket_display}/sim2real-b/{golden_run}/reports/sim2real.rrd
 
 ```bash
 cd {repo_root}
-./ops/private/sim2real-rtxpro/run-local-demo.sh
+./ops/private/sim2real-rtxpro/run-demo.sh
 ```
 
 Opens local Rerun web viewer. Artifacts: `/tmp/sim2real-local/<run-id>/`

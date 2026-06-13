@@ -4,6 +4,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PY="${ROOT}/npa/.venv/bin/python"
+
+if [ ! -x "${PY}" ]; then
+  if command -v python3 >/dev/null; then
+    python3 -m venv "${ROOT}/npa/.venv"
+    "${ROOT}/npa/.venv/bin/python" -m pip install -U pip -q
+    "${ROOT}/npa/.venv/bin/python" -m pip install -e "${ROOT}/npa" -q
+  else
+    echo "python3 required to bootstrap npa/.venv" >&2
+    exit 1
+  fi
+fi
+
 RUN_ID="${1:?usage: prestage-offline-run.sh <run-id> [local-dir]}"
 LOCAL_DIR="${2:-/tmp/sim2real-prestage/${RUN_ID}}"
 PREFIX="${S3_PREFIX:-sim2real-b}"
