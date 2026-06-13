@@ -1655,15 +1655,23 @@ def run_policy_rollout_component(
     }
     output_json = actions_dir / "policy-actions-result.json"
     output_json.parent.mkdir(parents=True, exist_ok=True)
+    summary_uri = _component_output_uri(
+        config,
+        component="policy_actions",
+        attempt_id=attempt_id,
+        filename="actions-summary.json",
+    )
     invocation = _run_image_component(
         config.policy_image,
         component="policy_actions",
         env=env,
         output_json=output_json,
-        output_uri=f"{output_uri}actions-summary.json",
+        output_uri=summary_uri,
         config=config,
     )
     payload = _read_component_json(output_json, invocation)
+    if payload.get("rollout_dirs"):
+        return [Path(item) for item in payload["rollout_dirs"]]
     return generate_action_rollouts(
         actions_dir,
         count=config.rollout_count,
@@ -1718,10 +1726,10 @@ def _config_from_workflow_state(
     from dataclasses import replace
 
     updates: dict[str, Any] = {}
-    for field in ("train_envs_uri", "heldout_envs_uri", "scene_spec_uri", "robot_spec_uri"):
-        value = str(state.get(field) or "").strip()
+    for state_field in ("train_envs_uri", "heldout_envs_uri", "scene_spec_uri", "robot_spec_uri"):
+        value = str(state.get(state_field) or "").strip()
         if value:
-            updates[field] = value
+            updates[state_field] = value
     if not updates:
         return config
     return replace(config, **updates)

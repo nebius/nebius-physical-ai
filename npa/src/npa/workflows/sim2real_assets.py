@@ -66,7 +66,6 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
         scene_doc = consumed["scene"].to_dict()
         scene_status = "consumed_byo"
         scene_name = "BYO mesh / SceneSpec"
-        consumed_scene_path = consumed["consumed_spec_path"]
     else:
         if sim_backend == SIM_BACKEND_ISAAC:
             scene = scene_assets.default_isaac_stock_scene_spec()
