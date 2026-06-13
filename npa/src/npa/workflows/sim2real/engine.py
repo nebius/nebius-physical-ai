@@ -1840,13 +1840,17 @@ def _kubernetes_component_env(
 ) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in env.items():
-        if key.startswith("NPA_SIM2REAL"):
+        if key.startswith("NPA_SIM2REAL") or key.startswith("NPA_COSMOS_") or key == "HF_HOME":
             safe[key] = value
     endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
         "AWS_ENDPOINT_URL", ""
     )
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
+    safe.setdefault("HF_HOME", "/tmp/hf_home")
+    safe.setdefault("NPA_COSMOS_REASON2_CACHE", "/tmp/hf_home/cosmos-reason2")
+    safe.setdefault("NPA_COSMOS_REASON3_CACHE", "/tmp/hf_home/cosmos-reason3")
+    safe.setdefault("NPA_COSMOS_REASON_CACHE", "/tmp/hf_home/cosmos-reason2")
     for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
