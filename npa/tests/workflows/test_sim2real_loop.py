@@ -964,6 +964,37 @@ def test_run_heldout_eval_component_from_s3_reads_single_envs_jsonl(
     assert payload["per_env"][0]["env_id"] == "heldout-0000"
 
 
+def test_resolve_env_records_s3_uri_appends_jsonl_for_split_prefixes() -> None:
+    assert (
+        loop_module._resolve_env_records_s3_uri(
+            "s3://bucket/run/envs/heldout/"
+        )
+        == "s3://bucket/run/envs/heldout/envs.jsonl"
+    )
+    assert (
+        loop_module._resolve_env_records_s3_uri(
+            "s3://bucket/run/envs/heldout/envs.jsonl"
+        )
+        == "s3://bucket/run/envs/heldout/envs.jsonl"
+    )
+
+
+def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "orch-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "orch-secret")
+    config = Sim2RealLoopConfig(
+        run_id="r",
+        s3_endpoint="https://storage.example.test",
+    )
+    safe = loop_module._kubernetes_component_env(
+        {"NPA_SIM2REAL_HELDOUT_ENVS_URI": "s3://bucket/run/envs/heldout/envs.jsonl"},
+        config,
+    )
+    assert safe["AWS_ACCESS_KEY_ID"] == "orch-key"
+    assert safe["AWS_SECRET_ACCESS_KEY"] == "orch-secret"
+    assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
+
+
 def test_wait_kubernetes_job_returns_failed_without_waiting(monkeypatch) -> None:
     import subprocess
 
