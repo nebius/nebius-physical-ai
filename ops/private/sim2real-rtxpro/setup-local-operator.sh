@@ -76,10 +76,14 @@ npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml \\
 
 ## Rerun
 
+Golden run for offline walkthrough: `rtxpro-staged-2x2-20260613t011356z`
+(`stage_14_rerun_viz` tier **WORKS**, `.rrd` on S3).
+
 ```bash
-# After download from s3://{bucket}/sim2real-b/<run-id>/reports/sim2real.rrd
+./ops/private/sim2real-rtxpro/prestage-offline-run.sh
 pip install rerun-sdk
-rerun sim2real.rrd
+rerun /tmp/sim2real-prestage/rtxpro-staged-2x2-20260613t011356z/reports/sim2real.rrd
+# Or after manual download from s3://{bucket}/sim2real-b/<run-id>/reports/sim2real.rrd
 ```
 
 ## Validated local accuracy delta (staged reference mode)
