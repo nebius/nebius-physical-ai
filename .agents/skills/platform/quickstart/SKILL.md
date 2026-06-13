@@ -38,9 +38,22 @@ exist.
 
 ## Install
 
-The venv can live anywhere; activating it puts `npa` on `PATH` (Python 3.10+):
+Python 3.10+. Platforms: **macOS**, **Linux**, **Windows via WSL2 Ubuntu** (not
+native Windows). Full copy-paste blocks: `docs/quickstart.md` § Fast install by
+platform.
+
+**Nebius CLI** (macOS, Linux, WSL — same install script):
 
 ```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+export PATH="${HOME}/.nebius/bin:${PATH}"
+```
+
+**npa** (venv can live anywhere; activating puts `npa` on `PATH`):
+
+```bash
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip

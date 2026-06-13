@@ -33,6 +33,7 @@ credentials.yml
 !.env.example
 ops/private/**/env.local
 ops/private/**/RUNBOOK.local.md
+ops/private/**/DEMO-WALKTHROUGH.local.md
 ops/private/**/credentials.local.yaml
 *.pem
 *.key
