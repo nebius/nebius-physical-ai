@@ -61,6 +61,7 @@ PY
 
 demo_preflight() {
   local root="$1"
+  local require_cluster="${2:-1}"
   local py="${root}/npa/.venv/bin/python"
   local missing=0
   local k8s_context="${KUBECONTEXT:-}"
@@ -72,6 +73,13 @@ demo_preflight() {
   if [ ! -f "${HOME}/.npa/credentials.yaml" ]; then
     echo "ERROR: ~/.npa/credentials.yaml missing — run: npa configure" >&2
     missing=1
+  fi
+  if [ "${require_cluster}" = "0" ]; then
+    if ! "${py}" -c "import rerun" 2>/dev/null; then
+      echo "ERROR: rerun-sdk not installed — re-run script to bootstrap venv" >&2
+      missing=1
+    fi
+    return "${missing}"
   fi
   if [ -z "${k8s_context}" ] && [ -f "${HOME}/.npa/config.yaml" ]; then
     _ctx_cfg=()
@@ -98,8 +106,8 @@ demo_preflight() {
       missing=1
     elif ! kubectl --context "${k8s_context}" get nodes --request-timeout=15s >/dev/null 2>&1; then
       echo "ERROR: kubectl cannot reach cluster ${k8s_context}" >&2
-      echo "       Install Nebius CLI: brew install nebius/tap/nebius" >&2
-      echo "       Then: nebius profile create npa-mk8s  (or use setup from operator pack)" >&2
+      echo "       Install Nebius CLI: curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash" >&2
+      echo "       Then create profile npa-mk8s (see operator pack README)" >&2
       missing=1
     fi
   fi
