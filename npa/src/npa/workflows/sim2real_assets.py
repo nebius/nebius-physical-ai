@@ -15,6 +15,29 @@ STOCK_ROBOT_SCHEMA = "npa.sim2real.stock_robot_spec.v1"
 CONSUMED_SCENE_SCHEMA = "npa.sim2real.consumed_scene_spec.v1"
 CONSUMED_ROBOT_SCHEMA = "npa.sim2real.consumed_robot_spec.v1"
 
+
+def scene_spec_doc_from_consumed(doc: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap Stage 2 ``consumed_scene_spec.json`` to a parseable SceneSpec doc."""
+
+    if doc.get("schema") == CONSUMED_SCENE_SCHEMA:
+        nested = doc.get("scene_spec")
+        if isinstance(nested, dict):
+            return nested
+    return doc
+
+
+def robot_spec_doc_from_consumed(doc: dict[str, Any]) -> dict[str, Any] | None:
+    """Unwrap Stage 2 ``consumed_robot_spec.json``; stock presets map to default sim."""
+
+    if doc.get("schema") == CONSUMED_ROBOT_SCHEMA:
+        status = str(doc.get("status") or "")
+        if status.startswith("stock_"):
+            return None
+        nested = doc.get("robot_spec")
+        if isinstance(nested, dict):
+            return nested
+    return doc
+
 DEFAULT_CAMERA_STOCK = {
     "workspace": {
         "placement": "stock_overhead",

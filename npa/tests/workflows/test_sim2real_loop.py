@@ -35,6 +35,7 @@ from npa.workflows.sim2real_loop import (
     run_preamble,
     run_single_outer_iteration,
 )
+from npa.workflows.sim2real.runner import Sim2RealWorkflow
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1124,10 +1125,10 @@ def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
         assert env_name in task["envs"]
         assert env_name in task["run"]
 
-    assert "npa.workflows.sim2real_loop preamble" in task["run"]
-    assert "npa.workflows.sim2real_loop outer-iteration" in task["run"]
-    assert "npa.workflows.sim2real_loop finalize" in task["run"]
-    assert "for outer_iteration in $(seq 1" in task["run"]
+    assert "npa.workflows.sim2real run" in task["run"]
+    assert "--initial-quality" in task["run"]
+    assert "--upload-artifacts" in task["run"]
+    assert "for outer_iteration in $(seq 1" not in task["run"]
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
@@ -1194,6 +1195,31 @@ def test_staged_path_produces_same_decision_as_full_loop(tmp_path: Path) -> None
         "signal_converter_source"
     ]
     assert (staged_dir / "state" / "workflow_state.json").exists()
+
+
+def test_workflow_runner_matches_full_loop(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    kwargs = dict(
+        threshold=0.75,
+        inner_iterations=2,
+        outer_iterations=1,
+        rollout_count=2,
+        steps_per_rollout=3,
+        heldout_env_count=2,
+        seed=17,
+        rerun_enabled=False,
+        upload_artifacts=False,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+    runner_dir = tmp_path / "runner"
+    config = Sim2RealLoopConfig(run_id="sim2real-runner", output_dir=runner_dir, **kwargs)
+    report = Sim2RealWorkflow(config).run()
+    assert report["outer_loop"]["latest_decision"]["decision"] in {
+        "promote_checkpoint",
+        "loop_back_to_inner_loop",
+    }
+    assert (runner_dir / "state" / "workflow_state.json").exists()
 
 
 def test_sim_backend_defaults_to_isaac_and_validates() -> None:
@@ -1291,6 +1317,33 @@ def test_backends_emit_schema_compatible_reports(monkeypatch) -> None:
         assert payload["policy_source"] == "inner_evidence_adapter"
         assert "sim_backend" in payload
     assert genesis["per_env"] == isaac["per_env"]
+
+
+def test_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+    from npa.workflows.sim2real_assets import CONSUMED_SCENE_SCHEMA
+
+    consumed = {
+        "schema": CONSUMED_SCENE_SCHEMA,
+        "status": "stock_tabletop",
+        "scene_spec": sa.default_isaac_stock_scene_spec().to_dict(),
+    }
+    spec_path = tmp_path / "consumed_scene_spec.json"
+    spec_path.write_text(json.dumps(consumed), encoding="utf-8")
+
+    class _Client:
+        def download_path(self, uri, dest):
+            Path(dest).write_text(spec_path.read_text(), encoding="utf-8")
+            return dest
+
+    scene = loop_module._resolve_isaac_scene(
+        scene_spec_uri="s3://bucket/run/stage_02_assets/consumed_scene_spec.json",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path / "assets",
+        client=_Client(),
+    )
+    assert scene.manipuland().asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
 
 
 def test_resolve_isaac_scene_stock_without_uris(tmp_path: Path) -> None:
@@ -1863,3 +1916,140 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     assert "cosmos2" not in reason["image"]
     assert "cosmos2-transfer" in COSMOS2_TRANSFER.read_text(encoding="utf-8")
     assert "cosmos3-reason" in COSMOS3_REASON.read_text(encoding="utf-8")
+
+
+def test_parallel_vlm_eval_caps_sibling_job_concurrency(monkeypatch, tmp_path: Path) -> None:
+    import threading
+
+    import npa.workflows.sim2real.engine as engine_module
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+    calls: list[dict] = []
+
+    def fake_run(cmd, **kwargs):
+        nonlocal active, peak
+        calls.append({"cmd": cmd, "input": kwargs.get("input")})
+        if "apply" in cmd:
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
+        if "get" in cmd and "job" in cmd and "jsonpath" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "1 0", "")
+        if "logs" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"component":"ok"}\n', "")
+        if "delete" in cmd:
+            with lock:
+                active = max(0, active - 1)
+            return subprocess.CompletedProcess(cmd, 0, "job.batch deleted\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(engine_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(engine_module, "_wait_kubernetes_job", lambda *a, **k: "complete")
+
+    storage = _FakeComponentStorage({})
+    monkeypatch.setattr(
+        engine_module.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, endpoint_url="": storage),
+    )
+
+    def fake_download(config, output_uri, output_path):
+        rollout_id = output_path.stem
+        payload = {
+            "schema": SCHEMA_VLM_EVAL,
+            "rollout_id": rollout_id,
+            "success": False,
+            "score": 0.5,
+            "per_step": [
+                {
+                    "step": 0,
+                    "critique_text": "parallel sibling eval",
+                    "error_tags": ["minor_alignment"],
+                    "action": [0.0, 0.0, 0.0],
+                    "camera_observation": "camera-000.ppm",
+                }
+            ],
+            "summary": "parallel sibling",
+            "model": "job-vlm",
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(engine_module, "_download_component_output", fake_download)
+
+    config = Sim2RealLoopConfig(
+        run_id="parallel-vlm",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        s3_prefix="neutral-prefix",
+        s3_endpoint="https://storage.example",
+        threshold=0.75,
+        rollout_count=3,
+        steps_per_rollout=1,
+        inner_iterations=1,
+        k8s_max_parallel_gpus=2,
+        k8s_namespace="default",
+    )
+    rollouts = generate_action_rollouts(
+        tmp_path / "actions",
+        count=3,
+        steps_per_rollout=1,
+        seed=3,
+        quality=0.4,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages.run_policy_rollouts",
+        lambda *args, **kwargs: rollouts,
+    )
+
+    evidence = engine_module.run_inner_loop(
+        config,
+        local_dir=tmp_path,
+        initial_quality=0.4,
+    )
+
+    apply_calls = [call for call in calls if "apply" in call["cmd"]]
+    assert len(apply_calls) == 3
+    assert peak <= 2
+    assert len(evidence["iterations"]) == 1
+    assert evidence["iterations"][0]["sample_vlm_eval"]["schema"] == SCHEMA_VLM_EVAL
+
+
+def test_wait_kubernetes_job_honors_required_successes(monkeypatch) -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    import subprocess
+
+    monkeypatch.setattr(
+        engine_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "2 0", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10,
+            required_successes=3,
+        )
+        == "timeout"
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "3 0", ""),
+    )
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10,
+            required_successes=3,
+        )
+        == "complete"
+    )
