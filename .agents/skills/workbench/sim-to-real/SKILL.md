@@ -17,6 +17,15 @@ project-specific names or infrastructure into the implementation.
 - Keep artifacts partitioned by pipeline run ID so repeated experiments do not
   overwrite each other.
 
+## Documentation
+
+| Guide | Purpose |
+| --- | --- |
+| [sim2real-data-contracts.md](../../../docs/workbench/guides/sim2real-data-contracts.md) | Formats, JSON schemas, S3 layout (canonical) |
+| [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md) | Operator quickstart |
+| [sim2real-customer-assets.md](../../../docs/workbench/guides/sim2real-customer-assets.md) | Customer uploads, scorecard, POLICY_IMAGE seam |
+| [sim2real-architecture.md](../../../docs/workbench/guides/sim2real-architecture.md) | K8s sibling jobs, fallbacks |
+
 ## Workflow Shape
 
 1. Import source robot, scene, or task data from a configured object-storage

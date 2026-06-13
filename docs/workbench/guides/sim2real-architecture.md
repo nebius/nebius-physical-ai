@@ -1,9 +1,12 @@
 # Sim-to-Real VLM→RL — Architecture (as implemented)
 
-This document describes the **current** control flow in code and YAML. It is not a
-roadmap or desired-state design.
+This document describes **control flow**, K8s sibling jobs, and fallbacks.
 
-**Sources of truth:**
+**Formats & schemas:** [sim2real-data-contracts.md](./sim2real-data-contracts.md)  
+**Operator guide:** [sim2real-workflow.md](./sim2real-workflow.md)  
+**Customer uploads:** [sim2real-customer-assets.md](./sim2real-customer-assets.md)
+
+**Sources of truth (code):**
 
 | Layer | Path |
 | --- | --- |
@@ -11,8 +14,6 @@ roadmap or desired-state design.
 | Stage CLI | `npa/src/npa/workflows/sim2real_loop.py` |
 | SDK wrappers | `npa/src/npa/sdk/workbench/sim2real.py` |
 | Direct K8s submit | `ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh` |
-
-User-facing guide: [sim2real-workflow.md](./sim2real-workflow.md)
 
 ---
 
@@ -85,7 +86,7 @@ Fields the bash loop depends on:
 flowchart LR
   subgraph preamble["preamble — Stages 1–6"]
     S1["1 Trigger<br/>stage_01_trigger/trigger.json"]
-    S2["2 Assets<br/>BYO consume or external_stub.json"]
+    S2["2 Assets<br/>consumed_scene/robot_spec.json"]
     S3["3 Augment<br/>augment/manifest.json"]
     S4["4–6 Envgen<br/>envs/raw, train, heldout<br/>tokens/manifest.json"]
     S1 --> S2 --> S3 --> S4
@@ -113,16 +114,19 @@ flowchart LR
 
 ---
 
-## Inner loop (Stages 7–9) — always in the orchestrator process
+## Inner loop (Stages 7–9)
 
-`run_inner_loop()` runs `INNER_ITERATIONS` times per outer iteration. Action
-rollouts are **always** generated locally (`generate_action_rollouts`); they are
-not sibling K8s jobs today.
+`run_inner_loop()` runs `INNER_ITERATIONS` times per outer iteration. Stage 7
+policy rollouts route like Stage 3 augment: sibling K8s job when
+`s3_bucket` + registry-qualified `POLICY_IMAGE` + S3 `train_envs_uri`; else
+local reference rollouts in the orchestrator. Stages 8–9 (VLM, signal, trainer)
+always orchestrate from the parent pod; only VLM eval spawns sibling Jobs among
+the inner-loop GPU components.
 
 ```mermaid
 flowchart TD
   subgraph inner["run_inner_loop (per inner iteration)"]
-    AR["7 generate_action_rollouts<br/>actions/train/outer-XX/iter-YY/"]
+    AR["7 run_policy_rollouts<br/>actions/train/outer-XX/iter-YY/"]
     AR --> PER{"for each rollout"}
     PER --> VLM["8 evaluate_rollout_with_vlm"]
     VLM --> SIG["9 _convert_eval_to_signal"]
@@ -164,6 +168,23 @@ Sibling VLM job contract:
 
 Signal conversion always runs in the orchestrator pod — never a sibling Job.
 
+### Stage 3 augment routing (`run_augment_stage`)
+
+| Condition | Mode | Tier |
+| --- | --- | --- |
+| `s3_bucket` + registry-qualified `AUGMENT_IMAGE` | Sibling Job on `augment_image` (`cosmos2_transfer`) | **WORKS** |
+| `s3_bucket` + unresolved/placeholder `AUGMENT_IMAGE` | In-process reference augment | **SEAM** |
+| no `s3_bucket` | In-process reference augment | **WORKS** (smoke) |
+
+### Stage 7 policy routing (`run_policy_rollouts`)
+
+| Condition | Mode | Tier |
+| --- | --- | --- |
+| `s3_bucket` + S3 `train_envs_uri` + registry-qualified `POLICY_IMAGE` | Sibling Job (`policy_actions`) | **WORKS** |
+| `s3_bucket` + missing/placeholder `POLICY_IMAGE` | `generate_action_rollouts` in orchestrator | **SEAM** |
+| `BYO_POLICY_COMMAND` | Shell command | **WORKS** |
+| no `s3_bucket` | Local reference rollouts | **WORKS** (smoke) |
+
 ### Trainer update
 
 | Condition | Trainer |
@@ -186,7 +207,9 @@ flowchart TD
   BYO -->|yes| CMD["shell command"]
   BYO -->|no| S3{"s3_bucket set?"}
   S3 -->|no| LOCAL["local path"]
-  S3 -->|yes| K8S["kubernetes_job path"]
+  S3 -->|yes| READY{"heldout_backend_image()<br/>registry-qualified?"}
+  READY -->|no| SEAM["reference / seam_placeholder<br/>payload in orchestrator"]
+  READY -->|yes| K8S["kubernetes_job path"]
 
   LOCAL --> SIM{"torch + sim available?"}
   SIM -->|yes| COMP["_component_heldout_payload<br/>genesis or isaac"]
@@ -200,8 +223,8 @@ flowchart TD
 
 **`heldout_backend_image()`** (actual code):
 
-- `sim_backend=isaac` → `isaac_image` (Isaac Lab / Isaac Sim)
-- `sim_backend=genesis` (default) → `eval_image`
+- `sim_backend=isaac` (default) → `isaac_image` (Isaac Lab / Isaac Sim)
+- `sim_backend=genesis` → `eval_image`
 
 Sibling held-out job injects NPA source via `NPA_SOURCE_REPO`/`NPA_SOURCE_REF` or
 `NPA_SIM2REAL_SOURCE_TARBALL_URI` before running the component subcommand.
@@ -246,29 +269,81 @@ The finalize CLI reads `final_inner`, `final_eval`, `final_decision` from
 
 ## Sibling K8s jobs (when `s3_bucket` is set)
 
-Only **VLM eval** and **held-out eval** spawn sibling Jobs from the orchestrator.
-The orchestrator pod must have `kubectl` and cluster credentials.
+These components spawn sibling GPU Jobs from the orchestrator when their image
+refs are registry-qualified (see routing tables above). The orchestrator pod
+must have `kubectl` and cluster credentials.
+
+| Component key | Stage | Image env | When skipped |
+| --- | --- | --- | --- |
+| `cosmos2_transfer` | 3 | `AUGMENT_IMAGE` | Reference augment locally (**SEAM** tier) |
+| `policy_actions` | 7 | `POLICY_IMAGE` | Reference rollouts locally (**SEAM** tier) |
+| `vlm_eval` | 8 | `VLM_IMAGE` | One Job per rollout; never skipped with bucket set |
+| `heldout_eval` | 10 | `ISAAC_IMAGE` or `EVAL_IMAGE` via `heldout_backend_image()` | Reference heuristic when image not ready |
+
+Trainer, signal converter, and envgen (Stages 4–6) run in the orchestrator pod.
 
 ```mermaid
 sequenceDiagram
   participant ORCH as Orchestrator pod<br/>(runbook / staged job)
   participant S3 as S3-compatible storage
   participant K8s as Kubernetes API
-  participant VLM as vlm_image Job
-  participant EVAL as heldout_backend_image Job
+  participant SIB as Sibling GPU Job
 
-  ORCH->>S3: Upload rollout / heldout envs / inner evidence
+  ORCH->>S3: Upload inputs under component-io/
   ORCH->>K8s: kubectl apply Job manifest
-  K8s->>VLM: Schedule GPU pod (vlm_eval)
-  VLM->>S3: Download inputs, upload eval JSON
-  ORCH->>K8s: kubectl wait + logs + delete Job
+  K8s->>SIB: Schedule GPU pod
+  SIB->>S3: Download inputs, upload output JSON
+  ORCH->>K8s: kubectl wait + logs
   ORCH->>S3: Download output JSON to local dir
-
-  Note over ORCH,EVAL: Same pattern for heldout_eval per outer iteration
 ```
 
-Job labels: `app=npa-sim2real`, `run-id`, `component`. GPU node selector uses
-`NPA_SIM2REAL_K8S_GPU_PRODUCT`. Env secrets from `NPA_SIM2REAL_K8S_ENV_SECRET_NAMES`.
+**Job naming:** parent orchestrator `sim2real-{run_id}` (direct K8s submit) or
+SkyPilot-managed name; siblings `s2r-{component}-{run_slug}-{uuid8}` (max 63
+chars). Labels: `app.kubernetes.io/name=sim2real-sibling-component`,
+`app.kubernetes.io/component`, `sim2real.local/run-id`.
+
+---
+
+## Kubernetes deployment inventory
+
+Generic reference for RTX PRO class direct-K8s runs
+(`ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh`). Substitute your
+cluster, bucket, and registry IDs — no secrets in docs.
+
+| Item | Typical value |
+| --- | --- |
+| Cluster context | `<cluster-context>` (e.g. managed-K8s workbench target) |
+| Kubeconfig | `~/.npa/clusters/<cluster-context>/kubeconfig` |
+| Namespace | `default` (`NPA_SIM2REAL_K8S_NAMESPACE`) |
+| S3 endpoint | `https://storage.eu-north1.nebius.cloud` (region-specific) |
+| Bucket | `<bucket-id>` from `~/.npa/config.yaml` |
+| Registry | `cr.<region>.nebius.cloud/<registry-id>` |
+| ServiceAccount | `agent-sa` |
+| imagePullSecrets | `agent-sa`, `ngc-nvcr-imagepullsecret`, `npa-nebius-registry` |
+| envFrom Secrets | `hf-ngc-tokens`, `npa-storage-credentials` |
+| GPU resource | `nvidia.com/gpu: 1` |
+| Orchestrator nodeSelector | `nvidia.com/gpu.product: NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition` |
+| Sibling nodeSelector | `nvidia.com/gpu.compute.major/minor: 12/0` + same `gpu.product` |
+| Sibling timeout | `7200s` (`NPA_SIM2REAL_K8S_JOB_TIMEOUT_S`) |
+
+**S3 prefixes:** [sim2real-data-contracts.md § S3 layout](./sim2real-data-contracts.md#artifact-paths)
+
+**Reference images** (tags from `Sim2RealLoopConfig` defaults; prefix with registry):
+
+| Role | Image tag |
+| --- | --- |
+| Orchestrator + in-process trainer | `npa-lerobot-vlm-rl:0.1.0` |
+| Stage 3 augment | `npa-cosmos2-transfer:2.5.0` |
+| Stage 7 policy | `npa-sim2real-reference-policy:0.1.1` |
+| Stage 8 VLM | `npa-cosmos3-reason:3.0.1-genuine-sm120` |
+| Stage 10 held-out (Genesis) | `npa-sim2real-eval:0.1.1-genuine-sm120` |
+| Stage 10 held-out (Isaac, default backend) | `npa-isaac-lab:2.3.2.post1` |
+
+Isaac defaults on direct submit: `NPA_SIM2REAL_SIM_BACKEND=isaac`,
+`NPA_SIM2REAL_ISAAC_TASK=Isaac-Lift-Cube-Franka-v0`.
+
+Stage-level **WORKS / SEAM / PARTIAL** scorecard:
+[sim2real-customer-assets.md](./sim2real-customer-assets.md#production-handoff-scorecard-13-step-reference-pipeline).
 
 ---
 
@@ -278,6 +353,8 @@ When `s3_bucket` is empty, sibling Jobs are **not** spawned:
 
 | Component | Fallback |
 | --- | --- |
+| Augment | `_reference_augment_local` |
+| Policy rollouts | `generate_action_rollouts` |
 | VLM eval | `_reference_vlm_payload_from_rollout` (deterministic from rollout manifest + PPM frames) |
 | Held-out eval | `_component_heldout_payload` if `torch` + sim import succeeds; else `_reference_heldout_payload` |
 | S3 upload | Skipped (`upload.status = skipped`) |
@@ -290,30 +367,11 @@ real bucket (`NPA_SIM2REAL_BUCKET`); the YAML exits if it is missing or
 
 ## Artifact and state paths
 
-Local root: `{output_dir}` (default `/tmp/npa-sim2real-{run_id}`).
+Full path list, JSON `schema` values, and format families:
+[sim2real-data-contracts.md](./sim2real-data-contracts.md#artifact-paths).
 
-| Path | Purpose |
-| --- | --- |
-| `state/workflow_state.json` | Cross-stage state; bash loop reads `current_quality`, `final_decision` |
-| `stage_01_trigger/trigger.json` | Stage 1 trigger record |
-| `stage_02_assets/` | BYO assets or `external_stub.json` |
-| `augment/manifest.json` | Stage 3 augmentation manifest |
-| `envs/raw/`, `envs/train/`, `envs/heldout/` | Stage 4–6 env manifests |
-| `tokens/manifest.json` | Stage 6 token manifest |
-| `actions/train/outer-XX/iter-YY/` | Stage 7 rollouts |
-| `vlm_eval/train/outer-XX/iter-YY/` | Stage 8 VLM evaluations |
-| `training_signal/train/outer-XX/iter-YY/` | Stage 9 RL signals |
-| `inner_loop/outer-XX/evidence.json` | Inner-loop evidence per outer iteration |
-| `eval/heldout/report.json` | Stage 10 held-out report |
-| `outer_loop/decision.json` | Stage 11 threshold decision |
-| `checkpoints/candidate/` | Promoted checkpoint metadata |
-| `stage_12_external_validation/` | Stage 12 stub |
-| `stage_13_retrigger/retrigger.json` | Stage 13 retrigger record |
-| `reports/sim2real-report.json` | E2E report |
-| `reports/sim2real.rrd` | Rerun recording (when `stage_14_rerun_viz` tier is WORKS) |
-
-S3 mirror (when uploaded): `s3://{NPA_SIM2REAL_BUCKET}/{NPA_SIM2REAL_PREFIX}/{run_id}/`
-— see `artifact_uris()` in `sim2real_loop.py` for canonical URIs.
+Local root: `{output_dir}` (default `/tmp/npa-sim2real-{run_id}`).  
+S3 mirror: `s3://{NPA_SIM2REAL_BUCKET}/{NPA_SIM2REAL_PREFIX}/{run_id}/` — see `artifact_uris()` in `sim2real_loop.py`.
 
 ---
 
