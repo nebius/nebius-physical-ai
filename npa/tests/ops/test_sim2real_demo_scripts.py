@@ -80,3 +80,18 @@ def test_run_local_demo_aliases_run_demo() -> None:
 def test_scripts_use_npa_repo_root(script: str) -> None:
     content = (OPS / script).read_text()
     assert "npa_repo_root" in content
+
+
+def test_trigger_pipeline_script_exists() -> None:
+    path = OPS / "trigger-pipeline.sh"
+    assert path.is_file()
+    assert os.access(path, os.X_OK)
+    text = path.read_text()
+    assert "TRIGGER_DATASET_URI" in text
+    assert "trigger_preflight_s3" in text
+
+
+def test_submit_passes_trigger_dataset_uri() -> None:
+    content = (OPS / "submit-k8s-staged-job.sh").read_text()
+    assert "NPA_SIM2REAL_TRIGGER_DATASET_URI" in content
+    assert "--trigger-dataset-uri" in content

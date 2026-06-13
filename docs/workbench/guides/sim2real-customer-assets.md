@@ -153,8 +153,8 @@ the operator supplies a registry-qualified image or customer asset.
 | 8–9 | VLM + RL trainer | **WORKS** | Cosmos3 Reason + LeRobot VLM-signal trainer on cluster |
 | 10 | Held-out eval | **PARTIAL** | Genesis or Isaac Lab rollouts; BYO robot/scene must load (no silent Franka fallback) |
 | 11 | Threshold gate | **WORKS** | Promote vs loop-back |
-| 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` |
-| 13 | Retrigger | **SEAM** | Record only; no auto S3 watcher |
+| 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` — customer deploys checkpoint |
+| 13 | Next batch | **Explicit trigger** | Customer uploads new LeRobot batch + runs `trigger-pipeline.sh` (no S3 polling) |
 
 **Overall:** ~**80%** as an NPA orchestration framework on RTX PRO class GPUs; ~**20%**
 gap is third-party asset catalogs, LanceDB stage, live real-world loop, and UR/Flexiv
@@ -185,8 +185,8 @@ Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.
 
 ## Customer onboarding checklist
 
-1. **Trigger** — Land a **LeRobot dataset** at `NPA_SIM2REAL_TRIGGER_DATASET_URI` (only customer input that is LeRobot-native).
-2. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
-3. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc. (or accept **SEAM** reference fallbacks).
-4. **Scale** — `NPA_ENV_COUNT=10000`, `NPA_TRAIN_FRACTION=0.8` (JSON env catalog, not 10K sim instances).
-5. **Inspect** — `consumed_*_spec.json` + `train_envs_uri` in `state/workflow_state.json` after preamble.
+1. **Upload** — Land a complete **LeRobot dataset** at your chosen S3 prefix.
+2. **Trigger** — `export TRIGGER_DATASET_URI=s3://…/` then `./ops/private/sim2real-rtxpro/trigger-pipeline.sh` (or workflow submit with the same URI).
+3. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
+4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
+5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.
