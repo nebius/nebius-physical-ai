@@ -328,13 +328,15 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    bucket = str(
-        overrides.get("s3_bucket")
-        or os.environ.get("NPA_SIM2REAL_BUCKET")
-        or os.environ.get("NPA_S3_BUCKET")
-        or os.environ.get("S3_BUCKET")
-        or ""
-    )
+    if "s3_bucket" in overrides:
+        bucket = str(overrides.get("s3_bucket") or "")
+    else:
+        bucket = str(
+            os.environ.get("NPA_SIM2REAL_BUCKET")
+            or os.environ.get("NPA_S3_BUCKET")
+            or os.environ.get("S3_BUCKET")
+            or ""
+        )
     registry = os.environ.get("NPA_REGISTRY", "")
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
@@ -747,50 +749,14 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         )
     )
 
-    if config.scene_spec_uri or config.assets_uri:
-        consumed = _consume_stage_assets(config, local_dir)
-        stage_records.append(consumed["stage_record"])
-        components.append(
-            ComponentRecord(
-                "stage_02_assets",
-                "WORKS",
-                (
-                    "Downloaded and validated the BYO mesh/SceneSpec and emitted a "
-                    "consumed scene spec with per-object provenance for the "
-                    "held-out Genesis rollout."
-                ),
-                {"local": consumed["consumed_spec_path"]},
-            )
-        )
-    else:
-        stage_records.append(
-            _write_stage(
-                local_dir,
-                2,
-                "assets",
-                {
-                    "schema": "npa.sim2real.external_stub.v1",
-                    "stage": 2,
-                    "name": "external real assets and SceneSpec",
-                    "status": "stock_assets",
-                    "assets_uri": config.assets_uri,
-                    "scene_spec_uri": config.scene_spec_uri,
-                    "robot_preset": config.robot_preset or "franka-stock",
-                    "next_action": "CONTINUE",
-                },
-                filename="external_stub.json",
-            )
-        )
-        components.append(
-            ComponentRecord(
-                "stage_02_assets",
-                "WORKS",
-                "Stock Franka/tabletop assets; custom UR/Flexiv OBJ uploads via ASSETS_URI.",
-                {"local": str(local_dir / "stage_02_assets" / "external_stub.json")},
-            )
-        )
-
+    from npa.workflows.sim2real_assets import run_assets_stage
     from npa.workflows.sim2real_stages import run_augment_stage, run_envgen_split_stage
+
+    assets_result = run_assets_stage(config, local_dir)
+    stage_records.append(assets_result.stage_record)
+    components.append(ComponentRecord(**assets_result.component))
+    scene_spec_uri = assets_result.scene_spec_uri
+    robot_spec_uri = assets_result.robot_spec_uri
 
     augment_result = run_augment_stage(config, local_dir)
     stage_records.append(
@@ -804,6 +770,8 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         config,
         local_dir,
         augmented_frames_uri=augment_result["augmented_frames_uri"],
+        scene_spec_uri=scene_spec_uri,
+        robot_spec_uri=robot_spec_uri,
     )
     components.append(ComponentRecord(**envgen_result["component"]))
     train_envs_uri = envgen_result["train_envs_uri"]
@@ -817,6 +785,8 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "components": [asdict(component) for component in components],
         "train_envs_uri": train_envs_uri,
         "heldout_envs_uri": heldout_envs_uri,
+        "scene_spec_uri": scene_spec_uri,
+        "robot_spec_uri": robot_spec_uri,
         "env_count": envgen_result["env_count"],
         "train_env_count": envgen_result["train_count"],
         "heldout_env_count": envgen_result["heldout_count"],
@@ -1748,7 +1718,7 @@ def _config_from_workflow_state(
     from dataclasses import replace
 
     updates: dict[str, Any] = {}
-    for field in ("train_envs_uri", "heldout_envs_uri"):
+    for field in ("train_envs_uri", "heldout_envs_uri", "scene_spec_uri", "robot_spec_uri"):
         value = str(state.get(field) or "").strip()
         if value:
             updates[field] = value
@@ -2670,6 +2640,12 @@ def _run_trainer_via_command(
     return result
 
 
+def _heldout_k8s_image_ready(config: Sim2RealLoopConfig) -> bool:
+    from npa.workflows.sim2real_stages import k8s_image_ready
+
+    return k8s_image_ready(config.heldout_backend_image())
+
+
 def run_heldout_eval(
     config: Sim2RealLoopConfig,
     *,
@@ -2711,7 +2687,7 @@ def run_heldout_eval(
             env=env,
             component="heldout_eval",
         )
-    elif not config.s3_bucket.strip():
+    elif not config.s3_bucket.strip() or not _heldout_k8s_image_ready(config):
         heldout_manifest = local_dir / "envs" / "heldout" / "manifest.json"
         envs = json.loads(heldout_manifest.read_text(encoding="utf-8")).get("envs", [])
         local_backend = config.sim_backend
@@ -2743,7 +2719,9 @@ def run_heldout_eval(
         _write_json_artifact(output_path, payload)
         invocation = {
             "component": "heldout_eval",
-            "mode": "local_reference",
+            "mode": "local_reference"
+            if not config.s3_bucket.strip()
+            else "seam_placeholder",
             "image": config.heldout_backend_image(),
         }
     else:

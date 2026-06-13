@@ -112,6 +112,12 @@ spec:
               value: "${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120"
             - name: EVAL_IMAGE
               value: "${REG}/npa-sim2real-eval:0.1.1-genuine-sm120"
+            - name: NPA_REGISTRY
+              value: "${REG}"
+            - name: AUGMENT_IMAGE
+              value: "${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
+            - name: POLICY_IMAGE
+              value: "${POLICY_IMAGE:-${REG}/npa-sim2real-reference-policy:0.1.1}"
             - name: ISAAC_IMAGE
               value: "${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
             - name: NPA_SIM2REAL_ISAAC_TASK
@@ -178,6 +184,10 @@ spec:
                 --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
                 --isaac-image "\${ISAAC_IMAGE}"
                 --isaac-task "\${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
+                --augment-image "\${AUGMENT_IMAGE}"
+                --policy-image "\${POLICY_IMAGE}"
+                --env-count "\${NPA_ENV_COUNT:-10000}"
+                --train-fraction "\${NPA_TRAIN_FRACTION:-0.8}"
                 --vlm-image "\${VLM_IMAGE}"
                 --eval-image "\${EVAL_IMAGE}"
                 --trainer-image "\${TRAINER_IMAGE}"
@@ -205,7 +215,7 @@ YAML
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"
 echo "run_id=${RUN_ID} job=${JOB} manifest=${MANIFEST} log=${LOG}"
-echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} isaac_image=${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
+echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} env_count=${NPA_ENV_COUNT:-10000} isaac_image=${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1} augment_image=${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
 
 MONITOR_SCRIPT="$(cd "$(dirname "$0")" && pwd)/monitor-k8s-job.sh"
 MONITOR_SESSION="${MONITOR_TMUX_SESSION:-sim2real-cluster-live}"

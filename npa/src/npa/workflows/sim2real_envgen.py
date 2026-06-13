@@ -34,8 +34,13 @@ class SceneSpec:
     simready_catalog: tuple[str, ...] = DEFAULT_SCENE_CATALOG
     byo_mesh_uri: str = DEFAULT_BYO_MESH_URI
     augmented_frames_uri: str = ""
+    scene_spec_uri: str = ""
+    robot_spec_uri: str = ""
+    robot_preset: str = "franka"
+    sim_backend: str = "isaac"
     camera_names: tuple[str, ...] = ("workspace", "wrist")
-    physics_profile: str = "genesis-franka-pick-place"
+    cameras: dict[str, Any] = field(default_factory=dict)
+    physics_profile: str = "isaac-lift-franka"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -129,10 +134,25 @@ def generate_raw_envs(config: EnvGenConfig) -> list[dict[str, Any]]:
                 "scene": {
                     "simready_asset": catalog,
                     "byo_mesh_uri": config.scene_spec.byo_mesh_uri,
+                    "scene_spec_uri": config.scene_spec.scene_spec_uri,
                     "augmented_frame_uri": _augment_ref(config.scene_spec.augmented_frames_uri, index),
                 },
+                "embodiment": {
+                    "robot_preset": config.scene_spec.robot_preset,
+                    "robot_spec_uri": config.scene_spec.robot_spec_uri,
+                    "sim_backend": config.scene_spec.sim_backend,
+                },
+                "cameras": config.scene_spec.cameras
+                or {
+                    name: {
+                        "uri": f"{config.raw_uri}camera/{env_id}/{name}.png",
+                        "shape": [480, 640, 3],
+                        "dtype": "uint8",
+                    }
+                    for name in config.scene_spec.camera_names
+                },
                 "physics": {
-                    "engine": "genesis",
+                    "engine": config.scene_spec.sim_backend,
                     "profile": config.scene_spec.physics_profile,
                     "friction": round(rng.uniform(0.45, 1.25), 5),
                     "mass_scale": round(rng.uniform(0.85, 1.15), 5),

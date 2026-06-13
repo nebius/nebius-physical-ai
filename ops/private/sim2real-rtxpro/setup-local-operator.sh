@@ -27,7 +27,8 @@ env_lines = [
     f"SCENE_SPEC_URI=s3://{bucket}/sim2real-assets/pusht/scene-spec.json",
     f"AWS_ENDPOINT_URL={endpoint}",
     f"S3_ENDPOINT_URL={endpoint}",
-    "NPA_SIM2REAL_SIM_BACKEND=genesis",
+    "NPA_SIM2REAL_SIM_BACKEND=isaac",
+    "NPA_SIM2REAL_ISAAC_TASK=Isaac-Lift-Cube-Franka-v0",
     "INNER_ITERATIONS=2",
     "OUTER_ITERATIONS=2",
     "SUCCESS_THRESHOLD=0.45",
@@ -41,6 +42,7 @@ if registry:
         f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:0.1.0",
         f"VLM_IMAGE={reg}/npa-cosmos3-reason:3.0.1-genuine-sm120",
         f"EVAL_IMAGE={reg}/npa-sim2real-eval:0.1.1-genuine-sm120",
+        f"ISAAC_IMAGE={reg}/npa-isaac-lab:2.3.2.post1",
     ])
 (out / "env.local").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
 md = f"""# RTX PRO Sim2Real — Local Operator Runbook (generated)

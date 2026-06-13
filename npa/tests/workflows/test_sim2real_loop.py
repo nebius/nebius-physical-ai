@@ -208,6 +208,16 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert (tmp_path / "vlm_eval" / "train").exists()
     assert (tmp_path / "training_signal" / "train").exists()
     assert (tmp_path / "inner_loop" / "outer-01" / "evidence.json").exists()
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_12_external_validation"]["tier"] == "SEAM"
+    assert (
+        json.loads(
+            (
+                tmp_path / "stage_12_external_validation" / "external_stub.json"
+            ).read_text()
+        )["status"]
+        == "documented_external_stub"
+    )
     assert (
         json.loads((tmp_path / "eval" / "heldout" / "report.json").read_text())[
             "success_rate"
@@ -442,6 +452,8 @@ def test_heldout_eval_launches_sibling_job_and_parses_per_env_output(
         threshold=0.75,
         k8s_namespace="default",
         source_ref="dev-branch",
+        sim_backend="genesis",
+        eval_image="cr.example/npa-sim2real-eval:0.1.1",
     )
     inner_evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
@@ -520,6 +532,32 @@ def test_component_vlm_payload_uses_cosmos_reason_model_and_frames(
     assert payload["model"] == "nvidia/Cosmos-Reason1-7B"
     assert payload["frame_count"] == 1
     assert "synthetic_signature" not in payload
+
+
+def test_component_heldout_payload_defaults_to_isaac_rollout_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_isaac(env_payload, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
+        captured["isaac_called"] = True
+        captured["isaac_task"] = isaac_task
+        return [{"env_id": "heldout-0000", "score": 0.82, "success": True, "details": {}}]
+
+    def fake_genesis(*args, **kwargs):
+        raise AssertionError("genesis rollout must not run when sim_backend defaults")
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_genesis)
+
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+    )
+
+    assert captured["isaac_called"] is True
+    assert payload["sim_backend"] == "isaac"
+    assert payload["component_source"] == "isaac_rollout"
+    assert payload["rollout_backend"] == "isaaclab:Isaac-Lift-Cube-Franka-v0"
 
 
 def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> None:
@@ -653,20 +691,19 @@ def test_component_heldout_payload_with_scene_attaches_provenance(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         # Simulate the env building the mesh and marking it loaded.
         if scene is not None:
             for obj in scene.objects:
                 obj.loaded = True
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     payload = loop_module._component_heldout_payload(
         [{"env_id": "heldout-0000", "seed": 1}],
         inner_evidence={"reward_trend": [0.2, 0.6]},
         threshold=0.75,
         scene=scene,
-        sim_backend="genesis",
     )
     assert payload["asset_fallback_used"] is False
     prov = payload["asset_provenance"]
@@ -684,17 +721,16 @@ def test_component_heldout_payload_raises_when_mesh_not_loaded(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     with pytest.raises(loop_module.Sim2RealLoopError):
         loop_module._component_heldout_payload(
             [{"env_id": "heldout-0000", "seed": 1}],
             inner_evidence={},
             threshold=0.75,
             scene=scene,
-            sim_backend="genesis",
         )
 
 
@@ -742,18 +778,17 @@ def test_component_heldout_payload_with_robot_attaches_provenance(
     robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
     ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         if robot is not None:
             robot.loaded = True  # env builds it
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     payload = loop_module._component_heldout_payload(
         [{"env_id": "heldout-0000", "seed": 1}],
         inner_evidence={"reward_trend": [0.2, 0.6]},
         threshold=0.75,
         robot=robot,
-        sim_backend="genesis",
     )
     assert payload["robot_fallback_used"] is False
     prov = payload["robot_provenance"]
@@ -772,17 +807,16 @@ def test_component_heldout_payload_raises_when_byo_robot_not_loaded(
     robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
     ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     with pytest.raises(loop_module.Sim2RealLoopError):
         loop_module._component_heldout_payload(
             [{"env_id": "heldout-0000", "seed": 1}],
             inner_evidence={},
             threshold=0.75,
             robot=robot,
-            sim_backend="genesis",
         )
 
 
@@ -856,13 +890,13 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
 
     monkeypatch.setattr(client, "download_path", download_path)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         if scene is not None:
             for obj in scene.objects:
                 obj.loaded = True
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
 
     payload = loop_module.run_heldout_eval_component_from_s3(
         heldout_envs_uri="s3://bucket/run/heldout/",
@@ -870,7 +904,7 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
         output_uri="s3://bucket/run/output/report.json",
         threshold=0.75,
         assets_uri="s3://bucket/run/object.obj",
-        sim_backend="genesis",
+        sim_backend="isaac",
     )
     assert payload["asset_fallback_used"] is False
     assert payload["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
@@ -884,6 +918,7 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     report = sim2real.run(
         run_id="sim2real-sdk-unit",
         output_dir=tmp_path,
+        s3_bucket="",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
         threshold=0.45,
         inner_iterations=1,
@@ -1045,8 +1080,11 @@ def test_sim_backend_defaults_to_isaac_and_validates() -> None:
 
 
 def test_build_config_from_env_reads_sim_backend(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_SIM2REAL_SIM_BACKEND", "GENESIS")
+    monkeypatch.delenv("NPA_SIM2REAL_SIM_BACKEND", raising=False)
     config = loop_module.build_config_from_env(run_id="env-backend")
+    assert config.sim_backend == "isaac"
+    monkeypatch.setenv("NPA_SIM2REAL_SIM_BACKEND", "GENESIS")
+    config = loop_module.build_config_from_env(run_id="env-backend-genesis")
     assert config.sim_backend == "genesis"
     override = loop_module.build_config_from_env(run_id="ov", sim_backend="isaac")
     assert override.sim_backend == "isaac"
@@ -1319,7 +1357,7 @@ def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path
         threshold=0.75,
         k8s_namespace="default",
         sim_backend="isaac",
-        isaac_image="npa-isaac-lab:2.3.2.post1",
+        isaac_image="cr.example/npa-isaac-lab:2.3.2.post1",
         source_ref="dev-branch",
         source_repo="https://example.invalid/repo.git",
     )
@@ -1332,7 +1370,7 @@ def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path
     apply_call = next(call for call in calls if "apply" in call["cmd"])
     manifest = json.loads(apply_call["input"])
     container = manifest["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == "npa-isaac-lab:2.3.2.post1"
+    assert container["image"] == "cr.example/npa-isaac-lab:2.3.2.post1"
     script = container["args"][0]
     assert "/isaac-sim/python.sh" in script
     assert "--sim-backend" in script
