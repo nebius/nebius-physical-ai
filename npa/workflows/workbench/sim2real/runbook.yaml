@@ -57,7 +57,7 @@ envs:
   NPA_SIM2REAL_ISAAC_TASK: "Isaac-Lift-Cube-Franka-v0"
   VLM_MODEL: "nvidia/Cosmos-Reason2-8B"
   VLM_REASON2_MODEL: "nvidia/Cosmos-Reason2-8B"
-  VLM_REASON3_MODEL: "nvidia/Cosmos3-Super-Reasoner"
+  VLM_REASON3_MODEL: "nvidia/Cosmos-Reason1-7B"
   NPA_SIM2REAL_VLM_DUAL_REASON: "1"
   SUCCESS_THRESHOLD: "0.75"
   INNER_ITERATIONS: "2"

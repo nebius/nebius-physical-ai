@@ -10,10 +10,10 @@ from typing import Any
 
 DEFAULT_REASON1_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_REASON3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-DEFAULT_REASON1_CACHE = "/models/cosmos-reason1"
-DEFAULT_REASON2_CACHE = "/models/cosmos-reason2"
-DEFAULT_REASON3_CACHE = "/models/cosmos-reason3"
+DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason1-7B"
+DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
+DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
+DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason3"
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 )
@@ -186,6 +186,8 @@ def run_cosmos_reason_vlm(
         raise CosmosReasonError("Cosmos Reason inference requires a CUDA GPU")
 
     cache_dir = default_reason_cache_dir(resolved_model)
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(Path(cache_dir).parent))
     max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
     selected_paths = image_paths[: max(1, max_frames)]
     for path in selected_paths:

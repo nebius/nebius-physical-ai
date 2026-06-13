@@ -120,6 +120,10 @@ reports/sim2real.rrd
   - `npa-lerobot-vlm-rl:0.1.0`
   - `npa-sim2real-eval:0.1.1-genuine-sm120`
 - Gated model repository access accepted where required by the VLM image.
+  Self-hosted dual VLM defaults: `nvidia/Cosmos-Reason2-8B` (Reason2) and
+  `nvidia/Cosmos-Reason1-7B` (Reason3). Accept both on Hugging Face before launch.
+  `nvidia/Cosmos3-Super-Reasoner` is Token Factory–hosted only — not an HF repo.
+  See [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md#hugging-face-model-access-self-hosted-workbench).
 - `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a
   Kubernetes secret such as `hf-ngc-tokens`.
 - S3-compatible storage credentials and endpoint configured through environment

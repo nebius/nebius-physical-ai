@@ -84,13 +84,22 @@ Sim2Real stage 8 evaluates rollouts with **two** workbench-hosted Cosmos Reason
 models in parallel sibling GPU jobs — not Token Factory:
 
 - `nvidia/Cosmos-Reason2-8B` (`vlm_eval_reason2`)
-- `nvidia/Cosmos3-Super-Reasoner` (`vlm_eval_reason3`)
+- `nvidia/Cosmos-Reason1-7B` (`vlm_eval_reason3`, self-hosted default)
+
+`nvidia/Cosmos3-Super-Reasoner` is a **Token Factory hosted** model id only
+(no Hugging Face repo). Use `npa workbench token-factory reason` for that path;
+do not set it as `VLM_REASON3_MODEL` on self-hosted sim2real runs.
 
 Implementation lives in `npa.workbench.cosmos.reason`. The `npa-cosmos3-reason`
 image runs `component-vlm-eval`; dual eval merges judgments via
 `merge_dual_reason_evaluations`. Pool sizing divides `k8s_max_parallel_gpus` by
 two jobs per rollout (`NPA_SIM2REAL_VLM_DUAL_REASON=1`, default). With
 `k8s_max_parallel_gpus=16` and `ROLLOUT_COUNT=8`, all 16 GPUs can run VLM eval.
+
+**Hugging Face setup (required once per account):** accept each gated repo at
+https://huggingface.co while signed in, then put `HF_TOKEN` in
+`~/.npa/credentials.yaml` and mirror it into the cluster `hf-ngc-tokens` secret.
+See [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md#hugging-face-model-access-self-hosted-workbench).
 
 Env knobs: `VLM_REASON2_MODEL`, `VLM_REASON3_MODEL`, `VLM_REASON2_IMAGE`,
 `VLM_REASON3_IMAGE`, `NPA_COSMOS_REASON2_CACHE`, `NPA_COSMOS_REASON3_CACHE`.
