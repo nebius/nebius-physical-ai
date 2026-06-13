@@ -10,10 +10,10 @@ from typing import Any
 
 DEFAULT_REASON1_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason1-7B"
+DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
-DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason3"
+DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 )
@@ -47,7 +47,11 @@ def cosmos_reason_family(model_id: str) -> str:
 
 
 def default_reason_cache_dir(model_id: str) -> str:
-    family = cosmos_reason_family(model_id)
+    resolved = resolve_cosmos_reason_model_id(model_id)
+    mid = resolved.lower()
+    if "reason2-2b" in mid:
+        return os.environ.get("NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE)
+    family = cosmos_reason_family(resolved)
     if family == "reason3":
         return os.environ.get("NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE)
     if family == "reason2":
@@ -92,7 +96,7 @@ def cosmos_reason_k8s_shell_preamble() -> str:
         'export HF_HOME="${HF_HOME:-/tmp/hf_home}"\n'
         'mkdir -p "${HF_HOME}" '
         '"${NPA_COSMOS_REASON2_CACHE:-/tmp/hf_home/cosmos-reason2}" '
-        '"${NPA_COSMOS_REASON3_CACHE:-/tmp/hf_home/cosmos-reason3}" '
+        '"${NPA_COSMOS_REASON3_CACHE:-/tmp/hf_home/cosmos-reason2-2b}" '
         '"${NPA_COSMOS_REASON_CACHE:-/tmp/hf_home/cosmos-reason2}"\n'
     )
 

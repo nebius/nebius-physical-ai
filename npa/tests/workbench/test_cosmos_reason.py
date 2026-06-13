@@ -33,7 +33,7 @@ def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None
     monkeypatch.delenv("NPA_COSMOS_REASON2_CACHE", raising=False)
     monkeypatch.delenv("NPA_COSMOS_REASON3_CACHE", raising=False)
     assert default_reason_cache_dir(DEFAULT_REASON2_MODEL) == DEFAULT_REASON2_CACHE
-    assert default_reason_cache_dir(DEFAULT_REASON3_MODEL) == DEFAULT_REASON1_CACHE
+    assert default_reason_cache_dir(DEFAULT_REASON3_MODEL) == DEFAULT_REASON3_CACHE
     assert DEFAULT_REASON2_CACHE.startswith("/tmp/hf_home/")
 
 

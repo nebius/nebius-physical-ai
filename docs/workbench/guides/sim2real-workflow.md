@@ -62,7 +62,7 @@ OUTER_ITERATIONS=1
 SUCCESS_THRESHOLD=0.75
 ```
 
-**Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
+**Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason2-2B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
 
 Submit:
 
@@ -126,8 +126,16 @@ that owns the token.
 | Hugging Face repo | Gated? | Role | Notes |
 | --- | --- | --- | --- |
 | `nvidia/Cosmos-Reason2-8B` | **Yes — accept license** | Reason2 sibling (`vlm_eval_reason2`) | Default `VLM_REASON2_MODEL` |
-| `nvidia/Cosmos-Reason1-7B` | **Yes — accept license** | Reason3 sibling (`vlm_eval_reason3`) | Default `VLM_REASON3_MODEL` for workbench GPU jobs |
+| `nvidia/Cosmos-Reason2-2B` | **Yes — accept license** | Reason3 sibling (`vlm_eval_reason3`) | Default `VLM_REASON3_MODEL` (smaller second Reason2 checkpoint) |
 | `nvidia/Cosmos-Transfer2.5-2B` | **Yes — accept license** | Stage 3 augment (Cosmos Transfer image) | Downloaded inside `npa-cosmos2-transfer` |
+
+### Cosmos 3 on Hugging Face (not used by sim2real VLM Jobs today)
+
+| Hugging Face repo | Gated? | Notes |
+| --- | --- | --- |
+| `nvidia/Cosmos3-Nano` | Often early-access | 16B omni-model (reason + generate); used by Cosmos3 text-to-image workflows, not the `npa-cosmos3-reason` VLM sibling image |
+| `nvidia/Cosmos3-Super` | Often early-access | 64B omni-model; datacenter scale |
+| `nvidia/Cosmos-Reason1-7B` | Open | Legacy Reason1 generation; superseded by Reason2 for sim2real defaults |
 
 ### Hosted-only (not for self-hosted VLM Jobs)
 

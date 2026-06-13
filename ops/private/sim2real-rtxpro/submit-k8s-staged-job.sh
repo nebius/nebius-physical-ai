@@ -182,7 +182,7 @@ spec:
             - name: VLM_REASON2_MODEL
               value: "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
             - name: VLM_REASON3_MODEL
-              value: "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason1-7B}"
+              value: "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
             - name: NPA_SIM2REAL_VLM_DUAL_REASON
               value: "${NPA_SIM2REAL_VLM_DUAL_REASON:-1}"
             - name: HELDOUT_ENV_COUNT
@@ -234,7 +234,7 @@ spec:
                 --outer-iterations "\${OUTER_ITERATIONS:-1}"
                 --rollout-count "\${ROLLOUT_COUNT:-8}"
                 --vlm-reason2-model "\${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
-                --vlm-reason3-model "\${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason1-7B}"
+                --vlm-reason3-model "\${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
                 --vlm-dual-reason
                 --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
                 --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-4}}"

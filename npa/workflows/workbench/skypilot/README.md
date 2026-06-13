@@ -164,7 +164,7 @@ can fetch weights. Gated repos are marked **(gated — accept license)**.
 
 The self-contained Sim2Real runbook (`../sim2real/runbook.yaml`) defaults to
 dual self-hosted VLM eval: `nvidia/Cosmos-Reason2-8B` and
-`nvidia/Cosmos-Reason1-7B`, both **(gated — accept license)**, plus
+`nvidia/Cosmos-Reason2-2B`, both **(gated — accept license)**, plus
 `nvidia/Cosmos-Transfer2.5-2B` for augment. The public `lerobot/pusht` dataset
 needs no HF acceptance. `nvidia/Cosmos3-Super-Reasoner` is **Token Factory only**
 (not on Hugging Face); do not use it as `VLM_REASON3_MODEL` for cluster Jobs.

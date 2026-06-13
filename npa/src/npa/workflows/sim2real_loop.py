@@ -92,12 +92,12 @@ DEFAULT_K8S_MAX_PARALLEL_GPUS = 2
 DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason1-7B"
+DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
 DEFAULT_LEROBOT_DATASET_ID = "lerobot/pusht"
 REFERENCE_VLM_ALIASES = {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 DEFAULT_COSMOS_REASON_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_COSMOS_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
-DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason3"
+DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 SCHEMA_VLM_EVAL = "npa.sim2real.vlm_eval.v1"
 SCHEMA_RL_SIGNAL = "npa.sim2real.rl_signal.v1"
 SCHEMA_HELDOUT_REPORT = "npa.sim2real.heldout_eval.v1"
@@ -1002,7 +1002,7 @@ def run_finalize(
                     "WORKS",
                     "VLM image/command are runtime-configurable; "
                     "dual self-hosted defaults: nvidia/Cosmos-Reason2-8B (Reason2) and "
-                    "nvidia/Cosmos-Reason1-7B (Reason3 sibling). Accept gated Hugging Face "
+                    "nvidia/Cosmos-Reason2-2B (Reason3 sibling). Accept gated Hugging Face "
                     "licenses before launch.",
                     {"image": config.vlm_image},
                 )
