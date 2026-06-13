@@ -55,6 +55,60 @@ def default_reason_cache_dir(model_id: str) -> str:
     return os.environ.get("NPA_COSMOS_REASON_CACHE", DEFAULT_REASON1_CACHE)
 
 
+_VLM_K8S_COMPONENTS = frozenset({"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"})
+
+
+def cosmos_reason_runtime_env() -> dict[str, str]:
+    """Writable Hugging Face cache env for Cosmos Reason sibling Jobs."""
+
+    hf_home = os.environ.get("HF_HOME", "/tmp/hf_home")
+    return {
+        "HF_HOME": hf_home,
+        "NPA_COSMOS_REASON2_CACHE": os.environ.get(
+            "NPA_COSMOS_REASON2_CACHE", DEFAULT_REASON2_CACHE
+        ),
+        "NPA_COSMOS_REASON3_CACHE": os.environ.get(
+            "NPA_COSMOS_REASON3_CACHE", DEFAULT_REASON3_CACHE
+        ),
+        "NPA_COSMOS_REASON_CACHE": os.environ.get(
+            "NPA_COSMOS_REASON_CACHE", DEFAULT_REASON2_CACHE
+        ),
+    }
+
+
+def prepare_cosmos_reason_cache(*, model_id: str) -> str:
+    """Ensure the model cache directory exists and HF_HOME is set."""
+
+    cache_dir = default_reason_cache_dir(model_id)
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(Path(cache_dir).parent))
+    return cache_dir
+
+
+def cosmos_reason_k8s_shell_preamble() -> str:
+    """Shell snippet run before VLM sibling Jobs download gated HF weights."""
+
+    return (
+        'export HF_HOME="${HF_HOME:-/tmp/hf_home}"\n'
+        'mkdir -p "${HF_HOME}" '
+        '"${NPA_COSMOS_REASON2_CACHE:-/tmp/hf_home/cosmos-reason2}" '
+        '"${NPA_COSMOS_REASON3_CACHE:-/tmp/hf_home/cosmos-reason3}" '
+        '"${NPA_COSMOS_REASON_CACHE:-/tmp/hf_home/cosmos-reason2}"\n'
+    )
+
+
+def apply_cosmos_reason_kubernetes_env(safe: dict[str, str]) -> dict[str, str]:
+    """Merge writable HF cache defaults into a sibling Job env map."""
+
+    for key, value in cosmos_reason_runtime_env().items():
+        safe.setdefault(key, value)
+    return safe
+
+
+def vlm_k8s_component(component: str) -> bool:
+    return component in _VLM_K8S_COMPONENTS
+
+
 def task_description_from_manifest(manifest: dict[str, Any]) -> str:
     for key in ("task_description", "task", "instruction", "prompt"):
         value = str(manifest.get(key) or "").strip()
@@ -185,9 +239,7 @@ def run_cosmos_reason_vlm(
     if not torch.cuda.is_available():
         raise CosmosReasonError("Cosmos Reason inference requires a CUDA GPU")
 
-    cache_dir = default_reason_cache_dir(resolved_model)
-    Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_HOME", str(Path(cache_dir).parent))
+    cache_dir = prepare_cosmos_reason_cache(model_id=resolved_model)
     max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
     selected_paths = image_paths[: max(1, max_frames)]
     for path in selected_paths:
