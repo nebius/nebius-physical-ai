@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Self-contained Mac operator paste — pull if needed, install run.sh, run demo.
-# Usage:
-#   bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh
-# Or paste the heredoc block from FRANKA-STOCK-GUIDE.md into a new terminal.
+# Self-contained Mac operator paste — sync repo, install run.sh, run demo.
 set -euo pipefail
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
@@ -16,56 +13,50 @@ fi
 DEMO="${NPA_SIM2REAL_DEMO:-${DEMO:-${HOME}/npa-sim2real-demo}}"
 REPO="${NPA_SIM2REAL_REPO:-${DEMO}/nebius-physical-ai}"
 BRANCH="${NPA_SIM2REAL_BRANCH:-feat/sim2real-mandatory-stages}"
-GIT="${GIT:-$(command -v git || true)}"
 MAC_RUN="${REPO}/ops/private/sim2real-rtxpro/mac-run.sh"
-
-_die() {
-  echo "ERROR: $*" >&2
-  exit 1
-}
-
-_ensure_git() {
-  if [[ -n "${GIT}" && -x "${GIT}" ]]; then
-    return 0
-  fi
-  for candidate in /usr/bin/git /opt/homebrew/bin/git; do
-    if [[ -x "${candidate}" ]]; then
-      GIT="${candidate}"
-      export GIT
-      return 0
-    fi
-  done
-  _die "git not found — install Xcode CLI tools: xcode-select --install"
-}
+SYNC_LIB="${REPO}/ops/private/sim2real-rtxpro/lib/sync-operator-repo.sh"
 
 _sync_repo() {
-  if [[ ! -d "${REPO}/.git" ]]; then
-    _die "missing ${REPO} — clone nebius-physical-ai into ~/npa-sim2real-demo/ first"
+  if [[ -f "${SYNC_LIB}" ]]; then
+    # shellcheck source=lib/sync-operator-repo.sh
+    source "${SYNC_LIB}"
+    sync_operator_repo "${REPO}" "${BRANCH}"
+    return 0
   fi
-  _ensure_git
-  echo "=== git pull ${BRANCH} in ${REPO} ==="
+
+  # Fallback when checkout predates sync-operator-repo.sh
+  local git_bin="${GIT:-$(command -v git || echo /usr/bin/git)}"
+  [[ -x "${git_bin}" ]] || {
+    echo "ERROR: git not found — xcode-select --install" >&2
+    exit 1
+  }
+  [[ -d "${REPO}/.git" ]] || {
+    echo "ERROR: clone nebius-physical-ai to ${REPO} first" >&2
+    exit 1
+  }
   (
     cd "${REPO}"
-    "${GIT}" fetch origin "${BRANCH}"
-    if "${GIT}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
-      "${GIT}" checkout "${BRANCH}"
-    else
-      "${GIT}" checkout -b "${BRANCH}" "origin/${BRANCH}"
-    fi
-    "${GIT}" pull --ff-only origin "${BRANCH}"
+    "${git_bin}" fetch origin "${BRANCH}"
+    "${git_bin}" checkout "${BRANCH}" 2>/dev/null || "${git_bin}" checkout -b "${BRANCH}" "origin/${BRANCH}"
+    "${git_bin}" pull --ff-only origin "${BRANCH}" || "${git_bin}" reset --hard "origin/${BRANCH}"
   )
 }
 
 _install_run_sh() {
-  [[ -f "${MAC_RUN}" ]] || _die "missing ${MAC_RUN} after pull"
+  [[ -f "${MAC_RUN}" ]] || {
+    echo "ERROR: missing ${MAC_RUN} after sync" >&2
+    exit 1
+  }
+  mkdir -p "${DEMO}"
   cp "${MAC_RUN}" "${DEMO}/run.sh"
   chmod +x "${DEMO}/run.sh"
   echo "Installed ${DEMO}/run.sh"
 }
 
 _main() {
-  mkdir -p "${DEMO}"
   _sync_repo
+  # Re-read paths in case sync updated the tree.
+  MAC_RUN="${REPO}/ops/private/sim2real-rtxpro/mac-run.sh"
   _install_run_sh
   if [[ "${SIM2REAL_PASTE_SKIP_DEMO:-0}" == "1" ]]; then
     echo "SIM2REAL_PASTE_SKIP_DEMO=1 — stop before ./run.sh demo"
