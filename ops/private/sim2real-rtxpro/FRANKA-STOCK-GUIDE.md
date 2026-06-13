@@ -38,11 +38,13 @@ The pipeline does **not** poll S3 — you upload the batch, then explicitly trig
 | K8s context | `npa-rtxpro-mk8s` |
 | Nebius CLI | `~/.nebius/bin/nebius` (profile `npa-mk8s`) |
 
-Shell exports on every terminal:
+Shell exports on every terminal (included in paste block below; `run.sh` also sets these):
 
 ```bash
-export PATH="${HOME}/.nebius/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
-export KUBECONFIG="${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved"
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
+export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
+export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
+[[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
 ```
 
 ---
@@ -91,17 +93,37 @@ cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 ```
 
-Then from `~/npa-sim2real-demo`:
+Then from `~/npa-sim2real-demo` — **new terminal, paste once:**
 
 ```bash
-# Full customer replication (reset → submit)
-./run.sh demo
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
+export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
+export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
+[[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
+cd ~/npa-sim2real-demo && ./run.sh demo
+```
 
-# Or step by step:
-./run.sh cleanup              # clear local tmp + finished K8s jobs
-./run.sh trigger              # submit to cluster (prints monitor cmd)
-./run.sh status <RUN_ID>      # live kubectl + S3 checklist
-./run.sh sync <RUN_ID>        # pull artifacts + Rerun viz
+Or run the same block from the repo file:
+
+```bash
+bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh
+```
+
+After `./run.sh demo`, monitor and sync (same terminal is fine — `run.sh` sets PATH/kube):
+
+```bash
+./run.sh status <RUN_ID>
+./run.sh sync <RUN_ID>
+```
+
+Step-by-step equivalent:
+
+```bash
+cd ~/npa-sim2real-demo
+./run.sh cleanup
+./run.sh trigger
+./run.sh status <RUN_ID>
+./run.sh sync <RUN_ID>
 ```
 
 Remove a specific failed run (including S3 artifacts):
