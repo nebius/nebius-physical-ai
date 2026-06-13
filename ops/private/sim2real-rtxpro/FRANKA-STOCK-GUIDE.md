@@ -68,32 +68,33 @@ cd ~/npa-sim2real-demo
 
 ### B. Full pipeline — stock Franka on cluster
 
-1. **Use a real LeRobot prefix** (preflight requires `meta/info.json` or `data/**/*.parquet`):
-
-```bash
-# Pre-staged stock trigger (demo):
-export TRIGGER_DATASET_URI=s3://YOUR-BUCKET/sim2real-triggers/trigger-validate-20260611T154016Z/lerobot-pusht/
-export TRIGGER_DATASET_ID=lerobot/pusht
-
-# Do NOT set ASSETS_URI or SCENE_SPEC_URI — stock Franka path is automatic.
-```
-
-2. **Submit:**
-
-```bash
-cd ~/npa-sim2real-demo
-git pull && ./setup.sh    # once per session if pack changed
-./run.sh trigger
-```
-
-Submit log: `/tmp/sim2real-demo/submit.log` — look for `run_id=` and `job=sim2real-<RUN_ID>`.
-
-**From NPA repo directly** (same flow, no private wrapper):
+**Submit** (canonical — uses direct K8s Job, not SkyPilot):
 
 ```bash
 cd ~/npa-sim2real-demo/nebius-physical-ai
-export TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/<batch>/lerobot-pusht/
-./ops/private/sim2real-rtxpro/trigger-pipeline.sh
+export TRIGGER_DATASET_URI=s3://YOUR-BUCKET/sim2real-triggers/trigger-validate-20260611T154016Z/lerobot-pusht/
+
+./npa/.venv/bin/npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
+  --tool sim2real \
+  --run-id "sim2real-staged-$(date -u +%Y%m%dT%H%M%SZ | tr '[:upper:]' '[:lower:]')" \
+  --var "NPA_SIM2REAL_TRIGGER_DATASET_URI=${TRIGGER_DATASET_URI}" \
+  --var "INNER_ITERATIONS=1" \
+  --var "OUTER_ITERATIONS=2"
+```
+
+**Monitor live stages:**
+
+```bash
+./npa/.venv/bin/npa workbench workflow status <RUN_ID> --tool sim2real --watch
+```
+
+Private operator wrapper (preflight + submit + wait + sync + Rerun):
+
+```bash
+cd ~/npa-sim2real-demo
+export TRIGGER_DATASET_URI=s3://YOUR-BUCKET/sim2real-triggers/trigger-validate-20260611T154016Z/lerobot-pusht/
+./run.sh trigger
 ```
 
 ### C. Sync + Rerun after a completed run
@@ -154,7 +155,26 @@ kubectl --context npa-rtxpro-mk8s get jobs -n default --sort-by=.metadata.creati
 ### 2. Monitor until complete
 
 ```bash
+cd ~/npa-sim2real-demo/nebius-physical-ai
+./npa/.venv/bin/npa workbench workflow status sim2real-staged-<RUN_ID> --tool sim2real --watch
+```
+
+One-shot (no watch):
+
+```bash
+./npa/.venv/bin/npa workbench workflow status <RUN_ID> --tool sim2real
+```
+
+Operator shortcut:
+
+```bash
 OPS=~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro
+${OPS}/status-sim2real-run.sh <RUN_ID>
+```
+
+Legacy job monitor (K8s job only, no stage checklist):
+
+```bash
 ${OPS}/monitor-k8s-job.sh sim2real-<RUN_ID>
 ```
 
