@@ -10,11 +10,12 @@ if [[ "${2:-}" == "--watch" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
-
-export PATH="${HOME}/.nebius/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+export NPA_SIM2REAL_REPO="${ROOT}"
 
 _npa_cfg=()
 while IFS= read -r _line; do
@@ -91,9 +92,9 @@ print_status() {
 if [[ "${WATCH}" == "1" ]]; then
   while true; do
     clear 2>/dev/null || true
-    date -u
+    /bin/date -u
     print_status
-    sleep 10
+    /bin/sleep 10
   done
 else
   print_status

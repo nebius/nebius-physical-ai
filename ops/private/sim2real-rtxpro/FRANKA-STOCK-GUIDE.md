@@ -82,10 +82,30 @@ export TRIGGER_DATASET_URI=s3://lerobot-d87cf691/sim2real-triggers/trigger-valid
   --var "OUTER_ITERATIONS=2"
 ```
 
+## Mac operator interface (copy once)
+
+From your `nebius-physical-ai` checkout:
+
+```bash
+cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
+chmod +x ~/npa-sim2real-demo/run.sh
+```
+
+Then from `~/npa-sim2real-demo`:
+
+```bash
+./run.sh trigger          # submit to cluster (prints monitor cmd)
+./run.sh status <RUN_ID>  # live kubectl + S3 checklist
+./run.sh sync <RUN_ID>    # pull artifacts + Rerun viz
+```
+
+No `npa workbench workflow status` or git pull required on the laptop — scripts use
+`submit-k8s-staged-job.sh`, refresh registry auth before apply, and `status-run-local.sh`.
+
 **Monitor live stages:**
 
 ```bash
-./npa/.venv/bin/npa workbench workflow status <RUN_ID> --watch
+./run.sh status sim2real-staged-<RUN_ID>
 ```
 
 Private operator wrapper (preflight + submit + wait + sync + Rerun):

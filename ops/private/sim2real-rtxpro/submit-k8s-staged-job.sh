@@ -5,9 +5,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/operator-env.sh
+source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
+# shellcheck source=lib/registry-pull-secret.sh
+source "${SCRIPT_DIR}/lib/registry-pull-secret.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
+export NPA_SIM2REAL_REPO="${ROOT}"
 
 npa_read_lines _npa_cfg operator_read_config "${ROOT}"
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
@@ -76,21 +81,9 @@ print("Preflight OK: all workflow images are registry-qualified.")
 PY
 
 # Refresh npa-nebius-registry before apply — stale IAM tokens cause ImagePullBackOff 401.
-"${ROOT}/npa/.venv/bin/python" - <<PY
-from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
-ensure_registry_pull_secret_for_images(
-    "${ORCHESTRATOR_IMAGE}",
-    "${TRAINER_IMAGE}",
-    "${VLM_IMAGE}",
-    "${EVAL_IMAGE}",
-    "${AUGMENT_IMAGE}",
-    "${POLICY_IMAGE}",
-    "${ISAAC_IMAGE}",
-    kubeconfig="${KUBECONFIG}",
-    k8s_context="${CTX}",
-)
-print("Refreshed npa-nebius-registry pull secret.")
-PY
+registry_refresh_for_images "${CTX}" \
+  "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${VLM_IMAGE}" "${EVAL_IMAGE}" \
+  "${AUGMENT_IMAGE}" "${POLICY_IMAGE}" "${ISAAC_IMAGE}"
 
 LOG="/tmp/sim2real-cluster/${RUN_ID}.log"
 mkdir -p /tmp/sim2real-cluster

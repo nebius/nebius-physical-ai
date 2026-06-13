@@ -28,6 +28,19 @@ Credentials are referenced by path only.
 
 **Laptop = interface.** Compute on Nebius RTX cluster → S3 → sync → Rerun.
 
+**Recommended — single script on Mac:**
+
+```bash
+cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
+chmod +x ~/npa-sim2real-demo/run.sh
+cd ~/npa-sim2real-demo
+./run.sh trigger
+./run.sh status <run-id>
+./run.sh sync <run-id>
+```
+
+Or from the repo directly:
+
 ```bash
 ./ops/private/sim2real-rtxpro/run-demo.sh
 # reuse completed run:
