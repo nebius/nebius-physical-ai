@@ -44,6 +44,8 @@ env_lines = [
     "SUCCESS_THRESHOLD=0.45",
     "ROLLOUT_COUNT=3",
     "HELDOUT_ENV_COUNT=8",
+    "NPA_ENVGEN_SHARD_COUNT=16",
+    "NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS=16",
 ]
 if k8s_context:
     env_lines.append(f"NPA_SIM2REAL_K8S_CONTEXT={k8s_context}")

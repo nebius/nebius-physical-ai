@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real_loop import (
+from npa.workflows.sim2real import (
     Sim2RealLoopConfig,
     artifact_uris,
     build_config_from_env,

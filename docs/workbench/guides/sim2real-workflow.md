@@ -82,7 +82,8 @@ npa workbench health sim2real \
 ```
 
 > Top-level `npa workbench sim2real` was removed. Use **`workflow submit`**, module CLI
-> (`python -m npa.workflows.sim2real_loop …`), or SDK (`npa.sdk.workbench.sim2real`).
+> (`python -m npa.workflows.sim2real run …`), staged subcommands (`preamble`,
+> `outer-iteration`, `finalize`), or SDK (`npa.sdk.workbench.sim2real`).
 
 ---
 
@@ -91,17 +92,10 @@ npa workbench health sim2real \
 Open **`npa/workflows/workbench/sim2real/runbook.yaml`**. The `run:` block is the source of truth:
 
 ```yaml
-# Stage 1-6: preamble
-python -m npa.workflows.sim2real_loop preamble "${common_args[@]}"
-
-# Stage 7-11: visible outer loop + threshold gate
-for outer_iteration in $(seq 1 "${OUTER_ITERATIONS}"); do
-  python -m npa.workflows.sim2real_loop outer-iteration ...
-  if decision == promote_checkpoint; then break; fi
-done
-
-# Stage 12-13: report + upload
-python -m npa.workflows.sim2real_loop finalize ... --upload-artifacts
+# Stage 1-13: single Python orchestrator (replaces bash preamble/outer/finalize loop)
+./npa/.venv/bin/python -m npa.workflows.sim2real run "${common_args[@]}" \
+  --initial-quality "${INITIAL_QUALITY:-0.38}" \
+  --upload-artifacts
 ```
 
 ### What to edit where
@@ -138,12 +132,16 @@ Run the same three commands the YAML uses:
 
 ```bash
 OUT=/tmp/s2r-smoke
-npa/.venv/bin/python -m npa.workflows.sim2real_loop preamble \
+npa/.venv/bin/python -m npa.workflows.sim2real run \
   --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
-npa/.venv/bin/python -m npa.workflows.sim2real_loop outer-iteration \
+
+# Or explicit stage boundaries (debug / partial reruns):
+npa/.venv/bin/python -m npa.workflows.sim2real preamble \
+  --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
+npa/.venv/bin/python -m npa.workflows.sim2real outer-iteration \
   --run-id smoke --output-dir "$OUT" --outer-iteration 1 --initial-quality 0.38 \
   --inner-iterations 2 --rollout-count 2 --no-rerun
-npa/.venv/bin/python -m npa.workflows.sim2real_loop finalize \
+npa/.venv/bin/python -m npa.workflows.sim2real finalize \
   --run-id smoke --output-dir "$OUT" --inner-iterations 2 --rollout-count 2 --no-rerun
 ```
 

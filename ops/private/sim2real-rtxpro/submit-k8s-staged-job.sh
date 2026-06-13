@@ -163,6 +163,10 @@ spec:
               value: "${NPA_ENV_COUNT:-10000}"
             - name: NPA_TRAIN_FRACTION
               value: "${NPA_TRAIN_FRACTION:-0.8}"
+            - name: NPA_ENVGEN_SHARD_COUNT
+              value: "${NPA_ENVGEN_SHARD_COUNT:-16}"
+            - name: NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS
+              value: "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
             - name: ROLLOUT_COUNT
               value: "2"
             - name: HELDOUT_ENV_COUNT
@@ -223,6 +227,8 @@ spec:
                 --policy-image "\${POLICY_IMAGE}"
                 --env-count "\${NPA_ENV_COUNT:-10000}"
                 --train-fraction "\${NPA_TRAIN_FRACTION:-0.8}"
+                --envgen-shard-count "\${NPA_ENVGEN_SHARD_COUNT:-16}"
+                --k8s-max-parallel-gpus "\${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
                 --vlm-image "\${VLM_IMAGE}"
                 --eval-image "\${EVAL_IMAGE}"
                 --trainer-image "\${TRAINER_IMAGE}"
