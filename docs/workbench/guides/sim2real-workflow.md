@@ -145,10 +145,8 @@ npa workbench health sim2real --checks tokens,registry,cluster
 
 If a sibling Job fails with `GatedRepoError` or `403`, re-open the repo page,
 confirm access, and retry. If pulls fail with `401 Unauthorized`, refresh the
-`npa-nebius-registry` pull secret (see above). If you see
-`PermissionError at /models/cosmos-reason2`, the job image predates writable
-`/tmp/hf_home` defaults — upgrade to the latest `feat/sim2real-mandatory-stages`
-branch (or set `HF_HOME=/tmp/hf_home` on sibling Jobs).
+`npa-nebius-registry` pull secret (see above). Sibling Jobs use writable
+`/tmp/hf_home` caches by default (see `npa.workbench.cosmos.reason`).
 
 ---
 

@@ -1006,6 +1006,7 @@ def test_resolve_env_records_s3_uri_appends_jsonl_for_split_prefixes() -> None:
 
 
 def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "orch-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "orch-secret")
     config = Sim2RealLoopConfig(
@@ -1019,6 +1020,8 @@ def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) ->
     assert safe["AWS_ACCESS_KEY_ID"] == "orch-key"
     assert safe["AWS_SECRET_ACCESS_KEY"] == "orch-secret"
     assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
+    assert safe["HF_HOME"] == "/tmp/hf_home"
+    assert safe["NPA_COSMOS_REASON2_CACHE"] == "/tmp/hf_home/cosmos-reason2"
 
 
 def test_wait_kubernetes_job_returns_failed_without_waiting(monkeypatch) -> None:

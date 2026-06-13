@@ -26,10 +26,13 @@ from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
+    apply_cosmos_reason_kubernetes_env,
+    cosmos_reason_k8s_shell_preamble,
     merge_dual_reason_evaluations,
     resolve_cosmos_reason_model_id,
     run_cosmos_reason_vlm,
     task_description_from_manifest,
+    vlm_k8s_component,
 )
 # npa.workbench.lerobot.policy_container is imported lazily inside the inner
 # loop (see _signal_training_imports) and inside the BYO signal/trainer helpers.
@@ -2317,6 +2320,9 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
+    vlm_preamble = ""
+    if vlm_k8s_component(component):
+        vlm_preamble = cosmos_reason_k8s_shell_preamble()
     # The Isaac Lab image ships Isaac Sim + isaaclab only under its bundled
     # interpreter (/isaac-sim/python.sh) and bakes no npa code. Branch npa code
     # is injected at start either from an S3 source tarball
@@ -2325,7 +2331,7 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     # boto3 is installed to a writable target dir for the S3 client.
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
         return f"""set -euo pipefail
-export NPA_SKIP_EAGER_IMPORTS=1
+{vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
@@ -2350,7 +2356,7 @@ fi
 "$PYBIN" -m npa.workflows.sim2real_loop {subcommand}
 """
     return f"""set -euo pipefail
-if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
   python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
 import os, sys, tarfile, urllib.parse, boto3
@@ -2375,13 +2381,14 @@ def _kubernetes_component_env(
 ) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in env.items():
-        if key.startswith("NPA_SIM2REAL"):
+        if key.startswith("NPA_SIM2REAL") or key.startswith("NPA_COSMOS_") or key == "HF_HOME":
             safe[key] = value
     endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
         "AWS_ENDPOINT_URL", ""
     )
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
+    apply_cosmos_reason_kubernetes_env(safe)
     for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:

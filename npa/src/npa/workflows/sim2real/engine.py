@@ -31,6 +31,11 @@ from npa.workbench.cosmos.reason import (
     run_cosmos_reason_vlm,
     task_description_from_manifest,
 )
+from npa.workbench.cosmos.reason import (
+    apply_cosmos_reason_kubernetes_env,
+    cosmos_reason_k8s_shell_preamble,
+    vlm_k8s_component,
+)
 from npa.workflows.sim2real.config import artifact_uris, byo_seams
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
@@ -1782,6 +1787,9 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
         )
     else:
         raise Sim2RealLoopError(f"unsupported image component: {component}")
+    vlm_preamble = ""
+    if vlm_k8s_component(component):
+        vlm_preamble = cosmos_reason_k8s_shell_preamble()
     # The Isaac Lab image ships Isaac Sim + isaaclab only under its bundled
     # interpreter (/isaac-sim/python.sh) and bakes no npa code. Branch npa code
     # is injected at start either from an S3 source tarball
@@ -1790,7 +1798,7 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     # boto3 is installed to a writable target dir for the S3 client.
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
         return f"""set -euo pipefail
-export NPA_SKIP_EAGER_IMPORTS=1
+{vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
@@ -1815,7 +1823,7 @@ fi
 "$PYBIN" -m npa.workflows.sim2real {subcommand}
 """
     return f"""set -euo pipefail
-if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
   python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
 import os, sys, tarfile, urllib.parse, boto3
@@ -1847,10 +1855,7 @@ def _kubernetes_component_env(
     )
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
-    safe.setdefault("HF_HOME", "/tmp/hf_home")
-    safe.setdefault("NPA_COSMOS_REASON2_CACHE", "/tmp/hf_home/cosmos-reason2")
-    safe.setdefault("NPA_COSMOS_REASON3_CACHE", "/tmp/hf_home/cosmos-reason3")
-    safe.setdefault("NPA_COSMOS_REASON_CACHE", "/tmp/hf_home/cosmos-reason2")
+    apply_cosmos_reason_kubernetes_env(safe)
     for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
