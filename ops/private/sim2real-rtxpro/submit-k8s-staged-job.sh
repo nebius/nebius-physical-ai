@@ -34,6 +34,45 @@ if [ -z "${REG}" ]; then
   echo "Set REGISTRY or configure storage.registry in ~/.npa/config.yaml" >&2
   exit 1
 fi
+
+# Preflight: every image must be registry-qualified before we apply the Job.
+TRAINER_IMAGE="${TRAINER_IMAGE:-${REG}/npa-lerobot-vlm-rl:0.1.0}"
+VLM_IMAGE="${VLM_IMAGE:-${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120}"
+EVAL_IMAGE="${EVAL_IMAGE:-${REG}/npa-sim2real-eval:0.1.1-genuine-sm120}"
+AUGMENT_IMAGE="${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
+POLICY_IMAGE="${POLICY_IMAGE:-${REG}/npa-sim2real-reference-policy:0.1.1}"
+ISAAC_IMAGE="${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
+ORCHESTRATOR_IMAGE="${ORCHESTRATOR_IMAGE:-${TRAINER_IMAGE}}"
+
+"${ROOT}/npa/.venv/bin/python" - \
+  "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${VLM_IMAGE}" "${EVAL_IMAGE}" \
+  "${AUGMENT_IMAGE}" "${POLICY_IMAGE}" "${ISAAC_IMAGE}" <<'PY'
+import sys
+from npa.guardrails.skypilot import unresolved_image_placeholders
+from npa.workflows.sim2real_health import _looks_registry_qualified
+
+labels = (
+    "orchestrator",
+    "trainer",
+    "vlm",
+    "eval",
+    "augment",
+    "policy",
+    "isaac",
+)
+bad: list[str] = []
+for label, image in zip(labels, sys.argv[1:], strict=True):
+    if not image or unresolved_image_placeholders(image) or not _looks_registry_qualified(image):
+        bad.append(f"{label}={image!r}")
+if bad:
+    print("Preflight failed: images must be registry-qualified (<registry>/<name>:<tag>).", file=sys.stderr)
+    for item in bad:
+        print(f"  {item}", file=sys.stderr)
+    print("Set REGISTRY in ~/.npa/config.yaml or export fully-qualified TRAINER_IMAGE, VLM_IMAGE, etc.", file=sys.stderr)
+    sys.exit(1)
+print("Preflight OK: all workflow images are registry-qualified.")
+PY
+
 LOG="/tmp/sim2real-cluster/${RUN_ID}.log"
 mkdir -p /tmp/sim2real-cluster
 
@@ -88,7 +127,7 @@ spec:
         - name: npa-nebius-registry
       containers:
         - name: orchestrator
-          image: ${REG}/npa-lerobot-vlm-rl:0.1.0
+          image: ${ORCHESTRATOR_IMAGE}
           imagePullPolicy: Always
           resources:
             limits:
@@ -107,19 +146,19 @@ spec:
             - name: S3_ENDPOINT_URL
               value: "${ENDPOINT}"
             - name: TRAINER_IMAGE
-              value: "${REG}/npa-lerobot-vlm-rl:0.1.0"
+              value: "${TRAINER_IMAGE}"
             - name: VLM_IMAGE
-              value: "${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120"
+              value: "${VLM_IMAGE}"
             - name: EVAL_IMAGE
-              value: "${REG}/npa-sim2real-eval:0.1.1-genuine-sm120"
+              value: "${EVAL_IMAGE}"
             - name: NPA_REGISTRY
               value: "${REG}"
             - name: AUGMENT_IMAGE
-              value: "${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
+              value: "${AUGMENT_IMAGE}"
             - name: POLICY_IMAGE
-              value: "${POLICY_IMAGE:-${REG}/npa-sim2real-reference-policy:0.1.1}"
+              value: "${POLICY_IMAGE}"
             - name: ISAAC_IMAGE
-              value: "${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
+              value: "${ISAAC_IMAGE}"
             - name: NPA_SIM2REAL_ISAAC_TASK
               value: "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
             - name: NPA_SIM2REAL_SIM_BACKEND
@@ -215,7 +254,7 @@ YAML
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"
 echo "run_id=${RUN_ID} job=${JOB} manifest=${MANIFEST} log=${LOG}"
-echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} env_count=${NPA_ENV_COUNT:-10000} isaac_image=${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1} augment_image=${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
+echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} env_count=${NPA_ENV_COUNT:-10000} isaac_image=${ISAAC_IMAGE} augment_image=${AUGMENT_IMAGE}"
 
 MONITOR_SCRIPT="$(cd "$(dirname "$0")" && pwd)/monitor-k8s-job.sh"
 MONITOR_SESSION="${MONITOR_TMUX_SESSION:-sim2real-cluster-live}"
