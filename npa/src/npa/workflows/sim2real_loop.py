@@ -1627,7 +1627,7 @@ def run_policy_rollout_component(
     iteration: int,
     train_envs_uri: str,
 ) -> list[Path]:
-    """Run swappable LeRobot/Cortex policy image to produce action rollouts."""
+    """Run swappable LeRobot policy image to produce action rollouts."""
 
     if config.byo_policy_command.strip():
         return _run_policy_rollouts_via_command(
@@ -4394,7 +4394,7 @@ def run_policy_actions_component_from_s3(
     rollout_count: int,
     steps_per_rollout: int,
 ) -> dict[str, Any]:
-    """Sibling-job entrypoint: swappable LeRobot/Cortex policy container contract."""
+    """Sibling-job entrypoint: swappable LeRobot policy container contract."""
 
     from npa.clients.storage import StorageClient
     from npa.workflows.sim2real_envgen import EnvGenConfig, write_action_conditioned_envs
