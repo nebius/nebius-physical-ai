@@ -93,17 +93,21 @@ cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 ```
 
-Then from `~/npa-sim2real-demo` — **new terminal, paste once:**
+Then from `~/npa-sim2real-demo` — **new terminal, paste once** (installs `run.sh` + runs demo):
 
 ```bash
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HOME}/.nebius/bin:${PATH}"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
 export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
 [[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
+
+REPO="${HOME}/npa-sim2real-demo/nebius-physical-ai"
+cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${HOME}/npa-sim2real-demo/run.sh"
+chmod +x "${HOME}/npa-sim2real-demo/run.sh"
 cd ~/npa-sim2real-demo && ./run.sh demo
 ```
 
-Or run the same block from the repo file:
+Or one file from repo (same behavior):
 
 ```bash
 bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh

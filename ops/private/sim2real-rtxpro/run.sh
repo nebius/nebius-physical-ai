@@ -51,6 +51,8 @@ Usage: $(basename "$0") <command> [args]
   sync <run-id>               Sync artifacts from S3; VISUALIZE=1 opens Rerun
   cleanup [options]           Reset tmp + K8s jobs (--run-id, --s3, --dry-run)
   demo                        cleanup + trigger (customer replication from scratch)
+  rehearsal                   Sync golden run from S3 + Rerun (no cluster)
+  full                        Submit + wait + sync + Rerun (cluster end-to-end)
   help
 
 Cleanup options (passed through): --run-id ID, --s3, --local-only, --cluster-only, --dry-run
@@ -91,6 +93,21 @@ case "${CMD}" in
     fi
     export WAIT="${WAIT:-0}"
     exec "${OPS}/trigger-pipeline.sh"
+    ;;
+  rehearsal)
+    # Legacy private-repo command: sync completed golden run, open Rerun.
+    export SUBMIT=0 VISUALIZE="${VISUALIZE:-1}"
+    export RUN_ID="${RUN_ID:-rtxpro-isaac-2x2-20260613t043658z}"
+    exec "${OPS}/run-demo.sh"
+    ;;
+  full)
+    # Legacy private-repo command: submit, wait on cluster, sync + viz.
+    if [ -f "${HOME}/.npa/sim2real-operator.env" ]; then
+      # shellcheck disable=SC1091
+      source "${HOME}/.npa/sim2real-operator.env"
+    fi
+    export WAIT=1 VISUALIZE="${VISUALIZE:-1}" SUBMIT=1
+    exec "${OPS}/run-demo.sh"
     ;;
   help | -h | --help)
     _usage
