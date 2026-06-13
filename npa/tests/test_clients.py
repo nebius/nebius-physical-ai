@@ -143,6 +143,31 @@ def test_storage_client_uploads_and_downloads_directories(
     )
 
 
+def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
+    tmp_path: Path, mock_s3
+) -> None:
+    local = tmp_path / "result.json"
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [{"Contents": []}]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    downloaded = client.download_path(
+        "s3://bucket/prefix/result.json", str(local)
+    )
+
+    assert downloaded == str(local)
+    mock_s3.head_object.assert_called_once_with(
+        Bucket="bucket", Key="prefix/result.json"
+    )
+    mock_s3.download_file.assert_called_once_with(
+        "bucket", "prefix/result.json", str(local)
+    )
+
+
 def test_storage_client_uploads_and_downloads_files(
     tmp_path: Path, mock_s3
 ) -> None:

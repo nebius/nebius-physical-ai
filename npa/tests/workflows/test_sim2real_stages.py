@@ -12,6 +12,7 @@ from npa.workflows.sim2real_stages import (
     effective_heldout_count,
     effective_train_count,
     k8s_image_ready,
+    resolve_augment_frame_count,
     run_augment_stage,
 )
 
@@ -39,6 +40,15 @@ def test_effective_env_counts_use_10k_mandatory_split() -> None:
     assert effective_env_count(config) == 10_000
     assert effective_train_count(config) == 8_000
     assert effective_heldout_count(config) == 2_000
+
+
+def test_resolve_augment_frame_count_scales_with_rollouts(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_SIM2REAL_AUGMENT_FRAME_COUNT", raising=False)
+    monkeypatch.delenv("NPA_SIM2REAL_ROLLOUT_COUNT", raising=False)
+    assert resolve_augment_frame_count(rollout_count=2) == 16
+    assert resolve_augment_frame_count(rollout_count=300) == 1024
+    monkeypatch.setenv("NPA_SIM2REAL_AUGMENT_FRAME_COUNT", "64")
+    assert resolve_augment_frame_count(rollout_count=2) == 64
 
 
 def test_preamble_executes_augment_and_envgen_locally(tmp_path: Path) -> None:

@@ -1597,6 +1597,7 @@ def run_cosmos2_transfer_component(
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_AUGMENT_IMAGE": config.augment_image,
+        "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
     }
     output_json = local_dir / "cosmos2-transfer-result.json"
     result_uri = f"{output_uri.rstrip('/')}/cosmos2-transfer-result.json"
@@ -2235,7 +2236,7 @@ def _download_component_output(
 ) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     client = _storage_client(config)
-    attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "5")))
+    attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12")))
     for attempt in range(attempts):
         if output_json.exists():
             output_json.unlink()
@@ -2287,7 +2288,11 @@ def _normalized_s3_prefix(uri: str) -> str:
 def _read_component_json(output_path: Path, invocation: dict[str, Any]) -> dict[str, Any]:
     if output_path.exists():
         return json.loads(output_path.read_text(encoding="utf-8"))
-    stdout = str(invocation.get("stdout") or "")
+    stdout = str(
+        invocation.get("stdout")
+        or invocation.get("stdout_excerpt")
+        or ""
+    )
     for line in reversed(stdout.splitlines()):
         stripped = line.strip()
         if stripped.startswith("{") and stripped.endswith("}"):
@@ -4351,10 +4356,11 @@ def run_cosmos2_transfer_component_from_s3(
 
     from npa.clients.storage import StorageClient
     from npa.workflows.cosmos_split import Cosmos2TransferConfig, build_cosmos2_transfer_manifest
+    from npa.workflows.sim2real_stages import resolve_augment_frame_count
 
     client = StorageClient.from_environment()
     frames_root = augmented_frames_uri.rstrip("/") + "/"
-    frame_count = 1024
+    frame_count = resolve_augment_frame_count()
     index: list[dict[str, str]] = []
     for index_no in range(frame_count):
         frame_key = f"frame-{index_no:05d}.json"

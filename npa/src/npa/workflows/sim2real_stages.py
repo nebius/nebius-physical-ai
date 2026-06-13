@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import tempfile
 from pathlib import Path
@@ -20,6 +21,20 @@ if TYPE_CHECKING:
 
 DEFAULT_ENV_COUNT = 10_000
 DEFAULT_TRAIN_FRACTION = 0.8
+
+
+def resolve_augment_frame_count(*, rollout_count: int = 0, override: int = 0) -> int:
+    """Scale augment frames with rollout count; cap at 1024 for production runs."""
+
+    if override > 0:
+        return min(1024, override)
+    env_override = int(os.environ.get("NPA_SIM2REAL_AUGMENT_FRAME_COUNT", "0") or "0")
+    if env_override > 0:
+        return min(1024, env_override)
+    rollout = rollout_count or int(os.environ.get("NPA_SIM2REAL_ROLLOUT_COUNT", "0") or "0")
+    if rollout > 0:
+        return min(1024, max(16, rollout * 4))
+    return 1024
 
 
 def effective_env_count(config: Sim2RealLoopConfig) -> int:
@@ -267,7 +282,7 @@ def _reference_augment_local(
     frames_dir = local_dir / "augment" / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(config.seed)
-    frame_count = min(1024, max(16, config.rollout_count * 4))
+    frame_count = resolve_augment_frame_count(rollout_count=config.rollout_count)
     index: list[dict[str, Any]] = []
     for index_no in range(frame_count):
         frame_path = frames_dir / f"frame-{index_no:05d}.json"
