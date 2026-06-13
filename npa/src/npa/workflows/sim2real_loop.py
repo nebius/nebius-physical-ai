@@ -1867,6 +1867,10 @@ def _run_kubernetes_image_component(
             f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
             f"{events_excerpt}"
         )
+    if component == "heldout_eval":
+        grace = int(os.environ.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "20"))
+        if grace > 0:
+            time.sleep(grace)
     _download_component_output(config, output_uri, output_json)
     return {
         "mode": "kubernetes_job",
