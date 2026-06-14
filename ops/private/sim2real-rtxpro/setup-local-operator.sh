@@ -57,6 +57,8 @@ if registry:
     env_lines.extend([
         f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:0.1.0",
         f"VLM_IMAGE={reg}/npa-cosmos3-reason:3.0.1-genuine-sm120",
+        f"AUGMENT_IMAGE={reg}/npa-cosmos2-transfer:2.5.0",
+        f"POLICY_IMAGE={reg}/npa-sim2real-reference-policy:0.1.1",
         f"EVAL_IMAGE={reg}/npa-sim2real-eval:0.1.1-genuine-sm120",
         f"ISAAC_IMAGE={reg}/npa-isaac-lab:2.3.2.post1",
     ])

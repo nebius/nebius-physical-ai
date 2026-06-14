@@ -44,11 +44,11 @@ batch is uploaded before triggering — partial uploads are not detected automat
 
 ### 2. Trigger the pipeline
 
-**Operator pack (Mac — recommended):**
+**Operator pack (Mac — recommended):** see **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)**.
 
 ```bash
 cd ~/npa-sim2real-demo
-./run.sh demo          # cleanup + submit (customer replication from scratch)
+./run.sh demo
 ./run.sh status <RUN_ID>
 ./run.sh sync <RUN_ID>
 ```

@@ -3,7 +3,7 @@
 **Audience:** RTX PRO demo operators on a **Mac laptop** (interface only). GPU work runs on
 Nebius mk8s; artifacts land on S3; you monitor, sync, and open Rerun locally.
 
-**Related:** [CUSTOMER-DEMO.md](./CUSTOMER-DEMO.md) · [sim2real-customer-assets.md](../../../docs/workbench/guides/sim2real-customer-assets.md) · [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md)
+**Related:** [OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md) · [CUSTOMER-DEMO.md](./CUSTOMER-DEMO.md) · [sim2real-customer-assets.md](../../../docs/workbench/guides/sim2real-customer-assets.md) · [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md)
 
 ---
 
@@ -57,9 +57,8 @@ Sync a **completed** golden run from S3 and open Rerun. No Franka sim on the lap
 
 ```bash
 cd ~/npa-sim2real-demo
-./run.sh
-# Genesis golden: RUN_ID=rtxpro-staged-2x2-20260613t011356z ./run.sh
-# Isaac golden:   RUN_ID=rtxpro-isaac-2x2-20260613t043658z ./run.sh
+./run.sh rehearsal
+# Or: RUN_ID=rtxpro-isaac-2x2-20260613t043658z ./run.sh sync rtxpro-isaac-2x2-20260613t043658z
 ```
 
 | Run ID | Backend | Notes |
@@ -70,19 +69,10 @@ cd ~/npa-sim2real-demo
 
 ### B. Full pipeline — stock Franka on cluster
 
-**Submit** (runbook YAML — auto-routes to direct K8s on RTX clusters):
+Use **`./run.sh demo`** — see **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)** §4.
 
-```bash
-cd ~/npa-sim2real-demo/nebius-physical-ai
-export TRIGGER_DATASET_URI=s3://YOUR-BUCKET/sim2real-triggers/trigger-validate-20260611T154016Z/lerobot-pusht/
-
-./npa/.venv/bin/npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
-  --run-id "sim2real-staged-$(date -u +%Y%m%dT%H%M%SZ | tr '[:upper:]' '[:lower:]')" \
-  --var "NPA_SIM2REAL_TRIGGER_DATASET_URI=${TRIGGER_DATASET_URI}" \
-  --var "INNER_ITERATIONS=1" \
-  --var "OUTER_ITERATIONS=2"
-```
+Stock trigger is in `~/.npa/sim2real-operator.env` (example:
+`ops/private/sim2real-rtxpro/sim2real-operator.env.example`).
 
 ## Mac operator interface (copy once)
 

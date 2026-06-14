@@ -3,6 +3,9 @@
 **For Nebius RTX PRO 6000 cluster operators only.** This directory is safe to commit
 (templates + scripts). **Secrets never go here.**
 
+**Start here:** **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)** — full Mac guide (paste block,
+Cosmos versions, commands, troubleshooting).
+
 ## Setup (once per machine)
 
 ```bash
@@ -61,12 +64,11 @@ Requires `~/.npa/config.yaml`, `~/.npa/credentials.yaml`, and kubeconfig on the 
 
 ## Run staged workflow (manual)
 
+Prefer `./run.sh demo` — see **OPERATOR-GUIDE.md**. Direct submit:
+
 ```bash
-source ops/private/sim2real-rtxpro/env.local
-npa workbench health sim2real --checks all
-npa workbench workflow submit \
-  npa/workflows/workbench/sim2real/runbook.yaml \
-  --env-file ops/private/sim2real-rtxpro/env.local
+source ops/private/sim2real-rtxpro/env.local   # or ~/.npa/sim2real-operator.env
+./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
 ```
 
 ## View results
