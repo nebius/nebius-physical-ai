@@ -12,7 +12,7 @@ runner = CliRunner()
 
 
 def test_workbench_trigger_help() -> None:
-    result = runner.invoke(app, ["workbench", "trigger", "--help"])
+    result = runner.invoke(app, ["workbench", "workflow", "trigger", "--help"])
 
     assert result.exit_code == 0
     assert "retrigger Workbench workflows" in result.output
@@ -44,6 +44,7 @@ def test_workbench_trigger_run_passes_byo_endpoint_and_paths(monkeypatch) -> Non
         app,
         [
             "workbench",
+            "workflow",
             "trigger",
             "run",
             "--s3-endpoint",

@@ -259,6 +259,7 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         env="locomotion-smoke",
         output=str(output_path),
         container_image="registry.example/sonic-eval:latest",
+        container_gpu_target="",
         container_runtime="podman",
         container_gpus="all",
         container_driver_capabilities="graphics,compute,utility,display",
@@ -271,6 +272,75 @@ def test_sonic_eval_cli_maps_flags_to_sdk(mocker, tmp_path) -> None:
         container_output_path="/eval/out/result.json",
         container_args=["--verbose"],
     )
+
+
+def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
+    onnx = tmp_path / "policy.onnx"
+    onnx.write_bytes(b"onnx")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            str(onnx),
+            "--backend",
+            "container",
+            "--container-image",
+            "registry.example/sonic-eval:latest",
+            "--container-gpu-target",
+            "h100",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "RT-core" in result.output
+    assert "h100" in result.output.lower()
+
+
+def test_sonic_eval_container_render_allows_rt_core_target(mocker, tmp_path) -> None:
+    onnx = tmp_path / "policy.onnx"
+    onnx.write_bytes(b"onnx")
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={
+            "format": "npa_sonic_eval_result_v1",
+            "status": "completed",
+            "backend": "container",
+            "mode": "container",
+            "smoke_level": False,
+            "result_uri": "",
+            "policy": {},
+            "eval": {},
+            "metrics": {},
+            "episodes": [],
+            "warnings": [],
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            str(onnx),
+            "--backend",
+            "container",
+            "--container-image",
+            "registry.example/sonic-eval:latest",
+            "--container-gpu-target",
+            "l40s",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert evaluate.call_args.kwargs["container_gpu_target"] == "l40s"
 
 
 def test_sonic_deploy_runtime_validation() -> None:

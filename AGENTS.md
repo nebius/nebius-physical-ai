@@ -10,6 +10,7 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 
 ## Codex Skills
 
+- `.agents/skills/platform/context-efficiency/SKILL.md`: apply on every turn to minimize context ingestion, keep chat memory lean, avoid full-workspace scans, and route work to the right model tier.
 - `.agents/skills/platform/quickstart/SKILL.md`: first-time setup, zero-credential first run, install, Nebius auth, and the contributor dev/test loop.
 - `.agents/skills/workbench/cookbooks/SKILL.md`: working end-to-end cookbooks mapped to their validated entrypoints (BDD100K, sim-to-real, VLM-eval loop, LeRobot benchmarks, Isaac Lab BYOF).
 - `.agents/skills/workbench/workbench-tool/SKILL.md`: workbench API/CLI/SDK/container pattern and S3 data flow.
@@ -21,6 +22,8 @@ Nebius Physical AI provides containerized workbench tools and SkyPilot workflows
 - `.agents/skills/workbench/lerobot/SKILL.md`: LeRobot policy training, serving, inference, datasets, and validation.
 - `.agents/skills/workbench/fiftyone/SKILL.md`: FiftyOne curation, visualization, public access, and app behavior.
 - `.agents/skills/workbench/vlm-eval/SKILL.md`: VLM-eval scoring, stub/self-hosted/api backends, benchmark sweeps, the sim-to-real loop, and the zero-credential first run.
+- `.agents/skills/workbench/token-factory/SKILL.md`: Nebius Token Factory native workflows — the OpenAI-compatible hosted-inference client, the token-factory tool (caption/generate), the vlm-eval api backend, and the zero-GPU Token Factory SkyPilot workflows.
+- `.agents/skills/workbench/compose-cloud-tokenfactory/SKILL.md`: composing pipelines that pair Nebius AI Cloud compute (serverless/k8s/VM GPU) with hosted Token Factory inference — getting both tokens, the S3 contract, and the runner-script vs serial-YAML composition styles.
 - `.agents/skills/workbench/genesis/SKILL.md`: Genesis simulation, RL teacher training, and EGL/DRI rendering limits.
 - `.agents/skills/workbench/isaac-lab/SKILL.md`: Isaac Lab RT-core routing, headless training, workflows, and custom forks.
 - `.agents/skills/workbench/cosmos/SKILL.md`: Cosmos world-model serving, backend selection, downloads, and rendering limits.
