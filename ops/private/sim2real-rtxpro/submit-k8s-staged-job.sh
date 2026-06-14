@@ -207,6 +207,16 @@ spec:
               value: "${TRIGGER_URI}"
             - name: NPA_SIM2REAL_TRIGGER_DATASET_ID
               value: "${TRIGGER_ID}"
+            - name: ASSETS_URI
+              value: "${ASSETS_URI:-}"
+            - name: SCENE_SPEC_URI
+              value: "${SCENE_SPEC_URI:-}"
+            - name: NPA_SIM2REAL_K8S_CONTEXT
+              value: "${NPA_SIM2REAL_K8S_CONTEXT:-${CTX}}"
+            - name: NPA_SIM2REAL_K8S_GPU_PRODUCT
+              value: "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
+            - name: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S
+              value: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-10800}"
           envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
@@ -255,6 +265,13 @@ spec:
                 --k8s-service-account "\${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}"
                 --trigger-dataset-uri "\${NPA_SIM2REAL_TRIGGER_DATASET_URI}"
                 --trigger-dataset-id "\${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}"
+                --assets-uri "\${ASSETS_URI:-}"
+                --scene-spec-uri "\${SCENE_SPEC_URI:-}"
+                --k8s-context "\${NPA_SIM2REAL_K8S_CONTEXT:-}"
+                --k8s-gpu-product "\${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
+                --k8s-job-timeout-s "\${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-10800}"
+                --source-repo "\${NPA_SOURCE_REPO:-https://github.com/nebius/nebius-physical-ai.git}"
+                --source-ref "\${NPA_SOURCE_REF:-feat/sim2real-mandatory-stages}"
                 --upload-artifacts
               )
               python3 -m npa.workflows.sim2real run "\${common_args[@]}" \
