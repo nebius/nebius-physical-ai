@@ -19,6 +19,11 @@ BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
 REG="${REGISTRY:-${_npa_cfg[2]:-}}"
 CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
+export S3_BUCKET="${BUCKET}"
+export NPA_SIM2REAL_BUCKET="${BUCKET}"
+if [[ "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" == *YOUR-BUCKET* ]] && [ -n "${BUCKET}" ]; then
+  export NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI/YOUR-BUCKET/${BUCKET}}"
+fi
 if [ -z "${CTX}" ]; then
   echo "Set k8s_context in ~/.npa/config.yaml (storage or projects.<alias>)" >&2
   exit 1

@@ -39,11 +39,16 @@ _npa_cfg=()
 while IFS= read -r _line; do
   _npa_cfg+=("${_line}")
 done < <(operator_read_config "${ROOT}" 2>/dev/null || true)
-BUCKET="${S3_BUCKET:-${NPA_SIM2REAL_BUCKET:-${_npa_cfg[0]:-}}}"
+BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${S3_ENDPOINT_URL:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}}"
 CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
 export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
 operator_export_kubeconfig "${CTX}" "${ROOT}" || true
+export S3_BUCKET="${BUCKET}"
+export NPA_SIM2REAL_BUCKET="${BUCKET}"
+if [[ "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" == *YOUR-BUCKET* ]] && [ -n "${BUCKET}" ]; then
+  export NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI/YOUR-BUCKET/${BUCKET}}"
+fi
 BRANCH="${NPA_SOURCE_REF:-feat/sim2real-mandatory-stages}"
 PHASE="${CONVERGE_PHASE:-800}"
 TARGET_ENVS="${NPA_ENV_COUNT:-800}"
