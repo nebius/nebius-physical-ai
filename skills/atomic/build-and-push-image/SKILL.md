@@ -13,7 +13,7 @@ or workflow image references for NPA workbench tools.
 ## Procedure
 
 1. Resolve runtime registry settings with `npa configure` or
-   `npa.sdk.config.resolve_runtime_config`.
+   `npa.clients.config.resolve_container_registry` or `npa configure`.
 2. Build from the checked-in Dockerfile for the tool; do not invent a detached
    image source outside the repo.
 3. Tag images with the configured registry prefix and a version that matches the
@@ -26,7 +26,7 @@ or workflow image references for NPA workbench tools.
 
 - CLI: use `docker buildx build`, tool-specific `deploy --container-image`, and
   command help from the affected workbench tool.
-- SDK: resolve registry and project settings through `npa.sdk.config` instead of
+- SDK: resolve registry and project settings through `npa.clients.config` instead of
   hardcoded env reads.
 - YAML: workflow `image_id` values should come from variables or manifests,
   especially SONIC's `npa/src/npa/deploy/sonic_image_manifest.json`.

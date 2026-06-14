@@ -46,9 +46,8 @@ workflow environment variables.
 - CLI: `npa configure` writes runtime config and credentials; `npa
   provision-if-absent` ensures missing S3/Kubernetes resources or reports the
   dry-run plan.
-- SDK: `npa.sdk.config.resolve_runtime_config`,
-  `npa.sdk.config.write_runtime_config`, and
-  `npa.sdk.provisioning.provision_if_absent`.
+- SDK: `npa.provisioning.provision_if_absent` and project settings via
+  `npa.clients.config.resolve_project_storage` / `resolve_environment`.
 - YAML: workflow YAML reads runtime values through environment variables such as
   `NPA_PROJECT_ID`, `NPA_TENANT_ID`, `NPA_REGION`, `NPA_REGISTRY`,
   `NPA_REGISTRY_ID`, `NPA_S3_BUCKET`, `NPA_STORAGE_ENDPOINT`, and AWS S3 keys.
