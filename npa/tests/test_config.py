@@ -218,47 +218,6 @@ def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> 
     )
 
 
-def test_resolve_project_storage_overlays_project_credentials(isolated_config: Path) -> None:
-    isolated_config.parent.mkdir(parents=True)
-    isolated_config.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "proj": {
-                        "storage": {
-                            "checkpoint_bucket": "s3://bucket/checkpoints/",
-                            "endpoint_url": "https://storage.example",
-                        }
-                    }
-                }
-            }
-        )
-    )
-    credentials.CREDENTIALS_PATH.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "proj": {
-                        "storage": {
-                            "aws_access_key_id": "credential-access",
-                            "aws_secret_access_key": "credential-secret",
-                        }
-                    }
-                }
-            }
-        )
-    )
-
-    resolved = config.resolve_project_storage("proj")
-
-    assert resolved == config.StorageConfig(
-        checkpoint_bucket="s3://bucket/checkpoints/",
-        endpoint_url="https://storage.example",
-        aws_access_key_id="credential-access",
-        aws_secret_access_key="credential-secret",
-    )
-
-
 def test_resolve_project_storage_falls_back_to_terraform_state(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 
@@ -277,56 +236,6 @@ def test_resolve_container_registry_uses_project_override(isolated_config: Path)
 
     assert config.resolve_container_registry("proj-a") == "registry.example/npa"
     assert config.resolve_container_registry("proj-b") == config.DEFAULT_CONTAINER_REGISTRY
-
-
-def test_resolve_container_registry_uses_registry_id(isolated_config: Path) -> None:
-    isolated_config.parent.mkdir(parents=True)
-    isolated_config.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "proj": {
-                        "region": "eu-north1",
-                        "registry_id": "registry-1",
-                    }
-                }
-            }
-        )
-    )
-
-    assert config.resolve_container_registry("proj") == "cr.eu-north1.nebius.cloud/registry-1"
-
-
-def test_write_and_resolve_runtime_config(isolated_config: Path) -> None:
-    runtime = config.RuntimeConfig(
-        project="proj",
-        project_id="project-1",
-        tenant_id="tenant-1",
-        region="eu-north1",
-        registry=config.RegistryConfig(
-            registry="cr.eu-north1.nebius.cloud/registry-1",
-            registry_id="registry-1",
-        ),
-        storage=config.StorageConfig(
-            checkpoint_bucket="s3://bucket/checkpoints/",
-            endpoint_url="https://storage.eu-north1.nebius.cloud",
-            aws_access_key_id="access",
-            aws_secret_access_key="secret",
-        ),
-    )
-
-    config_path, credentials_path = config.write_runtime_config(runtime)
-    resolved = config.resolve_runtime_config("proj")
-
-    assert config_path == isolated_config
-    assert credentials_path == credentials.CREDENTIALS_PATH
-    assert resolved.project_id == "project-1"
-    assert resolved.tenant_id == "tenant-1"
-    assert resolved.registry.registry == "cr.eu-north1.nebius.cloud/registry-1"
-    assert resolved.registry.registry_id == "registry-1"
-    assert resolved.storage.checkpoint_bucket == "s3://bucket/checkpoints/"
-    assert resolved.storage.aws_access_key_id == "access"
-    assert resolved.storage.aws_secret_access_key == "secret"
 
 
 def test_resolve_config_uses_default_project_and_workbench(

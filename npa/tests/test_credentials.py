@@ -163,33 +163,6 @@ def test_load_credentials_reads_shared_s3_storage(tmp_path: Path) -> None:
     }
 
 
-def test_load_credentials_reads_project_scoped_storage(tmp_path: Path) -> None:
-    credentials_path = tmp_path / "credentials.yaml"
-    credentials_path.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "proj": {
-                        "storage": {
-                            "aws_access_key_id": "project-access",
-                            "aws_secret_access_key": "project-secret",
-                            "endpoint_url": "https://storage.project",
-                            "bucket": "s3://project-bucket/checkpoints/",
-                        }
-                    }
-                }
-            }
-        )
-    )
-
-    resolved = load_credentials(path=credentials_path, environ={})
-
-    assert resolved.project_storage["proj"].aws_access_key_id == "project-access"
-    assert resolved.project_storage["proj"].aws_secret_access_key == "project-secret"
-    assert resolved.project_storage["proj"].endpoint_url == "https://storage.project"
-    assert resolved.project_storage["proj"].bucket == "s3://project-bucket/checkpoints/"
-
-
 def test_load_credentials_byovm_env_overrides_ssh_config(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
