@@ -27,14 +27,14 @@ if not k8s_context:
             break
 run_id = "sim2real-demo"
 golden_run = str(storage.get("sim2real_golden_run_id", "") or "")
+trigger_run = golden_run or "trigger-validate-20260611T154016Z"
 env_lines = [
     f"NPA_SIM2REAL_RUN_ID={run_id}",
     f"NPA_SIM2REAL_BUCKET={bucket}",
     "NPA_SIM2REAL_PREFIX=sim2real-b",
     "NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht",
-    f"NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://{bucket}/sim2real-triggers/{run_id}/lerobot-pusht/",
-    f"ASSETS_URI=s3://{bucket}/sim2real-assets/pusht/",
-    f"SCENE_SPEC_URI=s3://{bucket}/sim2real-assets/pusht/scene-spec.json",
+    f"NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://{bucket}/sim2real-triggers/{trigger_run}/lerobot-pusht/",
+    "# Leave ASSETS_URI / SCENE_SPEC_URI unset to use built-in stock Isaac tabletop scene.",
     f"AWS_ENDPOINT_URL={endpoint}",
     f"S3_ENDPOINT_URL={endpoint}",
     "NPA_SIM2REAL_SIM_BACKEND=isaac",
