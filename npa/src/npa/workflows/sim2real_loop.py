@@ -708,7 +708,9 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
         "root": f"{root}/",
         "trigger_dataset": config.trigger_dataset_uri,
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
-        "stage_02_assets_stub": f"{root}/stage_02_assets/external_stub.json",
+        "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
+        # Backward-compatible alias retained for older consumers.
+        "stage_02_assets_stub": f"{root}/stage_02_assets/consumed_scene_spec.json",
         "stage_03_augment": f"{root}/augment/manifest.json",
         "stage_04_envs_raw": f"{root}/envs/raw/",
         "stage_05_envs_train": f"{root}/envs/train/",
@@ -1067,7 +1069,11 @@ def run_finalize(
     _write_json_artifact(report_path, report)
     upload_enabled = config.upload_artifacts if upload is None else upload
     if upload_enabled and config.s3_bucket:
-        report["upload"] = upload_run_artifacts(config, local_dir)
+        report["upload"] = upload_run_artifacts(
+            config,
+            local_dir,
+            fail_on_error=True,
+        )
     else:
         report["upload"] = {
             "status": "skipped",
@@ -1989,6 +1995,64 @@ def _wait_kubernetes_job(
     timeout_s: int,
 ) -> str:
     """Poll a sibling Job until it succeeds, fails, or times out."""
+
+    # Pre-check terminal counters first; this avoids false "complete" positives
+    # when the wait helper races stale state or mocked outputs.
+    initial_status = _kubectl(
+        config,
+        [
+            "get",
+            "job",
+            job_name,
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.status.succeeded} {.status.failed}",
+        ],
+        timeout_s=30,
+        check=False,
+    )
+    if initial_status.returncode == 0:
+        parts = (initial_status.stdout or "").strip().split()
+        succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
+        failed = int(parts[1]) if len(parts) > 1 and str(parts[1]).isdigit() else 0
+        if failed >= 1:
+            return "failed"
+        if succeeded >= 1:
+            return "complete"
+
+    # Fast-path: rely on the API server condition watcher when available.
+    # Keep a polling fallback for clusters/tooling where `kubectl wait` is flaky.
+    wait_result = _kubectl(
+        config,
+        [
+            "wait",
+            "--for=condition=complete",
+            f"job/{job_name}",
+            "-n",
+            namespace,
+            f"--timeout={max(1, int(timeout_s))}s",
+        ],
+        timeout_s=max(30, int(timeout_s) + 5),
+        check=False,
+    )
+    if wait_result.returncode == 0:
+        return "complete"
+    failed_result = _kubectl(
+        config,
+        [
+            "wait",
+            "--for=condition=failed",
+            f"job/{job_name}",
+            "-n",
+            namespace,
+            "--timeout=1s",
+        ],
+        timeout_s=10,
+        check=False,
+    )
+    if failed_result.returncode == 0:
+        return "failed"
 
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
     deadline = time.monotonic() + timeout_s
@@ -3263,7 +3327,12 @@ def threshold_decision(
     return {**decision, "decision_uri": str(path)}
 
 
-def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
+def upload_run_artifacts(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    *,
+    fail_on_error: bool = False,
+) -> dict[str, Any]:
     """Upload the run artifact tree to S3-compatible storage."""
 
     if not config.s3_bucket:
@@ -3273,6 +3342,8 @@ def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[st
         destination = f"{_artifact_root_uri(config)}/"
         uploaded = client.upload_directory(str(local_dir), destination)
     except Exception as exc:
+        if fail_on_error:
+            raise Sim2RealLoopError(f"S3 upload failed: {exc}") from exc
         return {
             "status": "blocked",
             "reason": f"S3 upload failed: {exc}",

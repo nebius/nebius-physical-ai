@@ -44,6 +44,11 @@ Full schema list and S3 layout: [sim2real-data-contracts.md](./sim2real-data-con
 
 **State between stages:** `state/workflow_state.json` (quality, outer history, latest decision).
 
+Status update (June 2026): stage-runner waits now pre-check Kubernetes Job
+terminal counters before relying on `kubectl wait`, so already-failed sibling
+jobs are reported as failed immediately instead of being misclassified as
+complete in race/mock edge cases.
+
 ---
 
 ## Quick start (8 knobs)
@@ -64,7 +69,17 @@ SUCCESS_THRESHOLD=0.75
 
 **Before submit:** complete [Hugging Face model access](#hugging-face-model-access-self-hosted-workbench) — accept `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason2-2B`, and `nvidia/Cosmos-Transfer2.5-2B`, put `HF_TOKEN` in `~/.npa/credentials.yaml`, and ensure cluster secret `hf-ngc-tokens` is present.
 
-Submit:
+Run preflight first (recommended):
+
+```bash
+npa workbench health sim2real \
+  --s3-bucket <your-bucket> \
+  --s3-endpoint <your-endpoint> \
+  --k8s-context <your-k8s-context> \
+  --k8s-kubeconfig ~/.npa/clusters/<your-k8s-context>/kubeconfig
+```
+
+Then submit:
 
 ```bash
 npa workbench workflow submit \
@@ -73,14 +88,10 @@ npa workbench workflow submit \
   --var NPA_SIM2REAL_RUN_ID=pusht-demo
 ```
 
-Preflight first:
+Track progress:
 
 ```bash
-npa workbench health sim2real \
-  --s3-bucket <your-bucket> \
-  --s3-endpoint <your-endpoint> \
-  --k8s-context <your-k8s-context> \
-  --k8s-kubeconfig ~/.npa/clusters/<your-k8s-context>/kubeconfig
+npa workbench workflow status <run-id> --watch
 ```
 
 ---
@@ -296,3 +307,9 @@ Asset handoff and scorecard: [sim2real-customer-assets.md](./sim2real-customer-a
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_sim2real_loop.py -q
 npa workbench health sim2real --checks config,coherence
 ```
+
+## Upload behavior (`--upload-artifacts`)
+
+When artifact upload is enabled, upload errors now fail the run instead of being
+silently downgraded. This makes storage/config regressions visible immediately in
+CI and operator dashboards.
