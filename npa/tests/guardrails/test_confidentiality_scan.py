@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 
@@ -11,6 +12,7 @@ from npa.guardrails.confidentiality import (
     main,
     scan_paths,
     scan_text,
+    should_skip_unconfigured_fork_pull_request,
     tracked_text_files,
 )
 
@@ -116,3 +118,51 @@ def test_confidentiality_scan_cli_fails_closed_when_source_missing(tmp_path) -> 
     missing_file = tmp_path / "missing.regex"
 
     assert main(["--repo-root", str(tmp_path), "--pattern-file", str(missing_file)]) == 2
+
+
+def test_should_skip_unconfigured_fork_pull_request(tmp_path) -> None:
+    event_file = tmp_path / "event.json"
+    event_file.write_text(
+        json.dumps(
+            {
+                "repository": {"full_name": "nebius/nebius-physical-ai"},
+                "pull_request": {
+                    "head": {"repo": {"full_name": "contributor/nebius-physical-ai"}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert should_skip_unconfigured_fork_pull_request(
+        "CUSTOMER_DENYLIST",
+        environ={
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(event_file),
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+        },
+    )
+
+
+def test_should_not_skip_same_repo_pull_request(tmp_path) -> None:
+    event_file = tmp_path / "event.json"
+    event_file.write_text(
+        json.dumps(
+            {
+                "repository": {"full_name": "nebius/nebius-physical-ai"},
+                "pull_request": {
+                    "head": {"repo": {"full_name": "nebius/nebius-physical-ai"}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert not should_skip_unconfigured_fork_pull_request(
+        "CUSTOMER_DENYLIST",
+        environ={
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(event_file),
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+        },
+    )

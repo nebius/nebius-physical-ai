@@ -6,6 +6,7 @@ The scanner intentionally reports only locations, never matched text.
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 import os
@@ -139,6 +140,40 @@ def scan_git_diff(repo_root: Path, diff_range: str, denylist: re.Pattern[str]) -
     return scan_text(result.stdout, denylist, source=f"diff:{diff_range}")
 
 
+
+
+def should_skip_unconfigured_fork_pull_request(
+    pattern_env: str,
+    *,
+    environ: Mapping[str, str] = os.environ,
+) -> bool:
+    """Return True when a fork PR workflow cannot access repository secrets."""
+
+    if environ.get(pattern_env, "").strip():
+        return False
+    if environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return False
+
+    event_path = environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        return False
+
+    try:
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    except OSError:
+        return False
+
+    pull_request = event.get("pull_request") or {}
+    head_repo = (pull_request.get("head") or {}).get("repo") or {}
+    head_full_name = head_repo.get("full_name")
+    base_full_name = (event.get("repository") or {}).get("full_name") or environ.get(
+        "GITHUB_REPOSITORY"
+    )
+    if not head_full_name or not base_full_name:
+        return False
+    return head_full_name != base_full_name
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
@@ -164,6 +199,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Match denylist regexes case-insensitively.",
     )
     args = parser.parse_args(argv)
+
+    if should_skip_unconfigured_fork_pull_request(args.pattern_env):
+        print(
+            "confidentiality scan skipped on fork pull request "
+            f"({args.pattern_env} secrets are unavailable to fork workflows)"
+        )
+        return 0
 
     try:
         source_pattern = load_denylist_pattern(
