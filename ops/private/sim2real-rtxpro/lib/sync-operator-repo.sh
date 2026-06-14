@@ -5,25 +5,19 @@
 #   source .../sync-operator-repo.sh
 #   sync_operator_repo /path/to/nebius-physical-ai feat/sim2real-mandatory-stages
 
-sync_operator_repo() {
-  local repo="${1:?repo path required}"
-  local branch="${2:?branch required}"
-  local remote="${3:-origin}"
-  local git_bin=""
-
-  sync_operator_find_git() {
-    if [[ -n "${GIT:-}" && -x "${GIT}" ]]; then
-      git_bin="${GIT}"
-      return 0
-    fi
-    local candidate
-    for candidate in "$(command -v git 2>/dev/null || true)" /usr/bin/git /opt/homebrew/bin/git; do
-      [[ -n "${candidate}" && -x "${candidate}" ]] || continue
-      git_bin="${candidate}"
-      export GIT="${git_bin}"
-      return 0
-    done
-    cat >&2 <<'EOF'
+sync_operator_find_git() {
+  local candidate
+  if [[ -n "${GIT:-}" && -x "${GIT}" ]]; then
+    printf '%s\n' "${GIT}"
+    return 0
+  fi
+  for candidate in "$(command -v git 2>/dev/null || true)" /usr/bin/git /opt/homebrew/bin/git; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    export GIT="${candidate}"
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+  cat >&2 <<'EOF'
 ERROR: git not found.
 
 Install Xcode command-line tools on Mac:
@@ -31,45 +25,56 @@ Install Xcode command-line tools on Mac:
 
 Then open a new terminal and re-run.
 EOF
-    return 1
-  }
+  return 1
+}
 
-  sync_operator_die() {
-    echo "ERROR: $*" >&2
-    return 1
-  }
+sync_operator_clone_if_missing() {
+  local repo="${1:?repo path required}"
+  local branch="${2:?branch required}"
+  local remote_url="${3:-https://github.com/nebius/nebius-physical-ai.git}"
+  local git_bin="${4:?git required}"
 
-  sync_operator_find_git || return 1
-
-  if [[ ! -d "${repo}" ]]; then
-    sync_operator_die "missing repo directory: ${repo}
-
-Clone once:
-  mkdir -p $(dirname "${repo}")
-  git clone --branch ${branch} https://github.com/nebius/nebius-physical-ai.git "${repo}""
+  if [[ -d "${repo}/.git" ]]; then
+    return 0
+  fi
+  if [[ -e "${repo}" && ! -d "${repo}/.git" ]]; then
+    echo "ERROR: ${repo} exists but is not a git repo — move it aside and re-run" >&2
     return 1
   fi
+  mkdir -p "$(dirname "${repo}")"
+  echo "=== git clone --branch ${branch} ${remote_url} -> ${repo} ==="
+  "${git_bin}" clone --branch "${branch}" -- "${remote_url}" "${repo}"
+}
+
+sync_operator_repo() {
+  local repo="${1:?repo path required}"
+  local branch="${2:?branch required}"
+  local remote="${3:-origin}"
+  local git_bin=""
+
+  git_bin="$(sync_operator_find_git)" || return 1
+  sync_operator_clone_if_missing "${repo}" "${branch}" "https://github.com/nebius/nebius-physical-ai.git" "${git_bin}" || return 1
 
   if [[ ! -d "${repo}/.git" ]]; then
-    sync_operator_die "${repo} is not a git checkout (.git missing)"
+    echo "ERROR: ${repo} is not a git checkout (.git missing)" >&2
     return 1
   fi
 
   (
     cd "${repo}" || exit 1
     if ! "${git_bin}" remote get-url "${remote}" >/dev/null 2>&1; then
-      sync_operator_die "remote ${remote} not configured in ${repo}"
+      echo "ERROR: remote ${remote} not configured in ${repo}" >&2
       exit 1
     fi
 
     echo "=== git fetch ${remote} ${branch} ==="
     if ! "${git_bin}" fetch "${remote}" "${branch}"; then
-      sync_operator_die "git fetch failed — check network and GitHub access"
+      echo "ERROR: git fetch failed — check network and GitHub access" >&2
       exit 1
     fi
 
     if ! "${git_bin}" show-ref --verify --quiet "refs/remotes/${remote}/${branch}"; then
-      sync_operator_die "remote branch ${remote}/${branch} not found after fetch"
+      echo "ERROR: remote branch ${remote}/${branch} not found after fetch" >&2
       exit 1
     fi
 
@@ -87,7 +92,7 @@ Clone once:
 
     if ! "${git_bin}" diff-index --quiet HEAD -- 2>/dev/null; then
       echo "WARN: dirty working tree — stashing local changes before sync"
-      "${git_bin}" stash push -u -m "sim2real-operator-auto-stash $(date -u +%Y%m%dT%H%M%SZ)" || true
+      "${git_bin}" stash push -u -m "sim2real-operator-auto-stash $(/bin/date -u +%Y%m%dT%H%M%SZ)" || true
     fi
 
     echo "=== git pull --ff-only ${remote} ${branch} ==="

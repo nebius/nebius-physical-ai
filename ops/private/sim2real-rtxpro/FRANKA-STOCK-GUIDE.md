@@ -93,9 +93,14 @@ cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
 chmod +x ~/npa-sim2real-demo/run.sh
 ```
 
-Then from **any new Mac terminal** — paste the **full block** from
-`ops/private/sim2real-rtxpro/PASTE-NEW-TERMINAL.sh` (handles git missing, clone,
-wrong branch, dirty tree, ff-only failure → reset):
+Then from **any new Mac terminal** — paste the full block from
+`ops/private/sim2real-rtxpro/PASTE-NEW-TERMINAL.sh`, or run:
+
+```bash
+bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/PASTE-NEW-TERMINAL.sh
+```
+
+**Paste block** (bootstrap clone if needed → sync/pull all cases → install `run.sh` → demo):
 
 ```bash
 bash <<'NPA_SIM2REAL_DEMO'
@@ -104,64 +109,30 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:${HO
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.npa/clusters/npa-rtxpro-mk8s/kubeconfig.resolved}"
 export KUBECONTEXT="${KUBECONTEXT:-npa-rtxpro-mk8s}"
 [[ -f "${HOME}/.npa/sim2real-operator.env" ]] && source "${HOME}/.npa/sim2real-operator.env"
-DEMO="${HOME}/npa-sim2real-demo"
-REPO="${DEMO}/nebius-physical-ai"
+DEMO="${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}"
+REPO="${NPA_SIM2REAL_REPO:-${DEMO}/nebius-physical-ai}"
 BRANCH="feat/sim2real-mandatory-stages"
-REMOTE="origin"
-GIT=""
-find_git() {
+PASTE="${REPO}/ops/private/sim2real-rtxpro/paste-customer-demo.sh"
+if [[ ! -d "${REPO}/.git" ]]; then
+  GIT=""
   for GIT in "$(command -v git 2>/dev/null || true)" /usr/bin/git /opt/homebrew/bin/git; do
-    [[ -n "${GIT}" && -x "${GIT}" ]] && return 0
+    [[ -n "${GIT}" && -x "${GIT}" ]] || continue
+    break
   done
-  echo "ERROR: git not found. Run: xcode-select --install" >&2
-  return 1
-}
-clone_if_missing() {
-  [[ -d "${REPO}/.git" ]] && return 0
-  find_git || return 1
-  echo "=== clone ${BRANCH} -> ${REPO} ==="
+  [[ -n "${GIT}" && -x "${GIT}" ]] || { echo "ERROR: git not found. Run: xcode-select --install" >&2; exit 1; }
+  [[ -e "${REPO}" && ! -d "${REPO}/.git" ]] && { echo "ERROR: ${REPO} exists but is not a git repo" >&2; exit 1; }
   mkdir -p "${DEMO}"
-  if [[ -d "${REPO}" && ! -d "${REPO}/.git" ]]; then
-    echo "ERROR: ${REPO} exists but is not a git repo — move it aside and re-run" >&2
-    return 1
-  fi
+  echo "=== first-time clone ${BRANCH} -> ${REPO} ==="
   "${GIT}" clone --branch "${BRANCH}" -- https://github.com/nebius/nebius-physical-ai.git "${REPO}"
-}
-sync_repo() {
-  find_git || return 1
-  clone_if_missing || return 1
-  cd "${REPO}"
-  echo "=== git fetch ${REMOTE} ${BRANCH} ==="
-  "${GIT}" fetch "${REMOTE}" "${BRANCH}"
-  "${GIT}" show-ref --verify --quiet "refs/remotes/${REMOTE}/${BRANCH}" || { echo "ERROR: remote branch missing" >&2; return 1; }
-  cur="$("${GIT}" symbolic-ref -q --short HEAD 2>/dev/null || true)"
-  if [[ "${cur}" != "${BRANCH}" ]]; then
-    if "${GIT}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
-      "${GIT}" checkout "${BRANCH}"
-    else
-      "${GIT}" checkout -b "${BRANCH}" "${REMOTE}/${BRANCH}"
-    fi
-  fi
-  if ! "${GIT}" diff-index --quiet HEAD -- 2>/dev/null; then
-    echo "WARN: dirty tree — auto-stashing"
-    "${GIT}" stash push -u -m "sim2real-operator-auto-stash $(date -u +%Y%m%dT%H%M%SZ)" || true
-  fi
-  if ! "${GIT}" pull --ff-only "${REMOTE}" "${BRANCH}"; then
-    echo "WARN: ff-only failed — reset to ${REMOTE}/${BRANCH}"
-    "${GIT}" reset --hard "${REMOTE}/${BRANCH}"
-  fi
-  "${GIT}" log -1 --oneline
-}
-install_run_sh() {
-  cp "${REPO}/ops/private/sim2real-rtxpro/mac-run.sh" "${DEMO}/run.sh"
-  chmod +x "${DEMO}/run.sh"
-  echo "Installed ${DEMO}/run.sh"
-}
-sync_repo && install_run_sh && cd "${DEMO}" && exec ./run.sh demo
+fi
+[[ -f "${PASTE}" ]] || { echo "ERROR: missing ${PASTE}" >&2; exit 1; }
+exec bash "${PASTE}"
 NPA_SIM2REAL_DEMO
 ```
 
-Shorter follow-up (repo already synced):
+`paste-customer-demo.sh` then handles: fetch, checkout, dirty stash, ff-only or hard reset, install `run.sh`, `./run.sh demo`.
+
+Shorter follow-up (repo already present):
 
 ```bash
 bash ~/npa-sim2real-demo/nebius-physical-ai/ops/private/sim2real-rtxpro/paste-customer-demo.sh
