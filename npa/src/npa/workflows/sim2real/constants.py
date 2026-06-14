@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from npa.workbench.cosmos.reason import (
-    DEFAULT_REASON2_CACHE as DEFAULT_COSMOS_REASON_CACHE,
-    DEFAULT_REASON2_CACHE as DEFAULT_COSMOS_REASON2_CACHE,
-    DEFAULT_REASON3_CACHE as DEFAULT_COSMOS_REASON3_CACHE,
-)
+# Keep sim2real constants importable without npa.workbench (Isaac held-out siblings
+# bootstrap npa from a source tarball and lack lancedb/pyarrow/fiftyone).
+DEFAULT_COSMOS_REASON_CACHE = "/tmp/hf_home/cosmos-reason2"
+DEFAULT_COSMOS_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
+DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 
 DEFAULT_S3_ENDPOINT = ""
 DEFAULT_BUCKET = ""

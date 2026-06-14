@@ -2037,22 +2037,41 @@ def _wait_kubernetes_job(
         check=False,
     )
     if wait_result.returncode == 0:
-        return "complete"
-    failed_result = _kubectl(
-        config,
-        [
-            "wait",
-            "--for=condition=failed",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            "--timeout=1s",
-        ],
-        timeout_s=10,
-        check=False,
-    )
-    if failed_result.returncode == 0:
-        return "failed"
+        verify = _kubectl(
+            config,
+            [
+                "get",
+                "job",
+                job_name,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.status.succeeded} {.status.failed}",
+            ],
+            timeout_s=30,
+            check=False,
+        )
+        if verify.returncode == 0:
+            parts = (verify.stdout or "").strip().split()
+            succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
+            if succeeded >= 1:
+                return "complete"
+    elif wait_result.returncode != 0:
+        failed_result = _kubectl(
+            config,
+            [
+                "wait",
+                "--for=condition=failed",
+                f"job/{job_name}",
+                "-n",
+                namespace,
+                "--timeout=1s",
+            ],
+            timeout_s=10,
+            check=False,
+        )
+        if failed_result.returncode == 0:
+            return "failed"
 
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
     deadline = time.monotonic() + timeout_s
@@ -2108,6 +2127,12 @@ def ensure_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
     return uri
 
 
+def _sibling_tarball_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    if "__pycache__" in tarinfo.name or tarinfo.name.endswith(".pyc"):
+        return None
+    return tarinfo
+
+
 def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
     """Upload a minimal npa source tarball so sibling Jobs run current code."""
 
@@ -2117,8 +2142,16 @@ def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
     with tempfile.TemporaryDirectory(prefix="npa-sibling-src-") as tmp:
         tarball = Path(tmp) / "npa-source.tgz"
         with tarfile.open(tarball, "w:gz") as archive:
-            archive.add(npa_root / "src", arcname="npa/src")
-            archive.add(npa_root / "pyproject.toml", arcname="npa/pyproject.toml")
+            archive.add(
+                npa_root / "src",
+                arcname="npa/src",
+                filter=_sibling_tarball_filter,
+            )
+            archive.add(
+                npa_root / "pyproject.toml",
+                arcname="npa/pyproject.toml",
+                filter=_sibling_tarball_filter,
+            )
         destination = (
             f"{_artifact_root_uri(config).rstrip('/')}/source/"
             f"npa-{_safe_slug(config.run_id)[:40]}.tgz"
@@ -2413,6 +2446,21 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     # a git clone (NPA_SOURCE_REPO/NPA_SOURCE_REF when the repo is reachable).
     # boto3 is installed to a writable target dir for the S3 client.
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
+        heldout_entry_cmd = (
+            '"$PYBIN" -m npa.workflows.sim2real.heldout_entry '
+            '--heldout-envs-uri "${NPA_SIM2REAL_HELDOUT_ENVS_URI}" '
+            '--inner-evidence-uri "${NPA_SIM2REAL_INNER_EVIDENCE_URI}" '
+            '--output-uri "${NPA_SIM2REAL_OUTPUT_URI}" '
+            '--threshold "${NPA_SIM2REAL_THRESHOLD}" '
+            '--limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}" '
+            '--sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}" '
+            '--isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-}" '
+            '--scene-spec-uri "${NPA_SIM2REAL_SCENE_SPEC_URI:-}" '
+            '--assets-uri "${NPA_SIM2REAL_ASSETS_URI:-}" '
+            '--robot-spec-uri "${NPA_SIM2REAL_ROBOT_SPEC_URI:-}" '
+            '--robot-source "${NPA_SIM2REAL_ROBOT_SOURCE:-}" '
+            '--robot-preset "${NPA_SIM2REAL_ROBOT_PRESET:-}"'
+        )
         return f"""set -euo pipefail
 {vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
 export PYTHONUNBUFFERED=1
@@ -2421,6 +2469,7 @@ if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
 mkdir -p "$DEPS"
 "$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
+"$PYBIN" -m pip install --quiet --target "$DEPS" pyyaml httpx typer rich jinja2 joblib numpy pillow 2>/dev/null || true
 export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
 if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
@@ -2436,13 +2485,12 @@ with tarfile.open("/tmp/npa-src.tgz") as tar:
     tar.extractall("/tmp/npa-source")
 PYB
 export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
-"$PYBIN" -m pip install --quiet --target "$DEPS" tomli 2>/dev/null || true
-if ! "$PYBIN" -c "import npa.workflows.sim2real.cli" 2>/tmp/npa-bootstrap.err; then
+if ! "$PYBIN" -c "import npa.workflows.sim2real.heldout_entry" 2>/tmp/npa-bootstrap.err; then
   echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
   cat /tmp/npa-bootstrap.err >&2 || true
   exit 3
 fi
-"$PYBIN" -m npa.workflows.sim2real {subcommand}
+{heldout_entry_cmd}
 """
     return f"""set -euo pipefail
 {vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then

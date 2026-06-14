@@ -93,4 +93,6 @@ def test_isaac_heldout_script_requires_source_tarball() -> None:
     script = _component_job_script("heldout_eval", sim_backend="isaac")
     assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
     assert "missing NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
+    assert "heldout_entry" in script
+    assert "sim2real.cli" not in script
     assert "git clone" not in script
