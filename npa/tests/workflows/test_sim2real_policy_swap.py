@@ -96,3 +96,10 @@ def test_isaac_heldout_script_requires_source_tarball() -> None:
     assert "heldout_entry" in script
     assert "sim2real.cli" not in script
     assert "git clone" not in script
+
+
+def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
+    script = _component_job_script("envgen_raw_shard")
+    assert "python -m npa.workflows.sim2real_envgen raw-shard" in script
+    assert "python -m npa.workflows.sim2real python" not in script
+    assert "invalid choice" not in script

@@ -2056,6 +2056,11 @@ if ! "$PYBIN" -c "import npa.workflows.sim2real.heldout_entry" 2>/tmp/npa-bootst
 fi
 {heldout_entry_cmd}
 """
+    exec_cmd = (
+        subcommand
+        if component == "envgen_raw_shard"
+        else f"python -m npa.workflows.sim2real {subcommand}"
+    )
     return f"""set -euo pipefail
 {vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
@@ -2073,7 +2078,7 @@ elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
   git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
   export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
 fi
-python -m npa.workflows.sim2real {subcommand}
+{exec_cmd}
 """
 
 
