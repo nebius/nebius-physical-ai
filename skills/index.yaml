@@ -1,0 +1,305 @@
+version: 1
+root: skills
+discovery:
+  scan_first: skills/index.yaml
+  compatibility_aliases:
+    - .agents/skills
+    - .claude/skills
+  rule: "Use this manifest as the source of truth; do not add new skills under split .agents or .claude trees."
+licenses:
+  - path: skills/LICENSE-NVIDIA-COSMOS3-OPENMDW-1.1
+    applies_to:
+      - cosmos3-codebase-nav
+      - cosmos3-env-troubleshoot
+      - cosmos3-setup
+      - cosmos3-inference
+      - cosmos3-post-training
+  - path: skills/NOTICE-NVIDIA-COSMOS3
+    applies_to:
+      - cosmos3-codebase-nav
+      - cosmos3-env-troubleshoot
+      - cosmos3-setup
+      - cosmos3-inference
+      - cosmos3-post-training
+skills:
+  - name: architecture
+    category: atomic
+    when_to_use: "Platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state."
+    path: skills/atomic/architecture/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/architecture/contributor-context.md
+  - name: build-and-push-image
+    category: atomic
+    when_to_use: "Build, tag, validate, or push NPA workbench container images."
+    path: skills/atomic/build-and-push-image/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "sonic", "deploy", "--help"]
+        contains: "--gpu-type"
+      - type: file_exists
+        path: npa/src/npa/deploy/sonic_image_manifest.json
+  - name: cosmos3-codebase-nav
+    category: atomic
+    when_to_use: "Navigate NPA Cosmos3 integration and upstream Cosmos framework files."
+    path: skills/atomic/cosmos3-codebase-nav/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workbench/cosmos/cosmos3.py
+      - type: cli_help
+        args: ["workbench", "cosmos", "check", "--help"]
+        contains: "output"
+  - name: cosmos3-env-troubleshoot
+    category: atomic
+    when_to_use: "Troubleshoot Cosmos3 setup, fetch, inference, CUDA, Docker, and credential failures."
+    path: skills/atomic/cosmos3-env-troubleshoot/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos", "fetch", "--help"]
+        contains: "skip-checkpoint"
+  - name: cosmos3-setup
+    category: atomic
+    when_to_use: "Set up Cosmos3 access, source checkout, Hugging Face reachability, and checkpoint staging."
+    path: skills/atomic/cosmos3-setup/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos", "check", "--help"]
+        contains: "json"
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml
+  - name: gpu-selection
+    category: atomic
+    when_to_use: "Choose or review GPU targets for training, rendering, inference, and workflow YAML resources."
+    path: skills/atomic/gpu-selection/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "isaac-lab", "train", "--help"]
+        contains: "gpu"
+      - type: cli_help
+        args: ["workbench", "sonic", "train", "--help"]
+        contains: "gpu"
+  - name: physical-ai-context
+    category: atomic
+    when_to_use: "Robotics, simulation, GPU routing, sim-to-real, or BDD100K domain context."
+    path: skills/atomic/physical-ai-context/SKILL.md
+    smoke:
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
+          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+  - name: review-checklist
+    category: atomic
+    when_to_use: "Code reviews and risk classification."
+    path: skills/atomic/review-checklist/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["--help"]
+        contains: "workbench"
+  - name: submit-workflow
+    category: atomic
+    when_to_use: "Submit, validate, or debug SkyPilot workflow YAML and runner paths."
+    path: skills/atomic/submit-workflow/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "workflow", "--help"]
+        contains: "workflow"
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
+  - name: super-prompt-patterns
+    category: atomic
+    when_to_use: "Draft, execute, or review Codex super-prompts for this repository."
+    path: skills/atomic/super-prompt-patterns/SKILL.md
+    smoke:
+      - type: file_exists
+        path: AGENTS.md
+  - name: testing-conventions
+    category: atomic
+    when_to_use: "Run or interpret NPA tests, lint checks, and validation reports."
+    path: skills/atomic/testing-conventions/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["--help"]
+        contains: "Nebius Physical AI"
+  - name: cosmos
+    category: tools
+    when_to_use: "Cosmos world model serving, inference, serverless training smoke, backend selection, or rendering limits."
+    path: skills/tools/cosmos/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos", "train", "--help"]
+        contains: "serverless"
+  - name: fiftyone
+    category: tools
+    when_to_use: "FiftyOne deployment, dataset curation, visualization, launch, and load-dataset behavior."
+    path: skills/tools/fiftyone/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "fiftyone", "load-dataset", "--help"]
+        contains: "dataset"
+  - name: genesis
+    category: tools
+    when_to_use: "Genesis simulation, RL teacher training, visual demo generation, and EGL behavior."
+    path: skills/tools/genesis/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "genesis", "train-teacher", "--help"]
+        contains: "serverless"
+  - name: groot
+    category: tools
+    when_to_use: "GR00T model download, finetuning, evaluation, serving, inference, conversion, status, and routing."
+    path: skills/tools/groot/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "groot", "download", "--help"]
+        contains: "model"
+      - type: cli_help
+        args: ["workbench", "groot", "convert", "--help"]
+        contains: "output"
+  - name: isaac-lab
+    category: tools
+    when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
+    path: skills/tools/isaac-lab/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "isaac-lab", "train", "--help"]
+        contains: "task"
+  - name: lancedb
+    category: tools
+    when_to_use: "LanceDB tables, vector queries, LeRobot/BDD100K imports, UDF backfills, and materialized views."
+    path: skills/tools/lancedb/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "lancedb", "create-table", "--help"]
+        contains: "table"
+      - type: cli_help
+        args: ["workbench", "lancedb", "query-table", "--help"]
+        contains: "table"
+  - name: lerobot
+    category: tools
+    when_to_use: "LeRobot policy training, evaluation, serving, inference, dataset conversion, or policy workflows."
+    path: skills/tools/lerobot/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "lerobot", "train", "--help"]
+        contains: "policy"
+  - name: mjlab
+    category: tools
+    when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
+    path: skills/tools/mjlab/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "mjlab", "eval", "--help"]
+        contains: "checkpoint"
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/mjlab-eval.yaml
+  - name: nebius-infra
+    category: tools
+    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, and credential assumptions."
+    path: skills/tools/nebius-infra/SKILL.md
+    smoke:
+      - type: configure_provision_dry_run
+  - name: retargeting
+    category: tools
+    when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
+    path: skills/tools/retargeting/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "sonic", "retargeting", "run", "--help"]
+        contains: "output"
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/retargeting.yaml
+  - name: skypilot-workflows
+    category: tools
+    when_to_use: "SkyPilot workflow authoring, runner scripts, limitations, and cleanup."
+    path: skills/tools/skypilot-workflows/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["skypilot", "bootstrap", "--help"]
+        contains: "SkyPilot"
+  - name: sonic
+    category: tools
+    when_to_use: "SONIC whole-body-control training, export, evaluation, serving, GPU routing, and validation."
+    path: skills/tools/sonic/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "sonic", "export", "--help"]
+        contains: "output"
+      - type: cli_help
+        args: ["workbench", "sonic", "serve", "--help"]
+        contains: "model-repo"
+  - name: workbench-tool
+    category: tools
+    when_to_use: "Add, change, deploy, or call any NPA workbench tool."
+    path: skills/tools/workbench-tool/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "--help"]
+        contains: "Physical AI"
+  - name: cosmos3-inference
+    category: workflows
+    when_to_use: "Run or modify Cosmos3 inference through the public text-to-image SkyPilot workflow."
+    path: skills/workflows/cosmos3-inference/SKILL.md
+    smoke:
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml
+  - name: cosmos3-post-training
+    category: workflows
+    when_to_use: "Plan or review Cosmos3 supervised fine-tuning and post-training support."
+    path: skills/workflows/cosmos3-post-training/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos", "train", "--help"]
+        contains: "runtime"
+  - name: sim-to-real
+    category: workflows
+    when_to_use: "Design, review, or operate sim-to-real data, training, evaluation, and loop-control workflows."
+    path: skills/workflows/sim-to-real/SKILL.md
+    smoke:
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/sim-to-real-loop.yaml
+          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+      - type: cli_help
+        args: ["workbench", "workflow", "trigger", "--help"]
+        contains: "trigger"
+  - name: train-policy
+    category: workflows
+    when_to_use: "Plan, review, or operate robot policy training across LeRobot, Isaac Lab, SONIC, and workflow YAMLs."
+    path: skills/workflows/train-policy/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "lerobot", "train", "--help"]
+        contains: "policy"
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
+          - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
+  - name: workbench-reference-workflows
+    category: workflows
+    when_to_use: "Reference SkyPilot YAMLs, runner scripts, cookbooks, and customer-adaptable pipeline implementations."
+    path: skills/workflows/workbench-reference-workflows/SKILL.md
+    smoke:
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml
+          - npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml
+          - npa/workflows/workbench/skypilot/cosmos3-text-to-image-inference.yaml
+          - npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
+          - npa/workflows/workbench/skypilot/isaac-lab-rl-sweep.yaml
+          - npa/workflows/workbench/skypilot/mjlab-eval.yaml
+          - npa/workflows/workbench/skypilot/retargeting.yaml
+          - npa/workflows/workbench/skypilot/sim-to-real-loop.yaml
+          - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
+          - npa/workflows/workbench/skypilot/sim-to-real-trigger.yaml
+          - npa/workflows/workbench/skypilot/sonic-eval.yaml
+          - npa/workflows/workbench/skypilot/sonic-export-eval.yaml
+          - npa/workflows/workbench/skypilot/sonic-export.yaml
+          - npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml
+          - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
+          - npa/workflows/workbench/skypilot/vlm-eval.yaml
+          - npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml
