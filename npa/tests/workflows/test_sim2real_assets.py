@@ -7,6 +7,7 @@ from pathlib import Path
 
 from npa.workflows.sim2real_assets import (
     run_assets_stage,
+    resolve_robot_spec_from_consumed_doc,
     robot_spec_doc_from_consumed,
     scene_spec_doc_from_consumed,
 )
@@ -59,3 +60,42 @@ def test_robot_spec_doc_from_consumed_stock_returns_none() -> None:
         "robot_spec": {"preset": "franka"},
     }
     assert robot_spec_doc_from_consumed(stock) is None
+
+
+def test_resolve_robot_spec_from_consumed_franka_envelope() -> None:
+    from npa.genesis import robot_assets as ra
+
+    consumed = {
+        "schema": "npa.sim2real.consumed_robot_spec.v1",
+        "status": "stock_franka",
+        "robot_preset": "franka",
+        "robot_spec": {"preset": "franka", "robot_source": "stock_franka"},
+    }
+    spec = resolve_robot_spec_from_consumed_doc(consumed)
+    assert spec is not None
+    assert spec.robot_source == ra.ROBOT_SOURCE_STOCK_FRANKA
+
+
+def test_resolve_robot_spec_from_consumed_ur5e_envelope() -> None:
+    from npa.genesis import robot_assets as ra
+
+    consumed = {
+        "schema": "npa.sim2real.consumed_robot_spec.v1",
+        "status": "preset_pending_urdf",
+        "robot_preset": "ur5e",
+        "robot_spec": {
+            "schema": ra.ROBOT_SPEC_SCHEMA,
+            "preset": "ur5e",
+            "robot_source": ra.ROBOT_SOURCE_BYO_URDF,
+            "name": "ur5e",
+            "ee_link": "tool0",
+            "n_arm_joints": 6,
+            "n_gripper_joints": 0,
+            "isaac_robot_hint": "ur5e",
+            "robot_uri": "",
+        },
+    }
+    spec = resolve_robot_spec_from_consumed_doc(consumed)
+    assert spec is not None
+    assert spec.name == "ur5e"
+    assert spec.ee_link == "tool0"

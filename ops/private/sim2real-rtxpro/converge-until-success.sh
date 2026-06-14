@@ -17,9 +17,18 @@ ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 export NPA_SIM2REAL_REPO="${ROOT}"
 
 ONCE=0
+SINGLE_ATTEMPT=0
+SINGLE_ENVS=""
+SINGLE_ATT_NUM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --once) ONCE=1; shift ;;
+    --single-attempt)
+      SINGLE_ATTEMPT=1
+      SINGLE_ENVS="${2:?env_count required}"
+      SINGLE_ATT_NUM="${3:?attempt required}"
+      shift 3
+      ;;
     -h | --help)
       sed -n '2,8p' "$0"
       exit 0
@@ -165,6 +174,13 @@ cleanup_failed_run() {
 run_attempt() {
   local env_count="$1"
   local attempt="$2"
+  env CONVERGE_PHASE="${PHASE}" \
+    bash "${SCRIPT_DIR}/converge-until-success.sh" --single-attempt "${env_count}" "${attempt}"
+}
+
+run_attempt_impl() {
+  local env_count="$1"
+  local attempt="$2"
   sync_repo
   if [ "${PHASE}" = "10k" ]; then
     export MONITOR_TIMEOUT_S="${MONITOR_TIMEOUT_S:-14400}"
@@ -175,6 +191,7 @@ run_attempt() {
   export NPA_ENV_COUNT="${env_count}"
   export NPA_TRAIN_FRACTION="${NPA_TRAIN_FRACTION:-0.8}"
   export NPA_SIM2REAL_HELDOUT_EVAL_LIMIT="${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-8}"
+  export NPA_SIM2REAL_ROBOT_PRESET="${NPA_SIM2REAL_ROBOT_PRESET:-${ROBOT_PRESET:-franka}}"
   export INNER_ITERATIONS="${INNER_ITERATIONS:-2}"
   export OUTER_ITERATIONS="${OUTER_ITERATIONS:-2}"
   export RUN_ID="converge-${PHASE}-a${attempt}-$(date -u +%Y%m%dT%H%M%Sz | tr '[:upper:]' '[:lower:]')"
@@ -222,6 +239,11 @@ converge_phase() {
 
 log "converge loop start phase=${PHASE} target_envs=${TARGET_ENVS} bucket=${BUCKET}"
 trap 'log "converge loop interrupted"' INT TERM
+
+if [ "${SINGLE_ATTEMPT}" = "1" ]; then
+  run_attempt_impl "${SINGLE_ENVS}" "${SINGLE_ATT_NUM}"
+  exit $?
+fi
 
 if converge_phase "${TARGET_ENVS}"; then
   if [ "${ONCE}" = "1" ]; then

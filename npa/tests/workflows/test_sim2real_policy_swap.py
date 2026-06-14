@@ -131,3 +131,33 @@ def test_engine_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> N
         client=_Client(),
     )
     assert scene.manipuland().asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
+
+
+def test_engine_resolve_heldout_robot_consumed_franka_envelope(tmp_path: Path) -> None:
+    from npa.genesis import robot_assets as ra
+    from npa.workflows.sim2real.engine import _resolve_heldout_robot
+    from npa.workflows.sim2real_assets import CONSUMED_ROBOT_SCHEMA
+
+    consumed = {
+        "schema": CONSUMED_ROBOT_SCHEMA,
+        "status": "stock_franka",
+        "robot_preset": "franka",
+        "robot_spec": {"preset": "franka", "robot_source": "stock_franka"},
+    }
+    spec_path = tmp_path / "consumed_robot_spec.json"
+    spec_path.write_text(json.dumps(consumed), encoding="utf-8")
+
+    class _Client:
+        def download_path(self, uri, dest):
+            Path(dest).write_text(spec_path.read_text(), encoding="utf-8")
+            return dest
+
+    robot = _resolve_heldout_robot(
+        robot_spec_uri="s3://bucket/run/stage_02_assets/consumed_robot_spec.json",
+        robot_source="",
+        robot_preset="",
+        dest_dir=tmp_path / "robot",
+        client=_Client(),
+    )
+    assert robot is not None
+    assert robot.robot_source == ra.ROBOT_SOURCE_STOCK_FRANKA

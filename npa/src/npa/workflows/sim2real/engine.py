@@ -3248,7 +3248,15 @@ def _resolve_heldout_robot(
         spec_local = dest_dir / "robot-spec.json"
         client.download_path(robot_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
-        spec = robot_assets.parse_robot_spec(doc)
+        from npa.workflows.sim2real_assets import resolve_robot_spec_from_consumed_doc
+
+        spec = resolve_robot_spec_from_consumed_doc(
+            doc,
+            robot_preset=robot_preset,
+            robot_source=robot_source,
+        )
+        if spec is None:
+            return None
     else:
         spec = robot_assets.robot_spec_from_inputs(
             robot_source=robot_source,

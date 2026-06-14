@@ -38,6 +38,33 @@ def robot_spec_doc_from_consumed(doc: dict[str, Any]) -> dict[str, Any] | None:
             return nested
     return doc
 
+
+def resolve_robot_spec_from_consumed_doc(
+    doc: dict[str, Any],
+    *,
+    robot_preset: str = "",
+    robot_source: str = "",
+) -> Any:
+    """Parse Stage-2 consumed robot JSON (or bare RobotSpec) into a RobotSpec."""
+
+    from npa.genesis import robot_assets
+
+    preset = str(robot_preset or doc.get("robot_preset") or "").strip().lower()
+    source = str(robot_source or doc.get("robot_source") or "").strip().lower()
+    inner = robot_spec_doc_from_consumed(doc)
+    if inner is None:
+        if preset:
+            return robot_assets.robot_spec_from_preset(preset)
+        return robot_assets.robot_spec_from_inputs(
+            robot_source=source,
+            robot_preset=preset,
+        )
+    preset_in_inner = str(inner.get("preset") or preset or "").strip().lower()
+    if preset_in_inner and not str(inner.get("robot_uri") or "").strip():
+        return robot_assets.robot_spec_from_preset(preset_in_inner)
+    return robot_assets.parse_robot_spec(inner)
+
+
 DEFAULT_CAMERA_STOCK = {
     "workspace": {
         "placement": "stock_overhead",
