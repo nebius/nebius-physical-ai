@@ -177,6 +177,7 @@ _cleanup_s3() {
   fi
   local uri="s3://${BUCKET}/${PREFIX}/${RUN_ID}/"
   echo "=== S3 cleanup ${uri} ==="
+  operator_export_storage_env "${ROOT}" || true
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "DRY-RUN aws s3 rm ${uri} --recursive --endpoint-url ${ENDPOINT}"
   else

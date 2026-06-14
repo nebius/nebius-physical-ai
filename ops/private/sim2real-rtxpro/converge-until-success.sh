@@ -95,6 +95,64 @@ sys.exit(0)
 PY
 }
 
+s3_delete_run_prefix() {
+  local run_id="$1"
+  RUN_ID_DEL="${run_id}" BUCKET_DEL="${BUCKET}" "${ROOT}/npa/.venv/bin/python" - <<'PY'
+import boto3, os, sys, yaml
+from pathlib import Path
+run_id = os.environ["RUN_ID_DEL"]
+bucket = os.environ["BUCKET_DEL"]
+prefix = f"sim2real-b/{run_id}/"
+creds = yaml.safe_load(Path.home().joinpath(".npa/credentials.yaml").read_text())["storage"]
+client = boto3.client(
+    "s3",
+    endpoint_url=creds["endpoint_url"],
+    aws_access_key_id=creds["aws_access_key_id"],
+    aws_secret_access_key=creds["aws_secret_access_key"],
+)
+token = None
+deleted = 0
+while True:
+    kwargs = {"Bucket": bucket, "Prefix": prefix}
+    if token:
+        kwargs["ContinuationToken"] = token
+    resp = client.list_objects_v2(**kwargs)
+    keys = [o["Key"] for o in resp.get("Contents") or []]
+    if not keys:
+        break
+    for key in keys:
+        client.delete_object(Bucket=bucket, Key=key)
+        deleted += 1
+    if not resp.get("IsTruncated"):
+        break
+    token = resp.get("NextContinuationToken")
+print(f"deleted {deleted} objects under {prefix}")
+PY
+}
+
+harvest_failure_logs() {
+  local run_id="$1"
+  local job="sim2real-${run_id}"
+  local out="${STATE_DIR}/failures/${run_id}"
+  mkdir -p "${out}"
+  kubectl --context "${KUBECONTEXT:-${_npa_cfg[3]:-}}" logs "job/${job}" --tail=200 \
+    >"${out}/orchestrator.log" 2>&1 || true
+  kubectl --context "${KUBECONTEXT:-${_npa_cfg[3]:-}}" get jobs -o name 2>/dev/null \
+    | grep -i "${run_id}" | while read -r jref; do
+      name="${jref#job/}"
+      kubectl --context "${KUBECONTEXT:-${_npa_cfg[3]:-}}" logs "${jref}" --tail=80 \
+        >"${out}/${name}.log" 2>&1 || true
+    done
+  log "failure logs -> ${out}/"
+}
+
+apply_autofix() {
+  local run_id="$1"
+  if [ -x "${SCRIPT_DIR}/converge-autofix.sh" ]; then
+    bash "${SCRIPT_DIR}/converge-autofix.sh" "${run_id}" 2>&1 | tee -a "${LOG}" || true
+  fi
+}
+
 cleanup_failed_run() {
   local run_id="$1"
   log "storage cleanup for failed run ${run_id}"
@@ -108,6 +166,11 @@ run_attempt() {
   local env_count="$1"
   local attempt="$2"
   sync_repo
+  if [ "${PHASE}" = "10k" ]; then
+    export MONITOR_TIMEOUT_S="${MONITOR_TIMEOUT_S:-14400}"
+  else
+    export MONITOR_TIMEOUT_S="${MONITOR_TIMEOUT_S:-7200}"
+  fi
   export LAUNCH_MONITOR=0
   export NPA_ENV_COUNT="${env_count}"
   export NPA_TRAIN_FRACTION="${NPA_TRAIN_FRACTION:-0.8}"
@@ -129,7 +192,12 @@ run_attempt() {
 
   log "FAIL run_id=${RUN_ID} (no sim2real-report.json on S3)"
   kubectl --context "${KUBECONTEXT:-${_npa_cfg[3]:-}}" logs "job/${job}" --tail=80 2>&1 | tee -a "${LOG}" || true
+  harvest_failure_logs "${RUN_ID}"
+  apply_autofix "${RUN_ID}"
   cleanup_failed_run "${RUN_ID}"
+  if [ "${CONVERGE_S3_CLEANUP:-1}" = "1" ]; then
+    s3_delete_run_prefix "${RUN_ID}" 2>&1 | tee -a "${LOG}" || true
+  fi
   echo "${RUN_ID}" >> "${STATE_DIR}/failures-${PHASE}.txt"
   return 1
 }
@@ -162,6 +230,7 @@ if converge_phase "${TARGET_ENVS}"; then
   fi
   if [ "${PHASE}" = "10k" ]; then
     log "10k phase success — converge complete"
+    touch "${STATE_DIR}/overnight-complete"
     exit 0
   fi
   log "800-env success — starting 10k validation phase (loop until report lands)"

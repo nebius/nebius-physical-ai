@@ -151,3 +151,29 @@ PY
   export KUBECONFIG="${resolved}"
   export NPA_KUBECONFIG_PATCHED=1
 }
+
+# Export AWS_* for aws CLI S3 cleanup (reads ~/.npa/credentials.yaml).
+operator_export_storage_env() {
+  local root="${1:?root required}"
+  eval "$("${root}/npa/.venv/bin/python" - <<'PY'
+import os, shlex, sys, yaml
+from pathlib import Path
+
+path = Path.home() / ".npa" / "credentials.yaml"
+if not path.exists():
+    sys.exit(0)
+creds = (yaml.safe_load(path.read_text()) or {}).get("storage") or {}
+pairs = []
+for key, env in (
+    ("aws_access_key_id", "AWS_ACCESS_KEY_ID"),
+    ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+    ("endpoint_url", "AWS_ENDPOINT_URL"),
+):
+    val = str(creds.get(key) or "").strip()
+    if val:
+        pairs.append(f"export {env}={shlex.quote(val)}")
+if pairs:
+    print("\n".join(pairs))
+PY
+)"
+}
