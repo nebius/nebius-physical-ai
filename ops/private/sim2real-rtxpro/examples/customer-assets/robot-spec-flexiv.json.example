@@ -1,0 +1,4 @@
+{
+  "preset": "flexiv",
+  "robot_uri": "s3://YOUR-BUCKET/sim2real-assets/YOUR-TASK-ID/flexiv.urdf"
+}

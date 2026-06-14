@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/lib/operator-env.sh"
 source "${SCRIPT_DIR}/lib/operator-config.sh"
 # shellcheck source=lib/registry-pull-secret.sh
 source "${SCRIPT_DIR}/lib/registry-pull-secret.sh"
+# shellcheck source=lib/customer-asset-profile.sh
+source "${SCRIPT_DIR}/lib/customer-asset-profile.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 export NPA_SIM2REAL_REPO="${ROOT}"
 
@@ -38,6 +40,12 @@ fi
 if [ -z "${REG}" ]; then
   echo "Set REGISTRY or configure storage.registry in ~/.npa/config.yaml" >&2
   exit 1
+fi
+
+customer_asset_profile_apply "${SCRIPT_DIR}" "${BUCKET}" "${CUSTOMER_TASK_ID:-${RUN_ID}}" || exit 1
+if [ -n "${CUSTOMER_ASSET_PROFILE_APPLIED:-}" ]; then
+  echo "Customer asset profile: ${CUSTOMER_ASSET_PROFILE_APPLIED} (${CUSTOMER_ASSET_PROFILE_PATH})"
+  customer_asset_profile_print
 fi
 
 TRIGGER_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-s3://${BUCKET}/sim2real-triggers/${RUN_ID}/lerobot-pusht/}}"
@@ -216,6 +224,10 @@ spec:
               value: "${ASSETS_URI:-}"
             - name: SCENE_SPEC_URI
               value: "${SCENE_SPEC_URI:-}"
+            - name: CAMERAS_URI
+              value: "${CAMERAS_URI:-}"
+            - name: NPA_SIM2REAL_CAMERAS_URI
+              value: "${NPA_SIM2REAL_CAMERAS_URI:-${CAMERAS_URI:-}}"
             - name: NPA_SIM2REAL_ROBOT_PRESET
               value: "${NPA_SIM2REAL_ROBOT_PRESET:-${ROBOT_PRESET:-}}"
             - name: NPA_SIM2REAL_ROBOT_SOURCE

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -77,6 +78,58 @@ DEFAULT_CAMERA_STOCK = {
         "dtype": "uint8",
     },
 }
+
+
+def _cameras_from_doc(doc: dict[str, Any]) -> dict[str, Any] | None:
+    cameras = doc.get("cameras")
+    if isinstance(cameras, dict) and cameras:
+        return cameras
+    return None
+
+
+def resolve_stage_cameras(
+    config: Sim2RealLoopConfig,
+    stage_dir: Path,
+    *,
+    client: Any | None = None,
+) -> dict[str, Any]:
+    """Resolve workspace/wrist cameras from CAMERAS_URI or a scene-spec cameras block."""
+
+    from npa.workflows.sim2real_loop import _storage_client
+
+    cameras_uri = (
+        os.environ.get("NPA_SIM2REAL_CAMERAS_URI")
+        or os.environ.get("CAMERAS_URI")
+        or ""
+    ).strip()
+    if cameras_uri:
+        storage = client or _storage_client(config)
+        local = stage_dir / "cameras-input.json"
+        storage.download_path(cameras_uri, str(local))
+        doc = json.loads(local.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and doc:
+            return doc
+
+    scene_input = stage_dir / "scene-spec.json"
+    if scene_input.is_file():
+        parsed = _cameras_from_doc(json.loads(scene_input.read_text(encoding="utf-8")))
+        if parsed is not None:
+            return parsed
+
+    return DEFAULT_CAMERA_STOCK
+
+
+def cameras_from_consumed_uri(uri: str) -> dict[str, Any]:
+    """Load cameras from a Stage-2 ``consumed_scene_spec.json`` path or URI."""
+
+    ref = (uri or "").strip()
+    if not ref:
+        return DEFAULT_CAMERA_STOCK
+    path = Path(ref)
+    if not path.is_file():
+        return DEFAULT_CAMERA_STOCK
+    parsed = _cameras_from_doc(json.loads(path.read_text(encoding="utf-8")))
+    return parsed if parsed is not None else DEFAULT_CAMERA_STOCK
 
 
 @dataclass(frozen=True)
@@ -154,6 +207,16 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
         robot_status = "stock_franka" if robot.is_stock_franka() else "preset_pending_urdf"
         robot_name = f"Stock robot preset ({preset})"
 
+    storage_client = None
+    if (config.s3_bucket and config.s3_endpoint.strip()) or robot_spec_uri_input:
+        storage_client = _storage_client(config)
+    cameras = resolve_stage_cameras(config, stage_dir, client=storage_client)
+    camera_label = (
+        "custom camera placements"
+        if cameras != DEFAULT_CAMERA_STOCK
+        else "stock camera placements"
+    )
+
     consumed_scene = {
         "schema": CONSUMED_SCENE_SCHEMA,
         "stage": 2,
@@ -163,7 +226,7 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
         "assets_uri": config.assets_uri,
         "scene_spec_uri": config.scene_spec_uri,
         "scene_spec": scene_doc,
-        "cameras": DEFAULT_CAMERA_STOCK,
+        "cameras": cameras,
         "next_action": "CONTINUE",
     }
     consumed_robot = {
@@ -211,7 +274,7 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
         "tier": "WORKS",
         "evidence": (
             f"Materialized {scene_status} scene and {robot_status} robot specs "
-            "with stock camera placements for envgen and held-out eval."
+            f"with {camera_label} for envgen and held-out eval."
         ),
         "artifacts": {
             "scene_spec": scene_spec_uri,
@@ -264,7 +327,7 @@ def build_envgen_scene_spec(
         robot_spec_uri=robot_spec_uri,
         robot_preset=config.robot_preset or "franka",
         sim_backend=config.sim_backend or SIM_BACKEND_ISAAC,
-        cameras=DEFAULT_CAMERA_STOCK,
+        cameras=cameras_from_consumed_uri(scene_spec_uri),
     )
 
 

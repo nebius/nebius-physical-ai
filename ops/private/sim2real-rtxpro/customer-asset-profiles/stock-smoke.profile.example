@@ -1,0 +1,6 @@
+# Platform smoke — stock Franka, stock tabletop, stock cameras.
+# Customer uploads LeRobot trigger only.
+ROBOT_MODE=stock_franka
+SCENE_MODE=stock
+OBJECT_MODE=none
+CAMERA_MODE=stock

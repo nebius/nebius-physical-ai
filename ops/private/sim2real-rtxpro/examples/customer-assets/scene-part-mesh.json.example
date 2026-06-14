@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "name": "part",
+      "role": "manipuland",
+      "asset_source": "byo_mesh",
+      "uri": "s3://YOUR-BUCKET/sim2real-assets/YOUR-TASK-ID/part.obj",
+      "pos": [0.5, 0.0, 0.05],
+      "mass": 0.05,
+      "friction": 0.9
+    }
+  ]
+}

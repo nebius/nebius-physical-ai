@@ -10,21 +10,68 @@
 
 ## Stock smoke vs customer production
 
-| Path | Robot | Purpose |
-| --- | --- | --- |
-| **Stock smoke** | NPA default Franka (empty `ROBOT_PRESET`) | Platform validation; supply **only** the LeRobot trigger |
-| **Customer production** | `ROBOT_PRESET=ur5e` / `flexiv` + `ROBOT_SPEC_URI` (URDF) | Real embodiment — not Franka |
+| Path | When to use |
+| --- | --- |
+| **`stock-smoke`** | Platform validation — LeRobot trigger only, stock Franka/table/cameras |
+| **`industrial`** | Production — UR/Flexiv URDF, OBJ parts, scene fixtures, custom cameras together |
 
-| Category | Stock smoke | Customer BYO later |
+Each onboarding axis is independent in one profile:
+
+| Axis | Modes | Customer upload |
 | --- | --- | --- |
-| **Robot** | Franka preset (built-in) | UR5e / UR10e / Flexiv URDF + `npa.sim2real.robot_spec.v1` |
-| **Objects** | Tabletop manipuland from sim backend | OBJ / STL / GLB / PLY / USD |
-| **Scene** | Stock Isaac or Genesis tabletop | Fixture meshes or `SceneSpec` JSON |
-| **Cameras** | Stock workspace + wrist (640×480) | Custom poses in `SceneSpec` |
+| **Robot** | `stock_franka` / `preset` / `byo` | `robot-spec.json` + URDF at `robot_uri` |
+| **Objects** | `none` / `mesh` / `scene_spec` | OBJ/STL/GLB mesh or manipuland block in `SceneSpec` |
+| **Scene** | `stock` / `custom` | Static fixtures (`role: static`) in `SceneSpec` |
+| **Cameras** | `stock` / `custom` | `cameras` block in `SceneSpec` or standalone `cameras.json` |
 
 **Sim backend:** default `isaac` (RT-core held-out). `genesis` remains supported as legacy.
 
 Customer trigger URI and train-env URI definitions: [data contracts § Customer input](./sim2real-data-contracts.md#customer-input-vs-workflow-output).
+
+---
+
+## Asset profiles (one knob, four axes)
+
+```bash
+export CUSTOMER_ASSET_PROFILE=industrial
+export CUSTOMER_TASK_ID=my-batch-20260614       # substitutes YOUR-TASK-ID in profile URIs
+export CUSTOMER_ROBOT_PRESET=flexiv             # optional; default ur5e in industrial profile
+./ops/private/sim2real-rtxpro/trigger-pipeline.sh
+```
+
+Profiles: `ops/private/sim2real-rtxpro/customer-asset-profiles/*.profile.example`.
+Copy to `~/.npa/customer-asset.profile` and set `CUSTOMER_ASSET_PROFILE` to that path.
+
+| Profile | Robot | Scene | Objects | Cameras |
+| --- | --- | --- | --- | --- |
+| `stock-smoke` | Stock Franka | Stock table | — | Stock |
+| `industrial` | UR/Flexiv preset + URDF | Custom fixtures via `SceneSpec` | Mesh or `SceneSpec` | Custom in `SceneSpec` or `CAMERAS_URI` |
+
+Dry-run:
+
+```bash
+CUSTOMER_ASSET_PROFILE=industrial ./ops/private/sim2real-rtxpro/apply-customer-asset-profile.sh
+```
+
+Customer JSON templates (`YOUR-BUCKET` / `YOUR-TASK-ID` placeholders):
+
+- `examples/customer-assets/robot-spec-ur5e.json.example`
+- `examples/customer-assets/robot-spec-flexiv.json.example`
+- `examples/customer-assets/scene-part-mesh.json.example` — manipuland only
+- `examples/customer-assets/scene-spec-full.json.example` — fixtures + part + cameras
+- `examples/customer-assets/cameras-custom.json.example` — standalone camera block
+
+Profile fields:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `ROBOT_MODE` | `stock_franka` / `preset` / `byo` | Arm selection |
+| `ROBOT_PRESET` | `franka` / `ur5e` / `ur10e` / `flexiv` | Preset when not stock Franka |
+| `ROBOT_SPEC_URI` | S3 URI | `robot-spec.json` (+ URDF at `robot_uri` inside) |
+| `SCENE_MODE` | `stock` / `custom` | Custom uses `ASSETS_URI` and/or `SCENE_SPEC_URI` |
+| `OBJECT_MODE` | `none` / `mesh` / `scene_spec` | Manipuland wiring |
+| `CAMERA_MODE` | `stock` / `custom` | Custom via `SceneSpec.cameras` or `CAMERAS_URI` |
+| `CAMERAS_URI` | S3 URI | Optional separate camera JSON |
 
 ---
 
@@ -82,10 +129,11 @@ see [runbook README](../../../npa/workflows/workbench/sim2real/README.md#one-byo
 # Trigger only (Monday stock run)
 export NPA_SIM2REAL_TRIGGER_DATASET_URI="s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/"
 
-# Optional BYO (later)
+# Optional BYO (same submit — set profile or env vars directly)
 export ASSETS_URI="s3://<bucket>/sim2real-assets/<task>/"
 export SCENE_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/scene-spec.json"
-export ROBOT_PRESET="ur5e"                                    # or franka (default)
+export CAMERAS_URI="s3://<bucket>/sim2real-assets/<task>/cameras.json"
+export ROBOT_PRESET="ur5e"
 export ROBOT_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/robot-spec.json"
 ```
 

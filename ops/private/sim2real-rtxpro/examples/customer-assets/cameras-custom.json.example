@@ -1,0 +1,14 @@
+{
+  "workspace": {
+    "placement": "custom",
+    "pos": [1.2, 0.0, 1.5],
+    "look_at": [0.5, 0.0, 0.0],
+    "resolution": [640, 480],
+    "dtype": "uint8"
+  },
+  "wrist": {
+    "placement": "stock_ee_mounted",
+    "resolution": [640, 480],
+    "dtype": "uint8"
+  }
+}

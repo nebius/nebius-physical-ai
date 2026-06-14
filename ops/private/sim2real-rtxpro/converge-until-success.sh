@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/lib/operator-env.sh"
 # shellcheck source=lib/operator-config.sh
 source "${SCRIPT_DIR}/lib/operator-config.sh"
+# shellcheck source=lib/customer-asset-profile.sh
+source "${SCRIPT_DIR}/lib/customer-asset-profile.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 export NPA_SIM2REAL_REPO="${ROOT}"
 
@@ -58,6 +60,7 @@ export NPA_SIM2REAL_BUCKET="${BUCKET}"
 if [[ "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" == *YOUR-BUCKET* ]] && [ -n "${BUCKET}" ]; then
   export NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI/YOUR-BUCKET/${BUCKET}}"
 fi
+customer_asset_profile_apply "${SCRIPT_DIR}" "${BUCKET}" "${CUSTOMER_TASK_ID:-pilot-task}" || exit 1
 BRANCH="${NPA_SOURCE_REF:-feat/sim2real-mandatory-stages}"
 PHASE="${CONVERGE_PHASE:-800}"
 TARGET_ENVS="${NPA_ENV_COUNT:-800}"
@@ -191,7 +194,7 @@ run_attempt_impl() {
   export NPA_ENV_COUNT="${env_count}"
   export NPA_TRAIN_FRACTION="${NPA_TRAIN_FRACTION:-0.8}"
   export NPA_SIM2REAL_HELDOUT_EVAL_LIMIT="${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-8}"
-  export NPA_SIM2REAL_ROBOT_PRESET="${NPA_SIM2REAL_ROBOT_PRESET:-${ROBOT_PRESET:-franka}}"
+  export NPA_SIM2REAL_ROBOT_PRESET="${NPA_SIM2REAL_ROBOT_PRESET:-${ROBOT_PRESET:-}}"
   export INNER_ITERATIONS="${INNER_ITERATIONS:-2}"
   export OUTER_ITERATIONS="${OUTER_ITERATIONS:-2}"
   export RUN_ID="converge-${PHASE}-a${attempt}-$(date -u +%Y%m%dT%H%M%Sz | tr '[:upper:]' '[:lower:]')"

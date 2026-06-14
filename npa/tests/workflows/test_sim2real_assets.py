@@ -6,10 +6,13 @@ import json
 from pathlib import Path
 
 from npa.workflows.sim2real_assets import (
+    cameras_from_consumed_uri,
+    resolve_stage_cameras,
     run_assets_stage,
     resolve_robot_spec_from_consumed_doc,
     robot_spec_doc_from_consumed,
     scene_spec_doc_from_consumed,
+    DEFAULT_CAMERA_STOCK,
 )
 from npa.workflows.sim2real_loop import Sim2RealLoopConfig
 
@@ -99,3 +102,29 @@ def test_resolve_robot_spec_from_consumed_ur5e_envelope() -> None:
     assert spec is not None
     assert spec.name == "ur5e"
     assert spec.ee_link == "tool0"
+
+
+def test_resolve_stage_cameras_from_scene_spec_file(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "stage_02_assets"
+    stage_dir.mkdir()
+    custom = {
+        "workspace": {"placement": "custom", "resolution": [1280, 720], "dtype": "uint8"},
+    }
+    (stage_dir / "scene-spec.json").write_text(
+        json.dumps({"objects": [], "cameras": custom}),
+        encoding="utf-8",
+    )
+    config = Sim2RealLoopConfig(run_id="cam-test", output_dir=tmp_path)
+    resolved = resolve_stage_cameras(config, stage_dir)
+    assert resolved == custom
+
+
+def test_cameras_from_consumed_uri_reads_envelope(tmp_path: Path) -> None:
+    consumed_path = tmp_path / "consumed_scene_spec.json"
+    custom = {"wrist": {"placement": "custom", "resolution": [640, 480], "dtype": "uint8"}}
+    consumed_path.write_text(
+        json.dumps({"schema": "npa.sim2real.consumed_scene_spec.v1", "cameras": custom}),
+        encoding="utf-8",
+    )
+    assert cameras_from_consumed_uri(str(consumed_path)) == custom
+    assert cameras_from_consumed_uri("") == DEFAULT_CAMERA_STOCK
