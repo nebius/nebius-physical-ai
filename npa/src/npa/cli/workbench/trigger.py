@@ -1,4 +1,4 @@
-"""npa workbench trigger - S3 retriggers for Workbench pipelines."""
+"""npa workbench workflow trigger - S3 retriggers for Workbench pipelines."""
 
 from __future__ import annotations
 

@@ -16,9 +16,11 @@ tag_families:
     status: production
 
   cuda13-b300:
-    description: CUDA 13.x runtime for B300 and future Blackwell GPUs
+    description: CUDA 13.x runtime for Blackwell validation images
     gpu_targets:
       - B300
+      - RTX PRO 6000
+      - sm_120
     cuda_version: "13.x"
     pytorch_version_min: "2.9"
     status: blocked-on-upstream

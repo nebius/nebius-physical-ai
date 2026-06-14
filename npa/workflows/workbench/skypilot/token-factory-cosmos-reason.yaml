@@ -1,0 +1,50 @@
+# Physical-AI scene reasoning with Nebius Token Factory (zero-GPU).
+#
+# Points nvidia/Cosmos3-Super-Reasoner (hosted by Token Factory) at scene images
+# and asks for scene understanding plus a robot plan of action. Inference is
+# hosted, so this runs on CPU only. Designed for the "walk the robot to a scene,
+# ask what to do" physical-common-sense loop. Provide the API key as a SkyPilot
+# secret at launch:
+#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#     --secret AWS_SECRET_ACCESS_KEY token-factory-cosmos-reason.yaml
+name: token-factory-cosmos-reason
+execution: serial
+---
+name: token-factory-cosmos-reason
+resources:
+  cloud: kubernetes
+  cpus: 4
+  memory: 16
+  image_id: "docker:${NPA_TOKEN_FACTORY_IMAGE}"
+envs:
+  NPA_TOKEN_FACTORY_IMAGE: "cr.eu-north1.nebius.cloud/<your-registry-id>/npa-cosmos:1.0.9"
+  INPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/scene/"
+  OUTPUT_URI: "s3://<your-bucket-name>/token-factory/<run-id>/scene-reasoning/"
+  MODEL: "nvidia/Cosmos3-Super-Reasoner"
+  TASK: "Describe this scene and give a step-by-step plan of action a robot should follow to operate safely and usefully here."
+  MAX_IMAGES: "8"
+  MAX_TOKENS: "1024"
+  TEMPERATURE: "0.2"
+  # Optional override; defaults to https://api.tokenfactory.nebius.com/v1/.
+  NEBIUS_TOKEN_FACTORY_BASE_URL: ""
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
+setup: |
+  set -e
+  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
+    python3 -m pip install -e /opt/nebius-physical-ai/npa
+  fi
+run: |
+  set -euo pipefail
+  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
+    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+    exit 1
+  fi
+  npa workbench token-factory reason \
+    --input-path "${INPUT_URI}" \
+    --output-path "${OUTPUT_URI}" \
+    --model "${MODEL}" \
+    --task "${TASK}" \
+    --max-images "${MAX_IMAGES}" \
+    --max-tokens "${MAX_TOKENS}" \
+    --temperature "${TEMPERATURE}" \
+    --output json

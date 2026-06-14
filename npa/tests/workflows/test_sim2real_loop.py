@@ -5,11 +5,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 import npa.workflows.sim2real_loop as loop_module
 from npa.sdk.workbench import cosmos2, cosmos3, sim2real
 from npa.workbench.lerobot.policy_container import (
+    PolicyContainerError,
+    VlmSignalUpdateResult,
     parse_vlm_signal_batch,
     run_vlm_signal_training_step,
 )
@@ -18,6 +21,7 @@ from npa.workflows.sim2real_loop import (
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
     Sim2RealLoopConfig,
+    Sim2RealLoopError,
     artifact_uris,
     build_config_from_env,
     convert_vlm_eval_to_rl_signal,
@@ -26,11 +30,18 @@ from npa.workflows.sim2real_loop import (
     generate_action_rollouts,
     run_full_loop,
     run_heldout_eval,
+    run_inner_loop,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "npa" / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+SIM2REAL_ACTIONS = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-actions.yaml"
+)
+SIM2REAL_ENVGEN_SPLIT = (
+    ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "sim2real-envgen-split.yaml"
+)
 COSMOS2_TRANSFER = (
     ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "cosmos2-transfer.yaml"
 )
@@ -515,8 +526,9 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
     ]
     captured = {}
 
-    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold):
+    def fake_genesis_rollouts(env_payload, *, inner_evidence, threshold, scene=None, robot=None):
         captured["envs"] = env_payload
+        captured["scene"] = scene
         captured["inner_evidence"] = inner_evidence
         captured["threshold"] = threshold
         return [
@@ -541,6 +553,7 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
         envs,
         inner_evidence=inner_evidence,
         threshold=0.75,
+        sim_backend="genesis",
     )
 
     assert captured["envs"] == envs
@@ -550,6 +563,317 @@ def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> 
     assert payload["rollout_backend"] == "npa.genesis.env_pick_place.FrankaPickPlaceEnv"
     assert payload["policy_source"] == "inner_evidence_adapter"
     assert "synthetic_signature" not in payload
+
+
+class _FakeMeshClient:
+    """Fake StorageClient that writes JSON/mesh bytes for download_path."""
+
+    def __init__(self, *, spec_doc: dict | None = None, mesh: bytes = b"MESH") -> None:
+        self.spec_doc = spec_doc
+        self.mesh = mesh
+        self.downloads: list[tuple[str, str]] = []
+        self.uploads: list[tuple[str, str]] = []
+
+    def download_path(self, uri: str, local_path: str) -> str:
+        self.downloads.append((uri, local_path))
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith(".json"):
+            Path(local_path).write_text(json.dumps(self.spec_doc or {}))
+        else:
+            Path(local_path).write_bytes(self.mesh)
+        return local_path
+
+    def upload_file(self, local_file: str, bucket_uri: str) -> str:
+        self.uploads.append((local_file, bucket_uri))
+        return bucket_uri
+
+
+def test_resolve_heldout_scene_byo_mesh_records_provenance(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="",
+        assets_uri="s3://bucket/run/object.obj",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert scene is not None
+    obj = scene.manipuland()
+    assert obj.asset_source == sa.ASSET_SOURCE_BYO_MESH
+    assert obj.sha256 == sa.sha256_file(obj.local_path)
+    assert scene.provenance_block()["asset_fallback_used"] is False
+
+
+def test_resolve_heldout_scene_none_without_uris(tmp_path: Path) -> None:
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=_FakeMeshClient(),
+    )
+    assert scene is None
+
+
+def test_resolve_heldout_scene_from_scene_spec_json(tmp_path: Path) -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "widget",
+                "asset_source": "byo_mesh",
+                "uri": "s3://bucket/run/widget.glb",
+            }
+        ],
+        "goal_pos": [0.5, 0.3, 0.04],
+    }
+    client = _FakeMeshClient(spec_doc=doc)
+    scene = loop_module._resolve_heldout_scene(
+        scene_spec_uri="s3://bucket/run/scene-spec.json",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert scene is not None
+    assert scene.manipuland().uri.endswith("widget.glb")
+    assert scene.manipuland().sha256
+
+
+def test_component_heldout_payload_with_scene_attaches_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        # Simulate the env building the mesh and marking it loaded.
+        if scene is not None:
+            for obj in scene.objects:
+                obj.loaded = True
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        scene=scene,
+        sim_backend="genesis",
+    )
+    assert payload["asset_fallback_used"] is False
+    prov = payload["asset_provenance"]
+    assert prov["objects"][0]["asset_source"] == "byo_mesh"
+    assert prov["objects"][0]["loaded"] is True
+    assert prov["objects"][0]["sha256"] == scene.manipuland().sha256
+
+
+def test_component_heldout_payload_raises_when_mesh_not_loaded(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._component_heldout_payload(
+            [{"env_id": "heldout-0000", "seed": 1}],
+            inner_evidence={},
+            threshold=0.75,
+            scene=scene,
+            sim_backend="genesis",
+        )
+
+
+def test_resolve_heldout_robot_none_without_inputs(tmp_path: Path) -> None:
+    robot = loop_module._resolve_heldout_robot(
+        robot_spec_uri="",
+        robot_source="",
+        robot_preset="",
+        dest_dir=tmp_path,
+        client=_FakeMeshClient(),
+    )
+    assert robot is None
+
+
+def test_resolve_heldout_robot_byo_urdf_records_provenance(tmp_path: Path) -> None:
+    from npa.genesis import robot_assets as ra
+
+    doc = {
+        "preset": "ur5e",
+        "robot_source": "byo_urdf",
+        "robot_uri": "s3://bucket/robots/ur5e.urdf",
+    }
+    client = _FakeMeshClient(spec_doc=doc, mesh=b"<robot>urdf</robot>")
+    robot = loop_module._resolve_heldout_robot(
+        robot_spec_uri="s3://bucket/robots/robot-spec.json",
+        robot_source="",
+        robot_preset="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    assert robot is not None
+    assert robot.robot_source == ra.ROBOT_SOURCE_BYO_URDF
+    assert robot.ee_link == "tool0"
+    assert robot.sha256 == ra.sha256_file(robot.local_path)
+    assert robot.provenance()["robot_fallback_used"] is False
+
+
+def test_component_heldout_payload_with_robot_attaches_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import robot_assets as ra
+
+    client = _FakeMeshClient(mesh=b"<robot>urdf</robot>")
+    robot = ra.robot_spec_from_preset("ur5e")
+    robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
+    ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        if robot is not None:
+            robot.loaded = True  # env builds it
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        robot=robot,
+        sim_backend="genesis",
+    )
+    assert payload["robot_fallback_used"] is False
+    prov = payload["robot_provenance"]
+    assert prov["robot_source"] == "byo_urdf"
+    assert prov["loaded"] is True
+    assert prov["ee_link"] == "tool0"
+
+
+def test_component_heldout_payload_raises_when_byo_robot_not_loaded(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.genesis import robot_assets as ra
+
+    client = _FakeMeshClient(mesh=b"<robot>urdf</robot>")
+    robot = ra.robot_spec_from_preset("ur5e")
+    robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
+    ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._component_heldout_payload(
+            [{"env_id": "heldout-0000", "seed": 1}],
+            inner_evidence={},
+            threshold=0.75,
+            robot=robot,
+            sim_backend="genesis",
+        )
+
+
+def test_normalize_heldout_report_propagates_robot_provenance() -> None:
+    payload = {
+        "per_env": [{"env_id": "h-0", "score": 0.9, "success": True}],
+        "robot_provenance": {
+            "schema": "npa.sim2real.robot_provenance.v1",
+            "robot_source": "byo_urdf",
+            "loaded": True,
+            "robot_fallback_used": False,
+        },
+        "robot_fallback_used": False,
+    }
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.5)
+    report = loop_module._normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["robot_provenance"]["robot_source"] == "byo_urdf"
+    assert report["robot_fallback_used"] is False
+
+
+def test_normalize_heldout_report_propagates_provenance() -> None:
+    payload = {
+        "per_env": [{"env_id": "h-0", "score": 0.9, "success": True}],
+        "asset_provenance": {
+            "schema": "npa.sim2real.asset_provenance.v1",
+            "asset_fallback_used": False,
+            "objects": [{"name": "widget", "asset_source": "byo_mesh", "loaded": True}],
+        },
+        "asset_fallback_used": False,
+    }
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.5)
+    report = loop_module._normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["asset_fallback_used"] is False
+    assert report["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
+
+
+def test_run_heldout_eval_component_from_s3_writes_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    monkeypatch.setattr(
+        loop_module.StorageClient, "from_environment", staticmethod(lambda **kw: client)
+    )
+
+    # Seed the env records the component downloads.
+    def download_path(uri, local_path):
+        client.downloads.append((uri, local_path))
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith("heldout/"):
+            Path(local_path).mkdir(parents=True, exist_ok=True)
+            (Path(local_path) / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n"
+            )
+        elif uri.endswith(".json"):
+            Path(local_path).write_text(json.dumps({"reward_trend": [0.2, 0.6]}))
+        else:
+            Path(local_path).write_bytes(b"OBJ-BYTES")
+        return local_path
+
+    monkeypatch.setattr(client, "download_path", download_path)
+
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+        if scene is not None:
+            for obj in scene.objects:
+                obj.loaded = True
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+
+    payload = loop_module.run_heldout_eval_component_from_s3(
+        heldout_envs_uri="s3://bucket/run/heldout/",
+        inner_evidence_uri="s3://bucket/run/inner-evidence.json",
+        output_uri="s3://bucket/run/output/report.json",
+        threshold=0.75,
+        assets_uri="s3://bucket/run/object.obj",
+        sim_backend="genesis",
+    )
+    assert payload["asset_fallback_used"] is False
+    assert payload["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
+    # A consumed scene spec is uploaded alongside the report.
+    uploaded = [u[1] for u in client.uploads]
+    assert any(u.endswith("consumed-scene-spec.json") for u in uploaded)
 
 
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
@@ -610,6 +934,8 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert len(docs) == 1
     task = docs[0]
     assert task["name"] == "sim2real-full-loop"
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert task["resources"]["accelerators"] == "RTX6000:1"
 
     # SkyPilot 0.12.2 does not interpolate ${VAR} inside `envs` or `image_id`.
     # The raw runbook must therefore carry materialized literals and expand env
@@ -634,8 +960,653 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
+    assert "--k8s-gpu-product" in task["run"]
+    assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
+
+
+def test_sim_backend_defaults_to_isaac_and_validates() -> None:
+    config = Sim2RealLoopConfig(run_id="backend-default")
+    assert config.sim_backend == "isaac"
+    assert config.heldout_backend_image() == config.isaac_image
+    config.validate()
+
+    genesis_config = Sim2RealLoopConfig(run_id="backend-genesis", sim_backend="genesis")
+    assert genesis_config.heldout_backend_image() == genesis_config.eval_image
+
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        Sim2RealLoopConfig(run_id="backend-bad", sim_backend="mujoco").validate()
+
+
+def test_build_config_from_env_reads_sim_backend(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_SIM_BACKEND", "GENESIS")
+    config = loop_module.build_config_from_env(run_id="env-backend")
+    assert config.sim_backend == "genesis"
+    override = loop_module.build_config_from_env(run_id="ov", sim_backend="isaac")
+    assert override.sim_backend == "isaac"
+
+
+def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None:
+    envs = [{"env_id": "heldout-0000", "seed": 1}]
+    captured = {}
+
+    def fake_isaac(env_payload, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
+        captured["isaac_called"] = True
+        captured["isaac_task"] = isaac_task
+        return [{"env_id": "heldout-0000", "score": 0.7, "success": False, "details": {}}]
+
+    def fake_genesis(*args, **kwargs):
+        raise AssertionError("genesis rollout must not run for sim_backend=isaac")
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_genesis)
+
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence={"reward_trend": [0.2, 0.5]},
+        threshold=0.75,
+        sim_backend="isaac",
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
+    )
+    assert captured["isaac_called"] is True
+    assert captured["isaac_task"] == "Isaac-Lift-Cube-Franka-v0"
+    assert payload["sim_backend"] == "isaac"
+    assert payload["component_source"] == "isaac_rollout"
+    assert payload["rollout_backend"] == "isaaclab:Isaac-Lift-Cube-Franka-v0"
+    assert payload["schema"] == SCHEMA_HELDOUT_REPORT
+
+
+def test_component_heldout_payload_genesis_backend_unchanged(monkeypatch) -> None:
+    def fake_genesis(env_payload, *, inner_evidence, threshold, scene=None, robot=None):
+        return [{"env_id": "heldout-0000", "score": 0.8, "success": True, "details": {}}]
+
+    def fake_isaac(*args, **kwargs):
+        raise AssertionError("isaac rollout must not run for sim_backend=genesis")
+
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_genesis)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        sim_backend="genesis",
+    )
+    assert payload["sim_backend"] == "genesis"
+    assert payload["component_source"] == "genesis_rollout"
+    assert payload["rollout_backend"] == "npa.genesis.env_pick_place.FrankaPickPlaceEnv"
+
+
+def test_backends_emit_schema_compatible_reports(monkeypatch) -> None:
+    """Both backends must produce the identical per-env report schema."""
+
+    rows = [{"env_id": "heldout-0000", "score": 0.8, "success": True, "details": {"x": 1}}]
+    monkeypatch.setattr(
+        loop_module, "_run_genesis_heldout_rollouts", lambda *a, **k: rows
+    )
+    monkeypatch.setattr(
+        loop_module, "_run_isaac_heldout_rollouts", lambda *a, **k: rows
+    )
+    common = dict(inner_evidence={"reward_trend": [0.2]}, threshold=0.75)
+    genesis = loop_module._component_heldout_payload(rows, sim_backend="genesis", **common)
+    isaac = loop_module._component_heldout_payload(rows, sim_backend="isaac", **common)
+
+    assert genesis["schema"] == isaac["schema"] == SCHEMA_HELDOUT_REPORT
+    for payload in (genesis, isaac):
+        assert set(payload["per_env"][0]) >= {"env_id", "score", "success", "details"}
+        assert payload["policy_source"] == "inner_evidence_adapter"
+        assert "sim_backend" in payload
+    assert genesis["per_env"] == isaac["per_env"]
+
+
+def test_resolve_isaac_scene_stock_without_uris(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+
+    scene = loop_module._resolve_isaac_scene(
+        scene_spec_uri="",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=_FakeMeshClient(),
+    )
+    assert scene is not None
+    manip = scene.manipuland()
+    assert manip.asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
+    assert manip.sha256 == ""
+    assert scene.provenance_block()["asset_fallback_used"] is False
+
+
+def test_resolve_isaac_scene_byo_mesh_records_provenance(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"NAIL-MESH-BYTES")
+    scene = loop_module._resolve_isaac_scene(
+        scene_spec_uri="",
+        assets_uri="s3://bucket/run/nail.obj",
+        byo_mesh_uri="",
+        dest_dir=tmp_path,
+        client=client,
+    )
+    manip = scene.manipuland()
+    assert manip.asset_source == sa.ASSET_SOURCE_BYO_MESH
+    assert manip.sha256 == sa.sha256_file(manip.local_path)
+
+
+def test_isaac_payload_stock_scene_provenance(monkeypatch) -> None:
+    from npa.genesis import scene_assets as sa
+
+    scene = sa.default_isaac_stock_scene_spec()
+
+    def fake_isaac(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
+        # Stock manipuland is materialized by the task env (marks loaded).
+        if scene is not None:
+            scene.manipuland().loaded = True
+        return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+        scene=scene,
+        sim_backend="isaac",
+    )
+    prov = payload["asset_provenance"]
+    assert prov["objects"][0]["asset_source"] == "isaac_stock"
+    assert payload["asset_fallback_used"] is False
+
+
+def test_isaac_payload_byo_mesh_not_loaded_raises(monkeypatch, tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+
+    client = _FakeMeshClient(mesh=b"NAIL-MESH")
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/nail.obj")
+    sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
+
+    # Isaac rollout that "forgets" to import the mesh must trip the no-fallback gate.
+    monkeypatch.setattr(
+        loop_module,
+        "_run_isaac_heldout_rollouts",
+        lambda *a, **k: [{"env_id": "heldout-0000", "score": 0.9, "success": True}],
+    )
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._component_heldout_payload(
+            [{"env_id": "heldout-0000", "seed": 1}],
+            inner_evidence={},
+            threshold=0.75,
+            scene=scene,
+            sim_backend="isaac",
+        )
+
+
+class _FakeMeshConverter:
+    """Fake Isaac Lab converter: writes a USD next to a tracked usd_path."""
+
+    instances: list[str] = []
+
+    def __init__(self, cfg) -> None:
+        out = Path(cfg.usd_dir) / cfg.usd_file_name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("#usda 1.0\n")
+        self.usd_path = str(out)
+        type(self).instances.append(cfg.asset_path)
+
+
+def _install_fake_isaac_converters(monkeypatch, *, kind: dict) -> None:
+    import types
+
+    # Fake isaaclab.sim providing the spawn/property cfg classes the mesh
+    # converter path references (real module needs the Isaac Sim runtime / pxr).
+    root_mod = types.ModuleType("isaaclab")
+    monkeypatch.setitem(sys.modules, "isaaclab", root_mod)
+    sim_mod = types.ModuleType("isaaclab.sim")
+
+    class _Cfg:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    sim_mod.MassPropertiesCfg = _Cfg
+    sim_mod.RigidBodyPropertiesCfg = _Cfg
+    sim_mod.CollisionPropertiesCfg = _Cfg
+    sim_mod.UsdFileCfg = _Cfg
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim_mod)
+
+    mod = types.ModuleType("isaaclab.sim.converters")
+
+    class MeshConverterCfg:
+        def __init__(self, *, asset_path, usd_dir, usd_file_name, force_usd_conversion=True, **kwargs):
+            self.asset_path = asset_path
+            self.usd_dir = usd_dir
+            self.usd_file_name = usd_file_name
+            self.__dict__.update(kwargs)
+
+    class UrdfConverterCfg(MeshConverterCfg):
+        pass
+
+    class MeshConverter(_FakeMeshConverter):
+        pass
+
+    class UrdfConverter(_FakeMeshConverter):
+        def __init__(self, cfg) -> None:
+            super().__init__(cfg)
+            kind["urdf"] = True
+
+    mod.MeshConverter = MeshConverter
+    mod.MeshConverterCfg = MeshConverterCfg
+    mod.UrdfConverter = UrdfConverter
+    mod.UrdfConverterCfg = UrdfConverterCfg
+    monkeypatch.setitem(sys.modules, "isaaclab.sim.converters", mod)
+
+
+def test_isaac_import_mesh_to_usd_dispatches_mesh_converter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _FakeMeshConverter.instances = []
+    kind: dict = {}
+    _install_fake_isaac_converters(monkeypatch, kind=kind)
+    src = tmp_path / "nail.obj"
+    src.write_text("v 0 0 0\n")
+    usd = loop_module._isaac_import_mesh_to_usd(str(src), work_dir=tmp_path / "usd")
+    assert usd.endswith("nail.usd")
+    assert Path(usd).is_file()
+    assert _FakeMeshConverter.instances == [str(src)]
+    assert "urdf" not in kind
+
+
+def test_isaac_import_urdf_to_usd_dispatches_urdf_converter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _FakeMeshConverter.instances = []
+    kind: dict = {}
+    _install_fake_isaac_converters(monkeypatch, kind=kind)
+    src = tmp_path / "robot.urdf"
+    src.write_text("<robot/>\n")
+    usd = loop_module._isaac_import_mesh_to_usd(str(src), work_dir=tmp_path / "usd")
+    assert usd.endswith("robot.usd")
+    assert kind.get("urdf") is True
+
+
+def test_isaac_import_mesh_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(loop_module.Sim2RealLoopError):
+        loop_module._isaac_import_mesh_to_usd(
+            str(tmp_path / "absent.obj"), work_dir=tmp_path / "usd"
+        )
+
+
+def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path) -> None:
+    output_payload = {
+        "schema": SCHEMA_HELDOUT_REPORT,
+        "sim_backend": "isaac",
+        "per_env": [
+            {"env_id": "env-a", "score": 0.81, "success": True, "details": {}},
+        ],
+    }
+    storage = _FakeComponentStorage({"heldout_eval": output_payload})
+    _patch_component_storage(monkeypatch, storage)
+    calls = _patch_kubectl(monkeypatch)
+    config = Sim2RealLoopConfig(
+        run_id="isaac-image-job",
+        s3_bucket="bucket",
+        s3_prefix="neutral-prefix",
+        s3_endpoint="https://storage.example",
+        heldout_envs_uri="s3://bucket/neutral-prefix/run/envs/heldout/",
+        threshold=0.75,
+        k8s_namespace="default",
+        sim_backend="isaac",
+        isaac_image="npa-isaac-lab:2.3.2.post1",
+        source_ref="dev-branch",
+        source_repo="https://example.invalid/repo.git",
+    )
+    run_heldout_eval(
+        config,
+        local_dir=tmp_path,
+        inner_evidence={"schema": "npa.sim2real.inner_loop_evidence.v1", "reward_trend": [0.1]},
+        outer_iteration=1,
+    )
+    apply_call = next(call for call in calls if "apply" in call["cmd"])
+    manifest = json.loads(apply_call["input"])
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "npa-isaac-lab:2.3.2.post1"
+    script = container["args"][0]
+    assert "/isaac-sim/python.sh" in script
+    assert "--sim-backend" in script
+    env_names = {item["name"] for item in container["env"]}
+    assert "NPA_SIM2REAL_SIM_BACKEND" in env_names
+
+
+def _signal_converter_command(tmp_path: Path, *, valid: bool = True) -> str:
+    script = tmp_path / "byo_signal_converter.py"
+    body = (
+        '''
+import json, os
+from pathlib import Path
+
+ev = json.loads(Path(os.environ["NPA_SIM2REAL_EVALUATION_JSON"]).read_text())
+out = Path(os.environ["NPA_SIM2REAL_OUTPUT_JSON"])
+out.parent.mkdir(parents=True, exist_ok=True)
+marker = Path(os.environ["NPA_SIM2REAL_SWAP_MARKER"])
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write("signal_converter\\n")
+'''
+    )
+    if valid:
+        body += (
+            '''
+per_step = [
+    {
+        "step": int(s["step"]),
+        "reward": 0.5,
+        "advantage": 0.1,
+        "target": {"nl_correction": "byo correction", "action_delta": [0.0, 0.0, 0.0]},
+        "error_tags": s.get("error_tags", ["ok"]),
+    }
+    for s in ev["per_step"]
+]
+out.write_text(json.dumps({
+    "schema": os.environ["NPA_SIM2REAL_RL_SIGNAL_SCHEMA"],
+    "rollout_id": ev["rollout_id"],
+    "source": "byo-test",
+    "per_step": per_step,
+}))
+'''
+        )
+    else:
+        body += '\nout.write_text(json.dumps({"schema": "wrong.schema", "per_step": []}))\n'
+    script.write_text(body, encoding="utf-8")
+    return f"{sys.executable} {script}"
+
+
+def _trainer_command(tmp_path: Path, *, valid: bool = True) -> str:
+    script = tmp_path / "byo_trainer.py"
+    body = (
+        '''
+import json, os
+from pathlib import Path
+
+batch = json.loads(Path(os.environ["NPA_SIM2REAL_SIGNAL_JSON"]).read_text())
+out = Path(os.environ["NPA_SIM2REAL_OUTPUT_JSON"])
+out.parent.mkdir(parents=True, exist_ok=True)
+marker = Path(os.environ["NPA_SIM2REAL_SWAP_MARKER"])
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write("trainer\\n")
+n = len(batch.get("signals", []))
+'''
+    )
+    if valid:
+        body += (
+            '''
+out.write_text(json.dumps({
+    "reward_head_after": 0.25 + 0.01 * n,
+    "policy_output_after": [0.06, 0.0, -0.03],
+    "policy_delta_l2": 0.42,
+    "loss_before": 1.0,
+    "loss_after": 0.4,
+    "backend": "byo-test",
+}))
+'''
+        )
+    else:
+        body += '\nout.write_text(json.dumps({"reward_head_after": 0.1}))\n'
+    script.write_text(body, encoding="utf-8")
+    return f"{sys.executable} {script}"
+
+
+def test_byo_signal_converter_swap_invoked_and_recorded(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-signal-swap",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_signal_converter=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} {_signal_converter_command(tmp_path)}"
+        ),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["signal_converter_source"] == "byo_command"
+    assert evidence["trainer_source"] == "reference"
+    assert evidence["iterations"][0]["signal_converter_source"] == "byo_command"
+    assert "signal_converter" in marker.read_text(encoding="utf-8")
+    sample_signal = evidence["iterations"][0]["sample_signal"]
+    assert sample_signal["schema"] == SCHEMA_RL_SIGNAL
+    assert sample_signal["source"] == "byo-test"
+    # The BYO signal must remain parseable by the downstream trainer contract.
+    parse_vlm_signal_batch(sample_signal)
+
+
+def test_byo_signal_converter_malformed_raises_no_fallback(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-signal-bad",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_signal_converter=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} "
+            f"{_signal_converter_command(tmp_path, valid=False)}"
+        ),
+    )
+
+    with pytest.raises(Sim2RealLoopError, match="rl_signal"):
+        run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+
+def test_byo_trainer_command_swap_invoked_and_recorded(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-trainer-swap",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_trainer_command=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} {_trainer_command(tmp_path)}"
+        ),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["trainer_source"] == "byo_command"
+    assert evidence["signal_converter_source"] == "reference"
+    iteration = evidence["iterations"][0]
+    assert iteration["trainer_source"] == "byo_command"
+    update = iteration["update"]
+    assert update["reward_head_after"] == pytest.approx(0.26)
+    assert update["policy_output_after"] == [0.06, 0.0, -0.03]
+    assert update["policy_delta_l2"] == pytest.approx(0.42)
+    assert update["backend"] == "byo-test"
+    # The no-signal control still runs the in-process reference trainer.
+    assert iteration["no_signal_control"]["backend"] != "byo-test"
+    assert "trainer" in marker.read_text(encoding="utf-8")
+
+
+def test_byo_trainer_command_missing_fields_raises_no_fallback(tmp_path: Path) -> None:
+    marker = tmp_path / "swap-marker.log"
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-trainer-bad",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=(
+            f"NPA_SIM2REAL_COMPONENT_MARKER={marker} {_component_command(tmp_path)}"
+        ),
+        byo_trainer_command=(
+            f"NPA_SIM2REAL_SWAP_MARKER={marker} "
+            f"{_trainer_command(tmp_path, valid=False)}"
+        ),
+    )
+
+    with pytest.raises(Sim2RealLoopError, match="policy_output_after"):
+        run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+
+def test_default_inner_loop_provenance_is_reference(tmp_path: Path) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-default-prov",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        byo_vlm_command=_component_command(tmp_path),
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    assert evidence["trainer_source"] == "reference"
+    assert evidence["signal_converter_source"] == "reference"
+
+
+def test_full_loop_writes_rerun_recording_by_default(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-default",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    viz = report["visualization"]
+    assert viz["status"] == "written"
+    assert viz["source"] == "reference"
+    rrd = tmp_path / "reports" / "sim2real.rrd"
+    assert rrd.exists() and rrd.stat().st_size > 0
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "WORKS"
+
+
+def test_full_loop_rerun_disabled_toggle(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-off",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+        rerun_enabled=False,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["status"] == "disabled"
+    assert not (tmp_path / "reports" / "sim2real.rrd").exists()
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "SEAM"
+
+
+def test_full_loop_rerun_warns_when_sdk_missing(monkeypatch, tmp_path: Path) -> None:
+    import npa.workflows.sim2real_viz as viz_module
+
+    def _raise(**_kwargs):
+        raise viz_module.RerunUnavailableError("rerun-sdk is not installed")
+
+    monkeypatch.setattr(viz_module, "emit_sim2real_rerun", _raise)
+    command = _component_command(tmp_path)
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-rerun-warn",
+        output_dir=tmp_path,
+        threshold=0.4,
+        inner_iterations=1,
+        outer_iterations=1,
+        rollout_count=1,
+        steps_per_rollout=2,
+        heldout_env_count=2,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+
+    report = run_full_loop(config)
+
+    assert report["visualization"]["status"] == "skipped"
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_14_rerun_viz"]["tier"] == "WARN"
+
+
+def test_vlm_signal_update_result_from_dict_defaults_and_required() -> None:
+    result = VlmSignalUpdateResult.from_dict(
+        {
+            "reward_head_after": 0.3,
+            "policy_output_after": [0.1, -0.2],
+            "policy_delta_l2": 0.5,
+        }
+    )
+
+    assert result.reward_head_after == 0.3
+    assert result.policy_output_after == [0.1, -0.2]
+    assert result.policy_delta_l2 == 0.5
+    # Safe defaults fill the rest.
+    assert result.policy_output_before == [0.0, 0.0]
+    assert result.backend == "byo_command"
+    assert result.status == "updated"
+    assert result.loss_integration_point == "byo_trainer_command"
+    assert result.to_dict()["policy_delta_l2"] == 0.5
+
+    for missing in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
+        payload = {
+            "reward_head_after": 0.3,
+            "policy_output_after": [0.1],
+            "policy_delta_l2": 0.5,
+        }
+        del payload[missing]
+        with pytest.raises(PolicyContainerError):
+            VlmSignalUpdateResult.from_dict(payload)
+
+    with pytest.raises(PolicyContainerError):
+        VlmSignalUpdateResult.from_dict(
+            {
+                "reward_head_after": 0.3,
+                "policy_output_after": [],
+                "policy_delta_l2": 0.5,
+            }
+        )
+
+
+def test_sim2real_component_workflows_target_rtx_pro_6000() -> None:
+    actions = [
+        doc
+        for doc in yaml.safe_load_all(SIM2REAL_ACTIONS.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
+    envgen = [
+        doc
+        for doc in yaml.safe_load_all(SIM2REAL_ENVGEN_SPLIT.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
+
+    assert actions[0]["resources"]["accelerators"] == "RTXPRO6000:1"
+    assert envgen[0]["resources"]["accelerators"] == "RTXPRO6000:1"
 
 
 def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:

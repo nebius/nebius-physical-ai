@@ -9,6 +9,7 @@ import yaml
 from npa.cli.demo import stage_artifacts
 from npa.cli.main import app
 from npa.clients import config
+from npa.clients import credentials as credentials_mod
 from npa.clients.project_credentials import resolve_credentials
 from npa.errors import ScopedCredentialError
 from fakes import _access_denied, _fake_s3_factory, _manifest
@@ -72,6 +73,63 @@ def test_resolve_credentials_nonexistent_project_raises(
 ) -> None:
     with pytest.raises(ScopedCredentialError, match="missing-project"):
         resolve_credentials(project="missing-project")
+
+
+@pytest.fixture()
+def user_credentials_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Empty machine config plus a user ~/.npa/credentials.yaml with S3 keys."""
+    cfg = tmp_path / ".npa" / "config.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("projects:\n  proj-x: {}\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+
+    for var in (
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    creds_file = tmp_path / ".npa" / "credentials.yaml"
+    creds_file.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "endpoint_url": "https://host-storage.example",
+                    "aws_access_key_id": "host-key",
+                    "aws_secret_access_key": "host-secret",
+                    "bucket": "s3://host-bucket/",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_mod, "CREDENTIALS_PATH", creds_file)
+    return creds_file
+
+
+def test_resolve_credentials_default_falls_back_to_user_credentials_file(
+    user_credentials_file: Path,
+) -> None:
+    resolved = resolve_credentials(project=None)
+
+    assert resolved.endpoint_url == "https://host-storage.example"
+    assert resolved.aws_access_key_id == "host-key"
+    assert resolved.aws_secret_access_key == "host-secret"
+    assert resolved.uses_host_credentials is True
+
+
+def test_resolve_credentials_named_project_requires_allow_host_creds(
+    user_credentials_file: Path,
+) -> None:
+    with pytest.raises(ScopedCredentialError, match="--allow-host-creds"):
+        resolve_credentials(project="proj-x")
+
+    resolved = resolve_credentials(project="proj-x", allow_host_creds=True)
+    assert resolved.aws_access_key_id == "host-key"
+    assert resolved.uses_host_credentials is True
 
 
 def test_demo_stage_cross_project_uses_source_and_target_credentials(

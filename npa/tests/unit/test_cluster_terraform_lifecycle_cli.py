@@ -316,3 +316,54 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert ["terraform", "init"] in stream_calls
     assert ["terraform", "destroy", "-auto-approve"] in stream_calls
+
+
+def test_terraform_env_refreshes_stale_token_by_default(monkeypatch) -> None:
+    # A stale ambient token must NOT shadow the freshly minted profile token.
+    monkeypatch.setenv("TF_VAR_iam_token", "stale-cloud-env-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-cloud-env-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+
+    captured_env: dict[str, str] = {}
+
+    def fake_capture(args, **kwargs):
+        captured_env.update(kwargs.get("env", {}))
+        return _completed("fresh-token\n")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    env = tf_mod._terraform_env("nebius")
+
+    assert env["TF_VAR_iam_token"] == "fresh-token"
+    assert env["NEBIUS_IAM_TOKEN"] == "fresh-token"
+    # The stale token is cleared before minting so it cannot leak into the mint call.
+    assert captured_env.get("TF_VAR_iam_token") in (None, "")
+    assert captured_env.get("NEBIUS_IAM_TOKEN") in (None, "")
+
+
+def test_terraform_env_reuses_token_when_opted_in(monkeypatch) -> None:
+    monkeypatch.setenv("TF_VAR_iam_token", "intentional-ci-token")
+    monkeypatch.setenv("NPA_REUSE_IAM_TOKEN", "1")
+
+    def fail_capture(args, **kwargs):
+        raise AssertionError("must not mint a new token when reuse is opted in")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fail_capture)
+
+    env = tf_mod._terraform_env("nebius")
+
+    assert env["TF_VAR_iam_token"] == "intentional-ci-token"
+
+
+def test_terraform_env_mints_when_no_token_present(monkeypatch) -> None:
+    monkeypatch.delenv("TF_VAR_iam_token", raising=False)
+    monkeypatch.delenv("NEBIUS_IAM_TOKEN", raising=False)
+    monkeypatch.setenv("NPA_REUSE_IAM_TOKEN", "1")
+
+    monkeypatch.setattr(
+        tf_mod, "_run_capture", lambda *a, **k: _completed("minted-token\n")
+    )
+
+    env = tf_mod._terraform_env("nebius")
+
+    assert env["TF_VAR_iam_token"] == "minted-token"

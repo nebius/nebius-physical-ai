@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import joblib
 import numpy as np
@@ -12,16 +13,24 @@ from npa.cli.main import app
 runner = CliRunner()
 
 
-def test_retargeting_registered_under_workbench() -> None:
-    result = runner.invoke(app, ["workbench", "--help"])
+def test_retargeting_registered_under_sonic() -> None:
+    result = runner.invoke(app, ["workbench", "sonic", "--help"])
 
     assert result.exit_code == 0
     assert "retargeting" in result.output
 
 
+def test_removed_tools_not_advertised_in_workbench_help() -> None:
+    result = runner.invoke(app, ["workbench", "--help"])
+
+    assert result.exit_code == 0
+    for removed in ("sim2real", "retargeting", "trigger", "golden-eval", "sim2real-envgen", "data"):
+        assert not re.search(rf"│\s+{re.escape(removed)}\s+", result.output)
+
+
 def test_retargeting_command_help() -> None:
     for command in ("run", "workflow", "status", "list"):
-        result = runner.invoke(app, ["workbench", "retargeting", command, "--help"])
+        result = runner.invoke(app, ["workbench", "sonic", "retargeting", command, "--help"])
 
         assert result.exit_code == 0
         assert "Usage:" in result.output
@@ -49,6 +58,7 @@ def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
         app,
         [
             "workbench",
+            "sonic",
             "retargeting",
             "run",
             "--input-path",
@@ -91,6 +101,7 @@ def test_retargeting_respects_env_dry_run(monkeypatch, tmp_path) -> None:
         app,
         [
             "workbench",
+            "sonic",
             "retargeting",
             "run",
             "--input-path",
@@ -114,6 +125,7 @@ def test_retargeting_rejects_negative_frame_limit() -> None:
         app,
         [
             "workbench",
+            "sonic",
             "retargeting",
             "run",
             "--input-path",
@@ -130,7 +142,7 @@ def test_retargeting_rejects_negative_frame_limit() -> None:
 
 
 def test_retargeting_workflow_path() -> None:
-    result = runner.invoke(app, ["workbench", "retargeting", "workflow", "--output", "json"])
+    result = runner.invoke(app, ["workbench", "sonic", "retargeting", "workflow", "--output", "json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.output)

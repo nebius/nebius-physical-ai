@@ -1,0 +1,63 @@
+{
+  "format": "npa_sm120_image_manifest_v1",
+  "as_of": "2026-06-07T06:51:11Z",
+  "registry": "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw",
+  "target": {
+    "gpu": "RTX PRO 6000 Blackwell",
+    "compute_capability": "sm_120"
+  },
+  "images": [
+    {
+      "name": "npa-base",
+      "tag": "cuda13-b300-sm80-sm90-sm120-latest",
+      "source_tag": "cuda13-b300-sm80-sm90-sm120-20260605T203555Z",
+      "digest": "sha256:629bb75b4b763ff99a164f66fb029c5b82178ab19c21c7d82e063b7f0c60090e",
+      "purpose": "CUDA 13/PyTorch 2.9 base with sm_120-capable runtime dependencies."
+    },
+    {
+      "name": "npa-genesis",
+      "tag": "0.4.6-sm80-sm90-sm120-latest",
+      "source_tag": "0.4.6-sm80-sm90-sm120-20260605T205847Z",
+      "digest": "sha256:88d1a9d7eea8ba03a5988b24c5b25f2e698585b78036f09d7929479a42a12ba9",
+      "purpose": "Genesis/Sim2Real base layered on the sm_120 CUDA 13 runtime."
+    },
+    {
+      "name": "npa-sim2real-envgen",
+      "tag": "0.1.1",
+      "source_tag": "0.1.1-sm120-20260605T2248Z",
+      "digest": "sha256:c1593689b1df1d5eaac6c6c130cd28589038c40645a06aaea310c989631c738e",
+      "purpose": "Sim2Real environment generation image."
+    },
+    {
+      "name": "npa-sim2real-reference-policy",
+      "tag": "0.1.1",
+      "source_tag": "0.1.1-sm120-20260605T2248Z",
+      "digest": "sha256:0f0523d8964f98bc7be77962d96217095c3cff90b0dd19d4c94e6e4b367f3cec",
+      "purpose": "Reference BYO-compatible Sim2Real action policy image."
+    },
+    {
+      "name": "npa-sim2real-eval",
+      "tag": "0.1.0",
+      "digest": "sha256:d38e06dd07fa47f0d30be1efce5b80e249feb04423013fcc6b53706ed38a1a03",
+      "purpose": "Sim2Real evaluation image."
+    },
+    {
+      "name": "npa-lerobot-vlm-rl",
+      "tag": "0.1.0",
+      "digest": "sha256:1500fea2eae5dd9520942339405161bb148fe0bd093e888645b7389c69347dfc",
+      "purpose": "LeRobot VLM/RL image layered on the sm_120 Genesis runtime."
+    },
+    {
+      "name": "npa-cosmos3-reason",
+      "tag": "3.0.0",
+      "digest": "sha256:d862dfd5371b4f73255acefabfe70d1932e57fec61f980ae5c855c62ec10022d",
+      "purpose": "Cosmos3 reasoning image layered on the sm_120 CUDA 13 runtime."
+    },
+    {
+      "name": "npa-sonic",
+      "tag": "0.1.2-k8s-runtime",
+      "digest": "sha256:f58443705a1d98303d52526dc27dc3918d374afb1de563bd0f34d5fa5187eabf",
+      "purpose": "SONIC host-mounted-driver Kubernetes runtime for RTX PRO 6000."
+    }
+  ]
+}

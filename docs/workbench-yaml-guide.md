@@ -236,6 +236,33 @@ Derived paths:
 `envs` block. Cleanup is controlled by the runner's `--cleanup` flag, which calls
 the SkyPilot cleanup path for the run after terminal workflow status.
 
+## Durable Workflow State
+
+For long-running SkyPilot workflows, prefer the generic durable monitor instead
+of adding ad hoc log upload code to each YAML:
+
+```bash
+npa workbench workflow submit <workflow.yaml> \
+  --durable-s3 \
+  --workflow-s3-uri "s3://<bucket>/workflows/<run-id>/" \
+  --infra "k8s/<context>"
+```
+
+The submit command injects an S3 MOUNT-mode `file_mount` into every task and
+wraps each `run` block with redacted stdout/stderr teeing plus
+`manifest.json`, `logs/<stage>/status.json`, and `artifacts/<stage>/` state.
+The user-facing monitor is:
+
+```bash
+npa workbench workflow status "s3://<bucket>/workflows/<run-id>/"
+npa workbench workflow logs "s3://<bucket>/workflows/<run-id>/" --stage <stage>
+npa workbench workflow artifacts "s3://<bucket>/workflows/<run-id>/"
+```
+
+Keep committed raw SkyPilot YAMLs focused on task logic. Do not use SkyPilot
+`logs.store` or CloudWatch for the Workbench durable monitor path; the cluster
+pod writes the S3 state through the mounted run prefix.
+
 ## Standard Pipeline Stages (BDD100K Reference)
 
 The BDD100K pipeline is the canonical reference implementation:

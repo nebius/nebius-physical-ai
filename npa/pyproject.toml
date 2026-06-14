@@ -124,4 +124,5 @@ markers = [
     "ngc_e2e: GR00T NGC credential e2e tests that require NPA_TEST_GROOT_NGC_E2E=1 and a live GR00T workbench.",
     "byovm_live: BYOVM tests that require opt-in live target environment variables.",
     "gpu: tests that provision a live GPU through SkyPilot when credentials are available.",
+    "token_factory_e2e: live Nebius Token Factory API tests that require a real NEBIUS_API_KEY.",
 ]

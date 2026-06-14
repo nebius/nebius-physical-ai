@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -11,7 +10,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import yaml
 
@@ -90,8 +89,10 @@ def submit_workflow(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
+    infra: str = "",
     secret_envs: Sequence[str] | None = None,
     require_controller_up: bool = False,
+    extra_env: Mapping[str, str] | None = None,
     timeout: int = 1800,
     controller_preflight_timeout: int = 300,
     controller_preflight_interval: float = 15.0,
@@ -124,6 +125,9 @@ def submit_workflow(
         generated_config_path = submission_dir / "skypilot-config.yaml"
         generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
         env = sky_environment(runtime_config.isolated_config_dir)
+        for key, value in (extra_env or {}).items():
+            if value:
+                env[key] = value
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
 
         cmd = [
@@ -136,8 +140,10 @@ def submit_workflow(
             "--yes",
             str(prepared_yaml),
         ]
+        if infra:
+            cmd[-1:-1] = ["--infra", infra]
         for secret_name in secret_envs or ():
-            if os.environ.get(secret_name):
+            if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
         _wait_for_healthy_jobs_controller(

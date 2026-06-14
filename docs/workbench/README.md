@@ -8,6 +8,7 @@ workflows, and operational runbooks.
 | Path | Purpose |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
+| [../../npa/workflows/workbench/skypilot/README.md](../../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
 | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
@@ -26,6 +27,7 @@ workflows, and operational runbooks.
 
 | Reader | Start with |
 | --- | --- |
+| Salesperson or evaluator | [Workflow catalog](../../npa/workflows/workbench/skypilot/README.md) to see what the platform runs |
 | Customer running their first Workbench workload | [getting-started.md](getting-started.md) |
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |
 | Customer running the first H100 sim-to-real proof | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) |

@@ -48,22 +48,23 @@ export ROLLOUT_COUNT=3
 export STEPS_PER_ROLLOUT=4
 export HELDOUT_ENV_COUNT=8
 
-npa workbench sim2real run \
+npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id "${NPA_SIM2REAL_RUN_ID}" \
-  --s3-bucket "${NPA_SIM2REAL_BUCKET}" \
-  --s3-prefix "${NPA_SIM2REAL_PREFIX}" \
-  --s3-endpoint "${AWS_ENDPOINT_URL}" \
-  --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI}" \
-  --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID}" \
-  --assets-uri "${ASSETS_URI}" \
-  --scene-spec-uri "${SCENE_SPEC_URI}" \
-  --inner-iterations "${INNER_ITERATIONS}" \
-  --outer-iterations "${OUTER_ITERATIONS}" \
-  --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS}" \
-  --rollout-count "${ROLLOUT_COUNT}" \
-  --steps-per-rollout "${STEPS_PER_ROLLOUT}" \
-  --heldout-env-count "${HELDOUT_ENV_COUNT}" \
-  --upload-artifacts
+  --var NPA_SIM2REAL_RUN_ID="${NPA_SIM2REAL_RUN_ID}" \
+  --var NPA_SIM2REAL_BUCKET="${NPA_SIM2REAL_BUCKET}" \
+  --var NPA_SIM2REAL_PREFIX="${NPA_SIM2REAL_PREFIX}" \
+  --var AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI}" \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID="${NPA_SIM2REAL_TRIGGER_DATASET_ID}" \
+  --var ASSETS_URI="${ASSETS_URI}" \
+  --var SCENE_SPEC_URI="${SCENE_SPEC_URI}" \
+  --var INNER_ITERATIONS="${INNER_ITERATIONS}" \
+  --var OUTER_ITERATIONS="${OUTER_ITERATIONS}" \
+  --var LOOP_OF_LOOPS_ITERATIONS="${LOOP_OF_LOOPS_ITERATIONS}" \
+  --var ROLLOUT_COUNT="${ROLLOUT_COUNT}" \
+  --var STEPS_PER_ROLLOUT="${STEPS_PER_ROLLOUT}" \
+  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}"
 ```
 
 Canonical S3 layout for the quickstart:
@@ -90,6 +91,7 @@ eval/heldout/
 outer_loop/decision.json
 stage_13_retrigger/retrigger.json
 reports/sim2real-report.json
+reports/sim2real.rrd
 ```
 
 ## Prerequisites
@@ -156,6 +158,37 @@ config field. Set what you need; the rest fall back to reference defaults.
 | Rollout count | `--rollout-count` | `rollout_count=` | `ROLLOUT_COUNT` |
 | Steps per rollout | `--steps-per-rollout` | `steps_per_rollout=` | `STEPS_PER_ROLLOUT` |
 | Held-out env count | `--heldout-env-count` | `heldout_env_count=` | `HELDOUT_ENV_COUNT` |
+| VLM command swap | `--byo-vlm-command` | `byo_vlm_command=` | `BYO_VLM_COMMAND` |
+| Signal-converter swap | `--byo-signal-converter` | `byo_signal_converter=` | `BYO_SIGNAL_CONVERTER` |
+| Trainer command swap | `--byo-trainer-command` | `byo_trainer_command=` | `BYO_TRAINER_COMMAND` |
+| Held-out eval swap | `--byo-eval-command` | `byo_eval_command=` | `BYO_EVAL_COMMAND` |
+| Rerun viz toggle | `--rerun` / `--no-rerun` | `rerun_enabled=` | `NPA_SIM2REAL_RERUN` |
+| Rerun command swap | `--byo-rerun-command` | `byo_rerun_command=` | `BYO_RERUN_COMMAND` |
+
+### Command-Swap I/O Contracts
+
+Each `byo_*_command` is a shell command the loop runs at the matching seam. They
+all share the same convention: inputs arrive as JSON file paths in environment
+variables, and the command writes its result JSON to `NPA_SIM2REAL_OUTPUT_JSON`.
+A command that exits non-zero, writes nothing, or emits a non-conforming /empty
+document fails the run loudly — the loop never silently falls back to the
+reference implementation. Each run records which path executed
+(`trainer_source` / `signal_converter_source` = `byo_command` | `reference`) in
+the inner-loop evidence so a run can prove the customer hook actually ran.
+
+| Seam | Reads | Writes (`NPA_SIM2REAL_OUTPUT_JSON`) |
+| --- | --- | --- |
+| `byo_vlm_command` | `NPA_SIM2REAL_ROLLOUT_DIR`, `NPA_SIM2REAL_ROLLOUT_MANIFEST` | `npa.sim2real.vlm_eval.v1` (score + per_step critiques) |
+| `byo_signal_converter` | `NPA_SIM2REAL_EVALUATION_JSON` | `npa.sim2real.rl_signal.v1` (non-empty `per_step` of `{step, reward, advantage?, target?, error_tags?}`) |
+| `byo_trainer_command` | `NPA_SIM2REAL_SIGNAL_JSON` (+ `NPA_SIM2REAL_INITIAL_REWARD_HEAD`, `NPA_SIM2REAL_INITIAL_ACTION_BIAS`, `NPA_SIM2REAL_LEARNING_RATE`, `NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT`) | trainer update with at least `reward_head_after`, `policy_output_after` (list), `policy_delta_l2` (optional `loss_before`/`loss_after`) |
+| `byo_eval_command` | `NPA_SIM2REAL_HELDOUT_ENVS_DIR`, `NPA_SIM2REAL_INNER_EVIDENCE_JSON` | `npa.sim2real.heldout_eval.v1` (non-empty `per_env`) |
+| `byo_rerun_command` | `NPA_SIM2REAL_RUN_DIR`, `NPA_SIM2REAL_REPORT_JSON` | non-empty `.rrd` at `NPA_SIM2REAL_OUTPUT_RRD` |
+
+When a `byo_trainer_command` is set, the per-iteration no-signal **control** still
+runs the in-process reference trainer. This keeps the policy-delta attribution
+honest: the BYO trainer produces the signal-driven update, and the reference
+control provides the shared-initial-state, no-signal baseline that the delta is
+measured against.
 
 ## Run All Three Tiers
 
@@ -214,26 +247,27 @@ report = sim2real.run(
 print(report["outer_loop"]["latest_decision"])
 ```
 
-CLI:
+Workflow submit:
 
 ```bash
-npa workbench sim2real run \
+npa workbench workflow submit \
+  npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id pusht-cli-demo \
-  --s3-bucket <bucket> \
-  --s3-prefix pusht-cli-demo \
-  --trigger-dataset-uri s3://<bucket>/sim2real-triggers/pusht-cli-demo/lerobot-pusht/ \
-  --trigger-dataset-id lerobot/pusht \
-  --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
-  --scene-spec-uri s3://<bucket>/sim2real-assets/pusht/scene-spec.json \
-  --inner-iterations 2 \
-  --outer-iterations 1 \
-  --upload-artifacts
+  --var NPA_SIM2REAL_RUN_ID=pusht-cli-demo \
+  --var NPA_SIM2REAL_BUCKET=<bucket> \
+  --var NPA_SIM2REAL_PREFIX=pusht-cli-demo \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<bucket>/sim2real-triggers/pusht-cli-demo/lerobot-pusht/ \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht \
+  --var ASSETS_URI=s3://<bucket>/sim2real-assets/pusht/ \
+  --var SCENE_SPEC_URI=s3://<bucket>/sim2real-assets/pusht/scene-spec.json \
+  --var INNER_ITERATIONS=2 \
+  --var OUTER_ITERATIONS=1
 ```
 
-Inner loop only:
+Inner loop only (local SDK / module — no top-level workbench CLI):
 
 ```bash
-npa workbench sim2real inner-loop \
+npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
   --run-id sim2real-inner-example \
   --output-dir /tmp/sim2real-inner-example \
   --inner-iterations 2
@@ -262,6 +296,32 @@ npa workbench sim2real inner-loop \
     `stage_12_external_validation/external_stub.json`.
 13. Retrigger: writes `stage_13_retrigger/retrigger.json`, targeting Stage 1
     when a new real-world LeRobot dataset lands in the trigger path.
+14. Rerun visualization: writes `reports/sim2real.rrd` (a single Rerun recording)
+    from the completed run's artifacts. Default on (`NPA_SIM2REAL_RERUN=1` /
+    `--rerun`); set `NPA_SIM2REAL_RERUN=0` / `--no-rerun` to skip. Degrades to a
+    WARN (not a hard failure) when `rerun-sdk` is not installed locally, but
+    always produces the `.rrd` when it is available.
+
+### Rerun Visualization
+
+The `.rrd` reuses the repo's existing Rerun capability (the same `rerun-sdk`
+recording API the LeRobot/GR00T adapters build on) and logs, on a shared
+`frame_time` timeline:
+
+- `rollouts/iter_NN/<rollout_id>/camera` — rollout camera frames as image streams.
+- `rollouts/iter_NN/<rollout_id>/critique` — per-step VLM critique text + error
+  tags as a text document overlay.
+- `rollouts/iter_NN/<rollout_id>/score` — the VLM success score.
+- `signal/reward` and `signal/advantage` — the per-step VLM->RL signal as scalar
+  timeseries, plus `signal/reward_trend` across iterations.
+- `heldout/scores` and `heldout/per_env/<env_id>` — held-out per-env scores as a
+  scalar/bar view.
+
+Open it with `rerun reports/sim2real.rrd`, or load it headlessly with
+`rerun.recording.load_recording(...)` to inspect entity counts. Set
+`NPA_SIM2REAL_RERUN_MP4=1` to also emit best-effort per-rollout `rollout.mp4`
+files (skipped when `ffmpeg` is not on PATH). When `--upload-artifacts` is set,
+the `.rrd` uploads with the rest of the run tree.
 
 ## Loops
 
@@ -341,6 +401,7 @@ options:
 - `byo_signal_converter`
 - `trainer_image`, `byo_trainer_command`
 - `eval_image`, `byo_eval_command`
+- `rerun_enabled`, `byo_rerun_command`
 - `threshold`
 - `inner_iterations`, `outer_iterations`, `loop_of_loops_iterations`
 - `rollout_count`, `steps_per_rollout`, `heldout_env_count`

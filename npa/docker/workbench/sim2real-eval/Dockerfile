@@ -13,6 +13,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /workspace
 
+USER root
+
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
@@ -22,7 +24,7 @@ RUN python -m pip install tomli \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
-    && chown -R ubuntu:ubuntu /workspace
+    && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
 
 USER ubuntu
 

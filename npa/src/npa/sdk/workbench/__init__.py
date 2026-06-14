@@ -15,8 +15,10 @@ from . import (
     sim2real,
     sim2real_envgen,
     sonic,
+    token_factory,
     trigger,
     vlm_eval,
+    workflow,
 )
 
 __all__ = [
@@ -31,7 +33,9 @@ __all__ = [
     "sim2real",
     "sim2real_envgen",
     "sonic",
+    "token_factory",
     "training_config",
     "trigger",
     "vlm_eval",
+    "workflow",
 ]
