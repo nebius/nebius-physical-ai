@@ -2086,10 +2086,26 @@ def _wait_kubernetes_job(
 def _npa_package_root() -> Path | None:
     """Return the checkout ``npa/`` directory when running from source."""
 
-    candidate = Path(__file__).resolve().parents[4]
-    if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
-        return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
+            return candidate
+    for fallback in (Path("/tmp/npa-src/npa"), Path("/tmp/npa-source/npa")):
+        if (fallback / "pyproject.toml").exists() and (fallback / "src" / "npa").is_dir():
+            return fallback
     return None
+
+
+_SIBLING_SOURCE_TARBALL_BY_RUN: dict[str, str] = {}
+
+
+def ensure_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
+    cached = _SIBLING_SOURCE_TARBALL_BY_RUN.get(config.run_id, "").strip()
+    if cached:
+        return cached
+    uri = _stage_sibling_source_tarball(config)
+    if uri:
+        _SIBLING_SOURCE_TARBALL_BY_RUN[config.run_id] = uri
+    return uri
 
 
 def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
@@ -2118,7 +2134,7 @@ def _ensure_sibling_source_env(
     merged = dict(env)
     if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI"):
         return merged
-    tarball_uri = _stage_sibling_source_tarball(config)
+    tarball_uri = ensure_sibling_source_tarball(config)
     if tarball_uri:
         merged["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = tarball_uri
     return merged
@@ -2399,14 +2415,19 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
         return f"""set -euo pipefail
 {vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
+export PYTHONUNBUFFERED=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
+mkdir -p "$DEPS"
 "$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
 export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
-if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-  "$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
+if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
+  exit 2
+fi
+rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
+"$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
 import os, sys, tarfile, urllib.parse, boto3
 u = urllib.parse.urlparse(sys.argv[1])
 ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
@@ -2414,13 +2435,14 @@ boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), 
 with tarfile.open("/tmp/npa-src.tgz") as tar:
     tar.extractall("/tmp/npa-source")
 PYB
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
-  rm -rf /tmp/npa-source
-  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
+export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
+"$PYBIN" -m pip install --quiet --target "$DEPS" tomli 2>/dev/null || true
+if ! "$PYBIN" -c "import npa.workflows.sim2real.cli" 2>/tmp/npa-bootstrap.err; then
+  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
+  cat /tmp/npa-bootstrap.err >&2 || true
+  exit 3
 fi
-"$PYBIN" -m npa.workflows.sim2real_loop {subcommand}
+"$PYBIN" -m npa.workflows.sim2real {subcommand}
 """
     return f"""set -euo pipefail
 {vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
@@ -2635,6 +2657,9 @@ def _download_component_output(
     output_json.parent.mkdir(parents=True, exist_ok=True)
     client = _storage_client(config)
     attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12")))
+    grace_s = float(os.environ.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "0") or "0")
+    if grace_s > 0:
+        time.sleep(grace_s)
     for attempt in range(attempts):
         if output_json.exists():
             output_json.unlink()

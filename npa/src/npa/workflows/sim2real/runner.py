@@ -92,6 +92,17 @@ class Sim2RealWorkflow:
         state.status = "completed"
         state.report_path = str(self._local_dir / "reports" / "sim2real-report.json")
         state.save()
+        from npa.workflows.sim2real.engine import (
+            _read_workflow_state,
+            _write_workflow_state,
+            sync_workflow_state_to_s3,
+        )
+
+        finalize_state = _read_workflow_state(self._local_dir)
+        finalize_state["status"] = "completed"
+        finalize_state["report_path"] = state.report_path
+        _write_workflow_state(self._local_dir, finalize_state, config=self.config)
+        sync_workflow_state_to_s3(self.config, self._local_dir)
         return report
 
     def run(self, *, upload: bool | None = None) -> dict[str, Any]:

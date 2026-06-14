@@ -72,6 +72,8 @@ from npa.workflows.sim2real.utils import (
 
 # Isaac Sim app handle — closed only after held-out report upload.
 _ISAAC_SIMULATION_APP: Any = None
+# Per-run sibling source tarball (Isaac held-out eval cannot git-clone inside Isaac Sim).
+_SIBLING_SOURCE_TARBALL_BY_RUN: dict[str, str] = {}
 
 if TYPE_CHECKING:
     from npa.workbench.lerobot.policy_container import VlmSignalUpdateResult
@@ -182,6 +184,13 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     components.append(ComponentRecord(**envgen_result["component"]))
     train_envs_uri = envgen_result["train_envs_uri"]
     heldout_envs_uri = envgen_result["heldout_envs_uri"]
+    sibling_source_tarball_uri = ""
+    if config.s3_bucket:
+        sibling_source_tarball_uri = ensure_sibling_source_tarball(config)
+        if config.sim_backend == SIM_BACKEND_ISAAC and not sibling_source_tarball_uri:
+            raise Sim2RealLoopError(
+                "failed to stage sibling source tarball for Isaac held-out eval"
+            )
     state = {
         "schema": "npa.sim2real.workflow_state.v1",
         "run_id": config.run_id,
@@ -200,6 +209,7 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "final_inner": None,
         "final_eval": None,
         "final_decision": None,
+        "sibling_source_tarball_uri": sibling_source_tarball_uri,
         "current_quality": 0.36 + rng.random() * 0.04,
         "next_outer_iteration": 1,
         "updated_at": _utc_now(),
@@ -238,7 +248,7 @@ def run_single_outer_iteration(
     next_quality = quality
     if decision["decision"] != "promote_checkpoint":
         next_quality = min(0.95, quality + 0.12)
-    return {
+    result = {
         "outer_iteration": outer_iteration,
         "inner": inner,
         "heldout_report": heldout_report,
@@ -251,6 +261,101 @@ def run_single_outer_iteration(
         },
         "next_quality": next_quality,
     }
+    _append_outer_iteration_workflow_state(
+        config,
+        local_dir=local_dir,
+        outer_iteration=outer_iteration,
+        inner=inner,
+        heldout_report=heldout_report,
+        decision=decision,
+        next_quality=next_quality,
+    )
+    return result
+
+
+def _append_outer_iteration_workflow_state(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    outer_iteration: int,
+    inner: dict[str, Any],
+    heldout_report: dict[str, Any],
+    decision: dict[str, Any],
+    next_quality: float,
+) -> None:
+    """Merge stages 7–11 artifacts into ``workflow_state.json`` for status polling."""
+
+    try:
+        state = _read_workflow_state(local_dir)
+    except Sim2RealLoopError:
+        return
+    components = list(state.get("components") or [])
+    stage_updates = (
+        (
+            "stage_07_actions_train",
+            "WORKS",
+            f"Policy rollouts completed for outer-{outer_iteration:02d} "
+            f"({config.rollout_count} rollouts × {config.inner_iterations} inner iters).",
+            {"prefix": str(local_dir / "actions" / "train" / f"outer-{outer_iteration:02d}")},
+        ),
+        (
+            "stage_08_vlm_eval_train",
+            "WORKS",
+            "Dual Reason VLM critique merged for train rollouts.",
+            {"prefix": str(local_dir / "vlm_eval" / "train" / f"outer-{outer_iteration:02d}")},
+        ),
+        (
+            "stage_09_training_signal",
+            "WORKS",
+            "VLM critiques converted to RL training signals.",
+            {"prefix": str(local_dir / "training_signal" / "train" / f"outer-{outer_iteration:02d}")},
+        ),
+        (
+            "stage_10_eval_heldout",
+            "WORKS",
+            f"Held-out eval report written (success_rate={heldout_report.get('success_rate', 'n/a')}).",
+            {"report": heldout_report.get("report_uri", "")},
+        ),
+        (
+            "stage_11_outer_loop",
+            "WORKS",
+            f"Threshold decision: {decision.get('decision', 'unknown')}.",
+            {"decision": str(local_dir / "outer_loop" / "decision.json")},
+        ),
+    )
+    names = {str(item.get("name") or "") for item in components if isinstance(item, dict)}
+    for name, tier, evidence, artifacts in stage_updates:
+        if name in names:
+            continue
+        components.append(
+            asdict(
+                ComponentRecord(
+                    name,
+                    tier,
+                    evidence,
+                    artifacts,
+                )
+            )
+        )
+    state["components"] = components
+    state["status"] = "outer_iteration_completed"
+    state["final_inner"] = inner
+    state["final_eval"] = heldout_report
+    state["final_decision"] = decision
+    state["current_quality"] = next_quality
+    state["next_outer_iteration"] = outer_iteration + 1
+    history = list(state.get("outer_history") or [])
+    history.append(
+        {
+            "outer_iteration": outer_iteration,
+            "inner_loop": inner.get("evidence_uri"),
+            "heldout_report": heldout_report.get("report_uri"),
+            "decision": decision.get("decision"),
+        }
+    )
+    state["outer_history"] = history
+    state["updated_at"] = _utc_now()
+    _write_workflow_state(local_dir, state, config=config)
 
 
 def run_finalize(
@@ -1367,10 +1472,25 @@ def _wait_kubernetes_job(
 def _npa_package_root() -> Path | None:
     """Return the checkout ``npa/`` directory when running from source."""
 
-    candidate = Path(__file__).resolve().parents[4]
-    if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
-        return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
+            return candidate
+    for fallback in (Path("/tmp/npa-src/npa"), Path("/tmp/npa-source/npa")):
+        if (fallback / "pyproject.toml").exists() and (fallback / "src" / "npa").is_dir():
+            return fallback
     return None
+
+
+def ensure_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
+    """Upload (once per run) a minimal npa source tarball for sibling Jobs."""
+
+    cached = _SIBLING_SOURCE_TARBALL_BY_RUN.get(config.run_id, "").strip()
+    if cached:
+        return cached
+    uri = _stage_sibling_source_tarball(config)
+    if uri:
+        _SIBLING_SOURCE_TARBALL_BY_RUN[config.run_id] = uri
+    return uri
 
 
 def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
@@ -1394,12 +1514,12 @@ def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
 def _ensure_sibling_source_env(
     config: Sim2RealLoopConfig, env: dict[str, str]
 ) -> dict[str, str]:
-    """Inject git clone or source tarball env for sibling Jobs when needed."""
+    """Inject source tarball env for sibling Jobs (Isaac held-out requires it)."""
 
     merged = dict(env)
     if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI"):
         return merged
-    tarball_uri = _stage_sibling_source_tarball(config)
+    tarball_uri = ensure_sibling_source_tarball(config)
     if tarball_uri:
         merged["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = tarball_uri
     return merged
@@ -1801,14 +1921,19 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
     if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
         return f"""set -euo pipefail
 {vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
+export PYTHONUNBUFFERED=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
 DEPS=/tmp/npa-pydeps
+mkdir -p "$DEPS"
 "$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
 export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
-if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-  "$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
+if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
+  exit 2
+fi
+rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
+"$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
 import os, sys, tarfile, urllib.parse, boto3
 u = urllib.parse.urlparse(sys.argv[1])
 ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
@@ -1816,11 +1941,12 @@ boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), 
 with tarfile.open("/tmp/npa-src.tgz") as tar:
     tar.extractall("/tmp/npa-source")
 PYB
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
-  rm -rf /tmp/npa-source
-  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
+export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
+"$PYBIN" -m pip install --quiet --target "$DEPS" tomli 2>/dev/null || true
+if ! "$PYBIN" -c "import npa.workflows.sim2real.cli" 2>/tmp/npa-bootstrap.err; then
+  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
+  cat /tmp/npa-bootstrap.err >&2 || true
+  exit 3
 fi
 "$PYBIN" -m npa.workflows.sim2real {subcommand}
 """
@@ -2037,6 +2163,9 @@ def _download_component_output(
     output_json.parent.mkdir(parents=True, exist_ok=True)
     client = _storage_client(config)
     attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12")))
+    grace_s = float(os.environ.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "0") or "0")
+    if grace_s > 0:
+        time.sleep(grace_s)
     for attempt in range(attempts):
         if output_json.exists():
             output_json.unlink()

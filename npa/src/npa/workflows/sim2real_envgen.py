@@ -280,6 +280,15 @@ def write_split_manifest(config: EnvGenConfig, output_dir: Path) -> dict[str, An
     }
 
 
+def _policy_action_amplitude() -> float:
+    """Return action delta scale for the configured policy image variant."""
+
+    variant = os.environ.get("NPA_SIM2REAL_POLICY_VARIANT", "reference").strip().lower()
+    if variant in {"explore", "alt", "aggressive"}:
+        return 0.085
+    return 0.025
+
+
 def write_action_conditioned_envs(
     config: EnvGenConfig,
     output_dir: Path,
@@ -304,6 +313,8 @@ def write_action_conditioned_envs(
         train_path = output_dir / "split" / "train-envs.jsonl"
         input_train_uri = split["uploaded_train"]
     output_actions_uri = actions_uri.rstrip("/") + "/" if actions_uri else config.actions_uri
+    amplitude = _policy_action_amplitude()
+    variant = os.environ.get("NPA_SIM2REAL_POLICY_VARIANT", "reference").strip().lower()
     conditioned: list[dict[str, Any]] = []
     for env in _read_jsonl(train_path)[:limit]:
         seed = _stable_int(f"{config.seed}:{env['env_id']}:{policy_image}")
@@ -312,10 +323,11 @@ def write_action_conditioned_envs(
         env["actions"] = {
             "schema": "npa.sim2real.reference_actions.v1",
             "policy_image": policy_image,
+            "policy_variant": variant,
             "action_space": "cartesian_delta_xyz_gripper",
             "timesteps": 16,
             "values": [
-                [round(rng.uniform(-0.025, 0.025), 6) for _ in range(3)]
+                [round(rng.uniform(-amplitude, amplitude), 6) for _ in range(3)]
                 + [round(rng.uniform(0.0, 1.0), 6)]
                 for _ in range(16)
             ],

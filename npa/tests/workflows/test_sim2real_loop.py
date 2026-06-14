@@ -1575,6 +1575,8 @@ def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path
     assert container["image"] == "cr.example/npa-isaac-lab:2.3.2.post1"
     script = container["args"][0]
     assert "/isaac-sim/python.sh" in script
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
+    assert "missing NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
     assert "--sim-backend" in script
     env_names = {item["name"] for item in container["env"]}
     assert "NPA_SIM2REAL_SIM_BACKEND" in env_names

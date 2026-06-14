@@ -5,6 +5,7 @@ LABEL org.opencontainers.image.title="npa-sim2real-reference-policy"
 LABEL org.opencontainers.image.description="Reference BYO-compatible Sim2Real action policy image"
 
 ENV POLICY_IMAGE_KIND=npa-sim2real-reference-policy
+ENV NPA_SIM2REAL_POLICY_VARIANT=reference
 
 USER ubuntu
 
