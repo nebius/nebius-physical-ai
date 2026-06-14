@@ -200,7 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if should_skip_unconfigured_fork_pull_request(args.pattern_env):
+    if (args.tree or args.diff_range) and should_skip_unconfigured_fork_pull_request(
+        args.pattern_env
+    ):
         print(
             "confidentiality scan skipped on fork pull request "
             f"({args.pattern_env} secrets are unavailable to fork workflows)"
