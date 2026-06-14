@@ -2518,6 +2518,13 @@ def _deploy_kubernetes_fiftyone(
 ) -> None:
     address = _normalize_app_address(address)
     service_type = "LoadBalancer" if public_ip else "ClusterIP"
+    if public_ip and not dry_run:
+        typer.echo(
+            "Warning: --public-ip exposes the FiftyOne app via a public LoadBalancer. FiftyOne has "
+            "no built-in authentication, so anyone who reaches the address gets full read/write access "
+            "to the loaded datasets. Restrict access at the network layer or keep it ClusterIP.",
+            err=True,
+        )
     resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if destroy:
         _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
