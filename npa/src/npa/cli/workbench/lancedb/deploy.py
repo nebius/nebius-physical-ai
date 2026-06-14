@@ -27,6 +27,14 @@ from .helpers import (
 )
 
 
+_SECRET_ENV_MARKERS = ("SECRET", "TOKEN", "PASSWORD", "ACCESS_KEY")
+
+
+def _is_secret_env(key: str) -> bool:
+    upper = key.upper()
+    return any(marker in upper for marker in _SECRET_ENV_MARKERS)
+
+
 def _auth_mode_for(runtime: LanceDBRuntime, auth_mode: str) -> str:
     value = auth_mode.strip().lower()
     if value == "auto":
@@ -85,13 +93,16 @@ def _run_container(
         "-p",
         f"{port}:{port}",
     ]
+    redacted_cmd = list(cmd)
     for key, value in env.items():
         if value:
             cmd.extend(["-e", f"{key}={value}"])
+            redacted_cmd.extend(["-e", f"{key}={'<redacted>' if _is_secret_env(key) else value}"])
     cmd.append(image)
+    redacted_cmd.append(image)
 
     if dry_run:
-        typer.echo(" ".join(cmd))
+        typer.echo(" ".join(redacted_cmd))
         return "<dry-run>"
 
     try:

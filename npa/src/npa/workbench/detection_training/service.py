@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import platform
@@ -30,13 +31,18 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
     resolved_auth_mode = auth_mode or os.environ.get("DETECTION_TRAINING_AUTH_MODE", "none")
     resolved_token = token if token is not None else os.environ.get("DETECTION_TRAINING_TOKEN", "")
     app = FastAPI(title="NPA Detection Training")
+    if resolved_auth_mode == "none":
+        LOGGER.warning(
+            "detection-training service started with auth disabled; every endpoint is reachable "
+            "without a token. Set DETECTION_TRAINING_AUTH_MODE=token and DETECTION_TRAINING_TOKEN."
+        )
 
     async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
             raise HTTPException(status_code=500, detail="DETECTION_TRAINING_TOKEN is not configured")
-        if authorization != f"Bearer {resolved_token}":
+        if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")

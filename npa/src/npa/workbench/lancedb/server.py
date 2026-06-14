@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import logging
 import math
 import os
 from typing import Any
@@ -9,6 +11,8 @@ from typing import Any
 import lancedb
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from .backfill import (
@@ -162,13 +166,18 @@ def create_app(
     app = FastAPI(title="NPA LanceDB wrapper")
     db = lancedb.connect(resolved_storage)
     known_tables: set[str] = set()
+    if resolved_auth_mode == "none":
+        LOGGER.warning(
+            "LanceDB wrapper started with auth disabled; every endpoint is reachable without a token. "
+            "Set LANCEDB_AUTH_MODE=token and LANCEDB_TOKEN before exposing it beyond localhost."
+        )
 
     async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
             raise HTTPException(status_code=500, detail="LANCEDB_TOKEN is not configured")
-        if authorization != f"Bearer {resolved_token}":
+        if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
