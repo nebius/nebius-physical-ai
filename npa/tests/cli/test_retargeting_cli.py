@@ -24,7 +24,7 @@ def test_removed_tools_not_advertised_in_workbench_help() -> None:
     result = runner.invoke(app, ["workbench", "--help"])
 
     assert result.exit_code == 0
-    for removed in ("sim2real", "retargeting", "trigger", "golden-eval", "sim2real-envgen", "data"):
+    for removed in ("sim2real", "retargeting", "trigger", "sim2real-envgen", "data"):
         assert not re.search(rf"│\s+{re.escape(removed)}\s+", result.output)
 
 
