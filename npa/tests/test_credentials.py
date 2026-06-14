@@ -89,6 +89,30 @@ def test_load_credentials_reads_ngc_section_and_env_overrides(tmp_path: Path) ->
     assert shared_credential_env(resolved)["NGC_TEAM"] == "team-env"
 
 
+def test_load_credentials_reads_nebius_token_factory_key(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file"}})
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.nebius_api_key == "tf-file"
+    assert resolved.tokens["NEBIUS_API_KEY"] == "tf-file"
+    assert shared_credential_env(resolved)["NEBIUS_API_KEY"] == "tf-file"
+
+
+def test_nebius_api_key_env_overrides_file(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file"}})
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={"NEBIUS_API_KEY": "tf-env"})
+
+    assert resolved.nebius_api_key == "tf-env"
+
+
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(

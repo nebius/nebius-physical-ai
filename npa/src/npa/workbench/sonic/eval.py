@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from npa.workbench.sonic import EXPORT_METADATA_FORMAT, load_export_metadata
+from npa.workbench.sonic.routing import SonicRoutingError, validate_render_gpu_target
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
@@ -189,6 +190,7 @@ def evaluate_onnx_policy(
     env: str = DEFAULT_EVAL_ENV,
     output: str = "",
     container_image: str = "",
+    container_gpu_target: str = "",
     container_runtime: str = DEFAULT_CONTAINER_RUNTIME,
     container_gpus: str = DEFAULT_CONTAINER_GPUS,
     container_driver_capabilities: str = DEFAULT_CONTAINER_DRIVER_CAPABILITIES,
@@ -209,6 +211,14 @@ def evaluate_onnx_policy(
         raise SonicEvalError("--episodes must be positive")
     if container_render_frames <= 0:
         raise SonicEvalError("--container-render-frames must be positive")
+    if backend == CONTAINER_BACKEND and container_gpu_target:
+        # The container backend rasterizes Isaac-Lab render frames, so it must
+        # land on an RT-core GPU. Fail fast on a datacenter-headless misroute
+        # instead of burning a live launch.
+        try:
+            validate_render_gpu_target(container_gpu_target)
+        except SonicRoutingError as exc:
+            raise SonicEvalError(str(exc)) from exc
 
     bundle = load_eval_bundle(onnx=onnx, metadata=metadata)
     if backend == REFERENCE_BACKEND:

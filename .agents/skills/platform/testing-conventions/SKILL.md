@@ -31,6 +31,7 @@ npa/.venv/bin/python -m ruff check <files>
 - Known pre-existing failure: `tests/smoke/test_cosmos_serverless_smoke.py` has 5 tests gated by `NPA_COSMOS_SERVERLESS_SMOKE=1`; they fail with `Unable to list Nebius VPC networks for project project-smoke: unsupported`.
 - E2E tests are gated by `NPA_INTEGRATION_E2E=1` and excluded from standard runs with `--ignore=npa/tests/e2e`.
 - Pipeline E2E tests use the `e2e_pipeline` pytest marker.
+- Live Nebius Token Factory tests use the `token_factory_e2e` marker (in `npa/tests/e2e/test_token_factory_e2e.py`). They self-skip without a real `NEBIUS_API_KEY`; the marker is in conftest `_LIVE_MARKERS` so the key is not scrubbed. Run with `NEBIUS_API_KEY=... pytest npa/tests/e2e/test_token_factory_e2e.py`.
 
 Expected baseline: 1242+ passed, 21 skipped, 1 xpassed, 0 failures.
 

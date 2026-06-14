@@ -59,7 +59,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
-        name="retargeting/run",
+        name="sonic/retargeting/run",
         cli_module="npa.cli.workbench.retargeting",
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.retargeting",
@@ -164,7 +164,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
-        name="trigger/run",
+        name="workflow/trigger/run",
         cli_module="npa.cli.workbench.trigger",
         cli_callback="run_cmd",
         sdk_module="npa.sdk.workbench.trigger",
@@ -208,7 +208,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
-        name="trigger/watch",
+        name="workflow/trigger/watch",
         cli_module="npa.cli.workbench.trigger",
         cli_callback="watch_cmd",
         sdk_module="npa.sdk.workbench.trigger",
@@ -256,8 +256,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "lancedb",
         "lerobot",
         "mjlab",
-        "sim2real",
-        "sim2real-envgen",
+        "token-factory",
         "workflow",
     }
     discovered = registered_workbench_tools()
