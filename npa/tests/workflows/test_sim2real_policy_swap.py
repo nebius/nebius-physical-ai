@@ -103,3 +103,31 @@ def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
     assert "python -m npa.workflows.sim2real_envgen raw-shard" in script
     assert "python -m npa.workflows.sim2real python" not in script
     assert "invalid choice" not in script
+
+
+def test_engine_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+    from npa.workflows.sim2real.engine import _resolve_isaac_scene
+    from npa.workflows.sim2real_assets import CONSUMED_SCENE_SCHEMA
+
+    consumed = {
+        "schema": CONSUMED_SCENE_SCHEMA,
+        "status": "stock_tabletop",
+        "scene_spec": sa.default_isaac_stock_scene_spec().to_dict(),
+    }
+    spec_path = tmp_path / "consumed_scene_spec.json"
+    spec_path.write_text(json.dumps(consumed), encoding="utf-8")
+
+    class _Client:
+        def download_path(self, uri, dest):
+            Path(dest).write_text(spec_path.read_text(), encoding="utf-8")
+            return dest
+
+    scene = _resolve_isaac_scene(
+        scene_spec_uri="s3://bucket/run/stage_02_assets/consumed_scene_spec.json",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path / "assets",
+        client=_Client(),
+    )
+    assert scene.manipuland().asset_source == sa.ASSET_SOURCE_ISAAC_STOCK

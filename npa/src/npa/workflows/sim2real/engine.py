@@ -3169,7 +3169,11 @@ def _resolve_heldout_scene(
         spec_local = dest_dir / "scene-spec.json"
         client.download_path(scene_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
-        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+        from npa.workflows.sim2real_assets import scene_spec_doc_from_consumed
+
+        scene = scene_assets.parse_scene_spec(
+            scene_spec_doc_from_consumed(doc), source_uri=scene_spec_uri
+        )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
@@ -3204,7 +3208,11 @@ def _resolve_isaac_scene(
         spec_local = dest_dir / "scene-spec.json"
         client.download_path(scene_spec_uri, str(spec_local))
         doc = json.loads(spec_local.read_text(encoding="utf-8"))
-        scene = scene_assets.parse_scene_spec(doc, source_uri=scene_spec_uri)
+        from npa.workflows.sim2real_assets import scene_spec_doc_from_consumed
+
+        scene = scene_assets.parse_scene_spec(
+            scene_spec_doc_from_consumed(doc), source_uri=scene_spec_uri
+        )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)

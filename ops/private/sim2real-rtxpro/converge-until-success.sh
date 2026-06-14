@@ -156,14 +156,18 @@ log "converge loop start phase=${PHASE} target_envs=${TARGET_ENVS} bucket=${BUCK
 trap 'log "converge loop interrupted"' INT TERM
 
 if converge_phase "${TARGET_ENVS}"; then
-  if [ "${ONCE}" = "1" ] || [ "${PHASE}" = "10k" ]; then
-    log "done (once or 10k phase complete)"
+  if [ "${ONCE}" = "1" ]; then
+    log "done (--once)"
     exit 0
   fi
-  log "800-env success — starting 10k validation phase"
+  if [ "${PHASE}" = "10k" ]; then
+    log "10k phase success — converge complete"
+    exit 0
+  fi
+  log "800-env success — starting 10k validation phase (loop until report lands)"
   export CONVERGE_PHASE=10k
   export PHASE=10k
-  exec env NPA_ENV_COUNT=10000 CONVERGE_PHASE=10k "$0" --once
+  exec env NPA_ENV_COUNT=10000 CONVERGE_PHASE=10k "$0"
 fi
 
 exit 1
