@@ -3,8 +3,7 @@
 **For Nebius RTX PRO 6000 cluster operators only.** This directory is safe to commit
 (templates + scripts). **Secrets never go here.**
 
-**Start here:** **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)** — full Mac guide (paste block,
-Cosmos versions, commands, troubleshooting).
+**Start here:** **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)** — one-page quick start.
 
 ## Setup (once per machine)
 
@@ -27,38 +26,9 @@ This writes **`RUNBOOK.local.md`**, **`DEMO-WALKTHROUGH.local.md`**, and **`env.
 with your bucket, registry, and cluster context filled from `~/.npa/config.yaml`.
 Credentials are referenced by path only.
 
-## Customer demo (handoff)
+## Customer demo
 
-**Laptop = interface.** Compute on Nebius RTX cluster → S3 → sync → Rerun.
-
-**Recommended — single script on Mac:**
-
-```bash
-cp ops/private/sim2real-rtxpro/mac-run.sh ~/npa-sim2real-demo/run.sh
-chmod +x ~/npa-sim2real-demo/run.sh
-cd ~/npa-sim2real-demo
-
-# Customer replication from scratch:
-./run.sh demo
-./run.sh status <run-id>
-./run.sh sync <run-id>
-
-# Or stepwise:
-./run.sh cleanup && ./run.sh trigger
-```
-
-Or from the repo directly:
-
-```bash
-./ops/private/sim2real-rtxpro/run-demo.sh
-# reuse completed run:
-RUN_ID=<run-id> ./ops/private/sim2real-rtxpro/run-demo.sh
-```
-
-Full handoff doc: **`CUSTOMER-DEMO.md`**
-
-Stock Franka demo (no asset upload) + **how to view each stage from your Mac:**
-**`FRANKA-STOCK-GUIDE.md`**
+See **[OPERATOR-GUIDE.md](./OPERATOR-GUIDE.md)** — setup once, paste block, `./run.sh demo|status|sync`.
 
 Requires `~/.npa/config.yaml`, `~/.npa/credentials.yaml`, and kubeconfig on the laptop.
 
