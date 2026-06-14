@@ -8,7 +8,9 @@ resources:
   accelerators: H100:1
   cpus: 16+
   memory: 128+
-  disk_size: 1024
+  # No disk_size: SkyPilot rejects it on Kubernetes ("Disk size N is not
+  # supported by Kubernetes"). The pod uses node ephemeral storage; attach a
+  # volume if you need more than the node provides.
 envs:
   # Runtime coordinates can be overridden at launch for BYO forks/checkpoints.
   NPA_COSMOS3_SOURCE_REPO: "https://github.com/NVIDIA/cosmos-framework.git"

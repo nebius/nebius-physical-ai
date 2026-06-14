@@ -1,4 +1,4 @@
-"""npa workbench retargeting - motion retargeting commands."""
+"""npa workbench sonic retargeting - motion retargeting commands."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.deploy.images import container_image_for_tool
 from npa.workbench.retargeting import (
     SUPPORTED_SOURCE_FORMATS,
     RetargetingError,
-    build_retargeting_manifest,
-    write_result,
+    run_retargeting,
 )
 
 app = typer.Typer(
@@ -27,6 +27,7 @@ app = typer.Typer(
 console = Console(stderr=True)
 
 WORKFLOW_PATH = Path("npa/workflows/workbench/skypilot/retargeting.yaml")
+DEFAULT_RETARGETING_IMAGE_ENV = "NPA_RETARGETING_IMAGE"
 
 
 class OutputFormat(str, Enum):
@@ -35,11 +36,13 @@ class OutputFormat(str, Enum):
 
 
 class SourceFormat(str, Enum):
-    amass = "amass"
+    auto = "auto"
+    soma_csv = "soma-csv"
+    bones_seed_csv = "bones-seed-csv"
+    deploy_pkl = "deploy-pkl"
+    teleop_pkl = "teleop-pkl"
+    motion_lib = "motion-lib"
     bvh = "bvh"
-    isaac_lab = "isaac-lab"
-    mocap_json = "mocap-json"
-    usd = "usd"
 
 
 @app.command("run")
@@ -56,34 +59,58 @@ def run_cmd(
         help="S3 or local path for retargeted motions and manifest.",
     ),
     source_format: SourceFormat = typer.Option(
-        SourceFormat.mocap_json,
+        SourceFormat.auto,
         "--source-format",
-        help="Source motion format.",
+        help="Source format accepted by upstream SONIC preprocessors.",
     ),
     embodiment: str = typer.Option("unitree-g1", "--embodiment", help="Target robot embodiment."),
-    retarget_map: str = typer.Option("", "--retarget-map", help="Optional retarget-map path or URI."),
-    frame_rate: int = typer.Option(50, "--frame-rate", help="Output frame rate in Hz."),
+    retarget_map: str = typer.Option(
+        "",
+        "--retarget-map",
+        help="Optional external SOMA/GMR retarget-map path or URI for provenance.",
+    ),
+    frame_rate: int = typer.Option(30, "--frame-rate", help="Output frame rate in Hz."),
+    source_frame_rate: int = typer.Option(
+        0,
+        "--source-frame-rate",
+        help="Source data frame rate in Hz; 0 lets the upstream converter use target FPS.",
+    ),
     max_frames: int = typer.Option(0, "--max-frames", help="Maximum frames to process; 0 means all."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the manifest artifact."),
+    individual: bool = typer.Option(
+        True,
+        "--individual/--combined",
+        help="Write one PKL per motion when the upstream converter supports it.",
+    ),
+    num_workers: int = typer.Option(4, "--num-workers", help="Parallel worker count."),
+    sonic_home: str = typer.Option(
+        "",
+        "--sonic-home",
+        envvar="SONIC_HOME",
+        help="Path to a GR00T-WholeBodyControl checkout; defaults to SONIC_HOME or auto-fetch.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan the preprocess without writing outputs."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Retarget source motion artifacts into the SONIC embodiment schema."""
 
     try:
-        result = build_retargeting_manifest(
+        effective_dry_run = dry_run or _env_dry_run()
+        result = run_retargeting(
             input_path=input_path,
             output_path=output_path,
             source_format=source_format.value,
             embodiment=embodiment,
             retarget_map=retarget_map,
             frame_rate=frame_rate,
+            source_frame_rate=source_frame_rate,
             max_frames=max_frames,
+            individual=individual,
+            num_workers=num_workers,
+            sonic_home=sonic_home,
+            dry_run=effective_dry_run,
         )
         payload = asdict(result)
-        effective_dry_run = dry_run or _env_dry_run()
         payload["dry_run"] = effective_dry_run
-        if not effective_dry_run:
-            payload["written_uri"] = write_result(payload, result_uri=result.result_uri)
     except RetargetingError as exc:
         _fail(str(exc))
         return
@@ -92,11 +119,24 @@ def run_cmd(
 
 @app.command("workflow")
 def workflow_cmd(
+    image: str = typer.Option(
+        "",
+        "--image",
+        envvar=DEFAULT_RETARGETING_IMAGE_ENV,
+        help="Retargeting workflow image. Also settable with NPA_RETARGETING_IMAGE.",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Show the SkyPilot YAML template for retargeting."""
 
-    _emit({"workflow": str(WORKFLOW_PATH)}, output)
+    _emit(
+        {
+            "workflow": str(WORKFLOW_PATH),
+            "image_env": DEFAULT_RETARGETING_IMAGE_ENV,
+            "image": image.strip() or container_image_for_tool("retargeting"),
+        },
+        output,
+    )
 
 
 @app.command("status")
@@ -107,9 +147,10 @@ def status_cmd(
 
     _emit(
         {
-            "backend": "retargeting",
+            "backend": "sonic-motion-lib-converter",
             "status": "available",
             "workflow": str(WORKFLOW_PATH),
+            "source_formats": list(SUPPORTED_SOURCE_FORMATS),
         },
         output,
     )

@@ -1,0 +1,35 @@
+# Standalone Cosmos2 transfer stage.
+#
+# Render concrete values before submitting. Secrets are injected through
+# Kubernetes/SkyPilot secret envs, not committed in this file.
+name: cosmos2-transfer
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO6000:1
+  image_id: "docker:${COSMOS2_TRANSFER_IMAGE}"
+envs:
+  NPA_RUN_ID: "${NPA_RUN_ID}"
+  NPA_INPUT_URI: "${NPA_INPUT_URI}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  NPA_ASSETS_URI: "${NPA_ASSETS_URI}"
+  NPA_SCENE_SPEC_URI: "${NPA_SCENE_SPEC_URI}"
+  COSMOS2_TRANSFER_IMAGE: "${COSMOS2_TRANSFER_IMAGE}"
+run: |
+  set -euo pipefail
+  python - <<'PY'
+  import json
+  import os
+
+  payload = {
+      "schema": "npa.cosmos2.transfer.v1",
+      "stage": "cosmos2-transfer",
+      "run_id": os.environ.get("NPA_RUN_ID", ""),
+      "input_uri": os.environ["NPA_INPUT_URI"],
+      "output_uri": os.environ["NPA_OUTPUT_URI"],
+      "assets_uri": os.environ.get("NPA_ASSETS_URI", ""),
+      "scene_spec_uri": os.environ.get("NPA_SCENE_SPEC_URI", ""),
+      "image": os.environ.get("COSMOS2_TRANSFER_IMAGE", ""),
+      "status": "contract_ready",
+  }
+  print(json.dumps(payload, indent=2, sort_keys=True))
+  PY

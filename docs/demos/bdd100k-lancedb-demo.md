@@ -1,6 +1,13 @@
 # BDD100K Failure-Mode Detection Demo
 ## Nebius Physical AI Workbench - LanceDB Reproduction
 
+> This demo reproduces LanceDB's autonomous-vehicle perception pipeline on
+> Nebius Physical AI Workbench, adding a FiftyOne (Voxel51) visual-review stage.
+> Source material:
+>
+> - Blog: [Unifying the AV ML Stack: From Raw Data to Trained Model with LanceDB](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb)
+> - Reference code: [lancedb/training — object-detection](https://github.com/lancedb/training/tree/main/object-detection)
+
 ### The Problem
 
 AV perception models fail silently on rare scenarios: riders, nighttime pedestrians, and objects far from the camera. These failure modes are underrepresented in training data and easy to miss in aggregate metrics.
@@ -33,9 +40,8 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  # Replace <your-registry-id> with your Nebius container registry ID.
-  # Replace <lancedb-image-tag> with: npa workbench lancedb system-info
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lancedb:<lancedb-image-tag>"
+  # Pinned first-party LanceDB image; override image_id only for BYO registries.
+  image_id: "docker:cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
 envs:
   NPA_PIPELINE_RUN_ID: "<your-run-id>"
   S3_BUCKET: "${NPA_S3_BUCKET}"
@@ -111,8 +117,11 @@ Each failure-mode view trains a separate Faster R-CNN ResNet50 FPN v2 detector.
 ### Reproducing This Demo
 
 Prerequisites: Nebius account, `npa` CLI installed, and access to the
-`npa-workbench-eu-north1` cluster profile. Start with the no-infrastructure
-validation first:
+`npa-workbench-eu-north1` cluster profile. To provision the object store,
+Kubernetes cluster, GPU node groups, and in-cluster services from scratch,
+follow the "Prerequisites: Provision Infrastructure" section of
+[`docs/workbench/cookbooks/bdd100k-pipeline.md`](../workbench/cookbooks/bdd100k-pipeline.md).
+Start with the no-infrastructure validation first:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \

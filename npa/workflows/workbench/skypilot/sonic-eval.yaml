@@ -8,10 +8,11 @@ resources:
   accelerators: L40S:1
   cpus: 8
   memory: 32
-  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
-  # the npa CLI, npa[sonic], and any simulator/runtime dependencies.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+  # NPA_WORKBENCH_IMAGE is BYO-overridable. The default is a pushed first-party
+  # image that installs the npa CLI and this repository's Workbench package.
+  image_id: "docker:${NPA_WORKBENCH_IMAGE}"
 envs:
+  NPA_WORKBENCH_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
   NPA_PIPELINE_RUN_ID: "<run-id>"
   SONIC_ONNX: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.onnx"
   SONIC_METADATA: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/export/sonic_policy.metadata.json"
@@ -26,6 +27,7 @@ envs:
   SONIC_EVAL_CONTAINER_POLICY_PATH: "/npa/eval/input/policy.onnx"
   SONIC_EVAL_CONTAINER_METADATA_PATH: "/npa/eval/input/metadata.json"
   SONIC_EVAL_CONTAINER_OUTPUT_PATH: "/npa/eval/output/sonic_eval_results.json"
+  # Set to nvidia.com/gpu=all for NVIDIA CDI sidecars where Docker --gpus is unsupported.
   SONIC_EVAL_CONTAINER_GPUS: "all"
   SONIC_EVAL_CONTAINER_DRIVER_CAPABILITIES: "all"
   SONIC_EVAL_CONTAINER_VULKAN_ICD: "/etc/vulkan/icd.d/nvidia_icd.json"

@@ -81,7 +81,7 @@ def test_workbench_public_surface() -> None:
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
-        "retargeting": ["build_retargeting_manifest", "write_result", "result_uri_for"],
+        "retargeting": ["run_retargeting", "validate_motion_lib", "metadata_uri_for", "result_uri_for"],
         "sonic": [
             "export_onnx",
             "evaluate_onnx_policy",

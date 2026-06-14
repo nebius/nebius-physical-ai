@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from npa.workbench.sonic import EXPORT_METADATA_FORMAT, load_export_metadata
+from npa.workbench.sonic.routing import SonicRoutingError, validate_render_gpu_target
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
@@ -43,6 +44,7 @@ DEFAULT_CONTAINER_OMNI_USER_DIR = "/tmp/isaac-sim-cache"
 DEFAULT_CONTAINER_OMNI_LOG_DIR = "/tmp/isaac-sim-cache/logs"
 REFERENCE_BACKEND = "reference"
 CONTAINER_BACKEND = "container"
+NVIDIA_CDI_DEVICE_PREFIX = "nvidia.com/"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
 BUILTIN_REFERENCE_ENVS = {"locomotion-smoke", "sonic-locomotion-smoke"}
 BUILTIN_REFERENCE_STEPS = 32
@@ -188,6 +190,7 @@ def evaluate_onnx_policy(
     env: str = DEFAULT_EVAL_ENV,
     output: str = "",
     container_image: str = "",
+    container_gpu_target: str = "",
     container_runtime: str = DEFAULT_CONTAINER_RUNTIME,
     container_gpus: str = DEFAULT_CONTAINER_GPUS,
     container_driver_capabilities: str = DEFAULT_CONTAINER_DRIVER_CAPABILITIES,
@@ -208,6 +211,14 @@ def evaluate_onnx_policy(
         raise SonicEvalError("--episodes must be positive")
     if container_render_frames <= 0:
         raise SonicEvalError("--container-render-frames must be positive")
+    if backend == CONTAINER_BACKEND and container_gpu_target:
+        # The container backend rasterizes Isaac-Lab render frames, so it must
+        # land on an RT-core GPU. Fail fast on a datacenter-headless misroute
+        # instead of burning a live launch.
+        try:
+            validate_render_gpu_target(container_gpu_target)
+        except SonicRoutingError as exc:
+            raise SonicEvalError(str(exc)) from exc
 
     bundle = load_eval_bundle(onnx=onnx, metadata=metadata)
     if backend == REFERENCE_BACKEND:
@@ -678,10 +689,14 @@ def _container_command(
         (str(output_dir), output_parent, ""),
     ]
     command = [runtime, "run", "--rm"]
+    nvidia_visible_devices = ""
     if _is_docker_runtime(runtime):
         command.extend(["--runtime", "nvidia"])
         if container_gpus:
-            command.extend(["--gpus", container_gpus])
+            if _is_nvidia_cdi_device_request(container_gpus):
+                nvidia_visible_devices = container_gpus
+            else:
+                command.extend(["--gpus", container_gpus])
         for device in container_devices:
             if device:
                 command.extend(["--device", device])
@@ -702,6 +717,8 @@ def _container_command(
         "OMNI_USER_DIR": DEFAULT_CONTAINER_OMNI_USER_DIR,
         "OMNI_LOG_DIR": DEFAULT_CONTAINER_OMNI_LOG_DIR,
     }
+    if nvidia_visible_devices:
+        env_vars["NVIDIA_VISIBLE_DEVICES"] = nvidia_visible_devices
     if container_driver_capabilities:
         env_vars["NVIDIA_DRIVER_CAPABILITIES"] = container_driver_capabilities
     if container_vulkan_icd:
@@ -1099,6 +1116,10 @@ def _dedupe_mounts(mounts: list[tuple[str, str, str]]) -> list[tuple[str, str, s
 
 def _is_docker_runtime(runtime: str) -> bool:
     return Path(runtime).name == "docker"
+
+
+def _is_nvidia_cdi_device_request(gpu_request: str) -> bool:
+    return gpu_request.strip().startswith(NVIDIA_CDI_DEVICE_PREFIX)
 
 
 def _rate(episodes: list[dict[str, Any]], key: str) -> float:

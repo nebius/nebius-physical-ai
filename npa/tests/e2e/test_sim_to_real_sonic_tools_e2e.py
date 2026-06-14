@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import joblib
+import numpy as np
 import pytest
 import yaml
 
@@ -116,19 +118,23 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     e2e_project: str | None,
     e2e_test_bucket: str,
     s3_helper: Any,
+    tmp_path: Path,
 ) -> None:
-    source_motion_key = "sonic-locomotion/source-motion/motion-000.json"
-    s3_helper.client.put_object(
-        Bucket=e2e_test_bucket,
-        Key=source_motion_key,
-        Body=json.dumps(
-            {
-                "format": "mocap-json",
-                "embodiment": "source",
-                "frames": [{"t": 0.0, "root": [0, 0, 0]}],
+    source_motion_key = "sonic-locomotion/source-motion/walk.pkl"
+    source_motion = tmp_path / "walk.pkl"
+    joblib.dump(
+        {
+            "walk": {
+                "root_trans_offset": np.zeros((4, 3), dtype=np.float32),
+                "pose_aa": np.zeros((4, 30, 3), dtype=np.float32),
+                "dof": np.zeros((4, 29), dtype=np.float32),
+                "root_rot": np.zeros((4, 4), dtype=np.float32),
+                "fps": 30,
             }
-        ).encode("utf-8"),
+        },
+        source_motion,
     )
+    s3_helper.client.upload_file(str(source_motion), e2e_test_bucket, source_motion_key)
     checkpoint_key = "sonic-locomotion/training/checkpoint_smoke.json"
     s3_helper.client.put_object(
         Bucket=e2e_test_bucket,
@@ -149,7 +155,7 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
             "--output-path",
             retargeted_uri,
             "--source-format",
-            "mocap-json",
+            "motion-lib",
             "--embodiment",
             "unitree-g1",
             "--frame-rate",
@@ -165,14 +171,21 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     assert retarget_result.returncode == 0, _format_result(retarget_result)
     retarget_payload = json.loads(retarget_result.stdout)
     assert retarget_payload["status"] == "retargeted"
-    assert retarget_payload["written_uri"] == f"{retargeted_uri}retargeting_manifest.json"
+    assert retarget_payload["artifact_kind"] == "robot_motion_lib"
+    assert retarget_payload["artifact_uri"] == retargeted_uri
+    assert retarget_payload["metadata_written_uri"] == f"{retargeted_uri}retargeting_result.json"
     retarget_object = s3_helper.client.get_object(
         Bucket=e2e_test_bucket,
-        Key="sonic-locomotion/retargeted/retargeting_manifest.json",
+        Key="sonic-locomotion/retargeted/retargeting_result.json",
     )
-    retarget_manifest = json.loads(retarget_object["Body"].read().decode("utf-8"))
-    assert retarget_manifest["embodiment"] == "unitree-g1"
-    assert retarget_manifest["max_frames"] == 8
+    retarget_metadata = json.loads(retarget_object["Body"].read().decode("utf-8"))
+    assert retarget_metadata["embodiment"] == "unitree-g1"
+    assert retarget_metadata["max_frames"] == 8
+    retargeted_motion = s3_helper.client.get_object(
+        Bucket=e2e_test_bucket,
+        Key="sonic-locomotion/retargeted/walk.pkl",
+    )
+    assert retargeted_motion["ContentLength"] > 0
 
     mjlab_uri = f"s3://{e2e_test_bucket}/sonic-locomotion/mjlab/"
     mjlab_result = _run_npa(
@@ -240,18 +253,24 @@ def test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts(
     assert sonic_docs[0] == {"name": "sonic-locomotion-finetuning", "execution": "serial"}
     assert [task["name"] for task in sonic_docs[1:]] == [
         "sonic-retarget-motion",
-        "sonic-finetune",
-        "sonic-mjlab-eval",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
     ]
-    assert "npa workbench retargeting run" in sonic_docs[1]["run"]
-    assert sonic_docs[2]["resources"]["accelerators"] == "L40S:1"
-    assert sonic_docs[2]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
-    assert "/entrypoint.sh train" in sonic_docs[2]["run"]
-    assert "npa workbench mjlab eval" in sonic_docs[3]["run"]
+    assert sonic_docs[1]["resources"]["cloud"] == "kubernetes"
+    assert sonic_docs[1]["envs"]["AWS_PROFILE"] == "nebius"
+    assert "npa workbench sonic retargeting run" in sonic_docs[1]["run"]
+    assert sonic_docs[2]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[2]["resources"]["use_spot"] is True
+    assert sonic_docs[2]["resources"]["region"] == "eu-north1"
+    assert sonic_docs[2]["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
+    assert sonic_docs[2]["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
+    assert "/entrypoint.sh finetune" in sonic_docs[2]["run"]
     assert sonic_docs[3]["resources"]["accelerators"] == "H100:1"
+    assert sonic_docs[3]["resources"]["use_spot"] is True
+    assert "mujoco-eval" in sonic_docs[3]["run"]
 
     assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench retargeting run" in retarget_docs[1]["run"]
+    assert "npa workbench sonic retargeting run" in retarget_docs[1]["run"]
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
     assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
     assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
@@ -279,9 +298,9 @@ def test_e2e_cli_smoke_surfaces_for_pipeline_tools() -> None:
         ["workbench", "data", "--help"],
         ["workbench", "vlm-eval", "status", "--output", "json"],
         ["workbench", "vlm-eval", "list", "--output", "json"],
-        ["workbench", "retargeting", "status", "--output", "json"],
-        ["workbench", "retargeting", "list", "--output", "json"],
-        ["workbench", "retargeting", "workflow", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "status", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "list", "--output", "json"],
+        ["workbench", "sonic", "retargeting", "workflow", "--output", "json"],
         ["workbench", "mjlab", "status", "--output", "json"],
         ["workbench", "mjlab", "list", "--output", "json"],
         ["workbench", "mjlab", "workflow", "--output", "json"],

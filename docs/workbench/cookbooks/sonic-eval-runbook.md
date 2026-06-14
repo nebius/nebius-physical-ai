@@ -24,15 +24,15 @@ The SkyPilot blueprint is
 - Object storage credentials are available to the task, and the endpoint is
   `https://storage.eu-north1.nebius.cloud`.
 - The first-party SONIC image is built and pushed with the variant that matches
-  your GPU target. Use `0.1.2` for L40S VM targets and `0.1.2-k8s` for
+  your GPU target. Use `0.1.2` for L40S VM targets and `0.1.2-k8s-runtime` for
   RTX PRO 6000 Blackwell Kubernetes targets:
 
   ```bash
   export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
   npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant baked
-  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
+  npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s --tag 0.1.2-k8s-runtime
   docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2"
-  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+  docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
   ```
 
   See `docs/workbench/sonic-image-catalog.md` for the compatibility matrix.
@@ -113,6 +113,11 @@ CONTAINER_OUTPUT_PATH: /npa/eval/output/sonic_eval_results.json
 ```
 
 The container receives:
+
+- Docker GPU injection defaults to `CONTAINER_GPUS=all`, which uses Docker's
+  `--gpus` flag. For NVIDIA CDI sidecars, set
+  `CONTAINER_GPUS=nvidia.com/gpu=all`; the CLI then uses the NVIDIA runtime and
+  passes that CDI device through `NVIDIA_VISIBLE_DEVICES` instead of `--gpus`.
 
 - `NPA_SONIC_ONNX`
 - `NPA_SONIC_METADATA`

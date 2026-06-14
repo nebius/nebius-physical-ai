@@ -55,7 +55,7 @@ launch it directly:
 
 | YAML field | L40S value | RTX PRO 6000 Kubernetes value |
 | --- | --- | --- |
-| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s` |
+| `resources.image_id` and `POLICY_IMAGE` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2` | `cr.eu-north1.nebius.cloud/<registry-id>/npa-sonic:0.1.2-k8s-runtime` |
 | `SONIC_GPU_TYPE` | `l40s` | `gpu-rtx6000` |
 | `SONIC_IMAGE_VARIANT` | `sonic-l40s-baked` | `sonic-k8s-host-mounted` |
 | `S3_ENDPOINT_URL` | your S3-compatible endpoint | your S3-compatible endpoint |
@@ -103,6 +103,17 @@ Then add `--config-path /path/to/skypilot-kubernetes.yaml` to the submit command
 Do not set `serviceAccountName` unless that account can also list Kubernetes
 nodes and pods for SkyPilot prechecks.
 
+When `SONIC_PAYLOAD_MODE=docker`, the default `SONIC_DOCKER_GPU_REQUEST=all`
+uses Docker's legacy `--gpus all` path. On Kubernetes sidecars where the NVIDIA
+runtime is configured for CDI, set
+`SONIC_DOCKER_GPU_REQUEST: nvidia.com/gpu=all` and ensure the SkyPilot runtime
+has `nvidia-ctk` from `nvidia-container-toolkit`. The workflow generates
+`/etc/cdi/nvidia.yaml` immediately before `docker run`, then starts the payload
+with `--runtime=nvidia`, `NVIDIA_VISIBLE_DEVICES=nvidia.com/gpu=all`, and
+`NVIDIA_DRIVER_CAPABILITIES=all`. If the sidecar is unprivileged or lacks Docker
+and `nvidia-ctk`, use the direct Kubernetes host-mounted SONIC image path rather
+than the nested Docker payload.
+
 SDK equivalent:
 
 ```python
@@ -134,8 +145,12 @@ For RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator, use the
 host-mounted variant:
 
 ```bash
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s"
+npa/docker/workbench/sonic/build.sh \
+  --registry "${NPA_REGISTRY}" \
+  --push \
+  --variant k8s \
+  --tag 0.1.2-k8s-runtime
+docker manifest inspect "${NPA_REGISTRY}/npa-sonic:0.1.2-k8s-runtime"
 ```
 
 Expected output artifacts:

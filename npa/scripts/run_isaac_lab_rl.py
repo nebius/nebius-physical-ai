@@ -71,6 +71,14 @@ def render_workflow(
     iterations: int,
     output_root: str = DEFAULT_OUTPUT_ROOT,
     image: str = "",
+    data_path: str = "",
+    overrides: list[str] | None = None,
+    wandb_enabled: bool = False,
+    wandb_project: str = "",
+    wandb_run_name: str = "",
+    wandb_mode: str = "offline",
+    checkpoint_s3_uri: str = "",
+    checkpoint_s3_endpoint_url: str = "",
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
     train_docs = [doc for doc in docs[1:] if isinstance(doc.get("envs"), dict)]
@@ -80,6 +88,20 @@ def render_workflow(
         envs["NPA_ISAAC_LAB_RUN_ID"] = run_id
         envs["ISAAC_LAB_TASK"] = task
         envs["ISAAC_LAB_ITERATIONS"] = str(iterations)
+        rendered_overrides = list(overrides or [])
+        envs["NPA_TRAINING_DATA_PATH"] = data_path
+        envs["NPA_TRAINING_OVERRIDES_JSON"] = json.dumps(rendered_overrides)
+        envs["NPA_TRAINING_OVERRIDES"] = " ".join(rendered_overrides)
+        envs["NPA_TRAINING_WANDB_ENABLED"] = "1" if wandb_enabled else "0"
+        envs["NPA_TRAINING_WANDB_PROJECT"] = wandb_project
+        envs["NPA_TRAINING_WANDB_RUN_NAME"] = wandb_run_name
+        envs["WANDB_MODE"] = wandb_mode if wandb_enabled else "disabled"
+        envs["NPA_CHECKPOINT_S3_URI"] = checkpoint_s3_uri
+        envs["NPA_CHECKPOINT_S3_ENDPOINT_URL"] = checkpoint_s3_endpoint_url
+        if checkpoint_s3_endpoint_url:
+            envs["AWS_ENDPOINT_URL"] = checkpoint_s3_endpoint_url
+            envs["NEBIUS_S3_ENDPOINT"] = checkpoint_s3_endpoint_url
+        envs["ISAAC_LAB_HYDRA_OVERRIDES"] = " ".join(["agent.save_interval=1", *rendered_overrides]).strip()
         variant = str(envs.get("RUN_VARIANT") or doc.get("name") or "").strip()
         prefix = output_root.rstrip("/") + f"/{run_id}/"
         if multiple and variant:
@@ -121,6 +143,14 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         iterations=args.iterations,
         output_root=args.output_root,
         image=args.image,
+        data_path=args.data_path,
+        overrides=args.override,
+        wandb_enabled=args.wandb,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run_name,
+        wandb_mode=args.wandb_mode,
+        checkpoint_s3_uri=args.checkpoint_s3_uri,
+        checkpoint_s3_endpoint_url=args.checkpoint_s3_endpoint_url,
     )
     variants = [
         str(doc.get("envs", {}).get("RUN_VARIANT"))
@@ -226,6 +256,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run-id", default="")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--image", default="", help="Container image override, e.g. cr.../npa-isaac-lab:tag.")
+    parser.add_argument("--data-path", default="", help="Canonical custom training data path.")
+    parser.add_argument("--override", action="append", default=[], help="Canonical training override KEY=VALUE.")
+    parser.add_argument("--wandb", action="store_true", help="Enable W&B logging.")
+    parser.add_argument("--wandb-project", default="")
+    parser.add_argument("--wandb-run-name", default="")
+    parser.add_argument("--wandb-mode", default="offline")
+    parser.add_argument("--checkpoint-s3-uri", default="")
+    parser.add_argument("--checkpoint-s3-endpoint-url", default="")
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)

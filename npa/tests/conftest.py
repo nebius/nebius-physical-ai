@@ -11,9 +11,70 @@ from npa.guardrails.pytest_collection import assert_nonzero_collection
 os.environ.setdefault("NPA_PROJECT_ID", "project-test-00000000")
 os.environ.setdefault("NPA_S3_BUCKET", "test-bucket-00000000")
 
+# Live markers whose tests intentionally use real ambient credentials.
+_LIVE_MARKERS = frozenset(
+    {
+        "byovm_live",
+        "e2e",
+        "e2e_pipeline",
+        "e2e_serverless",
+        "e2e_skypilot",
+        "gpu",
+        "multi_gpu",
+        "ngc_e2e",
+        "token_factory_e2e",
+    }
+)
+
+# Credential/storage env vars that override file config. A contributor who has
+# followed the quickstart and exported real Nebius creds must still get a
+# hermetic unit suite, so these are scrubbed for non-live tests. Without this,
+# e.g. an exported AWS_ENDPOINT_URL leaks into deploy-config assertions.
+_AMBIENT_CREDENTIAL_ENV_VARS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_ENDPOINT_URL",
+    "AWS_PROFILE",
+    "AWS_DEFAULT_REGION",
+    "AWS_REGION",
+    "NEBIUS_S3_ENDPOINT",
+    "NEBIUS_S3_BUCKET",
+    "NPA_STORAGE_ENDPOINT",
+    "NPA_CHECKPOINT_BUCKET",
+    "NEBIUS_PROJECT_ID",
+    "NEBIUS_TENANT_ID",
+    "NPA_REGISTRY",
+    "NPA_REGISTRY_ID",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "NEBIUS_API_KEY",
+    "NEBIUS_TOKEN_FACTORY_API_KEY",
+    "NEBIUS_TOKEN_FACTORY_BASE_URL",
+    "NEBIUS_BASE_URL",
+    "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+    "NPA_BYOVM_HOST",
+    "NPA_SSH_HOST",
+    "NPA_BYOVM_SSH_USER",
+    "NPA_SSH_USER",
+    "NPA_BYOVM_SSH_KEY",
+    "NPA_SSH_KEY",
+)
+
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
+
+
+@pytest.fixture(autouse=True)
+def scrub_ambient_credential_env(monkeypatch, request):
+    """Isolate non-live tests from real credentials exported in the shell."""
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        return
+    for env_var in _AMBIENT_CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(env_var, raising=False)
 
 
 def _is_huggingface_url(url: object) -> bool:
@@ -32,6 +93,7 @@ def block_live_huggingface_http(monkeypatch, request):
         "gpu",
         "multi_gpu",
         "ngc_e2e",
+        "token_factory_e2e",
     }
     if any(request.node.get_closest_marker(marker) for marker in live_markers):
         return

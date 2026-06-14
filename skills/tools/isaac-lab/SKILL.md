@@ -32,14 +32,14 @@ npa workbench isaac-lab list
 
 ## Custom Forks
 
-Canonical onboarding starts at `docs/getting-started.md`; do not duplicate
-credential, S3, Kubernetes, registry, or SkyPilot bootstrap setup here.
+Canonical onboarding starts at `docs/workbench/getting-started.md`; do not
+duplicate credential, S3, Kubernetes, registry, or SkyPilot bootstrap setup here.
 
 Customers can bring their own Isaac Lab fork through an `image_id` override in the SkyPilot YAML. The workbench provides a validated base container; the customer layers their fork on top.
 
 The replacement image must preserve the expected Isaac Lab entry point or runner contract.
 
-Cookbook: `docs/cookbooks/byof-isaac-lab/README.md`.
+Cookbook: `docs/workbench/cookbooks/byof-isaac-lab/README.md`.
 
 Validated BYOF surfaces:
 
@@ -52,6 +52,40 @@ Validated BYOF surfaces:
 The runner exposes `--image` directly. It does not expose a `--run-cmd` flag, so
 custom entrypoints should use a customer-owned YAML variant that preserves the
 runtime contract, checkpoint discovery, manifest creation, and S3 upload block.
+
+## Sim2Real Held-Out Backend
+
+Isaac Lab is also the default sim engine for the Sim2Real loop's non-VLM
+held-out rollout eval. The held-out eval is backend-pluggable:
+
+- `sim_backend=isaac` (default): the held-out rollout runs headless Isaac Sim
+  inside the Isaac Lab image as the eval component Job. It uses the Isaac Lab
+  manipulation task (`Isaac-Lift-Cube-Franka-v0` by default) for a Franka
+  pick/lift rollout.
+- `sim_backend=genesis`: the existing Genesis `FrankaPickPlaceEnv` path, kept
+  fully intact.
+
+Select with `--sim-backend`, env `NPA_SIM2REAL_SIM_BACKEND`, or the runbook
+YAML. Both backends emit the identical `npa.sim2real.heldout_eval.v1` per-env
+schema (`env_id`/`score`/`success`/`details`), so `report.json` and the
+outer-loop gate are backend-agnostic. The VLM eval (Cosmos-Reason) is unchanged.
+
+Asset handling mirrors the Genesis no-fallback provenance discipline:
+
+- Stock: the built-in Isaac lift-cube manipuland, recorded as
+  `asset_source=isaac_stock` (no sha256).
+- BYO mesh: a customer mesh/URDF imported to USD via Isaac Lab's offline
+  converters (`isaaclab.sim.converters.MeshConverter` / `UrdfConverter`),
+  recorded as `asset_source=byo_mesh` with a sha256. A mesh that fails to
+  import or load raises; there is no silent fallback to the stock asset.
+
+The Isaac Lab image bakes no `npa` code, and Isaac Sim is only importable via
+its bundled interpreter `/isaac-sim/python.sh`. The eval component injects
+branch `npa` code into that interpreter at start from an S3 source tarball
+(`NPA_SIM2REAL_SOURCE_TARBALL_URI`) or, when the repo is reachable, a git clone
+(`NPA_SOURCE_REPO`/`NPA_SOURCE_REF`), and ensures `boto3` for the S3 client.
+
+Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 
 ## Operational Safety
 

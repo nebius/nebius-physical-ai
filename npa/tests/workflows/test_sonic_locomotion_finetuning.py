@@ -6,6 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
+EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
+EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -57,15 +59,15 @@ def test_sonic_locomotion_pipeline_yaml_is_serial_and_uses_expected_tools() -> N
     tasks = docs[1:]
     assert [task["name"] for task in tasks] == [
         "sonic-retarget-motion",
-        "sonic-finetune",
-        "sonic-mjlab-eval",
+        "sonic-g1-finetune",
+        "sonic-mujoco-eval",
     ]
-    assert "npa workbench retargeting run" in tasks[0]["run"]
-    assert "/entrypoint.sh train" in tasks[1]["run"]
-    assert "npa workbench mjlab eval" in tasks[2]["run"]
+    assert "npa workbench sonic retargeting run" in tasks[0]["run"]
+    assert "/entrypoint.sh finetune" in tasks[1]["run"]
+    assert "mujoco-eval" in tasks[2]["run"]
 
 
-def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_image() -> None:
+def test_sonic_locomotion_pipeline_uses_h100_mujoco_mvp_image() -> None:
     docs = _docs(PIPELINE_YAML)
     retarget, train, eval_task = docs[1:]
 
@@ -73,15 +75,41 @@ def test_sonic_locomotion_pipeline_routes_first_party_sonic_to_l40s_manifest_ima
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
-        "image_id": "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>",
+        "image_id": "docker:${NPA_RETARGETING_IMAGE}",
     }
-    assert train["resources"]["cloud"] == "kubernetes"
-    assert train["resources"]["accelerators"] == "L40S:1"
-    assert eval_task["resources"]["cloud"] == "kubernetes"
+    assert retarget["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget["envs"]["SOURCE_FORMAT"] == "auto"
+    assert retarget["envs"]["RETARGET_FRAME_RATE"] == "30"
+    assert retarget["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
+    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+    assert train["resources"]["cloud"] == "nebius"
+    assert train["resources"]["region"] == "eu-north1"
+    assert train["resources"]["accelerators"] == "H100:1"
+    assert train["resources"]["use_spot"] is True
+    assert train["resources"]["image_id"] == (
+        "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
+    )
+    assert eval_task["resources"]["cloud"] == "nebius"
+    assert eval_task["resources"]["region"] == "eu-north1"
     assert eval_task["resources"]["accelerators"] == "H100:1"
-    assert train["resources"]["image_id"].endswith("/npa-sonic:<sonic-image-tag>")
-    assert train["envs"]["SONIC_GPU_TYPE"] == "l40s"
-    assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-l40s-baked"
+    assert eval_task["resources"]["use_spot"] is True
+    assert eval_task["resources"]["image_id"] == (
+        "docker:example.invalid/npa-sonic-mujoco:0.1.3-mvp"
+    )
+    assert train["envs"]["POLICY_IMAGE"] == "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
+    assert eval_task["envs"]["POLICY_IMAGE"] == "example.invalid/npa-sonic-mujoco:0.1.3-mvp"
+    assert train["envs"]["SONIC_GPU_TYPE"] == "h100"
+    assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-mujoco-h100-mvp"
+    assert train["envs"]["AWS_PROFILE"] == "nebius"
+    assert train["envs"]["RETARGETED_MOTION_URI"].endswith("/retargeted/")
+    assert train["envs"]["SONIC_TRAIN_MODE"] == "finetune"
+    assert train["envs"]["SONIC_RUN_REAL_TRAIN"] == "1"
+    assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"].endswith(
+        "/training/checkpoints/last.pt"
+    )
+    assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
+    assert eval_task["envs"]["SONIC_MUJOCO_STEPS"] == "64"
 
 
 def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
@@ -101,15 +129,37 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
     retarget, train, eval_task = docs[1:]
 
-    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
-    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s"
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
+    assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    assert retarget["envs"]["AWS_PROFILE"] == "nebius"
+    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     assert train["resources"]["cloud"] == "kubernetes"
     assert train["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    assert eval_task["resources"]["image_id"] == "docker:registry.example/workbench/npa:tools"
+    assert eval_task["resources"]["image_id"] == (
+        "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    )
+    assert eval_task["resources"]["cloud"] == "kubernetes"
+    assert eval_task["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert train["envs"]["SONIC_GPU_TYPE"] == "gpu-rtx6000"
     assert train["envs"]["SONIC_IMAGE_VARIANT"] == "sonic-k8s-host-mounted"
+    assert train["envs"]["AWS_PROFILE"] == "nebius"
+    assert train["envs"]["POLICY_IMAGE"] == (
+        "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    )
+    assert eval_task["envs"]["POLICY_IMAGE"] == (
+        "registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
+    )
+    assert eval_task["envs"]["AWS_PROFILE"] == "nebius"
     assert train["envs"]["SONIC_TRAIN_OUTPUT_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/training/"
-    assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert train["envs"]["RETARGETED_MOTION_URI"] == "s3://proof-bucket/sonic-proof/sonic-run/retargeted/"
+    assert eval_task["envs"]["SONIC_FINE_TUNED_CHECKPOINT_URI"] == (
+        "s3://proof-bucket/sonic-proof/sonic-run/training/checkpoints/last.pt"
+    )
+    assert eval_task["envs"]["SONIC_MUJOCO_OUTPUT_URI"] == (
+        "s3://proof-bucket/sonic-proof/sonic-run/mujoco-eval/"
+    )
+    assert train["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert eval_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"
     for task in (retarget, train, eval_task):
         assert "${" not in task["resources"]["image_id"]
         assert "${" not in "\n".join(str(value) for value in task["envs"].values())
@@ -151,6 +201,31 @@ def test_sonic_sdk_submit_passes_secret_envs(mocker) -> None:
     assert "registry.example/workbench/npa-sonic:0.1.2" in str(captured["content"])
 
 
+def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
+    from npa.workbench.sonic.workflow import materialize_sonic_workflow
+
+    plan = materialize_sonic_workflow(
+        SONIC_TRAIN_STANDALONE_YAML,
+        run_id="sonic-run",
+        registry="registry.example/workbench",
+        gpu_target="l40s",
+        s3_endpoint="https://storage.example",
+        s3_bucket="proof-bucket",
+        env_overrides={"SONIC_PAYLOAD_MODE": "docker"},
+    )
+    docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
+    task = docs[1]
+
+    assert "image_id" not in task["resources"]
+    assert task["envs"]["POLICY_IMAGE"] == "registry.example/workbench/npa-sonic:0.1.2"
+    assert task["envs"]["SONIC_PAYLOAD_MODE"] == "docker"
+    assert task["envs"]["SONIC_DOCKER_GPU_REQUEST"] == "all"
+    assert '--gpus "${SONIC_DOCKER_GPU_REQUEST}"' in task["run"]
+    assert "nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" in task["run"]
+    assert "NVIDIA_VISIBLE_DEVICES=${SONIC_DOCKER_GPU_REQUEST}" in task["run"]
+    assert 'docker run --rm "${docker_gpu_args[@]}"' in task["run"]
+
+
 def test_tool_yamls_match_registered_cli_surfaces() -> None:
     retarget_docs = _docs(RETARGETING_YAML)
     mjlab_docs = _docs(MJLAB_YAML)
@@ -159,13 +234,18 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
 
     assert retarget_docs[0] == {"name": "retargeting", "execution": "serial"}
     assert retarget_docs[1]["name"] == "retarget-motion"
-    assert "npa workbench retargeting run" in retarget_docs[1]["run"]
+    assert "npa workbench sonic retargeting run" in retarget_docs[1]["run"]
     assert "accelerators" not in retarget_docs[1]["resources"]
+    assert retarget_docs[1]["resources"]["image_id"] == "docker:${NPA_RETARGETING_IMAGE}"
+    assert retarget_docs[1]["envs"]["NPA_RETARGETING_IMAGE"] == EXPECTED_RETARGETING_IMAGE
+    assert retarget_docs[1]["envs"]["RETARGET_SOURCE_FRAME_RATE"] == "120"
 
     assert mjlab_docs[0] == {"name": "mjlab-eval", "execution": "serial"}
     assert mjlab_docs[1]["name"] == "mjlab-locomotion-eval"
     assert "npa workbench mjlab eval" in mjlab_docs[1]["run"]
     assert mjlab_docs[1]["resources"]["accelerators"] == "H100:1"
+    assert mjlab_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert mjlab_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
 
     assert sonic_export_docs[0] == {"name": "sonic-export", "execution": "serial"}
     assert sonic_export_docs[1]["name"] == "sonic-export-onnx"
@@ -183,6 +263,8 @@ def test_tool_yamls_match_registered_cli_surfaces() -> None:
     assert "npa workbench sonic eval" in sonic_eval_docs[1]["run"]
     assert sonic_eval_docs[1]["resources"]["cloud"] == "nebius"
     assert sonic_eval_docs[1]["resources"]["accelerators"] == "L40S:1"
+    assert sonic_eval_docs[1]["resources"]["image_id"] == "docker:${NPA_WORKBENCH_IMAGE}"
+    assert sonic_eval_docs[1]["envs"]["NPA_WORKBENCH_IMAGE"] == EXPECTED_WORKBENCH_IMAGE
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_BACKEND"] == "reference"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_ENV"] == "smoke"
     assert sonic_eval_docs[1]["envs"]["SONIC_EVAL_CONTAINER_GPUS"] == "all"

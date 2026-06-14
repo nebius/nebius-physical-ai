@@ -6,7 +6,7 @@ This cookbook describes the SkyPilot workflow at
 The workflow composes three Workbench stages:
 
 1. Retarget source motion artifacts into the SONIC embodiment schema with
-   `npa workbench retargeting run`.
+   `npa workbench sonic retargeting run`.
 2. Fine-tune or smoke-validate the SONIC locomotion checkpoint on L40S with the
    baked SONIC image variant.
 3. Evaluate the resulting checkpoint with MJLab metrics through
@@ -32,13 +32,20 @@ For raw `sky` runs, replace `<your-bucket-name>`, `<run-id>`,
 or SDK submission, pass the values to the SONIC materializer and it writes the
 literal YAML before calling SkyPilot.
 
+Retargeting uses `NPA_RETARGETING_IMAGE`, which defaults to the CPU
+`npa-retargeting:0.1.0` preprocess image. That image includes the `npa` CLI,
+CPU Python dependencies, and the pinned upstream
+`NVlabs/GR00T-WholeBodyControl` data-process scripts. MJLab still uses
+`NPA_WORKBENCH_IMAGE`, which defaults to the pushed generic Workbench image
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`.
+
 ## Tool Templates
 
 The individual tool templates are available when you want to validate stages
 separately:
 
 ```bash
-npa workbench retargeting workflow
+npa workbench sonic retargeting workflow
 npa workbench mjlab workflow
 ```
 
@@ -63,9 +70,10 @@ sky jobs launch \
   /tmp/sonic.yaml
 ```
 
-The `sonic-finetune` stage uses the first-party SONIC image. The retargeting and
-MJLab stages require a generic helper image that contains the `npa` CLI and this
-repository's Workbench package.
+The `sonic-finetune` stage uses the first-party SONIC image. The retargeting
+stage uses the CPU preprocess image and does not request accelerators. MJLab
+uses the generic helper image that contains the `npa` CLI and this repository's
+Workbench package.
 
 ## CLI Submission
 
@@ -107,7 +115,7 @@ For RTX PRO 6000 Kubernetes targets, use:
 --accelerators RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
 ```
 
-This resolves the SONIC stage to `npa-sonic:0.1.2-k8s`. L40S resolves to
+This resolves the SONIC stage to `npa-sonic:0.1.2-k8s-runtime`. L40S resolves to
 `npa-sonic:0.1.2`.
 
 For Kubernetes targets that pull private images, pass a SkyPilot config with the
@@ -149,8 +157,15 @@ sonic.submit_workflow(
 The retargeting stage writes:
 
 ```text
-s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/retargeting_manifest.json
+s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/**/*.pkl
+s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/retargeting_result.json
 ```
+
+The `.pkl` files are real SONIC motion-lib artifacts with fields such as
+`root_trans_offset`, `pose_aa`, `dof`, `root_rot`, and `fps`. The metadata JSON
+is only a sidecar. For raw `bvh` inputs, the stage writes SOMA skeleton PKLs;
+upstream SONIC does not bundle the external SOMA Retargeter/GMR step required
+to turn raw BVH into G1 robot motion-lib data.
 
 The SONIC stage writes training artifacts under:
 
@@ -192,9 +207,12 @@ The tool CLIs support `NPA_DRY_RUN=1`, which validates inputs and returns the
 artifact schema without writing outputs:
 
 ```bash
-NPA_DRY_RUN=1 npa workbench retargeting run \
+NPA_DRY_RUN=1 npa workbench sonic retargeting run \
   --input-path s3://bucket/motions/source/ \
   --output-path s3://bucket/sonic-locomotion/run-1/retargeted/ \
+  --source-format bones-seed-csv \
+  --frame-rate 30 \
+  --source-frame-rate 120 \
   --output json
 
 NPA_DRY_RUN=1 npa workbench mjlab eval \

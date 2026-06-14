@@ -26,6 +26,10 @@ making architecture, review, or domain judgments.
 Compatibility symlinks exist at `.claude/skills` and `.agents/skills`; do not
 create a new split skill tree.
 
+### Partner Capability Roadmap
+
+Onboarding NVIDIA Physical AI / Omniverse capabilities (NuRec, CAD-to-SimReady, USD tooling, defect-image SDG, video data augmentation, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`. Those are not yet implemented in the workbench; add each as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+
 ## Project Instructions
 
 - Do not hardcode project IDs, tenant IDs, registry IDs, bucket names, or secrets. Credentials live in `~/.npa/credentials.yaml`; machine-managed config lives in `~/.npa/config.yaml`.

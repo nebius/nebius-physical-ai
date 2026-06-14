@@ -11,6 +11,7 @@ from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot import workflow as workflow_module
 from npa.orchestration.skypilot.workflow import (
     SkyPilotSubmitError,
+    _stable_sky_cwd,
     _status_from_queue_payload,
     submit_workflow,
     workflow_status,
@@ -24,6 +25,14 @@ def _fake_sky(tmp_path: Path) -> Path:
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
     sky.chmod(0o755)
     return sky
+
+
+def _is_status_cmd(cmd: list[str]) -> bool:
+    return len(cmd) >= 2 and cmd[1] == "status"
+
+
+def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +52,8 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 42\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -51,7 +62,8 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
 
     assert result.status == "SUBMITTED"
     assert result.job_id == "42"
-    cmd, kwargs = calls[0]
+    assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    cmd, kwargs = calls[1]
     assert cmd[:5] == [str(sky_bin), "jobs", "launch", "--name", "run-abc"]
     assert "--config" not in cmd
     assert "--detach-run" in cmd
@@ -62,7 +74,47 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
         "cloud": "kubernetes",
         "cpus": 4,
         "memory": 16,
+        "autostop": False,
     }
+
+
+def test_submit_workflow_runs_sky_from_stable_cwd(monkeypatch, tmp_path) -> None:
+    """All sky invocations must run from a durable cwd so the auto-started
+    API server daemon never inherits an ephemeral (later-deleted) directory."""
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    isolated = tmp_path / "sky-state"
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 7\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(yaml_path, "run-cwd", isolated_config_dir=isolated, sky_bin=sky_bin)
+
+    assert calls, "expected sky to be invoked"
+    for cmd, kwargs in calls:
+        cwd = kwargs.get("cwd")
+        assert cwd, f"sky command missing stable cwd: {cmd}"
+        assert Path(cwd).is_dir(), f"sky cwd is not an existing directory: {cwd}"
+        assert cwd == str(isolated)
+
+
+def test_stable_sky_cwd_falls_back_to_home_when_dir_missing(tmp_path) -> None:
+    missing = tmp_path / "does-not-exist"
+    assert _stable_sky_cwd(missing) == str(Path.home())
+    assert _stable_sky_cwd(None) == str(Path.home())
+
+
+def test_stable_sky_cwd_prefers_existing_isolated_dir(tmp_path) -> None:
+    isolated = tmp_path / "sky-state"
+    isolated.mkdir()
+    assert _stable_sky_cwd(isolated) == str(isolated)
 
 
 def test_submit_workflow_network_failure_raises_typed_error(monkeypatch, tmp_path) -> None:
@@ -71,6 +123,8 @@ def test_submit_workflow_network_failure_raises_typed_error(monkeypatch, tmp_pat
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="network connection failed")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -85,6 +139,8 @@ def test_submit_workflow_auth_failure_raises_typed_error(monkeypatch, tmp_path) 
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Authentication failed: credentials expired")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -118,6 +174,8 @@ def test_submit_workflow_cleans_owned_temp_dir_on_timeout(monkeypatch, tmp_path)
         return str(owned_dir)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
     monkeypatch.setattr(workflow_module.tempfile, "mkdtemp", fake_mkdtemp)
@@ -135,6 +193,8 @@ def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_pa
     sky_bin = _fake_sky(tmp_path)
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 12\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -151,7 +211,7 @@ def test_submit_workflow_can_emit_nebius_controller_fallback(monkeypatch, tmp_pa
     resources = config["jobs"]["controller"]["resources"]
     assert resources["cloud"] == "nebius"
     assert resources["instance_type"] == "cpu-e2_2vcpu-8gb"
-    assert resources["autostop"]["down"] is False
+    assert resources["autostop"] is False
 
 
 def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_path) -> None:
@@ -161,6 +221,8 @@ def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_pat
     calls = []
 
     def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
 
@@ -182,6 +244,41 @@ def test_submit_workflow_passes_configured_secret_env_names(monkeypatch, tmp_pat
     assert "AWS_SECRET_ACCESS_KEY" not in cmd
 
 
+def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs["env"])
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-config-secrets",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/npa-rtxpro-mk8s",
+        secret_envs=("AWS_ACCESS_KEY_ID",),
+        extra_env={"AWS_ACCESS_KEY_ID": "from-config"},
+    )
+
+    cmd = calls[0]
+    assert "--infra" in cmd
+    assert cmd[cmd.index("--infra") + 1] == "k8s/npa-rtxpro-mk8s"
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == cmd[cmd.index("--secret") : cmd.index("--secret") + 2]
+    assert "from-config" not in cmd
+    assert captured_env["AWS_ACCESS_KEY_ID"] == "from-config"
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")
@@ -190,6 +287,8 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
 
     def fake_run(cmd, **kwargs):
         captured_env.update(kwargs["env"])
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 9", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -198,6 +297,130 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
 
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
     assert captured_env["SKY_RUNTIME_DIR"] == str(tmp_path / "isolated" / "sky-runtime")
+
+
+def test_submit_workflow_require_controller_up_uses_canonical_preflight(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1:4] == ["status", "--refresh", "--output"]:
+            stdout = '[{"name": "sky-jobs-controller-abc123", "status": "UP"}]'
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 77\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path,
+        "run-guard",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        require_controller_up=True,
+    )
+
+    assert result.job_id == "77"
+    assert calls[0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[1][:5] == [str(sky_bin), "jobs", "launch", "--name", "run-guard"]
+
+
+def test_submit_workflow_require_controller_up_blocks_missing_controller(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if _is_status_cmd(cmd):
+            return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+        raise AssertionError("launch should be blocked until a controller exists")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotSubmitError, match="no jobs-controller found"):
+        submit_workflow(
+            yaml_path,
+            "run-require-controller",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=sky_bin,
+            require_controller_up=True,
+            controller_preflight_timeout=0,
+            controller_preflight_interval=0,
+        )
+
+    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+
+
+def test_submit_workflow_blocks_unhealthy_existing_jobs_controller(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    owned_dir = tmp_path / "owned-autostop-submission"
+    calls = []
+
+    def fake_mkdtemp(prefix: str) -> str:
+        owned_dir.mkdir()
+        return str(owned_dir)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if _is_status_cmd(cmd):
+            stdout = '[{"name": "sky-jobs-controller-64ce57a0", "status": "AUTOSTOPPING"}]'
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        raise AssertionError("launch should be blocked until controller is healthy")
+
+    monkeypatch.setattr(workflow_module.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotSubmitError, match="sky-jobs-controller-64ce57a0=AUTOSTOPPING"):
+        submit_workflow(
+            yaml_path,
+            "run-autostop",
+            sky_bin=sky_bin,
+            controller_preflight_timeout=0,
+            controller_preflight_interval=0,
+        )
+
+    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
+    assert not owned_dir.exists()
+
+
+def test_submit_workflow_controller_preflight_parses_warning_prefixed_json(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if not _is_status_cmd(cmd):
+            raise AssertionError("launch should be blocked until controller is healthy")
+        stdout = (
+            "\x1b[33mCluster 'sky-jobs-controller-abc123' is autostopping.\x1b[0m\n\n"
+            '[{"name": "sky-jobs-controller-abc123", "status": "AUTOSTOPPING"}]'
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="sky-jobs-controller-abc123=AUTOSTOPPING",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-guard",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=sky_bin,
+            controller_preflight_timeout=0,
+            controller_preflight_interval=0,
+        )
+
+    assert calls == [[str(sky_bin), "status", "--refresh", "--output", "json"]]
 
 
 def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:

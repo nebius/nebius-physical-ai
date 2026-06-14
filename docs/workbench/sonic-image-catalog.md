@@ -5,13 +5,18 @@ The machine-readable source of truth is
 manifest to resolve first-party SONIC image tags for CLI, SDK, and workflow
 paths.
 
+This manifest is SONIC-scoped. Other Workbench images resolve through
+`npa/src/npa/deploy/images.py` and `[tool.npa.supported-tools]` in
+`npa/pyproject.toml`; do not add non-SONIC tools to this manifest unless the
+catalog is intentionally expanded to all Workbench solutions.
+
 SONIC uses two image variants. They differ only in how NVIDIA graphics and
 driver-coupled userspace are provided.
 
 | Variant | Tag | Driver provisioning | Use for | Why |
 | --- | --- | --- | --- | --- |
 | `sonic-l40s-baked` | `npa-sonic:0.1.2` | `baked` | L40S VM or compute-only host driver targets | The host does not mount the NVIDIA graphics userspace needed by Isaac Lab, so the image carries the matching NVML, GL, and Vulkan libraries. |
-| `sonic-k8s-host-mounted` | `npa-sonic:0.1.2-k8s` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
+| `sonic-k8s-host-mounted` | `npa-sonic:0.1.2-k8s-runtime` | `host-mounted` | RTX PRO 6000 Blackwell on Kubernetes with the NVIDIA GPU Operator | The GPU Operator mounts driver-matched NVML, GL, and Vulkan libraries from the node, so the image must not carry conflicting driver libraries. |
 
 Use `${NPA_REGISTRY}/npa-sonic:<tag>` for a concrete registry reference:
 
@@ -82,6 +87,23 @@ sonic.submit_workflow(
 )
 ```
 
+## Related BYO Images
+
+The VLM eval workflows use `NPA_VLM_IMAGE` for the serving image. The committed
+default is `cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos:1.0.9`,
+a pushed CUDA/PyTorch Workbench image; set `NPA_VLM_IMAGE` to a prebuilt VLM or
+vLLM image when you need pinned serving dependencies.
+
+The retargeting workflow uses `NPA_RETARGETING_IMAGE` for the CPU preprocess
+image. The committed default is
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0`, a pushed
+image that installs this repository's `npa` package, CPU preprocess
+dependencies, and pinned upstream SONIC data-process scripts.
+
+MJLab workflows use `NPA_WORKBENCH_IMAGE` for the generic Workbench CLI image.
+The committed default remains
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6`.
+
 ## Build Commands
 
 Baked L40S variant:
@@ -93,8 +115,12 @@ npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --varian
 Kubernetes host-mounted variant:
 
 ```bash
-npa/docker/workbench/sonic/build.sh --registry "${NPA_REGISTRY}" --push --variant k8s
+npa/docker/workbench/sonic/build.sh \
+  --registry "${NPA_REGISTRY}" \
+  --push \
+  --variant k8s \
+  --tag 0.1.2-k8s-runtime
 ```
 
-Do not overwrite existing `0.1.2`, `0.1.1`, or `0.1.0` tags. New compatibility
-variants must use additive tags.
+Do not overwrite existing `0.1.2`, `0.1.2-k8s`, `0.1.1`, or `0.1.0` tags. New
+compatibility variants must use additive tags.

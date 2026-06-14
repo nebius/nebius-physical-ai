@@ -17,3 +17,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, and Nebius infra.
 
 Compatibility symlinks exist at `.agents/skills` and `.claude/skills`; do not add new skills there directly.
+
+## Partner Capability Roadmap
+
+Onboarding NVIDIA Physical AI / Omniverse capabilities (NuRec, CAD-to-SimReady, USD tooling, defect-image SDG, video data augmentation, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`. Those are not yet implemented in the workbench; add each as a real skill only when its solution lands on Nebius + SkyPilot, with tests.

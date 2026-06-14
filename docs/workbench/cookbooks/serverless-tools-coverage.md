@@ -16,7 +16,7 @@ The Workbench supports `--runtime serverless` on these non-LeRobot tools, each b
 
 GR00T code and unit coverage are in place, but smoke validation is still open.
 W7p-groot-debug classified the W7-parallel-tools failures as an image tag
-mismatch (`npa-groot:n1.7` was not pushed), fixed the default serverless image
+mismatch (the old unpushed GR00T tag was not pushed), fixed the default serverless image
 tag to `npa-groot:0.1.0`, and retried once. The retry reached `STARTING` with a
 running compute instance but produced no logs before cleanup. Nebius handoff:
 `/tmp/w7pgd-20260514T001207Z/NEBIUS-SUPPORT-HANDOFF.md`.

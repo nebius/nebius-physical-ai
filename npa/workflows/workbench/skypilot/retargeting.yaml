@@ -7,32 +7,48 @@ resources:
   cloud: kubernetes
   cpus: 4
   memory: 16
-  # Replace <your-registry-id> and <npa-image-tag> with an image that includes
-  # the npa CLI and this repository's Workbench package.
-  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa:<npa-image-tag>"
+  # NPA_RETARGETING_IMAGE is BYO-overridable. The default is a CPU preprocess
+  # image with npa plus upstream SONIC data_process scripts.
+  image_id: "docker:${NPA_RETARGETING_IMAGE}"
 envs:
+  NPA_RETARGETING_IMAGE: "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
+  NPA_RETARGETING_UPSTREAM_REF: "a9d20b2ac0949244d94461a1a3263f38c5027c4a"
   INPUT_MOTION_URI: "s3://<your-bucket-name>/motions/source/"
   RETARGETED_MOTION_URI: "s3://<your-bucket-name>/sonic-locomotion/<run-id>/retargeted/"
-  SOURCE_FORMAT: "mocap-json"
+  SOURCE_FORMAT: "auto"
   SONIC_EMBODIMENT: "unitree-g1"
   RETARGET_MAP_URI: ""
-  RETARGET_FRAME_RATE: "50"
+  RETARGET_FRAME_RATE: "30"
+  RETARGET_SOURCE_FRAME_RATE: "120"
   RETARGET_MAX_FRAMES: "0"
+  RETARGET_NUM_WORKERS: "4"
+  RETARGET_INDIVIDUAL: "1"
+  AWS_PROFILE: "nebius"
+  S3_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
   NPA_DRY_RUN: "0"
 setup: |
-  set -e
-  if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then
-    python3 -m pip install -e /opt/nebius-physical-ai/npa
-  fi
+  set -euo pipefail
+  npa --version
 run: |
   set -euo pipefail
-  npa workbench retargeting run \
+  export AWS_PROFILE="${AWS_PROFILE:-nebius}"
+  export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-https://storage.eu-north1.nebius.cloud}}"
+  export NEBIUS_S3_ENDPOINT="${NEBIUS_S3_ENDPOINT:-${AWS_ENDPOINT_URL}}"
+  cmd=(npa workbench sonic retargeting run \
     --input-path "${INPUT_MOTION_URI}" \
     --output-path "${RETARGETED_MOTION_URI}" \
     --source-format "${SOURCE_FORMAT}" \
     --embodiment "${SONIC_EMBODIMENT}" \
     --retarget-map "${RETARGET_MAP_URI}" \
     --frame-rate "${RETARGET_FRAME_RATE}" \
+    --source-frame-rate "${RETARGET_SOURCE_FRAME_RATE}" \
     --max-frames "${RETARGET_MAX_FRAMES}" \
-    --output json
+    --num-workers "${RETARGET_NUM_WORKERS}" \
+    --output json)
+  if [ "${RETARGET_INDIVIDUAL}" = "1" ]; then
+    cmd+=(--individual)
+  else
+    cmd+=(--combined)
+  fi
+  "${cmd[@]}"

@@ -516,7 +516,7 @@ def test_deploy_can_build_registry_pull_secret_from_docker_auth(tmp_path: Path, 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     assert detection_training._image_registry("cr.example.test/project/image:tag") == "cr.example.test"
-    assert detection_training._image_registry("npa-detection-training:latest") == ""
+    assert detection_training._image_registry("npa-detection-training:dev") == ""
     assert detection_training._docker_auth_config("cr.example.test") == {
         "auths": {"cr.example.test": {"auth": "dXNlcjpwYXNz"}}
     }

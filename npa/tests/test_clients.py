@@ -406,3 +406,107 @@ def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
     assert result["iam_token"] == "iam"
     assert result["s3_endpoint"] == "https://storage.eu-north1.nebius.cloud"
     assert statuses[0] == "Getting IAM access token..."
+
+
+def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
+    mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa")
+    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    bucket = mocker.patch("npa.clients.nebius.ensure_bucket", return_value="chosen")
+    mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
+
+    result = nebius.bootstrap_environment(
+        "project",
+        "tenant",
+        "eu-north1",
+        bucket_name="chosen",
+        bucket_max_size_bytes=123,
+    )
+
+    assert result["s3_bucket"] == "chosen"
+    bucket.assert_called_once_with("project", "chosen", max_size_bytes=123)
+
+
+def test_nebius_bucket_exists(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={"items": [{"metadata": {"name": "lerobot-abc"}}]},
+    )
+
+    assert nebius.bucket_exists("project", "lerobot-abc") is True
+    assert nebius.bucket_exists("project", "other") is False
+
+
+def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=True)
+    run = mocker.patch("npa.clients.nebius._run")
+
+    assert nebius.ensure_bucket("project", "lerobot-abc", max_size_bytes=123) == "lerobot-abc"
+    run.assert_not_called()
+
+
+def test_nebius_ensure_bucket_applies_max_size_on_create(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    run = mocker.patch("npa.clients.nebius._run")
+
+    nebius.ensure_bucket("project", "lerobot-abc", max_size_bytes=50 * 1024**3)
+
+    args = run.call_args.args[0]
+    assert "--max-size-bytes" in args
+    assert args[args.index("--max-size-bytes") + 1] == str(50 * 1024**3)
+
+
+def test_nebius_ensure_bucket_unlimited_omits_max_size(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    run = mocker.patch("npa.clients.nebius._run")
+
+    nebius.ensure_bucket("project", "lerobot-abc")
+
+    assert "--max-size-bytes" not in run.call_args.args[0]
+
+
+def test_nebius_current_project_and_tenant_from_profile(mocker) -> None:
+    run = mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=["project-xyz", "tenant-xyz"],
+    )
+
+    assert nebius.current_project_id() == "project-xyz"
+    assert nebius.current_tenant_id() == "tenant-xyz"
+    assert run.call_args_list[0].args[0] == ["config", "get", "parent-id"]
+    assert run.call_args_list[1].args[0] == ["config", "get", "tenant-id"]
+
+
+def test_nebius_current_project_id_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no profile"))
+
+    assert nebius.current_project_id() == ""
+
+
+def test_nebius_discover_container_registry_builds_url(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        return_value={
+            "items": [
+                {
+                    "metadata": {"id": "registry-e00abc"},
+                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
+                }
+            ]
+        },
+    )
+
+    assert (
+        nebius.discover_container_registry("project")
+        == "cr.eu-north1.nebius.cloud/e00abc"
+    )
+
+
+def test_nebius_discover_container_registry_empty_without_project() -> None:
+    assert nebius.discover_container_registry("") == ""
+
+
+def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
+
+    assert nebius.discover_container_registry("project") == ""

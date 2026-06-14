@@ -1,0 +1,25 @@
+# Standalone Cosmos3 reason stage.
+#
+# Render concrete values before submitting. Secrets are injected through
+# Kubernetes/SkyPilot secret envs, not committed in this file.
+name: cosmos3-reason
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO6000:1
+  image_id: "docker:${COSMOS3_REASON_IMAGE}"
+envs:
+  NPA_RUN_ID: "${NPA_RUN_ID}"
+  NPA_INPUT_URI: "${NPA_INPUT_URI}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  NPA_REASON_PROMPT: "${NPA_REASON_PROMPT}"
+  COSMOS3_REASON_MODEL: "${COSMOS3_REASON_MODEL}"
+  COSMOS3_REASON_IMAGE: "${COSMOS3_REASON_IMAGE}"
+run: |
+  set -euo pipefail
+  python -m npa.workflows.cosmos_split cosmos3-reason \
+    --run-id "${NPA_RUN_ID:-}" \
+    --input-uri "${NPA_INPUT_URI}" \
+    --output-uri "${NPA_OUTPUT_URI}" \
+    --model "${COSMOS3_REASON_MODEL:-nvidia/Cosmos-Reason1-7B}" \
+    --image "${COSMOS3_REASON_IMAGE:-}" \
+    --prompt "${NPA_REASON_PROMPT:-}"

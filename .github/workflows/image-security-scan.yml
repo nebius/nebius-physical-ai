@@ -63,6 +63,7 @@ jobs:
           scan-ref: "."
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          limit-severities-for-sarif: true
           format: sarif
           output: trivy-config.sarif
 
@@ -107,6 +108,7 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           vuln-type: os
+          limit-severities-for-sarif: true
           format: sarif
           output: trivy-${{ matrix.name }}.sarif
 

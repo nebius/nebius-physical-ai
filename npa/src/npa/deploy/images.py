@@ -21,11 +21,41 @@ CONTAINER_IMAGE_NAMES = {
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
     "cosmos": "npa-cosmos",
+    "cosmos2-transfer": "npa-cosmos2-transfer",
+    "cosmos3-reason": "npa-cosmos3-reason",
     "groot": "npa-groot",
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
+    "retargeting": "npa-retargeting",
+    "sim2real-envgen": "npa-sim2real-envgen",
+    "sim2real-reference-policy": "npa-sim2real-reference-policy",
+    "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
+    "sim2real-eval": "npa-sim2real-eval",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
+}
+
+SUPPORTED_TOOL_VERSIONS = {
+    "lerobot": "0.5.1",
+    "lerobot-policy": "0.1.0",
+    "genesis": "0.4.6",
+    "isaac-lab": "2.3.2.post1",
+    "cosmos": "1.0.9",
+    "cosmos2-transfer": "2.5.0",
+    "cosmos3-reason": "3.0.1-genuine-sm120",
+    "groot": "0.1.0",
+    "fiftyone": "1.15.0",
+    "sonic": "0.1.2",
+    "retargeting": "0.1.0",
+    "sim2real-envgen": "0.1.1",
+    "sim2real-reference-policy": "0.1.1",
+    "lerobot-vlm-rl": "0.1.0",
+    "sim2real-eval": "0.1.1-genuine-sm120",
+    "lancedb": "0.30.2",
+    "detection-training": "bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z",
+    "nebius-cli": "0.12.192",
+    "terraform": "~> 0.5.201",
+    "terraform-cli": "1.13.3",
 }
 
 
@@ -70,7 +100,10 @@ def supported_tool_version(tool: str) -> str:
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
             return str(data["tool"]["npa"]["supported-tools"][tool])
-    raise RuntimeError(f"Could not find pyproject.toml for tool version lookup: {tool}")
+    try:
+        return SUPPORTED_TOOL_VERSIONS[tool]
+    except KeyError as exc:
+        raise RuntimeError(f"Could not find supported version for tool: {tool}") from exc
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
@@ -172,6 +205,11 @@ def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, A
         "rtx-pro": "sonic-k8s-host-mounted",
         "rtx6000": "sonic-k8s-host-mounted",
         "rtx-pro-6000": "sonic-k8s-host-mounted",
+        "mujoco": "sonic-mujoco-h100-mvp",
+        "h100": "sonic-mujoco-h100-mvp",
+        "h200": "sonic-mujoco-h100-mvp",
+        "sonic-mujoco": "sonic-mujoco-h100-mvp",
+        "mvp": "sonic-mujoco-h100-mvp",
     }
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:

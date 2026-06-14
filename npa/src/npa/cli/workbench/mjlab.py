@@ -12,6 +12,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.deploy.images import DEFAULT_WORKBENCH_IMAGE_ENV, default_workbench_image
 from npa.workbench.mjlab import MjlabEvalError, evaluate_locomotion, write_result
 
 app = typer.Typer(
@@ -90,11 +91,24 @@ def eval_cmd(
 
 @app.command("workflow")
 def workflow_cmd(
+    image: str = typer.Option(
+        "",
+        "--image",
+        envvar=DEFAULT_WORKBENCH_IMAGE_ENV,
+        help="Workbench workflow image. Also settable with NPA_WORKBENCH_IMAGE.",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Show the SkyPilot YAML template for MJLab evaluation."""
 
-    _emit({"workflow": str(WORKFLOW_PATH)}, output)
+    _emit(
+        {
+            "workflow": str(WORKFLOW_PATH),
+            "image_env": DEFAULT_WORKBENCH_IMAGE_ENV,
+            "image": image.strip() or default_workbench_image(),
+        },
+        output,
+    )
 
 
 @app.command("status")

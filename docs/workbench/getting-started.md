@@ -115,7 +115,7 @@ Export the non-secret resource identifiers used by commands and examples:
 export NEBIUS_PROJECT_ID=<your-project-id>
 export NEBIUS_TENANT_ID=<your-tenant-id>
 export NPA_S3_BUCKET=<your-bucket>
-export NPA_REGISTRY_ID=<your-registry-id>
+export NPA_REGISTRY_ID=e00cm0vc6t09m0z5gw
 export NPA_REGISTRY=cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
@@ -144,11 +144,13 @@ Gate: the command lists the bucket or exits successfully with an empty listing.
 
 ## Verify Docker Registry Access
 
-`NPA_REGISTRY_ID` is the registry namespace only. The active image-resolution
-paths use `NPA_REGISTRY` as the full registry prefix, or
-`projects.<alias>.container_registry` in NPA config. Build and push commands
-should therefore tag images as `${NPA_REGISTRY}/<image>:<tag>`, not as a value
-derived from `NPA_REGISTRY_ID` alone.
+`NPA_REGISTRY_ID` is the registry namespace only. The first-party default is
+`e00cm0vc6t09m0z5gw` (`npa-workbench`), which resolves to
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw`. The active image-resolution
+paths still prefer `projects.<alias>.container_registry`, then `NPA_REGISTRY`,
+then top-level config before falling back to that default. Build and push
+commands should therefore tag images as `${NPA_REGISTRY}/<image>:<tag>`, not as
+a value derived from `NPA_REGISTRY_ID` alone.
 
 Verify Docker registry access:
 
@@ -270,6 +272,8 @@ manifest from S3.
 
 ## Next Docs
 
+- [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md): how to call any
+  Workbench tool through the CLI, SDK, and SkyPilot YAML.
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
 - [sim-to-real-quickstart.md](sim-to-real-quickstart.md): first H100

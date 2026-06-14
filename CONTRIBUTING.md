@@ -444,13 +444,41 @@ CI currently verifies tests, image security, and secret regression through:
 Gitleaks runs the custom Nebius-pattern rules in `.gitleaks.toml` on pull
 requests and pushes to `main`.
 ## Testing Requirements
-Use the repo virtualenv for validation:
+
+Install the dev tooling into your virtualenv once (this pulls in `pytest`,
+`pytest-mock`, `pytest-cov`, `pytest-timeout`, `ruff`, and the `server` extra so
+the suite collects):
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
+pip install -e "npa[dev]"
 ```
 
-Do not use bare `python` for repo validation.
+Then use the `make` targets from the repo root:
+
+```bash
+make test         # fast default: full unit suite, no live/GPU/network (PR gate)
+make test-smoke   # quickest: onboarding CLI smoke tests only
+make lint         # ruff
+make test-e2e     # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
+```
+
+`make test` deselects the live/GPU/e2e markers (`gpu`, `multi_gpu`, `e2e`,
+`e2e_serverless`, `e2e_skypilot`, `e2e_pipeline`, `byovm_live`, `ngc_e2e`) by
+marker rather than only ignoring `tests/e2e`. This matters: some `gpu`/`e2e`
+tests live under `tests/workbench/` and will try to launch real infrastructure
+if your shell has Nebius creds/SkyPilot configured, so the marker filter — not
+just `--ignore=tests/e2e` — is what keeps the default suite hermetic.
+
+Override the interpreter with `make test PYTHON=/path/to/venv/bin/python`. The
+equivalent raw command is:
+
+```bash
+cd npa && python -m pytest tests/ --ignore=tests/e2e \
+  -m "not e2e and not e2e_serverless and not e2e_skypilot and not e2e_pipeline and not gpu and not multi_gpu and not byovm_live and not ngc_e2e" \
+  --timeout=180 -q
+```
+
+Do not use bare `python` for repo validation; use your venv's interpreter.
 
 Test layout:
 
@@ -578,7 +606,7 @@ Update BDD100K label map for real data
 Before review, a PR should pass the non-e2e test suite:
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
+make test
 ```
 
 Run focused tests for the touched surface as well. Documentation-only changes
@@ -671,8 +699,10 @@ The infra skill uses `${NPA_REGISTRY_ID}` to describe the registry ID. Current
 code uses `NPA_REGISTRY` as the full registry prefix in
 `npa/src/npa/deploy/images.py` and `npa/src/npa/clients/config.py`.
 
-Committed examples may use either a full `NPA_REGISTRY` prefix or a
-`<your-registry-id>` placeholder. Do not commit a concrete registry ID.
+Committed BYO examples may use either a full `NPA_REGISTRY` prefix or a
+`<your-registry-id>` placeholder. Resolver-owned first-party defaults may use
+the `npa-workbench` registry ID `e00cm0vc6t09m0z5gw`; avoid concrete registry
+IDs in customer-specific examples.
 ### Detection training is a service, not one of the 8 named tools
 `npa/src/npa/workbench/detection_training/` exists and is a strong service
 reference. It is not in the 8-tool architecture list in

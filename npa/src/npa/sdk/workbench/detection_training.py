@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from npa.workbench.detection_training.schemas import (
+    CheckpointS3Settings,
     DEFAULT_LANCE_URI,
     DEFAULT_TOKEN_ENV,
     EvalRequest,
@@ -15,6 +16,7 @@ from npa.workbench.detection_training.schemas import (
     StatusResponse,
     TrainRequest,
     TrainResponse,
+    WandbSettings,
 )
 
 
@@ -29,8 +31,16 @@ class DetectionTrainingValidationError(ValueError):
 def train(
     *,
     view: str,
-    output_uri: str,
+    output_uri: str = "",
+    data_path: str = "",
     lance_uri: str = DEFAULT_LANCE_URI,
+    overrides: list[str] | None = None,
+    wandb: dict[str, Any] | None = None,
+    checkpoint_s3: dict[str, Any] | None = None,
+    checkpoint_s3_uri: str = "",
+    checkpoint_s3_endpoint_url: str = "",
+    checkpoint_s3_access_key_id: str = "",
+    checkpoint_s3_secret_access_key: str = "",
     num_classes: int = 10,
     epochs: int = 10,
     batch_size: int = 8,
@@ -43,10 +53,31 @@ def train(
     timeout: float = 30.0,
 ) -> TrainResponse:
     """Start a Faster R-CNN detection-training run."""
+    checkpoint_payload = {
+        **(checkpoint_s3 or {}),
+        **{
+            key: value
+            for key, value in {
+                "uri": checkpoint_s3_uri,
+                "endpoint_url": checkpoint_s3_endpoint_url,
+                "aws_access_key_id": checkpoint_s3_access_key_id,
+                "aws_secret_access_key": checkpoint_s3_secret_access_key,
+            }.items()
+            if value
+        },
+    }
+    checkpoint_settings = CheckpointS3Settings(**checkpoint_payload)
+    effective_output_uri = output_uri or checkpoint_settings.uri
+    if not effective_output_uri:
+        raise DetectionTrainingValidationError("output_uri or checkpoint_s3.uri is required")
     request = TrainRequest(
         view=view,
-        lance_uri=lance_uri,
-        output_uri=output_uri,
+        lance_uri=data_path or lance_uri,
+        data_path=data_path,
+        output_uri=effective_output_uri,
+        overrides=overrides or [],
+        wandb=WandbSettings(**(wandb or {})),
+        checkpoint_s3=checkpoint_settings,
         num_classes=num_classes,
         epochs=epochs,
         batch_size=batch_size,
@@ -196,4 +227,3 @@ __all__ = [
     "status",
     "train",
 ]
-

@@ -5,6 +5,8 @@ PYTHON_BIN="${NPA_PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
   if [ -x /isaac-sim/python.sh ]; then
     PYTHON_BIN=/isaac-sim/python.sh
+  elif [ -x /opt/npa/venv/bin/python ]; then
+    PYTHON_BIN=/opt/npa/venv/bin/python
   elif [ -x /opt/isaac-lab/venv/bin/python ]; then
     PYTHON_BIN=/opt/isaac-lab/venv/bin/python
   else
@@ -58,6 +60,86 @@ for path in local_dir.rglob("*"):
 PYUPLOAD
 }
 
+download_s3_file() {
+  local uri="$1"
+  local destination="$2"
+  NPA_DOWNLOAD_URI="$uri" NPA_DOWNLOAD_DESTINATION="$destination" "$PYTHON_BIN" <<'PYDOWNLOAD'
+import os
+import pathlib
+from urllib.parse import urlparse
+
+import boto3
+
+uri = os.environ["NPA_DOWNLOAD_URI"]
+destination = pathlib.Path(os.environ["NPA_DOWNLOAD_DESTINATION"])
+parsed = urlparse(uri)
+if parsed.scheme != "s3" or not parsed.netloc:
+    raise SystemExit(f"invalid S3 URI: {uri}")
+destination.parent.mkdir(parents=True, exist_ok=True)
+s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL"))
+s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(destination))
+print(f"downloaded {uri} -> {destination}", flush=True)
+PYDOWNLOAD
+}
+
+write_gpu_device_proof() {
+  "$PYTHON_BIN" <<'PYGPU'
+import json
+import os
+import pathlib
+import subprocess
+
+out = pathlib.Path(os.environ.get("NPA_LOCAL_OUTPUT_DIR", "/tmp/npa-sonic-output"))
+out.mkdir(parents=True, exist_ok=True)
+payload = {
+    "format": "npa_sonic_gpu_device_v1",
+    "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+}
+try:
+    import torch
+
+    payload["torch_cuda_available"] = bool(torch.cuda.is_available())
+    payload["torch_device_count"] = int(torch.cuda.device_count())
+    if torch.cuda.is_available():
+        payload["torch_device_name"] = torch.cuda.get_device_name(0)
+        payload["torch_device_capability"] = list(torch.cuda.get_device_capability(0))
+except Exception as exc:
+    payload["torch_error"] = f"{type(exc).__name__}: {exc}"
+try:
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=20,
+        check=False,
+    )
+    payload["nvidia_smi_returncode"] = result.returncode
+    payload["nvidia_smi"] = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+except Exception as exc:
+    payload["nvidia_smi_error"] = f"{type(exc).__name__}: {exc}"
+(out / "gpu_device.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PYGPU
+}
+
+write_image_pull_proof() {
+  "$PYTHON_BIN" <<'PYIMAGE'
+import json
+import os
+import pathlib
+
+out = pathlib.Path(os.environ.get("NPA_LOCAL_OUTPUT_DIR", "/tmp/npa-sonic-output"))
+out.mkdir(parents=True, exist_ok=True)
+payload = {
+    "format": "npa_sonic_image_pull_proof_v1",
+    "policy_image": os.environ.get("SONIC_POLICY_IMAGE", ""),
+    "repo_digests": os.environ.get("SONIC_IMAGE_REPO_DIGESTS", ""),
+    "payload_mode": os.environ.get("SONIC_PAYLOAD_MODE", ""),
+}
+(out / "image_pull_proof.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PYIMAGE
+}
+
 write_smoke_summary() {
   local command="$1"
   "$PYTHON_BIN" <<PY
@@ -96,6 +178,10 @@ summary = {
     "sample_data": os.environ.get("SONIC_SAMPLE_DATA", "1") == "1",
     "num_envs": int(os.environ.get("SONIC_NUM_ENVS", "16")),
     "steps": int(os.environ.get("SONIC_STEPS", os.environ.get("SONIC_MAX_ITERATIONS", "5"))),
+    "train_mode": os.environ.get("SONIC_TRAIN_MODE", "smoke"),
+    "real_train": os.environ.get("SONIC_RUN_REAL_TRAIN", "0") == "1",
+    "fine_tuned_checkpoint": os.environ.get("SONIC_FINE_TUNED_CHECKPOINT_PATH", ""),
+    "fine_tuned_checkpoint_uri": os.environ.get("SONIC_FINE_TUNED_CHECKPOINT_URI", ""),
     "gear_sonic_import": gear_sonic_import,
     "isaaclab_import": isaaclab_import,
     "isaaclab_app_import": isaaclab_app_import,
@@ -106,6 +192,71 @@ summary = {
 (out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
 print("NPA_SONIC_CONTAINER_SMOKE_DONE", out / "sonic_smoke_result.json", flush=True)
 sys.exit(0 if ok else 1)
+PY
+}
+
+write_train_summary() {
+  local command="$1"
+  local rc="$2"
+  "$PYTHON_BIN" <<PY
+import json
+import os
+import pathlib
+import shutil
+import time
+
+out = pathlib.Path(${OUTPUT_DIR@Q})
+out.mkdir(parents=True, exist_ok=True)
+roots = [
+    pathlib.Path("/opt/sonic/runs"),
+    pathlib.Path("/opt/sonic/outputs"),
+    pathlib.Path("/opt/sonic/logs"),
+    out,
+]
+checkpoint_suffixes = (".pt", ".pth", ".safetensors", ".ckpt")
+checkpoints = []
+for root in roots:
+    if not root.exists():
+        continue
+    checkpoints.extend(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix in checkpoint_suffixes
+    )
+checkpoints = sorted(checkpoints, key=lambda path: (path.stat().st_mtime, str(path)))
+latest = checkpoints[-1] if checkpoints else None
+stable = out / f"sonic_checkpoint{latest.suffix if latest else '.pt'}"
+if latest is not None and latest != stable:
+    shutil.copy2(latest, stable)
+summary = {
+    "status": "success" if int(${rc@Q}) == 0 and latest is not None else "failed",
+    "exit_code": int(${rc@Q}),
+    "tool": "sonic",
+    "command": ${command@Q},
+    "embodiment": os.environ.get("SONIC_EMBODIMENT", "UNITREE_G1_SONIC"),
+    "checkpoint": os.environ.get("SONIC_CHECKPOINT", "nvidia/GEAR-SONIC:sonic_release/last.pt"),
+    "data_path": os.environ.get("NPA_TRAINING_DATA_PATH") or os.environ.get("SONIC_DATA_PATH", ""),
+    "overrides": json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]")),
+    "sample_data": os.environ.get("SONIC_SAMPLE_DATA", "1") == "1",
+    "num_envs": int(os.environ.get("SONIC_NUM_ENVS", "16")),
+    "steps": int(os.environ.get("SONIC_STEPS", os.environ.get("SONIC_MAX_ITERATIONS", "5"))),
+    "wandb": {
+        "enabled": os.environ.get("NPA_TRAINING_WANDB_ENABLED", "0") == "1",
+        "project": os.environ.get("NPA_TRAINING_WANDB_PROJECT", ""),
+        "run_name": os.environ.get("NPA_TRAINING_WANDB_RUN_NAME", ""),
+        "mode": os.environ.get("WANDB_MODE", ""),
+    },
+    "checkpoint_path": str(latest) if latest is not None else "",
+    "stable_checkpoint_path": str(stable) if latest is not None else "",
+    "checkpoint_s3_uri": os.environ.get("NPA_CHECKPOINT_S3_URI", os.environ.get("NPA_OUTPUT_PATH", "")),
+    "timestamp": int(time.time()),
+}
+manifest = {"format": "npa_sonic_training_checkpoint_v1", **summary}
+(out / "sonic_train_summary.json").write_text(json.dumps(summary, indent=2))
+(out / "npa_sonic_checkpoint_manifest.json").write_text(json.dumps(manifest, indent=2))
+print("NPA_SONIC_CONTAINER_TRAIN_DONE", out / "sonic_train_summary.json", flush=True)
+if summary["status"] != "success":
+    raise SystemExit(summary["exit_code"] or 3)
 PY
 }
 
@@ -269,6 +420,155 @@ download_sample_data() {
   "$PYTHON_BIN" /opt/sonic/download_from_hf.py --sample "${token_arg[@]}"
 }
 
+download_training_checkpoint() {
+  local checkpoint_path="${SONIC_CHECKPOINT_PATH:-sonic_release/last.pt}"
+  if [ -f "$checkpoint_path" ]; then
+    return 0
+  fi
+  if [ "${SONIC_DOWNLOAD_TRAINING_CHECKPOINT:-1}" != "1" ]; then
+    return 0
+  fi
+  local token_arg=()
+  if [ -n "${HF_TOKEN:-}" ]; then
+    token_arg=(--token "$HF_TOKEN")
+  fi
+  "$PYTHON_BIN" /opt/sonic/download_from_hf.py --training --no-smpl "${token_arg[@]}"
+}
+
+run_real_train() {
+  cd /opt/sonic
+  download_training_checkpoint
+  local checkpoint_path="${SONIC_CHECKPOINT_PATH:-sonic_release/last.pt}"
+  local train_mode="${SONIC_TRAIN_MODE:-train}"
+  local experiment_base="${SONIC_EXPERIMENT_BASE_DIR:-$OUTPUT_DIR/logs_rl}"
+  local motion_file="${SONIC_MOTION_FILE:-}"
+  local smpl_motion_file="${SONIC_SMPL_MOTION_FILE:-}"
+  if [ "${SONIC_SAMPLE_DATA:-0}" = "1" ]; then
+    motion_file="${motion_file:-sample_data/robot_filtered}"
+    smpl_motion_file="${smpl_motion_file:-sample_data/smpl_filtered}"
+  fi
+  local hydra_args=(
+    "gear_sonic/train_agent_trl.py"
+    "+exp=manager/universal_token/all_modes/sonic_release"
+    "+checkpoint=${checkpoint_path}"
+    "+resume=${SONIC_RESUME:-False}"
+    "num_envs=${SONIC_NUM_ENVS:-16}"
+    "headless=${SONIC_HEADLESS:-True}"
+    "base_dir=${experiment_base}"
+    "++algo.config.num_learning_iterations=${SONIC_MAX_ITERATIONS:-5}"
+    "++algo.config.num_steps_per_env=${SONIC_NUM_STEPS_PER_ENV:-4}"
+    "++callbacks.model_save.save_last_frequency=${SONIC_SAVE_LAST_FREQUENCY:-1}"
+    "++callbacks.model_save.save_frequency=${SONIC_SAVE_FREQUENCY:-1}"
+  )
+  if [ -n "$motion_file" ]; then
+    hydra_args+=("++manager_env.commands.motion.motion_lib_cfg.motion_file=${motion_file}")
+  fi
+  if [ -n "$smpl_motion_file" ]; then
+    hydra_args+=("++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file=${smpl_motion_file}")
+  fi
+  if [ -n "${SONIC_DATA_PATH:-}" ]; then
+    hydra_args+=("+data_path=${SONIC_DATA_PATH}")
+  fi
+  if [ -n "${NPA_TRAINING_OVERRIDES_JSON:-}" ]; then
+    while IFS= read -r override; do
+      [ -n "$override" ] && hydra_args+=("$override")
+    done < <("$PYTHON_BIN" - <<'PY'
+import json
+import os
+
+for item in json.loads(os.environ.get("NPA_TRAINING_OVERRIDES_JSON", "[]")):
+    print(item)
+PY
+)
+  elif [ -n "${NPA_TRAINING_OVERRIDES:-}" ]; then
+    read -r -a extra_hydra_args <<< "${NPA_TRAINING_OVERRIDES}"
+    hydra_args+=("${extra_hydra_args[@]}")
+  fi
+  printf 'NPA_SONIC_REAL_TRAIN mode=%s checkpoint=%s iterations=%s num_envs=%s\n' \
+    "$train_mode" "$checkpoint_path" "${SONIC_MAX_ITERATIONS:-5}" "${SONIC_NUM_ENVS:-16}"
+  "$PYTHON_BIN" -m accelerate.commands.launch \
+    --num_processes="${SONIC_NUM_PROCESSES:-1}" \
+    "${hydra_args[@]}"
+  sync_training_artifacts "$checkpoint_path"
+}
+
+sync_training_artifacts() {
+  local source_checkpoint="$1"
+  SONIC_SOURCE_CHECKPOINT_PATH="$source_checkpoint" "$PYTHON_BIN" <<'PYSYNC'
+import json
+import os
+import pathlib
+import shutil
+import time
+
+out = pathlib.Path(os.environ.get("NPA_LOCAL_OUTPUT_DIR", "/tmp/npa-sonic-output"))
+out.mkdir(parents=True, exist_ok=True)
+search_roots = [
+    pathlib.Path(os.environ.get("SONIC_EXPERIMENT_BASE_DIR", out / "logs_rl")),
+    pathlib.Path("/opt/sonic/logs_rl"),
+    out,
+]
+candidates = []
+for root in search_roots:
+    if root.exists():
+        candidates.extend(root.rglob("last.pt"))
+        candidates.extend(root.rglob("model_step_*.pt"))
+candidates = [path for path in candidates if path.is_file()]
+if not candidates:
+    raise SystemExit("real SONIC training completed but no checkpoint was found")
+checkpoint = max(candidates, key=lambda path: path.stat().st_mtime)
+checkpoint_dir = out / "checkpoints"
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+target = checkpoint_dir / "last.pt"
+if checkpoint.resolve() != target.resolve():
+    shutil.copy2(checkpoint, target)
+config_candidates = sorted(checkpoint.parent.glob("config*.yaml"))
+for config in config_candidates[:3]:
+    shutil.copy2(config, out / config.name)
+manifest = {
+    "format": "npa_sonic_finetune_manifest_v1",
+    "status": "completed",
+    "train_mode": os.environ.get("SONIC_TRAIN_MODE", "finetune"),
+    "source_checkpoint_path": os.environ.get("SONIC_SOURCE_CHECKPOINT_PATH", ""),
+    "source_checkpoint_ref": os.environ.get("SONIC_CHECKPOINT", ""),
+    "fine_tuned_checkpoint_path": str(target),
+    "fine_tuned_checkpoint_uri": (os.environ.get("NPA_OUTPUT_PATH", "").rstrip("/") + "/checkpoints/last.pt")
+    if os.environ.get("NPA_OUTPUT_PATH")
+    else "",
+    "experiment_checkpoint_path": str(checkpoint),
+    "max_iterations": int(os.environ.get("SONIC_MAX_ITERATIONS", "5")),
+    "num_envs": int(os.environ.get("SONIC_NUM_ENVS", "16")),
+    "num_steps_per_env": int(os.environ.get("SONIC_NUM_STEPS_PER_ENV", "4")),
+    "generated_at": int(time.time()),
+}
+(out / "fine_tune_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+os.environ["SONIC_FINE_TUNED_CHECKPOINT_PATH"] = str(target)
+os.environ["SONIC_FINE_TUNED_CHECKPOINT_URI"] = manifest["fine_tuned_checkpoint_uri"]
+print(f"NPA_SONIC_FINE_TUNE_CHECKPOINT {target}", flush=True)
+PYSYNC
+  export SONIC_FINE_TUNED_CHECKPOINT_PATH="$OUTPUT_DIR/checkpoints/last.pt"
+  if [ -n "${NPA_OUTPUT_PATH:-}" ]; then
+    export SONIC_FINE_TUNED_CHECKPOINT_URI="${NPA_OUTPUT_PATH%/}/checkpoints/last.pt"
+  fi
+  write_gpu_device_proof
+  write_image_pull_proof
+}
+
+run_mujoco_eval() {
+  local checkpoint_uri="${SONIC_FINE_TUNED_CHECKPOINT_URI:-${SONIC_EVAL_CHECKPOINT_URI:-}}"
+  local checkpoint_path="${SONIC_EVAL_CHECKPOINT_PATH:-}"
+  if [ -z "$checkpoint_path" ]; then
+    checkpoint_path="$OUTPUT_DIR/input/fine_tuned_last.pt"
+  fi
+  if [ -n "$checkpoint_uri" ]; then
+    download_s3_file "$checkpoint_uri" "$checkpoint_path"
+  fi
+  export SONIC_EVAL_CHECKPOINT_PATH="$checkpoint_path"
+  "$PYTHON_BIN" /opt/npa/docker/workbench/sonic/mujoco_eval.py
+  write_gpu_device_proof
+  write_image_pull_proof
+}
+
 write_upload_and_exit() {
   local command="$1"
   set +e
@@ -291,18 +591,25 @@ case "$MODE" in
     upload_outputs
     exit "$rc"
     ;;
+  mujoco-eval|mujoco_eval)
+    set +e
+    run_mujoco_eval
+    rc=$?
+    set -e
+    upload_outputs
+    exit "$rc"
+    ;;
+  finetune|fine-tune)
+    export SONIC_RUN_REAL_TRAIN=1
+    export SONIC_TRAIN_MODE="${SONIC_TRAIN_MODE:-finetune}"
+    download_sample_data
+    run_real_train
+    write_upload_and_exit finetune
+    ;;
   train)
     download_sample_data
     if [ "${SONIC_RUN_REAL_TRAIN:-0}" = "1" ]; then
-      cd /opt/sonic
-      "$PYTHON_BIN" -m accelerate.commands.launch \
-        --num_processes="${SONIC_NUM_PROCESSES:-1}" \
-        gear_sonic/train_agent_trl.py \
-        +exp=manager/universal_token/all_modes/sonic_release \
-        "+checkpoint=${SONIC_CHECKPOINT_PATH:-sonic_release/last.pt}" \
-        "num_envs=${SONIC_NUM_ENVS:-16}" \
-        "headless=${SONIC_HEADLESS:-True}" \
-        "++algo.config.num_learning_iterations=${SONIC_MAX_ITERATIONS:-5}"
+      run_real_train
     fi
     write_upload_and_exit train
     ;;

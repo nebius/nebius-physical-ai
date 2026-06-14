@@ -35,7 +35,11 @@ regexes = [
     '''e00tygb9eej5d174n7''',
     '''e00bravhx46tk01ykz''',
     '''e00h9xcpssv53b3y3n''',
+    '''e00cm0vc6t09m0z5gw''',
     '''hf_123456789''',
+    '''hf_testsecret123456''',
+    '''hf_npae2eworkflowsecret1234567890''',
+    '''AKIAABCDEFGHIJKLMNOP''',
 ]
 paths = [
     '''SECURITY\.md''',

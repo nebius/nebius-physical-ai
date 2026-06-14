@@ -12,6 +12,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.deploy.images import DEFAULT_VLM_IMAGE_ENV, default_vlm_image
 from npa.workbench.vlm_eval import (
     DEFAULT_BENCHMARK_THRESHOLDS,
     DEFAULT_API_KEY_ENV,
@@ -241,11 +242,24 @@ def benchmark_cmd(
 
 @app.command("workflow")
 def workflow_cmd(
+    image: str = typer.Option(
+        "",
+        "--image",
+        envvar=DEFAULT_VLM_IMAGE_ENV,
+        help="Self-hosted VLM workflow image. Also settable with NPA_VLM_IMAGE.",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Show the SkyPilot YAML template for VLM evaluation."""
 
-    _emit({"workflow": str(WORKFLOW_PATH)}, output)
+    _emit(
+        {
+            "workflow": str(WORKFLOW_PATH),
+            "image_env": DEFAULT_VLM_IMAGE_ENV,
+            "image": image.strip() or default_vlm_image(),
+        },
+        output,
+    )
 
 
 @app.command("status")

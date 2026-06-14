@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import traceback
 from importlib.metadata import version as package_version
+from typing import Callable, Optional
 
 import typer
 
@@ -16,18 +19,10 @@ from npa.cli.cluster import app as cluster_app
 from npa.cli.convert import app as convert_app
 from npa.cli.demo import app as demo_app
 from npa.cli.network import app as network_app
-from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
-from npa.clients.config import (
-    RegistryConfig,
-    RuntimeConfig,
-    StorageConfig,
-    resolve_runtime_config,
-    write_runtime_config,
-)
 from npa.clients.serverless import ServerlessClientError
 
 app = typer.Typer(
@@ -55,25 +50,41 @@ app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
 app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
 app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
 app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
-app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup")
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
+DEFAULT_REGION = "eu-north1"
+# Recommended default cap for an auto-created object-storage bucket.
+RECOMMENDED_BUCKET_SIZE_GB = 50
+
 _SETUP_GUIDANCE = """Credential setup
 
-Create ~/.npa/credentials.yaml for user-level tokens and BYOVM SSH defaults:
+Run `npa configure` in a terminal for an interactive setup. With an
+authenticated Nebius profile it auto-creates your S3 bucket and access key, so
+you only supply tenant/project/region (pre-filled from the profile) plus the
+Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
+existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
+user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
+  # Nebius Token Factory API key (OpenAI-compatible hosted inference).
+  # Get one at https://tokenfactory.nebius.com/ -> API keys.
+  NEBIUS_API_KEY: nebius_REPLACE_ME
 ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
   # team: optional-ngc-team
+storage:
+  aws_access_key_id: <your-s3-access-key-id>
+  aws_secret_access_key: <your-s3-secret-access-key>
+  endpoint_url: https://storage.eu-north1.nebius.cloud
+  bucket: s3://<your-bucket>/
 ssh:
-  host: 203.0.113.10
+  host: <your-byovm-host>
   user: ubuntu
   key_path: ~/.ssh/id_ed25519
 
@@ -81,8 +92,10 @@ Then secure it:
 
 chmod 600 ~/.npa/credentials.yaml
 
-Deploy commands create and update ~/.npa/config.yaml for projects, workbenches,
-SSH targets, container registry settings, and Terraform state.
+`npa configure` also writes ~/.npa/config.yaml with your Nebius project id,
+tenant id, region, and container registry so commands no longer need those
+values exported in the shell or read from the Nebius CLI. Deploy commands
+extend the same file with workbench endpoints and Terraform state.
 """
 
 
@@ -107,150 +120,327 @@ def main(
     """Nebius Physical AI workbench CLI."""
 
 
+def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> bool:
+    """Return True when the local Nebius CLI has a usable, authenticated profile."""
+
+    if not shutil.which("nebius"):
+        return False
+    try:
+        result = runner(
+            ["nebius", "iam", "get-access-token"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
+def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
+    """Run the interactive `nebius profile create` flow."""
+
+    try:
+        result = runner(["nebius", "profile", "create"], check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
+def _ensure_nebius_profile() -> None:
+    """Detect or interactively create a local Nebius CLI profile."""
+
+    if _nebius_profile_ready():
+        typer.echo("Nebius CLI profile detected (`nebius iam get-access-token` works).")
+        return
+    if not shutil.which("nebius"):
+        typer.echo(
+            "Nebius CLI not found. Install it from https://docs.nebius.com/cli/install, "
+            "then re-run `npa configure` to create a local profile."
+        )
+        return
+    if not typer.confirm(
+        "No authenticated Nebius CLI profile found. Create one now?",
+        default=True,
+    ):
+        typer.echo("Skipped Nebius profile creation. Run `nebius profile create` later.")
+        return
+    if _create_nebius_profile() and _nebius_profile_ready():
+        typer.echo("Nebius CLI profile is ready.")
+    else:
+        typer.echo(
+            "Could not verify a Nebius profile. Run `nebius profile create` manually, "
+            "then `nebius iam get-access-token` to confirm."
+        )
+
+
+def _endpoint_for_region(region: str) -> str:
+    """Return the Nebius S3-compatible storage endpoint URL for *region*."""
+    reg = (region or DEFAULT_REGION).strip() or DEFAULT_REGION
+    return f"https://storage.{reg}.nebius.cloud"
+
+
+def _gb_to_bytes(value: str) -> int:
+    """Parse a GB amount into bytes; non-negative or invalid means unlimited (0)."""
+    try:
+        gb = float(str(value).strip())
+    except (TypeError, ValueError):
+        gb = float(RECOMMENDED_BUCKET_SIZE_GB)
+    if gb <= 0:
+        return 0
+    return int(gb * 1024**3)
+
+
+def _as_bucket_uri(name: str) -> str:
+    """Normalize a bucket name to an ``s3://<name>/`` URI."""
+    value = (name or "").strip()
+    if not value:
+        return ""
+    if value.startswith("s3://"):
+        return value
+    return f"s3://{value.rstrip('/')}/"
+
+
+def _provision_object_storage(
+    nebius_client,
+    ask: Callable[..., str],
+    *,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+) -> dict[str, str] | None:
+    """Auto-create the S3 bucket + access key for the project."""
+    if not (project_id and tenant_id):
+        return None
+
+    suggested_bucket = nebius_client.bucket_name_for(tenant_id, project_id)
+    bucket_name = ask("Object-storage bucket name", default=suggested_bucket) or suggested_bucket
+
+    try:
+        already_exists = nebius_client.bucket_exists(project_id, bucket_name)
+    except Exception:
+        already_exists = False
+
+    bucket_max_size_bytes = 0
+    if already_exists:
+        typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
+    elif typer.confirm(
+        f"Set a size limit on new bucket '{bucket_name}'?", default=True
+    ):
+        bucket_max_size_bytes = _gb_to_bytes(
+            ask(
+                f"Bucket size limit in GB (recommended {RECOMMENDED_BUCKET_SIZE_GB})",
+                default=str(RECOMMENDED_BUCKET_SIZE_GB),
+            )
+        )
+        if bucket_max_size_bytes == 0:
+            typer.echo("  Using no size limit (unlimited, up to quota).")
+    else:
+        typer.echo("  Creating bucket without a size limit (unlimited, up to quota).")
+
+    try:
+        typer.echo("Provisioning Nebius object storage (bucket + access key)...")
+        creds = nebius_client.bootstrap_environment(
+            project_id,
+            tenant_id,
+            region,
+            bucket_name=bucket_name,
+            bucket_max_size_bytes=bucket_max_size_bytes,
+            on_status=lambda msg: typer.echo(f"  - {msg}"),
+        )
+    except nebius_client.NebiusError as exc:
+        typer.echo(f"  Could not auto-provision object storage: {exc}")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"  Could not auto-provision object storage: {exc}")
+        return None
+
+    access_key = creds.get("nebius_api_key", "")
+    secret_key = creds.get("nebius_secret_key", "")
+    if not (access_key and secret_key):
+        typer.echo("  Provisioning did not return usable S3 credentials.")
+        return None
+
+    bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
+    typer.echo(f"  Provisioned bucket {bucket} and an S3 access key.")
+    return {
+        "aws_access_key_id": access_key,
+        "aws_secret_access_key": secret_key,
+        "endpoint_url": creds.get("s3_endpoint", "") or _endpoint_for_region(region),
+        "bucket": bucket,
+    }
+
+
+def _run_interactive_configure(*, provision: bool = True) -> None:
+    """Prompt for credentials/config and write the NPA dotfiles."""
+
+    from npa.clients.config import CONFIG_PATH, write_config
+    from npa.clients.credentials import write_credentials_file
+    from npa.clients import nebius as nebius_client
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
+
+    typer.echo("Interactive npa setup. Press Enter to skip any optional field.\n")
+    _ensure_nebius_profile()
+    typer.echo("")
+
+    def ask(label: str, *, default: str = "", secret: bool = False) -> str:
+        return str(
+            typer.prompt(
+                label,
+                default=default,
+                hide_input=secret,
+                show_default=bool(default) and not secret,
+            )
+        ).strip()
+
+    project_id = ask("Nebius project id", default=nebius_client.current_project_id())
+    tenant_id = ask("Nebius tenant id", default=nebius_client.current_tenant_id())
+    region = ask("Region", default=DEFAULT_REGION)
+    registry = ask(
+        "Container registry",
+        default=nebius_client.discover_container_registry(project_id)
+        or DEFAULT_CONTAINER_REGISTRY,
+    )
+
+    storage: dict[str, str] | None = None
+    if provision and project_id and tenant_id:
+        storage = _provision_object_storage(
+            nebius_client,
+            ask,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+        )
+        if storage is None:
+            typer.echo(
+                "\nFalling back to manual object-storage entry. "
+                "Provide existing S3 credentials or press Enter to skip."
+            )
+    if storage is None:
+        storage = {
+            "aws_access_key_id": ask(
+                "S3 access key id (AWS_ACCESS_KEY_ID)", secret=True
+            ),
+            "aws_secret_access_key": ask(
+                "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
+            ),
+            "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
+            "bucket": ask("S3 bucket (e.g. s3://my-bucket/)"),
+        }
+
+    hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
+    nebius_api_key = ask("Nebius Token Factory API key (NEBIUS_API_KEY)", secret=True)
+    ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
+
+    credentials_path = write_credentials_file(
+        {
+            "tokens": {"HF_TOKEN": hf_token, "NEBIUS_API_KEY": nebius_api_key},
+            "ngc": {"api_key": ngc_api_key},
+            "storage": storage,
+        }
+    )
+
+    project_stanza = {
+        key: value
+        for key, value in (
+            ("project_id", project_id),
+            ("tenant_id", tenant_id),
+            ("region", region),
+            ("container_registry", registry),
+        )
+        if value
+    }
+    wrote_config = False
+    if project_id or tenant_id:
+        alias = region or "default"
+        write_config({"projects": {alias: project_stanza}, "default_project": alias})
+        wrote_config = True
+
+    typer.echo(f"\nWrote {credentials_path} (chmod 600).")
+    if wrote_config:
+        typer.echo(f"Wrote {CONFIG_PATH}.")
+    else:
+        typer.echo(
+            "Skipped ~/.npa/config.yaml: provide a Nebius project id to write a "
+            "project profile."
+        )
+    typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
+
+
+def _configure_impl(
+    *, show: bool, interactive: Optional[bool], provision: bool = True
+) -> None:
+    if show:
+        typer.echo(_SETUP_GUIDANCE)
+        return
+    should_prompt = interactive if interactive is not None else sys.stdin.isatty()
+    if not should_prompt:
+        typer.echo(_SETUP_GUIDANCE)
+        return
+    try:
+        _run_interactive_configure(provision=provision)
+    except (EOFError, typer.Abort):
+        typer.echo("\n")
+        typer.echo(_SETUP_GUIDANCE)
+
+
 @app.command(
     "configure",
     help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
 def configure(
-    project: str = typer.Option("", "--project", help="Project alias in ~/.npa/config.yaml."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
-    tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    region: str = typer.Option("", "--region", help="Nebius region, for example eu-north1."),
-    registry: str = typer.Option("", "--registry", help="Full container registry prefix."),
-    registry_id: str = typer.Option("", "--registry-id", help="Nebius container registry ID."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint URL."),
-    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket URI or bucket name."),
-    aws_access_key_id: str = typer.Option("", "--aws-access-key-id", help="S3 access key ID."),
-    aws_secret_access_key: str = typer.Option("", "--aws-secret-access-key", help="S3 secret access key."),
-    non_interactive: bool = typer.Option(
+    show: bool = typer.Option(
         False,
-        "--non-interactive",
-        help="Write a populated template from flags and placeholders without prompting.",
+        "--show",
+        help="Print the credential/config file layout instead of prompting.",
+    ),
+    interactive: Optional[bool] = typer.Option(
+        None,
+        "--interactive/--no-interactive",
+        help="Force or disable interactive prompting (defaults to auto-detect TTY).",
+    ),
+    provision: bool = typer.Option(
+        True,
+        "--provision/--no-provision",
+        help=(
+            "Auto-create the Nebius S3 bucket and access key from your profile "
+            "(default). Use --no-provision to enter existing S3 credentials."
+        ),
     ),
 ) -> None:
-    """Capture project, registry, and storage runtime settings."""
-    has_values = any(
-        (
-            project,
-            project_id,
-            tenant_id,
-            region,
-            registry,
-            registry_id,
-            s3_endpoint,
-            s3_bucket,
-            aws_access_key_id,
-            aws_secret_access_key,
-        )
-    )
-    if not non_interactive and not has_values and not sys.stdin.isatty():
-        typer.echo(_SETUP_GUIDANCE)
-        return
-
-    resolved = resolve_runtime_config(
-        project or None,
-        project_id=project_id or None,
-        tenant_id=tenant_id or None,
-        region=region or None,
-        registry=registry or None,
-        registry_id=registry_id or None,
-        s3_endpoint=s3_endpoint or None,
-        s3_bucket=s3_bucket or None,
-        aws_access_key_id=aws_access_key_id or None,
-        aws_secret_access_key=aws_secret_access_key or None,
-    )
-
-    if non_interactive:
-        runtime_config = _non_interactive_runtime_config(resolved)
-    else:
-        runtime_config = _interactive_runtime_config(resolved)
-
-    config_path, credentials_path = write_runtime_config(runtime_config)
-    typer.echo(f"Wrote config: {config_path}")
-    if credentials_path is not None:
-        typer.echo(f"Wrote credentials: {credentials_path}")
-    typer.echo(f"Project: {runtime_config.project}")
-    typer.echo(f"Registry: {runtime_config.registry.registry}")
-    typer.echo(f"Storage: {runtime_config.storage.checkpoint_bucket}")
+    """Interactively write ~/.npa credentials and config, or show guidance."""
+    _configure_impl(show=show, interactive=interactive, provision=provision)
 
 
 @app.command(
     "init",
-    help="Show credential and config setup guidance.",
+    help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
-def init() -> None:
-    """Show credential and config setup guidance."""
-    typer.echo(_SETUP_GUIDANCE)
-
-
-def _non_interactive_runtime_config(resolved: RuntimeConfig) -> RuntimeConfig:
-    region = resolved.region or "eu-north1"
-    registry_id = resolved.registry.registry_id or "<registry-id>"
-    registry = (
-        resolved.registry.registry
-        if resolved.registry.registry and "<" not in resolved.registry.registry
-        else f"cr.{region}.nebius.cloud/{registry_id}"
-    )
-    return RuntimeConfig(
-        project=resolved.project or "default",
-        project_id=resolved.project_id or "<project-id>",
-        tenant_id=resolved.tenant_id or "<tenant-id>",
-        region=region,
-        registry=RegistryConfig(
-            registry=registry,
-            registry_id=registry_id,
+def init(
+    show: bool = typer.Option(
+        False,
+        "--show",
+        help="Print the credential/config file layout instead of prompting.",
+    ),
+    interactive: Optional[bool] = typer.Option(
+        None,
+        "--interactive/--no-interactive",
+        help="Force or disable interactive prompting (defaults to auto-detect TTY).",
+    ),
+    provision: bool = typer.Option(
+        True,
+        "--provision/--no-provision",
+        help=(
+            "Auto-create the Nebius S3 bucket and access key from your profile "
+            "(default). Use --no-provision to enter existing S3 credentials."
         ),
-        storage=StorageConfig(
-            checkpoint_bucket=resolved.storage.checkpoint_bucket or "s3://<bucket>/checkpoints/",
-            endpoint_url=resolved.storage.endpoint_url or f"https://storage.{region}.nebius.cloud",
-            aws_access_key_id=resolved.storage.aws_access_key_id or "<aws-access-key-id>",
-            aws_secret_access_key=resolved.storage.aws_secret_access_key or "<aws-secret-access-key>",
-        ),
-    )
-
-
-def _interactive_runtime_config(resolved: RuntimeConfig) -> RuntimeConfig:
-    project = _prompt("Project alias", resolved.project or "default")
-    region = _prompt("Region", resolved.region or "eu-north1")
-    project_id = _prompt("Project ID", resolved.project_id)
-    tenant_id = _prompt("Tenant ID", resolved.tenant_id)
-    registry_id_default = resolved.registry.registry_id or ""
-    registry_id = _prompt("Registry ID", registry_id_default)
-    registry_default = resolved.registry.registry or (
-        f"cr.{region}.nebius.cloud/{registry_id}" if registry_id else ""
-    )
-    registry = _prompt("Registry prefix", registry_default)
-    s3_endpoint = _prompt(
-        "S3 endpoint",
-        resolved.storage.endpoint_url or f"https://storage.{region}.nebius.cloud",
-    )
-    s3_bucket = _prompt("S3 bucket URI", resolved.storage.checkpoint_bucket)
-    aws_access_key_id = _prompt("S3 access key ID", resolved.storage.aws_access_key_id)
-    aws_secret_access_key = typer.prompt(
-        "S3 secret access key",
-        default=resolved.storage.aws_secret_access_key,
-        hide_input=True,
-        show_default=bool(resolved.storage.aws_secret_access_key),
-    )
-    return RuntimeConfig(
-        project=project,
-        project_id=project_id,
-        tenant_id=tenant_id,
-        region=region,
-        registry=RegistryConfig(registry=registry, registry_id=registry_id),
-        storage=StorageConfig(
-            checkpoint_bucket=s3_bucket,
-            endpoint_url=s3_endpoint,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-        ),
-    )
-
-
-def _prompt(label: str, default: str) -> str:
-    return typer.prompt(label, default=default, show_default=bool(default))
+    ),
+) -> None:
+    """Interactively write ~/.npa credentials and config, or show guidance."""
+    _configure_impl(show=show, interactive=interactive, provision=provision)
 
 
 def app_entry() -> None:

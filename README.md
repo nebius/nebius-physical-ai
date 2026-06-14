@@ -13,20 +13,41 @@ orchestration, vLLM serving, managed Kubernetes, and GPU clusters.
 
 ## Quick Start
 
-Install the package from the `npa/` Python project:
+Install the `npa` package into a fresh virtual environment. The venv can live
+anywhere; activating it puts `npa` on your `PATH` (Python 3.10+ required):
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
 
-python3 -m venv npa/.venv
-npa/.venv/bin/python -m pip install --upgrade pip
-npa/.venv/bin/python -m pip install -e npa
-export PATH="$PWD/npa/.venv/bin:$PATH"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e npa
+
+npa --version
 ```
 
-Authenticate with the Nebius CLI and let `npa` print the local credential
-schema for optional Hugging Face, NGC, object-storage, and BYOVM SSH values:
+Run your first real result with **no cloud, GPU, or credentials** — score a
+shipped sample rollout set with the offline stub backend:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json \
+  --output /tmp/vlm-eval-benchmark.json \
+  --backend stub \
+  --thresholds 0.5,0.8,0.9 \
+  --rubrics default,strict \
+  --models Qwen/Qwen2-VL-7B-Instruct \
+  --format json
+```
+
+You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
+That is the full local loop; the same command swaps `--backend stub` for a real
+`self-hosted` or `api` VLM backend once you add credentials.
+
+Next, authenticate with the Nebius CLI and print the credential schema (see
+[docs/quickstart.md](docs/quickstart.md) for the full walkthrough):
 
 ```bash
 nebius profile create
@@ -34,21 +55,72 @@ nebius iam get-access-token >/dev/null
 npa configure
 ```
 
-Run a first Workbench command without provisioning infrastructure:
+The flagship GPU workload is **NVIDIA Cosmos** (world-foundation model for
+synthetic data and world generation). It runs across multiple NVIDIA GPU
+platforms via a single `--gpu-type` flag (`gpu-h100-sxm`, `gpu-h200-sxm`,
+`gpu-b300-sxm`, `gpu-l40s`) with no RT-core lock-in:
 
 ```bash
-npa workbench vlm-eval list
-npa workbench vlm-eval run \
-  --input-path ./rollout.json \
-  --output-path ./eval.json \
-  --backend stub \
-  --score 0.9 \
-  --dry-run \
-  --output json
+npa workbench cosmos -p <your-project-alias> -n cosmos deploy \
+  --runtime serverless --gpu-type <gpu-platform> --wait
+npa workbench cosmos -p <your-project-alias> -n cosmos infer \
+  --prompt "A robot arm stacks colored cubes" \
+  --output-path s3://<your-bucket>/cosmos/out/
+```
+
+Cosmos needs Nebius credentials, an `HF_TOKEN`, and GPU capacity; see the
+flagship walkthrough in [docs/quickstart.md](docs/quickstart.md#7-flagship-gpu-workload-nvidia-cosmos).
+
+## Zero-GPU hosted inference: Nebius Token Factory
+
+[Nebius Token Factory](https://tokenfactory.nebius.com/) is an OpenAI-compatible
+hosted-inference API for open text and vision models. NPA uses it natively so
+several workbench tools run with **no GPU and no server to manage** — you only
+need a `NEBIUS_API_KEY`. This includes physical-AI scene reasoning with
+`nvidia/Cosmos3-Super-Reasoner` (image/video → scene understanding + plan).
+
+```bash
+# 1. Get a key at https://tokenfactory.nebius.com/ -> API keys, then:
+npa configure                       # stores NEBIUS_API_KEY in ~/.npa/credentials.yaml
+npa workbench token-factory verify  # confirms auth + lists served models
+
+# 2. Use it (zero GPU):
+npa workbench token-factory reason   --input-path ./scene  --output-path /tmp/plan      # Cosmos reasoner
+npa workbench token-factory caption  --input-path ./frames --output-path /tmp/captions  # vision
+npa workbench token-factory generate --input-path ./prompts.jsonl --output-path /tmp/gen # text
+npa workbench vlm-eval run --backend api --api-key-env NEBIUS_API_KEY \
+  --input-path ./rollout --output-path /tmp/eval                                        # score rollouts
+```
+
+Full register-and-use walkthrough, SkyPilot workflows, and combo pipelines that
+pair Token Factory with Nebius GPU compute:
+[docs/workbench/token-factory.md](docs/workbench/token-factory.md).
+
+To work on `npa` itself (tests, lint), install the dev extra and run the fast
+suite — see [CONTRIBUTING.md](CONTRIBUTING.md):
+
+```bash
+pip install -e "npa[dev]"
+make test
 ```
 
 For full cloud setup, continue with [docs/quickstart.md](docs/quickstart.md)
 and [docs/workbench/getting-started.md](docs/workbench/getting-started.md).
+
+## Easy Guides
+
+Short, fun, copy-paste walkthroughs that pair a **robot**, a **simulation
+environment**, and a **cool public dataset**. Start with the no-GPU one, then
+pick a robot — see [docs/workbench/guides/README.md](docs/workbench/guides/README.md).
+
+| Guide | Robot | Sim / engine | Public dataset |
+| --- | --- | --- | --- |
+| [Score a robot in 60 seconds (no GPU)](docs/workbench/guides/score-a-robot-no-gpu.md) | any | offline | shipped sample rollouts |
+| [Pick-and-place with a Franka arm](docs/workbench/guides/franka-pick-and-place-genesis.md) | Franka Emika Panda | Genesis | DROID (Franka) |
+| [Teach a robot to push a T](docs/workbench/guides/pusht-sim-to-real.md) | sim pusher | sim-to-real loop | `lerobot/pusht` |
+| [Train a Reachy 2 humanoid policy](docs/workbench/guides/reachy2-lerobot-policy.md) | Reachy 2 | LeRobot | Pollen Robotics / LeRobot Hub |
+| [Make a Unitree G1 walk](docs/workbench/guides/g1-humanoid-walk-sonic.md) | Unitree G1 | MuJoCo | NVIDIA GEAR-SONIC |
+| [Train a quadruped to run](docs/workbench/guides/quadruped-isaac-lab.md) | ANYmal / quadruped | Isaac Lab | Isaac Lab built-in tasks |
 
 ## Workbench
 
@@ -58,14 +130,14 @@ namespace.
 
 | Category | Workbench commands |
 | --- | --- |
-| Data curation | `npa workbench data sync`, `npa workbench data status`, `npa workbench data list`; `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list` |
+| Data curation | `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list` |
 | Synthetic data | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench genesis generate-demos`; SkyPilot templates such as `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` and `npa/workflows/workbench/templates/curate-augment-train.yaml` |
-| Simulation | `npa workbench isaac-lab train`, `eval`, `export-lerobot`; `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench retargeting run` |
+| Simulation | `npa workbench isaac-lab train`, `eval`, `export-lerobot`; `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run` |
 | Eval | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student` |
 | Observability | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list` |
 | Robot policy | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list` |
 | World models | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `status`, `system-info` |
-| Blueprints | `npa workbench workflow submit`, `run`, `status`, `logs`, `teardown`, `distill`; checked-in YAML under `npa/workflows/workbench/skypilot/` for Isaac Lab, VLM eval, SONIC export, SONIC eval, SONIC locomotion fine-tuning, retargeting, MJLab eval, sim-to-real, and BDD100K pipelines |
+| Blueprints | `npa workbench workflow submit`, `workflow trigger watch`, `status`, `logs`, `teardown`, `distill`; checked-in YAML under `npa/workflows/workbench/skypilot/` and `npa/workflows/workbench/sim2real/` for Isaac Lab, VLM eval, SONIC export, SONIC eval, SONIC locomotion fine-tuning, retargeting, MJLab eval, sim-to-real, and BDD100K pipelines |
 
 ### Eval: VLM Backend
 
@@ -153,7 +225,7 @@ SONIC image routing is manifest-driven:
   `npa/src/npa/deploy/sonic_image_manifest.json` using `--gpu-type`, with
   `--image` and `--image-variant` available as explicit overrides.
 - L40S VM targets use the baked `npa-sonic:0.1.2` image. RTX PRO 6000
-  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s`
+  Blackwell Kubernetes targets use the host-mounted `npa-sonic:0.1.2-k8s-runtime`
   image. See `docs/workbench/sonic-image-catalog.md`.
 
 ### Solution Patterns
@@ -186,8 +258,8 @@ Workbench runs on Nebius infrastructure rather than hiding it:
 
 - Object storage is the data layer for datasets, checkpoints, rollouts, eval
   JSON, exported models, and Rerun recordings.
-- OSMO and SkyPilot provide orchestration patterns for multi-stage jobs and
-  managed Kubernetes backed workflows.
+- SkyPilot provides orchestration patterns for multi-stage jobs and managed
+  Kubernetes backed workflows.
 - vLLM-compatible endpoints support shared model-serving and Eval backends.
 - Managed Kubernetes, VM, BYOVM, container, and serverless runtimes cover GPU
   targets including H100, H200, L40S, B300, and RTX6000 profiles as each tool is
@@ -202,8 +274,14 @@ Workbench runs on Nebius infrastructure rather than hiding it:
   credential setup.
 - [docs/workbench/getting-started.md](docs/workbench/getting-started.md):
   Workbench setup and first workload path.
+- [docs/workbench/guides/README.md](docs/workbench/guides/README.md): easy,
+  beginner-friendly guides built around Franka, Reachy 2, Unitree G1, and
+  quadrupeds in simulation with public datasets.
 - [docs/workbench/](docs/workbench/): Workbench guides, cookbooks, and
   troubleshooting.
+- [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md):
+  end-to-end cookbooks, including the
+  [BDD100K + LanceDB pipeline](docs/workbench/cookbooks/bdd100k-pipeline.md).
 - [docs/cli/README.md](docs/cli/README.md): generated CLI reference.
 - [docs/architecture/solutions-model.md](docs/architecture/solutions-model.md):
   solution namespace model.

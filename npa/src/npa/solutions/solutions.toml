@@ -12,7 +12,7 @@ cli_command = "npa workbench workflow submit npa/workflows/workbench/skypilot/si
 [[solutions]]
 name = "retargeting"
 description = "Motion retargeting Workbench tool for SONIC locomotion pipelines"
-cli_command = "npa workbench retargeting"
+cli_command = "npa workbench sonic retargeting"
 
 [[solutions]]
 name = "mjlab"

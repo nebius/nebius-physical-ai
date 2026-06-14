@@ -112,6 +112,14 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.training_config import (
+    TrainingConfig,
+    TrainingConfigError,
+    build_training_config,
+    checkpoint_s3_uri as resolve_checkpoint_s3_uri,
+    render_overrides,
+    shell_env_exports,
+)
 
 app = typer.Typer(
     name="groot",
@@ -124,7 +132,7 @@ console = Console(stderr=True)
 _project_alias: str = ""
 _workbench_name: str = ""
 
-GROOT_RELEASE = "n1.7"
+GROOT_RELEASE = "0.1.0"
 GROOT_RUNTIME_VERSION = "0.1.0"
 GROOT_PYPI_PACKAGE = f"nvidia-gr00t-sdk=={GROOT_RUNTIME_VERSION}"
 GROOT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T.git"
@@ -1648,16 +1656,19 @@ def _build_finetune_command(
     num_gpus: int,
     config: str,
     endpoint_url: str,
+    checkpoint_endpoint_url: str = "",
     max_steps: int | None = None,
     global_batch_size: int | None = None,
     dataloader_num_workers: int | None = None,
     save_steps: int | None = None,
     save_total_limit: int | None = None,
     save_only_model: bool = False,
+    training_config: TrainingConfig | None = None,
 ) -> str:
+    training = training_config or TrainingConfig()
     dataset_dir, dataset_setup = _resolve_remote_path_setup(
-        input_path,
-        _cache_dir("data", input_path),
+        training.data_path or input_path,
+        _cache_dir("data", training.data_path or input_path),
         endpoint_url,
     )
     if _is_hf_groot_model_ref(base_model):
@@ -1686,7 +1697,7 @@ def _build_finetune_command(
         else output_path
     )
     upload_cmd = (
-        _remote_upload_dir_cmd(output_dir, output_path, endpoint_url)
+        _remote_upload_dir_cmd(output_dir, output_path, checkpoint_endpoint_url or endpoint_url)
         if output_is_s3
         else "true"
     )
@@ -1708,9 +1719,14 @@ def _build_finetune_command(
         train_args += f" \\\n  --save-total-limit {save_total_limit}"
     if save_only_model:
         train_args += " \\\n  --save-only-model"
+    override_args = render_overrides(training.overrides, style="cli")
+    if override_args:
+        train_args += f" \\\n  {override_args}"
+    training_env = shell_env_exports(training.env())
     script = f"""\
 set -euo pipefail
 cd {GROOT_REPO}
+{training_env}
 mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_DATA_MOUNT}/checkpoints {GROOT_CONFIG_CACHE}
 {dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
@@ -3326,11 +3342,25 @@ def reload_env_cmd(
 @app.command("finetune")
 def finetune_cmd(
     input_path: str = typer.Option(
-        ..., "--input-path", help="S3 URI for a GR00T LeRobot training dataset."
+        "", "--input-path", help="Compatibility alias for --data-path."
     ),
+    data_path: str = typer.Option("", "--data-path", help="Custom GR00T LeRobot training dataset path."),
     output_path: str = typer.Option(
-        ..., "--output-path", help="S3 URI for a fine-tuned checkpoint directory."
+        "", "--output-path", help="Compatibility checkpoint output path; prefer --checkpoint-s3-uri for S3."
     ),
+    override: list[str] = typer.Option(
+        [],
+        "--override",
+        help="Generic trainer override as KEY=VALUE. Repeat for any underlying GR00T training arg.",
+    ),
+    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B environment for the training run."),
+    wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
+    wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
+    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
+    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
+    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
+    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
+    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
     base_model: str = typer.Option(
         DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID or S3 URI."
     ),
@@ -3371,41 +3401,68 @@ def finetune_cmd(
     if num_gpus <= 0:
         _fail(f"--num-gpus must be positive, got {num_gpus}")
     try:
-        input_path = validate_read_path(
-            input_path,
+        training_config = build_training_config(
+            data_path=data_path,
+            overrides=override,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
+            wandb_mode=wandb_mode,
+            checkpoint_s3_uri=checkpoint_s3_uri,
+            checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+            checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+            checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+        )
+        effective_input_path = validate_read_path(
+            training_config.data_path or input_path,
             tool="GR00T finetune",
-            option="--input-path",
+            option="--data-path",
             allow_hf=False,
         )
-        output_path = validate_write_path(
-            output_path,
+        checkpoint_output_path = validate_write_path(
+            resolve_checkpoint_s3_uri(training_config, output_path),
             tool="GR00T finetune",
-            option="--output-path",
+            option="--checkpoint-s3-uri",
             required=True,
         )
-    except PathContractError as exc:
+        if not training_config.data_path:
+            training_config = build_training_config(
+                data_path=effective_input_path,
+                overrides=override,
+                wandb_enabled=wandb_enabled,
+                wandb_project=wandb_project,
+                wandb_run_name=wandb_run_name,
+                wandb_mode=wandb_mode,
+                checkpoint_s3_uri=checkpoint_s3_uri,
+                checkpoint_s3_endpoint_url=checkpoint_s3_endpoint_url,
+                checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
+                checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
+            )
+    except (PathContractError, TrainingConfigError) as exc:
         _fail(str(exc))
     cfg = _get_ssh_config()
-    ssh = _ssh_client(cfg)
+    ssh = _ssh_client(cfg, extra_tokens=training_config.env())
     tag = _normalize_embodiment_tag(robot_embodiment)
     cmd = _runtime_command(
         cfg,
         _build_finetune_command(
-            input_path=input_path,
-            output_path=output_path,
+            input_path=effective_input_path,
+            output_path=checkpoint_output_path,
             base_model=base_model,
             robot_embodiment=tag,
             num_gpus=num_gpus,
             config=config,
             endpoint_url=cfg.storage.endpoint_url,
+            checkpoint_endpoint_url=training_config.checkpoint_s3.endpoint_url,
             max_steps=max_steps,
             global_batch_size=global_batch_size,
             dataloader_num_workers=dataloader_num_workers,
             save_steps=save_steps,
             save_total_limit=save_total_limit,
             save_only_model=save_only_model,
+            training_config=training_config,
         ),
-        pass_env=GROOT_REMOTE_ENV_NAMES,
+        pass_env=(*GROOT_REMOTE_ENV_NAMES, *tuple(training_config.env().keys())),
     )
 
     start = time.time()
@@ -3418,11 +3475,13 @@ def finetune_cmd(
     result = {
         "status": "success" if exit_code == 0 else "failed",
         "exit_code": exit_code,
-        "input_path": input_path,
-        "output_path": output_path,
+        "input_path": effective_input_path,
+        "data_path": training_config.data_path,
+        "output_path": checkpoint_output_path,
         "base_model": base_model,
         "robot_embodiment": tag,
         "num_gpus": num_gpus,
+        "training_config": training_config.public_dict(),
         "duration_seconds": round(time.time() - start, 1),
     }
     if exit_code != 0:
