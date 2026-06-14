@@ -17,20 +17,16 @@ workflow environment variables.
 
 1. Keep committed files public-repo safe. Never hardcode project IDs, tenant IDs,
    registry IDs, bucket names, VM IPs, private endpoints, or secrets.
-2. Capture runtime configuration with `npa configure`. In non-interactive or CI
-   contexts, pass explicit flags and placeholders:
+2. Capture runtime configuration with `npa configure`. In CI or scripted
+   contexts, use `--show` for the schema and write `~/.npa/config.yaml` plus
+   `~/.npa/credentials.yaml` from placeholders:
 
    ```bash
-   npa configure --non-interactive \
-     --project ci \
-     --project-id project-ci \
-     --tenant-id tenant-ci \
-     --region eu-north1 \
-     --registry-id registry-ci \
-     --s3-bucket s3://ci-bucket/checkpoints/ \
-     --aws-access-key-id access \
-     --aws-secret-access-key secret
+   npa configure --show
    ```
+
+   Interactive runs auto-provision S3 when a Nebius profile is present. Use
+   `--no-provision` to supply existing object-storage credentials instead.
 
 3. Ensure runtime resources with the additive-only setup command:
 
@@ -86,6 +82,6 @@ Run the CI-backed dry-run example:
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 ```
 
-That test invokes `npa configure --non-interactive` and `npa
+That test invokes `npa configure --show` and `npa
 provision-if-absent --dry-run --output-format json` against temporary config
 paths and asserts the S3/Kubernetes actions are reported without live writes.

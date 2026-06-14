@@ -207,7 +207,7 @@ skills:
     path: skills/tools/retargeting/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "retargeting", "run", "--help"]
+        args: ["workbench", "sonic", "retargeting", "run", "--help"]
         contains: "output"
       - type: workflow_yaml
         paths:
@@ -265,7 +265,7 @@ skills:
           - npa/workflows/workbench/skypilot/sim-to-real-loop.yaml
           - npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml
       - type: cli_help
-        args: ["workbench", "trigger", "--help"]
+        args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
   - name: train-policy
     category: workflows

@@ -31,14 +31,8 @@ from typing import Any
 
 import yaml
 
-from npa.clients.credentials import (
-    CredentialsConfig,
-    StorageCredentials,
-    load_credentials,
-    storage_endpoint_url,
-    write_project_storage_credentials,
-)
-from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, DEFAULT_CONTAINER_REGISTRY_ID
+from npa.clients.credentials import CredentialsConfig, load_credentials
+from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
 CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
 
@@ -48,21 +42,15 @@ APP_STATUS_HEALTHY = "healthy"
 APP_STATUS_INSTALL_FAILED = "install_failed"
 
 ENV_MAP = {
-    "project_id": "NPA_PROJECT_ID",
-    "tenant_id": "NPA_TENANT_ID",
-    "region": "NPA_REGION",
     "endpoint": "NPA_WORKBENCH_ENDPOINT",
     "endpoint_strategy": "NPA_ENDPOINT_STRATEGY",
     "service_port": "NPA_SERVICE_PORT",
     "container_registry": "NPA_REGISTRY",
-    "registry_id": "NPA_REGISTRY_ID",
     "ssh_host": "NPA_SSH_HOST",
     "ssh_user": "NPA_SSH_USER",
     "ssh_key": "NPA_SSH_KEY",
     "checkpoint_bucket": "NPA_CHECKPOINT_BUCKET",
     "storage_endpoint_url": "AWS_ENDPOINT_URL",
-    "s3_bucket": "NPA_S3_BUCKET",
-    "s3_endpoint": "NPA_STORAGE_ENDPOINT",
     "hf_token": "HF_TOKEN",
     "ngc_api_key": "NGC_API_KEY",
     "ngc_org": "NGC_ORG",
@@ -101,22 +89,6 @@ class TerraformStateConfig:
     endpoint: str = ""
     access_key: str = ""
     secret_key: str = ""
-
-
-@dataclass
-class RegistryConfig:
-    registry: str = DEFAULT_CONTAINER_REGISTRY
-    registry_id: str = DEFAULT_CONTAINER_REGISTRY_ID
-
-
-@dataclass
-class RuntimeConfig:
-    project: str = "default"
-    project_id: str = ""
-    tenant_id: str = ""
-    region: str = "eu-north1"
-    registry: RegistryConfig = field(default_factory=RegistryConfig)
-    storage: StorageConfig = field(default_factory=lambda: StorageConfig("", ""))
 
 
 @dataclass
@@ -218,34 +190,6 @@ def _require(value: str | None, name: str, env_var: str) -> str:
 def _normalize_endpoint_strategy(value: str | None) -> str:
     normalized = str(value or "").strip().lower().replace("-", "_")
     return "ssh_fallback" if normalized in {"ssh", "ssh_fallback"} else "public"
-
-
-def _normalize_registry(value: str) -> str:
-    return value.strip().rstrip("/")
-
-
-def _registry_from_id(registry_id: str, region: str) -> str:
-    normalized_id = registry_id.strip().strip("/")
-    if not normalized_id:
-        return ""
-    normalized_region = (region or "eu-north1").strip()
-    return f"cr.{normalized_region}.nebius.cloud/{normalized_id}"
-
-
-def _registry_id_from_registry(registry: str) -> str:
-    normalized = _normalize_registry(registry)
-    if not normalized:
-        return ""
-    return normalized.rsplit("/", 1)[-1]
-
-
-def _normalize_bucket(value: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        return ""
-    if normalized.startswith("s3://"):
-        return normalized
-    return f"s3://{normalized.lstrip('/')}"
 
 
 def _endpoint_port(endpoint: str) -> int:
@@ -445,156 +389,12 @@ def resolve_container_registry(project: str | None = None) -> str:
 
     value = ""
     if isinstance(proj, dict):
-        value = str(proj.get("container_registry", "") or proj.get("registry", "") or "")
-        if not value:
-            registry_id = str(proj.get("registry_id", "") or "")
-            region = str(proj.get("region", "") or yml.get("region", "") or "eu-north1")
-            value = _registry_from_id(registry_id, region)
+        value = str(proj.get("container_registry", "") or "")
     if not value:
         value = os.environ.get("NPA_REGISTRY", "")
-    if not value and os.environ.get("NPA_REGISTRY_ID"):
-        region = os.environ.get("NPA_REGION", "") or "eu-north1"
-        value = _registry_from_id(os.environ["NPA_REGISTRY_ID"], region)
     if not value:
         value = str(yml.get("container_registry", "") or "")
-    return _normalize_registry(value) if value else DEFAULT_CONTAINER_REGISTRY
-
-
-def resolve_runtime_config(
-    project: str | None = None,
-    *,
-    project_id: str | None = None,
-    tenant_id: str | None = None,
-    region: str | None = None,
-    registry: str | None = None,
-    registry_id: str | None = None,
-    s3_endpoint: str | None = None,
-    s3_bucket: str | None = None,
-    aws_access_key_id: str | None = None,
-    aws_secret_access_key: str | None = None,
-) -> RuntimeConfig:
-    """Resolve project-level runtime settings with one canonical name per field."""
-    yml = _load_yaml()
-    try:
-        proj = _resolve_project_section(yml, project)
-    except ConfigError:
-        proj = {}
-    if not isinstance(proj, dict):
-        proj = {}
-
-    credentials = resolve_credentials()
-    project_name = _resolved_project_name(yml, project)
-    storage = resolve_project_storage(project_name)
-
-    def pick(cli_value: str | None, env_name: str, yaml_key: str, default: str = "") -> str:
-        if cli_value:
-            return cli_value
-        env_value = os.environ.get(env_name, "")
-        if env_value:
-            return env_value
-        yaml_value = proj.get(yaml_key, "")
-        return str(yaml_value or default)
-
-    resolved_region = pick(region, "NPA_REGION", "region", "eu-north1")
-    resolved_project_id = pick(project_id, "NPA_PROJECT_ID", "project_id")
-    resolved_tenant_id = pick(tenant_id, "NPA_TENANT_ID", "tenant_id")
-    resolved_registry_id = (
-        registry_id
-        or os.environ.get("NPA_REGISTRY_ID", "")
-        or str(proj.get("registry_id", "") or "")
-    )
-    resolved_registry = (
-        _normalize_registry(registry or "")
-        or _normalize_registry(os.environ.get("NPA_REGISTRY", ""))
-        or _normalize_registry(str(proj.get("container_registry", "") or proj.get("registry", "") or ""))
-        or _registry_from_id(resolved_registry_id, resolved_region)
-        or DEFAULT_CONTAINER_REGISTRY
-    )
-    if not resolved_registry_id:
-        resolved_registry_id = _registry_id_from_registry(resolved_registry)
-
-    resolved_bucket = _normalize_bucket(
-        s3_bucket
-        or os.environ.get("NPA_S3_BUCKET", "")
-        or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-        or os.environ.get("NEBIUS_S3_BUCKET", "")
-        or storage.checkpoint_bucket
-        or credentials.s3_bucket
-    )
-    resolved_endpoint = storage_endpoint_url(
-        s3_endpoint
-        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
-        or os.environ.get("AWS_ENDPOINT_URL", "")
-        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or storage.endpoint_url
-        or credentials.s3_endpoint
-        or f"storage.{resolved_region}.nebius.cloud"
-    )
-    resolved_access_key = (
-        aws_access_key_id
-        or os.environ.get("AWS_ACCESS_KEY_ID", "")
-        or storage.aws_access_key_id
-        or credentials.s3_access_key_id
-    )
-    resolved_secret_key = (
-        aws_secret_access_key
-        or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        or storage.aws_secret_access_key
-        or credentials.s3_secret_access_key
-    )
-
-    return RuntimeConfig(
-        project=project_name,
-        project_id=resolved_project_id,
-        tenant_id=resolved_tenant_id,
-        region=resolved_region,
-        registry=RegistryConfig(
-            registry=resolved_registry,
-            registry_id=resolved_registry_id,
-        ),
-        storage=StorageConfig(
-            checkpoint_bucket=resolved_bucket,
-            endpoint_url=resolved_endpoint,
-            aws_access_key_id=resolved_access_key,
-            aws_secret_access_key=resolved_secret_key,
-        ),
-    )
-
-
-def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
-    """Return the non-secret ``config.yaml`` payload for a runtime config."""
-    return {
-        "default_project": config.project,
-        "projects": {
-            config.project: {
-                "project_id": config.project_id,
-                "tenant_id": config.tenant_id,
-                "region": config.region,
-                "registry_id": config.registry.registry_id,
-                "container_registry": config.registry.registry,
-                "storage": {
-                    "checkpoint_bucket": config.storage.checkpoint_bucket,
-                    "endpoint_url": config.storage.endpoint_url,
-                },
-                "workbenches": {},
-            },
-        },
-    }
-
-
-def write_runtime_config(config: RuntimeConfig) -> tuple[Path, Path | None]:
-    """Persist runtime config and project-scoped storage credentials."""
-    config_path = write_config(runtime_config_payload(config))
-    credentials_path: Path | None = None
-    if config.storage.aws_access_key_id or config.storage.aws_secret_access_key:
-        credentials_path = write_project_storage_credentials(
-            config.project,
-            aws_access_key_id=config.storage.aws_access_key_id,
-            aws_secret_access_key=config.storage.aws_secret_access_key,
-            endpoint_url=config.storage.endpoint_url,
-            bucket=config.storage.checkpoint_bucket,
-        )
-    return config_path, credentials_path
+    return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
 
 
 # ── Read / write ─────────────────────────────────────────────────────────
@@ -1130,12 +930,6 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
     state = proj.get("terraform_state", {})
     if not isinstance(state, dict):
         state = {}
-    credentials = resolve_credentials()
-    project_name = _resolved_project_name(yml, project)
-    project_credentials = getattr(credentials, "project_storage", {}).get(
-        project_name,
-        StorageCredentials(),
-    )
 
     def pick(*keys: str, default: str = "") -> str:
         for key in keys:
@@ -1169,8 +963,8 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
         default=str(state.get("secret_key", "") or ""),
     )
     return StorageConfig(
-        checkpoint_bucket=project_credentials.bucket or bucket,
-        endpoint_url=project_credentials.endpoint_url or endpoint,
-        aws_access_key_id=project_credentials.aws_access_key_id or access_key,
-        aws_secret_access_key=project_credentials.aws_secret_access_key or secret_key,
+        checkpoint_bucket=bucket,
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
     )

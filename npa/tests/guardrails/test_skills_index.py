@@ -111,30 +111,30 @@ def _assert_configure_provision_dry_run(
     for env_var in config.ENV_MAP.values():
         monkeypatch.delenv(env_var, raising=False)
 
-    configure = runner.invoke(
-        app,
-        [
-            "configure",
-            "--non-interactive",
-            "--project",
-            "ci",
-            "--project-id",
-            "project-ci",
-            "--tenant-id",
-            "tenant-ci",
-            "--region",
-            "eu-north1",
-            "--registry-id",
-            "registry-ci",
-            "--s3-bucket",
-            "s3://ci-bucket/checkpoints/",
-            "--aws-access-key-id",
-            "access-placeholder",
-            "--aws-secret-access-key",
-            "secret-placeholder",
-        ],
-    )
+    configure = runner.invoke(app, ["configure", "--show"])
     assert configure.exit_code == 0, configure.output
+    assert "storage:" in configure.output
+
+    npa_home.mkdir(parents=True, exist_ok=True)
+    (npa_home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "ci",
+                "projects": {
+                    "ci": {
+                        "project_id": "project-ci",
+                        "tenant_id": "tenant-ci",
+                        "region": "eu-north1",
+                        "registry_id": "registry-ci",
+                        "storage": {
+                            "checkpoint_bucket": "s3://ci-bucket/checkpoints/",
+                            "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                        },
+                    }
+                },
+            }
+        )
+    )
 
     provision = runner.invoke(
         app,
