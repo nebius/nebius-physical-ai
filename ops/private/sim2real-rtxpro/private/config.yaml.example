@@ -1,0 +1,12 @@
+# Copy to ~/npa-sim2real-demo/private/config.yaml (non-secret).
+
+storage:
+  bucket: s3://YOUR-BUCKET
+  endpoint_url: https://storage.eu-north1.nebius.cloud
+  registry: YOUR-REGISTRY-ID.cr.eu-north1.nebius.cloud
+  k8s_context: YOUR-K8S-CONTEXT
+
+projects:
+  default:
+    project_id: YOUR-PROJECT-ID
+    k8s_context: YOUR-K8S-CONTEXT

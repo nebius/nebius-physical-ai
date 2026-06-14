@@ -21,11 +21,16 @@ _npa_cfg=()
 while IFS= read -r _line; do
   _npa_cfg+=("${_line}")
 done < <(operator_read_config "${ROOT}" 2>/dev/null || true)
-BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-YOUR-BUCKET}}"
+BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
 ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
-CTX="${KUBECONTEXT:-${_npa_cfg[3]:-npa-rtxpro-mk8s}}"
+CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
 PREFIX="${S3_PREFIX:-sim2real-b}"
 NS="${KUBENS:-default}"
+
+if [ -z "${BUCKET}" ] || [ -z "${CTX}" ]; then
+  echo "ERROR: configure storage.bucket and k8s_context in ~/.npa/config.yaml" >&2
+  exit 1
+fi
 
 export KUBECONFIG="${KUBECONFIG:-$(operator_kubeconfig_path "${CTX}")}"
 operator_export_kubeconfig "${CTX}" "${ROOT}" 2>/dev/null || true

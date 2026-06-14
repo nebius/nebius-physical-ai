@@ -36,6 +36,8 @@ fi
 OPS="${SCRIPT_DIR}"
 # shellcheck source=lib/operator-shell.sh
 source "${SCRIPT_DIR}/lib/operator-shell.sh"
+# shellcheck source=lib/customer-preflight.sh
+source "${SCRIPT_DIR}/lib/customer-preflight.sh"
 operator_bootstrap_shell "${NPA_SIM2REAL_REPO}"
 
 CMD="${1:-help}"
@@ -47,8 +49,10 @@ Usage: $(basename "$0") <command> [args]
 
   trigger [env overrides]     Submit pipeline (default WAIT=0, prints monitor cmd)
   submit                      Same as trigger
-  status <run-id>             Live kubectl + S3 stage checklist (--watch)
+  status <run-id>             Live stages via npa (fallback: kubectl + S3)
   sync <run-id>               Sync artifacts from S3; VISUALIZE=1 opens Rerun
+  setup                       Scaffold ~/npa-sim2real-demo/private/ from templates
+  seed-trigger                Upload stock lerobot/pusht trigger to YOUR bucket
   cleanup [options]           Reset tmp + K8s jobs (--run-id, --s3, --dry-run)
   demo                        cleanup + trigger (customer replication from scratch)
   rehearsal                   Sync golden run from S3 + Rerun (no cluster)
@@ -58,12 +62,13 @@ Usage: $(basename "$0") <command> [args]
 Cleanup options (passed through): --run-id ID, --s3, --local-only, --cluster-only, --dry-run
 
 Env (trigger): TRIGGER_DATASET_URI, TRIGGER_DATASET_ID, RUN_ID, WAIT, INNER_ITERATIONS, OUTER_ITERATIONS
-Config: ~/.npa/config.yaml + credentials.yaml; kubeconfig under ~/.npa/clusters/<context>/
+Config: ~/npa-sim2real-demo/private/ → ~/.npa/  (or ~/.npa/config.yaml directly)
 EOF
 }
 
 case "${CMD}" in
   trigger | submit)
+    customer_preflight "${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}" || exit 1
     if [ -f "${HOME}/.npa/sim2real-operator.env" ]; then
       # shellcheck disable=SC1091
       source "${HOME}/.npa/sim2real-operator.env"
@@ -73,7 +78,7 @@ case "${CMD}" in
     ;;
   status)
     RUN_ID="${1:?usage: $(basename "$0") status <run-id>}"
-    exec "${OPS}/status-run-local.sh" "${RUN_ID}" --watch
+    exec "${OPS}/status-run-npa.sh" "${RUN_ID}" --watch
     ;;
   sync)
     RUN_ID="${1:?usage: $(basename "$0") sync <run-id>}"
@@ -85,6 +90,7 @@ case "${CMD}" in
     ;;
   demo)
     echo "=== Customer replication: cleanup → trigger ==="
+    customer_preflight "${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}" || exit 1
     "${OPS}/cleanup-operator.sh" "$@"
     echo ""
     if [ -f "${HOME}/.npa/sim2real-operator.env" ]; then
@@ -94,10 +100,18 @@ case "${CMD}" in
     export WAIT="${WAIT:-0}"
     exec "${OPS}/trigger-pipeline.sh"
     ;;
+  setup)
+    exec "${OPS}/setup-customer-demo.sh" "${NPA_SIM2REAL_DEMO:-${HOME}/npa-sim2real-demo}"
+    ;;
+  seed-trigger)
+    exec "${OPS}/seed-stock-trigger.sh"
+    ;;
   rehearsal)
-    # Legacy private-repo command: sync completed golden run, open Rerun.
+    if [ -z "${RUN_ID:-}" ]; then
+      echo "ERROR: set RUN_ID=<completed-run-id> for rehearsal" >&2
+      exit 1
+    fi
     export SUBMIT=0 VISUALIZE="${VISUALIZE:-1}"
-    export RUN_ID="${RUN_ID:-rtxpro-isaac-2x2-20260613t043658z}"
     exec "${OPS}/run-demo.sh"
     ;;
   full)

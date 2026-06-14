@@ -5,6 +5,14 @@
 operator_bootstrap_shell() {
   local root="${1:-}"
 
+  local _lib_dir
+  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "${_lib_dir}/private-install.sh" ]]; then
+    # shellcheck source=private-install.sh
+    source "${_lib_dir}/private-install.sh"
+    operator_install_private_config
+  fi
+
   if [[ -f "${HOME}/.npa/sim2real-operator.env" ]]; then
     # shellcheck disable=SC1091
     source "${HOME}/.npa/sim2real-operator.env"
