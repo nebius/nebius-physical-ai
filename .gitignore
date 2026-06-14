@@ -34,6 +34,9 @@ credentials.yml
 ops/private/**/env.local
 ops/private/**/RUNBOOK.local.md
 ops/private/**/DEMO-WALKTHROUGH.local.md
+ops/private/**/FRANKA-STOCK-GUIDE.local.md
+.tmp-paste-verify-demo/
+.phone-agent-pr-test
 ops/private/**/credentials.local.yaml
 *.pem
 *.key
