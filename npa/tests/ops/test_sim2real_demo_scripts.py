@@ -97,6 +97,22 @@ def test_submit_passes_trigger_dataset_uri() -> None:
     assert "--trigger-dataset-uri" in content
 
 
+def test_submit_workbench_script_exists() -> None:
+    script = OPS / "submit-workbench-job.sh"
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+    text = script.read_text()
+    assert "npa workbench workflow submit" in text
+    assert "operator_parse_submit_run_id" in (LIB / "operator-config.sh").read_text()
+
+
+def test_operator_normalizes_staged_run_id() -> None:
+    content = (LIB / "operator-config.sh").read_text()
+    assert "operator_normalize_staged_run_id" in content
+    assert "operator_parse_submit_run_id" in content
+    assert "us-central1" in content
+
+
 def test_operator_exports_kubeconfig_helper() -> None:
     content = (LIB / "operator-config.sh").read_text()
     assert "operator_export_kubeconfig" in content

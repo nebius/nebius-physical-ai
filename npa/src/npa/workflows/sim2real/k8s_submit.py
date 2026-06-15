@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX
-from npa.workflows.sim2real.monitor import load_operator_config, orchestrator_job_name
+from npa.workflows.sim2real.monitor import (
+    load_operator_config,
+    normalize_staged_run_id,
+    orchestrator_job_name,
+    parse_submit_job,
+    parse_submit_run_id,
+)
 
 
 @dataclass(frozen=True)
@@ -83,7 +89,7 @@ def submit_sim2real_staged_job(
     if not reg:
         raise ValueError("storage.registry is not set in ~/.npa/config.yaml")
 
-    resolved_run_id = run_id or os.environ.get("RUN_ID") or ""
+    resolved_run_id = normalize_staged_run_id(run_id or os.environ.get("RUN_ID") or "")
     env = dict(os.environ)
     env.update(
         {
@@ -136,17 +142,13 @@ def submit_sim2real_staged_job(
     if proc.returncode != 0:
         raise RuntimeError(f"sim2real K8s submit failed:\n{output}")
 
-    parsed_run_id = resolved_run_id
-    job_name = ""
-    for line in output.splitlines():
-        if line.startswith("run_id="):
-            parsed_run_id = line.split("=", 1)[1].strip()
-        if line.startswith("job="):
-            job_name = line.split("=", 1)[1].strip()
-    if not parsed_run_id:
-        raise RuntimeError(f"submit script did not return run_id:\n{output}")
-    if not job_name:
-        job_name = orchestrator_job_name(parsed_run_id)
+    try:
+        parsed_run_id = parse_submit_run_id(output)
+    except ValueError as exc:
+        if not resolved_run_id:
+            raise RuntimeError(f"submit script did not return run_id:\n{output}") from exc
+        parsed_run_id = resolved_run_id
+    job_name = parse_submit_job(output, parsed_run_id)
 
     log_path = f"/tmp/sim2real-cluster/{parsed_run_id}.log"
     manifest_path = f"/tmp/sim2real-cluster/{job_name}.yaml"

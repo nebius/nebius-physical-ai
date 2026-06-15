@@ -17,12 +17,14 @@ source "${SCRIPT_DIR}/lib/customer-asset-profile.sh"
 source "${SCRIPT_DIR}/lib/lerobot-byo-trainer.sh"
 # shellcheck source=lib/asset-profile-guard.sh
 source "${SCRIPT_DIR}/lib/asset-profile-guard.sh"
+# shellcheck source=lib/trigger-preflight.sh
+source "${SCRIPT_DIR}/lib/trigger-preflight.sh"
 ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 export NPA_SIM2REAL_REPO="${ROOT}"
 
 npa_read_lines _npa_cfg operator_read_config "${ROOT}"
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
-ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
+ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.us-central1.nebius.cloud}}"
 REG="${REGISTRY:-${_npa_cfg[2]:-}}"
 CTX="${KUBECONTEXT:-${_npa_cfg[3]:-}}"
 export S3_BUCKET="${BUCKET}"
@@ -54,7 +56,8 @@ if [ -n "${CUSTOMER_ASSET_PROFILE_APPLIED:-}" ]; then
   customer_asset_profile_print
 fi
 
-TRIGGER_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-s3://${BUCKET}/sim2real-triggers/${RUN_ID}/lerobot-pusht/}}"
+STOCK_TRIGGER_URI="${_npa_cfg[4]:-}"
+TRIGGER_URI="${NPA_SIM2REAL_TRIGGER_DATASET_URI:-${TRIGGER_DATASET_URI:-${STOCK_TRIGGER_URI:-s3://${BUCKET}/sim2real-triggers/${RUN_ID}/lerobot-pusht/}}}"
 TRIGGER_ID="${NPA_SIM2REAL_TRIGGER_DATASET_ID:-${TRIGGER_DATASET_ID:-lerobot/pusht}}"
 # Normalize trailing slash for S3 prefix semantics.
 if [ -n "${TRIGGER_URI}" ] && [[ "${TRIGGER_URI}" != */ ]]; then
@@ -104,6 +107,16 @@ if bad:
     sys.exit(1)
 print("Preflight OK: all workflow images are registry-qualified.")
 PY
+
+echo "=== Preflight: LeRobot trigger on S3 ==="
+echo "  ${TRIGGER_URI}"
+trigger_preflight_s3 "${TRIGGER_URI}" "${ENDPOINT}" "${ROOT}"
+
+echo "=== Preflight: operator S3 write access ==="
+storage_preflight_write "${BUCKET}" "${ENDPOINT}" "${ROOT}"
+
+echo "=== Preflight: cluster npa-storage-credentials endpoint ==="
+storage_preflight_cluster_secret "${CTX}" "${ENDPOINT}" "${ROOT}"
 
 # Refresh npa-nebius-registry before apply — stale IAM tokens cause ImagePullBackOff 401.
 registry_refresh_for_images "${CTX}" \
@@ -322,7 +335,10 @@ chmod 600 "${MANIFEST}"
 
 echo "Applying job ${JOB} to context ${CTX}..." | tee "${LOG}"
 kubectl --context "${CTX}" apply -f "${MANIFEST}" | tee -a "${LOG}"
-echo "run_id=${RUN_ID} job=${JOB} manifest=${MANIFEST} log=${LOG}"
+echo "run_id=${RUN_ID}"
+echo "job=${JOB}"
+echo "manifest=${MANIFEST}"
+echo "log=${LOG}"
 echo "trigger_uri=${TRIGGER_URI} trigger_id=${TRIGGER_ID}"
 echo "sim_backend=${NPA_SIM2REAL_SIM_BACKEND:-isaac} env_count=${NPA_ENV_COUNT:-10000} isaac_image=${ISAAC_IMAGE} augment_image=${AUGMENT_IMAGE}"
 

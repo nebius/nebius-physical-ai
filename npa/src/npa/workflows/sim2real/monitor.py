@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,8 +88,58 @@ def resolve_kubeconfig(context: str) -> Path:
     )
 
 
+_STAGED_RUN_ID_RE = re.compile(r"sim2real-staged-\d{8}t\d{6}z", re.IGNORECASE)
+
+
+def normalize_staged_run_id(run_id: str) -> str:
+    """Canonicalize staged run ids and strip polluted submit-log suffixes."""
+
+    rid = (run_id or "").strip()
+    if not rid:
+        return rid
+    first = rid.split()[0]
+    match = _STAGED_RUN_ID_RE.search(first)
+    if match:
+        return match.group(0).lower()
+    lowered = first.lower()
+    if lowered.startswith("sim2real-staged-"):
+        return lowered
+    if lowered.startswith("sim2real-"):
+        rest = lowered[len("sim2real-") :]
+        if rest.startswith("staged-"):
+            return f"sim2real-{rest}"
+    if lowered.startswith("staged-"):
+        return f"sim2real-{lowered}"
+    return first
+
+
+def parse_submit_run_id(output: str) -> str:
+    """Parse ``run_id=`` lines from operator submit script output."""
+
+    parsed = ""
+    for line in output.splitlines():
+        if line.startswith("run_id=") or line.startswith("run_id:"):
+            raw = line.split("=", 1)[-1].split(":", 1)[-1].strip()
+            parsed = normalize_staged_run_id(raw)
+    if not parsed:
+        raise ValueError("submit script did not return run_id")
+    return parsed
+
+
+def parse_submit_job(output: str, run_id: str = "") -> str:
+    """Parse orchestrator job name from submit script output."""
+
+    job = ""
+    for line in output.splitlines():
+        if line.startswith("job=") or line.startswith("job_id:"):
+            job = line.split("=", 1)[-1].split(":", 1)[-1].strip().split()[0]
+    if not job and run_id:
+        return orchestrator_job_name(run_id)
+    return job
+
+
 def orchestrator_job_name(run_id: str) -> str:
-    return f"sim2real-{run_id}"
+    return f"sim2real-{normalize_staged_run_id(run_id)}"
 
 
 def run_prefix_uri(*, bucket: str, prefix: str, run_id: str, endpoint: str) -> str:
@@ -447,6 +498,7 @@ def get_sim2real_workflow_status(
     kubeconfig: str | Path = "",
 ) -> dict[str, Any]:
     """Return workflow-style status for a Sim2Real staged K8s run."""
+    run_id = normalize_staged_run_id(run_id)
 
     try:
         operator = load_operator_config()

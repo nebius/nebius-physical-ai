@@ -21,13 +21,13 @@ if [ ! -x "${PY}" ]; then
   fi
 fi
 
-RUN_ID="${1:?usage: prestage-offline-run.sh <run-id> [local-dir]}"
+RUN_ID="$(operator_normalize_staged_run_id "${1:?usage: prestage-offline-run.sh <run-id> [local-dir]}")"
 LOCAL_DIR="${2:-/tmp/sim2real-prestage/${RUN_ID}}"
 PREFIX="${S3_PREFIX:-sim2real-b}"
 
 npa_read_lines _npa_cfg operator_read_config "${ROOT}"
 BUCKET="${S3_BUCKET:-${_npa_cfg[0]:-}}"
-ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
+ENDPOINT="${S3_ENDPOINT:-${_npa_cfg[1]:-https://storage.us-central1.nebius.cloud}}"
 if [ -z "${BUCKET}" ]; then
   echo "Set storage.bucket in ~/.npa/config.yaml or S3_BUCKET" >&2
   exit 1
@@ -35,7 +35,9 @@ fi
 
 mkdir -p "${LOCAL_DIR}"
 
-echo "Syncing s3://${BUCKET}/${PREFIX}/${RUN_ID}/ -> ${LOCAL_DIR}/"
+echo "run_id=${RUN_ID}"
+echo "s3://${BUCKET}/${PREFIX}/${RUN_ID}/"
+echo "local_dir=${LOCAL_DIR}/"
 
 export PRESTAGE_RUN_ID="${RUN_ID}" PRESTAGE_BUCKET="${BUCKET}" PRESTAGE_PREFIX="${PREFIX}"
 export PRESTAGE_LOCAL_DIR="${LOCAL_DIR}" PRESTAGE_ENDPOINT="${ENDPOINT}"
@@ -67,7 +69,7 @@ client = boto3.client(
     aws_access_key_id=s["aws_access_key_id"],
     aws_secret_access_key=s["aws_secret_access_key"],
     config=Config(signature_version="s3v4"),
-    region_name="eu-north1",
+    region_name="us-central1",
 )
 
 keys = [

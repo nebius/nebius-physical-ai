@@ -61,10 +61,16 @@ if not k8s_context:
         if isinstance(proj, dict) and proj.get("k8s_context"):
             k8s_context = str(proj["k8s_context"])
             break
+stock_trigger = str(storage.get("sim2real_stock_trigger_uri") or "").strip()
+if not stock_trigger and bucket:
+    stock_trigger = (
+        f"s3://{bucket}/sim2real-triggers/trigger-validate-20260611T154016Z/lerobot-pusht/"
+    )
 print(bucket)
 print(endpoint)
 print(registry)
 print(k8s_context)
+print(stock_trigger)
 PY
 }
 
@@ -124,7 +130,7 @@ operator_export_kubeconfig() {
 ERROR: Nebius CLI not found — required for mk8s kubeconfig auth on Mac.
 
 Install:
-  curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+  curl -fsSL https://storage.us-central1.nebius.cloud/cli/install.sh | bash
   export PATH="${HOME}/.nebius/bin:${PATH}"
 
 Then re-run. Ensure `nebius` is on PATH and profile `npa-mk8s` is configured:
@@ -190,9 +196,18 @@ PY
 )"
 }
 
-# Canonical staged run id (accept timestamp-only, job name, or duplicated prefixes).
+# Canonical staged run id — strip submit-log junk and extract sim2real-staged-YYYYMMDDtHHMMSSz.
 operator_normalize_staged_run_id() {
   local rid="${1:?run id required}"
+  local extracted
+
+  rid="${rid%%[$' \t\r\n']*}"
+  extracted="$(printf '%s' "${rid}" | grep -oE 'sim2real-staged-[0-9]{8}t[0-9]{6}z' | head -1 || true)"
+  if [ -n "${extracted}" ]; then
+    printf '%s\n' "${extracted}"
+    return 0
+  fi
+
   case "${rid}" in
     sim2real-staged-*) printf '%s\n' "${rid}"; return 0 ;;
   esac
@@ -202,6 +217,42 @@ operator_normalize_staged_run_id() {
     staged-*) printf '%s\n' "sim2real-${rid}"; return 0 ;;
     *) printf '%s\n' "sim2real-staged-${rid}" ;;
   esac
+}
+
+# Parse run_id from submit log (handles single-line run_id=… job=… manifest=… noise).
+operator_parse_submit_run_id() {
+  local log="${1:?log required}"
+  local line parsed
+  line="$(grep -E '^(run_id=|run_id:)' "${log}" | tail -1 || true)"
+  if [ -z "${line}" ]; then
+    return 1
+  fi
+  parsed="$(printf '%s' "${line}" | grep -oE 'sim2real-staged-[0-9]{8}t[0-9]{6}z' | head -1 || true)"
+  if [ -z "${parsed}" ]; then
+    parsed="$(printf '%s' "${line}" | sed -E 's/^run_id[=: ]+//' | awk '{print $1}')"
+  fi
+  operator_normalize_staged_run_id "${parsed}"
+}
+
+# Parse orchestrator job name from submit log.
+operator_parse_submit_job() {
+  local log="${1:?log required}"
+  local run_id="${2:-}"
+  local line parsed
+  line="$(grep -E '^(job=|job_id:)' "${log}" | tail -1 || true)"
+  if [ -z "${line}" ]; then
+    if [ -n "${run_id}" ]; then
+      operator_orchestrator_job_name "${run_id}"
+      return 0
+    fi
+    return 1
+  fi
+  parsed="$(printf '%s' "${line}" | sed -E 's/^job(_id)?[=: ]+//' | awk '{print $1}')"
+  if [ -z "${parsed}" ] && [ -n "${run_id}" ]; then
+    operator_orchestrator_job_name "${run_id}"
+    return 0
+  fi
+  printf '%s\n' "${parsed}"
 }
 
 # Orchestrator Job name for a staged run id.

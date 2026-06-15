@@ -33,6 +33,10 @@ LOG_DIR="/tmp/sim2real-demo"
 mkdir -p "${LOG_DIR}"
 
 RUN_ID="${RUN_ID:-}"
+if [ -n "${RUN_ID}" ]; then
+  RUN_ID="$(operator_normalize_staged_run_id "${RUN_ID}")"
+  export RUN_ID
+fi
 WAIT="${WAIT:-1}"
 VISUALIZE="${VISUALIZE:-1}"
 SYNC_DIR="${SYNC_DIR:-/tmp/sim2real-demo/${RUN_ID:-pending}}"
@@ -106,14 +110,15 @@ _submit_and_wait() {
   fi
   "${submit_script}" 2>&1 | tee -a "${submit_log}"
 
-  RUN_ID="$(grep -E '^(run_id=|run_id:)' "${submit_log}" | tail -1 | sed -E 's/^run_id[=: ]+//')"
-  JOB="$(grep -E '^(job=|job_id:)' "${submit_log}" | tail -1 | sed -E 's/^job(_id)?[=: ]+//')"
-  if [ -z "${RUN_ID}" ]; then
+  if ! RUN_ID="$(operator_parse_submit_run_id "${submit_log}")"; then
     echo "ERROR: could not parse run_id from submit output" >&2
     exit 1
   fi
-  JOB="${JOB:-sim2real-${RUN_ID}}"
-  echo "Submitted run_id=${RUN_ID} job=${JOB}"
+  export RUN_ID
+  JOB="$(operator_parse_submit_job "${submit_log}" "${RUN_ID}" || true)"
+  JOB="${JOB:-$(operator_orchestrator_job_name "${RUN_ID}")}"
+  echo "Submitted run_id=${RUN_ID}"
+  echo "Submitted job=${JOB}"
 
   if [ "${WAIT}" != "1" ]; then
     echo ""
@@ -136,7 +141,9 @@ _submit_and_wait() {
 _sync_from_s3() {
   SYNC_DIR="/tmp/sim2real-demo/${RUN_ID}"
   echo "=== Sync artifacts from S3 ==="
-  echo "s3://${BUCKET}/${S3_PREFIX:-sim2real-b}/${RUN_ID}/ -> ${SYNC_DIR}/"
+  echo "run_id=${RUN_ID}"
+  echo "s3://${BUCKET}/${S3_PREFIX:-sim2real-b}/${RUN_ID}/"
+  echo "local_dir=${SYNC_DIR}/"
   S3_BUCKET="${BUCKET}" S3_ENDPOINT="${ENDPOINT}" \
     "${OPS}/prestage-offline-run.sh" "${RUN_ID}" "${SYNC_DIR}"
 }
