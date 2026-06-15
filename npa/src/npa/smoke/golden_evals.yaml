@@ -480,3 +480,27 @@ containers:
       gpu: optional
       timeout_seconds: 600
       status: gpu-gated
+
+  sim2real-rerun-viewer:
+    image: npa-sim2real-rerun-viewer
+    dockerfile: npa/docker/workbench/sim2real-rerun-viewer/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Lightweight rerun.io viewer sidecar for Sim2Real loop visualization
+        (loads reports/sim2real.rrd from object storage on :9090).
+    safety:
+      runs_as: nobody
+      base_image: python:3.11-slim-bookworm
+      network: serve endpoint on :9090 when deployed
+      external_fetch: [pypi]
+      notes: >-
+        Thin rerun-sdk image; no NPA code bundled. Default hosted serve uses
+        python:3.11-slim bootstrap unless NPA_SIM2REAL_RERUN_IMAGE overrides.
+    golden_eval:
+      kind: build-import
+      command: 'python -c "import rerun as rr; assert hasattr(rr, \"__version__\")"'
+      serverless_gpu: h100
+      gpu: none
+      timeout_seconds: 120
+      status: ready

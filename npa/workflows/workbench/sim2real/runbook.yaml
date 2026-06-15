@@ -40,6 +40,26 @@
 # Then set storage.sim2real_stock_trigger_uri to the destination prefix and run
 # sync-cluster-storage-secret.sh so cluster pods get AWS_ENDPOINT_URL + keys.
 #
+# ---------------------------------------------------------------------------
+# Configuration reference (operator env, runbook, config.yaml)
+# ---------------------------------------------------------------------------
+# | Concern | Where to set | Example vars |
+# | --- | --- | --- |
+# | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | ASSETS_URI, SCENE_SPEC_URI, CAMERAS_URI, NPA_SIM2REAL_CAMERAS_URI, ROBOT_SPEC_URI, NPA_SIM2REAL_ROBOT_SPEC_URI, ROBOT_PRESET, NPA_SIM2REAL_ROBOT_PRESET |
+# | Artifact bucket vs trigger bucket | config.yaml, operator env, runbook NPA_SIM2REAL_* | NPA_SIM2REAL_BUCKET (alias S3_BUCKET), NPA_SIM2REAL_TRIGGER_DATASET_URI (alias TRIGGER_DATASET_URI), storage.bucket, storage.sim2real_stock_trigger_uri |
+# | GCP/custom bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
+# | LeRobot custom/trigger dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default lerobot/pusht |
+# | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, VLM_IMAGE, EVAL_IMAGE, TRAINER_IMAGE, ISAAC_IMAGE, NPA_SIM2REAL_RERUN_IMAGE |
+#
+# Sim assets: Stage 2 reads ASSETS_URI and/or SCENE_SPEC_URI (and optional
+# CAMERAS_URI / ROBOT_SPEC_URI). Leave empty for stock Franka/tabletop smoke.
+# Trigger prefix may differ from artifact prefix on GCP — same bucket or not.
+#
+# Custom images: export registry-qualified refs before submit-k8s-staged-job.sh
+# or workflow submit. Unresolved AUGMENT_IMAGE / POLICY_IMAGE → reference
+# placeholder locally (SEAM tier). Rerun hosted serve defaults to
+# python:3.11-slim bootstrap; set NPA_SIM2REAL_RERUN_IMAGE for npa-sim2real-rerun-viewer.
+#
 # SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
 # `image_id` at submission time. So every value below is a materialized literal,
 # and the `run` block expands env vars at container runtime instead. Operators

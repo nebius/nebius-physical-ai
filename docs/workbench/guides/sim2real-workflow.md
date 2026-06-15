@@ -20,6 +20,20 @@ storage** comment block at the top of `runbook.yaml` for the full variable map
 
 ---
 
+## Configuration reference
+
+| Concern | Where to set | Example vars |
+| --- | --- | --- |
+| Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | `ASSETS_URI`, `SCENE_SPEC_URI`, `CAMERAS_URI`, `NPA_SIM2REAL_CAMERAS_URI`, `ROBOT_SPEC_URI`, `NPA_SIM2REAL_ROBOT_SPEC_URI`, `ROBOT_PRESET`, `NPA_SIM2REAL_ROBOT_PRESET` |
+| Artifact bucket vs trigger bucket | `config.yaml`, operator env, runbook | `NPA_SIM2REAL_BUCKET` (alias `S3_BUCKET`), `NPA_SIM2REAL_TRIGGER_DATASET_URI` (alias `TRIGGER_DATASET_URI`), `storage.bucket`, `storage.sim2real_stock_trigger_uri` |
+| GCP/custom bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` |
+| LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
+| Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
+
+Artifact bucket and trigger prefix may differ (common on GCP). Sim assets are optional — leave URIs empty for stock smoke. See [sim2real-customer-assets.md](./sim2real-customer-assets.md) for BYO scene/robot detail.
+
+---
+
 ## Pipeline at a glance
 
 You can read the entire loop in the runbook `run:` block — no hidden orchestrator.
