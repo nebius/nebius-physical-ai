@@ -1,4 +1,4 @@
-# Standalone Sim2Real VLM-to-RL full-loop runbook.
+# Standalone Sim2Real VLM-to-RL staged runbook.
 #
 # This is the raw-SkyPilot tier of the three-tier example set. It is meant to be
 # read and run without npa in the loop. The SDK (sim2real.run) and
@@ -26,7 +26,7 @@
 #       envFrom:
 #         - secretRef:
 #             name: hf-ngc-tokens
-name: sim2real-full-loop
+name: sim2real-staged-loop
 resources:
   cloud: kubernetes
   accelerators: RTX6000:1
@@ -34,6 +34,7 @@ resources:
   memory: 64+
   image_id: "docker:example.invalid/npa-lerobot-vlm-rl:0.1.0"
 envs:
+  # Headline env block (operator-facing knobs)
   NPA_SIM2REAL_RUN_ID: ""
   NPA_SIM2REAL_BUCKET: "example-bucket"
   NPA_SIM2REAL_PREFIX: "sim2real-b"
@@ -58,10 +59,12 @@ envs:
   SUCCESS_THRESHOLD: "0.75"
   INNER_ITERATIONS: "2"
   OUTER_ITERATIONS: "1"
+  INITIAL_QUALITY: "0.38"
   LOOP_OF_LOOPS_ITERATIONS: "1"
   ROLLOUT_COUNT: "3"
   STEPS_PER_ROLLOUT: "4"
   HELDOUT_ENV_COUNT: "8"
+  # Advanced defaults (leave unless tuning specific infra/runtime behavior)
   SIGNAL_LOSS_WEIGHT: "1.0"
   LEARNING_RATE: "0.05"
   NO_GUARDRAILS: "0"
@@ -136,51 +139,77 @@ run: |
   run_id="${NPA_SIM2REAL_RUN_ID:-sim2real-$(date -u +%Y%m%dT%H%M%SZ)}"
   output_dir="/tmp/npa-sim2real-${run_id}"
   mkdir -p "${output_dir}"
+  common_args=(
+    --run-id "${run_id}"
+    --output-dir "${output_dir}"
+    --s3-bucket "${bucket}"
+    --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}"
+    --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}"
+    --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}"
+    --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}"
+    --action-rollouts-uri "${ACTION_ROLLOUTS_URI:-}"
+    --train-envs-uri "${TRAIN_ENVS_URI:-}"
+    --heldout-envs-uri "${HELDOUT_ENVS_URI:-}"
+    --assets-uri "${ASSETS_URI:-}"
+    --scene-spec-uri "${SCENE_SPEC_URI:-}"
+    --augment-image "${AUGMENT_IMAGE:-}"
+    --policy-image "${POLICY_IMAGE:-}"
+    --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}"
+    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}"
+    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}"
+    --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
+    --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
+    --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
+    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}"
+    --threshold "${SUCCESS_THRESHOLD:-0.75}"
+    --inner-iterations "${INNER_ITERATIONS:-2}"
+    --outer-iterations "${OUTER_ITERATIONS:-1}"
+    --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}"
+    --rollout-count "${ROLLOUT_COUNT:-3}"
+    --steps-per-rollout "${STEPS_PER_ROLLOUT:-4}"
+    --heldout-env-count "${HELDOUT_ENV_COUNT:-8}"
+    --signal-loss-weight "${SIGNAL_LOSS_WEIGHT:-1.0}"
+    --learning-rate "${LEARNING_RATE:-0.05}"
+    --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}"
+    --byo-trainer-command "${BYO_TRAINER_COMMAND:-}"
+    --byo-vlm-command "${BYO_VLM_COMMAND:-}"
+    --byo-eval-command "${BYO_EVAL_COMMAND:-}"
+    --byo-rerun-command "${BYO_RERUN_COMMAND:-}"
+    --k8s-namespace "${NPA_SIM2REAL_K8S_NAMESPACE:-default}"
+    --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}"
+    --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}"
+    --k8s-env-secret-names "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES:-hf-ngc-tokens,npa-storage-credentials}"
+    --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}"
+    --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
+    --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-7200}"
+    --source-repo "${NPA_SOURCE_REPO:-}"
+    --source-ref "${NPA_SOURCE_REF:-}"
+    --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
+  )
 
-  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop full-loop \
-    --run-id "${run_id}" \
-    --output-dir "${output_dir}" \
-    --s3-bucket "${bucket}" \
-    --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}" \
-    --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}" \
-    --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}" \
-    --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}" \
-    --action-rollouts-uri "${ACTION_ROLLOUTS_URI:-}" \
-    --train-envs-uri "${TRAIN_ENVS_URI:-}" \
-    --heldout-envs-uri "${HELDOUT_ENVS_URI:-}" \
-    --assets-uri "${ASSETS_URI:-}" \
-    --scene-spec-uri "${SCENE_SPEC_URI:-}" \
-    --augment-image "${AUGMENT_IMAGE:-}" \
-    --policy-image "${POLICY_IMAGE:-}" \
-    --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}" \
-    --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}" \
-    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}" \
-    --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}" \
-    --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}" \
-    --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}" \
-    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}" \
-    --threshold "${SUCCESS_THRESHOLD:-0.75}" \
-    --inner-iterations "${INNER_ITERATIONS:-2}" \
-    --outer-iterations "${OUTER_ITERATIONS:-1}" \
-    --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}" \
-    --rollout-count "${ROLLOUT_COUNT:-3}" \
-    --steps-per-rollout "${STEPS_PER_ROLLOUT:-4}" \
-    --heldout-env-count "${HELDOUT_ENV_COUNT:-8}" \
-    --signal-loss-weight "${SIGNAL_LOSS_WEIGHT:-1.0}" \
-    --learning-rate "${LEARNING_RATE:-0.05}" \
-    --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}" \
-    --byo-trainer-command "${BYO_TRAINER_COMMAND:-}" \
-    --byo-vlm-command "${BYO_VLM_COMMAND:-}" \
-    --byo-eval-command "${BYO_EVAL_COMMAND:-}" \
-    --byo-rerun-command "${BYO_RERUN_COMMAND:-}" \
-    --k8s-namespace "${NPA_SIM2REAL_K8S_NAMESPACE:-default}" \
-    --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}" \
-    --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}" \
-    --k8s-env-secret-names "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES:-hf-ngc-tokens,npa-storage-credentials}" \
-    --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}" \
-    --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}" \
-    --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-7200}" \
-    --source-repo "${NPA_SOURCE_REPO:-}" \
-    --source-ref "${NPA_SOURCE_REF:-}" \
-    --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}" \
+  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop preamble "${common_args[@]}"
+  state_json="${output_dir}/state/workflow_state.json"
+  current_quality="$(
+    ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${INITIAL_QUALITY:-0.38}"
+  )"
+
+  total_outer="${OUTER_ITERATIONS:-1}"
+  for outer_iteration in $(seq 1 "${total_outer}"); do
+    ./npa/.venv/bin/python -m npa.workflows.sim2real_loop outer-iteration \
+      "${common_args[@]}" \
+      --outer-iteration "${outer_iteration}" \
+      --initial-quality "${current_quality}"
+    current_quality="$(
+      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${current_quality}"
+    )"
+    decision="$(
+      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print((state.get("final_decision") or {}).get("decision", ""))' "${state_json}"
+    )"
+    if [ "${decision}" = "promote_checkpoint" ]; then
+      break
+    fi
+  done
+
+  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop finalize \
+    "${common_args[@]}" \
     --upload-artifacts
