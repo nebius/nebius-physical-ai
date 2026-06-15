@@ -27,7 +27,6 @@ from npa.workflows.sim2real_loop import (
     run_inner_loop,
 )
 from npa.workflows.sim2real_rerun_serve import (
-    DEFAULT_CLUSTER_NAME,
     DEFAULT_NAMESPACE,
     DEFAULT_PORT,
     DEFAULT_RERUN_IMAGE,
@@ -405,7 +404,7 @@ def rerun_serve_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
     project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
     cluster_name: str = typer.Option(
-        DEFAULT_CLUSTER_NAME, "--cluster-name", help="NPA cluster profile for cached kubeconfig."
+        "", "--cluster-name", help="NPA cluster profile for cached kubeconfig (default: from ~/.npa/config.yaml)."
     ),
     kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
     namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
@@ -413,6 +412,14 @@ def rerun_serve_command(
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
     s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
     s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    rrd_uri: str = typer.Option(
+        "", "--rrd-uri", help="Explicit s3:// URI for reports/sim2real.rrd (no local download)."
+    ),
+    report_uri: str = typer.Option(
+        "",
+        "--report-uri",
+        help="s3:// URI for reports/sim2real-report.json; .rrd is derived as sibling.",
+    ),
     rerun_image: str = typer.Option(DEFAULT_RERUN_IMAGE, "--rerun-image", help="Rerun container image."),
     service_type: str = typer.Option(
         "loadbalancer",
@@ -424,7 +431,7 @@ def rerun_serve_command(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Deploy a hosted Rerun viewer that syncs reports/sim2real.rrd from S3."""
+    """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
     try:
         access_key, secret_key = _rerun_serve_credentials()
         config = build_rerun_serve_config(
@@ -440,6 +447,8 @@ def rerun_serve_command(
             service_type=service_type,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
+            rrd_s3_uri=rrd_uri,
+            report_uri=report_uri,
         )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)

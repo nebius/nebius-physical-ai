@@ -17,6 +17,7 @@ from npa.workflows.sim2real_rerun_serve import (
     destroy_rerun_serve,
     redact_rerun_serve_manifest,
     resolve_storage_bucket,
+    rrd_s3_uri_from_report_uri,
 )
 
 
@@ -49,6 +50,27 @@ def test_build_config_resolves_bucket_and_s3_uri(mocker) -> None:
     assert config.s3_bucket == "demo-bucket"
     assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real.rrd"
     assert config.s3_endpoint == "https://storage.example"
+
+
+def test_build_config_accepts_report_uri(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-abc",
+        report_uri="s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real-report.json",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real.rrd"
+
+
+def test_rrd_s3_uri_from_report_uri() -> None:
+    report = "s3://demo-bucket/sim2real-b/run-1/reports/sim2real-report.json"
+    assert rrd_s3_uri_from_report_uri(report) == (
+        "s3://demo-bucket/sim2real-b/run-1/reports/sim2real.rrd"
+    )
 
 
 def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:

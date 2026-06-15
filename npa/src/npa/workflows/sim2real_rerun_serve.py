@@ -20,7 +20,7 @@ DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
 DEFAULT_S3_PREFIX = "sim2real-b"
-DEFAULT_CLUSTER_NAME = "npa-workbench-eu-north1"
+DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "LoadBalancer"
 K8S_NAME_MAX_LEN = 63
 K8S_NAME_PREFIX = "npa-sim2real-rerun"
@@ -45,6 +45,7 @@ class RerunServeConfig:
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "eu-north1"
+    rrd_s3_uri_override: str = ""
 
     @property
     def deployment_name(self) -> str:
@@ -52,6 +53,8 @@ class RerunServeConfig:
 
     @property
     def rrd_s3_uri(self) -> str:
+        if self.rrd_s3_uri_override.strip():
+            return self.rrd_s3_uri_override.strip()
         prefix = "/".join(part.strip("/") for part in (self.s3_prefix, self.run_id) if part)
         return f"s3://{self.s3_bucket}/{prefix}/reports/sim2real.rrd"
 
@@ -102,6 +105,45 @@ def resolve_storage_bucket(storage: StorageConfig, *, override: str = "") -> str
     return bucket_from_s3_uri(configured) if configured.startswith("s3://") else configured
 
 
+def rrd_s3_uri_from_report_uri(report_uri: str) -> str:
+    uri = report_uri.strip()
+    if not uri.startswith("s3://"):
+        raise Sim2RealRerunServeError("--report-uri must be an s3:// URI")
+    if uri.endswith("/sim2real-report.json"):
+        return uri[: -len("sim2real-report.json")] + "sim2real.rrd"
+    if uri.endswith("sim2real-report.json"):
+        return uri.replace("sim2real-report.json", "sim2real.rrd")
+    raise Sim2RealRerunServeError(
+        "--report-uri must end with reports/sim2real-report.json"
+    )
+
+
+def resolve_cluster_name_from_config() -> str:
+    import os
+
+    import yaml
+
+    for env_key in ("NPA_K8S_CONTEXT", "KUBECONTEXT"):
+        value = os.environ.get(env_key, "").strip()
+        if value:
+            return value
+    cfg_path = Path.home() / ".npa" / "config.yaml"
+    if not cfg_path.exists():
+        return ""
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return ""
+    storage = cfg.get("storage") or {}
+    k8s_context = str(storage.get("k8s_context", "") or "").strip()
+    if k8s_context:
+        return k8s_context
+    for proj in (cfg.get("projects") or {}).values():
+        if isinstance(proj, dict) and proj.get("k8s_context"):
+            return str(proj["k8s_context"]).strip()
+    return ""
+
+
 def build_rerun_serve_config(
     *,
     run_id: str,
@@ -118,6 +160,8 @@ def build_rerun_serve_config(
     aws_access_key_id: str = "",
     aws_secret_access_key: str = "",
     aws_region: str = "eu-north1",
+    rrd_s3_uri: str = "",
+    report_uri: str = "",
 ) -> RerunServeConfig:
     if not run_id.strip():
         raise Sim2RealRerunServeError("--run-id is required")
@@ -128,6 +172,9 @@ def build_rerun_serve_config(
         raise Sim2RealRerunServeError(
             "S3 credentials are required to sync sim2real.rrd into the cluster pod."
         )
+    rrd_override = rrd_s3_uri.strip()
+    if report_uri.strip():
+        rrd_override = rrd_s3_uri_from_report_uri(report_uri)
     normalized_service = _normalize_service_type(service_type)
     return RerunServeConfig(
         run_id=run_id.strip(),
@@ -143,6 +190,7 @@ def build_rerun_serve_config(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         aws_region=aws_region.strip() or "eu-north1",
+        rrd_s3_uri_override=rrd_override,
     )
 
 
@@ -344,20 +392,30 @@ def destroy_rerun_serve(
 
 
 def resolve_kubeconfig_path(*, cluster_name: str, kubeconfig: str) -> str:
+    import os
+
     if kubeconfig.strip():
         return kubeconfig.strip()
-    if not cluster_name.strip():
-        return ""
-    path = Path.home() / ".npa" / "clusters" / cluster_name.strip() / "kubeconfig"
-    return str(path) if path.exists() else ""
+    env_kube = os.environ.get("KUBECONFIG", "").strip()
+    if env_kube:
+        for candidate in env_kube.split(os.pathsep):
+            if candidate and Path(candidate).exists():
+                return candidate
+    profile = cluster_name.strip() or resolve_cluster_name_from_config() or DEFAULT_CLUSTER_NAME
+    for filename in ("kubeconfig.resolved", "kubeconfig"):
+        path = Path.home() / ".npa" / "clusters" / profile / filename
+        if path.exists():
+            return str(path)
+    return ""
 
 
 def require_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
     resolved = resolve_kubeconfig_path(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if not resolved:
+        profile = cluster_name.strip() or resolve_cluster_name_from_config() or DEFAULT_CLUSTER_NAME
         raise Sim2RealRerunServeError(
-            "No kubeconfig found. Pass --kubeconfig or configure "
-            f"~/.npa/clusters/{cluster_name}/kubeconfig."
+            "No kubeconfig found. Pass --kubeconfig, export KUBECONFIG, or configure "
+            f"~/.npa/clusters/{profile}/kubeconfig."
         )
     return resolved
 
