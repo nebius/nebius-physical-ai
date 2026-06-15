@@ -158,6 +158,10 @@ envs:
   # NPA_SIM2REAL_RERUN: "1" (default) emits reports/sim2real.rrd after the loop;
   # "0" disables it. Degrades to a WARN if rerun-sdk is not installed locally.
   NPA_SIM2REAL_RERUN: "1"
+  # NPA_SIM2REAL_RERUN_SERVE: "1" (default) deploys hosted Rerun on mk8s after
+  # successful S3 upload when NPA_SIM2REAL_RERUN=1; "0" skips auto-serve (manual
+  # npa workbench sim2real rerun serve still available). One LB per run_id.
+  NPA_SIM2REAL_RERUN_SERVE: "1"
   NPA_SIM2REAL_K8S_NAMESPACE: "default"
   NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"
   NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"

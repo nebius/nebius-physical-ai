@@ -300,17 +300,65 @@ with `reward_head_after`, `policy_output_after`, `policy_delta_l2`.
 
 ## Rerun observability
 
-After a run:
+Stage 14 writes `reports/sim2real.rrd` locally and uploads it with the run tree.
+When `NPA_SIM2REAL_RERUN=1` (default), artifact upload succeeds, and cluster
+credentials are available, **`run_finalize` also deploys a hosted Rerun viewer**
+on mk8s (`npa workbench sim2real rerun serve` logic). The workflow logs and
+`reports/sim2real-report.json` include `rerun_serve.public_url` — one
+LoadBalancer per `run_id`, shared by all teammates.
+
+Disable hosted serve only: `NPA_SIM2REAL_RERUN_SERVE=0`. Disable `.rrd` emission:
+`NPA_SIM2REAL_RERUN=0` or `--no-rerun`.
+
+Re-deploy or refresh after a completed run:
+
+```bash
+npa workbench sim2real rerun serve --run-id <sim2real-staged-…>
+```
+
+Local offline review:
 
 ```bash
 pip install rerun-sdk
 rerun /path/to/reports/sim2real.rrd
 ```
 
-Logs: rollout frames, VLM critiques, RL rewards/advantages, held-out scores.  
-Toggle: `NPA_SIM2REAL_RERUN=0` or `--no-rerun`.
+Logs: rollout frames, VLM critiques, RL rewards/advantages, held-out scores.
 
 ---
+
+## Real-world policy deployment (Stage 12 seam)
+
+After Stage 11 promotes, artifacts land under
+`s3://<bucket>/sim2real-b/<run-id>/checkpoints/candidate/`:
+
+| Artifact | Schema | What it is today |
+| --- | --- | --- |
+| `candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote metadata (success rate, threshold, run id) |
+| `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `checkpoint_uri` pointer when decision is `promote_checkpoint` |
+| Inner-loop trainer update | in `inner_loop/…/evidence.json` | Reference VLM→RL bias update (`policy_output_after`) — not a LeRobot `pretrained_model/` tree |
+
+**WORKS today:** sim training, held-out eval, checkpoint **metadata** on S3, loop
+retrigger record (Stage 13).
+
+**SEAM today:** live real-robot execution. Stage 12 writes
+`stage_12_external_validation/external_stub.json` with `input_checkpoint` —
+a documented BYO gate, not an automated deploy.
+
+**Customer deploy path (BYO):**
+
+1. On promote, download `checkpoints/candidate/` from the run prefix on S3.
+2. Map the reference trainer state to your robot policy format (or run your own
+   trainer via `BYO_TRAINER_COMMAND` that writes a deployable LeRobot checkpoint).
+3. Deploy with LeRobot on your robot stack, for example:
+   `npa workbench lerobot serve --input-path s3://<your-bucket>/policies/<run-id>/`
+   (requires a standard LeRobot checkpoint layout — not emitted by the reference
+   trainer today).
+4. Collect a new LeRobot dataset on hardware, upload to
+   `s3://<bucket>/sim2real-triggers/<batch>/lerobot-<task>/`, and re-trigger
+   (Stage 13).
+
+Detail and scorecard: [sim2real-customer-assets.md § Real-world policy](./sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam).
 
 ## Simulation assets & robots
 

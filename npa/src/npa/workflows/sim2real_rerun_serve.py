@@ -721,3 +721,132 @@ def _label_value(value: str) -> str:
 
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def _env_bool(value: str, *, default: bool = True) -> bool:
+    normalized = value.strip().lower()
+    if not normalized:
+        return default
+    return normalized not in {"0", "false", "no", "off"}
+
+
+def should_auto_rerun_serve(
+    *,
+    rerun_enabled: bool,
+    s3_bucket: str,
+    upload_status: str,
+    viz_status: str,
+) -> bool:
+    """Return True when finalize should deploy the hosted Rerun viewer on mk8s."""
+
+    if not _env_bool(os.environ.get("NPA_SIM2REAL_RERUN_SERVE", "1")):
+        return False
+    if not rerun_enabled:
+        return False
+    if not s3_bucket.strip():
+        return False
+    if upload_status != "uploaded":
+        return False
+    if viz_status in {"disabled", "skipped"}:
+        return False
+    return True
+
+
+def resolve_rerun_serve_credentials() -> tuple[str, str]:
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    if access_key and secret_key:
+        return access_key, secret_key
+    try:
+        from npa.clients.credentials import load_credentials
+
+        creds = load_credentials()
+        access_key = access_key or (creds.s3_access_key_id or "").strip()
+        secret_key = secret_key or (creds.s3_secret_access_key or "").strip()
+    except Exception:
+        pass
+    if not access_key or not secret_key:
+        raise Sim2RealRerunServeError(
+            "S3 credentials are required for auto rerun serve. Configure ~/.npa/credentials.yaml "
+            "or export AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
+        )
+    return access_key, secret_key
+
+
+def maybe_auto_rerun_serve(
+    *,
+    run_id: str,
+    s3_bucket: str,
+    s3_prefix: str = DEFAULT_S3_PREFIX,
+    s3_endpoint: str = "",
+    rerun_enabled: bool,
+    upload_info: dict[str, Any],
+    viz_info: dict[str, Any],
+    k8s_kubeconfig: str = "",
+    k8s_namespace: str = DEFAULT_NAMESPACE,
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+) -> dict[str, Any]:
+    """Deploy idempotent hosted Rerun for a completed run when gates pass.
+
+    One deployment per ``run_id`` (stable ``deployment_name``) exposes a shared
+    ``public_url`` for all teammates. Degrades to ``skipped`` / ``blocked`` with
+    a reason instead of failing the workflow.
+    """
+
+    upload_status = str(upload_info.get("status", ""))
+    viz_status = str(viz_info.get("status", ""))
+    if not should_auto_rerun_serve(
+        rerun_enabled=rerun_enabled,
+        s3_bucket=s3_bucket,
+        upload_status=upload_status,
+        viz_status=viz_status,
+    ):
+        return {
+            "status": "skipped",
+            "reason": (
+                "auto rerun serve disabled or prerequisites missing "
+                f"(rerun_enabled={rerun_enabled}, upload={upload_status!r}, viz={viz_status!r})"
+            ),
+        }
+
+    try:
+        normalized_run_id = validate_staged_run_id(run_id)
+    except Sim2RealRerunServeError as exc:
+        return {"status": "skipped", "reason": str(exc)}
+
+    try:
+        access_key, secret_key = (
+            (aws_access_key_id.strip(), aws_secret_access_key.strip())
+            if aws_access_key_id.strip() and aws_secret_access_key.strip()
+            else resolve_rerun_serve_credentials()
+        )
+        serve_config = build_rerun_serve_config(
+            run_id=normalized_run_id,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=s3_endpoint,
+            namespace=k8s_namespace,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+        kubeconfig = resolve_kubeconfig_path(cluster_name="", kubeconfig=k8s_kubeconfig)
+        if not kubeconfig:
+            return {
+                "status": "blocked",
+                "reason": (
+                    "No kubeconfig for auto rerun serve. Run "
+                    f"'npa workbench sim2real rerun serve --run-id {normalized_run_id}' "
+                    "from an operator shell with cluster access."
+                ),
+                "rrd_s3_uri": serve_config.rrd_s3_uri,
+                "deployment_name": serve_config.deployment_name,
+            }
+        result = apply_rerun_serve(serve_config, kubeconfig=kubeconfig)
+    except Sim2RealRerunServeError as exc:
+        return {"status": "blocked", "reason": str(exc), "run_id": run_id}
+
+    payload = result.to_dict()
+    if payload.get("public_url"):
+        print(f"public_url: {payload['public_url']}", flush=True)
+    return payload

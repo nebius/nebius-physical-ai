@@ -15,9 +15,11 @@ from npa.workflows.sim2real_rerun_serve import (
     build_rerun_serve_manifest,
     deployment_name_for_run,
     destroy_rerun_serve,
+    maybe_auto_rerun_serve,
     redact_rerun_serve_manifest,
     resolve_storage_bucket,
     rrd_s3_uri_from_report_uri,
+    should_auto_rerun_serve,
     validate_staged_run_id,
     verify_rrd_exists_on_s3,
 )
@@ -255,3 +257,98 @@ def test_invalid_service_type_raises() -> None:
             aws_access_key_id="ak",
             aws_secret_access_key="sk",
         )
+
+
+@pytest.mark.parametrize(
+    ("rerun_enabled", "upload_status", "viz_status", "expected"),
+    [
+        (True, "uploaded", "reference", True),
+        (False, "uploaded", "reference", False),
+        (True, "skipped", "reference", False),
+        (True, "uploaded", "disabled", False),
+    ],
+)
+def test_should_auto_rerun_serve_gate(
+    rerun_enabled: bool,
+    upload_status: str,
+    viz_status: str,
+    expected: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_SIM2REAL_RERUN_SERVE", raising=False)
+    assert (
+        should_auto_rerun_serve(
+            rerun_enabled=rerun_enabled,
+            s3_bucket="demo-bucket",
+            upload_status=upload_status,
+            viz_status=viz_status,
+        )
+        is expected
+    )
+
+
+def test_should_auto_rerun_serve_respects_disable_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_RERUN_SERVE", "0")
+    assert not should_auto_rerun_serve(
+        rerun_enabled=True,
+        s3_bucket="demo-bucket",
+        upload_status="uploaded",
+        viz_status="reference",
+    )
+
+
+def test_maybe_auto_rerun_serve_skips_when_upload_missing() -> None:
+    result = maybe_auto_rerun_serve(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        rerun_enabled=True,
+        upload_info={"status": "skipped"},
+        viz_info={"status": "reference"},
+    )
+    assert result["status"] == "skipped"
+
+
+def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_rerun_serve_credentials",
+        return_value=("ak", "sk"),
+    )
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.build_rerun_serve_config",
+        return_value=build_rerun_serve_config(
+            run_id="sim2real-staged-20260615t180818z",
+            s3_bucket="demo-bucket",
+            aws_access_key_id="ak",
+            aws_secret_access_key="sk",
+        ),
+    )
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_kubeconfig_path",
+        return_value="/tmp/kubeconfig",
+    )
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.apply_rerun_serve",
+        return_value=type(
+            "Result",
+            (),
+            {
+                "to_dict": lambda self: {
+                    "status": "deployed",
+                    "public_url": "http://203.0.113.10:9090/",
+                    "run_id": "sim2real-staged-20260615t180818z",
+                    "deployment_name": "npa-sim2real-rerun-sim2real-staged-20260615t180818z",
+                }
+            },
+        )(),
+    )
+
+    result = maybe_auto_rerun_serve(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        rerun_enabled=True,
+        upload_info={"status": "uploaded"},
+        viz_info={"status": "reference"},
+        k8s_kubeconfig="/tmp/kubeconfig",
+    )
+    assert result["status"] == "deployed"
+    assert "public_url: http://203.0.113.10:9090/" in capsys.readouterr().out

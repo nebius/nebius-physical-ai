@@ -562,6 +562,53 @@ def run_finalize(
             "status": "skipped",
             "reason": "upload_artifacts is false or no s3_bucket configured",
         }
+
+    from npa.workflows.sim2real_rerun_serve import maybe_auto_rerun_serve
+
+    rerun_serve = maybe_auto_rerun_serve(
+        run_id=config.run_id,
+        s3_bucket=config.s3_bucket,
+        s3_prefix=config.s3_prefix,
+        s3_endpoint=config.s3_endpoint,
+        rerun_enabled=config.rerun_enabled,
+        upload_info=report["upload"],
+        viz_info=viz_info,
+        k8s_kubeconfig=config.k8s_kubeconfig,
+        k8s_namespace=config.k8s_namespace,
+    )
+    report["rerun_serve"] = rerun_serve
+    if rerun_serve.get("status") == "deployed":
+        components.append(
+            asdict(
+                ComponentRecord(
+                    "stage_14_rerun_serve",
+                    "WORKS",
+                    (
+                        "Deployed hosted Rerun viewer on mk8s; one LoadBalancer per run_id "
+                        "shares public_url for all viewers."
+                    ),
+                    {
+                        "public_url": rerun_serve.get("public_url", ""),
+                        "deployment_name": rerun_serve.get("deployment_name", ""),
+                    },
+                )
+            )
+        )
+        report["components"] = components
+    elif rerun_serve.get("status") == "blocked":
+        components.append(
+            asdict(
+                ComponentRecord(
+                    "stage_14_rerun_serve",
+                    "WARN",
+                    rerun_serve.get("reason", "auto rerun serve blocked"),
+                    {"rrd_s3_uri": rerun_serve.get("rrd_s3_uri", "")},
+                    next_action="CONTINUE",
+                )
+            )
+        )
+        report["components"] = components
+
     _write_json_artifact(report_path, report)
     return report
 

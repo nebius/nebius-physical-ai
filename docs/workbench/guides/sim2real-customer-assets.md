@@ -252,3 +252,46 @@ Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.
 3. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
 4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
 5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.
+
+---
+
+## Real-world policy deployment (Stage 12 seam)
+
+NPA sim2real **trains and evaluates in simulation** and writes promote artifacts to
+S3. It does **not** push a policy to customer hardware automatically.
+
+### What lands on S3 after promote (Stage 11)
+
+| Path | Format | Contents |
+| --- | --- | --- |
+| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold |
+| `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` + local `checkpoint_uri` |
+| `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reference trainer `policy_output_after` (action bias), not LeRobot weights |
+| `stage_12_external_validation/external_stub.json` | `npa.sim2real.external_stub.v1` | **SEAM** — documents `input_checkpoint`; no robot deploy |
+
+The reference VLM→RL loop updates a lightweight policy representation inside the
+orchestrator. It does **not** emit a LeRobot `pretrained_model/` checkpoint tree
+suitable for `npa workbench lerobot serve` without a BYO trainer or export step.
+
+### What the customer deploys
+
+| Deployable today | Status | Notes |
+| --- | --- | --- |
+| Promote metadata JSON on S3 | **WORKS** | Audit / handoff record |
+| LeRobot policy checkpoint for robot | **SEAM (BYO)** | Customer maps trainer output or runs `BYO_TRAINER_COMMAND` to write deployable weights |
+| `POLICY_IMAGE` container | **WORKS** in sim | Stage 7 rollouts in cluster — not the on-robot runtime |
+| New LeRobot trigger batch | **WORKS** | Stage 13 retrigger → upload dataset → `trigger-pipeline.sh` |
+
+### Suggested BYO robot flow
+
+1. Wait for `outer_loop/decision.json` with `"decision": "promote_checkpoint"`.
+2. Export or convert your policy to a LeRobot-compatible checkpoint on S3 (BYO
+   trainer hook or offline export from inner-loop evidence).
+3. On the robot workstation or edge server:
+   `npa workbench lerobot serve --input-path s3://<bucket>/policies/<run-id>/`
+   (see [LeRobot skill](../../../skills/tools/lerobot/SKILL.md)).
+4. Run hardware episodes; upload a new LeRobot dataset to your trigger prefix.
+5. Re-run the workflow with `NPA_SIM2REAL_TRIGGER_DATASET_URI` pointing at the new batch.
+
+Stage 12 remains a **documented external-validation stub** until a customer wires
+real-world eval (success metrics, safety checks) into their MLOps stack.
