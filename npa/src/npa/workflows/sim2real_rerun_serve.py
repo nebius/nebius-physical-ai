@@ -31,6 +31,7 @@ K8S_NAME_MAX_LEN = 63
 K8S_NAME_PREFIX = "npa-sim2real-rerun"
 ROLLOUT_TIMEOUT_SEC = 900
 DEPLOYMENT_PROGRESS_DEADLINE_SEC = 900
+KUBECTL_DELETE_TIMEOUT_SEC = 60
 
 STAGED_RUN_ID_RE = re.compile(
     r"^(?:sim2real-staged-[0-9]{8}t[0-9]{6}z|rtxpro-staged-[a-z0-9-]*[0-9]{8}t[0-9]{6}z)$",
@@ -506,9 +507,20 @@ def destroy_rerun_serve(
 ) -> RerunServeResult:
     runner = kubectl or _default_kubectl
     for kind in ("service", "deployment", "secret"):
+        name = config.deployment_name if kind != "secret" else config.secret_name
         runner(
-            ["delete", kind, config.deployment_name if kind != "secret" else config.secret_name, "-n", config.namespace, "--ignore-not-found=true"],
+            [
+                "delete",
+                kind,
+                name,
+                "-n",
+                config.namespace,
+                "--ignore-not-found=true",
+                "--wait=false",
+                f"--request-timeout={KUBECTL_DELETE_TIMEOUT_SEC}s",
+            ],
             kubeconfig=kubeconfig,
+            timeout_sec=KUBECTL_DELETE_TIMEOUT_SEC + 5,
         )
     return rerun_serve_result(config, status="deleted", kubeconfig=kubeconfig)
 
@@ -606,6 +618,7 @@ def _default_kubectl(
     *,
     stdin: str | None = None,
     kubeconfig: str = "",
+    timeout_sec: float | None = None,
 ) -> str:
     import shutil
     import subprocess
@@ -617,7 +630,18 @@ def _default_kubectl(
         cmd.extend(["--kubeconfig", kubeconfig])
     cmd.extend(args)
     try:
-        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+        result = subprocess.run(
+            cmd,
+            input=stdin,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise Sim2RealRerunServeError(
+            f"kubectl command timed out after {timeout_sec}s: {' '.join(args[:4])}"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         raise Sim2RealRerunServeError(f"kubectl command failed: {detail}") from exc

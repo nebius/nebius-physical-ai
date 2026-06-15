@@ -222,13 +222,14 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
     )
     deleted: list[list[str]] = []
 
-    def fake_kubectl(args, *, stdin=None, kubeconfig=""):
+    def fake_kubectl(args, *, stdin=None, kubeconfig="", timeout_sec=None):
         deleted.append(args)
         return ""
 
     result = destroy_rerun_serve(config, kubeconfig="/tmp/kubeconfig", kubectl=fake_kubectl)
     assert result.status == "deleted"
     assert deleted[0][:2] == ["delete", "service"]
+    assert "--wait=false" in deleted[0]
     assert deleted[1][:2] == ["delete", "deployment"]
     assert deleted[2][:2] == ["delete", "secret"]
     assert deleted[2][2] == config.secret_name
