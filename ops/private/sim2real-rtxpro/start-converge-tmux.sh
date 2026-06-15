@@ -25,6 +25,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "${STATE_DIR}"
+chmod +x "${SCRIPT_DIR}/ensure-converge-ops.sh" 2>/dev/null || true
+bash "${SCRIPT_DIR}/ensure-converge-ops.sh" 2>&1 | tee -a "${STATE_DIR}/ensure-ops.log" || {
+  echo "ensure-converge-ops failed — cannot start tmux converge" >&2
+  exit 1
+}
 chmod +x "${SCRIPT_DIR}/watchdog-converge.sh" \
   "${SCRIPT_DIR}/converge-autofix.sh" \
   "${SCRIPT_DIR}/converge-cursor-patch.sh" \

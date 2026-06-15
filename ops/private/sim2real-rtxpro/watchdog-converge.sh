@@ -47,6 +47,9 @@ kick_converge_in_tmux() {
 log "watchdog start poll=${POLL_S}s converge_session=${CONVERGE_SESSION}"
 
 while [ ! -f "${COMPLETE_FILE}" ]; do
+  if [ -x "${SCRIPT_DIR}/ensure-converge-ops.sh" ]; then
+    bash "${SCRIPT_DIR}/ensure-converge-ops.sh" 2>&1 | tee -a "${LOG}" || true
+  fi
   if converge_running; then
     log "ok: converge or monitor active"
   elif tmux has-session -t "${CONVERGE_SESSION}" 2>/dev/null; then

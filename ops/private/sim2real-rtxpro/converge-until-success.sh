@@ -264,6 +264,9 @@ converge_phase() {
 }
 
 log "converge loop start phase=${PHASE} target_envs=${TARGET_ENVS} bucket=${BUCKET}"
+if [ -x "${SCRIPT_DIR}/ensure-converge-ops.sh" ]; then
+  bash "${SCRIPT_DIR}/ensure-converge-ops.sh" 2>&1 | tee -a "${LOG}" || exit 1
+fi
 trap 'log "converge loop interrupted"' INT TERM
 
 if [ "${SINGLE_ATTEMPT}" = "1" ]; then
