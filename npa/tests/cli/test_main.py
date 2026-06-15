@@ -373,6 +373,7 @@ def test_configure_non_tty_prints_guidance() -> None:
 
     assert result.exit_code == 0
     assert "~/.npa/credentials.yaml" in result.output
+    assert "npa configure --interactive" in result.output
 
 
 def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) -> None:
@@ -423,6 +424,150 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
 
     assert result.exit_code == 0, result.output
     assert "Nebius CLI profile detected" in result.output
+
+
+def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+
+    def fail_create(**_):
+        raise AssertionError("must not create a profile when the user declines")
+
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", fail_create)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "n\n" + "\n".join([""] * 10) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Skipped Nebius profile creation" in result.output
+    assert "Re-run `npa configure`" in result.output
+
+
+def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    readiness = iter([False, False])
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: True)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "y\n" + "\n".join([""] * 10) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Could not verify a Nebius profile" in result.output
+    assert "Re-run `npa configure`" in result.output
+
+
+def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "y\n" + "\n".join([""] * 10) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Could not verify a Nebius profile" in result.output
+
+
+def test_configure_full_interactive_bootstraps_profile_and_provisions(
+    monkeypatch, tmp_path
+) -> None:
+    """Interactive configure without stubbing _ensure_nebius_profile."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    readiness = iter([False, True])
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
+    created: list[bool] = []
+
+    def fake_create(**_):
+        created.append(True)
+        return True
+
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
+    _stub_nebius_defaults(
+        monkeypatch, project="project-12345", tenant="tenant-abcde"
+    )
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda project_id, tenant_id, region, **kwargs: {
+            "nebius_api_key": "AKIAPROVISIONED",
+            "nebius_secret_key": "provisioned-secret",
+            "s3_bucket": kwargs.get("bucket_name"),
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    answers = "\n".join(
+        [
+            "y",                 # create Nebius profile
+            "",                  # project id (accept derived)
+            "",                  # tenant id (accept derived)
+            "",                  # region (default eu-north1)
+            "",                  # registry (default)
+            "",                  # bucket name (accept suggested)
+            "n",                 # no bucket size limit
+            "hf_secret_token",   # HF token
+            "",                  # Token Factory API key (skip)
+            "",                  # NGC API key (skip)
+        ]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert created == [True]
+    assert "Nebius CLI profile is ready." in result.output
+    creds = yaml.safe_load(creds_path.read_text())
+    assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
+    assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
+
+
+def test_configure_missing_nebius_cli_shows_install_guidance(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "\n".join([""] * 10) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Nebius CLI not found" in result.output
+    assert "re-run `npa configure`" in result.output.lower()
 
 
 def test_nebius_profile_ready_uses_get_access_token(monkeypatch) -> None:

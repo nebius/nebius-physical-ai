@@ -128,15 +128,18 @@ chmod 600 ~/.npa/credentials.yaml
 Nebius account authentication is handled by the `nebius` CLI profile, not by a
 long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
-Configure and verify the Nebius CLI:
+Run interactive setup in a terminal. `npa configure` creates a Nebius CLI
+profile when none exists, then writes `~/.npa/credentials.yaml` and
+`~/.npa/config.yaml`:
 
 ```bash
-nebius profile create
-nebius profile list
-nebius iam get-access-token >/dev/null
+npa configure
 ```
 
-Gate: `nebius iam get-access-token` exits successfully.
+In non-interactive environments (CI, pipes), run `npa configure --interactive`
+in a real terminal, or `npa configure --show` for the file layout.
+
+Gate: after interactive setup, `nebius iam get-access-token` exits successfully.
 
 Keep these non-secret values handy for later workbench deploys:
 
@@ -566,8 +569,8 @@ Install the Nebius CLI and restart the shell:
 
 `Nebius auth failed`
 
-Run `nebius profile create`, verify `nebius profile list`, and check that
-`nebius iam get-access-token` returns successfully.
+Re-run `npa configure` in a terminal. If a profile exists but the wrong one is
+active, switch with `nebius profile activate <profile>` and retry.
 
 `terraform binary not found on PATH`
 

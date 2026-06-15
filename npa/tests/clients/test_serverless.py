@@ -377,7 +377,7 @@ def test_auth_error_has_hint() -> None:
     err = AuthError("permission denied")
 
     assert err.hint
-    assert "nebius profile create" in err.hint
+    assert "npa configure" in err.hint
 
 
 def test_endpoint_not_found_carries_endpoint_metadata() -> None:

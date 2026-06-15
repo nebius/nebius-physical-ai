@@ -48,12 +48,12 @@ For repo validation use `npa/.venv/bin/python`; never bare `python`.
 ## Authenticate
 
 ```bash
-nebius profile create
-nebius iam get-access-token >/dev/null
 npa configure
 ```
 
-`npa configure` is interactive and bootstraps a Nebius profile. Secrets live in
+`npa configure` is interactive: it bootstraps a Nebius CLI profile when needed,
+then writes NPA credential/config files. In non-interactive shells use
+`npa configure --interactive`. Secrets live in
 `~/.npa/credentials.yaml`; machine config in `~/.npa/config.yaml`. Never hardcode
 project, tenant, registry, bucket, or secret values. Deploy workbench tools with
 `--storage-endpoint storage.eu-north1.nebius.cloud` (the CLI default is wrong for

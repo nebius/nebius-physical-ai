@@ -43,7 +43,7 @@ class EndpointNotFoundError(ServerlessClientError):
 class AuthError(ServerlessClientError):
     """Authentication or authorization failure. Not a NER condition."""
 
-    hint: str = "Run `nebius profile create` or refresh Nebius credentials."
+    hint: str = "Run `npa configure` to set up or refresh Nebius credentials."
 
 
 @dataclass

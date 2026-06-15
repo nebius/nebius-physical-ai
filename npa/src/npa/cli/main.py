@@ -62,8 +62,10 @@ RECOMMENDED_BUCKET_SIZE_GB = 50
 
 _SETUP_GUIDANCE = """Credential setup
 
-Run `npa configure` in a terminal for an interactive setup. With an
-authenticated Nebius profile it auto-creates your S3 bucket and access key, so
+Run `npa configure` in a terminal for interactive setup (use
+`npa configure --interactive` when stdin is not a TTY). The flow bootstraps a
+Nebius CLI profile when needed, then with an authenticated profile auto-creates
+your S3 bucket and access key, so
 you only supply tenant/project/region (pre-filled from the profile) plus the
 Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
@@ -164,14 +166,17 @@ def _ensure_nebius_profile() -> None:
         "No authenticated Nebius CLI profile found. Create one now?",
         default=True,
     ):
-        typer.echo("Skipped Nebius profile creation. Run `nebius profile create` later.")
+        typer.echo(
+            "Skipped Nebius profile creation. Re-run `npa configure` when ready "
+            "to create a profile."
+        )
         return
     if _create_nebius_profile() and _nebius_profile_ready():
         typer.echo("Nebius CLI profile is ready.")
     else:
         typer.echo(
-            "Could not verify a Nebius profile. Run `nebius profile create` manually, "
-            "then `nebius iam get-access-token` to confirm."
+            "Could not verify a Nebius profile. Re-run `npa configure` in a "
+            "terminal to retry profile creation."
         )
 
 

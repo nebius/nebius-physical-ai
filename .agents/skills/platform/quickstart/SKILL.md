@@ -53,12 +53,12 @@ For repo validation, always use `npa/.venv/bin/python`; never bare `python`.
 ## Authenticate
 
 ```bash
-nebius profile create
-nebius iam get-access-token >/dev/null
 npa configure
 ```
 
-`npa configure` is interactive and bootstraps a Nebius profile. User secrets live
+`npa configure` is interactive: it bootstraps a Nebius CLI profile when needed,
+then writes NPA credential/config files. In non-interactive shells use
+`npa configure --interactive`. User secrets live
 in `~/.npa/credentials.yaml`; machine-managed config lives in `~/.npa/config.yaml`.
 Never hardcode project, tenant, registry, bucket, or secret values.
 

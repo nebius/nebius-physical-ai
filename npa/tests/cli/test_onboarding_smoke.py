@@ -22,6 +22,17 @@ runner = CliRunner()
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
+def test_setup_guidance_points_to_single_configure_entrypoint() -> None:
+    """Onboarding guidance should not require separate nebius CLI steps first."""
+    for command in ("configure", "init"):
+        result = runner.invoke(app, [command])
+        assert result.exit_code == 0
+        lowered = result.output.lower()
+        assert "npa configure --interactive" in result.output
+        assert "nebius profile create" not in lowered
+        assert "get-access-token" not in lowered
+
+
 def test_setup_guidance_contains_no_raw_ip_address() -> None:
     """Setup guidance must use placeholders, never a literal host/IP."""
     for command in ("configure", "init"):
