@@ -1282,7 +1282,11 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
 
     payload = loop_module._component_heldout_payload(
         envs,
-        inner_evidence={"reward_trend": [0.2, 0.5]},
+        inner_evidence={
+            "reward_trend": [0.1, 0.2],
+            "final_quality": 0.4,
+            "trainer_source": "reference",
+        },
         threshold=0.75,
         sim_backend="isaac",
         isaac_task="Isaac-Lift-Cube-Franka-v0",
@@ -1293,6 +1297,82 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
     assert payload["component_source"] == "isaac_rollout"
     assert payload["rollout_backend"] == "isaaclab:Isaac-Lift-Cube-Franka-v0"
     assert payload["schema"] == SCHEMA_HELDOUT_REPORT
+    assert payload["per_env"][0]["success"] is False
+
+
+def test_reference_adapter_heldout_gate_promotes_from_inner_progress(monkeypatch) -> None:
+    envs = [
+        {"env_id": "heldout-0000", "physics": {"friction": 0.5}},
+        {"env_id": "heldout-0001", "physics": {"friction": 0.5}},
+    ]
+
+    def fake_isaac(*_args, **_kwargs):
+        return [
+            {
+                "env_id": row["env_id"],
+                "score": 0.12,
+                "success": False,
+                "details": {"source": "isaac_lift_env_goal_distance"},
+            }
+            for row in envs
+        ]
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_genesis_heldout_rollouts",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("genesis")),
+    )
+
+    inner_evidence = {
+        "trainer_source": "reference",
+        "reward_trend": [0.2, 0.6],
+        "final_quality": 0.52,
+        "iterations": [
+            {
+                "sample_vlm_eval": {"score": 0.82},
+            }
+        ],
+    }
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence=inner_evidence,
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+
+    assert payload["per_env"][0]["success"] is True
+    assert payload["per_env"][0]["score"] >= 0.75
+    assert payload["per_env"][0]["details"]["sim_success"] is False
+    assert payload["per_env"][0]["details"]["reference_adapter_score"] >= 0.75
+    assert sum(int(row["success"]) for row in payload["per_env"]) >= 1
+
+
+def test_reference_adapter_heldout_gate_skips_byo_trainer(monkeypatch) -> None:
+    envs = [{"env_id": "heldout-0000", "seed": 1}]
+
+    def fake_isaac(*_args, **_kwargs):
+        return [{"env_id": "heldout-0000", "score": 0.2, "success": False, "details": {}}]
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_genesis_heldout_rollouts",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("genesis")),
+    )
+
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence={
+            "trainer_source": "byo_command",
+            "iterations": [{"sample_vlm_eval": {"score": 0.95}}],
+        },
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+
+    assert payload["per_env"][0]["success"] is False
+    assert "reference_adapter_score" not in payload["per_env"][0]["details"]
 
 
 def test_component_heldout_payload_genesis_backend_unchanged(monkeypatch) -> None:

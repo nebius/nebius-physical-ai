@@ -310,6 +310,83 @@ def _s3_prefix_nonempty(client: StorageClient, bucket: str, prefix: str) -> bool
     return int(response.get("KeyCount") or 0) > 0
 
 
+def _load_s3_json(client: StorageClient, bucket: str, key: str) -> dict[str, Any] | None:
+    if not _s3_object_exists(client, bucket, key):
+        return None
+    try:
+        body = client._s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        payload = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, OSError, KeyError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_workflow_state(
+    client: StorageClient,
+    bucket: str,
+    run_prefix: str,
+) -> dict[str, Any] | None:
+    return _load_s3_json(client, bucket, f"{run_prefix.rstrip('/')}/state/workflow_state.json")
+
+
+def _extract_eval_metrics(
+    *,
+    workflow_state: dict[str, Any] | None,
+    client: StorageClient,
+    bucket: str,
+    run_prefix: str,
+) -> dict[str, Any]:
+    """Surface held-out success_rate, threshold, and promote/loopback decision."""
+
+    metrics: dict[str, Any] = {}
+    final_eval = (workflow_state or {}).get("final_eval")
+    final_decision = (workflow_state or {}).get("final_decision")
+
+    if isinstance(final_eval, dict):
+        if final_eval.get("success_rate") is not None:
+            metrics["success_rate"] = final_eval["success_rate"]
+        if final_eval.get("threshold") is not None:
+            metrics["threshold"] = final_eval["threshold"]
+
+    if isinstance(final_decision, dict):
+        if final_decision.get("decision"):
+            metrics["decision"] = final_decision["decision"]
+        if metrics.get("threshold") is None and final_decision.get("threshold") is not None:
+            metrics["threshold"] = final_decision["threshold"]
+        if metrics.get("success_rate") is None and final_decision.get("success_rate") is not None:
+            metrics["success_rate"] = final_decision["success_rate"]
+
+    prefix = run_prefix.rstrip("/")
+    if metrics.get("success_rate") is None or metrics.get("threshold") is None:
+        heldout = _load_s3_json(client, bucket, f"{prefix}/eval/heldout/report.json")
+        if heldout:
+            metrics.setdefault("success_rate", heldout.get("success_rate"))
+            metrics.setdefault("threshold", heldout.get("threshold"))
+
+    if metrics.get("decision") is None:
+        decision = _load_s3_json(client, bucket, f"{prefix}/outer_loop/decision.json")
+        if decision:
+            metrics.setdefault("decision", decision.get("decision"))
+            metrics.setdefault("success_rate", decision.get("success_rate"))
+            metrics.setdefault("threshold", decision.get("threshold"))
+
+    if any(key not in metrics for key in ("success_rate", "decision", "threshold")):
+        report = _load_s3_json(client, bucket, f"{prefix}/reports/sim2real-report.json")
+        if report:
+            outer = report.get("outer_loop") or {}
+            latest_eval = outer.get("latest_heldout_report") or {}
+            latest_dec = outer.get("latest_decision") or {}
+            if isinstance(latest_eval, dict):
+                metrics.setdefault("success_rate", latest_eval.get("success_rate"))
+                metrics.setdefault("threshold", latest_eval.get("threshold"))
+            if isinstance(latest_dec, dict):
+                metrics.setdefault("decision", latest_dec.get("decision"))
+                metrics.setdefault("success_rate", latest_dec.get("success_rate"))
+                metrics.setdefault("threshold", latest_dec.get("threshold"))
+
+    return {key: value for key, value in metrics.items() if value is not None}
+
+
 def _artifact_rule_matches(
     client: StorageClient,
     bucket: str,
@@ -725,6 +802,14 @@ def emit_sim2real_status(result: dict[str, Any], *, json_output: bool = False) -
     print(f"status: {result.get('status')}")
     if result.get("current_stage"):
         print(f"current_stage: {result.get('current_stage')}")
+    eval_metrics = result.get("eval_metrics")
+    if isinstance(eval_metrics, dict) and eval_metrics:
+        if eval_metrics.get("success_rate") is not None:
+            print(f"success_rate: {eval_metrics.get('success_rate')}")
+        if eval_metrics.get("threshold") is not None:
+            print(f"threshold: {eval_metrics.get('threshold')}")
+        if eval_metrics.get("decision"):
+            print(f"decision: {eval_metrics.get('decision')}")
     if result.get("k8s_job"):
         print(f"k8s_job: {result.get('k8s_job')}")
     if result.get("pod_reason"):
@@ -885,6 +970,16 @@ def get_sim2real_workflow_status(
         if isinstance(stages.get(current), dict):
             stages[current]["state"] = "RUNNING"
 
+    run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
+    client = StorageClient.from_environment(endpoint_url=endpoint)
+    workflow_state = _load_workflow_state(client, bucket, run_prefix)
+    eval_metrics = _extract_eval_metrics(
+        workflow_state=workflow_state,
+        client=client,
+        bucket=bucket,
+        run_prefix=run_prefix,
+    )
+
     return {
         "run_id": run_id,
         "workflow_name": "sim2real-staged-loop",
@@ -897,6 +992,7 @@ def get_sim2real_workflow_status(
             run_id=run_id,
             endpoint=endpoint,
         ),
+        "eval_metrics": eval_metrics,
         "k8s_job": k8s.get("job_name"),
         "k8s_context": context,
         "pod_phase": k8s.get("pod_phase"),

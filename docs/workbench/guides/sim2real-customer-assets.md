@@ -262,12 +262,30 @@ S3. It does **not** push a policy to customer hardware automatically.
 
 ### What lands on S3 after promote (Stage 11)
 
+Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
+
 | Path | Format | Contents |
 | --- | --- | --- |
 | `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold |
 | `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` + local `checkpoint_uri` |
 | `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reference trainer `policy_output_after` (action bias), not LeRobot weights |
 | `stage_12_external_validation/external_stub.json` | `npa.sim2real.external_stub.v1` | **SEAM** — documents `input_checkpoint`; no robot deploy |
+| `eval/heldout/report.json` | `npa.sim2real.heldout_eval.v1` | Held-out `success_rate`, `threshold`, per-env scores (stage 10) |
+| `reports/sim2real-report.json` | `npa.sim2real.e2e_report.v1` | E2E summary + `rerun_serve.public_url` when auto-serve ran |
+
+Fetch and inspect (replace bucket/run id):
+
+```bash
+PREFIX=s3://<bucket>/sim2real-b/<run-id>
+aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
+  | jq '{decision, success_rate, threshold, checkpoint_uri}'
+aws s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
+  | jq '{run_id, success_rate, threshold}'
+aws s3 cp "${PREFIX}/inner_loop/outer-01/evidence.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
+  | jq '{policy_output_after: (.policy_output_after|keys), reward_trend}'
+aws s3 cp "${PREFIX}/stage_12_external_validation/external_stub.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
+  | jq '{input_checkpoint, status}'
+```
 
 The reference VLM→RL loop updates a lightweight policy representation inside the
 orchestrator. It does **not** emit a LeRobot `pretrained_model/` checkpoint tree

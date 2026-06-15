@@ -637,6 +637,14 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
     if result.get("sky_job_id"):
         typer.echo(f"sky_job_id: {result.get('sky_job_id')}")
     typer.echo(f"run_prefix_uri: {result.get('run_prefix_uri')}")
+    eval_metrics = result.get("eval_metrics")
+    if isinstance(eval_metrics, dict) and eval_metrics:
+        if eval_metrics.get("success_rate") is not None:
+            typer.echo(f"success_rate: {eval_metrics.get('success_rate')}")
+        if eval_metrics.get("threshold") is not None:
+            typer.echo(f"threshold: {eval_metrics.get('threshold')}")
+        if eval_metrics.get("decision"):
+            typer.echo(f"decision: {eval_metrics.get('decision')}")
     stages = result.get("stages", {})
     if isinstance(stages, dict):
         for stage, info in stages.items():

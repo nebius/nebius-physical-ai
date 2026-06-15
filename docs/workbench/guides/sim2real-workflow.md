@@ -249,6 +249,52 @@ cat "$RUN/eval/heldout/report.json" | jq '{success_rate, per_env: .per_env|lengt
 cat "$RUN/outer_loop/decision.json" | jq .
 ```
 
+When stage 10+ has completed, `npa workbench workflow status <run-id>` also prints
+`success_rate`, `threshold`, and `decision` from workflow state or S3 artifacts
+(not only per-stage `SUCCEEDED`/`PENDING`).
+
+### Fetch final reports (S3)
+
+For a completed cluster run, artifacts live under
+`s3://<bucket>/sim2real-b/<run-id>/`. Replace placeholders with your bucket and
+run id from submit output.
+
+```bash
+source ~/.npa/sim2real-operator.env   # sets AWS_* and endpoint
+RUN=sim2real-staged-20260615t180818z
+BUCKET=lerobot-ccc9d3c7
+PREFIX="s3://${BUCKET}/sim2real-b/${RUN}"
+
+# E2E summary (includes rerun_serve.public_url when auto-serve ran)
+aws s3 cp "${PREFIX}/reports/sim2real-report.json" /tmp/sim2real-report.json \
+  --endpoint-url "${AWS_ENDPOINT_URL}"
+
+# Held-out eval (stage 10)
+aws s3 cp "${PREFIX}/eval/heldout/report.json" /tmp/heldout-report.json \
+  --endpoint-url "${AWS_ENDPOINT_URL}"
+
+# One-liners
+jq '{status, public_url: .rerun_serve.public_url, decision: .outer_loop.latest_decision.decision, success_rate: .outer_loop.latest_heldout_report.success_rate, threshold: .outer_loop.latest_decision.threshold}' \
+  /tmp/sim2real-report.json
+jq '{success_rate, threshold, passed: [.per_env[]|select(.success)]|length, total: (.per_env|length)}' \
+  /tmp/heldout-report.json
+jq '{decision, success_rate, threshold, checkpoint_uri}' \
+  <(aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}")
+```
+
+Sync the full run tree locally (debug / air-gap):
+
+```bash
+aws s3 sync "${PREFIX}/" "/tmp/sim2real-demo/${RUN}/" --endpoint-url "${AWS_ENDPOINT_URL}"
+```
+
+Live workflow state (updated during the run):
+
+```bash
+aws s3 cp "${PREFIX}/state/workflow_state.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
+  | jq '{status, success_rate: .final_eval.success_rate, threshold: .final_decision.threshold, decision: .final_decision.decision}'
+```
+
 ---
 
 ## Local smoke (no cluster)

@@ -200,6 +200,114 @@ def test_parse_submit_run_id_from_combined_line() -> None:
     assert parse_submit_run_id(output) == "sim2real-staged-20260615t120000z"
 
 
+def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = OperatorConfig(
+        bucket="demo-bucket",
+        endpoint_url="https://storage.example",
+        registry="cr.example/registry",
+        k8s_context="demo-context",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.load_operator_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.resolve_kubeconfig",
+        lambda context: tmp_path / "kubeconfig",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor._kubectl_json",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor._k8s_sibling_summary",
+        lambda **kwargs: [],
+    )
+
+    workflow_state = {
+        "status": "completed",
+        "updated_at": "2026-06-15T18:08:18Z",
+        "final_eval": {"success_rate": 0.72, "threshold": 0.55},
+        "final_decision": {
+            "decision": "promote_checkpoint",
+            "success_rate": 0.72,
+            "threshold": 0.55,
+        },
+        "components": [{"name": "stage_10_eval_heldout", "tier": "WORKS"}],
+    }
+    state_key = "sim2real-b/run-1/state/workflow_state.json"
+    report_key = "sim2real-b/run-1/reports/sim2real-report.json"
+    client = _mock_s3_client(
+        {
+            state_key: json.dumps(workflow_state),
+            report_key: json.dumps({"status": "completed"}),
+        }
+    )
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    result = get_sim2real_workflow_status("run-1")
+    assert result["eval_metrics"]["success_rate"] == 0.72
+    assert result["eval_metrics"]["threshold"] == 0.55
+    assert result["eval_metrics"]["decision"] == "promote_checkpoint"
+
+
+def test_sim2real_workflow_status_eval_metrics_fallback_to_heldout_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = OperatorConfig(
+        bucket="demo-bucket",
+        endpoint_url="https://storage.example",
+        registry="cr.example/registry",
+        k8s_context="demo-context",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.load_operator_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.resolve_kubeconfig",
+        lambda context: tmp_path / "kubeconfig",
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor._kubectl_json",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor._k8s_sibling_summary",
+        lambda **kwargs: [],
+    )
+
+    heldout_key = "sim2real-b/run-1/eval/heldout/report.json"
+    decision_key = "sim2real-b/run-1/outer_loop/decision.json"
+    client = _mock_s3_client(
+        {
+            heldout_key: json.dumps({"success_rate": 0.41, "threshold": 0.55}),
+            decision_key: json.dumps(
+                {
+                    "decision": "loop_back",
+                    "success_rate": 0.41,
+                    "threshold": 0.55,
+                }
+            ),
+        }
+    )
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    result = get_sim2real_workflow_status("run-1")
+    assert result["eval_metrics"]["success_rate"] == 0.41
+    assert result["eval_metrics"]["decision"] == "loop_back"
+
+
 def test_sim2real_workflow_status_marks_failed_image_pull(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
