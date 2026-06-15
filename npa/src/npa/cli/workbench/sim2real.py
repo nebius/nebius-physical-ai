@@ -420,7 +420,15 @@ def rerun_serve_command(
         "--report-uri",
         help="s3:// URI for reports/sim2real-report.json; .rrd is derived as sibling.",
     ),
-    rerun_image: str = typer.Option(DEFAULT_RERUN_IMAGE, "--rerun-image", help="Rerun container image."),
+    rerun_image: str = typer.Option(
+        DEFAULT_RERUN_IMAGE,
+        "--rerun-image",
+        help=(
+            "Rerun viewer container image (default: python:3.11-slim-bookworm with pip-installed "
+            "rerun-sdk; override with npa-sim2real-rerun-viewer from Nebius CR or "
+            "NPA_SIM2REAL_RERUN_IMAGE)."
+        ),
+    ),
     service_type: str = typer.Option(
         "loadbalancer",
         "--service-type",

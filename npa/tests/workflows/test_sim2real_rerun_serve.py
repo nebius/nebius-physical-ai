@@ -123,6 +123,7 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert init_container["name"] == "sync-rrd"
     assert "aws s3 cp" in init_container["command"][-1]
     assert rerun_container["image"] == DEFAULT_RERUN_IMAGE
+    assert "pip install" in rerun_container["command"][-1]
     assert f"--web-viewer-port {DEFAULT_PORT}" in rerun_container["command"][-1]
     assert rerun_container["command"][-1].endswith("--bind 0.0.0.0")
 
@@ -133,6 +134,24 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     service = next(item for item in manifest["items"] if item["kind"] == "Service")
     assert service["spec"]["type"] == "LoadBalancer"
     assert service["spec"]["ports"][0]["port"] == DEFAULT_PORT
+
+
+def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+        rerun_image="cr.eu-north1.nebius.cloud/demo/npa-sim2real-rerun-viewer:0.31.4",
+    )
+    manifest = build_rerun_serve_manifest(config)
+    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    rerun_container = deployment["spec"]["template"]["spec"]["containers"][0]
+    assert "pip install" not in rerun_container["command"][-1]
+    assert rerun_container["command"][-1].startswith("rerun /data/sim2real.rrd")
 
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:

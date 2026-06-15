@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -15,7 +16,11 @@ from npa.cli.rerun import RERUN_VERSION
 from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
 
-DEFAULT_RERUN_IMAGE = f"rerunio/rerun:{RERUN_VERSION}"
+# rerunio/rerun:* is not published on Docker Hub; serve via PyPI bootstrap or a
+# registry-built npa-sim2real-rerun-viewer image (see sim2real-build.sh).
+DEFAULT_RERUN_BOOTSTRAP_IMAGE = "python:3.11-slim-bookworm"
+DEFAULT_RERUN_IMAGE = DEFAULT_RERUN_BOOTSTRAP_IMAGE
+DEFAULT_RERUN_VIEWER_TOOL = "sim2real-rerun-viewer"
 DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
@@ -219,6 +224,33 @@ def resolve_cluster_name_from_config() -> str:
     return ""
 
 
+def default_rerun_image() -> str:
+    """Return the Rerun viewer container image for mk8s serve deployments."""
+
+    override = os.environ.get("NPA_SIM2REAL_RERUN_IMAGE", "").strip()
+    if override:
+        return override
+    return DEFAULT_RERUN_BOOTSTRAP_IMAGE
+
+
+def _rerun_image_has_preinstalled_cli(image: str) -> bool:
+    lowered = image.strip().lower()
+    return "npa-sim2real-rerun-viewer" in lowered or lowered.startswith("rerunio/rerun:")
+
+
+def _rerun_serve_command(config: RerunServeConfig) -> str:
+    base_cmd = (
+        "rerun /data/sim2real.rrd --web-viewer "
+        f"--web-viewer-port {config.port} --bind 0.0.0.0"
+    )
+    if _rerun_image_has_preinstalled_cli(config.rerun_image):
+        return base_cmd
+    return (
+        f"python -m pip install --no-cache-dir 'rerun-sdk=={RERUN_VERSION}' "
+        f"&& exec {base_cmd}"
+    )
+
+
 def build_rerun_serve_config(
     *,
     run_id: str,
@@ -258,7 +290,7 @@ def build_rerun_serve_config(
         namespace=namespace.strip() or DEFAULT_NAMESPACE,
         port=port,
         name=name.strip(),
-        rerun_image=rerun_image.strip() or DEFAULT_RERUN_IMAGE,
+        rerun_image=rerun_image.strip() or default_rerun_image(),
         aws_cli_image=aws_cli_image.strip() or DEFAULT_AWS_CLI_IMAGE,
         service_type=normalized_service,
         aws_access_key_id=aws_access_key_id,
@@ -290,10 +322,7 @@ set -eu
 aws s3 cp "${S3_URI}" /data/sim2real.rrd
 test -s /data/sim2real.rrd
 """
-    serve_command = (
-        "rerun /data/sim2real.rrd --web-viewer "
-        f"--web-viewer-port {config.port} --bind 0.0.0.0"
-    )
+    serve_command = _rerun_serve_command(config)
     return {
         "apiVersion": "v1",
         "kind": "List",
@@ -344,7 +373,11 @@ test -s /data/sim2real.rrd
                                     "ports": [{"name": "http", "containerPort": config.port}],
                                     "readinessProbe": {
                                         "httpGet": {"path": "/", "port": "http"},
-                                        "initialDelaySeconds": 5,
+                                        "initialDelaySeconds": (
+                                            15
+                                            if _rerun_image_has_preinstalled_cli(config.rerun_image)
+                                            else 90
+                                        ),
                                         "periodSeconds": 10,
                                         "timeoutSeconds": 5,
                                     },
