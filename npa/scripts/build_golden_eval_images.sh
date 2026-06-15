@@ -88,6 +88,7 @@ build_sim2real_stack() {
   export ENVGEN_TAG="${envgen_tag}"
   export EVAL_TAG="${eval_tag}"
   export VLM_RL_TAG="${vlm_rl_tag}"
+  export SKIP_COSMOS3_REASON=1
   bash "${NPA_ROOT}/npa/docker/workbench/sim2real-build.sh" \
     --registry "${REGISTRY}" \
     $([[ "${PUSH}" == "1" ]] && echo --push)

@@ -18,10 +18,10 @@ usage() {
 Usage: sim2real-build.sh [--registry REGISTRY] [--push]
 
 Builds the Sim2Real reference images one at a time:
-  npa-cosmos3-reason:${VLM_TAG}
-  npa-sim2real-envgen:0.1.1
-  npa-sim2real-reference-policy:0.1.1
-  npa-lerobot-vlm-rl:0.1.0
+  npa-cosmos3-reason:${VLM_TAG} (skipped when SKIP_COSMOS3_REASON=1)
+  npa-sim2real-envgen:${ENVGEN_TAG}
+  npa-sim2real-reference-policy:${ENVGEN_TAG}
+  npa-lerobot-vlm-rl:${VLM_RL_TAG}
   npa-sim2real-eval:${EVAL_TAG}
 
 Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 / sm80-sm90-sm120 base
@@ -84,7 +84,11 @@ build_one() {
   fi
 }
 
-build_one "npa-cosmos3-reason" "${VLM_TAG}" "${SCRIPT_DIR}/cosmos3-reason/Dockerfile" "BASE_IMAGE=${BASE_IMAGE}"
+if [ -n "${SKIP_COSMOS3_REASON:-}" ]; then
+  echo "Skipping npa-cosmos3-reason (SKIP_COSMOS3_REASON=${SKIP_COSMOS3_REASON})"
+else
+  build_one "npa-cosmos3-reason" "${VLM_TAG}" "${SCRIPT_DIR}/cosmos3-reason/Dockerfile" "BASE_IMAGE=${BASE_IMAGE}"
+fi
 build_one "npa-sim2real-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
 build_one "npa-sim2real-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-sim2real-envgen:${ENVGEN_TAG}"
 build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
