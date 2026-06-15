@@ -1995,6 +1995,18 @@ def _run_image_component(
     )
 
 
+def _kubectl_job_not_found(result: subprocess.CompletedProcess[str]) -> bool:
+    """Return True when kubectl reports the sibling Job no longer exists."""
+
+    if result.returncode == 0:
+        return False
+    text = f"{result.stderr or ''}{result.stdout or ''}"
+    lowered = text.lower()
+    return "notfound" in lowered.replace(" ", "") or (
+        "not found" in lowered and "job" in lowered
+    )
+
+
 def _wait_kubernetes_job(
     config: Sim2RealLoopConfig,
     *,
@@ -2002,7 +2014,11 @@ def _wait_kubernetes_job(
     job_name: str,
     timeout_s: int,
 ) -> str:
-    """Poll a sibling Job until it succeeds, fails, or times out."""
+    """Poll a sibling Job until it succeeds, fails, or times out.
+
+    External or manual Job deletion during a wait is treated as failure so the
+    driver fails fast instead of blocking on ``kubectl wait`` for ``timeout_s``.
+    """
 
     # Pre-check terminal counters first; this avoids false "complete" positives
     # when the wait helper races stale state or mocked outputs.
@@ -2020,6 +2036,8 @@ def _wait_kubernetes_job(
         timeout_s=30,
         check=False,
     )
+    if _kubectl_job_not_found(initial_status):
+        return "failed"
     if initial_status.returncode == 0:
         parts = (initial_status.stdout or "").strip().split()
         succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
@@ -2044,6 +2062,8 @@ def _wait_kubernetes_job(
         timeout_s=max(30, int(timeout_s) + 5),
         check=False,
     )
+    if _kubectl_job_not_found(wait_result):
+        return "failed"
     if wait_result.returncode == 0:
         verify = _kubectl(
             config,
@@ -2098,6 +2118,8 @@ def _wait_kubernetes_job(
             timeout_s=30,
             check=False,
         )
+        if _kubectl_job_not_found(result):
+            return "failed"
         if result.returncode == 0:
             parts = (result.stdout or "").strip().split()
             succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0

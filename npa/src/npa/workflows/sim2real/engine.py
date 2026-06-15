@@ -1532,6 +1532,18 @@ def _run_image_component(
     )
 
 
+def _kubectl_job_not_found(result: subprocess.CompletedProcess[str]) -> bool:
+    """Return True when kubectl reports the sibling Job no longer exists."""
+
+    if result.returncode == 0:
+        return False
+    text = f"{result.stderr or ''}{result.stdout or ''}"
+    lowered = text.lower()
+    return "notfound" in lowered.replace(" ", "") or (
+        "not found" in lowered and "job" in lowered
+    )
+
+
 def _wait_kubernetes_job(
     config: Sim2RealLoopConfig,
     *,
@@ -1540,7 +1552,11 @@ def _wait_kubernetes_job(
     timeout_s: int,
     required_successes: int = 1,
 ) -> str:
-    """Poll a sibling Job until it succeeds, fails, or times out."""
+    """Poll a sibling Job until it succeeds, fails, or times out.
+
+    External or manual Job deletion during a wait is treated as failure so the
+    driver fails fast instead of blocking on ``kubectl wait`` for ``timeout_s``.
+  """
 
     initial_status = _kubectl(
         config,
@@ -1556,6 +1572,8 @@ def _wait_kubernetes_job(
         timeout_s=30,
         check=False,
     )
+    if _kubectl_job_not_found(initial_status):
+        return "failed"
     if initial_status.returncode == 0:
         parts = (initial_status.stdout or "").strip().split()
         succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
@@ -1578,6 +1596,8 @@ def _wait_kubernetes_job(
         timeout_s=max(30, int(timeout_s) + 5),
         check=False,
     )
+    if _kubectl_job_not_found(wait_result):
+        return "failed"
     if wait_result.returncode == 0:
         verify = _kubectl(
             config,
@@ -1632,6 +1652,8 @@ def _wait_kubernetes_job(
             timeout_s=30,
             check=False,
         )
+        if _kubectl_job_not_found(result):
+            return "failed"
         if result.returncode == 0:
             parts = (result.stdout or "").strip().split()
             succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
@@ -1642,6 +1664,59 @@ def _wait_kubernetes_job(
                 return "failed"
         time.sleep(poll_s)
     return "timeout"
+
+
+def _log_sibling_job_applied(
+    config: Sim2RealLoopConfig,
+    *,
+    namespace: str,
+    job_name: str,
+    component: str,
+) -> str:
+    """Log sibling Job identity after apply and return the Job UID when known."""
+
+    uid_result = _kubectl(
+        config,
+        [
+            "get",
+            "job",
+            job_name,
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.metadata.uid}",
+        ],
+        timeout_s=30,
+        check=False,
+    )
+    job_uid = (uid_result.stdout or "").strip() if uid_result.returncode == 0 else ""
+    print(
+        f"sibling_job_applied: component={component} job={job_name} uid={job_uid or 'unknown'}",
+        flush=True,
+    )
+    return job_uid
+
+
+def _format_pod_exit_diagnostics(pod_info: dict[str, Any]) -> str:
+    """Summarize pod phase and container exit/wait reasons for operator errors."""
+
+    parts: list[str] = []
+    phase = str(pod_info.get("phase") or "").strip()
+    if phase:
+        parts.append(f"pod_phase={phase}")
+    for status in pod_info.get("container_statuses") or []:
+        name = str(status.get("name") or "container")
+        state = status.get("state") or {}
+        for state_key in ("terminated", "waiting"):
+            detail = state.get(state_key) or {}
+            reason = str(detail.get("reason") or "").strip()
+            message = str(detail.get("message") or "").strip()
+            if reason or message:
+                parts.append(f"{name}:{state_key}={reason} {message}".strip())
+    lookup_error = str(pod_info.get("lookup_error") or "").strip()
+    if lookup_error:
+        parts.append(f"lookup_error={lookup_error}")
+    return " ".join(parts)
 
 
 def _npa_package_root() -> Path | None:
@@ -1744,6 +1819,9 @@ def _run_kubernetes_indexed_image_component(
         stdin=json.dumps(manifest),
         timeout_s=120,
     )
+    job_uid = _log_sibling_job_applied(
+        config, namespace=namespace, job_name=job_name, component=component
+    )
     wait_result = _wait_kubernetes_job(
         config,
         namespace=namespace,
@@ -1790,6 +1868,7 @@ def _run_kubernetes_indexed_image_component(
         raise Sim2RealLoopError(
             f"{component} indexed Kubernetes Job {job_name} did not complete: "
             f"status={wait_result} "
+            f"{_format_pod_exit_diagnostics(pod_info)} "
             f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
             f"{events_excerpt}"
         )
@@ -1800,6 +1879,7 @@ def _run_kubernetes_indexed_image_component(
         "image_digests": pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
+        "job_uid": job_uid,
         "completions": completions,
         "parallelism": parallelism,
         "pod": pod_info,
@@ -1844,6 +1924,9 @@ def _run_kubernetes_image_component(
         ["apply", "-f", "-"],
         stdin=json.dumps(manifest),
         timeout_s=120,
+    )
+    job_uid = _log_sibling_job_applied(
+        config, namespace=namespace, job_name=job_name, component=component
     )
     wait_result = _wait_kubernetes_job(
         config,
@@ -1890,6 +1973,7 @@ def _run_kubernetes_image_component(
         raise Sim2RealLoopError(
             f"{component} Kubernetes Job {job_name} did not complete: "
             f"status={wait_result} "
+            f"{_format_pod_exit_diagnostics(pod_info)} "
             f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
             f"{events_excerpt}"
         )
@@ -1905,6 +1989,7 @@ def _run_kubernetes_image_component(
         "image_digests": pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
+        "job_uid": job_uid,
         "pod": pod_info,
         "gpu_request": {
             "resource": config.k8s_gpu_resource,
@@ -2299,6 +2384,9 @@ def _component_pod_info(
 def _cleanup_component_job(
     config: Sim2RealLoopConfig, *, namespace: str, job_name: str
 ) -> subprocess.CompletedProcess[str]:
+    # Sibling Jobs are deleted after each component when
+    # NPA_SIM2REAL_DELETE_COMPONENT_JOBS=1 (default). External/manual deletion
+    # during a wait is treated as failure (NotFound) so the driver fails fast.
     if not _bool_value(os.environ.get("NPA_SIM2REAL_DELETE_COMPONENT_JOBS", "1")):
         return subprocess.CompletedProcess([], 0, "", "")
     return _kubectl(

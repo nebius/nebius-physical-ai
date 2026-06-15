@@ -1058,6 +1058,70 @@ def test_wait_kubernetes_job_returns_complete(monkeypatch) -> None:
     )
 
 
+def test_wait_kubernetes_job_fail_fast_on_not_found(monkeypatch) -> None:
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_kubectl(config, args, **kwargs):
+        calls.append(list(args))
+        stderr = (
+            "Error from server (NotFound): jobs \"j\" not found"
+            if args[0] == "get"
+            else ""
+        )
+        return subprocess.CompletedProcess(args, 1, "", stderr)
+
+    monkeypatch.setattr(loop_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=7200
+        )
+        == "failed"
+    )
+    assert calls[0][:3] == ["get", "job", "j"]
+    assert not any(call[0] == "wait" for call in calls)
+
+
+def test_wait_kubernetes_job_poll_not_found_returns_failed(monkeypatch) -> None:
+    import subprocess
+
+    sequence = [
+        subprocess.CompletedProcess(["get"], 0, "0 0", ""),
+        subprocess.CompletedProcess(
+            ["wait"],
+            1,
+            "",
+            "timed out waiting for the condition on jobs/j",
+        ),
+        subprocess.CompletedProcess(
+            ["wait"],
+            1,
+            "",
+            "timed out waiting for the condition on jobs/j",
+        ),
+        subprocess.CompletedProcess(
+            ["get"],
+            1,
+            "",
+            "Error from server (NotFound): jobs \"j\" not found",
+        ),
+    ]
+
+    def fake_kubectl(config, args, **kwargs):
+        return sequence.pop(0)
+
+    monkeypatch.setattr(loop_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=60
+        )
+        == "failed"
+    )
+
+
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     report = sim2real.run(
@@ -2155,6 +2219,36 @@ def test_wait_kubernetes_job_honors_required_successes(monkeypatch) -> None:
         )
         == "complete"
     )
+
+
+def test_engine_wait_kubernetes_job_not_found_skips_long_wait(monkeypatch) -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_kubectl(config, args, **kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            "",
+            "Error from server (NotFound): jobs \"j\" not found",
+        )
+
+    monkeypatch.setattr(engine_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10800,
+        )
+        == "failed"
+    )
+    assert calls[0][:3] == ["get", "job", "j"]
+    assert not any(call[0] == "wait" for call in calls)
 
 
 def test_cosmos2_transfer_component_uploads_result_json_to_explicit_uri(
