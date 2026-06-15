@@ -70,7 +70,7 @@ Verify the tools and platform setup:
 
 ```bash
 npa --version
-nebius iam get-access-token >/dev/null
+npa configure --show
 aws --version
 docker --version
 kubectl version --client
