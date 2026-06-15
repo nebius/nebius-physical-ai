@@ -3,7 +3,7 @@
 **Audience:** RTX PRO demo operators on a Mac laptop. GPU work runs on Nebius mk8s; artifacts
 land on S3.
 
-**Monitor stage-status fix:** fixed in NPA commit `5ce31d1` — Mac operators must
+**Monitor stage-status fix:** fixed in NPA commit `fec4cd2` — Mac operators must
 `git pull origin feat/sim2real-mandatory-stages && ./setup.sh` to refresh the venv before
 `npa workbench workflow status`.
 
@@ -60,7 +60,7 @@ Replace `<RUN_ID>` with the timestamp id (for example `20260615t172625z`).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Monitor: `stage_01_trigger` / `stage_02_assets` / `stage_06_tokens` PENDING while later stages SUCCEEDED | Status polled stale S3 keys (`assets_manifest.json`, `cosmos2-transfer-result.json` only) instead of `workflow_state.json` + consumed specs / augment manifest / envgen split | Re-run from current branch; monitor prefers `state/workflow_state.json`, then `consumed_scene_spec.json`+`consumed_robot_spec.json`, `augment/manifest.json`, and train+heldout `envs.jsonl` (tokens folded into envgen) |
-| Monitor: early stages PENDING while later SUCCEEDED | Stale monitor artifact paths (pre-`5ce31d1`) | `git pull origin feat/sim2real-mandatory-stages && ./setup.sh` in `~/npa-sim2real-demo/nebius-physical-ai` |
+| Monitor: early stages PENDING while later SUCCEEDED | Stale monitor artifact paths (pre-`fec4cd2`) | `git pull origin feat/sim2real-mandatory-stages && ./setup.sh` in `~/npa-sim2real-demo/nebius-physical-ai` |
 | Monitor: `stage_01_trigger` / all stages PENDING, no S3 artifacts | Orchestrator died before first upload (often stage 2) | `kubectl logs` on orchestrator pod — see AccessDenied row below |
 | Preflight: `no LeRobot batch` | Stock trigger not seeded on new bucket | `./seed-stock-trigger.sh` then set `sim2real_stock_trigger_uri` |
 | Preflight: `cannot write to s3://.../sim2real-b/` | IAM keys lack PutObject on bucket/region | Fix bucket IAM; verify `storage.endpoint_url` matches bucket region |
