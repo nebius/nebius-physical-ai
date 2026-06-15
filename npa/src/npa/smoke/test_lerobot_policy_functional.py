@@ -77,10 +77,12 @@ def check_short_eval(state: Path) -> CheckResult:
     command = [
         "lerobot-eval",
         f"--policy.path={checkpoint}",
+        f"--env.type=pusht",
         f"--output_dir={eval_dir}",
-        "--env.type=pusht",
+        "--eval.batch_size=1",
         "--eval.n_episodes=1",
-        "--device=cuda",
+        "--policy.device=cuda",
+        "--policy.use_amp=false",
     ]
     code, _output = _run(command, log_path=log_path, timeout=600)
     if code != 0:
