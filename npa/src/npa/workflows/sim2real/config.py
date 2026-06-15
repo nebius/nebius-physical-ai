@@ -413,7 +413,7 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
         "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
         "stage_02_assets_stub": f"{root}/stage_02_assets/consumed_scene_spec.json",
-        "stage_03_augment": f"{root}/augment/manifest.json",
+        "stage_03_augment": f"{root}/augment/cosmos2-transfer-result.json",
         "stage_04_envs_raw": f"{root}/envs/raw/",
         "stage_05_envs_train": f"{root}/envs/train/",
         "stage_06_tokens": f"{root}/tokens/manifest.json",

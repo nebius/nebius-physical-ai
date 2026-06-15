@@ -241,6 +241,12 @@ sim2real.status(run_id="<run-id>", watch=True)
 Module CLI (`python -m npa.workflows.sim2real status`) remains available for
 in-cluster/debug use; operators should prefer ``npa workbench workflow status``.
 
+Stage 3 (augment) is marked **SUCCEEDED** only when
+`augment/cosmos2-transfer-result.json` exists on S3—not when `augment/manifest.json`
+alone is present. If status shows augment pending while the driver is waiting on a
+Cosmos Transfer sibling Job, check sibling Jobs and cluster events rather than
+relying on partial augment markers.
+
 ```bash
 RUN=/tmp/npa-sim2real-<run-id>
 cat "$RUN/state/workflow_state.json" | jq '{quality:.current_quality, decision:.final_decision.decision}'

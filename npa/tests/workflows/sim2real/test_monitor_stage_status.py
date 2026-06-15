@@ -161,7 +161,7 @@ def test_stage_01_inferred_when_later_stage_present(
 ) -> None:
     client = _fake_s3(
         {
-            "sim2real-b/run-1/augment/manifest.json",
+            "sim2real-b/run-1/augment/cosmos2-transfer-result.json",
         }
     )
     monkeypatch.setattr(
@@ -178,6 +178,30 @@ def test_stage_01_inferred_when_later_stage_present(
     assert stages["stage_03_augment"]["state"] == "SUCCEEDED"
     assert stages["stage_01_trigger"]["state"] == "SUCCEEDED"
     assert stages["stage_01_trigger"]["source"] == "inferred_from_later_stage"
+
+
+def test_stage_03_pending_without_cosmos2_transfer_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _fake_s3(
+        {
+            "sim2real-b/run-1/augment/manifest.json",
+            "sim2real-b/run-1/augment/frames/index.json",
+        }
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_03_augment"]["state"] == "PENDING"
+    assert stages["stage_01_trigger"]["state"] == "PENDING"
 
 
 def test_workflow_completion_index_maps_envgen_component() -> None:

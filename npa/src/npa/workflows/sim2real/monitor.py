@@ -61,10 +61,8 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
     _StageMonitorSpec(
         "stage_03_augment",
         (
-            _ArtifactRule(("augment/manifest.json",), "file"),
+            # Gate on Cosmos Transfer output, not augment/manifest.json alone.
             _ArtifactRule(("augment/cosmos2-transfer-result.json",), "file"),
-            _ArtifactRule(("augment/frames/index.json",), "file"),
-            _ArtifactRule(("augment/frames/",), "prefix"),
         ),
         component_names=("stage_03_augment",),
         stage_numbers=(3,),
@@ -148,6 +146,8 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
         (_ArtifactRule(("reports/sim2real-report.json",), "file"),),
     ),
 )
+
+_STAGE_03_COSMOS2_RESULT_KEY = "augment/cosmos2-transfer-result.json"
 
 _STAGE_ORDER: tuple[str, ...] = tuple(spec.name for spec in _STAGE_SPECS)
 _STAGE_NUMBER_TO_NAME: dict[int, str] = {
@@ -618,6 +618,14 @@ def _stage_states(
             source = "s3_artifact" if present else ""
             tier = ""
             completed_at = ""
+        if spec.name == "stage_03_augment" and not _stage_03_cosmos2_result_present(
+            client, bucket, run_prefix=run_prefix
+        ):
+            present = False
+            if source and source != "s3_artifact":
+                source = "awaiting_cosmos2_result"
+            elif not source:
+                source = ""
         stages[spec.name] = {
             "name": spec.name,
             "state": "SUCCEEDED" if present else "PENDING",
@@ -629,6 +637,16 @@ def _stage_states(
 
     _apply_infer_from_later(stages)
     return stages
+
+
+def _stage_03_cosmos2_result_present(
+    client: StorageClient,
+    bucket: str,
+    *,
+    run_prefix: str,
+) -> bool:
+    key = f"{run_prefix.rstrip('/')}/{_STAGE_03_COSMOS2_RESULT_KEY}"
+    return _s3_object_exists(client, bucket, key)
 
 
 def _kubectl_json(args: list[str], *, kubeconfig: Path) -> dict[str, Any]:
