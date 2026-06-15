@@ -121,6 +121,22 @@ wait_for_fleet() {
   return 1
 }
 
+_cleanup_stale_fleet_sessions() {
+  local keep="${1:-}"
+  if ! command -v tmux >/dev/null 2>&1; then
+    return 0
+  fi
+  local session
+  while IFS= read -r session; do
+    [[ -n "${session}" ]] || continue
+    [[ "${session}" == "${keep}" ]] && continue
+    tmux kill-session -t "${session}" 2>/dev/null || true
+  done < <(
+    tmux list-sessions -F '#{session_name}' 2>/dev/null \
+      | grep "^${FLEET_SESSION_PREFIX}-a" || true
+  )
+}
+
 harvest_failures() {
   local run_id="$1"
   local log_root="$2"
@@ -146,6 +162,7 @@ run_fleet_tmux() {
   local launch_log="${STATE_DIR}/fleet-launch-a${attempt}.log"
 
   log "=== fleet attempt ${attempt} session=${session} max_in_flight=${MAX_IN_FLIGHT} ==="
+  _cleanup_stale_fleet_sessions "${session}"
   tmux kill-session -t "${session}" 2>/dev/null || true
 
   set +e
