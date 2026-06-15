@@ -44,7 +44,7 @@ if not cfg_path.exists():
 cfg = yaml.safe_load(cfg_path.read_text()) or {}
 storage = cfg.get("storage") or {}
 bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
-endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
+endpoint = storage.get("endpoint_url", "https://storage.us-central1.nebius.cloud")
 registry = str(storage.get("registry", cfg.get("registry", ""))).rstrip("/")
 k8s_context = str(storage.get("k8s_context", "") or "")
 if not k8s_context:
@@ -52,6 +52,9 @@ if not k8s_context:
         if isinstance(proj, dict) and proj.get("k8s_context"):
             k8s_context = str(proj["k8s_context"])
             break
+if not str(endpoint or "").strip():
+    print("MISSING_ENDPOINT", file=sys.stderr)
+    sys.exit(1)
 print(bucket)
 print(endpoint)
 print(registry)
@@ -73,6 +76,14 @@ demo_preflight() {
   if [ ! -f "${HOME}/.npa/credentials.yaml" ]; then
     echo "ERROR: ~/.npa/credentials.yaml missing — run: npa configure" >&2
     missing=1
+  fi
+  if [ "${missing}" = "0" ] && [ "${require_cluster}" != "0" ]; then
+    local endpoint
+    endpoint="$(operator_resolve_storage_endpoint "${root}" 2>/dev/null || true)"
+    if [ -z "${endpoint}" ]; then
+      echo "ERROR: storage.endpoint_url missing in ~/.npa/config.yaml" >&2
+      missing=1
+    fi
   fi
   if [ "${require_cluster}" = "0" ]; then
     if ! "${py}" -c "import rerun" 2>/dev/null; then

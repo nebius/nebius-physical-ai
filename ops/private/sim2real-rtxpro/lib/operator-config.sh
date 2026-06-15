@@ -53,7 +53,7 @@ if not path.exists():
 cfg = yaml.safe_load(path.read_text()) or {}
 storage = cfg.get("storage") or {}
 bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
-endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
+endpoint = storage.get("endpoint_url", "https://storage.us-central1.nebius.cloud")
 registry = str(storage.get("registry", cfg.get("registry", ""))).rstrip("/")
 k8s_context = str(storage.get("k8s_context", "") or "")
 if not k8s_context:
@@ -170,26 +170,82 @@ PY
   export NPA_KUBECONFIG_PATCHED=1
 }
 
-# Export AWS_* for aws CLI S3 cleanup (reads ~/.npa/credentials.yaml).
+# Resolve S3 endpoint from ~/.npa/config.yaml (preferred), then credentials.yaml.
+operator_resolve_storage_endpoint() {
+  local root="${1:?root required}"
+  local ep
+  ep="$("${root}/npa/.venv/bin/python" - <<'PY'
+import yaml
+from pathlib import Path
+
+endpoint = ""
+cfg_path = Path.home() / ".npa" / "config.yaml"
+if cfg_path.exists():
+    cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    endpoint = str((cfg.get("storage") or {}).get("endpoint_url") or "").strip()
+    if not endpoint:
+        for proj in (cfg.get("projects") or {}).values():
+            if isinstance(proj, dict):
+                endpoint = str((proj.get("storage") or {}).get("endpoint_url") or "").strip()
+                if endpoint:
+                    break
+creds_path = Path.home() / ".npa" / "credentials.yaml"
+if not endpoint and creds_path.exists():
+    creds = yaml.safe_load(creds_path.read_text()) or {}
+    endpoint = str((creds.get("storage") or {}).get("endpoint_url") or "").strip()
+if not endpoint:
+    endpoint = "https://storage.us-central1.nebius.cloud"
+print(endpoint)
+PY
+)"
+  if [ -z "${ep}" ]; then
+    echo "ERROR: storage.endpoint_url missing — set storage.endpoint_url in ~/.npa/config.yaml" >&2
+    return 1
+  fi
+  printf '%s\n' "${ep}"
+}
+
+operator_require_storage_endpoint() {
+  operator_resolve_storage_endpoint "$1"
+}
+
+# Export AWS_* for aws CLI / boto3 (endpoint from config.yaml, keys from credentials.yaml).
 operator_export_storage_env() {
   local root="${1:?root required}"
   eval "$("${root}/npa/.venv/bin/python" - <<'PY'
-import os, shlex, sys, yaml
+import shlex, sys, yaml
 from pathlib import Path
 
-path = Path.home() / ".npa" / "credentials.yaml"
-if not path.exists():
-    sys.exit(0)
-creds = (yaml.safe_load(path.read_text()) or {}).get("storage") or {}
+cfg_path = Path.home() / ".npa" / "config.yaml"
+cfg = yaml.safe_load(cfg_path.read_text()) or {} if cfg_path.exists() else {}
+endpoint = str((cfg.get("storage") or {}).get("endpoint_url") or "").strip()
+if not endpoint:
+    for proj in (cfg.get("projects") or {}).values():
+        if isinstance(proj, dict):
+            endpoint = str((proj.get("storage") or {}).get("endpoint_url") or "").strip()
+            if endpoint:
+                break
+
+creds_path = Path.home() / ".npa" / "credentials.yaml"
+creds = {}
+if creds_path.exists():
+    creds = (yaml.safe_load(creds_path.read_text()) or {}).get("storage") or {}
+if not endpoint:
+    endpoint = str(creds.get("endpoint_url") or "").strip()
+if not endpoint:
+    endpoint = "https://storage.us-central1.nebius.cloud"
+
 pairs = []
 for key, env in (
     ("aws_access_key_id", "AWS_ACCESS_KEY_ID"),
     ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
-    ("endpoint_url", "AWS_ENDPOINT_URL"),
 ):
     val = str(creds.get(key) or "").strip()
     if val:
         pairs.append(f"export {env}={shlex.quote(val)}")
+if endpoint:
+    pairs.append(f"export AWS_ENDPOINT_URL={shlex.quote(endpoint)}")
+    pairs.append(f"export S3_ENDPOINT_URL={shlex.quote(endpoint)}")
 if pairs:
     print("\n".join(pairs))
 PY

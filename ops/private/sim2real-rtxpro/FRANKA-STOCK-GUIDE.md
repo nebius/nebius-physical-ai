@@ -58,7 +58,9 @@ Replace `<RUN_ID>` with the timestamp id (for example `20260615t172625z`).
 | Monitor: `stage_01_trigger` / all stages PENDING, no S3 artifacts | Orchestrator died before first upload (often stage 2) | `kubectl logs` on orchestrator pod — see AccessDenied row below |
 | Preflight: `no LeRobot batch` | Stock trigger not seeded on new bucket | `./seed-stock-trigger.sh` then set `sim2real_stock_trigger_uri` |
 | Preflight: `cannot write to s3://.../sim2real-b/` | IAM keys lack PutObject on bucket/region | Fix bucket IAM; verify `storage.endpoint_url` matches bucket region |
-| Pod: `AccessDenied` on `PutObject` to `sim2real-b/.../stage_02_assets/` | Cluster `npa-storage-credentials` stale (wrong endpoint or keys) | `./sync-cluster-storage-secret.sh` — secret had `eu-north1` while job used `us-central1` |
+| Pod: `AccessDenied` on `PutObject` to `sim2real-b/.../stage_02_assets/` | Cluster `npa-storage-credentials` stale (wrong endpoint or keys) | `./sync-cluster-storage-secret.sh` — secret endpoint must match `storage.endpoint_url` in `~/.npa/config.yaml` |
+| `ValueError: Invalid endpoint:` (empty) during preflight or secret sync | `AWS_ENDPOINT_URL` empty — credentials lacked endpoint while shell exported blank | Re-run `./setup-local-operator.sh` or ensure `~/.npa/config.yaml` has `storage.endpoint_url: https://storage.us-central1.nebius.cloud`; `./sync-cluster-storage-secret.sh` reads config, not empty env |
+| `./run.sh trigger` syncs old failed run instead of submitting | Stale `RUN_ID` still exported in shell | `unset RUN_ID` then `./run.sh trigger` (trigger always clears RUN_ID; unset if you exported it earlier) |
 | Pod: `AccessDenied` on trigger read | Same credential/endpoint mismatch | Sync secret; confirm trigger exists with `seed-stock-trigger.sh` |
 | `git clone` failure in pod | Wrong `NPA_SOURCE_REF` or GitHub outage | Job uses `feat/sim2real-mandatory-stages` by default |
 | ImagePullBackOff | Stale registry token | Re-run submit (refreshes `npa-nebius-registry`) |

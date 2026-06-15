@@ -64,7 +64,16 @@ while IFS= read -r _line; do
   _cfg+=("${_line}")
 done < <(demo_read_storage_config "${ROOT}")
 BUCKET="${S3_BUCKET:-${_cfg[0]:-}}"
-ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
+ENDPOINT="$(operator_resolve_storage_endpoint "${ROOT}" 2>/dev/null || true)"
+if [ -z "${ENDPOINT}" ]; then
+  ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
+fi
+if [ -z "${ENDPOINT}" ]; then
+  echo "ERROR: storage.endpoint_url missing in ~/.npa/config.yaml" >&2
+  exit 1
+fi
+export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-${ENDPOINT}}"
+export S3_ENDPOINT="${S3_ENDPOINT:-${ENDPOINT}}"
 REGISTRY="${REGISTRY:-${_cfg[2]:-}}"
 DEFAULT_CTX="${_cfg[3]:-}"
 if [ "${SYNC_ONLY}" != "1" ]; then

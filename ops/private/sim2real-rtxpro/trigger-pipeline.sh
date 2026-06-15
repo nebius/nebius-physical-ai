@@ -42,12 +42,25 @@ fi
 
 demo_bootstrap_venv "${ROOT}"
 
+ENDPOINT="$(operator_require_storage_endpoint "${ROOT}")" || exit 1
+export AWS_ENDPOINT_URL="${ENDPOINT}" S3_ENDPOINT="${ENDPOINT}" S3_ENDPOINT_URL="${ENDPOINT}"
+
 _cfg=()
 while IFS= read -r _line; do
   _cfg+=("${_line}")
 done < <(demo_read_storage_config "${ROOT}" 2>/dev/null || true)
-ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-https://storage.eu-north1.nebius.cloud}}"
+BUCKET="${S3_BUCKET:-${_cfg[0]:-}}"
+if [ -z "${BUCKET}" ]; then
+  echo "ERROR: storage.bucket missing in ~/.npa/config.yaml" >&2
+  exit 1
+fi
 
+echo "=== Preflight: storage endpoint + credentials ==="
+echo "  endpoint: ${ENDPOINT}"
+echo "  bucket:   ${BUCKET}"
+storage_preflight_write "${BUCKET}" "${ENDPOINT}" "${ROOT}" || exit 1
+
+echo ""
 echo "=== Preflight: LeRobot trigger on S3 ==="
 echo "  ${TRIGGER_URI}"
 trigger_preflight_s3 "${TRIGGER_URI}" "${ENDPOINT}" "${ROOT}"
@@ -62,4 +75,7 @@ customer_asset_prepare_for_submit
 
 echo ""
 echo "=== Trigger sim2real pipeline on Nebius cluster ==="
+unset RUN_ID
+export SUBMIT=1
+export WAIT="${WAIT:-0}"
 exec "${SCRIPT_DIR}/run-demo.sh"

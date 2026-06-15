@@ -17,7 +17,7 @@ storage = cfg.get("storage") or {}
 projects = cfg.get("projects") or {}
 first_project = next(iter(projects.values()), {}) if projects else {}
 bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/")[0]
-endpoint = storage.get("endpoint_url", "https://storage.eu-north1.nebius.cloud")
+endpoint = storage.get("endpoint_url", "https://storage.us-central1.nebius.cloud")
 registry = storage.get("registry", cfg.get("registry", ""))
 k8s_context = str(storage.get("k8s_context", "") or "")
 if not k8s_context:

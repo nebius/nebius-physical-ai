@@ -7,10 +7,15 @@
 #   storage_preflight_cluster_secret <k8s_context> <expected_endpoint> [repo_root]
 trigger_preflight_s3() {
   local uri="${1:?trigger dataset s3 uri required}"
-  local endpoint="${2:-https://storage.us-central1.nebius.cloud}"
+  local endpoint="${2:-}"
   local root="${3:-}"
   local py
   py="$(_trigger_preflight_python "${root}")" || return 1
+
+  if [ -z "${endpoint}" ]; then
+    echo "ERROR: S3 endpoint_url is empty — set storage.endpoint_url in ~/.npa/config.yaml" >&2
+    return 1
+  fi
 
   "${py}" - "${uri}" "${endpoint}" <<'PY'
 import sys
@@ -85,10 +90,15 @@ PY
 
 storage_preflight_write() {
   local bucket="${1:?bucket required}"
-  local endpoint="${2:-https://storage.us-central1.nebius.cloud}"
+  local endpoint="${2:-}"
   local root="${3:-}"
   local py
   py="$(_trigger_preflight_python "${root}")" || return 1
+
+  if [ -z "${endpoint}" ]; then
+    echo "ERROR: S3 endpoint_url is empty — set storage.endpoint_url in ~/.npa/config.yaml" >&2
+    return 1
+  fi
 
   "${py}" - "${bucket}" "${endpoint}" <<'PY'
 import sys

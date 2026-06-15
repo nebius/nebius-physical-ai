@@ -12,7 +12,10 @@ ROOT="$(npa_repo_root "${SCRIPT_DIR}")"
 PY="${ROOT}/npa/.venv/bin/python"
 
 npa_read_lines _cfg operator_read_config "${ROOT}"
-ENDPOINT="${S3_ENDPOINT:-${_cfg[1]:-}}"
+ENDPOINT="${_cfg[1]:-}"
+if [ -z "${ENDPOINT}" ]; then
+  ENDPOINT="$(operator_resolve_storage_endpoint "${ROOT}" || true)"
+fi
 CTX="${KUBECONTEXT:-${_cfg[3]:-npa-rtxpro-mk8s}}"
 NS="${K8S_NAMESPACE:-default}"
 SECRET="${STORAGE_SECRET_NAME:-npa-storage-credentials}"
