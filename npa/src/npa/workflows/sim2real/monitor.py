@@ -9,7 +9,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
@@ -17,22 +16,172 @@ from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
 
-_STAGE_CHECKS: tuple[tuple[str, str, str], ...] = (
-    ("stage_01_trigger", "stage_01_trigger/trigger.json", "file"),
-    ("stage_02_assets", "stage_02_assets/assets_manifest.json", "file"),
-    ("stage_03_augment", "augment/cosmos2-transfer-result.json", "file"),
-    ("stage_04_envs_raw", "envs/raw/", "prefix"),
-    ("stage_05_envs_train", "envs/train/", "prefix"),
-    ("stage_06_tokens", "tokens/manifest.json", "file"),
-    ("stage_07_actions_train", "actions/train/", "prefix"),
-    ("stage_08_vlm_eval_train", "vlm_eval/train/", "prefix"),
-    ("stage_09_training_signal", "training_signal/train/", "prefix"),
-    ("stage_10_eval_heldout", "eval/heldout/report.json", "file"),
-    ("stage_11_outer_loop", "outer_loop/decision.json", "file"),
-    ("stage_12_external_validation_stub", "stage_12_external_validation/external_stub.json", "file"),
-    ("stage_13_retrigger", "stage_13_retrigger/retrigger.json", "file"),
-    ("report", "reports/sim2real-report.json", "file"),
+@dataclass(frozen=True)
+class _ArtifactRule:
+    """Relative S3 keys under the run prefix; ``any`` or ``all`` must exist."""
+
+    paths: tuple[str, ...]
+    kind: str  # file | prefix
+    match: str = "any"  # any | all
+
+
+@dataclass(frozen=True)
+class _StageMonitorSpec:
+    name: str
+    rules: tuple[_ArtifactRule, ...]
+    component_names: tuple[str, ...] = ()
+    stage_numbers: tuple[int, ...] = ()
+    infer_from_later: bool = False
+
+
+_STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
+    _StageMonitorSpec(
+        "stage_01_trigger",
+        (_ArtifactRule(("stage_01_trigger/trigger.json",), "file"),),
+        component_names=("stage_01_trigger",),
+        stage_numbers=(1,),
+        infer_from_later=True,
+    ),
+    _StageMonitorSpec(
+        "stage_02_assets",
+        (
+            _ArtifactRule(
+                (
+                    "stage_02_assets/consumed_scene_spec.json",
+                    "stage_02_assets/consumed_robot_spec.json",
+                ),
+                "file",
+                match="all",
+            ),
+            _ArtifactRule(("stage_02_assets/assets_manifest.json",), "file"),
+        ),
+        component_names=("stage_02_assets",),
+        stage_numbers=(2,),
+    ),
+    _StageMonitorSpec(
+        "stage_03_augment",
+        (
+            _ArtifactRule(("augment/manifest.json",), "file"),
+            _ArtifactRule(("augment/cosmos2-transfer-result.json",), "file"),
+            _ArtifactRule(("augment/frames/index.json",), "file"),
+            _ArtifactRule(("augment/frames/",), "prefix"),
+        ),
+        component_names=("stage_03_augment",),
+        stage_numbers=(3,),
+    ),
+    _StageMonitorSpec(
+        "stage_04_envs_raw",
+        (
+            _ArtifactRule(("envs/raw/",), "prefix"),
+            _ArtifactRule(("envs/raw/raw-shard-00-of-01-summary.json",), "file"),
+            _ArtifactRule(("envs/manifest/scene-spec.json",), "file"),
+        ),
+        component_names=("stage_04_06_env_gen_split_tokens",),
+        stage_numbers=(4,),
+    ),
+    _StageMonitorSpec(
+        "stage_05_envs_train",
+        (
+            _ArtifactRule(("envs/train/envs.jsonl",), "file"),
+            _ArtifactRule(("envs/train/",), "prefix"),
+            _ArtifactRule(("envs/train/manifest.json",), "file"),
+        ),
+        component_names=("stage_04_06_env_gen_split_tokens",),
+        stage_numbers=(5,),
+    ),
+    _StageMonitorSpec(
+        "stage_06_tokens",
+        (
+            _ArtifactRule(
+                ("envs/train/envs.jsonl", "envs/heldout/envs.jsonl"),
+                "file",
+                match="all",
+            ),
+            _ArtifactRule(("tokens/manifest.json",), "file"),
+            _ArtifactRule(("envs/manifest/split-manifest.json",), "file"),
+            _ArtifactRule(("envs/split-manifest.json",), "file"),
+        ),
+        component_names=("stage_04_06_env_gen_split_tokens",),
+        stage_numbers=(6,),
+    ),
+    _StageMonitorSpec(
+        "stage_07_actions_train",
+        (_ArtifactRule(("actions/train/",), "prefix"),),
+        component_names=("stage_07_actions_train",),
+        stage_numbers=(7,),
+    ),
+    _StageMonitorSpec(
+        "stage_08_vlm_eval_train",
+        (_ArtifactRule(("vlm_eval/train/",), "prefix"),),
+        component_names=("stage_08_vlm_eval_train",),
+        stage_numbers=(8,),
+    ),
+    _StageMonitorSpec(
+        "stage_09_training_signal",
+        (_ArtifactRule(("training_signal/train/",), "prefix"),),
+        component_names=("stage_09_training_signal",),
+        stage_numbers=(9,),
+    ),
+    _StageMonitorSpec(
+        "stage_10_eval_heldout",
+        (_ArtifactRule(("eval/heldout/report.json",), "file"),),
+        component_names=("stage_10_eval_heldout",),
+        stage_numbers=(10,),
+    ),
+    _StageMonitorSpec(
+        "stage_11_outer_loop",
+        (_ArtifactRule(("outer_loop/decision.json",), "file"),),
+        component_names=("stage_11_outer_loop",),
+        stage_numbers=(11,),
+    ),
+    _StageMonitorSpec(
+        "stage_12_external_validation_stub",
+        (_ArtifactRule(("stage_12_external_validation/external_stub.json",), "file"),),
+        component_names=("stage_12_external_validation",),
+        stage_numbers=(12,),
+    ),
+    _StageMonitorSpec(
+        "stage_13_retrigger",
+        (_ArtifactRule(("stage_13_retrigger/retrigger.json",), "file"),),
+        component_names=("stage_13_retrigger",),
+        stage_numbers=(13,),
+    ),
+    _StageMonitorSpec(
+        "report",
+        (_ArtifactRule(("reports/sim2real-report.json",), "file"),),
+    ),
 )
+
+_STAGE_ORDER: tuple[str, ...] = tuple(spec.name for spec in _STAGE_SPECS)
+_STAGE_NUMBER_TO_NAME: dict[int, str] = {
+    number: spec.name for spec in _STAGE_SPECS for number in spec.stage_numbers
+}
+_PREAMBLE_STAGE_NAMES: frozenset[str] = frozenset(
+    {
+        "stage_01_trigger",
+        "stage_02_assets",
+        "stage_03_augment",
+        "stage_04_envs_raw",
+        "stage_05_envs_train",
+        "stage_06_tokens",
+    }
+)
+_OUTER_LOOP_STAGE_NAMES: frozenset[str] = frozenset(
+    {
+        "stage_07_actions_train",
+        "stage_08_vlm_eval_train",
+        "stage_09_training_signal",
+        "stage_10_eval_heldout",
+        "stage_11_outer_loop",
+    }
+)
+_STATUS_COMPLETED_STAGES: dict[str, frozenset[str]] = {
+    "preamble_completed": _PREAMBLE_STAGE_NAMES,
+    "outer_iteration_completed": _PREAMBLE_STAGE_NAMES | _OUTER_LOOP_STAGE_NAMES,
+    "finalize_completed": _PREAMBLE_STAGE_NAMES | _OUTER_LOOP_STAGE_NAMES,
+    "completed": frozenset(_STAGE_ORDER),
+}
+_ENV_SPLIT_COMPONENT = "stage_04_06_env_gen_split_tokens"
 
 
 @dataclass(frozen=True)
@@ -164,6 +313,184 @@ def _s3_prefix_nonempty(client: StorageClient, bucket: str, prefix: str) -> bool
     return int(response.get("KeyCount") or 0) > 0
 
 
+def _artifact_rule_matches(
+    client: StorageClient,
+    bucket: str,
+    *,
+    run_prefix: str,
+    rule: _ArtifactRule,
+) -> bool:
+    checks: list[bool] = []
+    for rel_path in rule.paths:
+        key = f"{run_prefix.rstrip('/')}/{rel_path.lstrip('/')}"
+        if rule.kind == "prefix":
+            if not key.endswith("/"):
+                key = f"{key}/"
+            checks.append(_s3_prefix_nonempty(client, bucket, key))
+        else:
+            checks.append(_s3_object_exists(client, bucket, key))
+    if rule.match == "all":
+        return bool(checks) and all(checks)
+    return any(checks)
+
+
+def _stage_artifact_present(
+    client: StorageClient,
+    bucket: str,
+    *,
+    run_prefix: str,
+    spec: _StageMonitorSpec,
+) -> bool:
+    return any(
+        _artifact_rule_matches(client, bucket, run_prefix=run_prefix, rule=rule)
+        for rule in spec.rules
+    )
+
+
+def _record_completed_at(entry: dict[str, Any], fallback: str) -> str:
+    record = entry.get("record") or {}
+    payload = record.get("payload") or {}
+    for candidate in (
+        payload.get("created_at"),
+        payload.get("updated_at"),
+        record.get("created_at"),
+        record.get("updated_at"),
+        fallback,
+    ):
+        if candidate:
+            return str(candidate)
+    return fallback
+
+
+def _workflow_completion_index(
+    workflow_state: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for component in workflow_state.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        name = str(component.get("name") or "")
+        if not name:
+            continue
+        index[name] = {
+            "source": "component",
+            "tier": str(component.get("tier") or ""),
+            "record": component,
+        }
+    for record in workflow_state.get("stage_records") or []:
+        if not isinstance(record, dict):
+            continue
+        payload = record.get("payload") or {}
+        stage_number = payload.get("stage")
+        if not isinstance(stage_number, int):
+            continue
+        name = _STAGE_NUMBER_TO_NAME.get(stage_number)
+        if not name or name in index:
+            continue
+        index[name] = {
+            "source": "stage_record",
+            "tier": "",
+            "record": record,
+        }
+    env_split = index.get(_ENV_SPLIT_COMPONENT)
+    if env_split:
+        for stage_name in ("stage_04_envs_raw", "stage_05_envs_train", "stage_06_tokens"):
+            if stage_name not in index:
+                index[stage_name] = env_split
+    return index
+
+
+def _workflow_stage_succeeded(
+    stage_name: str,
+    *,
+    workflow_state: dict[str, Any] | None,
+    completion_index: dict[str, dict[str, Any]],
+    spec: _StageMonitorSpec,
+) -> dict[str, Any] | None:
+    if not workflow_state:
+        return None
+    updated_at = str(workflow_state.get("updated_at") or "")
+    status = str(workflow_state.get("status") or "")
+    for milestone, stages in _STATUS_COMPLETED_STAGES.items():
+        if status == milestone and stage_name in stages:
+            return {
+                "state": "SUCCEEDED",
+                "source": "workflow_state_status",
+                "tier": "",
+                "completed_at": updated_at,
+            }
+    for component_name in spec.component_names:
+        entry = completion_index.get(component_name)
+        if entry:
+            return {
+                "state": "SUCCEEDED",
+                "source": "workflow_state",
+                "tier": str(entry.get("tier") or ""),
+                "completed_at": _record_completed_at(entry, updated_at),
+            }
+    entry = completion_index.get(stage_name)
+    if entry:
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state",
+            "tier": str(entry.get("tier") or ""),
+            "completed_at": _record_completed_at(entry, updated_at),
+        }
+    if stage_name in {"stage_05_envs_train", "stage_06_tokens"} and workflow_state.get(
+        "train_envs_uri"
+    ):
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state_train_envs_uri",
+            "tier": "",
+            "completed_at": updated_at,
+        }
+    if stage_name == "stage_04_envs_raw" and int(workflow_state.get("env_count") or 0) > 0:
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state_env_count",
+            "tier": "",
+            "completed_at": updated_at,
+        }
+    if stage_name == "stage_10_eval_heldout" and workflow_state.get("final_eval"):
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state_final_eval",
+            "tier": "",
+            "completed_at": updated_at,
+        }
+    if stage_name == "stage_11_outer_loop" and workflow_state.get("final_decision"):
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state_final_decision",
+            "tier": "",
+            "completed_at": updated_at,
+        }
+    if stage_name == "report" and str(workflow_state.get("report_path") or "").strip():
+        return {
+            "state": "SUCCEEDED",
+            "source": "workflow_state_report_path",
+            "tier": "",
+            "completed_at": updated_at,
+        }
+    return None
+
+
+def _apply_infer_from_later(stages: dict[str, dict[str, Any]]) -> None:
+    later_succeeded = False
+    for spec in reversed(_STAGE_SPECS):
+        info = stages.get(spec.name) or {}
+        if info.get("state") == "SUCCEEDED":
+            later_succeeded = True
+            continue
+        if later_succeeded and spec.infer_from_later:
+            stages[spec.name] = {
+                **info,
+                "state": "SUCCEEDED",
+                "source": "inferred_from_later_stage",
+            }
+
+
 def _stage_states(
     *,
     bucket: str,
@@ -179,39 +506,54 @@ def _stage_states(
     )
     uris = artifact_uris(config)
     client = StorageClient.from_environment(endpoint_url=endpoint)
-    stages: dict[str, dict[str, Any]] = {}
+    run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     workflow_state: dict[str, Any] | None = None
-    state_key = f"{s3_prefix.rstrip('/')}/{run_id}/state/workflow_state.json"
+    state_key = f"{run_prefix}/state/workflow_state.json"
     if _s3_object_exists(client, bucket, state_key):
         body = client._s3.get_object(Bucket=bucket, Key=state_key)["Body"].read()
         workflow_state = json.loads(body.decode("utf-8"))
 
-    record_by_stage = {}
-    if workflow_state:
-        for record in workflow_state.get("stage_records") or []:
-            name = str(record.get("stage") or record.get("name") or "")
-            if name:
-                record_by_stage[name] = record
-
-    for stage_name, rel_path, kind in _STAGE_CHECKS:
-        uri = uris.get(stage_name, f"s3://{bucket}/{s3_prefix.rstrip('/')}/{run_id}/{rel_path}")
-        parsed = urlparse(uri)
-        key = parsed.path.lstrip("/")
-        if kind == "prefix" and not key.endswith("/"):
-            key = f"{key}/"
-        if kind == "file":
-            present = _s3_object_exists(client, bucket, key)
+    completion_index = (
+        _workflow_completion_index(workflow_state) if workflow_state else {}
+    )
+    stages: dict[str, dict[str, Any]] = {}
+    for spec in _STAGE_SPECS:
+        primary_path = spec.rules[0].paths[0] if spec.rules else ""
+        uri = uris.get(
+            spec.name,
+            f"s3://{bucket}/{run_prefix}/{primary_path}" if primary_path else "",
+        )
+        resolved = _workflow_stage_succeeded(
+            spec.name,
+            workflow_state=workflow_state,
+            completion_index=completion_index,
+            spec=spec,
+        )
+        if resolved:
+            present = True
+            source = str(resolved.get("source") or "workflow_state")
+            tier = str(resolved.get("tier") or "")
+            completed_at = str(resolved.get("completed_at") or "")
         else:
-            present = _s3_prefix_nonempty(client, bucket, key)
-        tier = ""
-        if stage_name in record_by_stage:
-            tier = str(record_by_stage[stage_name].get("tier") or "")
-        stages[stage_name] = {
-            "name": stage_name,
+            present = _stage_artifact_present(
+                client,
+                bucket,
+                run_prefix=run_prefix,
+                spec=spec,
+            )
+            source = "s3_artifact" if present else ""
+            tier = ""
+            completed_at = ""
+        stages[spec.name] = {
+            "name": spec.name,
             "state": "SUCCEEDED" if present else "PENDING",
             "tier": tier,
             "artifact_uri": uri,
+            "source": source,
+            "completed_at": completed_at,
         }
+
+    _apply_infer_from_later(stages)
     return stages
 
 
@@ -360,16 +702,15 @@ def _aggregate_status(
 
 def _current_stage(stages: dict[str, dict[str, Any]]) -> str:
     last_done = ""
-    for stage_name, _, _ in _STAGE_CHECKS:
+    for stage_name in _STAGE_ORDER:
         if stages.get(stage_name, {}).get("state") == "SUCCEEDED":
             last_done = stage_name
     if not last_done:
         return "stage_01_trigger"
-    names = [name for name, _, _ in _STAGE_CHECKS]
-    if last_done == names[-1]:
+    if last_done == _STAGE_ORDER[-1]:
         return last_done
-    idx = names.index(last_done)
-    return names[min(idx + 1, len(names) - 1)]
+    idx = _STAGE_ORDER.index(last_done)
+    return _STAGE_ORDER[min(idx + 1, len(_STAGE_ORDER) - 1)]
 
 
 def status_is_terminal(status: str) -> bool:
