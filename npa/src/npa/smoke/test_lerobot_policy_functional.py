@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from npa.workbench.lerobot.policy_container import build_lerobot_eval_command
+
 
 @dataclass
 class CheckResult:
@@ -74,19 +76,18 @@ def check_short_eval(state: Path) -> CheckResult:
         return CheckResult("short eval", False, "missing checkpoint from train stage")
     eval_dir = state / "eval"
     log_path = state / "eval.log"
-    command = [
-        "lerobot-eval",
-        f"--policy.path={checkpoint}",
-        f"--env.type=pusht",
-        f"--output_dir={eval_dir}",
-        "--eval.batch_size=1",
-        "--eval.n_episodes=1",
-        "--policy.device=cuda",
-        "--policy.use_amp=false",
-    ]
+    command = build_lerobot_eval_command(
+        checkpoint_path=checkpoint,
+        output_dir=eval_dir,
+        env_type="pusht",
+        episodes=1,
+    )
     code, _output = _run(command, log_path=log_path, timeout=600)
     if code != 0:
         return CheckResult("short eval", False, f"exit={code}")
+    eval_info = eval_dir / "eval_info.json"
+    if not eval_info.is_file():
+        return CheckResult("short eval", False, f"missing {eval_info}")
     return CheckResult("short eval", True, str(eval_dir))
 
 

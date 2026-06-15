@@ -244,8 +244,8 @@ containers:
       external_fetch: [huggingface, s3]
       notes: >-
         Image is built and published outside this repo; pinned via
-        supported-tools (2.5.0). Golden eval proves the CLI/transfer contract
-        loads; a full eval needs the published image on a GPU host.
+        supported-tools (2.5.0). Published 2.5.0 lacks torch/npa on default
+        python, so inline CUDA probes fail; needs upstream smoke entrypoint.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional
@@ -254,7 +254,7 @@ containers:
       serverless_gpu: h100
       gpu: required
       timeout_seconds: 300
-      status: gpu-gated
+      status: blocked-on-upstream
 
   cosmos3-reason:
     image: npa-cosmos3-reason
