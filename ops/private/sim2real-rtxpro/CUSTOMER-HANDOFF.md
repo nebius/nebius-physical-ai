@@ -1,6 +1,8 @@
 # Sim2Real — Customer Handoff
 
-**Start here:** **[QUICKSTART.md](./QUICKSTART.md)**
+**Start here:** **[CUSTOMER-RUNBOOK.md](./CUSTOMER-RUNBOOK.md)** (full pipeline: install → 800-env industrial demo → customize)
+
+Quick paste path: **[QUICKSTART.md](./QUICKSTART.md)**
 
 ---
 
