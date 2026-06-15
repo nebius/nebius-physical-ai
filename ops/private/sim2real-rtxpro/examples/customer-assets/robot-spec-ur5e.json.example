@@ -1,4 +1,0 @@
-{
-  "preset": "ur5e",
-  "robot_uri": "s3://YOUR-BUCKET/sim2real-assets/YOUR-TASK-ID/ur5e.urdf"
-}

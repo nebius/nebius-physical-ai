@@ -91,6 +91,11 @@ tmp/
 *.tmp
 *.temp
 
+# Private customer/operator pack (separate private GitHub repo)
+ops/private/sim2real-rtxpro/
+ops/private/**/env.local
+ops/private/**/RUNBOOK.local.md
+
 # Node dependencies
 node_modules/
 
