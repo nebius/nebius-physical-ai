@@ -2,6 +2,14 @@
 # Direct Kubernetes submit for sim2real staged runbook.
 # Bypasses SkyPilot kubeconfig mismatch (workbench vs cluster contexts).
 # Credentials: cluster secretRef only — never embedded in generated manifests.
+#
+# Storage env (see runbook.yaml header for full map):
+#   S3_BUCKET              — artifact + trigger parent bucket (fallback: storage.bucket)
+#   AWS_ENDPOINT_URL       — S3-compatible endpoint (fallback: storage.endpoint_url)
+#   NPA_SIM2REAL_TRIGGER_DATASET_URI — LeRobot trigger prefix (required at submit)
+#   NPA_SIM2REAL_TRIGGER_DATASET_ID — source dataset id (default lerobot/pusht)
+# Aliases: TRIGGER_DATASET_URI, TRIGGER_DATASET_ID. Customer GCP: endpoint
+# https://storage.googleapis.com + GCS HMAC keys in ~/.npa/credentials.yaml.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

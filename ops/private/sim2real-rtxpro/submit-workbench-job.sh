@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Submit sim2real via npa workbench workflow submit + runbook.yaml.
 # Materializes operator config into the runbook, then launches through SkyPilot.
+#
+# Storage env (see runbook.yaml header for full map):
+#   S3_BUCKET, AWS_ENDPOINT_URL, NPA_SIM2REAL_TRIGGER_DATASET_URI (+ ID aliases)
+# Customer GCP: https://storage.googleapis.com + GCS HMAC keys in credentials.yaml.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -10,6 +10,14 @@ update → held-out eval → threshold gate → Rerun observability.
 **Canonical workflow file:** `npa/workflows/workbench/sim2real/runbook.yaml`  
 **Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`
 
+**Customer GCP bucket:** use GCS with the S3-compatible API. Set `storage.bucket`
+and `storage.endpoint_url` (`https://storage.googleapis.com`) in `~/.npa/config.yaml`,
+GCS HMAC keys in `~/.npa/credentials.yaml`, and
+`NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-gcp-bucket>/sim2real-triggers/<batch>/lerobot-pusht/`
+in operator env or `--var` on submit. See the **Trigger bucket & S3-compatible
+storage** comment block at the top of `runbook.yaml` for the full variable map
+(`NPA_SIM2REAL_BUCKET`, `AWS_ENDPOINT_URL`, `S3_BUCKET`, seed + cluster secret sync).
+
 ---
 
 ## Pipeline at a glance
