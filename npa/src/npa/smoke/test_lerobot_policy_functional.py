@@ -50,14 +50,16 @@ def check_short_train(state: Path) -> CheckResult:
     command = [
         "lerobot-train",
         "--policy.type=act",
+        "--policy.push_to_hub=false",
+        "--policy.device=cuda",
         "--dataset.repo_id=lerobot/pusht",
         f"--output_dir={train_dir}",
         "--steps=20",
         "--batch_size=8",
         "--num_workers=0",
         "--save_freq=20",
-        "--eval_freq=0",
-        "--device=cuda",
+        "--eval_freq=1000000",
+        "--log_freq=10",
     ]
     code, output = _run(command, log_path=log_path, timeout=900)
     checkpoint = _find_checkpoint(train_dir)

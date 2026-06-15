@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Callable
 
 from npa.workflows.sim2real_loop import SCHEMA_RL_SIGNAL
-from npa.workbench.lerobot.policy_container import run_vlm_signal_training_step
+from npa.workbench.lerobot.policy_container import (
+    parse_vlm_signal_batch,
+    run_vlm_signal_training_step,
+)
 
 
 @dataclass
@@ -23,7 +26,7 @@ class CheckResult:
 def _fixture_signal() -> dict:
     return {
         "schema": SCHEMA_RL_SIGNAL,
-        "run_id": "golden-smoke",
+        "rollout_id": "golden-smoke",
         "per_step": [
             {
                 "step": 0,
@@ -52,7 +55,8 @@ def check_vlm_signal_step() -> CheckResult:
         signal_path.write_text(json.dumps(_fixture_signal()), encoding="utf-8")
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         try:
-            update = run_vlm_signal_training_step(payload, output_dir=output_dir)
+            signals = parse_vlm_signal_batch(payload)
+            update = run_vlm_signal_training_step(signals, output_dir=output_dir)
         except Exception as exc:
             return CheckResult("vlm-signal-step", False, str(exc))
         if not Path(update.checkpoint_path).exists():
