@@ -34,6 +34,40 @@ DEFAULT_TRAIN_TIMEOUT_SECONDS = 43200
 DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
 
+# Request-supplied output directories are confined under this root so an
+# unauthenticated /feedback/train-step caller cannot write adapter checkpoints to
+# arbitrary filesystem paths (path traversal / arbitrary file write).
+POLICY_OUTPUT_ROOT_ENV = "NPA_POLICY_OUTPUT_ROOT"
+DEFAULT_POLICY_OUTPUT_ROOT = "/tmp/npa-lerobot"
+
+
+def _policy_output_root() -> Path:
+    return Path(os.environ.get(POLICY_OUTPUT_ROOT_ENV, "") or DEFAULT_POLICY_OUTPUT_ROOT).resolve()
+
+
+def jail_output_dir(raw: str | None, *, default_name: str) -> Path:
+    """Resolve a request-supplied output dir confined to the policy output root.
+
+    Rejects absolute paths and ``..`` traversal that would escape the jail.
+    """
+    root = _policy_output_root()
+    root.mkdir(parents=True, exist_ok=True)
+    candidate = (raw or "").strip()
+    if not candidate:
+        return root / default_name
+    relative = Path(candidate)
+    if relative.is_absolute():
+        try:
+            relative = relative.relative_to(root)
+        except ValueError:
+            raise PolicyContainerError(
+                f"output_dir must be a relative path under {root}; got absolute path {candidate!r}"
+            ) from None
+    resolved = (root / relative).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise PolicyContainerError(f"output_dir {candidate!r} escapes the allowed output root {root}")
+    return resolved
+
 
 class PolicyContainerError(Exception):
     """Raised when policy-container inference or feedback training fails."""
@@ -975,11 +1009,18 @@ def create_app() -> Any:
 
     @app.post("/feedback/train-step")
     async def feedback_train_step(payload: dict[str, Any]) -> dict[str, Any]:
+        is_signal = bool(payload.get("signals")) or str(payload.get("schema", "")).startswith(
+            "npa.sim2real.rl_signal."
+        )
         try:
-            if payload.get("signals") or str(payload.get("schema", "")).startswith("npa.sim2real.rl_signal."):
+            output_dir = jail_output_dir(
+                payload.get("output_dir"),
+                default_name="vlm-signal" if is_signal else "feedback",
+            )
+            if is_signal:
                 result = run_vlm_signal_training_step(
                     parse_vlm_signal_batch(payload),
-                    output_dir=Path(payload.get("output_dir") or "/tmp/npa-lerobot-vlm-signal"),
+                    output_dir=output_dir,
                     learning_rate=float(payload.get("learning_rate") or 0.05),
                     signal_loss_weight=float(payload.get("signal_loss_weight") or 1.0),
                     control=bool(payload.get("control", False)),
@@ -988,7 +1029,7 @@ def create_app() -> Any:
                 feedback = parse_feedback_batch(payload)
                 result = run_feedback_training_step(
                     feedback,
-                    output_dir=Path(payload.get("output_dir") or "/tmp/npa-lerobot-feedback"),
+                    output_dir=output_dir,
                     learning_rate=float(payload.get("learning_rate") or 0.1),
                 )
         except PolicyContainerError as exc:

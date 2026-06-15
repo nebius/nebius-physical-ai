@@ -22,7 +22,8 @@ from npa.workbench.cosmos.cosmos3 import (
 ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "workflows" / "workbench" / "skypilot"
 INFERENCE_YAML = SKYPILOT_ROOT / "cosmos3-text-to-image-inference.yaml"
-SKILL_ROOT = ROOT / ".agents" / "skills"
+SKILL_ROOT = ROOT / "skills"
+SKILL_INDEX = SKILL_ROOT / "index.yaml"
 
 
 def _runner(returncode: int = 0):
@@ -221,14 +222,17 @@ def test_cosmos3_inference_yaml_defaults_to_public_cosmos3_and_allows_s3() -> No
 def test_cosmos3_agent_skills_are_discoverable_and_well_formed() -> None:
     expected = {
         "cosmos3-setup",
-        "codebase-nav",
-        "env-troubleshoot",
-        "inference",
+        "cosmos3-codebase-nav",
+        "cosmos3-env-troubleshoot",
+        "cosmos3-inference",
         "cosmos3-post-training",
     }
+    index = yaml.safe_load(SKILL_INDEX.read_text())
+    entries = {entry["name"]: entry for entry in index["skills"]}
 
     for name in expected:
-        path = SKILL_ROOT / name / "SKILL.md"
+        assert name in entries
+        path = ROOT / entries[name]["path"]
         assert path.exists(), name
         text = path.read_text(encoding="utf-8")
         assert text.startswith("---\n")
