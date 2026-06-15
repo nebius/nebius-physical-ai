@@ -2,6 +2,31 @@
 
 Heavy glue lives here: sibling K8s jobs, sim backends, VLM critique, and RL
 signal conversion. Orchestration belongs in ``npa.workflows.sim2real.runner``.
+
+Canonical stage map (``monitor._STAGE_SPECS``, ``sim2real_stages``):
+
+| Stage | Monitor name | Entrypoint | Primary artifacts |
+| --- | --- | --- | --- |
+| 1 | ``stage_01_trigger`` | ``run_preamble`` | ``stage_01_trigger/trigger.json`` |
+| 2 | ``stage_02_assets`` | ``run_preamble`` → ``run_assets_stage`` | ``stage_02_assets/consumed_scene_spec.json`` |
+| 3 | ``stage_03_augment`` | ``run_preamble`` → ``run_augment_stage`` | ``augment/manifest.json`` |
+| 4 | ``stage_04_envs_raw`` | ``run_envgen_split_stage`` | ``envs/raw/`` |
+| 5 | ``stage_05_envs_train`` | ``run_envgen_split_stage`` | ``envs/train/envs.jsonl`` |
+| 6 | ``stage_06_tokens`` | ``run_envgen_split_stage`` | ``tokens/manifest.json`` |
+| 7 | ``stage_07_actions_train`` | ``run_inner_loop`` → ``run_policy_rollouts`` | ``actions/train/`` |
+| 8 | ``stage_08_vlm_eval_train`` | ``run_inner_loop`` → ``evaluate_rollout_with_vlm`` | ``vlm_eval/train/`` |
+| 9 | ``stage_09_training_signal`` | ``run_inner_loop`` (signal + trainer) | ``training_signal/train/`` |
+| 10 | ``stage_10_eval_heldout`` | ``run_single_outer_iteration`` → ``run_heldout_eval`` | ``eval/heldout/report.json`` |
+| 11 | ``stage_11_outer_loop`` | ``run_single_outer_iteration`` → ``threshold_decision`` | ``outer_loop/decision.json`` |
+| 12 | ``stage_12_external_validation_stub`` | ``run_finalize`` | ``stage_12_external_validation/external_stub.json`` |
+| 13 | ``stage_13_retrigger`` | ``run_finalize`` | ``stage_13_retrigger/retrigger.json`` |
+| 14 | ``stage_14_rerun_viz`` | ``run_finalize`` → ``_run_sim2real_viz_stage`` | ``reports/sim2real.rrd`` |
+
+Phase boundaries:
+
+- **Preamble (1–6):** ``run_preamble``
+- **Outer iteration (7–11):** ``run_single_outer_iteration`` (inner loop 7–9 per outer pass)
+- **Finalize (12–14 + report):** ``run_finalize``
 """
 
 from __future__ import annotations
@@ -88,6 +113,11 @@ def _signal_training_imports():
     return parse_vlm_signal_batch, run_vlm_signal_training_step
 
 
+# =============================================================================
+# Workflow state (cross-stage polling)
+# =============================================================================
+
+
 def _workflow_state_path(local_dir: Path) -> Path:
     return local_dir / "state" / "workflow_state.json"
 
@@ -131,6 +161,11 @@ def _read_workflow_state(local_dir: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise Sim2RealLoopError("workflow state payload must be a JSON object")
     return payload
+
+
+# =============================================================================
+# Stages 1–6 — preamble (`run_preamble`)
+# =============================================================================
 
 
 def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
@@ -215,6 +250,11 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "updated_at": _utc_now(),
     }
     return _write_workflow_state(local_dir, state, config=config)
+
+
+# =============================================================================
+# Stages 7–11 — outer iteration (`run_single_outer_iteration`)
+# =============================================================================
 
 
 def run_single_outer_iteration(
@@ -356,6 +396,11 @@ def _append_outer_iteration_workflow_state(
     state["outer_history"] = history
     state["updated_at"] = _utc_now()
     _write_workflow_state(local_dir, state, config=config)
+
+
+# =============================================================================
+# Stages 12–14 — finalize (`run_finalize`)
+# =============================================================================
 
 
 def run_finalize(
@@ -641,6 +686,11 @@ def _run_byo_rerun_command(
         ),
         info,
     )
+
+
+# =============================================================================
+# Stages 7–9 — inner loop (`run_inner_loop`)
+# =============================================================================
 
 
 def run_inner_loop(
@@ -1190,6 +1240,11 @@ def _run_component_command(
         "stdout_excerpt": _component_excerpt(result.stdout),
         "stderr_excerpt": _component_excerpt(result.stderr),
     }
+
+
+# =============================================================================
+# K8s sibling components (stages 3–7 GPU jobs)
+# =============================================================================
 
 
 def run_cosmos2_transfer_component(
@@ -2699,6 +2754,11 @@ def _heldout_k8s_image_ready(config: Sim2RealLoopConfig) -> bool:
     return k8s_image_ready(config.heldout_backend_image())
 
 
+# =============================================================================
+# Stage 10 — held-out eval (`run_heldout_eval`)
+# =============================================================================
+
+
 def run_heldout_eval(
     config: Sim2RealLoopConfig,
     *,
@@ -2908,6 +2968,11 @@ def _normalize_heldout_report(
     return report
 
 
+# =============================================================================
+# Stage 11 — outer loop decision (`threshold_decision`)
+# =============================================================================
+
+
 def threshold_decision(
     config: Sim2RealLoopConfig,
     *,
@@ -2959,6 +3024,11 @@ def threshold_decision(
     path = local_dir / "outer_loop" / "decision.json"
     _write_json_artifact(path, decision)
     return {**decision, "decision_uri": str(path)}
+
+
+# =============================================================================
+# Artifact upload (post-finalize)
+# =============================================================================
 
 
 def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
