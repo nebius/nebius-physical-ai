@@ -24,6 +24,17 @@ DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "LoadBalancer"
 K8S_NAME_MAX_LEN = 63
 K8S_NAME_PREFIX = "npa-sim2real-rerun"
+ROLLOUT_TIMEOUT_SEC = 900
+DEPLOYMENT_PROGRESS_DEADLINE_SEC = 900
+
+STAGED_RUN_ID_RE = re.compile(
+    r"^(?:sim2real-staged-[0-9]{8}t[0-9]{6}z|rtxpro-staged-[a-z0-9-]*[0-9]{8}t[0-9]{6}z)$",
+    re.IGNORECASE,
+)
+PLACEHOLDER_RUN_ID_RE = re.compile(
+    r"yyyymmdd|hhmmss|your-run-id|<run-id>|placeholder|example-run|tbd|xxxx",
+    re.IGNORECASE,
+)
 
 
 class Sim2RealRerunServeError(ValueError):
@@ -78,6 +89,70 @@ class RerunServeResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def validate_staged_run_id(run_id: str) -> str:
+    value = run_id.strip()
+    if not value:
+        raise Sim2RealRerunServeError("--run-id is required")
+    if PLACEHOLDER_RUN_ID_RE.search(value):
+        raise Sim2RealRerunServeError(
+            f"run-id looks like a template placeholder: {value!r}. "
+            "Use a real id from submit output (e.g. sim2real-staged-20260615t180818z)."
+        )
+    if not STAGED_RUN_ID_RE.fullmatch(value):
+        raise Sim2RealRerunServeError(
+            "run-id must match sim2real-staged-YYYYMMDDtHHMMSSz with digit timestamps "
+            f"(got {value!r})."
+        )
+    return value
+
+
+def verify_rrd_exists_on_s3(
+    config: RerunServeConfig,
+    *,
+    head_object: Callable[..., Any] | None = None,
+) -> None:
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+
+    uri = config.rrd_s3_uri
+    if not uri.startswith("s3://"):
+        raise Sim2RealRerunServeError(f"invalid rrd s3 uri: {uri}")
+    without_scheme = uri[5:]
+    bucket, _, key = without_scheme.partition("/")
+    if not bucket or not key:
+        raise Sim2RealRerunServeError(f"invalid rrd s3 uri: {uri}")
+
+    if head_object is not None:
+        try:
+            head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "missing")
+            raise Sim2RealRerunServeError(
+                f"Rerun recording not found at {uri} ({code}). "
+                "Wait for reports/sim2real.rrd on S3 before rerun serve."
+            ) from exc
+        return
+
+    client_kwargs: dict[str, Any] = {
+        "aws_access_key_id": config.aws_access_key_id,
+        "aws_secret_access_key": config.aws_secret_access_key,
+        "config": Config(signature_version="s3v4"),
+        "region_name": config.aws_region,
+    }
+    if config.s3_endpoint:
+        client_kwargs["endpoint_url"] = config.s3_endpoint
+    client = boto3.client("s3", **client_kwargs)
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "missing")
+        raise Sim2RealRerunServeError(
+            f"Rerun recording not found at {uri} ({code}). "
+            "Wait for reports/sim2real.rrd on S3 before rerun serve."
+        ) from exc
 
 
 def deployment_name_for_run(run_id: str) -> str:
@@ -163,8 +238,7 @@ def build_rerun_serve_config(
     rrd_s3_uri: str = "",
     report_uri: str = "",
 ) -> RerunServeConfig:
-    if not run_id.strip():
-        raise Sim2RealRerunServeError("--run-id is required")
+    normalized_run_id = validate_staged_run_id(run_id)
     storage = resolve_project_storage(project)
     bucket = resolve_storage_bucket(storage, override=s3_bucket)
     endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
@@ -177,7 +251,7 @@ def build_rerun_serve_config(
         rrd_override = rrd_s3_uri_from_report_uri(report_uri)
     normalized_service = _normalize_service_type(service_type)
     return RerunServeConfig(
-        run_id=run_id.strip(),
+        run_id=normalized_run_id,
         s3_bucket=bucket,
         s3_prefix=s3_prefix.strip("/") or DEFAULT_S3_PREFIX,
         s3_endpoint=endpoint,
@@ -245,6 +319,7 @@ test -s /data/sim2real.rrd
                 },
                 "spec": {
                     "replicas": 1,
+                    "progressDeadlineSeconds": DEPLOYMENT_PROGRESS_DEADLINE_SEC,
                     "strategy": {"type": "Recreate"},
                     "selector": {"matchLabels": {"app.kubernetes.io/instance": config.deployment_name}},
                     "template": {
@@ -356,11 +431,25 @@ def apply_rerun_serve(
     waiter = sleep or time.sleep
 
     manifest = build_rerun_serve_manifest(config)
+    verify_rrd_exists_on_s3(config)
     runner(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=kubeconfig)
-    runner(
-        ["rollout", "status", f"deployment/{config.deployment_name}", "-n", config.namespace, "--timeout=600s"],
-        kubeconfig=kubeconfig,
-    )
+    try:
+        runner(
+            [
+                "rollout",
+                "status",
+                f"deployment/{config.deployment_name}",
+                "-n",
+                config.namespace,
+                f"--timeout={ROLLOUT_TIMEOUT_SEC}s",
+            ],
+            kubeconfig=kubeconfig,
+        )
+    except Sim2RealRerunServeError as exc:
+        detail = _rollout_failure_diagnostics(config, kubeconfig, runner)
+        if detail:
+            raise Sim2RealRerunServeError(f"{exc}\n{detail}") from exc
+        raise
 
     public_url = ""
     if config.service_type == "LoadBalancer" and wait_for_public_url:
@@ -418,6 +507,65 @@ def require_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
             f"~/.npa/clusters/{profile}/kubeconfig."
         )
     return resolved
+
+
+def _rollout_failure_diagnostics(
+    config: RerunServeConfig,
+    kubeconfig: str,
+    kubectl: Callable[..., str],
+) -> str:
+    lines: list[str] = []
+    pod_cmd = [
+        "get",
+        "pods",
+        "-n",
+        config.namespace,
+        "-l",
+        f"app.kubernetes.io/instance={config.deployment_name}",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+    ]
+    try:
+        pod_names = kubectl(pod_cmd, kubeconfig=kubeconfig).strip().splitlines()
+    except Sim2RealRerunServeError:
+        return ""
+
+    for pod_name in pod_names:
+        if not pod_name:
+            continue
+        lines.append(f"pod: {pod_name}")
+        for container in ("sync-rrd", "rerun"):
+            log_cmd = [
+                "logs",
+                "-n",
+                config.namespace,
+                pod_name,
+                "-c",
+                container,
+                "--tail=40",
+            ]
+            try:
+                logs = kubectl(log_cmd, kubeconfig=kubeconfig).strip()
+            except Sim2RealRerunServeError:
+                logs = ""
+            if logs:
+                lines.append(f"--- {container} logs ---")
+                lines.append(logs)
+        describe_cmd = ["describe", "pod", "-n", config.namespace, pod_name]
+        try:
+            desc = kubectl(describe_cmd, kubeconfig=kubeconfig)
+        except Sim2RealRerunServeError:
+            desc = ""
+        for marker in ("Init Containers:", "State:", "Reason:", "Message:", "Warning"):
+            for raw in desc.splitlines():
+                if marker in raw:
+                    lines.append(raw.strip())
+    if not lines:
+        return (
+            "Hint: init container sync-rrd pulls sim2real.rrd from S3 using credentials "
+            f"in Secret {config.secret_name!r}. Check RUN_ID exists and S3 creds are valid."
+        )
+    return "\n".join(lines)
 
 
 def _default_kubectl(

@@ -18,6 +18,8 @@ from npa.workflows.sim2real_rerun_serve import (
     redact_rerun_serve_manifest,
     resolve_storage_bucket,
     rrd_s3_uri_from_report_uri,
+    validate_staged_run_id,
+    verify_rrd_exists_on_s3,
 )
 
 
@@ -36,19 +38,47 @@ def test_deployment_name_sanitizes_run_id() -> None:
     )
 
 
+def test_validate_staged_run_id_rejects_placeholder() -> None:
+    with pytest.raises(Sim2RealRerunServeError, match="placeholder"):
+        validate_staged_run_id("sim2real-staged-YYYYMMDDTHHMMSSz")
+
+
+def test_validate_staged_run_id_accepts_canonical() -> None:
+    assert validate_staged_run_id("sim2real-staged-20260615t180818z") == (
+        "sim2real-staged-20260615t180818z"
+    )
+
+
+def test_manifest_sets_progress_deadline(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    manifest = build_rerun_serve_manifest(config)
+    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    assert deployment["spec"]["progressDeadlineSeconds"] == 900
+
+
 def test_build_config_resolves_bucket_and_s3_uri(mocker) -> None:
     mocker.patch(
         "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
+        run_id="sim2real-staged-20260615t180818z",
         s3_prefix="sim2real-b",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
     assert config.s3_bucket == "demo-bucket"
-    assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real.rrd"
+    assert config.rrd_s3_uri == (
+        "s3://demo-bucket/sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd"
+    )
     assert config.s3_endpoint == "https://storage.example"
 
 
@@ -58,12 +88,12 @@ def test_build_config_accepts_report_uri(mocker) -> None:
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
-        report_uri="s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real-report.json",
+        run_id="sim2real-staged-20260615t180818z",
+        report_uri="s3://demo-bucket/sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real-report.json",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
-    assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-abc/reports/sim2real.rrd"
+    assert config.rrd_s3_uri == "s3://demo-bucket/sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd"
 
 
 def test_rrd_s3_uri_from_report_uri() -> None:
@@ -79,7 +109,7 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
+        run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
@@ -111,7 +141,7 @@ def test_redact_manifest_hides_secret_values(mocker) -> None:
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
+        run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
@@ -126,8 +156,9 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
         "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
+    mocker.patch("npa.workflows.sim2real_rerun_serve.verify_rrd_exists_on_s3")
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
+        run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
@@ -166,7 +197,7 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
-        run_id="sim2real-staged-abc",
+        run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
@@ -198,7 +229,7 @@ def test_missing_bucket_raises_clear_error() -> None:
 def test_invalid_service_type_raises() -> None:
     with pytest.raises(Sim2RealRerunServeError, match="service-type"):
         build_rerun_serve_config(
-            run_id="abc",
+            run_id="sim2real-staged-20260615t180818z",
             s3_bucket="bucket",
             service_type="ingress",
             aws_access_key_id="ak",
