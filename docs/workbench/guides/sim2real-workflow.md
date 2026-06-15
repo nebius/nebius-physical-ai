@@ -32,8 +32,7 @@ this workflow — the VLM step runs the genuine Cosmos-Reason image on the
 cluster, not a hosted API.
 
 ```bash
-nebius profile create
-npa configure        # interactive; writes ~/.npa/credentials.yaml
+npa configure        # interactive; bootstraps Nebius profile + ~/.npa files
 ```
 
 ---

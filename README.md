@@ -46,12 +46,12 @@ You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
 That is the full local loop; the same command swaps `--backend stub` for a real
 `self-hosted` or `api` VLM backend once you add credentials.
 
-Next, authenticate with the Nebius CLI and print the credential schema (see
+Next, run a single interactive NPA setup step (install the Nebius CLI binary
+first; `npa configure` reuses or creates the profile and writes your NPA
+credential/config files — see
 [docs/quickstart.md](docs/quickstart.md) for the full walkthrough):
 
 ```bash
-nebius profile create
-nebius iam get-access-token >/dev/null
 npa configure
 ```
 

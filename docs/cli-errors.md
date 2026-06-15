@@ -43,7 +43,7 @@ their own `Auth` error type and include a recovery hint.
 Error: Nebius authentication failed.
 
   Cause: permission denied
-  Hint: Run `nebius profile create` or refresh Nebius credentials.
+  Hint: Run `npa configure` to set up or refresh Nebius credentials.
 ```
 
 ## Not-found errors
