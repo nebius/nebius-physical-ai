@@ -10,11 +10,180 @@ import pytest
 
 from npa.workflows.sim2real.monitor import (
     OperatorConfig,
+    _stage_states,
     get_sim2real_workflow_status,
     normalize_staged_run_id,
     orchestrator_job_name,
     parse_submit_run_id,
 )
+
+
+def _mock_s3_client(existing_keys: set[str], *, prefixes: set[str] | None = None) -> MagicMock:
+    prefixes = prefixes or set()
+
+    client = MagicMock()
+
+    def head_object(Bucket, Key):  # noqa: N803
+        if Key in existing_keys:
+            return {}
+        import botocore.exceptions
+
+        raise botocore.exceptions.ClientError(
+            {"Error": {"Code": "404", "Message": "not found"}},
+            "HeadObject",
+        )
+
+    def list_objects_v2(Bucket, Prefix, MaxKeys=1):  # noqa: N803
+        del Bucket, MaxKeys
+        if Prefix in prefixes or any(key.startswith(Prefix) for key in existing_keys):
+            return {"KeyCount": 1}
+        return {"KeyCount": 0}
+
+    def get_object(Bucket, Key):  # noqa: N803
+        del Bucket
+        body = MagicMock()
+        body.read.return_value = existing_keys[Key].encode("utf-8")
+        return {"Body": body}
+
+    client._s3.head_object.side_effect = head_object
+    client._s3.list_objects_v2.side_effect = list_objects_v2
+    client._s3.get_object.side_effect = get_object
+    return client
+
+
+def test_stage_states_prefers_workflow_state_over_missing_s3_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow_state = {
+        "status": "preamble_completed",
+        "updated_at": "2026-06-18T18:08:18Z",
+        "train_envs_uri": "s3://demo-bucket/sim2real-b/run/envs/train/envs.jsonl",
+        "env_count": 10000,
+        "components": [
+            {"name": "stage_02_assets", "tier": "WORKS"},
+            {"name": "stage_03_augment", "tier": "WORKS"},
+            {"name": "stage_04_06_env_gen_split_tokens", "tier": "WORKS"},
+        ],
+        "stage_records": [
+            {
+                "path": "/tmp/run/stage_01_trigger/trigger.json",
+                "payload": {"stage": 1, "schema": "npa.sim2real.trigger.v1"},
+            }
+        ],
+    }
+    state_key = "sim2real-b/run-1/state/workflow_state.json"
+    client = _mock_s3_client({state_key: json.dumps(workflow_state)})
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    for stage_name in (
+        "stage_01_trigger",
+        "stage_02_assets",
+        "stage_03_augment",
+        "stage_04_envs_raw",
+        "stage_05_envs_train",
+        "stage_06_tokens",
+    ):
+        assert stages[stage_name]["state"] == "SUCCEEDED", stage_name
+    assert stages["stage_02_assets"]["source"] == "workflow_state_status"
+
+
+def test_stage_states_detects_consumed_asset_specs_on_s3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = {
+        "sim2real-b/run-1/stage_02_assets/consumed_scene_spec.json",
+        "sim2real-b/run-1/stage_02_assets/consumed_robot_spec.json",
+    }
+    client = _mock_s3_client(keys)
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_02_assets"]["state"] == "SUCCEEDED"
+    assert stages["stage_02_assets"]["source"] == "s3_artifact"
+
+
+def test_stage_states_detects_augment_manifest_not_only_transfer_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = {"sim2real-b/run-1/augment/manifest.json"}
+    client = _mock_s3_client(keys)
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_03_augment"]["state"] == "SUCCEEDED"
+
+
+def test_stage_states_tokens_succeeds_when_folded_into_envgen_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = {
+        "sim2real-b/run-1/envs/train/envs.jsonl",
+        "sim2real-b/run-1/envs/heldout/envs.jsonl",
+    }
+    client = _mock_s3_client(keys)
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_06_tokens"]["state"] == "SUCCEEDED"
+    assert stages["stage_05_envs_train"]["state"] == "SUCCEEDED"
+
+
+def test_stage_states_infers_trigger_from_later_stage_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = {"sim2real-b/run-1/augment/manifest.json"}
+    client = _mock_s3_client(keys)
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_01_trigger"]["state"] == "SUCCEEDED"
+    assert stages["stage_01_trigger"]["source"] == "inferred_from_later_stage"
 
 
 def test_orchestrator_job_name() -> None:
