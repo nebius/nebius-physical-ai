@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from npa.clients.credentials import load_credentials
 from npa.workflows.sim2real_loop import (
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_INNER_ITERATIONS,
@@ -23,6 +26,25 @@ from npa.workflows.sim2real_loop import (
     run_full_loop,
     run_inner_loop,
 )
+from npa.workflows.sim2real_rerun_serve import (
+    DEFAULT_CLUSTER_NAME,
+    DEFAULT_NAMESPACE,
+    DEFAULT_PORT,
+    DEFAULT_RERUN_IMAGE,
+    DEFAULT_S3_PREFIX,
+    Sim2RealRerunServeError,
+    apply_rerun_serve,
+    build_rerun_serve_config,
+    build_rerun_serve_manifest,
+    destroy_rerun_serve,
+    redact_rerun_serve_manifest,
+    require_kubeconfig,
+)
+
+
+class OutputFormat(str, Enum):
+    text = "text"
+    json = "json"
 
 
 app = typer.Typer(
@@ -308,3 +330,102 @@ def convert_signal_command(
         json.dumps(signal, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     typer.echo(str(output_json))
+
+
+rerun_app = typer.Typer(
+    name="rerun",
+    help="Host Sim2Real Rerun recordings on the customer's mk8s cluster.",
+    no_args_is_help=True,
+)
+app.add_typer(rerun_app, name="rerun")
+
+
+def _emit_rerun_serve_result(payload: dict, *, output: OutputFormat) -> None:
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(f"status: {payload['status']}")
+    typer.echo(f"run_id: {payload['run_id']}")
+    typer.echo(f"rrd_s3_uri: {payload['rrd_s3_uri']}")
+    if payload.get("public_url"):
+        typer.echo(f"public_url: {payload['public_url']}")
+    else:
+        typer.echo(f"cluster_url: {payload['cluster_url']}")
+        typer.echo(f"port_forward: {payload['port_forward_command']}")
+
+
+def _rerun_serve_credentials() -> tuple[str, str]:
+    creds = load_credentials()
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or creds.s3_access_key_id
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key
+    if not access_key or not secret_key:
+        raise Sim2RealRerunServeError(
+            "S3 credentials are required. Configure ~/.npa/credentials.yaml or export AWS_*."
+        )
+    return access_key, secret_key
+
+
+@rerun_app.command("serve")
+def rerun_serve_command(
+    run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    cluster_name: str = typer.Option(
+        DEFAULT_CLUSTER_NAME, "--cluster-name", help="NPA cluster profile for cached kubeconfig."
+    ),
+    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
+    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    port: int = typer.Option(DEFAULT_PORT, "--port", help="Rerun web viewer port."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
+    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    rerun_image: str = typer.Option(DEFAULT_RERUN_IMAGE, "--rerun-image", help="Rerun container image."),
+    service_type: str = typer.Option(
+        "loadbalancer",
+        "--service-type",
+        help="Kubernetes Service type: loadbalancer, nodeport, or clusterip.",
+    ),
+    name: str = typer.Option("", "--name", help="Deployment/service name override."),
+    destroy: bool = typer.Option(False, "--destroy", help="Delete the hosted Rerun deployment."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Deploy a hosted Rerun viewer that syncs reports/sim2real.rrd from S3."""
+    try:
+        access_key, secret_key = _rerun_serve_credentials()
+        config = build_rerun_serve_config(
+            run_id=run_id,
+            project=project or None,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=s3_endpoint,
+            namespace=namespace,
+            port=port,
+            name=name,
+            rerun_image=rerun_image,
+            service_type=service_type,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+        if dry_run:
+            manifest = build_rerun_serve_manifest(config)
+            if output == OutputFormat.json:
+                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+            else:
+                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+            return
+        resolved_kubeconfig = require_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+        if destroy:
+            result = destroy_rerun_serve(config, kubeconfig=resolved_kubeconfig)
+        else:
+            if service_type.strip().lower() in {"loadbalancer", "lb"} and not dry_run:
+                typer.echo(
+                    "Warning: LoadBalancer exposes the Rerun web viewer without built-in auth. "
+                    "Restrict access at the network layer or use --service-type clusterip with port-forward.",
+                    err=True,
+                )
+            result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
+    except Sim2RealRerunServeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    _emit_rerun_serve_result(result.to_dict(), output=output)
