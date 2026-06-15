@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--scene-spec-uri", default="")
+    parser.add_argument("--cameras-uri", default="")
     parser.add_argument("--assets-uri", default="")
     parser.add_argument("--byo-mesh-uri", default="")
     parser.add_argument("--robot-spec-uri", default="")
@@ -43,6 +44,7 @@ def main() -> int:
         threshold=args.threshold,
         limit=args.limit,
         scene_spec_uri=args.scene_spec_uri,
+        cameras_uri=args.cameras_uri,
         assets_uri=args.assets_uri,
         byo_mesh_uri=args.byo_mesh_uri,
         robot_spec_uri=args.robot_spec_uri,

@@ -112,6 +112,12 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         scene_spec_uri=str(
             overrides.get("scene_spec_uri") or os.environ.get("SCENE_SPEC_URI") or ""
         ),
+        cameras_uri=str(
+            overrides.get("cameras_uri")
+            or os.environ.get("NPA_SIM2REAL_CAMERAS_URI")
+            or os.environ.get("CAMERAS_URI")
+            or ""
+        ),
         robot_spec_uri=str(
             overrides.get("robot_spec_uri")
             or os.environ.get("ROBOT_SPEC_URI")
@@ -433,6 +439,7 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "trigger_dataset_id": config.trigger_dataset_id,
         "assets_uri": config.assets_uri,
         "scene_spec_uri": config.scene_spec_uri,
+        "cameras_uri": config.cameras_uri,
         "augment_image": config.augment_image,
         "action_rollouts_uri": config.action_rollouts_uri,
         "train_envs_uri": config.train_envs_uri,

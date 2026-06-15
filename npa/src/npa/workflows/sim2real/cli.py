@@ -89,6 +89,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--scene-spec-uri", default=os.environ.get("SCENE_SPEC_URI", "")
     )
     parser.add_argument(
+        "--cameras-uri",
+        default=os.environ.get(
+            "NPA_SIM2REAL_CAMERAS_URI", os.environ.get("CAMERAS_URI", "")
+        ),
+    )
+    parser.add_argument(
         "--robot-spec-uri", default=os.environ.get("ROBOT_SPEC_URI", "")
     )
     parser.add_argument("--robot-source", default=os.environ.get("ROBOT_SOURCE", ""))
@@ -317,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     component_heldout.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     component_heldout.add_argument("--limit", type=int, default=0)
     component_heldout.add_argument("--scene-spec-uri", default="")
+    component_heldout.add_argument("--cameras-uri", default="")
     component_heldout.add_argument("--assets-uri", default="")
     component_heldout.add_argument("--byo-mesh-uri", default="")
     component_heldout.add_argument("--robot-spec-uri", default="")
@@ -435,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
             threshold=args.threshold,
             limit=args.limit,
             scene_spec_uri=args.scene_spec_uri,
+            cameras_uri=args.cameras_uri,
             assets_uri=args.assets_uri,
             byo_mesh_uri=args.byo_mesh_uri,
             robot_spec_uri=args.robot_spec_uri,
@@ -481,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         heldout_envs_uri=args.heldout_envs_uri,
         assets_uri=args.assets_uri,
         scene_spec_uri=args.scene_spec_uri,
+        cameras_uri=args.cameras_uri,
         robot_spec_uri=args.robot_spec_uri,
         robot_source=args.robot_source,
         robot_preset=args.robot_preset,

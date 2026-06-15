@@ -72,6 +72,7 @@ class Sim2RealLoopConfig:
     heldout_envs_uri: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
+    cameras_uri: str = ""
     # BYO robot embodiment (alongside the object SceneSpec). ``robot_spec_uri``
     # points at a RobotSpec JSON; ``robot_preset`` selects a built-in preset
     # (franka/ur5e/ur10e/flexiv); ``robot_source`` selects a bare source. All

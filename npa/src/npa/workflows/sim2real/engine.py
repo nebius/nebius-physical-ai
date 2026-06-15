@@ -1959,6 +1959,7 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
             "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
             "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
             "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
+            "--cameras-uri \"${NPA_SIM2REAL_CAMERAS_URI:-}\" "
             "--robot-spec-uri \"${NPA_SIM2REAL_ROBOT_SPEC_URI:-}\" "
             "--robot-source \"${NPA_SIM2REAL_ROBOT_SOURCE:-}\" "
             "--robot-preset \"${NPA_SIM2REAL_ROBOT_PRESET:-}\""
@@ -2021,6 +2022,7 @@ def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACK
             '--isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-}" '
             '--scene-spec-uri "${NPA_SIM2REAL_SCENE_SPEC_URI:-}" '
             '--assets-uri "${NPA_SIM2REAL_ASSETS_URI:-}" '
+            '--cameras-uri "${NPA_SIM2REAL_CAMERAS_URI:-}" '
             '--robot-spec-uri "${NPA_SIM2REAL_ROBOT_SPEC_URI:-}" '
             '--robot-source "${NPA_SIM2REAL_ROBOT_SOURCE:-}" '
             '--robot-preset "${NPA_SIM2REAL_ROBOT_PRESET:-}"'
@@ -2726,6 +2728,7 @@ def run_heldout_eval(
             "NPA_SIM2REAL_ISAAC_TASK": config.isaac_task,
             "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
             "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
+            "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
             "NPA_SIM2REAL_ROBOT_SPEC_URI": config.robot_spec_uri,
             "NPA_SIM2REAL_ROBOT_SOURCE": config.robot_source,
             "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
@@ -3025,6 +3028,7 @@ def run_heldout_eval_component_from_s3(
     threshold: float = DEFAULT_THRESHOLD,
     limit: int = 0,
     scene_spec_uri: str = "",
+    cameras_uri: str = "",
     assets_uri: str = "",
     byo_mesh_uri: str = "",
     robot_spec_uri: str = "",
@@ -3076,6 +3080,7 @@ def run_heldout_eval_component_from_s3(
         if sim_backend == SIM_BACKEND_ISAAC:
             scene = _resolve_isaac_scene(
                 scene_spec_uri=scene_spec_uri,
+                cameras_uri=cameras_uri,
                 assets_uri=assets_uri,
                 byo_mesh_uri=byo_mesh_uri,
                 dest_dir=root / "assets",
@@ -3084,6 +3089,7 @@ def run_heldout_eval_component_from_s3(
         else:
             scene = _resolve_heldout_scene(
                 scene_spec_uri=scene_spec_uri,
+                cameras_uri=cameras_uri,
                 assets_uri=assets_uri,
                 byo_mesh_uri=byo_mesh_uri,
                 dest_dir=root / "assets",
@@ -3147,6 +3153,7 @@ def run_heldout_eval_component_from_s3(
 def _resolve_heldout_scene(
     *,
     scene_spec_uri: str,
+    cameras_uri: str = "",
     assets_uri: str,
     byo_mesh_uri: str,
     dest_dir: Path,
@@ -3177,6 +3184,11 @@ def _resolve_heldout_scene(
         )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+    from npa.workflows.sim2real_assets import merge_standalone_cameras_uri
+
+    scene = merge_standalone_cameras_uri(
+        scene, cameras_uri=cameras_uri, dest_dir=dest_dir, client=client
+    )
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
     return scene
 
@@ -3184,6 +3196,7 @@ def _resolve_heldout_scene(
 def _resolve_isaac_scene(
     *,
     scene_spec_uri: str,
+    cameras_uri: str = "",
     assets_uri: str,
     byo_mesh_uri: str,
     dest_dir: Path,
@@ -3216,6 +3229,11 @@ def _resolve_isaac_scene(
         )
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
+    from npa.workflows.sim2real_assets import merge_standalone_cameras_uri
+
+    scene = merge_standalone_cameras_uri(
+        scene, cameras_uri=cameras_uri, dest_dir=dest_dir, client=client
+    )
     scene_assets.resolve_scene_assets(scene, dest_dir=dest_dir, client=client)
     return scene
 
@@ -3306,6 +3324,15 @@ def _consume_stage_assets(
     else:
         scene = scene_assets.synthesize_scene_spec(byo_mesh_uri=mesh_uri)
 
+    from npa.workflows.sim2real_assets import merge_standalone_cameras_uri
+
+    scene = merge_standalone_cameras_uri(
+        scene,
+        cameras_uri=config.cameras_uri,
+        dest_dir=stage_dir,
+        client=client,
+    )
+
     assets_dir = stage_dir / "assets"
     for obj in scene.objects:
         if obj.asset_source == scene_assets.ASSET_SOURCE_BYO_MESH:
@@ -3325,6 +3352,7 @@ def _consume_stage_assets(
         "status": "consumed",
         "assets_uri": config.assets_uri,
         "scene_spec_uri": config.scene_spec_uri,
+        "cameras_uri": config.cameras_uri,
         "scene_spec": scene.to_dict(),
         "asset_provenance": scene.provenance_block(),
         "next_action": "CONTINUE",

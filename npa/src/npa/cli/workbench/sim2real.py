@@ -70,6 +70,9 @@ def run_command(
     scene_spec_uri: str = typer.Option(
         "", "--scene-spec-uri", help="BYO SceneSpec URI."
     ),
+    cameras_uri: str = typer.Option(
+        "", "--cameras-uri", help="Standalone cameras.json URI (optional)."
+    ),
     robot_spec_uri: str = typer.Option(
         "", "--robot-spec-uri", help="BYO RobotSpec JSON URI (robot embodiment)."
     ),
@@ -211,6 +214,7 @@ def run_command(
         heldout_envs_uri=heldout_envs_uri,
         assets_uri=assets_uri,
         scene_spec_uri=scene_spec_uri,
+        cameras_uri=cameras_uri,
         robot_spec_uri=robot_spec_uri,
         robot_source=robot_source,
         robot_preset=robot_preset,

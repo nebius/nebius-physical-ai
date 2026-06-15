@@ -87,6 +87,29 @@ def _cameras_from_doc(doc: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def merge_standalone_cameras_uri(
+    scene: Any,
+    *,
+    cameras_uri: str,
+    dest_dir: Path,
+    client: Any,
+) -> Any:
+    """Download standalone cameras.json and attach when the scene has no block."""
+
+    from npa.genesis import scene_assets
+
+    uri = (cameras_uri or "").strip()
+    if not uri or scene is None or scene.cameras:
+        return scene
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    cam_local = dest_dir / "cameras.json"
+    client.download_path(uri, str(cam_local))
+    doc = json.loads(cam_local.read_text(encoding="utf-8"))
+    return scene_assets.merge_cameras_into_scene(
+        scene, scene_assets.parse_cameras_doc(doc)
+    )
+
+
 def resolve_stage_cameras(
     config: Sim2RealLoopConfig,
     stage_dir: Path,
@@ -98,7 +121,8 @@ def resolve_stage_cameras(
     from npa.workflows.sim2real_loop import _storage_client
 
     cameras_uri = (
-        os.environ.get("NPA_SIM2REAL_CAMERAS_URI")
+        (config.cameras_uri or "").strip()
+        or os.environ.get("NPA_SIM2REAL_CAMERAS_URI")
         or os.environ.get("CAMERAS_URI")
         or ""
     ).strip()
@@ -225,6 +249,7 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
         "sim_backend": sim_backend,
         "assets_uri": config.assets_uri,
         "scene_spec_uri": config.scene_spec_uri,
+        "cameras_uri": config.cameras_uri,
         "scene_spec": scene_doc,
         "cameras": cameras,
         "next_action": "CONTINUE",
