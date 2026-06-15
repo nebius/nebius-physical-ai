@@ -44,7 +44,7 @@ CONTAINER_IMAGE_NAMES = {
 
 SUPPORTED_TOOL_VERSIONS = {
     "lerobot": "0.5.1",
-    "lerobot-policy": "0.1.0",
+    "lerobot-policy": "0.1.1",
     "genesis": "0.4.6",
     "isaac-lab": "2.3.2.post1",
     "cosmos": "1.0.9",
@@ -54,10 +54,10 @@ SUPPORTED_TOOL_VERSIONS = {
     "fiftyone": "1.15.0",
     "sonic": "0.1.2",
     "retargeting": "0.1.1",
-    "sim2real-envgen": "0.1.1",
-    "sim2real-reference-policy": "0.1.1",
-    "lerobot-vlm-rl": "0.1.0",
-    "sim2real-eval": "0.1.1-genuine-sm120",
+    "sim2real-envgen": "0.1.2",
+    "sim2real-reference-policy": "0.1.2",
+    "lerobot-vlm-rl": "0.1.1",
+    "sim2real-eval": "0.1.2-genuine-sm120",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",

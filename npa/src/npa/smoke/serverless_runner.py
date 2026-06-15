@@ -96,7 +96,12 @@ def submit_golden_eval(
             "aws_secret_access_key": cfg.s3_secret_access_key,
             "endpoint_url": cfg.s3_endpoint,
         },
-        extra_env={"NPA_GOLDEN_EVAL": tool},
+        extra_env={
+            "NPA_GOLDEN_EVAL": tool,
+            # Smoke modules import npa.smoke.*; skip eager SDK imports that pull
+            # pyarrow/lancedb/fiftyone deps missing from slim tool images.
+            "NPA_SKIP_EAGER_IMPORTS": "1",
+        },
     )
     env, secret_env = split_serverless_env(full_env)
 

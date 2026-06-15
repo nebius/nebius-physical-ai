@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-sim2real-envgen:0.1.1
+ARG BASE_IMAGE=npa-sim2real-envgen:0.1.2
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.title="npa-sim2real-reference-policy"

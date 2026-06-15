@@ -9,8 +9,9 @@ PUSH=0
 BASE_IMAGE="${BASE_IMAGE:-npa-base:cuda13-b300-sm80-sm90-sm120-latest}"
 GENESIS_IMAGE="${GENESIS_IMAGE:-npa-genesis:0.4.6-sm80-sm90-sm120-latest}"
 VLM_TAG="${VLM_TAG:-3.0.1-genuine-sm120}"
-ENVGEN_TAG="${ENVGEN_TAG:-0.1.1}"
-EVAL_TAG="${EVAL_TAG:-0.1.1-genuine-sm120}"
+ENVGEN_TAG="${ENVGEN_TAG:-0.1.2}"
+EVAL_TAG="${EVAL_TAG:-0.1.2-genuine-sm120}"
+VLM_RL_TAG="${VLM_RL_TAG:-0.1.1}"
 
 usage() {
   cat <<EOF
@@ -86,5 +87,5 @@ build_one() {
 build_one "npa-cosmos3-reason" "${VLM_TAG}" "${SCRIPT_DIR}/cosmos3-reason/Dockerfile" "BASE_IMAGE=${BASE_IMAGE}"
 build_one "npa-sim2real-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
 build_one "npa-sim2real-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-sim2real-envgen:${ENVGEN_TAG}"
-build_one "npa-lerobot-vlm-rl" "0.1.0" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
+build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
 build_one "npa-sim2real-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"

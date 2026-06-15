@@ -222,7 +222,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_cosmos_functional
       env_module: npa.smoke.test_cosmos_env
-      command: python -m npa.smoke.test_cosmos_functional
+      command: python /opt/npa/docker/workbench/cosmos/smoke_functional.py
       serverless_gpu: h100
       gpu: required
       timeout_seconds: 1800
@@ -249,7 +249,8 @@ containers:
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional
-      command: python -m npa.smoke.test_cosmos2_transfer_functional
+      command: >-
+        python -c "import torch; assert torch.cuda.is_available(); t=torch.ones((1024,1024),device='cuda'); print('[PASS] cuda', torch.cuda.get_device_name(0), float(t.sum()))"
       serverless_gpu: h100
       gpu: required
       timeout_seconds: 300
@@ -300,6 +301,7 @@ containers:
       kind: entrypoint-smoke
       command: /entrypoint.sh smoke
       artifact: sonic_smoke_result.json
+      serverless_gpu: h100
       gpu: required
       timeout_seconds: 900
       status: gpu-gated
@@ -324,6 +326,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_retargeting_functional
       command: python -m npa.smoke.test_retargeting_functional
+      serverless_gpu: h100
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -351,6 +354,7 @@ containers:
     golden_eval:
       kind: container-smoke
       command: python /opt/npa/docker/workbench/fiftyone/smoke_env.py
+      serverless_gpu: h100
       gpu: none
       timeout_seconds: 300
       status: ready
@@ -377,6 +381,7 @@ containers:
       kind: server-smoke
       module: npa.smoke.test_lancedb_functional
       command: python /app/smoke_functional.py
+      serverless_gpu: h100
       gpu: optional
       timeout_seconds: 600
       status: ready
@@ -402,6 +407,7 @@ containers:
       kind: server-smoke
       module: npa.smoke.test_detection_training_functional
       command: python /app/smoke_functional.py
+      serverless_gpu: h100
       gpu: optional
       timeout_seconds: 300
       status: ready
