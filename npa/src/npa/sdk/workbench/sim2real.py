@@ -11,8 +11,11 @@ from npa.workflows.sim2real_loop import (
     build_config_from_env,
     byo_seams,
     convert_vlm_eval_to_rl_signal,
+    run_finalize,
     run_full_loop,
     run_inner_loop,
+    run_preamble,
+    run_single_outer_iteration,
     signal_mapping_rules,
 )
 
@@ -48,6 +51,72 @@ def inner_loop(
     return run_inner_loop(config, local_dir=Path(output_dir), initial_quality=initial_quality)
 
 
+def preamble(
+    *,
+    run_id: str = "sim2real-staged-sdk",
+    output_dir: str | Path | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Run Stage 1-6 and persist workflow state."""
+
+    config = build_config_from_env(run_id=run_id, output_dir=output_dir, **overrides)
+    return run_preamble(config)
+
+
+def outer_iteration(
+    *,
+    run_id: str = "sim2real-staged-sdk",
+    output_dir: str | Path,
+    outer_iteration: int,
+    initial_quality: float,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Run one Stage 7-11 iteration for staged execution."""
+
+    local_dir = Path(output_dir)
+    config = build_config_from_env(run_id=run_id, output_dir=local_dir, **overrides)
+    return run_single_outer_iteration(
+        config,
+        local_dir=local_dir,
+        outer_iteration=outer_iteration,
+        initial_quality=initial_quality,
+    )
+
+
+def finalize(
+    *,
+    run_id: str = "sim2real-staged-sdk",
+    output_dir: str | Path,
+    stage_records: list[dict[str, Any]],
+    components: list[dict[str, Any]],
+    outer_history: list[dict[str, Any]],
+    final_inner: dict[str, Any],
+    final_eval: dict[str, Any],
+    final_decision: dict[str, Any],
+    upload_artifacts: bool = False,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Run Stage 12-13/report/upload for staged execution."""
+
+    local_dir = Path(output_dir)
+    config = build_config_from_env(
+        run_id=run_id,
+        output_dir=local_dir,
+        upload_artifacts=upload_artifacts,
+        **overrides,
+    )
+    return run_finalize(
+        config,
+        local_dir=local_dir,
+        stage_records=stage_records,
+        components=components,
+        outer_history=outer_history,
+        final_inner=final_inner,
+        final_eval=final_eval,
+        final_decision=final_decision,
+    )
+
+
 def output_paths(**overrides: Any) -> dict[str, str]:
     """Return run-scoped S3 artifact URIs."""
 
@@ -68,6 +137,9 @@ __all__ = [
     "convert_vlm_eval_to_rl_signal",
     "inner_loop",
     "output_paths",
+    "outer_iteration",
+    "preamble",
+    "finalize",
     "run",
     "signal_mapping_rules",
     "seams",
