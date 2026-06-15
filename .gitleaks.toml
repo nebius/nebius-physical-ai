@@ -45,4 +45,6 @@ paths = [
     '''SECURITY\.md''',
     '''\.gitleaks\.toml''',
     '''docs/architecture/contributor-context\.md''',
+    # Operator runbooks reference validated lerobot-* bucket names (not secrets).
+    '''ops/private/''',
 ]
