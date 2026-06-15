@@ -30,6 +30,31 @@ def _repo_root() -> Path:
     raise RuntimeError("could not locate repo root (npa/pyproject.toml)")
 
 
+def _resolve_submit_script() -> Path:
+    """Locate the operator ``submit-k8s-staged-job.sh`` for walkthrough or in-repo layouts."""
+
+    explicit = os.environ.get("NPA_SIM2REAL_SUBMIT_SCRIPT", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        if path.is_file():
+            return path.resolve()
+        raise FileNotFoundError(f"NPA_SIM2REAL_SUBMIT_SCRIPT not found: {path}")
+
+    root = _repo_root()
+    candidates = (
+        root.parent / "operator" / "sim2real-rtxpro" / "submit-k8s-staged-job.sh",
+        root / "ops" / "private" / "sim2real-rtxpro" / "submit-k8s-staged-job.sh",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    tried = ", ".join(str(path) for path in candidates)
+    raise FileNotFoundError(
+        "missing sim2real operator submit script. Install the walkthrough operator pack "
+        f"or set NPA_SIM2REAL_SUBMIT_SCRIPT. Tried: {tried}"
+    )
+
+
 def submit_sim2real_staged_job(
     *,
     run_id: str = "",
@@ -49,9 +74,7 @@ def submit_sim2real_staged_job(
 
     operator = load_operator_config()
     root = _repo_root()
-    script = root / "ops" / "private" / "sim2real-rtxpro" / "submit-k8s-staged-job.sh"
-    if not script.is_file():
-        raise FileNotFoundError(f"missing operator submit script: {script}")
+    script = _resolve_submit_script()
 
     bucket = s3_bucket or operator.bucket
     endpoint = s3_endpoint or operator.endpoint_url

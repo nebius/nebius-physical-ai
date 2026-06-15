@@ -17,6 +17,40 @@ def test_sim2real_rerun_serve_help_lists_run_id() -> None:
     assert "--run-id" in result.output
 
 
+def test_sim2real_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "run_id": "sim2real-staged-run-1",
+        "status": "RUNNING",
+        "current_stage": "stage_03_augment",
+        "run_prefix_uri": "s3://demo-bucket/sim2real-b/sim2real-staged-run-1/",
+        "stages": {"stage_01_trigger": {"state": "SUCCEEDED", "tier": ""}},
+    }
+    def fake_watch(run_id: str, **kwargs: object) -> dict:
+        del run_id, kwargs
+        print(json.dumps(payload))
+        return payload
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.watch_sim2real_status",
+        fake_watch,
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sim2real",
+            "status",
+            "--run-id",
+            "sim2real-staged-run-1",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["run_id"] == "sim2real-staged-run-1"
+    assert body["status"] == "RUNNING"
+
+
 def test_sim2real_rerun_serve_dry_run_prints_manifest(mocker) -> None:
     mocker.patch(
         "npa.cli.workbench.sim2real._rerun_serve_credentials",
