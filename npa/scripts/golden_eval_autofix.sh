@@ -45,11 +45,15 @@ _maybe_commit_push() {
 
 log "run_id=${RUN_ID} branch=${BRANCH}"
 _maybe_commit_push
-log "fetch origin/${BRANCH}"
-git -C "${ROOT}" fetch origin "${BRANCH}" 2>&1 | tee -a "${LOG}"
-git -C "${ROOT}" checkout "${BRANCH}" 2>&1 | tee -a "${LOG}" || true
-git -C "${ROOT}" reset --hard "origin/${BRANCH}" 2>&1 | tee -a "${LOG}"
-log "HEAD $(git -C "${ROOT}" log -1 --oneline)"
+if [[ "${GOLDEN_EVAL_AUTOFIX_SKIP_GIT:-0}" == "1" ]]; then
+  log "skip git sync (GOLDEN_EVAL_AUTOFIX_SKIP_GIT=1)"
+else
+  log "fetch origin/${BRANCH}"
+  git -C "${ROOT}" fetch origin "${BRANCH}" 2>&1 | tee -a "${LOG}"
+  git -C "${ROOT}" checkout "${BRANCH}" 2>&1 | tee -a "${LOG}" || true
+  git -C "${ROOT}" reset --hard "origin/${BRANCH}" 2>&1 | tee -a "${LOG}"
+  log "HEAD $(git -C "${ROOT}" log -1 --oneline)"
+fi
 
 if [[ -x "${PYTHON}" ]]; then
   log "pip install -e npa"

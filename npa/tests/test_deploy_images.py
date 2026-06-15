@@ -18,11 +18,11 @@ def test_default_registry_is_real_first_party_registry() -> None:
 def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("lancedb")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.2"
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:0.30.3"
     )
     assert container_image_for_tool("detection-training") == (
         "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
-        "npa-detection-training:bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
+        "npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
     )
     assert (
         container_image_for_tool("groot")

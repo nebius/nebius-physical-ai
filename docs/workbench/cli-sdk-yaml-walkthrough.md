@@ -66,9 +66,10 @@ For the service and YAML paths, a deployed endpoint is also required:
 ```bash
 npa workbench detection-training deploy \
   --output-path "s3://${NPA_S3_BUCKET}/detection-training/" \
+  --namespace workbench \
   --gpu-type h100
 
-export NPA_DETECTION_TRAINING_ENDPOINT=http://npa-detection-training.default.svc.cluster.local:8790
+export NPA_DETECTION_TRAINING_ENDPOINT=http://npa-detection-training.workbench.svc.cluster.local:8790
 ```
 
 The deploy command prints the cluster-internal endpoint. From inside the cluster
@@ -160,11 +161,11 @@ resp = detection_training.train(
     lance_uri="s3://my-bucket/bdd100k-pipeline/example-run/lancedb/",
     output_uri="s3://my-bucket/detection-training/example-run/",
     mode="service",  # or service=True
-    endpoint="http://npa-detection-training.default.svc.cluster.local:8790",
+    endpoint="http://npa-detection-training.workbench.svc.cluster.local:8790",
 )
 
 status = detection_training.status(run_id=resp.run_id, mode="service",
-                                   endpoint="http://npa-detection-training.default.svc.cluster.local:8790")
+                                   endpoint="http://npa-detection-training.workbench.svc.cluster.local:8790")
 print(status.status, status.epochs_completed)
 ```
 
@@ -202,7 +203,7 @@ setup: |
   set -euo pipefail
   command -v jq >/dev/null || (apt-get update && apt-get install -y jq)
 envs:
-  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.default.svc.cluster.local:8790
+  DETECTION_TRAINING_ENDPOINT: http://npa-detection-training.workbench.svc.cluster.local:8790
   VIEW_NAME: bdd100k_rider_train
   LANCE_URI: s3://<your-bucket>/bdd100k-pipeline/example-run/lancedb/
   TRAIN_OUTPUT_URI: s3://<your-bucket>/detection-training/example-run/

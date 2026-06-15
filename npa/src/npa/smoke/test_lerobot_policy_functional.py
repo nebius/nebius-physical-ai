@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from npa.workbench.lerobot.policy_container import build_lerobot_eval_command
+
 
 @dataclass
 class CheckResult:
@@ -50,14 +52,16 @@ def check_short_train(state: Path) -> CheckResult:
     command = [
         "lerobot-train",
         "--policy.type=act",
+        "--policy.push_to_hub=false",
+        "--policy.device=cuda",
         "--dataset.repo_id=lerobot/pusht",
         f"--output_dir={train_dir}",
         "--steps=20",
         "--batch_size=8",
         "--num_workers=0",
         "--save_freq=20",
-        "--eval_freq=0",
-        "--device=cuda",
+        "--eval_freq=1000000",
+        "--log_freq=10",
     ]
     code, output = _run(command, log_path=log_path, timeout=900)
     checkpoint = _find_checkpoint(train_dir)
@@ -72,17 +76,18 @@ def check_short_eval(state: Path) -> CheckResult:
         return CheckResult("short eval", False, "missing checkpoint from train stage")
     eval_dir = state / "eval"
     log_path = state / "eval.log"
-    command = [
-        "lerobot-eval",
-        f"--policy.path={checkpoint}",
-        f"--output_dir={eval_dir}",
-        "--env.type=pusht",
-        "--eval.n_episodes=1",
-        "--device=cuda",
-    ]
+    command = build_lerobot_eval_command(
+        checkpoint_path=checkpoint,
+        output_dir=eval_dir,
+        env_type="pusht",
+        episodes=1,
+    )
     code, _output = _run(command, log_path=log_path, timeout=600)
     if code != 0:
         return CheckResult("short eval", False, f"exit={code}")
+    eval_info = eval_dir / "eval_info.json"
+    if not eval_info.is_file():
+        return CheckResult("short eval", False, f"missing {eval_info}")
     return CheckResult("short eval", True, str(eval_dir))
 
 

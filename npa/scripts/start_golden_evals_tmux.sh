@@ -16,8 +16,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-PYTHON="${ROOT}/npa/.venv/bin/python"
 DRIVER="${ROOT}/npa/scripts/run_golden_evals.py"
+
+if [[ -n "${GOLDEN_EVAL_PYTHON:-}" && -x "${GOLDEN_EVAL_PYTHON}" ]]; then
+  PYTHON="${GOLDEN_EVAL_PYTHON}"
+elif [[ -x "${ROOT}/npa/.venv/bin/python" ]]; then
+  PYTHON="${ROOT}/npa/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="$(command -v python3)"
+else
+  echo "Missing python; set GOLDEN_EVAL_PYTHON or create ${ROOT}/npa/.venv" >&2
+  exit 1
+fi
 
 _acquire_slot() {
   local state_dir="$1"
@@ -207,11 +217,6 @@ if ! command -v tmux >/dev/null; then
   exit 1
 fi
 
-if [[ ! -x "${PYTHON}" ]]; then
-  echo "Missing venv at ${PYTHON}; run: cd ${ROOT}/npa && python -m venv .venv && .venv/bin/pip install -e ." >&2
-  exit 1
-fi
-
 mkdir -p "${STATE_DIR}"
 "${PYTHON}" "${DRIVER}" validate >/dev/null
 
@@ -222,7 +227,7 @@ from npa.smoke.batch import iter_containers
 for name in iter_containers(
     include_blocked=${INCLUDE_BLOCKED},
     include_foundation=${TOOLS_ONLY} is False,
-    only_tools=${TOOLS_ONLY},
+    tools_only=${TOOLS_ONLY},
 ):
     print(name)
 PY

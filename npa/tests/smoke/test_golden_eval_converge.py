@@ -48,6 +48,10 @@ def test_autofix_script_runs() -> None:
         text=True,
         check=False,
         timeout=120,
+        env={
+            **os.environ,
+            "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
+        },
     )
     assert proc.returncode == 0, proc.stderr
 

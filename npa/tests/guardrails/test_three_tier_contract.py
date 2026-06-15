@@ -250,6 +250,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "data",
         "fiftyone",
         "genesis",
+        "golden-eval",
         "groot",
         "health",
         "isaac-lab",

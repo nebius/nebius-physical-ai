@@ -74,7 +74,12 @@ def deploy_cmd(
     node_selector_value: str = typer.Option("", "--node-selector-value", help="GPU node selector label value override."),
     image_pull_secret: str = typer.Option("npa-nebius-registry", "--image-pull-secret", help="Kubernetes imagePullSecret name for private registries."),
     token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    auth_mode: str = typer.Option("none", "--auth-mode", help="Auth mode: none or token."),
+    auth_mode: str = typer.Option("token", "--auth-mode", help="Auth mode: none or token. Defaults to token (secure)."),
+    insecure_no_auth: bool = typer.Option(
+        False,
+        "--insecure-no-auth",
+        help="Explicitly deploy without token auth (overrides --auth-mode to none). Not recommended.",
+    ),
     destroy: bool = typer.Option(False, "--destroy", help="Delete the Kubernetes service, deployment, and secret."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print Kubernetes manifest without applying it."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
@@ -82,6 +87,8 @@ def deploy_cmd(
     """Deploy the detection-training service to an NPA Workbench Kubernetes cluster."""
     if port < 1024 or port > 65535:
         fail("--port must be between 1024 and 65535")
+    if insecure_no_auth:
+        auth_mode = "none"
     if auth_mode not in {"none", "token"}:
         fail("--auth-mode must be none or token")
     if not output_path and not destroy:
@@ -117,6 +124,13 @@ def deploy_cmd(
     if dry_run:
         typer.echo(json.dumps(_redact_manifest(manifest), indent=2, sort_keys=True))
         return
+    if auth_mode == "none":
+        typer.echo(
+            "Warning: --auth-mode none deploys detection-training without token auth. The service "
+            "drives GPU training and carries S3 credentials, and any pod in the cluster can reach it. "
+            "Use --auth-mode token with DETECTION_TRAINING_TOKEN set.",
+            err=True,
+        )
     if image_pull_secret:
         _ensure_image_pull_secret(
             image=resolved_image,
@@ -409,6 +423,11 @@ def _kubernetes_manifest(
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
                                     "readinessProbe": {"httpGet": {"path": "/health", "port": "http"}, "initialDelaySeconds": 10, "periodSeconds": 10},
+                                    "securityContext": {
+                                        "allowPrivilegeEscalation": False,
+                                        "capabilities": {"drop": ["ALL"]},
+                                        "seccompProfile": {"type": "RuntimeDefault"},
+                                    },
                                 }
                             ],
                         },

@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import torch
-
 from npa.workflows.sim2real_envgen import EnvGenConfig, build_scene_spec, generate_raw_envs
 
 
@@ -29,7 +27,7 @@ def check_raw_env_generation() -> CheckResult:
         shard_index=0,
         shard_count=1,
         seed=7,
-        scene_spec=build_scene_spec(seed=7),
+        scene_spec=build_scene_spec(),
     )
     envs = generate_raw_envs(config)
     if len(envs) != 16:
@@ -45,6 +43,8 @@ def check_raw_env_generation() -> CheckResult:
 
 
 def check_genesis_cuda_step() -> CheckResult:
+    import torch
+
     if not torch.cuda.is_available():
         return CheckResult("genesis cuda step", False, "CUDA unavailable")
     try:

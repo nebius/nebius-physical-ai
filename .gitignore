@@ -33,10 +33,6 @@ credentials.yml
 !.env.example
 ops/private/**/env.local
 ops/private/**/RUNBOOK.local.md
-ops/private/**/DEMO-WALKTHROUGH.local.md
-ops/private/**/FRANKA-STOCK-GUIDE.local.md
-.tmp-paste-verify-demo/
-.phone-agent-pr-test
 ops/private/**/credentials.local.yaml
 *.pem
 *.key
@@ -90,15 +86,6 @@ npa-cosmos3-cache/
 tmp/
 *.tmp
 *.temp
-
-# Private customer/operator pack (separate private GitHub repo)
-ops/private/sim2real-rtxpro/
-ops/private/**/env.local
-ops/private/**/RUNBOOK.local.md
-ops/private/**/PRIVATE-WALKTHROUGH.local.md
-ops/private/**/DEMO-WALKTHROUGH.local.md
-ops/private/**/credentials.local.yaml
-ops/private/**/*.local.md
 
 # Node dependencies
 node_modules/

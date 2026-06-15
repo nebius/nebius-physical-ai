@@ -79,9 +79,16 @@ build_lancedb() {
 }
 
 build_sim2real_stack() {
-  local genesis_tag
+  local genesis_tag envgen_tag eval_tag vlm_rl_tag
   genesis_tag="$(tool_version genesis)"
+  envgen_tag="$(tool_version sim2real-envgen)"
+  eval_tag="$(tool_version sim2real-eval)"
+  vlm_rl_tag="$(tool_version lerobot-vlm-rl)"
   export GENESIS_IMAGE="${REGISTRY}/npa-genesis:${genesis_tag}"
+  export ENVGEN_TAG="${envgen_tag}"
+  export EVAL_TAG="${eval_tag}"
+  export VLM_RL_TAG="${vlm_rl_tag}"
+  export SKIP_COSMOS3_REASON=1
   bash "${NPA_ROOT}/npa/docker/workbench/sim2real-build.sh" \
     --registry "${REGISTRY}" \
     $([[ "${PUSH}" == "1" ]] && echo --push)
@@ -90,22 +97,22 @@ build_sim2real_stack() {
 for tool in "${TOOLS[@]}"; do
   case "${tool}" in
     retargeting)
-      build_simple retargeting npa-retargeting docker/workbench/retargeting/Dockerfile
+      build_simple retargeting npa-retargeting npa/docker/workbench/retargeting/Dockerfile
       ;;
     lancedb)
       build_lancedb
       ;;
     detection-training)
-      build_simple detection-training npa-detection-training docker/workbench/detection-training/Dockerfile
+      build_simple detection-training npa-detection-training npa/docker/workbench/detection-training/Dockerfile
       ;;
     fiftyone)
-      build_simple fiftyone npa-fiftyone docker/workbench/fiftyone/Dockerfile
+      build_simple fiftyone npa-fiftyone npa/docker/workbench/fiftyone/Dockerfile
       ;;
     genesis)
-      build_simple genesis npa-genesis docker/workbench/genesis/Dockerfile
+      build_simple genesis npa-genesis npa/docker/workbench/genesis/Dockerfile
       ;;
     lerobot-policy)
-      build_simple lerobot-policy npa-lerobot-policy docker/workbench/lerobot-policy/Dockerfile
+      build_simple lerobot-policy npa-lerobot-policy npa/docker/workbench/lerobot-policy/Dockerfile
       ;;
     sim2real-envgen | sim2real-reference-policy | lerobot-vlm-rl | sim2real-eval)
       # Built together; skip duplicates in loop.

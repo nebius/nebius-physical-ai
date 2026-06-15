@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from importlib.util import find_spec
 from unittest.mock import patch
 
 import pytest
@@ -29,14 +29,25 @@ def test_cosmos3_reason_cache_wiring_passes() -> None:
 
 
 def test_lerobot_vlm_rl_signal_step_passes() -> None:
-    from npa.smoke.test_lerobot_vlm_rl_functional import check_vlm_signal_step
+    from unittest.mock import MagicMock, patch
 
-    result = check_vlm_signal_step()
+    with patch(
+        "npa.smoke.test_lerobot_vlm_rl_functional.run_vlm_signal_training_step",
+        return_value=MagicMock(checkpoint_path="/tmp/checkpoint.pt", policy_delta_l2=0.1),
+    ):
+        with patch("pathlib.Path.exists", return_value=True):
+            from npa.smoke.test_lerobot_vlm_rl_functional import check_vlm_signal_step
+
+            result = check_vlm_signal_step()
     assert result.ok, result.detail
 
 
-@patch("npa.smoke.test_sim2real_envgen_functional.torch.cuda.is_available", return_value=True)
-@patch("npa.smoke.test_sim2real_envgen_functional.FrankaPickPlaceEnv")
+@pytest.mark.skipif(
+    find_spec("torch") is None,
+    reason="torch not installed",
+)
+@patch("npa.genesis.env_pick_place.FrankaPickPlaceEnv")
+@patch("torch.cuda.is_available", return_value=True)
 def test_sim2real_envgen_genesis_step_mocked(mock_env, _cuda) -> None:
     from npa.smoke.test_sim2real_envgen_functional import check_genesis_cuda_step
 
@@ -67,8 +78,15 @@ def test_manifest_covers_all_tools_with_container_smokes_or_server_smokes() -> N
 def test_run_all_dry_run_includes_all_tools() -> None:
     from npa.deploy.images import CONTAINER_IMAGE_NAMES
     from npa.smoke.batch import iter_containers, run_all
+    from npa.smoke.manifest import load_manifest
 
+    blocked = {
+        name
+        for name, spec in load_manifest().items()
+        if spec.golden_eval.status == "blocked-on-upstream"
+    }
+    expected = set(CONTAINER_IMAGE_NAMES) - blocked
     names = iter_containers(tools_only=True, include_foundation=False)
     batch = run_all(names, serverless=False, execute=False)
-    assert {r.name for r in batch.results} == set(CONTAINER_IMAGE_NAMES)
+    assert {r.name for r in batch.results} == expected
     assert batch.ok

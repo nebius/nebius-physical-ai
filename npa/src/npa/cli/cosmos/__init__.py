@@ -977,6 +977,12 @@ MODEL_DIR = Path(os.environ.get("COSMOS_MODEL_DIR", "{COSMOS_MODEL_DIR}"))
 OUTPUT_DIR = Path(os.environ.get("COSMOS_OUTPUT_DIR", "{COSMOS_HOME}/outputs"))
 DEFAULT_MODEL = "{default_model}"
 DISABLE_SAFETY = os.environ.get("COSMOS_DISABLE_SAFETY", "0").strip().lower() in {{"1", "true", "yes", "on"}}
+if DISABLE_SAFETY:
+    print(
+        "WARNING: COSMOS_DISABLE_SAFETY is set; the content safety checker is disabled. "
+        "Generated outputs are unfiltered. Do not expose this server to untrusted callers.",
+        flush=True,
+    )
 
 app = FastAPI(title="NPA Cosmos Server")
 _pipe: Any | None = None
