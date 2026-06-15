@@ -72,6 +72,38 @@ def test_run_all_serverless_parallel(mock_submit) -> None:
     assert sum(1 for r in batch.ran if r.ok) == 1
 
 
+@patch("npa.smoke.serverless_runner.submit_golden_eval")
+def test_run_container_eval_serverless_submit_error_continues(mock_submit) -> None:
+    from npa.clients.serverless import ServerlessClientError
+
+    mock_submit.side_effect = ServerlessClientError("job startup failed")
+    result = run_container_eval("cosmos2-transfer", serverless=True)
+    assert not result.ok
+    assert result.detail.get("error") == "ServerlessClientError"
+    assert "job startup failed" in result.detail.get("message", "")
+
+
+@patch("npa.smoke.serverless_runner.submit_golden_eval")
+def test_run_all_serverless_submit_error_does_not_abort_fleet(mock_submit) -> None:
+    from npa.clients.serverless import ServerlessClientError
+
+    mock_submit.side_effect = [
+        {"ok": True, "job_id": "a", "status": "completed"},
+        ServerlessClientError("job startup failed"),
+        {"ok": True, "job_id": "c", "status": "completed"},
+    ]
+    batch = run_all(
+        ["retargeting", "cosmos2-transfer", "fiftyone"],
+        serverless=True,
+        parallel=1,
+    )
+    assert mock_submit.call_count == 3
+    assert len(batch.results) == 3
+    assert sum(1 for r in batch.ran if r.ok) == 2
+    cosmos = next(r for r in batch.results if r.name == "cosmos2-transfer")
+    assert not cosmos.ok
+
+
 def test_run_all_cli_dry_run() -> None:
     from click.utils import strip_ansi
     from typer.testing import CliRunner

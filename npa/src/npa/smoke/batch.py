@@ -99,14 +99,38 @@ def run_container_eval(
     )
 
     if serverless:
+        from npa.clients.serverless import ServerlessClientError
         from npa.smoke.serverless_runner import submit_golden_eval
 
-        detail = submit_golden_eval(
-            name,
-            gpu_type=gpu or None,
-            timeout=timeout,
-            on_state_change=on_state_change,
-        )
+        try:
+            detail = submit_golden_eval(
+                name,
+                gpu_type=gpu or None,
+                timeout=timeout,
+                on_state_change=on_state_change,
+            )
+        except ServerlessClientError as exc:
+            return ContainerRunResult(
+                name=name,
+                mode=mode,
+                ok=False,
+                exit_code=1,
+                status=ge.status,
+                gpu=ge.gpu,
+                command=ge.command,
+                detail={"error": "ServerlessClientError", "message": str(exc)},
+            )
+        except (RuntimeError, TimeoutError) as exc:
+            return ContainerRunResult(
+                name=name,
+                mode=mode,
+                ok=False,
+                exit_code=1,
+                status=ge.status,
+                gpu=ge.gpu,
+                command=ge.command,
+                detail={"error": type(exc).__name__, "message": str(exc)},
+            )
         return ContainerRunResult(
             name=name,
             mode=mode,
