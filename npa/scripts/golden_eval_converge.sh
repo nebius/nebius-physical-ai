@@ -263,12 +263,13 @@ run_attempt() {
 }
 
 log "golden-eval converge start branch=${BRANCH} max_attempts=${MAX_ATTEMPTS}"
-require_tools
 
 if [[ -f "${PAUSED_IAM_FILE}" ]]; then
   log "PAUSED-IAM marker present (${PAUSED_IAM_FILE}) — serverless blocked by VPC PermissionDenied; exiting"
   exit 2
 fi
+
+require_tools
 
 trap 'log "converge interrupted"' INT TERM
 
