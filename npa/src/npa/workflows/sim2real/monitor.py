@@ -423,6 +423,19 @@ def sim2real_run_exists(
     return False
 
 
+def _missing_k8s_status(run_id: str) -> dict[str, Any]:
+    return {
+        "job_name": orchestrator_job_name(run_id),
+        "found": False,
+        "phase": "MISSING",
+        "active": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "pod_phase": "",
+        "pod_reason": "",
+    }
+
+
 def get_sim2real_workflow_status(
     run_id: str,
     *,
@@ -435,11 +448,20 @@ def get_sim2real_workflow_status(
 ) -> dict[str, Any]:
     """Return workflow-style status for a Sim2Real staged K8s run."""
 
-    operator = load_operator_config()
-    bucket = s3_bucket or operator.bucket
-    endpoint = s3_endpoint or operator.endpoint_url
-    context = k8s_context or operator.k8s_context
-    kcfg = Path(kubeconfig) if kubeconfig else resolve_kubeconfig(context)
+    try:
+        operator = load_operator_config()
+    except ValueError:
+        operator = None
+
+    bucket = s3_bucket or (operator.bucket if operator else "")
+    endpoint = s3_endpoint or (
+        operator.endpoint_url if operator else DEFAULT_S3_ENDPOINT
+    )
+    context = k8s_context or (operator.k8s_context if operator else "")
+    if not bucket:
+        raise ValueError(
+            "S3 bucket required (--s3-bucket or storage.bucket in ~/.npa/config.yaml)"
+        )
 
     stages = _stage_states(
         bucket=bucket,
@@ -447,18 +469,26 @@ def get_sim2real_workflow_status(
         s3_prefix=s3_prefix,
         endpoint=endpoint,
     )
-    k8s = _k8s_orchestrator_status(
-        run_id=run_id,
-        context=context,
-        kubeconfig=kcfg,
-        namespace=k8s_namespace,
-    )
-    siblings = _k8s_sibling_summary(
-        run_id=run_id,
-        context=context,
-        kubeconfig=kcfg,
-        namespace=k8s_namespace,
-    )
+    k8s = _missing_k8s_status(run_id)
+    siblings: list[dict[str, Any]] = []
+    if context:
+        try:
+            kcfg = Path(kubeconfig) if kubeconfig else resolve_kubeconfig(context)
+        except ValueError:
+            kcfg = None
+        if kcfg is not None:
+            k8s = _k8s_orchestrator_status(
+                run_id=run_id,
+                context=context,
+                kubeconfig=kcfg,
+                namespace=k8s_namespace,
+            )
+            siblings = _k8s_sibling_summary(
+                run_id=run_id,
+                context=context,
+                kubeconfig=kcfg,
+                namespace=k8s_namespace,
+            )
     status = _aggregate_status(stages, k8s)
     if status == "RUNNING":
         current = _current_stage(stages)

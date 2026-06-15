@@ -284,6 +284,41 @@ def run_command(
         typer.echo(text)
 
 
+@app.command("status")
+def status_command(
+    run_id: str = typer.Option(..., "--run-id", help="Sim2Real staged run id."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket for run artifacts."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 parent prefix (default: sim2real-b)."
+    ),
+    s3_endpoint: str = typer.Option(
+        DEFAULT_S3_ENDPOINT, "--s3-endpoint", help="S3-compatible endpoint."
+    ),
+    k8s_context: str = typer.Option("", "--k8s-context", help="Kubernetes context."),
+    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Job namespace."),
+    watch: bool = typer.Option(
+        False, "--watch/--no-watch", help="Refresh until the run reaches a terminal state."
+    ),
+    interval: float = typer.Option(10.0, "--interval", help="Watch refresh interval."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Check kubectl-submitted Sim2Real runs via S3 workflow_state.json and K8s jobs."""
+
+    from npa.workflows.sim2real.monitor import watch_sim2real_status
+
+    watch_sim2real_status(
+        run_id,
+        watch=watch,
+        interval=interval,
+        json_output=json_output,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        s3_endpoint=s3_endpoint,
+        k8s_context=k8s_context,
+        k8s_namespace=k8s_namespace,
+    )
+
+
 @app.command("inner-loop")
 def inner_loop_command(
     run_id: str = typer.Option("sim2real-inner-cli", "--run-id"),
