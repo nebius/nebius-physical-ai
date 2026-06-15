@@ -27,7 +27,7 @@ envs:
   RAW_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/raw-envs/"
   TRAIN_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/splits/train/"
   HELDOUT_ENVS_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/splits/heldout/"
-  POLICY_IMAGE: "npa-lerobot-policy:0.1.0"
+  POLICY_IMAGE: "npa-lerobot-policy:0.1.1"
   CHECKPOINT_URI: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/checkpoints/policy/"
   RERUN_RRD_PATH: "s3://${S3_BUCKET}/sim-to-real/<your-run-id>/viz/sim-to-real.rrd"
   SIM_BACKEND: "genesis"
