@@ -520,7 +520,7 @@ def test_cosmos_train_serverless_auth_error_shows_hint(mocker) -> None:
 
     assert result.exit_code == 1
     assert "Nebius authentication failed" in result.output
-    assert "nebius profile create" in result.output
+    assert "npa configure" in result.output
 
 
 def test_cosmos_placeholder_help_describes_roadmap() -> None:

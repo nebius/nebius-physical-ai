@@ -66,8 +66,9 @@ _SETUP_GUIDANCE = """Credential setup
 
 Run `npa configure` in a terminal for interactive setup (use
 `npa configure --interactive` when stdin is not a TTY). The flow uses the
-installed Nebius CLI binary internally (you do not run `nebius profile create`
-manually), bootstraps a profile when needed, then with an authenticated profile
+installed Nebius CLI binary internally (profile setup stays inside
+`npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
+when needed, then with an authenticated profile
 auto-creates your S3 bucket and access key, so
 you only supply tenant/project/region (pre-filled from the profile) plus the
 Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
@@ -198,8 +199,9 @@ def _ensure_nebius_profile() -> None:
     if not shutil.which("nebius"):
         typer.echo(
             "Nebius CLI not found. Install the binary from "
-            "https://docs.nebius.com/cli/install (you do not need to run "
-            "`nebius profile create` manually), then re-run `npa configure`."
+            "https://docs.nebius.com/cli/install (onboarding stays in "
+            "`npa configure`; no separate profile CLI steps), then re-run "
+            "`npa configure`."
         )
         return
     existing_profiles = _list_nebius_profiles()
