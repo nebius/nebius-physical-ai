@@ -436,6 +436,11 @@ def rerun_serve_command(
     ),
     name: str = typer.Option("", "--name", help="Deployment/service name override."),
     destroy: bool = typer.Option(False, "--destroy", help="Delete the hosted Rerun deployment."),
+    destroy_wait: bool = typer.Option(
+        False,
+        "--wait",
+        help="When used with --destroy, wait for Kubernetes to confirm resource deletion.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
@@ -467,7 +472,11 @@ def rerun_serve_command(
             return
         resolved_kubeconfig = require_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
         if destroy:
-            result = destroy_rerun_serve(config, kubeconfig=resolved_kubeconfig)
+            result = destroy_rerun_serve(
+                config,
+                kubeconfig=resolved_kubeconfig,
+                wait=destroy_wait,
+            )
         else:
             if service_type.strip().lower() in {"loadbalancer", "lb"} and not dry_run:
                 typer.echo(

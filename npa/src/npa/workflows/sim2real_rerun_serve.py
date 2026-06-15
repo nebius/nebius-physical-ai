@@ -504,10 +504,18 @@ def destroy_rerun_serve(
     *,
     kubeconfig: str,
     kubectl: Callable[..., str] | None = None,
+    wait: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> RerunServeResult:
     runner = kubectl or _default_kubectl
+    notify = progress or (lambda message: print(message, flush=True))
     for kind in ("service", "deployment", "secret"):
         name = config.deployment_name if kind != "secret" else config.secret_name
+        notify(
+            f"Deleting {kind}/{name} in namespace {config.namespace} "
+            f"(wait={'true' if wait else 'false'}, "
+            f"timeout={KUBECTL_DELETE_TIMEOUT_SEC}s)..."
+        )
         runner(
             [
                 "delete",
@@ -516,12 +524,13 @@ def destroy_rerun_serve(
                 "-n",
                 config.namespace,
                 "--ignore-not-found=true",
-                "--wait=false",
+                "--wait=true" if wait else "--wait=false",
                 f"--request-timeout={KUBECTL_DELETE_TIMEOUT_SEC}s",
             ],
             kubeconfig=kubeconfig,
             timeout_sec=KUBECTL_DELETE_TIMEOUT_SEC + 5,
         )
+    notify(f"Deleted rerun serve resources for {config.deployment_name}")
     return rerun_serve_result(config, status="deleted", kubeconfig=kubeconfig)
 
 

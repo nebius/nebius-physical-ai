@@ -223,18 +223,52 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
         aws_secret_access_key="sk",
     )
     deleted: list[list[str]] = []
+    messages: list[str] = []
 
     def fake_kubectl(args, *, stdin=None, kubeconfig="", timeout_sec=None):
         deleted.append(args)
         return ""
 
-    result = destroy_rerun_serve(config, kubeconfig="/tmp/kubeconfig", kubectl=fake_kubectl)
+    result = destroy_rerun_serve(
+        config,
+        kubeconfig="/tmp/kubeconfig",
+        kubectl=fake_kubectl,
+        progress=messages.append,
+    )
     assert result.status == "deleted"
     assert deleted[0][:2] == ["delete", "service"]
     assert "--wait=false" in deleted[0]
     assert deleted[1][:2] == ["delete", "deployment"]
     assert deleted[2][:2] == ["delete", "secret"]
     assert deleted[2][2] == config.secret_name
+    assert any("Deleting service/" in message for message in messages)
+    assert any("Deleted rerun serve resources" in message for message in messages)
+
+
+def test_destroy_rerun_serve_wait_uses_kubectl_wait_true(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    deleted: list[list[str]] = []
+
+    def fake_kubectl(args, *, stdin=None, kubeconfig="", timeout_sec=None):
+        deleted.append(args)
+        return ""
+
+    destroy_rerun_serve(
+        config,
+        kubeconfig="/tmp/kubeconfig",
+        kubectl=fake_kubectl,
+        wait=True,
+        progress=lambda _message: None,
+    )
+    assert all("--wait=true" in call for call in deleted)
 
 
 def test_missing_bucket_raises_clear_error() -> None:
