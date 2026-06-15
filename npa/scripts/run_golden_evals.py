@@ -5,14 +5,13 @@ Modes:
   validate   Offline manifest completeness/consistency check (nightly CI gate).
   list       Print the golden-eval table (optionally JSON).
   run        Execute a single container's golden-eval command.
-
-The actual GPU golden evals run on hosts that have the container runtime; this
-driver is the single entrypoint used by both CI (validate) and operators (run).
+  run-all    Execute every container's golden eval (optionally in parallel).
 
 Usage:
   npa/.venv/bin/python npa/scripts/run_golden_evals.py validate
   npa/.venv/bin/python npa/scripts/run_golden_evals.py list --json
-  npa/.venv/bin/python npa/scripts/run_golden_evals.py run lerobot --execute
+  npa/.venv/bin/python npa/scripts/run_golden_evals.py run lerobot --serverless
+  npa/.venv/bin/python npa/scripts/run_golden_evals.py run-all --serverless --parallel 4
 """
 
 from __future__ import annotations
@@ -22,8 +21,10 @@ import json
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.smoke.batch import iter_containers, run_all
 from npa.smoke.manifest import container, load_manifest, validate_manifest
 
 
@@ -97,6 +98,49 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return completed.returncode
 
 
+def _cmd_run_all(args: argparse.Namespace) -> int:
+    names = iter_containers(
+        include_blocked=args.include_blocked,
+        include_foundation=not args.tools_only,
+        tools_only=args.tools_only,
+    )
+    if args.containers:
+        wanted = set(args.containers)
+        names = [name for name in names if name in wanted]
+        missing = sorted(wanted - set(names))
+        if missing:
+            print(f"unknown or filtered containers: {', '.join(missing)}", file=sys.stderr)
+            return 2
+
+    mode = "dry-run"
+    if args.serverless:
+        mode = "serverless"
+    elif args.execute:
+        mode = "execute"
+    print(f"golden-eval run-all: mode={mode} parallel={args.parallel} count={len(names)}")
+
+    def _on_progress(result: object) -> None:
+        from npa.smoke.batch import ContainerRunResult
+
+        assert isinstance(result, ContainerRunResult)
+        state = "SKIP" if result.skipped else ("PASS" if result.ok else "FAIL")
+        print(f"  [{state}] {result.name} ({result.mode})")
+
+    batch = run_all(
+        names,
+        serverless=args.serverless,
+        execute=args.execute,
+        gpu=args.gpu,
+        timeout=args.timeout,
+        parallel=args.parallel,
+        on_progress=_on_progress if args.serverless or args.execute else None,
+    )
+    if args.json_out:
+        Path(args.json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
+    print(batch.to_json())
+    return 0 if batch.ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -123,6 +167,50 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--gpu", default="", help="Serverless GPU type override.")
     p_run.add_argument("--timeout", default="40m", help="Serverless job timeout.")
     p_run.set_defaults(func=_cmd_run)
+
+    p_all = sub.add_parser(
+        "run-all",
+        help="Run golden evals for every container (optionally in parallel).",
+    )
+    p_all.add_argument(
+        "--execute",
+        action="store_true",
+        help="Execute eval commands locally (CPU smokes only).",
+    )
+    p_all.add_argument(
+        "--serverless",
+        action="store_true",
+        help="Submit each eval to a Nebius Serverless GPU job.",
+    )
+    p_all.add_argument("--gpu", default="", help="Serverless GPU type override.")
+    p_all.add_argument("--timeout", default="40m", help="Serverless job timeout.")
+    p_all.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Max concurrent evals when using --serverless or --execute.",
+    )
+    p_all.add_argument(
+        "--include-blocked",
+        action="store_true",
+        help="Include blocked-on-upstream containers.",
+    )
+    p_all.add_argument(
+        "--tools-only",
+        action="store_true",
+        help="Only run CONTAINER_IMAGE_NAMES tools (skip foundation images).",
+    )
+    p_all.add_argument(
+        "containers",
+        nargs="*",
+        help="Optional subset of container keys; default is all manifest entries.",
+    )
+    p_all.add_argument(
+        "--json-out",
+        default="",
+        help="Write the batch summary JSON to this path.",
+    )
+    p_all.set_defaults(func=_cmd_run_all)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

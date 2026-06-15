@@ -7,7 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_WORKBENCH_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:0.4.6"
-EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0"
+EXPECTED_RETARGETING_IMAGE = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.1"
 PIPELINE_YAML = (
     ROOT
     / "npa"
@@ -129,7 +129,7 @@ def test_sonic_workflow_materializer_resolves_images_and_s3_literals() -> None:
     docs = [doc for doc in yaml.safe_load_all(plan.yaml_text) if doc is not None]
     retarget, train, eval_task = docs[1:]
 
-    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.1"
     assert train["resources"]["image_id"] == "docker:registry.example/workbench/npa-sonic:0.1.2-k8s-runtime"
     assert retarget["envs"]["AWS_PROFILE"] == "nebius"
     assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.example"

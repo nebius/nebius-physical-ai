@@ -119,10 +119,12 @@ containers:
         entrypoint.sh exposes check-import/serve/train/eval/validate-checkpoint;
         build asserts lerobot importability.
     golden_eval:
-      kind: build-import
-      command: python -m npa.workbench.lerobot.policy_container check-import
+      kind: container-smoke
+      module: npa.smoke.test_lerobot_policy_functional
+      command: python -m npa.smoke.test_lerobot_policy_functional
+      serverless_gpu: h200
       gpu: optional
-      timeout_seconds: 300
+      timeout_seconds: 900
       status: gpu-gated
 
   lerobot-vlm-rl:
@@ -140,10 +142,12 @@ containers:
       external_fetch: [pypi]
       notes: Build asserts parse_vlm_signal_batch import; no open ports.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workbench.lerobot.policy_container vlm-signal-step --help
-      gpu: optional
-      timeout_seconds: 120
+      kind: container-smoke
+      module: npa.smoke.test_lerobot_vlm_rl_functional
+      command: python -m npa.smoke.test_lerobot_vlm_rl_functional
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: 1800
       status: gpu-gated
 
   genesis:
@@ -243,11 +247,12 @@ containers:
         supported-tools (2.5.0). Golden eval proves the CLI/transfer contract
         loads; a full eval needs the published image on a GPU host.
     golden_eval:
-      kind: build-import
-      command: python -c "import npa.workbench.cosmos2"
+      kind: container-smoke
+      module: npa.smoke.test_cosmos2_transfer_functional
+      command: python -m npa.smoke.test_cosmos2_transfer_functional
       serverless_gpu: h100
       gpu: required
-      timeout_seconds: 120
+      timeout_seconds: 300
       status: gpu-gated
 
   cosmos3-reason:
@@ -267,8 +272,9 @@ containers:
         B300/CUDA13 family currently blocked-on-upstream; inherits base-image
         posture.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real_loop inner-loop --help
+      kind: container-smoke
+      module: npa.smoke.test_cosmos3_reason_functional
+      command: python -m npa.smoke.test_cosmos3_reason_functional
       serverless_gpu: b300
       gpu: optional
       timeout_seconds: 120
@@ -315,8 +321,9 @@ containers:
         CPU-only preprocess image; clones a pinned GR00T-WholeBodyControl ref at
         build (auto-fetch disabled at runtime).
     golden_eval:
-      kind: build-import
-      command: python -c "import npa.workbench.retargeting"
+      kind: container-smoke
+      module: npa.smoke.test_retargeting_functional
+      command: python -m npa.smoke.test_retargeting_functional
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -414,10 +421,12 @@ containers:
       external_fetch: [pypi]
       notes: Build py_compiles sim2real_envgen; no open ports.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real_envgen --help
+      kind: container-smoke
+      module: npa.smoke.test_sim2real_envgen_functional
+      command: python -m npa.smoke.test_sim2real_envgen_functional
+      serverless_gpu: h100
       gpu: optional
-      timeout_seconds: 120
+      timeout_seconds: 600
       status: gpu-gated
 
   sim2real-reference-policy:
@@ -435,10 +444,12 @@ containers:
       external_fetch: [pypi]
       notes: Thin label layer over envgen; inherits its posture.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real_envgen policy-contract --help
+      kind: container-smoke
+      module: npa.smoke.test_sim2real_policy_functional
+      command: python -m npa.smoke.test_sim2real_policy_functional
+      serverless_gpu: h100
       gpu: optional
-      timeout_seconds: 120
+      timeout_seconds: 300
       status: gpu-gated
 
   sim2real-eval:
@@ -456,8 +467,10 @@ containers:
       external_fetch: [pypi]
       notes: Build validates FrankaPickPlaceEnv import.
     golden_eval:
-      kind: workflow-smoke
-      command: python -m npa.workflows.sim2real_loop full-loop --help
+      kind: container-smoke
+      module: npa.smoke.test_sim2real_eval_functional
+      command: python -m npa.smoke.test_sim2real_eval_functional
+      serverless_gpu: h100
       gpu: optional
-      timeout_seconds: 120
+      timeout_seconds: 600
       status: gpu-gated

@@ -185,3 +185,94 @@ def run(
         raise typer.Exit(code=124) from exc
     if completed.returncode != 0:
         raise typer.Exit(code=completed.returncode)
+
+
+@app.command("run-all")
+def run_all_cmd(
+    execute: bool = typer.Option(
+        False,
+        "--execute/--dry-run",
+        help="Execute eval commands locally (CPU/workflow smokes only).",
+    ),
+    serverless: bool = typer.Option(
+        False,
+        "--serverless",
+        help="Submit each eval to a Nebius Serverless GPU job.",
+    ),
+    gpu: str = typer.Option("", "--gpu", help="Serverless GPU type override."),
+    timeout: str = typer.Option("40m", "--timeout", help="Serverless job timeout."),
+    parallel: int = typer.Option(
+        1,
+        "--parallel",
+        min=1,
+        help="Max concurrent evals when using --serverless or --execute.",
+    ),
+    include_blocked: bool = typer.Option(
+        False,
+        "--include-blocked",
+        help="Include blocked-on-upstream containers.",
+    ),
+    tools_only: bool = typer.Option(
+        False,
+        "--tools-only",
+        help="Only run CONTAINER_IMAGE_NAMES tools (skip foundation images).",
+    ),
+    json_out: str = typer.Option(
+        "",
+        "--json-out",
+        help="Write the batch summary JSON to this path.",
+    ),
+    containers: list[str] = typer.Argument(
+        None,
+        help="Optional subset of container keys; default is all manifest entries.",
+    ),
+) -> None:
+    """Run golden evals for every container (optionally in parallel)."""
+
+    from pathlib import Path
+
+    from npa.smoke.batch import iter_containers, run_all
+
+    names = iter_containers(
+        include_blocked=include_blocked,
+        include_foundation=not tools_only,
+        tools_only=tools_only,
+    )
+    if containers:
+        wanted = set(containers)
+        names = [name for name in names if name in wanted]
+        missing = sorted(wanted - set(names))
+        if missing:
+            err_console.print(f"[red]unknown or filtered containers: {', '.join(missing)}[/red]")
+            raise typer.Exit(code=2)
+
+    mode = "dry-run"
+    if serverless:
+        mode = "serverless"
+    elif execute:
+        mode = "execute"
+    console.print(
+        f"[cyan]golden-eval run-all[/cyan]: mode={mode} parallel={parallel} count={len(names)}"
+    )
+
+    def _on_progress(result: object) -> None:
+        from npa.smoke.batch import ContainerRunResult
+
+        assert isinstance(result, ContainerRunResult)
+        state = "SKIP" if result.skipped else ("PASS" if result.ok else "FAIL")
+        err_console.print(f"  [{state}] {result.name} ({result.mode})")
+
+    batch = run_all(
+        names,
+        serverless=serverless,
+        execute=execute,
+        gpu=gpu,
+        timeout=timeout,
+        parallel=parallel,
+        on_progress=_on_progress if serverless or execute else None,
+    )
+    if json_out:
+        Path(json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
+    console.print_json(batch.to_json())
+    if not batch.ok:
+        raise typer.Exit(code=1)
