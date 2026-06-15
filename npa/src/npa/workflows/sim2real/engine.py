@@ -3095,6 +3095,7 @@ def run_heldout_eval_component_from_s3(
             robot_preset=robot_preset,
             dest_dir=root / "robot",
             client=client,
+            sim_backend=sim_backend,
         )
         payload = _component_heldout_payload(
             envs,
@@ -3226,6 +3227,7 @@ def _resolve_heldout_robot(
     robot_preset: str,
     dest_dir: Path,
     client: Any,
+    sim_backend: str = DEFAULT_SIM_BACKEND,
 ) -> Any:
     """Download/synthesize and resolve a RobotSpec for the held-out rollout.
 
@@ -3264,6 +3266,10 @@ def _resolve_heldout_robot(
         )
         if spec is None:
             return None
+    backend = str(sim_backend or DEFAULT_SIM_BACKEND).strip().lower()
+    if backend == SIM_BACKEND_ISAAC and spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_MJCF:
+        return None
+    spec = robot_assets.adapt_robot_spec_for_sim_backend(spec, sim_backend)
     robot_assets.resolve_robot_asset(spec, dest_dir=dest_dir, client=client)
     return spec
 

@@ -103,6 +103,28 @@ def test_parse_robot_spec_preset_with_uri_override() -> None:
     assert spec.ee_link == "tool0"
     assert spec.n_arm_joints == 6
     assert spec.robot_uri.endswith("ur5e.urdf")
+    assert spec.robot_source == ra.ROBOT_SOURCE_BYO_URDF
+
+
+def test_parse_robot_spec_preset_with_mjcf_uri_infers_byo_mjcf() -> None:
+    doc = {
+        "preset": "ur5e",
+        "robot_uri": "s3://bucket/robots/ur5e/ur5e.xml",
+    }
+    spec = ra.parse_robot_spec(doc)
+    assert spec.robot_source == ra.ROBOT_SOURCE_BYO_MJCF
+    assert spec.robot_uri.endswith("ur5e.xml")
+
+
+def test_adapt_robot_spec_for_isaac_swaps_mjcf_to_urdf() -> None:
+    spec = ra.parse_robot_spec(
+        {"preset": "ur5e", "robot_uri": "s3://bucket/robots/ur5e/ur5e.xml"}
+    )
+    adapted = ra.adapt_robot_spec_for_sim_backend(spec, "isaac")
+    assert adapted.robot_source == ra.ROBOT_SOURCE_BYO_URDF
+    assert adapted.robot_uri.endswith("ur5e.urdf")
+    unchanged = ra.adapt_robot_spec_for_sim_backend(spec, "genesis")
+    assert unchanged.robot_source == ra.ROBOT_SOURCE_BYO_MJCF
 
 
 @pytest.mark.parametrize(

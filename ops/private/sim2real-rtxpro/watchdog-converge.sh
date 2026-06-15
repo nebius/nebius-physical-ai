@@ -34,9 +34,13 @@ kick_converge_in_tmux() {
   if ! command -v tmux >/dev/null; then
     return 1
   fi
-  tmux send-keys -t "${CONVERGE_SESSION}" C-c 2>/dev/null || true
+  local target="${CONVERGE_SESSION}:converge"
+  if ! tmux list-windows -t "${CONVERGE_SESSION}" -F '#{window_name}' 2>/dev/null | grep -qx converge; then
+    target="${CONVERGE_SESSION}"
+  fi
+  tmux send-keys -t "${target}" C-c 2>/dev/null || true
   sleep 2
-  tmux send-keys -t "${CONVERGE_SESSION}" \
+  tmux send-keys -t "${target}" \
     "cd \"${ROOT}\" && bash \"${SCRIPT_DIR}/converge-until-success.sh\" 2>&1 | tee -a \"${STATE_DIR}/tmux-launch.log\"" Enter
 }
 

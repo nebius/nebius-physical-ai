@@ -77,11 +77,35 @@ log() {
 }
 
 sync_repo() {
-  log "git fetch origin ${BRANCH}"
-  git -C "${ROOT}" fetch origin "${BRANCH}" 2>&1 | tee -a "${LOG}"
-  git -C "${ROOT}" checkout "${BRANCH}" 2>&1 | tee -a "${LOG}" || true
-  git -C "${ROOT}" reset --hard "origin/${BRANCH}" 2>&1 | tee -a "${LOG}"
-  log "HEAD $(git -C "${ROOT}" log -1 --oneline)"
+  bash "${SCRIPT_DIR}/converge-autofix.sh" sync 2>&1 | tee -a "${LOG}"
+}
+
+write_patch_request_and_autofix() {
+  local run_id="$1"
+  harvest_failure_logs "${run_id}"
+  apply_autofix "${run_id}"
+  if [[ "${CONVERGE_WAIT_FOR_PATCH:-0}" == "1" && -f "${STATE_DIR}/patch-request.md" ]]; then
+    local wait_s="${CONVERGE_WAIT_FOR_PATCH_S:-600}"
+    local deadline=$((SECONDS + wait_s))
+    log "CONVERGE_WAIT_FOR_PATCH=1 waiting up to ${wait_s}s for Cursor push (patch-request.md)"
+    while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+      if [[ -f "${STATE_DIR}/patch-applied" ]]; then
+        log "patch-applied marker seen — continuing"
+        rm -f "${STATE_DIR}/patch-applied"
+        break
+      fi
+      git -C "${ROOT}" fetch origin "${BRANCH}" 2>/dev/null || true
+      local remote_head local_head
+      remote_head="$(git -C "${ROOT}" rev-parse "origin/${BRANCH}" 2>/dev/null || echo "")"
+      local_head="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || echo "")"
+      if [[ -n "${remote_head}" && "${remote_head}" != "${local_head}" ]]; then
+        log "origin/${BRANCH} advanced — pulling patch"
+        bash "${SCRIPT_DIR}/converge-autofix.sh" sync 2>&1 | tee -a "${LOG}" || true
+        break
+      fi
+      sleep 15
+    done
+  fi
 }
 
 s3_report_ok() {
@@ -212,8 +236,7 @@ run_attempt_impl() {
 
   log "FAIL run_id=${RUN_ID} (no sim2real-report.json on S3)"
   kubectl --context "${KUBECONTEXT:-${_npa_cfg[3]:-}}" logs "job/${job}" --tail=80 2>&1 | tee -a "${LOG}" || true
-  harvest_failure_logs "${RUN_ID}"
-  apply_autofix "${RUN_ID}"
+  write_patch_request_and_autofix "${RUN_ID}"
   cleanup_failed_run "${RUN_ID}"
   if [ "${CONVERGE_S3_CLEANUP:-1}" = "1" ]; then
     s3_delete_run_prefix "${RUN_ID}" 2>&1 | tee -a "${LOG}" || true
