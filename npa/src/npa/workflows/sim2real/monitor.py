@@ -92,11 +92,8 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
     _StageMonitorSpec(
         "stage_06_tokens",
         (
-            _ArtifactRule(
-                ("envs/train/envs.jsonl", "envs/heldout/envs.jsonl"),
-                "file",
-                match="all",
-            ),
+            _ArtifactRule(("envs/train/envs.jsonl",), "file"),
+            _ArtifactRule(("envs/heldout/envs.jsonl",), "file"),
             _ArtifactRule(("tokens/manifest.json",), "file"),
             _ArtifactRule(("envs/manifest/split-manifest.json",), "file"),
             _ArtifactRule(("envs/split-manifest.json",), "file"),
