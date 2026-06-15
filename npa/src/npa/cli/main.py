@@ -65,9 +65,10 @@ RECOMMENDED_BUCKET_SIZE_GB = 50
 _SETUP_GUIDANCE = """Credential setup
 
 Run `npa configure` in a terminal for interactive setup (use
-`npa configure --interactive` when stdin is not a TTY). The flow bootstraps a
-Nebius CLI profile when needed, then with an authenticated profile auto-creates
-your S3 bucket and access key, so
+`npa configure --interactive` when stdin is not a TTY). The flow uses the
+installed Nebius CLI binary internally (you do not run `nebius profile create`
+manually), bootstraps a profile when needed, then with an authenticated profile
+auto-creates your S3 bucket and access key, so
 you only supply tenant/project/region (pre-filled from the profile) plus the
 Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
@@ -142,6 +143,42 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
     return getattr(result, "returncode", 1) == 0
 
 
+def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> list[str]:
+    """Return local Nebius CLI profile names, or [] when listing is unavailable."""
+
+    if not shutil.which("nebius"):
+        return []
+    try:
+        result = runner(
+            ["nebius", "profile", "list"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if getattr(result, "returncode", 1) != 0:
+        return []
+    stdout = getattr(result, "stdout", "") or ""
+    profiles: list[str] = []
+    for line in stdout.splitlines():
+        name = line.strip().split(maxsplit=1)[0] if line.strip() else ""
+        if name:
+            profiles.append(name)
+    return profiles
+
+
+def _region_from_registry_host(registry: str) -> str:
+    """Best-effort region from a container registry host such as cr.eu-north1.nebius.cloud."""
+
+    host = (registry or "").split("/", 1)[0].strip()
+    parts = host.split(".")
+    if len(parts) >= 4 and parts[0] == "cr" and parts[2] == "nebius":
+        return parts[1]
+    return ""
+
+
 def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
     """Run the interactive `nebius profile create` flow."""
 
@@ -160,17 +197,26 @@ def _ensure_nebius_profile() -> None:
         return
     if not shutil.which("nebius"):
         typer.echo(
-            "Nebius CLI not found. Install it from https://docs.nebius.com/cli/install, "
-            "then re-run `npa configure` to create a local profile."
+            "Nebius CLI not found. Install the binary from "
+            "https://docs.nebius.com/cli/install (you do not need to run "
+            "`nebius profile create` manually), then re-run `npa configure`."
         )
         return
-    if not typer.confirm(
-        "No authenticated Nebius CLI profile found. Create one now?",
-        default=True,
-    ):
+    existing_profiles = _list_nebius_profiles()
+    if existing_profiles:
+        typer.echo(
+            "Nebius CLI profiles exist but `nebius iam get-access-token` failed. "
+            "Try `nebius profile activate <profile>` or recreate the active profile."
+        )
+        create_prompt = "Create a new Nebius CLI profile now?"
+        create_default = False
+    else:
+        create_prompt = "No authenticated Nebius CLI profile found. Create one now?"
+        create_default = True
+    if not typer.confirm(create_prompt, default=create_default):
         typer.echo(
             "Skipped Nebius profile creation. Re-run `npa configure` when ready "
-            "to create a profile."
+            "to create or refresh a profile."
         )
         return
     if _create_nebius_profile() and _nebius_profile_ready():
@@ -301,14 +347,17 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         ).strip()
 
-    project_id = ask("Nebius project id", default=nebius_client.current_project_id())
-    tenant_id = ask("Nebius tenant id", default=nebius_client.current_tenant_id())
-    region = ask("Region", default=DEFAULT_REGION)
-    registry = ask(
-        "Container registry",
-        default=nebius_client.discover_container_registry(project_id)
-        or DEFAULT_CONTAINER_REGISTRY,
+    project_default = nebius_client.current_project_id()
+    tenant_default = nebius_client.current_tenant_id()
+    project_id = ask("Nebius project id", default=project_default)
+    tenant_id = ask("Nebius tenant id", default=tenant_default)
+    registry_default = (
+        nebius_client.discover_container_registry(project_id or project_default)
+        or DEFAULT_CONTAINER_REGISTRY
     )
+    region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
+    region = ask("Region", default=region_default)
+    registry = ask("Container registry", default=registry_default)
 
     storage: dict[str, str] | None = None
     if provision and project_id and tenant_id:

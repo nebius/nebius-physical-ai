@@ -386,6 +386,7 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     readiness = iter([False, True])
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
     created: list[bool] = []
 
     def fake_create(**_):
@@ -426,6 +427,112 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
     assert "Nebius CLI profile detected" in result.output
 
 
+def test_configure_existing_profile_prefills_and_writes_config(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: True)
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
+    _stub_nebius_defaults(
+        monkeypatch,
+        project="project-from-profile",
+        tenant="tenant-from-profile",
+        registry="cr.eu-west1.nebius.cloud/reg-abc",
+    )
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AKIAEXISTING",
+            "nebius_secret_key": "existing-secret",
+            "s3_bucket": "existing-bucket",
+            "s3_endpoint": "https://storage.eu-west1.nebius.cloud",
+        },
+    )
+
+    answers = "\n".join(
+        [
+            "",                  # project id (accept profile default)
+            "",                  # tenant id (accept profile default)
+            "",                  # region (accept eu-west1 from registry)
+            "",                  # registry (accept discovered)
+            "",                  # bucket name (accept suggested)
+            "hf_from_profile",   # HF token
+            "",                  # Token Factory API key (skip)
+            "",                  # NGC API key (skip)
+        ]
+    ) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Nebius CLI profile detected" in result.output
+    config = yaml.safe_load(config_path.read_text())
+    assert config["projects"]["eu-west1"]["project_id"] == "project-from-profile"
+    assert config["projects"]["eu-west1"]["tenant_id"] == "tenant-from-profile"
+    assert config["projects"]["eu-west1"]["region"] == "eu-west1"
+
+
+def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: ["agent-sa"])
+    monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "n\n" + "\n".join([""] * 10) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "profiles exist but" in result.output
+    assert "nebius profile activate" in result.output
+    assert "Skipped Nebius profile creation" in result.output
+
+
+def test_list_nebius_profiles_parses_profile_names(monkeypatch) -> None:
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+
+    class _Result:
+        returncode = 0
+        stdout = "agent-sa [default]\nagent-service\n"
+
+    def fake_runner(cmd, **kwargs):
+        assert cmd == ["nebius", "profile", "list"]
+        return _Result()
+
+    assert cli_main._list_nebius_profiles(runner=fake_runner) == [
+        "agent-sa",
+        "agent-service",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("registry", "expected"),
+    [
+        ("cr.eu-north1.nebius.cloud/reg-1", "eu-north1"),
+        ("cr.eu-west1.nebius.cloud/reg-1", "eu-west1"),
+        ("", ""),
+        ("cr.invalid", ""),
+    ],
+)
+def test_region_from_registry_host(registry: str, expected: str) -> None:
+    assert cli_main._region_from_registry_host(registry) == expected
+
+
 def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
@@ -434,6 +541,7 @@ def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
 
     def fail_create(**_):
         raise AssertionError("must not create a profile when the user declines")
@@ -458,6 +566,7 @@ def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) ->
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     readiness = iter([False, False])
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
     monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: True)
     _stub_nebius_defaults(monkeypatch)
 
@@ -477,6 +586,7 @@ def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
     monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
     _stub_nebius_defaults(monkeypatch)
 
@@ -504,6 +614,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     readiness = iter([False, True])
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: next(readiness))
+    monkeypatch.setattr(cli_main, "_list_nebius_profiles", lambda **_: [])
     created: list[bool] = []
 
     def fake_create(**_):

@@ -28,9 +28,9 @@ the package overview in [npa/README.md](../npa/README.md).
 - macOS or Linux. Windows is not currently tested.
 - A Nebius AI Cloud account with billing enabled. Start with the Nebius signup
   guide: <https://docs.nebius.com/signup-billing/sign-up>.
-- The Nebius AI Cloud CLI. Install and configure it:
-  <https://docs.nebius.com/cli/install> and
-  <https://docs.nebius.com/cli/configure>.
+- The Nebius AI Cloud CLI binary on `PATH`. Install it from
+  <https://docs.nebius.com/cli/install>; `npa configure` creates or reuses a
+  local profile for you (no manual `nebius profile create` step).
 - Terraform on `PATH` for later managed `deploy` and `--destroy` commands.
 - An SSH public key for later managed VM or BYOVM workbench commands. The
   bundled Terraform defaults to `~/.ssh/id_ed25519.pub`; pass
@@ -128,13 +128,19 @@ chmod 600 ~/.npa/credentials.yaml
 Nebius account authentication is handled by the `nebius` CLI profile, not by a
 long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
-Run interactive setup in a terminal. `npa configure` creates a Nebius CLI
-profile when none exists, then writes `~/.npa/credentials.yaml` and
-`~/.npa/config.yaml`:
+Run interactive setup in a terminal. `npa configure` detects an existing
+authenticated Nebius CLI profile (via `nebius iam get-access-token`), pre-fills
+project and tenant from that profile when available, and only runs profile
+creation when none is authenticated. It then writes `~/.npa/credentials.yaml` and
+`~/.npa/config.yaml` (re-run anytime to refresh NPA files from the active
+profile):
 
 ```bash
 npa configure
 ```
+
+You do not need to run `nebius profile create` manually; the Nebius CLI binary
+must still be installed because `npa` invokes it internally.
 
 In non-interactive environments (CI, pipes), run `npa configure --interactive`
 in a real terminal, or `npa configure --show` for the file layout.
