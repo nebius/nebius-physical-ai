@@ -34,8 +34,13 @@ class SceneSpec:
     simready_catalog: tuple[str, ...] = DEFAULT_SCENE_CATALOG
     byo_mesh_uri: str = DEFAULT_BYO_MESH_URI
     augmented_frames_uri: str = ""
+    scene_spec_uri: str = ""
+    robot_spec_uri: str = ""
+    robot_preset: str = "franka"
+    sim_backend: str = "isaac"
     camera_names: tuple[str, ...] = ("workspace", "wrist")
-    physics_profile: str = "genesis-franka-pick-place"
+    cameras: dict[str, Any] = field(default_factory=dict)
+    physics_profile: str = "isaac-lift-franka"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,6 +115,39 @@ def build_scene_spec(
     )
 
 
+def scene_spec_from_uri(uri: str) -> SceneSpec:
+    """Load a SceneSpec JSON artifact from a local path or s3:// URI."""
+
+    ref = str(uri or "").strip()
+    if not ref:
+        return build_scene_spec()
+    local_path = Path("/tmp/npa-scene-spec.json")
+    if ref.startswith("s3://"):
+        StorageClient.from_environment().download_path(ref, str(local_path))
+    else:
+        local_path = Path(ref)
+    payload = json.loads(local_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise Sim2RealEnvGenError(f"scene spec must be a JSON object: {ref}")
+    catalog = payload.get("simready_catalog") or DEFAULT_SCENE_CATALOG
+    camera_names = payload.get("camera_names") or ("workspace", "wrist")
+    notes = payload.get("notes") or ()
+    return SceneSpec(
+        schema=str(payload.get("schema") or "npa.sim2real.scene_spec.v1"),
+        simready_catalog=tuple(catalog),
+        byo_mesh_uri=str(payload.get("byo_mesh_uri") or DEFAULT_BYO_MESH_URI),
+        augmented_frames_uri=str(payload.get("augmented_frames_uri") or ""),
+        scene_spec_uri=str(payload.get("scene_spec_uri") or ""),
+        robot_spec_uri=str(payload.get("robot_spec_uri") or ""),
+        robot_preset=str(payload.get("robot_preset") or "franka"),
+        sim_backend=str(payload.get("sim_backend") or "isaac"),
+        camera_names=tuple(camera_names),
+        cameras=dict(payload.get("cameras") or {}),
+        physics_profile=str(payload.get("physics_profile") or "isaac-lift-franka"),
+        notes=tuple(notes),
+    )
+
+
 def generate_raw_envs(config: EnvGenConfig) -> list[dict[str, Any]]:
     """Generate deterministic raw env specs for one shard."""
 
@@ -129,10 +167,25 @@ def generate_raw_envs(config: EnvGenConfig) -> list[dict[str, Any]]:
                 "scene": {
                     "simready_asset": catalog,
                     "byo_mesh_uri": config.scene_spec.byo_mesh_uri,
+                    "scene_spec_uri": config.scene_spec.scene_spec_uri,
                     "augmented_frame_uri": _augment_ref(config.scene_spec.augmented_frames_uri, index),
                 },
+                "embodiment": {
+                    "robot_preset": config.scene_spec.robot_preset,
+                    "robot_spec_uri": config.scene_spec.robot_spec_uri,
+                    "sim_backend": config.scene_spec.sim_backend,
+                },
+                "cameras": config.scene_spec.cameras
+                or {
+                    name: {
+                        "uri": f"{config.raw_uri}camera/{env_id}/{name}.png",
+                        "shape": [480, 640, 3],
+                        "dtype": "uint8",
+                    }
+                    for name in config.scene_spec.camera_names
+                },
                 "physics": {
-                    "engine": "genesis",
+                    "engine": config.scene_spec.sim_backend,
                     "profile": config.scene_spec.physics_profile,
                     "friction": round(rng.uniform(0.45, 1.25), 5),
                     "mass_scale": round(rng.uniform(0.85, 1.15), 5),
@@ -227,6 +280,15 @@ def write_split_manifest(config: EnvGenConfig, output_dir: Path) -> dict[str, An
     }
 
 
+def _policy_action_amplitude() -> float:
+    """Return action delta scale for the configured policy image variant."""
+
+    variant = os.environ.get("NPA_SIM2REAL_POLICY_VARIANT", "reference").strip().lower()
+    if variant in {"explore", "alt", "aggressive"}:
+        return 0.085
+    return 0.025
+
+
 def write_action_conditioned_envs(
     config: EnvGenConfig,
     output_dir: Path,
@@ -251,6 +313,8 @@ def write_action_conditioned_envs(
         train_path = output_dir / "split" / "train-envs.jsonl"
         input_train_uri = split["uploaded_train"]
     output_actions_uri = actions_uri.rstrip("/") + "/" if actions_uri else config.actions_uri
+    amplitude = _policy_action_amplitude()
+    variant = os.environ.get("NPA_SIM2REAL_POLICY_VARIANT", "reference").strip().lower()
     conditioned: list[dict[str, Any]] = []
     for env in _read_jsonl(train_path)[:limit]:
         seed = _stable_int(f"{config.seed}:{env['env_id']}:{policy_image}")
@@ -259,10 +323,11 @@ def write_action_conditioned_envs(
         env["actions"] = {
             "schema": "npa.sim2real.reference_actions.v1",
             "policy_image": policy_image,
+            "policy_variant": variant,
             "action_space": "cartesian_delta_xyz_gripper",
             "timesteps": 16,
             "values": [
-                [round(rng.uniform(-0.025, 0.025), 6) for _ in range(3)]
+                [round(rng.uniform(-amplitude, amplitude), 6) for _ in range(3)]
                 + [round(rng.uniform(0.0, 1.0), 6)]
                 for _ in range(16)
             ],
@@ -331,9 +396,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(build_policy_image_contract(train_envs_uri=args.train_envs_uri, output_uri=args.actions_uri, default_policy_image=args.policy_image), indent=2, sort_keys=True))
         return 0
 
-    scene = build_scene_spec(
-        byo_mesh_uri=args.byo_mesh_uri,
-        augmented_frames_uri=args.augmented_frames_uri,
+    scene = (
+        scene_spec_from_uri(args.scene_spec_uri)
+        if getattr(args, "scene_spec_uri", "").strip()
+        else build_scene_spec(
+            byo_mesh_uri=args.byo_mesh_uri,
+            augmented_frames_uri=args.augmented_frames_uri,
+        )
     )
     config = EnvGenConfig(
         run_id=args.run_id,
@@ -373,6 +442,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--byo-mesh-uri", default=DEFAULT_BYO_MESH_URI)
     parser.add_argument("--augmented-frames-uri", default="")
+    parser.add_argument("--scene-spec-uri", default=os.environ.get("NPA_SIM2REAL_SCENE_SPEC_URI", ""))
     parser.add_argument("--output-dir", default="/tmp/npa-sim2real-envgen")
 
 

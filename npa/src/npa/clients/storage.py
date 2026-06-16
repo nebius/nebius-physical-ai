@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 
 class StorageError(Exception):
@@ -144,6 +145,23 @@ class StorageClient:
         """Download an S3 object or prefix to a local path. Returns local path."""
         bucket, prefix = _parse_bucket_uri(bucket_uri)
         dest = Path(local_path)
+
+        # Prefer a direct object fetch for file keys. Listing can lag briefly after
+        # sibling jobs upload their result JSON.
+        if prefix and not prefix.endswith("/"):
+            try:
+                self._s3.head_object(Bucket=bucket, Key=prefix)
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code not in {"404", "NoSuchKey", "NotFound", "403"}:
+                    raise
+            else:
+                target = (
+                    dest / Path(prefix).name if dest.exists() and dest.is_dir() else dest
+                )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self._s3.download_file(bucket, prefix, str(target))
+                return str(target)
 
         paginator = self._s3.get_paginator("list_objects_v2")
         pages = paginator.paginate(Bucket=bucket, Prefix=prefix)

@@ -70,14 +70,14 @@ installed Nebius CLI binary internally (profile setup stays inside
 `npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
 when needed, then with an authenticated profile
 auto-creates your S3 bucket and access key, so
-you only supply tenant/project/region (pre-filled from the profile) plus the
-Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
+you only supply tenant/project/region (pre-filled from the profile) plus optional
+Hugging Face, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
-  # Nebius Token Factory API key (OpenAI-compatible hosted inference).
+  # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys.
   NEBIUS_API_KEY: nebius_REPLACE_ME
 ngc:
@@ -388,7 +388,9 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         }
 
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
-    nebius_api_key = ask("Nebius Token Factory API key (NEBIUS_API_KEY)", secret=True)
+    nebius_api_key = ask(
+        "Nebius Token Factory API key (NEBIUS_API_KEY, optional)", secret=True
+    )
     ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
 
     credentials_path = write_credentials_file(

@@ -10,8 +10,13 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_COSMOS3_REASON_MODEL=nvidia/Cosmos-Predict2.5-2B \
     NPA_COSMOS3_TRANSFER_MODEL=nvidia/Cosmos-Transfer2.5-2B \
     NPA_COSMOS_GUARDRAIL_MODEL=nvidia/Cosmos-Guardrail1 \
-    NPA_COSMOS_REASON_MODEL_ID=nvidia/Cosmos-Reason1-7B \
-    NPA_COSMOS_REASON_CACHE=/models/cosmos-reason1 \
+    NPA_COSMOS_REASON2_MODEL_ID=nvidia/Cosmos-Reason2-8B \
+    NPA_COSMOS_REASON3_MODEL_ID=nvidia/Cosmos-Reason2-2B \
+    NPA_COSMOS_REASON_MODEL_ID=nvidia/Cosmos-Reason2-8B \
+    NPA_COSMOS_REASON2_CACHE=/tmp/hf_home/cosmos-reason2 \
+    NPA_COSMOS_REASON3_CACHE=/tmp/hf_home/cosmos-reason2-2b \
+    NPA_COSMOS_REASON_CACHE=/tmp/hf_home/cosmos-reason2 \
+    HF_HOME=/tmp/hf_home \
     PYTHONPATH=/opt/npa/src:$PYTHONPATH
 
 WORKDIR /workspace
@@ -23,7 +28,7 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 USER root
 
-RUN mkdir -p /models/cosmos-reason1 \
+RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && python -m pip install tomli \
     && python -m pip install \
       "accelerate>=0.33,<2" \
@@ -33,7 +38,7 @@ RUN mkdir -p /models/cosmos-reason1 \
       "transformers>=4.51,<5" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
-    && chown -R ubuntu:ubuntu /workspace /models/cosmos-reason1 /opt/npa/src /opt/npa/pyproject.toml
+    && chown -R ubuntu:ubuntu /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
 
 USER ubuntu
 

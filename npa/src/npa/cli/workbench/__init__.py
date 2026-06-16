@@ -23,6 +23,7 @@ from npa.cli.workbench.token_factory import app as token_factory_app
 from npa.cli.workbench.vlm_eval import app as vlm_eval_app
 from npa.cli.workbench.workflow import app as workflow_app
 from npa.cli.workbench.health import app as health_app
+from npa.cli.workbench.sim2real import app as sim2real_app
 
 app = typer.Typer(
     name="workbench",
@@ -56,6 +57,7 @@ app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(token_factory_app, name="token-factory")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(health_app, name="health")
+app.add_typer(sim2real_app, name="sim2real", hidden=True)
 app.add_typer(golden_eval_app, name="golden-eval")
 # Backward-compatible S3 bridge; not advertised in workbench --help.
 app.add_typer(data_app, name="data", hidden=True)

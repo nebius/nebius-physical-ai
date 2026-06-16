@@ -38,6 +38,7 @@ CONTAINER_IMAGE_NAMES = {
     "sim2real-reference-policy": "npa-sim2real-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "sim2real-eval": "npa-sim2real-eval",
+    "sim2real-rerun-viewer": "npa-sim2real-rerun-viewer",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
@@ -58,6 +59,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "sim2real-reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
     "sim2real-eval": "0.1.2-genuine-sm120",
+    "sim2real-rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",

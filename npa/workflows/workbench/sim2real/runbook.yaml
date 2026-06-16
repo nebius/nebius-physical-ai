@@ -4,6 +4,62 @@
 # read and run without npa in the loop. The SDK (sim2real.run) and
 # `npa workbench workflow submit` wrap the same workflow; they do not gate it.
 #
+# ---------------------------------------------------------------------------
+# Trigger bucket & S3-compatible storage (operator checklist)
+# ---------------------------------------------------------------------------
+# Stage 1 reads a LeRobot dataset from a trigger prefix under your object store.
+# The same bucket also holds run artifacts (sim2real-b/<run-id>/…).
+#
+# | What | Runbook env (materialized) | Operator shell | npa configure / ~/.npa |
+# | --- | --- | --- | --- |
+# | Artifact + trigger parent bucket | NPA_SIM2REAL_BUCKET | S3_BUCKET (alias) | storage.bucket in ~/.npa/config.yaml |
+# | S3-compatible endpoint | AWS_ENDPOINT_URL, S3_ENDPOINT_URL | AWS_ENDPOINT_URL | storage.endpoint_url in config.yaml |
+# | LeRobot trigger prefix (required) | NPA_SIM2REAL_TRIGGER_DATASET_URI | TRIGGER_DATASET_URI (alias) | storage.sim2real_stock_trigger_uri (seed path) |
+# | Source dataset id | NPA_SIM2REAL_TRIGGER_DATASET_ID | TRIGGER_DATASET_ID (alias) | — |
+# | S3 access keys (cluster Jobs) | via secretRef npa-storage-credentials | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY | ~/.npa/credentials.yaml storage.aws_* |
+#
+# Trigger path shape (no s3:// on bucket-only vars):
+#   s3://<your-bucket>/sim2real-triggers/<batch-id>/lerobot-pusht/
+#
+# External object-store bucket (GCS S3-compatible API):
+#   storage.bucket: <your-object-store-bucket>
+#   storage.endpoint_url: https://storage.googleapis.com
+#     (or regional, e.g. https://storage.us-central1.rep.googleapis.com)
+#   credentials.yaml: GCS HMAC keys as storage.aws_access_key_id / aws_secret_access_key
+#   operator env: NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/lerobot-pusht/
+#
+# Where to set values:
+#   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
+#   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
+#   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE` or --env-file
+#   4. Direct K8s submit — ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh reads
+#      S3_BUCKET + NPA_SIM2REAL_TRIGGER_DATASET_URI from the environment
+#
+# Seed stock trigger on a new bucket before first submit:
+#   ./ops/private/sim2real-rtxpro/seed-stock-trigger.sh
+# Then set storage.sim2real_stock_trigger_uri to the destination prefix and run
+# sync-cluster-storage-secret.sh so cluster pods get AWS_ENDPOINT_URL + keys.
+#
+# ---------------------------------------------------------------------------
+# Configuration reference (operator env, runbook, config.yaml)
+# ---------------------------------------------------------------------------
+# | Concern | Where to set | Example vars |
+# | --- | --- | --- |
+# | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | ASSETS_URI, SCENE_SPEC_URI, CAMERAS_URI, NPA_SIM2REAL_CAMERAS_URI, ROBOT_SPEC_URI, NPA_SIM2REAL_ROBOT_SPEC_URI, ROBOT_PRESET, NPA_SIM2REAL_ROBOT_PRESET |
+# | Artifact bucket vs trigger bucket | config.yaml, operator env, runbook NPA_SIM2REAL_* | NPA_SIM2REAL_BUCKET (alias S3_BUCKET), NPA_SIM2REAL_TRIGGER_DATASET_URI (alias TRIGGER_DATASET_URI), storage.bucket, storage.sim2real_stock_trigger_uri |
+# | External object-store bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
+# | LeRobot custom/trigger dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default lerobot/pusht |
+# | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, VLM_IMAGE, EVAL_IMAGE, TRAINER_IMAGE, ISAAC_IMAGE, NPA_SIM2REAL_RERUN_IMAGE |
+#
+# Sim assets: Stage 2 reads ASSETS_URI and/or SCENE_SPEC_URI (and optional
+# CAMERAS_URI / ROBOT_SPEC_URI). Leave empty for stock Franka/tabletop smoke.
+# Trigger prefix may differ from artifact prefix on S3-compatible object stores — same bucket or not.
+#
+# Custom images: export registry-qualified refs before submit-k8s-staged-job.sh
+# or workflow submit. Unresolved AUGMENT_IMAGE / POLICY_IMAGE → reference
+# placeholder locally (SEAM tier). Rerun hosted serve defaults to
+# python:3.11-slim bootstrap; set NPA_SIM2REAL_RERUN_IMAGE for npa-sim2real-rerun-viewer.
+#
 # SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
 # `image_id` at submission time. So every value below is a materialized literal,
 # and the `run` block expands env vars at container runtime instead. Operators
@@ -55,15 +111,24 @@ envs:
   ISAAC_IMAGE: ""
   NPA_SIM2REAL_SIM_BACKEND: "isaac"
   NPA_SIM2REAL_ISAAC_TASK: "Isaac-Lift-Cube-Franka-v0"
-  VLM_MODEL: "nvidia/Cosmos-Reason1-7B"
+  # Gated HF weights: accept Cosmos-Reason2-8B, Cosmos-Reason2-2B, and
+  # Cosmos-Transfer2.5-2B on huggingface.co; mount HF_TOKEN via hf-ngc-tokens.
+  VLM_MODEL: "nvidia/Cosmos-Reason2-8B"
+  VLM_REASON2_MODEL: "nvidia/Cosmos-Reason2-8B"
+  VLM_REASON3_MODEL: "nvidia/Cosmos-Reason2-2B"
+  NPA_SIM2REAL_VLM_DUAL_REASON: "1"
   SUCCESS_THRESHOLD: "0.75"
   INNER_ITERATIONS: "2"
   OUTER_ITERATIONS: "1"
+  NPA_ENV_COUNT: "10000"
+  NPA_TRAIN_FRACTION: "0.8"
   INITIAL_QUALITY: "0.38"
   LOOP_OF_LOOPS_ITERATIONS: "1"
-  ROLLOUT_COUNT: "3"
+  ROLLOUT_COUNT: "8"
   STEPS_PER_ROLLOUT: "4"
   HELDOUT_ENV_COUNT: "8"
+  NPA_ENVGEN_SHARD_COUNT: "16"
+  NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS: "16"
   # Advanced defaults (leave unless tuning specific infra/runtime behavior)
   SIGNAL_LOSS_WEIGHT: "1.0"
   LEARNING_RATE: "0.05"
@@ -93,6 +158,10 @@ envs:
   # NPA_SIM2REAL_RERUN: "1" (default) emits reports/sim2real.rrd after the loop;
   # "0" disables it. Degrades to a WARN if rerun-sdk is not installed locally.
   NPA_SIM2REAL_RERUN: "1"
+  # NPA_SIM2REAL_RERUN_SERVE: "1" (default) deploys hosted Rerun on mk8s after
+  # successful S3 upload when NPA_SIM2REAL_RERUN=1; "0" skips auto-serve (manual
+  # npa workbench sim2real rerun serve still available). One shared LB per cluster.
+  NPA_SIM2REAL_RERUN_SERVE: "1"
   NPA_SIM2REAL_K8S_NAMESPACE: "default"
   NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"
   NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
@@ -160,10 +229,15 @@ run: |
     --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
     --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
     --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
-    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason1-7B}"
+    --vlm-model "${VLM_MODEL:-nvidia/Cosmos-Reason2-8B}"
+    --vlm-reason2-model "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
+    --vlm-reason3-model "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
+    --vlm-dual-reason
     --threshold "${SUCCESS_THRESHOLD:-0.75}"
     --inner-iterations "${INNER_ITERATIONS:-2}"
     --outer-iterations "${OUTER_ITERATIONS:-1}"
+    --env-count "${NPA_ENV_COUNT:-10000}"
+    --train-fraction "${NPA_TRAIN_FRACTION:-0.8}"
     --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}"
     --rollout-count "${ROLLOUT_COUNT:-3}"
     --steps-per-rollout "${STEPS_PER_ROLLOUT:-4}"
@@ -182,34 +256,14 @@ run: |
     --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}"
     --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
     --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-7200}"
+    --envgen-shard-count "${NPA_ENVGEN_SHARD_COUNT:-16}"
+    --k8s-max-parallel-gpus "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
     --source-repo "${NPA_SOURCE_REPO:-}"
     --source-ref "${NPA_SOURCE_REF:-}"
     --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
   )
 
-  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop preamble "${common_args[@]}"
-  state_json="${output_dir}/state/workflow_state.json"
-  current_quality="$(
-    ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${INITIAL_QUALITY:-0.38}"
-  )"
-
-  total_outer="${OUTER_ITERATIONS:-1}"
-  for outer_iteration in $(seq 1 "${total_outer}"); do
-    ./npa/.venv/bin/python -m npa.workflows.sim2real_loop outer-iteration \
-      "${common_args[@]}" \
-      --outer-iteration "${outer_iteration}" \
-      --initial-quality "${current_quality}"
-    current_quality="$(
-      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print(state.get("current_quality", float(sys.argv[2])))' "${state_json}" "${current_quality}"
-    )"
-    decision="$(
-      ./npa/.venv/bin/python -c 'import json,sys; state=json.load(open(sys.argv[1], encoding="utf-8")); print((state.get("final_decision") or {}).get("decision", ""))' "${state_json}"
-    )"
-    if [ "${decision}" = "promote_checkpoint" ]; then
-      break
-    fi
-  done
-
-  ./npa/.venv/bin/python -m npa.workflows.sim2real_loop finalize \
+  ./npa/.venv/bin/python -m npa.workflows.sim2real run \
     "${common_args[@]}" \
+    --initial-quality "${INITIAL_QUALITY:-0.38}" \
     --upload-artifacts

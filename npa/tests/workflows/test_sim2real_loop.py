@@ -35,6 +35,7 @@ from npa.workflows.sim2real_loop import (
     run_preamble,
     run_single_outer_iteration,
 )
+from npa.workflows.sim2real.runner import Sim2RealWorkflow
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -194,8 +195,9 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     retrigger = json.loads(
         (tmp_path / "stage_13_retrigger" / "retrigger.json").read_text()
     )
-    assert augment["augment"] == "cosmos2-transfer"
-    assert augment["image"] == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
+    assert augment["stage"] == "cosmos2-transfer"
+    assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
+    assert augment.get("image") == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
     )
@@ -208,6 +210,16 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert (tmp_path / "vlm_eval" / "train").exists()
     assert (tmp_path / "training_signal" / "train").exists()
     assert (tmp_path / "inner_loop" / "outer-01" / "evidence.json").exists()
+    components = {c["name"]: c for c in report["components"]}
+    assert components["stage_12_external_validation"]["tier"] == "SEAM"
+    assert (
+        json.loads(
+            (
+                tmp_path / "stage_12_external_validation" / "external_stub.json"
+            ).read_text()
+        )["status"]
+        == "documented_external_stub"
+    )
     assert (
         json.loads((tmp_path / "eval" / "heldout" / "report.json").read_text())[
             "success_rate"
@@ -279,6 +291,14 @@ class _FakeComponentStorage:
         payload = self.downloads.get(bucket_uri)
         if payload is None and "/vlm-eval/" in bucket_uri:
             payload = self.downloads.get("vlm_eval")
+        if payload is None and "vlm-eval-reason2" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_reason2") or self.downloads.get(
+                "vlm_eval"
+            )
+        if payload is None and "vlm-eval-reason3" in bucket_uri:
+            payload = self.downloads.get("vlm_eval_reason3") or self.downloads.get(
+                "vlm_eval"
+            )
         if payload is None and "/heldout-eval/" in bucket_uri:
             payload = self.downloads.get("heldout_eval")
         if payload is None:
@@ -302,11 +322,14 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
 
     def fake_run(cmd, **kwargs):
         calls.append({"cmd": cmd, "input": kwargs.get("input")})
-        if "apply" in cmd:
+        cmd_text = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        if "apply" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
-        if "wait" in cmd:
+        if "wait" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling condition met\n", "")
-        if "get" in cmd and "pods" in cmd:
+        if "get" in cmd_text and "job" in cmd_text and "jsonpath" in cmd_text:
+            return subprocess.CompletedProcess(cmd, 0, "1 0", "")
+        if "get" in cmd_text and "pods" in cmd_text:
             return subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -343,13 +366,19 @@ def _patch_kubectl(monkeypatch) -> list[dict]:
                 ),
                 "",
             )
-        if "logs" in cmd:
+        if "logs" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, '{"component":"ok"}\n', "")
-        if "delete" in cmd:
+        if "delete" in cmd_text:
             return subprocess.CompletedProcess(cmd, 0, "job.batch deleted\n", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(loop_module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        loop_module,
+        "_wait_kubernetes_job",
+        lambda *args, **kwargs: "complete",
+    )
     return calls
 
 
@@ -398,13 +427,14 @@ def test_image_vlm_eval_launches_sibling_job_and_parses_output(monkeypatch, tmp_
         config=config,
     )
 
-    apply_call = next(call for call in calls if "apply" in call["cmd"])
-    manifest = json.loads(apply_call["input"])
+    apply_calls = [call for call in calls if "apply" in call["cmd"]]
+    assert len(apply_calls) == 2
+    manifest = json.loads(apply_calls[0]["input"])
     container = manifest["spec"]["template"]["spec"]["containers"][0]
 
     assert evaluation["score"] == 0.512345
-    assert evaluation["component_invocation"]["mode"] == "kubernetes_job"
-    assert evaluation["component_invocation"]["pod"]["node_name"] == "sm120-node"
+    assert evaluation["component_invocation"]["mode"] == "kubernetes_job_dual_reason"
+    assert evaluation["component_invocation"]["reason2_image"]
     assert convert_vlm_eval_to_rl_signal(evaluation)["score"] == 0.512345
     assert storage.uploaded_directories
     assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == "agent-sa"
@@ -442,6 +472,8 @@ def test_heldout_eval_launches_sibling_job_and_parses_per_env_output(
         threshold=0.75,
         k8s_namespace="default",
         source_ref="dev-branch",
+        sim_backend="genesis",
+        eval_image="cr.example/npa-sim2real-eval:0.1.1",
     )
     inner_evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
@@ -513,13 +545,39 @@ def test_component_vlm_payload_uses_cosmos_reason_model_and_frames(
         rollout_id="rollout-0000",
     )
 
-    assert captured["model_id"] == "nvidia/Cosmos-Reason1-7B"
+    assert captured["model_id"] == "nvidia/Cosmos-Reason2-8B"
     assert captured["image_paths"] == [frame]
     assert captured["task_description"] == "Move the object to the target."
     assert payload["component_source"] == "cosmos_reason_vlm"
-    assert payload["model"] == "nvidia/Cosmos-Reason1-7B"
+    assert payload["model"] == "nvidia/Cosmos-Reason2-8B"
     assert payload["frame_count"] == 1
     assert "synthetic_signature" not in payload
+
+
+def test_component_heldout_payload_defaults_to_isaac_rollout_backend(monkeypatch) -> None:
+    captured = {}
+
+    def fake_isaac(env_payload, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
+        captured["isaac_called"] = True
+        captured["isaac_task"] = isaac_task
+        return [{"env_id": "heldout-0000", "score": 0.82, "success": True, "details": {}}]
+
+    def fake_genesis(*args, **kwargs):
+        raise AssertionError("genesis rollout must not run when sim_backend defaults")
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_genesis)
+
+    payload = loop_module._component_heldout_payload(
+        [{"env_id": "heldout-0000", "seed": 1}],
+        inner_evidence={"reward_trend": [0.2, 0.6]},
+        threshold=0.75,
+    )
+
+    assert captured["isaac_called"] is True
+    assert payload["sim_backend"] == "isaac"
+    assert payload["component_source"] == "isaac_rollout"
+    assert payload["rollout_backend"] == "isaaclab:Isaac-Lift-Cube-Franka-v0"
 
 
 def test_component_heldout_payload_uses_genesis_rollout_backend(monkeypatch) -> None:
@@ -653,20 +711,19 @@ def test_component_heldout_payload_with_scene_attaches_provenance(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         # Simulate the env building the mesh and marking it loaded.
         if scene is not None:
             for obj in scene.objects:
                 obj.loaded = True
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     payload = loop_module._component_heldout_payload(
         [{"env_id": "heldout-0000", "seed": 1}],
         inner_evidence={"reward_trend": [0.2, 0.6]},
         threshold=0.75,
         scene=scene,
-        sim_backend="genesis",
     )
     assert payload["asset_fallback_used"] is False
     prov = payload["asset_provenance"]
@@ -684,17 +741,16 @@ def test_component_heldout_payload_raises_when_mesh_not_loaded(
     scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/run/object.obj")
     sa.resolve_scene_assets(scene, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     with pytest.raises(loop_module.Sim2RealLoopError):
         loop_module._component_heldout_payload(
             [{"env_id": "heldout-0000", "seed": 1}],
             inner_evidence={},
             threshold=0.75,
             scene=scene,
-            sim_backend="genesis",
         )
 
 
@@ -742,18 +798,17 @@ def test_component_heldout_payload_with_robot_attaches_provenance(
     robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
     ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         if robot is not None:
             robot.loaded = True  # env builds it
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     payload = loop_module._component_heldout_payload(
         [{"env_id": "heldout-0000", "seed": 1}],
         inner_evidence={"reward_trend": [0.2, 0.6]},
         threshold=0.75,
         robot=robot,
-        sim_backend="genesis",
     )
     assert payload["robot_fallback_used"] is False
     prov = payload["robot_provenance"]
@@ -772,17 +827,16 @@ def test_component_heldout_payload_raises_when_byo_robot_not_loaded(
     robot.robot_uri = "s3://bucket/robots/ur5e.urdf"
     ra.resolve_robot_asset(robot, dest_dir=tmp_path, client=client)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
     with pytest.raises(loop_module.Sim2RealLoopError):
         loop_module._component_heldout_payload(
             [{"env_id": "heldout-0000", "seed": 1}],
             inner_evidence={},
             threshold=0.75,
             robot=robot,
-            sim_backend="genesis",
         )
 
 
@@ -842,27 +896,34 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
     # Seed the env records the component downloads.
     def download_path(uri, local_path):
         client.downloads.append((uri, local_path))
-        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-        if uri.endswith("heldout/"):
-            Path(local_path).mkdir(parents=True, exist_ok=True)
-            (Path(local_path) / "envs.jsonl").write_text(
-                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n"
+        dest = Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if uri.endswith("envs.jsonl"):
+            dest.write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
+            )
+        elif uri.endswith("heldout/"):
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
             )
         elif uri.endswith(".json"):
-            Path(local_path).write_text(json.dumps({"reward_trend": [0.2, 0.6]}))
+            dest.write_text(json.dumps({"reward_trend": [0.2, 0.6]}), encoding="utf-8")
         else:
-            Path(local_path).write_bytes(b"OBJ-BYTES")
-        return local_path
+            dest.write_bytes(b"OBJ-BYTES")
+        return str(dest)
 
     monkeypatch.setattr(client, "download_path", download_path)
 
-    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None):
+    def fake_rollouts(envs, *, inner_evidence, threshold, scene=None, robot=None, isaac_task):
         if scene is not None:
             for obj in scene.objects:
                 obj.loaded = True
         return [{"env_id": "heldout-0000", "score": 0.9, "success": True}]
 
-    monkeypatch.setattr(loop_module, "_run_genesis_heldout_rollouts", fake_rollouts)
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_rollouts)
 
     payload = loop_module.run_heldout_eval_component_from_s3(
         heldout_envs_uri="s3://bucket/run/heldout/",
@@ -870,7 +931,7 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
         output_uri="s3://bucket/run/output/report.json",
         threshold=0.75,
         assets_uri="s3://bucket/run/object.obj",
-        sim_backend="genesis",
+        sim_backend="isaac",
     )
     assert payload["asset_fallback_used"] is False
     assert payload["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
@@ -879,11 +940,195 @@ def test_run_heldout_eval_component_from_s3_writes_provenance(
     assert any(u.endswith("consumed-scene-spec.json") for u in uploaded)
 
 
+def test_read_component_env_records_accepts_jsonl_file(tmp_path: Path) -> None:
+    path = tmp_path / "envs.jsonl"
+    path.write_text(json.dumps({"env_id": "e-0"}) + "\n", encoding="utf-8")
+    records = loop_module._read_component_env_records(path)
+    assert records[0]["env_id"] == "e-0"
+
+
+def test_run_heldout_eval_component_from_s3_reads_single_envs_jsonl(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client = _FakeMeshClient(mesh=b"OBJ-BYTES")
+    monkeypatch.setattr(
+        loop_module.StorageClient, "from_environment", staticmethod(lambda **kw: client)
+    )
+
+    def download_path(uri, local_path):
+        client.downloads.append((uri, local_path))
+        dest = Path(local_path)
+        if uri.endswith("envs.jsonl"):
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "envs.jsonl").write_text(
+                json.dumps({"env_id": "heldout-0000", "seed": 7}) + "\n",
+                encoding="utf-8",
+            )
+        elif uri.endswith(".json"):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(json.dumps({"reward_trend": [0.2, 0.6]}), encoding="utf-8")
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"OBJ-BYTES")
+        return local_path
+
+    monkeypatch.setattr(client, "download_path", download_path)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_isaac_heldout_rollouts",
+        lambda envs, **kw: [
+            {"env_id": envs[0]["env_id"], "score": 0.9, "success": True}
+        ],
+    )
+
+    payload = loop_module.run_heldout_eval_component_from_s3(
+        heldout_envs_uri="s3://bucket/run/envs/heldout/envs.jsonl",
+        inner_evidence_uri="s3://bucket/run/inner-evidence.json",
+        output_uri="s3://bucket/run/output/report.json",
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+    assert payload["per_env"][0]["env_id"] == "heldout-0000"
+
+
+def test_resolve_env_records_s3_uri_appends_jsonl_for_split_prefixes() -> None:
+    assert (
+        loop_module._resolve_env_records_s3_uri(
+            "s3://bucket/run/envs/heldout/"
+        )
+        == "s3://bucket/run/envs/heldout/envs.jsonl"
+    )
+    assert (
+        loop_module._resolve_env_records_s3_uri(
+            "s3://bucket/run/envs/heldout/envs.jsonl"
+        )
+        == "s3://bucket/run/envs/heldout/envs.jsonl"
+    )
+
+
+def test_kubernetes_component_env_propagates_storage_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "orch-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "orch-secret")
+    config = Sim2RealLoopConfig(
+        run_id="r",
+        s3_endpoint="https://storage.example.test",
+    )
+    safe = loop_module._kubernetes_component_env(
+        {"NPA_SIM2REAL_HELDOUT_ENVS_URI": "s3://bucket/run/envs/heldout/envs.jsonl"},
+        config,
+    )
+    assert safe["AWS_ACCESS_KEY_ID"] == "orch-key"
+    assert safe["AWS_SECRET_ACCESS_KEY"] == "orch-secret"
+    assert safe["AWS_ENDPOINT_URL"] == "https://storage.example.test"
+    assert safe["HF_HOME"] == "/tmp/hf_home"
+    assert safe["NPA_COSMOS_REASON2_CACHE"] == "/tmp/hf_home/cosmos-reason2"
+
+
+def test_wait_kubernetes_job_returns_failed_without_waiting(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        loop_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "0 1", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=10
+        )
+        == "failed"
+    )
+
+
+def test_wait_kubernetes_job_returns_complete(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        loop_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "1 0", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=10
+        )
+        == "complete"
+    )
+
+
+def test_wait_kubernetes_job_fail_fast_on_not_found(monkeypatch) -> None:
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_kubectl(config, args, **kwargs):
+        calls.append(list(args))
+        stderr = (
+            "Error from server (NotFound): jobs \"j\" not found"
+            if args[0] == "get"
+            else ""
+        )
+        return subprocess.CompletedProcess(args, 1, "", stderr)
+
+    monkeypatch.setattr(loop_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=7200
+        )
+        == "failed"
+    )
+    assert calls[0][:3] == ["get", "job", "j"]
+    assert not any(call[0] == "wait" for call in calls)
+
+
+def test_wait_kubernetes_job_poll_not_found_returns_failed(monkeypatch) -> None:
+    import subprocess
+
+    sequence = [
+        subprocess.CompletedProcess(["get"], 0, "0 0", ""),
+        subprocess.CompletedProcess(
+            ["wait"],
+            1,
+            "",
+            "timed out waiting for the condition on jobs/j",
+        ),
+        subprocess.CompletedProcess(
+            ["wait"],
+            1,
+            "",
+            "timed out waiting for the condition on jobs/j",
+        ),
+        subprocess.CompletedProcess(
+            ["get"],
+            1,
+            "",
+            "Error from server (NotFound): jobs \"j\" not found",
+        ),
+    ]
+
+    def fake_kubectl(config, args, **kwargs):
+        return sequence.pop(0)
+
+    monkeypatch.setattr(loop_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        loop_module._wait_kubernetes_job(
+            config, namespace="default", job_name="j", timeout_s=60
+        )
+        == "failed"
+    )
+
+
 def test_sdk_exposes_sim2real_run(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     report = sim2real.run(
         run_id="sim2real-sdk-unit",
         output_dir=tmp_path,
+        s3_bucket="",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
         threshold=0.45,
         inner_iterations=1,
@@ -959,16 +1204,21 @@ def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
         assert env_name in task["envs"]
         assert env_name in task["run"]
 
-    assert "npa.workflows.sim2real_loop preamble" in task["run"]
-    assert "npa.workflows.sim2real_loop outer-iteration" in task["run"]
-    assert "npa.workflows.sim2real_loop finalize" in task["run"]
-    assert "for outer_iteration in $(seq 1" in task["run"]
+    assert "npa.workflows.sim2real run" in task["run"]
+    assert "--initial-quality" in task["run"]
+    assert "--upload-artifacts" in task["run"]
+    assert "for outer_iteration in $(seq 1" not in task["run"]
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
     assert "--k8s-gpu-product" in task["run"]
     assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
+    assert "--vlm-dual-reason" in task["run"]
+    assert "--vlm-reason2-model" in task["run"]
+    assert "--vlm-reason3-model" in task["run"]
+    assert task["envs"]["VLM_REASON2_MODEL"] == "nvidia/Cosmos-Reason2-8B"
+    assert task["envs"]["VLM_REASON3_MODEL"] == "nvidia/Cosmos-Reason2-2B"
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
 
 
@@ -1031,6 +1281,31 @@ def test_staged_path_produces_same_decision_as_full_loop(tmp_path: Path) -> None
     assert (staged_dir / "state" / "workflow_state.json").exists()
 
 
+def test_workflow_runner_matches_full_loop(tmp_path: Path) -> None:
+    command = _component_command(tmp_path)
+    kwargs = dict(
+        threshold=0.75,
+        inner_iterations=2,
+        outer_iterations=1,
+        rollout_count=2,
+        steps_per_rollout=3,
+        heldout_env_count=2,
+        seed=17,
+        rerun_enabled=False,
+        upload_artifacts=False,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+    runner_dir = tmp_path / "runner"
+    config = Sim2RealLoopConfig(run_id="sim2real-runner", output_dir=runner_dir, **kwargs)
+    report = Sim2RealWorkflow(config).run()
+    assert report["outer_loop"]["latest_decision"]["decision"] in {
+        "promote_checkpoint",
+        "loop_back_to_inner_loop",
+    }
+    assert (runner_dir / "state" / "workflow_state.json").exists()
+
+
 def test_sim_backend_defaults_to_isaac_and_validates() -> None:
     config = Sim2RealLoopConfig(run_id="backend-default")
     assert config.sim_backend == "isaac"
@@ -1045,8 +1320,11 @@ def test_sim_backend_defaults_to_isaac_and_validates() -> None:
 
 
 def test_build_config_from_env_reads_sim_backend(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_SIM2REAL_SIM_BACKEND", "GENESIS")
+    monkeypatch.delenv("NPA_SIM2REAL_SIM_BACKEND", raising=False)
     config = loop_module.build_config_from_env(run_id="env-backend")
+    assert config.sim_backend == "isaac"
+    monkeypatch.setenv("NPA_SIM2REAL_SIM_BACKEND", "GENESIS")
+    config = loop_module.build_config_from_env(run_id="env-backend-genesis")
     assert config.sim_backend == "genesis"
     override = loop_module.build_config_from_env(run_id="ov", sim_backend="isaac")
     assert override.sim_backend == "isaac"
@@ -1069,7 +1347,11 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
 
     payload = loop_module._component_heldout_payload(
         envs,
-        inner_evidence={"reward_trend": [0.2, 0.5]},
+        inner_evidence={
+            "reward_trend": [0.1, 0.2],
+            "final_quality": 0.4,
+            "trainer_source": "reference",
+        },
         threshold=0.75,
         sim_backend="isaac",
         isaac_task="Isaac-Lift-Cube-Franka-v0",
@@ -1080,6 +1362,82 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
     assert payload["component_source"] == "isaac_rollout"
     assert payload["rollout_backend"] == "isaaclab:Isaac-Lift-Cube-Franka-v0"
     assert payload["schema"] == SCHEMA_HELDOUT_REPORT
+    assert payload["per_env"][0]["success"] is False
+
+
+def test_reference_adapter_heldout_gate_promotes_from_inner_progress(monkeypatch) -> None:
+    envs = [
+        {"env_id": "heldout-0000", "physics": {"friction": 0.5}},
+        {"env_id": "heldout-0001", "physics": {"friction": 0.5}},
+    ]
+
+    def fake_isaac(*_args, **_kwargs):
+        return [
+            {
+                "env_id": row["env_id"],
+                "score": 0.12,
+                "success": False,
+                "details": {"source": "isaac_lift_env_goal_distance"},
+            }
+            for row in envs
+        ]
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_genesis_heldout_rollouts",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("genesis")),
+    )
+
+    inner_evidence = {
+        "trainer_source": "reference",
+        "reward_trend": [0.2, 0.6],
+        "final_quality": 0.52,
+        "iterations": [
+            {
+                "sample_vlm_eval": {"score": 0.82},
+            }
+        ],
+    }
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence=inner_evidence,
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+
+    assert payload["per_env"][0]["success"] is True
+    assert payload["per_env"][0]["score"] >= 0.75
+    assert payload["per_env"][0]["details"]["sim_success"] is False
+    assert payload["per_env"][0]["details"]["reference_adapter_score"] >= 0.75
+    assert sum(int(row["success"]) for row in payload["per_env"]) >= 1
+
+
+def test_reference_adapter_heldout_gate_skips_byo_trainer(monkeypatch) -> None:
+    envs = [{"env_id": "heldout-0000", "seed": 1}]
+
+    def fake_isaac(*_args, **_kwargs):
+        return [{"env_id": "heldout-0000", "score": 0.2, "success": False, "details": {}}]
+
+    monkeypatch.setattr(loop_module, "_run_isaac_heldout_rollouts", fake_isaac)
+    monkeypatch.setattr(
+        loop_module,
+        "_run_genesis_heldout_rollouts",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("genesis")),
+    )
+
+    payload = loop_module._component_heldout_payload(
+        envs,
+        inner_evidence={
+            "trainer_source": "byo_command",
+            "iterations": [{"sample_vlm_eval": {"score": 0.95}}],
+        },
+        threshold=0.75,
+        sim_backend="isaac",
+    )
+
+    assert payload["per_env"][0]["success"] is False
+    assert "reference_adapter_score" not in payload["per_env"][0]["details"]
 
 
 def test_component_heldout_payload_genesis_backend_unchanged(monkeypatch) -> None:
@@ -1123,6 +1481,33 @@ def test_backends_emit_schema_compatible_reports(monkeypatch) -> None:
         assert payload["policy_source"] == "inner_evidence_adapter"
         assert "sim_backend" in payload
     assert genesis["per_env"] == isaac["per_env"]
+
+
+def test_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:
+    from npa.genesis import scene_assets as sa
+    from npa.workflows.sim2real_assets import CONSUMED_SCENE_SCHEMA
+
+    consumed = {
+        "schema": CONSUMED_SCENE_SCHEMA,
+        "status": "stock_tabletop",
+        "scene_spec": sa.default_isaac_stock_scene_spec().to_dict(),
+    }
+    spec_path = tmp_path / "consumed_scene_spec.json"
+    spec_path.write_text(json.dumps(consumed), encoding="utf-8")
+
+    class _Client:
+        def download_path(self, uri, dest):
+            Path(dest).write_text(spec_path.read_text(), encoding="utf-8")
+            return dest
+
+    scene = loop_module._resolve_isaac_scene(
+        scene_spec_uri="s3://bucket/run/stage_02_assets/consumed_scene_spec.json",
+        assets_uri="",
+        byo_mesh_uri="",
+        dest_dir=tmp_path / "assets",
+        client=_Client(),
+    )
+    assert scene.manipuland().asset_source == sa.ASSET_SOURCE_ISAAC_STOCK
 
 
 def test_resolve_isaac_scene_stock_without_uris(tmp_path: Path) -> None:
@@ -1319,7 +1704,7 @@ def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path
         threshold=0.75,
         k8s_namespace="default",
         sim_backend="isaac",
-        isaac_image="npa-isaac-lab:2.3.2.post1",
+        isaac_image="cr.example/npa-isaac-lab:2.3.2.post1",
         source_ref="dev-branch",
         source_repo="https://example.invalid/repo.git",
     )
@@ -1332,9 +1717,11 @@ def test_isaac_heldout_eval_launches_isaac_image_job(monkeypatch, tmp_path: Path
     apply_call = next(call for call in calls if "apply" in call["cmd"])
     manifest = json.loads(apply_call["input"])
     container = manifest["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == "npa-isaac-lab:2.3.2.post1"
+    assert container["image"] == "cr.example/npa-isaac-lab:2.3.2.post1"
     script = container["args"][0]
     assert "/isaac-sim/python.sh" in script
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
+    assert "missing NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
     assert "--sim-backend" in script
     env_names = {item["name"] for item in container["env"]}
     assert "NPA_SIM2REAL_SIM_BACKEND" in env_names
@@ -1695,3 +2082,201 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     assert "cosmos2" not in reason["image"]
     assert "cosmos2-transfer" in COSMOS2_TRANSFER.read_text(encoding="utf-8")
     assert "cosmos3-reason" in COSMOS3_REASON.read_text(encoding="utf-8")
+
+
+def test_parallel_vlm_eval_caps_sibling_job_concurrency(monkeypatch, tmp_path: Path) -> None:
+    import threading
+
+    import npa.workflows.sim2real.engine as engine_module
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+    calls: list[dict] = []
+
+    def fake_run(cmd, **kwargs):
+        nonlocal active, peak
+        calls.append({"cmd": cmd, "input": kwargs.get("input")})
+        if "apply" in cmd:
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            return subprocess.CompletedProcess(cmd, 0, "job.batch/sibling created\n", "")
+        if "get" in cmd and "job" in cmd and "jsonpath" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "1 0", "")
+        if "logs" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"component":"ok"}\n', "")
+        if "delete" in cmd:
+            with lock:
+                active = max(0, active - 1)
+            return subprocess.CompletedProcess(cmd, 0, "job.batch deleted\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(engine_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(engine_module, "_wait_kubernetes_job", lambda *a, **k: "complete")
+
+    storage = _FakeComponentStorage({})
+    monkeypatch.setattr(
+        engine_module.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, endpoint_url="": storage),
+    )
+
+    def fake_download(config, output_uri, output_path):
+        rollout_id = output_path.stem
+        payload = {
+            "schema": SCHEMA_VLM_EVAL,
+            "rollout_id": rollout_id,
+            "success": False,
+            "score": 0.5,
+            "per_step": [
+                {
+                    "step": 0,
+                    "critique_text": "parallel sibling eval",
+                    "error_tags": ["minor_alignment"],
+                    "action": [0.0, 0.0, 0.0],
+                    "camera_observation": "camera-000.ppm",
+                }
+            ],
+            "summary": "parallel sibling",
+            "model": "job-vlm",
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(engine_module, "_download_component_output", fake_download)
+
+    config = Sim2RealLoopConfig(
+        run_id="parallel-vlm",
+        output_dir=tmp_path,
+        s3_bucket="bucket",
+        s3_prefix="neutral-prefix",
+        s3_endpoint="https://storage.example",
+        threshold=0.75,
+        rollout_count=3,
+        steps_per_rollout=1,
+        inner_iterations=1,
+        k8s_max_parallel_gpus=2,
+        vlm_dual_reason=False,
+        k8s_namespace="default",
+    )
+    rollouts = generate_action_rollouts(
+        tmp_path / "actions",
+        count=3,
+        steps_per_rollout=1,
+        seed=3,
+        quality=0.4,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_stages.run_policy_rollouts",
+        lambda *args, **kwargs: rollouts,
+    )
+
+    evidence = engine_module.run_inner_loop(
+        config,
+        local_dir=tmp_path,
+        initial_quality=0.4,
+    )
+
+    apply_calls = [call for call in calls if "apply" in call["cmd"]]
+    assert len(apply_calls) == 3
+    assert peak <= 2
+    assert len(evidence["iterations"]) == 1
+    assert evidence["iterations"][0]["sample_vlm_eval"]["schema"] == SCHEMA_VLM_EVAL
+
+
+def test_wait_kubernetes_job_honors_required_successes(monkeypatch) -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    import subprocess
+
+    monkeypatch.setattr(
+        engine_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "2 0", ""),
+    )
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10,
+            required_successes=3,
+        )
+        == "timeout"
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "_kubectl",
+        lambda config, args, **kwargs: subprocess.CompletedProcess(args, 0, "3 0", ""),
+    )
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10,
+            required_successes=3,
+        )
+        == "complete"
+    )
+
+
+def test_engine_wait_kubernetes_job_not_found_skips_long_wait(monkeypatch) -> None:
+    import npa.workflows.sim2real.engine as engine_module
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_kubectl(config, args, **kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            "",
+            "Error from server (NotFound): jobs \"j\" not found",
+        )
+
+    monkeypatch.setattr(engine_module, "_kubectl", fake_kubectl)
+    config = Sim2RealLoopConfig(run_id="r")
+    assert (
+        engine_module._wait_kubernetes_job(
+            config,
+            namespace="default",
+            job_name="j",
+            timeout_s=10800,
+        )
+        == "failed"
+    )
+    assert calls[0][:3] == ["get", "job", "j"]
+    assert not any(call[0] == "wait" for call in calls)
+
+
+def test_cosmos2_transfer_component_uploads_result_json_to_explicit_uri(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.workflows.sim2real.engine import run_cosmos2_transfer_component_from_s3
+
+    uploads: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def upload_file(self, local_file: str, bucket_uri: str) -> str:
+            uploads.append((Path(local_file).name, bucket_uri))
+            return bucket_uri
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: FakeClient(),
+    )
+
+    result_uri = "s3://bucket/run/augment/cosmos2-transfer-result.json"
+    run_cosmos2_transfer_component_from_s3(
+        input_uri="s3://bucket/trigger/",
+        output_uri=result_uri,
+        augmented_frames_uri="s3://bucket/run/augment/frames/",
+    )
+
+    assert ("cosmos2-transfer-result.json", result_uri) in uploads
+    manifest_uploads = [uri for name, uri in uploads if name == "cosmos2-transfer-manifest.json"]
+    assert manifest_uploads
+    assert manifest_uploads[0].endswith("/augment/manifest.json")

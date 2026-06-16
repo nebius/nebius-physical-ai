@@ -1,5 +1,11 @@
 # Sim-To-Real Pipeline Runbook
 
+> **Production loop:** For the 13-stage VLM→RL sim-to-real runbook (Isaac held-out,
+> Cosmos augment, envgen, policy K8s jobs), use
+> [../guides/sim2real-workflow.md](../guides/sim2real-workflow.md) and
+> [../guides/sim2real-data-contracts.md](../guides/sim2real-data-contracts.md).
+> This cookbook documents the **legacy** `sim_to_real` SkyPilot YAML path.
+
 This is the customer runbook for the generic sim-to-real workflow. It extends
 the existing cookbook path instead of creating a second overlapping guide.
 

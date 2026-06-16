@@ -34,6 +34,7 @@ from npa.genesis.scene_assets import (
     PRIMITIVE_CYLINDER,
     PRIMITIVE_SPHERE,
     ROLE_MANIPULAND,
+    CameraSpec,
     ObjectSpec,
     SceneSpec,
     SceneSpecError,
@@ -181,6 +182,7 @@ class FrankaPickPlaceEnv:
         self._target_pos: torch.Tensor | None = None
         self._workspace_cam = None
         self._wrist_cam = None
+        self._named_cameras: dict[str, Any] = {}
 
         # Link references (populated after build)
         self._ee_link = None
@@ -264,19 +266,26 @@ class FrankaPickPlaceEnv:
 
         # Cameras (only if needed — rendering slows simulation significantly)
         if self.cfg.enable_cameras:
-            h, w = self.cfg.camera_res
-            self._workspace_cam = self._scene.add_camera(
-                res=(w, h),  # Genesis uses (width, height)
-                pos=(1.0, 0.0, 0.8),
-                lookat=(0.5, 0.0, 0.0),
-                fov=60,
-            )
-            self._wrist_cam = self._scene.add_camera(
-                res=(w, h),
-                pos=(0.4, 0.0, 0.4),
-                lookat=(0.5, 0.0, 0.0),
-                fov=90,
-            )
+            if self.cfg.scene_spec is not None and self.cfg.scene_spec.cameras:
+                self._build_cameras_from_spec(gs, self.cfg.scene_spec)
+            else:
+                h, w = self.cfg.camera_res
+                self._workspace_cam = self._scene.add_camera(
+                    res=(w, h),
+                    pos=(1.0, 0.0, 0.8),
+                    lookat=(0.5, 0.0, 0.0),
+                    fov=60,
+                )
+                self._wrist_cam = self._scene.add_camera(
+                    res=(w, h),
+                    pos=(0.4, 0.0, 0.4),
+                    lookat=(0.5, 0.0, 0.0),
+                    fov=90,
+                )
+                self._named_cameras = {
+                    "workspace": self._workspace_cam,
+                    "wrist": self._wrist_cam,
+                }
 
         # Build scene with parallel environments
         self._scene.build(n_envs=self.n_envs)
@@ -427,6 +436,28 @@ class FrankaPickPlaceEnv:
             raise SceneSpecError("SceneSpec produced no manipuland entity")
         self.scene_provenance = spec.provenance_block()
         return manipuland_entity
+
+    def _build_cameras_from_spec(self, gs: Any, spec: SceneSpec) -> None:
+        self._named_cameras = {}
+        for name, cam in spec.cameras.items():
+            width, height = cam.genesis_res()
+            entity = self._scene.add_camera(
+                res=(width, height),
+                pos=tuple(cam.pos),
+                lookat=tuple(cam.look_at),
+                fov=float(cam.fov),
+            )
+            self._named_cameras[name] = entity
+        self._workspace_cam = self._named_cameras.get("workspace")
+        self._wrist_cam = self._named_cameras.get("wrist")
+
+    def _render_camera_stack(self, camera: Any) -> np.ndarray:
+        frames: list[np.ndarray] = []
+        for env_idx in range(self.cfg.n_envs):
+            camera._env_idx = env_idx
+            rgb, _, _, _ = camera.render()
+            frames.append(np.asarray(rgb))
+        return np.stack(frames)
 
     def _add_object_entity(self, gs: Any, obj: ObjectSpec) -> Any:
         """Build one Genesis entity from an ObjectSpec, honoring source/pose."""
@@ -669,22 +700,28 @@ class FrankaPickPlaceEnv:
                 "Cameras not enabled. Create env with enable_cameras=True."
             )
 
-        ws_list = []
-        wr_list = []
-        for env_idx in range(self.cfg.n_envs):
-            self._workspace_cam._env_idx = env_idx
-            self._wrist_cam._env_idx = env_idx
-            ws_rgb, _, _, _ = self._workspace_cam.render()
-            wr_rgb, _, _, _ = self._wrist_cam.render()
-            ws_list.append(np.asarray(ws_rgb))
-            wr_list.append(np.asarray(wr_rgb))
+        camera_obs: dict[str, np.ndarray] = {}
+        if self._named_cameras:
+            for name, camera in self._named_cameras.items():
+                camera_obs[name] = self._render_camera_stack(camera)
+        else:
+            ws_list = []
+            wr_list = []
+            for env_idx in range(self.cfg.n_envs):
+                self._workspace_cam._env_idx = env_idx
+                self._wrist_cam._env_idx = env_idx
+                ws_rgb, _, _, _ = self._workspace_cam.render()
+                wr_rgb, _, _, _ = self._wrist_cam.render()
+                ws_list.append(np.asarray(ws_rgb))
+                wr_list.append(np.asarray(wr_rgb))
+            camera_obs["workspace"] = np.stack(ws_list)
+            camera_obs["wrist"] = np.stack(wr_list)
 
         joint_pos = self._robot.get_dofs_position()
         gripper_state = self._gripper_state(joint_pos)
 
         return {
-            "workspace": np.stack(ws_list),
-            "wrist": np.stack(wr_list),
+            **camera_obs,
             "joint_pos": joint_pos,
             "gripper_state": gripper_state,
         }
