@@ -95,6 +95,7 @@ def emit_sim2real_rerun(
     rollout_count = 0
     frame_count = 0
     mp4_paths: list[str] = []
+    critique_panel_rows: list[str] = []
 
     iterations = inner_evidence.get("iterations") or []
     for record in iterations:
@@ -107,6 +108,7 @@ def emit_sim2real_rerun(
             iter_root = f"rollouts/iter_{iteration:02d}/{rollout_id}"
             evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
             signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
+            manifest = _read_json(rollout_dir / "manifest.json")
             frames = _rollout_frames(rollout_dir)
             seconds = _log_rollout(
                 rr,
@@ -115,8 +117,10 @@ def emit_sim2real_rerun(
                 frames=frames,
                 evaluation=evaluation,
                 signal=signal,
+                manifest=manifest,
                 start_seconds=seconds,
                 counts=counts,
+                critique_panel_rows=critique_panel_rows,
             )
             rollout_count += 1
             frame_count += len(frames)
@@ -125,11 +129,13 @@ def emit_sim2real_rerun(
                 if mp4_path is not None:
                     mp4_paths.append(str(mp4_path))
 
+    _log_vlm_critique_panel(rr, recording, critique_panel_rows, counts)
     _log_reward_trend(rr, recording, inner_evidence.get("reward_trend") or [], counts)
     heldout_env_count = _log_heldout(
         rr,
         recording,
         (heldout_report or {}).get("per_env") or [],
+        (heldout_report or {}).get("success_rate"),
         counts,
     )
 
@@ -161,14 +167,18 @@ def _log_rollout(
     frames: list[np.ndarray],
     evaluation: dict[str, Any],
     signal: dict[str, Any],
+    manifest: dict[str, Any],
     start_seconds: float,
     counts: dict[str, int],
+    critique_panel_rows: list[str],
 ) -> float:
     seconds = start_seconds
     per_step_eval = {int(item.get("step", index)): item for index, item in enumerate(evaluation.get("per_step") or [])}
     per_step_signal = {int(item.get("step", index)): item for index, item in enumerate(signal.get("per_step") or [])}
+    per_step_actions = _actions_by_step(manifest.get("actions"))
     score = evaluation.get("score")
     summary = str(evaluation.get("summary") or "")
+    last_critique = ""
 
     for step, frame in enumerate(frames):
         _set_time(rr, recording, seconds)
@@ -186,9 +196,24 @@ def _log_rollout(
                 recording=recording,
             )
             _bump(counts, f"{root}/critique")
+            last_critique = overlay
         if score is not None:
             rr.log(f"{root}/score", _scalar(rr, float(score)), recording=recording)
             _bump(counts, f"{root}/score")
+
+        action_values = _as_float_list(eval_step.get("action"))
+        if not action_values:
+            action_values = per_step_actions.get(step, [])
+        for dim, value in enumerate(action_values):
+            rr.log(f"{root}/actions/dim_{dim:02d}", _scalar(rr, float(value)), recording=recording)
+            _bump(counts, f"{root}/actions/dim_{dim:02d}")
+        if action_values:
+            rr.log(
+                f"{root}/actions/l2_norm",
+                _scalar(rr, float(np.linalg.norm(np.asarray(action_values, dtype=float)))),
+                recording=recording,
+            )
+            _bump(counts, f"{root}/actions/l2_norm")
 
         signal_step = per_step_signal.get(step, {})
         if "reward" in signal_step:
@@ -198,6 +223,10 @@ def _log_rollout(
             rr.log("signal/advantage", _scalar(rr, float(signal_step["advantage"])), recording=recording)
             _bump(counts, "signal/advantage")
         seconds += ROLLOUT_FRAME_SECONDS
+    critique_body = summary or last_critique
+    if critique_body:
+        score_value = f"{float(score):.3f}" if score is not None else "n/a"
+        critique_panel_rows.append(f"### `{root}`\n\nscore: `{score_value}`\n\n{critique_body}")
     return seconds
 
 
@@ -208,9 +237,36 @@ def _log_reward_trend(rr: Any, recording: Any, reward_trend: list[Any], counts: 
         _bump(counts, "signal/reward_trend")
 
 
-def _log_heldout(rr: Any, recording: Any, per_env: list[dict[str, Any]], counts: dict[str, int]) -> int:
+def _log_vlm_critique_panel(
+    rr: Any,
+    recording: Any,
+    entries: list[str],
+    counts: dict[str, int],
+) -> None:
+    if not entries:
+        return
+    _set_time(rr, recording, 0.0)
+    rr.log(
+        "rollouts/summary/critique",
+        rr.TextDocument("# VLM critiques by rollout\n\n" + "\n\n---\n\n".join(entries), media_type="text/markdown"),
+        recording=recording,
+    )
+    _bump(counts, "rollouts/summary/critique")
+
+
+def _log_heldout(
+    rr: Any,
+    recording: Any,
+    per_env: list[dict[str, Any]],
+    success_rate: Any,
+    counts: dict[str, int],
+) -> int:
     seconds = 0.0
     logged = 0
+    if success_rate is not None:
+        _set_time(rr, recording, 0.0)
+        rr.log("heldout/success_rate", _scalar(rr, float(success_rate)), recording=recording)
+        _bump(counts, "heldout/success_rate")
     for index, item in enumerate(per_env):
         if not isinstance(item, dict):
             continue
@@ -388,6 +444,26 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _actions_by_step(values: Any) -> dict[int, list[float]]:
+    actions: dict[int, list[float]] = {}
+    for index, item in enumerate(values or []):
+        if not isinstance(item, dict):
+            continue
+        step = int(item.get("step", index))
+        payload = _as_float_list(item.get("action"))
+        if payload:
+            actions[step] = payload
+    return actions
+
+
+def _as_float_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [float(item) for item in value]
+    return [float(value)]
 
 
 def _import_rerun() -> tuple[Any, Any]:
