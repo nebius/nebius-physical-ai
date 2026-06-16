@@ -37,13 +37,13 @@ export AWS_ENDPOINT_URL=<default-platform-s3-endpoint>
 # Non-default S3-compatible endpoints supported but untested.
 
 # 3. Single LeRobot trainer image override. Leave unset to use the reference image.
-export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.0
+export TRAINER_IMAGE=<registry>/npa-lerobot-vlm-rl:0.1.1
 
 # 4. Reference image defaults. Override only if you have a newer pushed image.
-export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.0
-export POLICY_IMAGE=<registry>/npa-sim2real-reference-policy:0.1.1
+export AUGMENT_IMAGE=<registry>/npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z
+export POLICY_IMAGE=<registry>/npa-sim2real-reference-policy:0.1.2
 export VLM_IMAGE=<registry>/npa-cosmos3-reason:3.0.1-genuine-sm120
-export EVAL_IMAGE=<registry>/npa-sim2real-eval:0.1.1-genuine-sm120
+export EVAL_IMAGE=<registry>/npa-sim2real-eval:0.1.2-genuine-sm120
 
 # 5. Demo scale. Increase these for larger production runs.
 export INNER_ITERATIONS=2
@@ -104,12 +104,12 @@ reports/sim2real.rrd
 - Python 3.11 or newer and this package installed in `npa/.venv`.
 - A Kubernetes GPU cluster with schedulable RTX PRO 6000 class `sm_120` GPUs.
 - Pushed reference images:
-  - `npa-cosmos2-transfer:2.5.0`
-  - `npa-sim2real-envgen:0.1.1`
-  - `npa-sim2real-reference-policy:0.1.1`
+  - `npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z`
+  - `npa-sim2real-envgen:0.1.2`
+  - `npa-sim2real-reference-policy:0.1.2`
   - `npa-cosmos3-reason:3.0.1-genuine-sm120`
-  - `npa-lerobot-vlm-rl:0.1.0`
-  - `npa-sim2real-eval:0.1.1-genuine-sm120`
+  - `npa-lerobot-vlm-rl:0.1.1`
+  - `npa-sim2real-eval:0.1.2-genuine-sm120`
 - Gated model repository access accepted where required by the VLM image.
 - `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a
   Kubernetes secret such as `hf-ngc-tokens`.
@@ -129,7 +129,7 @@ npa workbench health sim2real \
   --s3-endpoint <your-s3-compatible-endpoint> \
   --trigger-dataset-uri s3://<bucket>/sim2real-triggers/<run-id>/lerobot-pusht/ \
   --assets-uri s3://<bucket>/sim2real-assets/pusht/ \
-  --policy-image <registry>/npa-sim2real-reference-policy:0.1.1
+  --policy-image <registry>/npa-sim2real-reference-policy:0.1.2
 ```
 
 Use `--checks config,coherence` for an infra-free static check, `--json` for

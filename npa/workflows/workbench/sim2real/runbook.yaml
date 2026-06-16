@@ -32,7 +32,7 @@ resources:
   accelerators: RTX6000:1
   cpus: 16+
   memory: 64+
-  image_id: "docker:example.invalid/npa-lerobot-vlm-rl:0.1.0"
+  image_id: "docker:example.invalid/npa-lerobot-vlm-rl:0.1.1"
 envs:
   # Headline env block (operator-facing knobs)
   NPA_SIM2REAL_RUN_ID: ""
@@ -154,9 +154,9 @@ run: |
     --scene-spec-uri "${SCENE_SPEC_URI:-}"
     --augment-image "${AUGMENT_IMAGE:-}"
     --policy-image "${POLICY_IMAGE:-}"
-    --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.0}"
+    --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.1}"
     --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}"
-    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.1-genuine-sm120}"
+    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.2-genuine-sm120}"
     --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
     --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
     --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
