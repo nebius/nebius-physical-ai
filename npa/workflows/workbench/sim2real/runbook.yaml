@@ -21,12 +21,12 @@
 # Trigger path shape (no s3:// on bucket-only vars):
 #   s3://<your-bucket>/sim2real-triggers/<batch-id>/lerobot-pusht/
 #
-# Customer GCP bucket (GCS S3-compatible API):
-#   storage.bucket: <your-gcp-bucket>
+# External object-store bucket (GCS S3-compatible API):
+#   storage.bucket: <your-object-store-bucket>
 #   storage.endpoint_url: https://storage.googleapis.com
 #     (or regional, e.g. https://storage.us-central1.rep.googleapis.com)
 #   credentials.yaml: GCS HMAC keys as storage.aws_access_key_id / aws_secret_access_key
-#   operator env: NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-gcp-bucket>/sim2real-triggers/<batch>/lerobot-pusht/
+#   operator env: NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/lerobot-pusht/
 #
 # Where to set values:
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
@@ -47,13 +47,13 @@
 # | --- | --- | --- |
 # | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | ASSETS_URI, SCENE_SPEC_URI, CAMERAS_URI, NPA_SIM2REAL_CAMERAS_URI, ROBOT_SPEC_URI, NPA_SIM2REAL_ROBOT_SPEC_URI, ROBOT_PRESET, NPA_SIM2REAL_ROBOT_PRESET |
 # | Artifact bucket vs trigger bucket | config.yaml, operator env, runbook NPA_SIM2REAL_* | NPA_SIM2REAL_BUCKET (alias S3_BUCKET), NPA_SIM2REAL_TRIGGER_DATASET_URI (alias TRIGGER_DATASET_URI), storage.bucket, storage.sim2real_stock_trigger_uri |
-# | GCP/custom bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
+# | External object-store bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
 # | LeRobot custom/trigger dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default lerobot/pusht |
 # | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, VLM_IMAGE, EVAL_IMAGE, TRAINER_IMAGE, ISAAC_IMAGE, NPA_SIM2REAL_RERUN_IMAGE |
 #
 # Sim assets: Stage 2 reads ASSETS_URI and/or SCENE_SPEC_URI (and optional
 # CAMERAS_URI / ROBOT_SPEC_URI). Leave empty for stock Franka/tabletop smoke.
-# Trigger prefix may differ from artifact prefix on GCP — same bucket or not.
+# Trigger prefix may differ from artifact prefix on S3-compatible object stores — same bucket or not.
 #
 # Custom images: export registry-qualified refs before submit-k8s-staged-job.sh
 # or workflow submit. Unresolved AUGMENT_IMAGE / POLICY_IMAGE → reference
@@ -160,7 +160,7 @@ envs:
   NPA_SIM2REAL_RERUN: "1"
   # NPA_SIM2REAL_RERUN_SERVE: "1" (default) deploys hosted Rerun on mk8s after
   # successful S3 upload when NPA_SIM2REAL_RERUN=1; "0" skips auto-serve (manual
-  # npa workbench sim2real rerun serve still available). One LB per run_id.
+  # npa workbench sim2real rerun serve still available). One shared LB per cluster.
   NPA_SIM2REAL_RERUN_SERVE: "1"
   NPA_SIM2REAL_K8S_NAMESPACE: "default"
   NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"

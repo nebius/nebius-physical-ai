@@ -8,7 +8,7 @@
 #   AWS_ENDPOINT_URL       — S3-compatible endpoint (fallback: storage.endpoint_url)
 #   NPA_SIM2REAL_TRIGGER_DATASET_URI — LeRobot trigger prefix (required at submit)
 #   NPA_SIM2REAL_TRIGGER_DATASET_ID — source dataset id (default lerobot/pusht)
-# Aliases: TRIGGER_DATASET_URI, TRIGGER_DATASET_ID. Customer GCP: endpoint
+# Aliases: TRIGGER_DATASET_URI, TRIGGER_DATASET_ID. External object-store example: endpoint
 # https://storage.googleapis.com + GCS HMAC keys in ~/.npa/credentials.yaml.
 set -euo pipefail
 

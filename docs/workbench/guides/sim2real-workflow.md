@@ -10,10 +10,10 @@ update → held-out eval → threshold gate → Rerun observability.
 **Canonical workflow file:** `npa/workflows/workbench/sim2real/runbook.yaml`  
 **Easy env overlay:** `npa/workflows/workbench/sim2real/quickstart.env`
 
-**Customer GCP bucket:** use GCS with the S3-compatible API. Set `storage.bucket`
+**External object-store bucket:** use GCS with the S3-compatible API. Set `storage.bucket`
 and `storage.endpoint_url` (`https://storage.googleapis.com`) in `~/.npa/config.yaml`,
 GCS HMAC keys in `~/.npa/credentials.yaml`, and
-`NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-gcp-bucket>/sim2real-triggers/<batch>/lerobot-pusht/`
+`NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/lerobot-pusht/`
 in operator env or `--var` on submit. See the **Trigger bucket & S3-compatible
 storage** comment block at the top of `runbook.yaml` for the full variable map
 (`NPA_SIM2REAL_BUCKET`, `AWS_ENDPOINT_URL`, `S3_BUCKET`, seed + cluster secret sync).
@@ -26,11 +26,11 @@ storage** comment block at the top of `runbook.yaml` for the full variable map
 | --- | --- | --- |
 | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | `ASSETS_URI`, `SCENE_SPEC_URI`, `CAMERAS_URI`, `NPA_SIM2REAL_CAMERAS_URI`, `ROBOT_SPEC_URI`, `NPA_SIM2REAL_ROBOT_SPEC_URI`, `ROBOT_PRESET`, `NPA_SIM2REAL_ROBOT_PRESET` |
 | Artifact bucket vs trigger bucket | `config.yaml`, operator env, runbook | `NPA_SIM2REAL_BUCKET` (alias `S3_BUCKET`), `NPA_SIM2REAL_TRIGGER_DATASET_URI` (alias `TRIGGER_DATASET_URI`), `storage.bucket`, `storage.sim2real_stock_trigger_uri` |
-| GCP/custom bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` |
+| External object-store bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` |
 | LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Artifact bucket and trigger prefix may differ (common on GCP). Sim assets are optional — leave URIs empty for stock smoke. See [sim2real-customer-assets.md](./sim2real-customer-assets.md) for BYO scene/robot detail.
+Artifact bucket and trigger prefix may differ (common on S3-compatible object stores). Sim assets are optional — leave URIs empty for stock smoke. See [sim2real-customer-assets.md](./sim2real-customer-assets.md) for BYO scene/robot detail.
 
 ---
 
@@ -356,16 +356,24 @@ Stage 14 writes `reports/sim2real.rrd` locally and uploads it with the run tree.
 When `NPA_SIM2REAL_RERUN=1` (default), artifact upload succeeds, and cluster
 credentials are available, **`run_finalize` also deploys a hosted Rerun viewer**
 on mk8s (`npa workbench sim2real rerun serve` logic). The workflow logs and
-`reports/sim2real-report.json` include `rerun_serve.public_url` — one
-LoadBalancer per `run_id`, shared by all teammates.
+`reports/sim2real-report.json` include `rerun_serve.public_url` — one shared
+LoadBalancer per mk8s cluster (stable URL for the whole team).
 
 Disable hosted serve only: `NPA_SIM2REAL_RERUN_SERVE=0`. Disable `.rrd` emission:
 `NPA_SIM2REAL_RERUN=0` or `--no-rerun`.
 
-Re-deploy or refresh after a completed run:
+Point the shared cluster viewer at a completed run (updates the served recording
+without a new external IP):
 
 ```bash
 npa workbench sim2real rerun serve --run-id <sim2real-staged-…>
+# optional: --cluster-name <profile from ~/.npa/clusters/>
+```
+
+Teardown the shared viewer for the cluster:
+
+```bash
+npa workbench sim2real rerun serve --run-id <any-valid-run-id> --destroy
 ```
 
 Local offline review:
