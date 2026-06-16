@@ -19,10 +19,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-PYTHON="${ROOT}/npa/.venv/bin/python"
 DRIVER="${ROOT}/npa/scripts/run_golden_evals.py"
 TMUX_LAUNCHER="${SCRIPT_DIR}/start_golden_evals_tmux.sh"
 AUTOFIX="${SCRIPT_DIR}/golden_eval_autofix.sh"
+
+_resolve_python() {
+  if [[ -n "${GOLDEN_EVAL_PYTHON:-}" ]]; then
+    echo "${GOLDEN_EVAL_PYTHON}"
+    return 0
+  fi
+  local venv="${ROOT}/npa/.venv/bin/python"
+  if [[ -x "${venv}" ]]; then
+    echo "${venv}"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  command -v python
+}
+
+PYTHON="$(_resolve_python)"
 
 BRANCH="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval-capability-chart}"
 STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
@@ -58,12 +76,15 @@ log() {
 }
 
 require_tools() {
-  if ! command -v tmux >/dev/null; then
-    echo "tmux required" >&2
+  if [[ -z "${PYTHON}" ]] || ! "${PYTHON}" -c "import sys" >/dev/null 2>&1; then
+    echo "python required (set GOLDEN_EVAL_PYTHON or create npa/.venv)" >&2
     exit 1
   fi
-  if [[ ! -x "${PYTHON}" ]]; then
-    echo "Missing venv at ${PYTHON}" >&2
+  if [[ "${UNIT_ONLY}" == "1" || "${FLEET_PAUSED}" == "1" ]]; then
+    return 0
+  fi
+  if ! command -v tmux >/dev/null; then
+    echo "tmux required" >&2
     exit 1
   fi
 }

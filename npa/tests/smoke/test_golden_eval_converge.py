@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,7 @@ def test_converge_unit_gate_runs_when_paused_iam_marker_present(tmp_path: Path) 
             **os.environ,
             "GOLDEN_EVAL_STATE_DIR": str(state_dir),
             "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
+            "GOLDEN_EVAL_PYTHON": sys.executable,
         },
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
