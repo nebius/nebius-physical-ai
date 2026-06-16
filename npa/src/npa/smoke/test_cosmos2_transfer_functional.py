@@ -1,8 +1,8 @@
-"""Cosmos2-Transfer external image golden eval (GPU runtime probe).
+"""Cosmos2-Transfer golden eval (GPU runtime probe).
 
-The transfer image is built outside this repo; this smoke proves the published
-image exposes a working CUDA PyTorch stack. Replace with a transfer inference
-probe when the external image ships a stable smoke entrypoint.
+The transfer runtime installs PyTorch in ``/opt/cosmos/cosmos-transfer2.5/.venv``
+(Python 3.10 + cu128). The golden-eval wrapper image bakes that venv; the smoke
+script discovers the venv python before running the CUDA matmul probe.
 """
 
 from __future__ import annotations

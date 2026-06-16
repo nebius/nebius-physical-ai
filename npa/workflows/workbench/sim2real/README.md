@@ -31,6 +31,11 @@ Canonical operator routing after CLI namespace cleanup: use
 subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
 and `npa workbench health sim2real` for preflight checks.
 
+Canonical operator routing after CLI namespace cleanup: use
+`npa workbench workflow submit` for cluster execution, module CLI staged
+subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
+and `npa workbench health sim2real` for preflight checks.
+
 ## Easy-Parameters Quickstart
 
 Use this when you want the canonical `lerobot/pusht` demo shape with the fewest

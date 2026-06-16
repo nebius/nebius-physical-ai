@@ -28,6 +28,7 @@ BRANCH="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval}"
 STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
 LOG="${STATE_DIR}/converge.log"
 COMPLETE_FILE="${STATE_DIR}/golden-evals-complete"
+PAUSED_IAM_FILE="${STATE_DIR}/PAUSED-IAM"
 MAX_IN_FLIGHT="${GOLDEN_EVAL_MAX_IN_FLIGHT:-2}"
 FLEET_TIMEOUT_S="${GOLDEN_EVAL_FLEET_TIMEOUT_S:-7200}"
 MAX_ATTEMPTS="${GOLDEN_EVAL_MAX_ATTEMPTS:-999}"
@@ -106,19 +107,73 @@ sys.exit(0 if total > 0 and completed >= total else 1)
 PY
 }
 
+_fleet_iam_blocked() {
+  local log_root="$1"
+  [[ -d "${log_root}" ]] || return 1
+  local f
+  for f in "${log_root}"/*.log; do
+    [[ -f "${f}" ]] || continue
+    if grep -qE 'SubnetResolutionError|PermissionDenied.*VPC|service VPC API' "${f}" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+_pause_for_iam_block() {
+  local log_root="$1"
+  cat > "${PAUSED_IAM_FILE}" <<EOF
+PAUSED: serverless golden evals blocked by IAM/VPC permissions.
+
+Detected SubnetResolutionError / VPC PermissionDenied in fleet logs under:
+  ${log_root}
+
+All serverless containers require VPC network listing permission on the project.
+Fix IAM grants for the VPC API, then remove this file and ${COMPLETE_FILE} before restarting converge.
+
+Paused at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  touch "${COMPLETE_FILE}"
+  log "FATAL: serverless blocked by VPC PermissionDenied — wrote ${PAUSED_IAM_FILE} and ${COMPLETE_FILE}"
+  exit 2
+}
+
 wait_for_fleet() {
   local summary="$1"
+  local log_root="${summary%/summary.json}"
   local deadline=$((SECONDS + FLEET_TIMEOUT_S))
   log "waiting for fleet summary=${summary} timeout=${FLEET_TIMEOUT_S}s"
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    if _fleet_iam_blocked "${log_root}"; then
+      _pause_for_iam_block "${log_root}"
+    fi
     if [[ -f "${summary}" ]] && _summary_done "${summary}"; then
       log "fleet complete summary=${summary}"
+      if _fleet_iam_blocked "${log_root}"; then
+        _pause_for_iam_block "${log_root}"
+      fi
       return 0
     fi
     sleep 15
   done
   log "fleet wait timed out summary=${summary}"
   return 1
+}
+
+_cleanup_stale_fleet_sessions() {
+  local keep="${1:-}"
+  if ! command -v tmux >/dev/null 2>&1; then
+    return 0
+  fi
+  local session
+  while IFS= read -r session; do
+    [[ -n "${session}" ]] || continue
+    [[ "${session}" == "${keep}" ]] && continue
+    tmux kill-session -t "${session}" 2>/dev/null || true
+  done < <(
+    tmux list-sessions -F '#{session_name}' 2>/dev/null \
+      | grep "^${FLEET_SESSION_PREFIX}-a" || true
+  )
 }
 
 harvest_failures() {
@@ -146,6 +201,7 @@ run_fleet_tmux() {
   local launch_log="${STATE_DIR}/fleet-launch-a${attempt}.log"
 
   log "=== fleet attempt ${attempt} session=${session} max_in_flight=${MAX_IN_FLIGHT} ==="
+  _cleanup_stale_fleet_sessions "${session}"
   tmux kill-session -t "${session}" 2>/dev/null || true
 
   set +e
@@ -207,7 +263,14 @@ run_attempt() {
 }
 
 log "golden-eval converge start branch=${BRANCH} max_attempts=${MAX_ATTEMPTS}"
+
+if [[ -f "${PAUSED_IAM_FILE}" ]]; then
+  log "PAUSED-IAM marker present (${PAUSED_IAM_FILE}) — serverless blocked by VPC PermissionDenied; exiting"
+  exit 2
+fi
+
 require_tools
+
 trap 'log "converge interrupted"' INT TERM
 
 attempt=1

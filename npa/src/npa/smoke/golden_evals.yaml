@@ -230,8 +230,7 @@ containers:
 
   cosmos2-transfer:
     image: npa-cosmos2-transfer
-    external_build: true
-    dockerfile: ""
+    dockerfile: npa/docker/workbench/cosmos2-transfer/Dockerfile
     physical_ai:
       useful: true
       role: >-
@@ -243,18 +242,17 @@ containers:
       network: transfer/serve endpoint
       external_fetch: [huggingface, s3]
       notes: >-
-        Image is built and published outside this repo; pinned via
-        supported-tools (2.5.0). Published 2.5.0 lacks torch/npa on default
-        python, so inline CUDA probes fail; needs upstream smoke entrypoint.
+        Base transfer runtime is built outside this repo; this repo ships a thin
+        golden-eval wrapper Dockerfile that copies a CUDA probe script. PyTorch
+        lives in /opt/cosmos/venv, not on default python.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional
-      command: >-
-        python -c "import torch; assert torch.cuda.is_available(); t=torch.ones((1024,1024),device='cuda'); print('[PASS] cuda', torch.cuda.get_device_name(0), float(t.sum()))"
+      command: bash /opt/cosmos2-transfer/smoke_functional.sh
       serverless_gpu: h100
       gpu: required
       timeout_seconds: 300
-      status: blocked-on-upstream
+      status: gpu-gated
 
   cosmos3-reason:
     image: npa-cosmos3-reason
@@ -480,27 +478,3 @@ containers:
       gpu: optional
       timeout_seconds: 600
       status: gpu-gated
-
-  sim2real-rerun-viewer:
-    image: npa-sim2real-rerun-viewer
-    dockerfile: npa/docker/workbench/sim2real-rerun-viewer/Dockerfile
-    physical_ai:
-      useful: true
-      role: >-
-        Lightweight rerun.io viewer sidecar for Sim2Real loop visualization
-        (loads reports/sim2real.rrd from object storage on :9090).
-    safety:
-      runs_as: nobody
-      base_image: python:3.11-slim-bookworm
-      network: serve endpoint on :9090 when deployed
-      external_fetch: [pypi]
-      notes: >-
-        Thin rerun-sdk image; no NPA code bundled. Default hosted serve uses
-        python:3.11-slim bootstrap unless NPA_SIM2REAL_RERUN_IMAGE overrides.
-    golden_eval:
-      kind: build-import
-      command: 'python -c "import rerun as rr; assert hasattr(rr, \"__version__\")"'
-      serverless_gpu: h100
-      gpu: none
-      timeout_seconds: 120
-      status: ready

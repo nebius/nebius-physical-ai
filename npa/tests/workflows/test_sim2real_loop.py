@@ -197,6 +197,7 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     )
     assert augment["stage"] == "cosmos2-transfer"
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
+    assert augment.get("image") == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
     )
@@ -1147,11 +1148,11 @@ def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> No
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
-    assert default_augment_image() == "npa-cosmos2-transfer:2.5.0"
+    assert default_augment_image() == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
 
     config = build_config_from_env(run_id="sim2real-images")
 
-    assert config.augment_image == "npa-cosmos2-transfer:2.5.0"
+    assert config.augment_image == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
     assert config.vlm_image == "npa-cosmos3-reason:3.0.1-genuine-sm120"
     assert "cosmos3" not in config.augment_image
 
@@ -1164,7 +1165,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.0"
+        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
     )
     assert (
         config.vlm_image == "registry.example/workbench/npa-cosmos3-reason:3.0.1-genuine-sm120"
@@ -2064,7 +2065,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
     transfer = cosmos2.transfer(
         input_uri="s3://bucket/input/",
         output_uri="s3://bucket/augment/",
-        image="npa-cosmos2-transfer:2.5.0",
+        image="npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z",
     )
     reason = cosmos3.reason(
         input_uri="s3://bucket/rollouts/",
@@ -2074,7 +2075,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
-    assert transfer["image"] == "npa-cosmos2-transfer:2.5.0"
+    assert transfer["image"] == "npa-cosmos2-transfer:2.5.1-golden-eval-smoke-20260616T033000Z"
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
     assert "cosmos3" not in transfer["image"]

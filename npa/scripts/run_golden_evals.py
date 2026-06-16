@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.batch import iter_containers, run_all
+from npa.smoke.batch import iter_containers, run_all, run_container_eval
 from npa.smoke.manifest import container, load_manifest, validate_manifest
 
 
@@ -72,16 +72,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(f"  $ {ge.command}")
 
     if args.serverless:
-        from npa.smoke.serverless_runner import submit_golden_eval
-
-        result = submit_golden_eval(
+        result = run_container_eval(
             args.container,
-            gpu_type=args.gpu or None,
+            serverless=True,
+            gpu=args.gpu,
             timeout=args.timeout,
             on_state_change=lambda job: print(f"  -> {getattr(job, 'status', '?')}"),
         )
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if result.get("ok") else 1
+        payload = result.detail if result.detail else {"ok": result.ok, "name": result.name}
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if result.ok else 1
 
     if not args.execute:
         return 0
