@@ -80,7 +80,7 @@ npa = "npa.cli.main:app_entry"
 
 [tool.npa.supported-tools]
 lerobot = "0.5.1"
-lerobot-policy = "0.1.0"
+lerobot-policy = "0.1.1"
 genesis = "0.4.6"
 isaac-lab = "2.3.2.post1"
 cosmos = "1.0.9"
@@ -89,13 +89,14 @@ cosmos3-reason = "3.0.1-genuine-sm120"
 groot = "0.1.0"
 fiftyone = "1.15.0"
 sonic = "0.1.2"
-retargeting = "0.1.0"
-sim2real-envgen = "0.1.1"
-sim2real-reference-policy = "0.1.1"
-lerobot-vlm-rl = "0.1.0"
-sim2real-eval = "0.1.1-genuine-sm120"
-lancedb = "0.30.2"
-detection-training = "bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z"
+retargeting = "0.1.1"
+sim2real-envgen = "0.1.2"
+sim2real-reference-policy = "0.1.2"
+lerobot-vlm-rl = "0.1.1"
+sim2real-eval = "0.1.2-genuine-sm120"
+sim2real-rerun-viewer = "0.31.4"
+lancedb = "0.30.3"
+detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
 nebius-cli = "0.12.192"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
@@ -106,6 +107,7 @@ packages = ["src/npa"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
+"src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1632,6 +1632,15 @@ def run_real_lerobot_loop(
 def main(argv: list[str] | None = None) -> int:
     """Module CLI used by the NPA CLI and SkyPilot YAML."""
 
+    import warnings
+
+    warnings.warn(
+        "npa.workflows.sim_to_real is legacy. Use npa.workflows.sim2real "
+        "(Sim2RealWorkflow / runbook.yaml) for the production VLM→RL loop.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     local = subparsers.add_parser("local-smoke", help="Run the local structural spine.")

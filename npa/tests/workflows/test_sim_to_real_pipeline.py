@@ -291,7 +291,7 @@ def test_yaml_exposes_parameterized_spine_and_feedback_contract() -> None:
     assert task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
     assert task["envs"]["S3_BUCKET"] == "${S3_BUCKET}"
     assert task["envs"]["NPA_S3_BUCKET"] == "${S3_BUCKET}"
-    assert task["envs"]["POLICY_IMAGE"] == "npa-lerobot-policy:0.1.0"
+    assert task["envs"]["POLICY_IMAGE"] == "npa-lerobot-policy:0.1.1"
     assert task["envs"]["LEROBOT_DATASET_REPO_ID"] == "lerobot/pusht"
     assert task["envs"]["EVAL_BACKEND"] == "state-success"
     assert task["envs"]["FEEDBACK_SOURCE"] == "sim-env"
@@ -640,8 +640,8 @@ def test_feedback_result_dataclass_is_public() -> None:
 
 
 def test_default_policy_image_uses_byo_policy_container() -> None:
-    assert default_policy_image() == "npa-lerobot-policy:0.1.0"
-    assert default_policy_image(registry="cr.example").endswith("/npa-lerobot-policy:0.1.0")
+    assert default_policy_image() == "npa-lerobot-policy:0.1.1"
+    assert default_policy_image(registry="cr.example").endswith("/npa-lerobot-policy:0.1.1")
 
 
 def test_lerobot_episode_split_covers_all_real_episode_ids() -> None:

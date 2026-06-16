@@ -64,6 +64,25 @@ DEFAULT_TARGET_POS = (0.5, 0.3, 0.04)
 DEFAULT_TARGET_THRESHOLD = 0.05
 DEFAULT_COLOR = (1.0, 0.0, 0.0)
 
+DEFAULT_CAMERA_NAMES = ("workspace", "wrist")
+
+CAMERA_PLACEMENT_CUSTOM = "custom"
+CAMERA_PLACEMENT_STOCK_WORKSPACE = "stock_workspace"
+CAMERA_PLACEMENT_STOCK_EE_MOUNTED = "stock_ee_mounted"
+CAMERA_PLACEMENTS = (
+    CAMERA_PLACEMENT_CUSTOM,
+    CAMERA_PLACEMENT_STOCK_WORKSPACE,
+    CAMERA_PLACEMENT_STOCK_EE_MOUNTED,
+)
+
+_STOCK_WORKSPACE_POS = (1.0, 0.0, 0.8)
+_STOCK_WORKSPACE_LOOK = (0.5, 0.0, 0.0)
+_STOCK_WORKSPACE_FOV = 60.0
+_STOCK_WRIST_POS = (0.4, 0.0, 0.4)
+_STOCK_WRIST_LOOK = (0.5, 0.0, 0.0)
+_STOCK_WRIST_FOV = 90.0
+_DEFAULT_CAMERA_RES = (480, 640)  # (height, width)
+
 
 class SceneSpecError(RuntimeError):
     """Raised when a SceneSpec is malformed or an asset cannot be resolved."""
@@ -124,6 +143,22 @@ class ObjectSpec:
 
 
 @dataclass
+class CameraSpec:
+    """One camera in a BYO scene (workspace, wrist, or custom name)."""
+
+    name: str
+    placement: str = CAMERA_PLACEMENT_STOCK_WORKSPACE
+    pos: tuple[float, float, float] = _STOCK_WORKSPACE_POS
+    look_at: tuple[float, float, float] = _STOCK_WORKSPACE_LOOK
+    fov: float = _STOCK_WORKSPACE_FOV
+    resolution: tuple[int, int] = _DEFAULT_CAMERA_RES  # (height, width)
+
+    def genesis_res(self) -> tuple[int, int]:
+        height, width = self.resolution
+        return (width, height)
+
+
+@dataclass
 class SceneSpec:
     """A parsed, simulator-agnostic scene description for the pick-place env."""
 
@@ -133,6 +168,7 @@ class SceneSpec:
     goal_threshold: float = DEFAULT_TARGET_THRESHOLD
     source_uri: str = ""
     asset_fallback_used: bool = False
+    cameras: dict[str, CameraSpec] = field(default_factory=dict)
 
     def manipuland(self) -> ObjectSpec:
         for obj in self.objects:
@@ -146,7 +182,7 @@ class SceneSpec:
         """Scene-level provenance written into report.json / consumed spec."""
 
         objects = [obj.provenance() for obj in self.objects]
-        return {
+        block: dict[str, Any] = {
             "schema": "npa.sim2real.asset_provenance.v1",
             "scene_spec_schema": self.schema,
             "source_uri": self.source_uri,
@@ -155,15 +191,25 @@ class SceneSpec:
             "goal_threshold": self.goal_threshold,
             "objects": objects,
         }
+        if self.cameras:
+            block["cameras"] = {
+                name: _camera_to_dict(cam) for name, cam in self.cameras.items()
+            }
+        return block
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema": self.schema,
             "goal_pos": list(self.goal_pos),
             "goal_threshold": self.goal_threshold,
             "source_uri": self.source_uri,
             "objects": [_object_to_dict(obj) for obj in self.objects],
         }
+        if self.cameras:
+            payload["cameras"] = {
+                name: _camera_to_dict(cam) for name, cam in self.cameras.items()
+            }
+        return payload
 
 
 def default_scene_spec() -> SceneSpec:
@@ -289,6 +335,96 @@ def _object_to_dict(obj: ObjectSpec) -> dict[str, Any]:
     }
 
 
+def _camera_from_dict(name: str, raw: dict[str, Any]) -> CameraSpec:
+    if not isinstance(raw, dict):
+        raise SceneSpecError(f"cameras.{name} must be a JSON object, got {raw!r}")
+    placement = str(raw.get("placement") or CAMERA_PLACEMENT_STOCK_WORKSPACE).strip()
+    if placement == CAMERA_PLACEMENT_STOCK_EE_MOUNTED:
+        cam = CameraSpec(
+            name=name,
+            placement=placement,
+            pos=_STOCK_WRIST_POS,
+            look_at=_STOCK_WRIST_LOOK,
+            fov=_STOCK_WRIST_FOV,
+        )
+    elif placement == CAMERA_PLACEMENT_STOCK_WORKSPACE:
+        cam = CameraSpec(
+            name=name,
+            placement=placement,
+            pos=_STOCK_WORKSPACE_POS,
+            look_at=_STOCK_WORKSPACE_LOOK,
+            fov=_STOCK_WORKSPACE_FOV,
+        )
+    else:
+        cam = CameraSpec(name=name, placement=CAMERA_PLACEMENT_CUSTOM)
+    if "pos" in raw:
+        cam.pos = _coerce_triple(raw["pos"], f"cameras.{name}.pos")
+    look_key = "look_at" if "look_at" in raw else "lookat"
+    if look_key in raw:
+        cam.look_at = _coerce_triple(raw[look_key], f"cameras.{name}.{look_key}")
+    if raw.get("fov") is not None:
+        cam.fov = float(raw["fov"])
+    if raw.get("resolution") is not None:
+        res = raw["resolution"]
+        if not isinstance(res, (list, tuple)) or len(res) != 2:
+            raise SceneSpecError(
+                f"cameras.{name}.resolution must be [width, height], got {res!r}"
+            )
+        cam.resolution = (int(res[1]), int(res[0]))
+    return cam
+
+
+def _camera_to_dict(cam: CameraSpec) -> dict[str, Any]:
+    height, width = cam.resolution
+    return {
+        "name": cam.name,
+        "placement": cam.placement,
+        "pos": list(cam.pos),
+        "look_at": list(cam.look_at),
+        "fov": cam.fov,
+        "resolution": [width, height],
+    }
+
+
+def parse_cameras_doc(doc: dict[str, Any]) -> dict[str, CameraSpec]:
+    """Parse cameras from SceneSpec JSON or standalone cameras.json."""
+
+    if not isinstance(doc, dict):
+        raise SceneSpecError(f"cameras document must be a JSON object, got {type(doc)!r}")
+    raw = doc.get("cameras", doc)
+    if not isinstance(raw, dict):
+        raise SceneSpecError("cameras must be a JSON object")
+    cameras: dict[str, CameraSpec] = {}
+    for key, value in raw.items():
+        if key == "schema":
+            continue
+        if not isinstance(value, dict):
+            raise SceneSpecError(f"cameras.{key} must be a JSON object, got {value!r}")
+        cameras[str(key)] = _camera_from_dict(str(key), value)
+    if not cameras:
+        raise SceneSpecError("cameras block is empty")
+    return cameras
+
+
+def merge_cameras_into_scene(
+    scene: SceneSpec, cameras: dict[str, CameraSpec]
+) -> SceneSpec:
+    """Attach standalone cameras when the scene spec has none yet."""
+
+    if scene.cameras or not cameras:
+        return scene
+    scene.cameras = dict(cameras)
+    return scene
+
+
+def camera_names(scene: SceneSpec | None = None) -> tuple[str, ...]:
+    """Return camera names from a scene, or stock defaults."""
+
+    if scene is not None and scene.cameras:
+        return tuple(scene.cameras.keys())
+    return DEFAULT_CAMERA_NAMES
+
+
 def parse_scene_spec(doc: dict[str, Any], *, source_uri: str = "") -> SceneSpec:
     """Parse and validate a SceneSpec JSON document into a SceneSpec."""
 
@@ -309,12 +445,16 @@ def parse_scene_spec(doc: dict[str, Any], *, source_uri: str = "") -> SceneSpec:
     goal_threshold = float(doc.get("goal_threshold", DEFAULT_TARGET_THRESHOLD))
     if goal_threshold <= 0:
         raise SceneSpecError("goal_threshold must be positive")
+    cameras: dict[str, CameraSpec] = {}
+    if doc.get("cameras") is not None:
+        cameras = parse_cameras_doc(doc)
     return SceneSpec(
         objects=objects,
         schema=str(doc.get("schema") or SCENE_SPEC_SCHEMA),
         goal_pos=goal_pos,
         goal_threshold=goal_threshold,
         source_uri=source_uri or str(doc.get("source_uri") or ""),
+        cameras=cameras,
     )
 
 

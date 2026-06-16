@@ -267,6 +267,16 @@ skills:
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
+  - name: sim2real-engine
+    category: tools
+    when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
+    path: skills/workbench/sim2real-engine/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/sim2real/engine.py
+      - type: cli_help
+        args: ["workbench", "sim2real", "status", "--help"]
+        contains: "run-id"
   - name: train-policy
     category: workflows
     when_to_use: "Plan, review, or operate robot policy training across LeRobot, Isaac Lab, SONIC, and workflow YAMLs."

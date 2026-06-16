@@ -163,8 +163,11 @@ can fetch weights. Gated repos are marked **(gated — accept license)**.
 | `sim2real-actions.yaml`, `sim2real-envgen-split.yaml` | None | Env generation / action conditioning use BYO container images, not HF repos. |
 
 The self-contained Sim2Real runbook (`../sim2real/runbook.yaml`) defaults to
-`nvidia/Cosmos-Reason1-7B` **(gated — accept license)** for its VLM and the
-public `lerobot/pusht` dataset.
+dual self-hosted VLM eval: `nvidia/Cosmos-Reason2-8B` and
+`nvidia/Cosmos-Reason2-2B`, both **(gated — accept license)**, plus
+`nvidia/Cosmos-Transfer2.5-2B` for augment. The public `lerobot/pusht` dataset
+needs no HF acceptance. `nvidia/Cosmos3-Super-Reasoner` is **Token Factory only**
+(not on Hugging Face); do not use it as `VLM_REASON3_MODEL` for cluster Jobs.
 
 ### Gated repos not surfaced by a workflow YAML
 

@@ -458,6 +458,7 @@ def build_lerobot_eval_command(
     output_dir: Path | str,
     env_type: str,
     episodes: int,
+    policy_type: str = DEFAULT_POLICY_TYPE,
     device: str = "cuda",
     env_task: str = "",
 ) -> list[str]:
@@ -467,7 +468,8 @@ def build_lerobot_eval_command(
         raise PolicyContainerError(f"episodes must be positive, got {episodes}")
     cmd = [
         "lerobot-eval",
-        f"--policy.path={checkpoint_path}",
+        f"--policy.type={policy_type}",
+        f"--policy.pretrained_path={checkpoint_path}",
         f"--env.type={env_type}",
         f"--output_dir={output_dir}",
         "--eval.batch_size=1",
