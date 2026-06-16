@@ -26,6 +26,8 @@ DEFAULT_PORT = 9090
 # Rerun web viewer binds here; nginx sidecar exposes DEFAULT_PORT with cache headers.
 RERUN_INTERNAL_WEB_PORT = 9091
 DEFAULT_GRPC_PORT = 9876
+# Browser gRPC origin for kubectl port-forward (must match forwarded local ports).
+DEFAULT_LOCAL_VIEWER_HOST = "127.0.0.1"
 DEFAULT_NGINX_IMAGE = "nginx:1.27-alpine"
 # Browser-cache static wasm/js (~40 MiB) so refresh does not re-download the app bundle.
 RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
@@ -105,6 +107,7 @@ class RerunServeResult:
     port: int
     cluster_url: str
     public_url: str
+    local_url: str
     port_forward_command: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -339,13 +342,24 @@ def _rerun_serve_command(config: RerunServeConfig) -> str:
 
 
 def public_viewer_url(host: str, *, http_port: int, grpc_port: int = DEFAULT_GRPC_PORT) -> str:
-    """Return a LoadBalancer URL that points the browser at the external gRPC proxy."""
+    """Return a viewer URL whose gRPC origin matches the HTTP page host."""
 
     host = host.strip()
     if not host:
         return ""
     proxy = f"rerun+http://{host}:{grpc_port}/proxy"
     return f"http://{host}:{http_port}/?url={quote(proxy, safe='')}"
+
+
+def local_viewer_url(
+    *,
+    http_port: int,
+    grpc_port: int = DEFAULT_GRPC_PORT,
+    host: str = DEFAULT_LOCAL_VIEWER_HOST,
+) -> str:
+    """Return a port-forward URL (127.0.0.1) with matching local gRPC proxy origin."""
+
+    return public_viewer_url(host, http_port=http_port, grpc_port=grpc_port)
 
 
 def build_rerun_serve_config(
@@ -590,7 +604,8 @@ def rerun_serve_result(
     port_forward = _port_forward_command(
         deployment_name=config.deployment_name,
         namespace=config.namespace,
-        port=config.port,
+        http_port=config.port,
+        grpc_port=DEFAULT_GRPC_PORT,
         kubeconfig=kubeconfig,
     )
     return RerunServeResult(
@@ -603,6 +618,7 @@ def rerun_serve_result(
         port=config.port,
         cluster_url=cluster_url,
         public_url=public_url,
+        local_url=local_viewer_url(http_port=config.port, grpc_port=DEFAULT_GRPC_PORT),
         port_forward_command=port_forward,
     )
 
@@ -875,11 +891,27 @@ def _node_port(service: dict[str, Any]) -> int:
     return 0
 
 
-def _port_forward_command(*, deployment_name: str, namespace: str, port: int, kubeconfig: str) -> str:
+def _port_forward_command(
+    *,
+    deployment_name: str,
+    namespace: str,
+    http_port: int,
+    grpc_port: int = DEFAULT_GRPC_PORT,
+    kubeconfig: str,
+) -> str:
     cmd = ["kubectl"]
     if kubeconfig:
         cmd.extend(["--kubeconfig", kubeconfig])
-    cmd.extend(["port-forward", "-n", namespace, f"deployment/{deployment_name}", f"{port}:{port}"])
+    cmd.extend(
+        [
+            "port-forward",
+            "-n",
+            namespace,
+            f"deployment/{deployment_name}",
+            f"{http_port}:{http_port}",
+            f"{grpc_port}:{grpc_port}",
+        ]
+    )
     return " ".join(cmd)
 
 
@@ -1039,4 +1071,8 @@ def maybe_auto_rerun_serve(
     payload = result.to_dict()
     if payload.get("public_url"):
         print(f"public_url: {payload['public_url']}", flush=True)
+    if payload.get("local_url"):
+        print(f"local_url: {payload['local_url']}", flush=True)
+    if payload.get("port_forward_command"):
+        print(f"port_forward: {payload['port_forward_command']}", flush=True)
     return payload
