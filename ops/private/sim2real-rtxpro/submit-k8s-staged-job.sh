@@ -77,17 +77,19 @@ from npa.deploy.images import supported_tool_version
 print(supported_tool_version("lerobot-vlm-rl"))
 print(supported_tool_version("sim2real-eval"))
 print(supported_tool_version("cosmos3-reason"))
+print(supported_tool_version("cosmos2-transfer"))
 PY
 )
 TRAINER_TAG="${_tags[0]}"
 EVAL_TAG="${_tags[1]}"
 VLM_TAG="${_tags[2]}"
+AUGMENT_TAG="${_tags[3]}"
 
 # Preflight: every image must be registry-qualified before we apply the Job.
 TRAINER_IMAGE="${TRAINER_IMAGE:-${REG}/npa-lerobot-vlm-rl:${TRAINER_TAG}}"
 VLM_IMAGE="${VLM_IMAGE:-${REG}/npa-cosmos3-reason:${VLM_TAG}}"
 EVAL_IMAGE="${EVAL_IMAGE:-${REG}/npa-sim2real-eval:${EVAL_TAG}}"
-AUGMENT_IMAGE="${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
+AUGMENT_IMAGE="${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:${AUGMENT_TAG}}"
 POLICY_IMAGE="${POLICY_IMAGE:-${TRAINER_IMAGE}}"
 ISAAC_IMAGE="${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
 ORCHESTRATOR_IMAGE="${ORCHESTRATOR_IMAGE:-${TRAINER_IMAGE}}"

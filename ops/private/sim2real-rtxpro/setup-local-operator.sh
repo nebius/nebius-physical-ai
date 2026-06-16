@@ -61,8 +61,8 @@ if registry:
     env_lines.extend([
         f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:{trainer_tag}",
         f"VLM_IMAGE={reg}/npa-cosmos3-reason:{vlm_tag}",
-        f"AUGMENT_IMAGE={reg}/npa-cosmos2-transfer:2.5.0",
-        f"POLICY_IMAGE={reg}/npa-sim2real-reference-policy:0.1.1",
+        f"AUGMENT_IMAGE={reg}/npa-cosmos2-transfer:{supported_tool_version('cosmos2-transfer')}",
+        f"POLICY_IMAGE={reg}/npa-sim2real-reference-policy:{supported_tool_version('sim2real-reference-policy')}",
         f"EVAL_IMAGE={reg}/npa-sim2real-eval:{eval_tag}",
         f"ISAAC_IMAGE={reg}/npa-isaac-lab:2.3.2.post1",
     ])

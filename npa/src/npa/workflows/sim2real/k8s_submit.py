@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from npa.deploy.images import supported_tool_version
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX
 from npa.workflows.sim2real.monitor import (
     load_operator_config,
@@ -121,8 +122,14 @@ def submit_sim2real_staged_job(
     from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
 
     kubeconfig = str(resolve_kubeconfig(context))
-    trainer_image = os.environ.get("TRAINER_IMAGE") or f"{reg}/npa-lerobot-vlm-rl:0.1.0"
-    augment_image = os.environ.get("AUGMENT_IMAGE") or f"{reg}/npa-cosmos2-transfer:2.5.0"
+    trainer_image = (
+        os.environ.get("TRAINER_IMAGE")
+        or f"{reg}/npa-lerobot-vlm-rl:{supported_tool_version('lerobot-vlm-rl')}"
+    )
+    augment_image = (
+        os.environ.get("AUGMENT_IMAGE")
+        or f"{reg}/npa-cosmos2-transfer:{supported_tool_version('cosmos2-transfer')}"
+    )
     ensure_registry_pull_secret_for_images(
         trainer_image,
         augment_image,
