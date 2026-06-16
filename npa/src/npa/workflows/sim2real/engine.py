@@ -97,6 +97,9 @@ from npa.workflows.sim2real.utils import (
 
 # Isaac Sim app handle — closed only after held-out report upload.
 _ISAAC_SIMULATION_APP: Any = None
+HELDOUT_VIZ_CAMERA_NAME = "heldout_viz_camera"
+DEFAULT_HELDOUT_RENDER_FRAMES = 8
+SCHEMA_HELDOUT_RENDERS = "npa.sim2real.heldout_renders.v1"
 # Per-run sibling source tarball (Isaac held-out eval cannot git-clone inside Isaac Sim).
 _SIBLING_SOURCE_TARBALL_BY_RUN: dict[str, str] = {}
 
@@ -589,6 +592,8 @@ def run_finalize(
                     ),
                     {
                         "public_url": rerun_serve.get("public_url", ""),
+                        "local_url": rerun_serve.get("local_url", ""),
+                        "port_forward_command": rerun_serve.get("port_forward_command", ""),
                         "deployment_name": rerun_serve.get("deployment_name", ""),
                     },
                 )
@@ -691,9 +696,10 @@ def _run_sim2real_viz_stage(
             "WORKS",
             (
                 f"Wrote Rerun recording with {result.rollout_count} rollout(s), "
-                f"{result.frame_count} camera frame(s), and {result.heldout_env_count} "
-                "held-out env score(s); camera streams, VLM critiques, RL signal, and "
-                "held-out scores are logged."
+                f"{result.frame_count} policy camera frame(s), "
+                f"{result.heldout_frame_count} held-out sim frame(s), and "
+                f"{result.heldout_env_count} held-out env score(s); camera streams, "
+                "VLM critiques, RL signal, and held-out scores are logged."
             ),
             {"rrd": str(rrd_path)},
         ),
@@ -3032,6 +3038,11 @@ def run_heldout_eval(
                 threshold=config.threshold,
                 sim_backend=local_backend,
                 isaac_task=config.isaac_task,
+                renders_dir=(
+                    output_dir / "renders"
+                    if local_backend == SIM_BACKEND_ISAAC
+                    else None
+                ),
             )
         else:
             payload = _reference_heldout_payload(
@@ -3174,6 +3185,8 @@ def _normalize_heldout_report(
     if "robot_provenance" in payload:
         report["robot_provenance"] = payload["robot_provenance"]
         report["robot_fallback_used"] = bool(payload.get("robot_fallback_used", False))
+    if payload.get("render_manifest"):
+        report["render_manifest"] = payload["render_manifest"]
     return report
 
 
@@ -3407,9 +3420,30 @@ def run_heldout_eval_component_from_s3(
             robot=robot,
             sim_backend=sim_backend,
             isaac_task=isaac_task,
+            renders_dir=(
+                root / "heldout-renders"
+                if sim_backend == SIM_BACKEND_ISAAC
+                else None
+            ),
         )
         _write_json_artifact(output_path, payload)
         client.upload_file(str(output_path), output_uri)
+        render_manifest = payload.get("render_manifest") or {}
+        if render_manifest.get("episodes"):
+            renders_dir = root / "heldout-renders"
+            renders_prefix = _sibling_uri(output_uri, "renders")
+            for frame_path in sorted(renders_dir.rglob("*.png")):
+                relative = frame_path.relative_to(renders_dir).as_posix()
+                client.upload_file(
+                    str(frame_path),
+                    f"{renders_prefix.rstrip('/')}/{relative}",
+                )
+            manifest_path = root / "render-manifest.json"
+            _write_json_artifact(manifest_path, render_manifest)
+            client.upload_file(
+                str(manifest_path),
+                _sibling_uri(output_uri, "render-manifest.json"),
+            )
         if scene is not None:
             spec_path = root / "consumed-scene-spec.json"
             _write_json_artifact(spec_path, scene.provenance_block())
@@ -3707,6 +3741,7 @@ def _component_heldout_payload(
     robot: Any = None,
     sim_backend: str = DEFAULT_SIM_BACKEND,
     isaac_task: str = DEFAULT_ISAAC_TASK,
+    renders_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run the held-out rollout on the selected backend and shape report.json.
 
@@ -3725,6 +3760,7 @@ def _component_heldout_payload(
             scene=scene,
             robot=robot,
             isaac_task=isaac_task,
+            renders_dir=renders_dir,
         )
         payload = {
             "schema": SCHEMA_HELDOUT_REPORT,
@@ -3774,6 +3810,14 @@ def _component_heldout_payload(
             )
         payload["asset_provenance"] = provenance
         payload["asset_fallback_used"] = provenance["asset_fallback_used"]
+    if renders_dir is not None:
+        manifest = _build_heldout_render_manifest(
+            renders_dir,
+            sim_backend=sim_backend,
+            isaac_task=isaac_task,
+        )
+        if manifest.get("episodes"):
+            payload["render_manifest"] = manifest
     return payload
 
 
@@ -4199,6 +4243,162 @@ def _isaac_adapter_actions(action_dim: int, adapter: dict[str, Any], *, n_envs: 
     return torch.clamp(actions, -1.0, 1.0)
 
 
+
+def _heldout_render_frames_enabled() -> bool:
+    return _bool_value(os.environ.get("NPA_SIM2REAL_HELDOUT_RENDER_FRAMES", "1"))
+
+
+def _heldout_render_step_indices(
+    max_steps: int,
+    *,
+    max_frames: int = DEFAULT_HELDOUT_RENDER_FRAMES,
+) -> set[int]:
+    if max_steps <= 0 or max_frames <= 0:
+        return set()
+    if max_steps <= max_frames:
+        return set(range(max_steps))
+    stride = max(1, max_steps // max_frames)
+    indices = list(range(0, max_steps, stride))
+    if indices[-1] != max_steps - 1:
+        indices.append(max_steps - 1)
+    if len(indices) > max_frames:
+        keep = {0, max_steps - 1}
+        middle = indices[1:-1]
+        pick_stride = max(1, len(middle) // max(1, max_frames - len(keep)))
+        keep.update(middle[::pick_stride])
+        indices = sorted(keep)
+        while len(indices) > max_frames:
+            indices.pop(len(indices) // 2)
+    return set(indices)
+
+
+def _attach_isaac_viz_camera(env_cfg: Any) -> None:
+    import isaaclab.sim as sim_utils
+
+    try:
+        from isaaclab.sensors import TiledCameraCfg as _CameraCfg
+    except ImportError:  # pragma: no cover
+        from isaaclab.sensors import CameraCfg as _CameraCfg
+
+    camera_cfg = _CameraCfg(
+        prim_path="{ENV_REGEX_NS}/HeldoutVizCamera",
+        offset=_CameraCfg.OffsetCfg(
+            pos=(1.35, 1.05, 0.95),
+            rot=(0.8829, 0.0, 0.4695, 0.0),
+            convention="world",
+        ),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0,
+            focus_distance=400.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.1, 20.0),
+        ),
+        width=128,
+        height=128,
+    )
+    setattr(env_cfg.scene, HELDOUT_VIZ_CAMERA_NAME, camera_cfg)
+
+
+def _isaac_extract_rgb_frame(env: Any, *, env_index: int = 0) -> Any:
+    import numpy as np
+
+    unwrapped = getattr(env, "unwrapped", env)
+    scene = getattr(unwrapped, "scene", None)
+    if scene is None:
+        return None
+    camera = None
+    for name in (HELDOUT_VIZ_CAMERA_NAME, "tiled_camera"):
+        try:
+            camera = scene[name]
+            break
+        except (KeyError, TypeError, AttributeError):
+            continue
+    if camera is None:
+        sensors = getattr(scene, "sensors", None)
+        if sensors is not None:
+            for name in (HELDOUT_VIZ_CAMERA_NAME, "tiled_camera"):
+                try:
+                    camera = sensors[name]
+                    break
+                except (KeyError, TypeError, AttributeError):
+                    continue
+    if camera is None:
+        return None
+    output = getattr(getattr(camera, "data", None), "output", None)
+    if not output or "rgb" not in output:
+        return None
+    rgb = output["rgb"]
+    if hasattr(rgb, "detach"):
+        rgb = rgb.detach()
+    if hasattr(rgb, "cpu"):
+        rgb = rgb.cpu()
+    array = np.asarray(rgb)
+    if array.ndim == 4:
+        array = array[env_index]
+    if array.ndim != 3 or array.shape[-1] < 3:
+        return None
+    frame = array[..., :3]
+    if frame.dtype != np.uint8:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(frame)
+
+
+def _write_render_png(path: Path, frame: Any) -> None:
+    import struct
+    import zlib
+
+    import numpy as np
+
+    array = np.asarray(frame, dtype=np.uint8)
+    height, width = int(array.shape[0]), int(array.shape[1])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = bytearray()
+    for row in range(height):
+        raw.append(0)
+        raw.extend(array[row].tobytes())
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _chunk(b"IHDR", header)
+    png += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    png += _chunk(b"IEND", b"")
+    path.write_bytes(png)
+
+
+def _build_heldout_render_manifest(
+    renders_dir: Path,
+    *,
+    sim_backend: str,
+    isaac_task: str = "",
+) -> dict[str, Any]:
+    episodes: list[dict[str, Any]] = []
+    if renders_dir.is_dir():
+        for env_dir in sorted(path for path in renders_dir.iterdir() if path.is_dir()):
+            frames = sorted(env_dir.glob("camera-*.png"))
+            if not frames:
+                continue
+            episodes.append(
+                {
+                    "env_id": env_dir.name,
+                    "frames": [frame.name for frame in frames],
+                }
+            )
+    return {
+        "schema": SCHEMA_HELDOUT_RENDERS,
+        "sim_backend": sim_backend,
+        "isaac_task": isaac_task,
+        "episodes": episodes,
+    }
+
 def _run_isaac_heldout_rollouts(
     envs: list[dict[str, Any]],
     *,
@@ -4207,6 +4407,7 @@ def _run_isaac_heldout_rollouts(
     scene: Any = None,
     robot: Any = None,
     isaac_task: str = DEFAULT_ISAAC_TASK,
+    renders_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the adapter policy through headless Isaac Lab held-out episodes.
 
@@ -4227,7 +4428,14 @@ def _run_isaac_heldout_rollouts(
             f"Isaac rollout eval requires isaaclab/Isaac Sim in the image: {exc}"
         ) from exc
 
-    simulation_app = AppLauncher(headless=True).app
+    capture_renders = renders_dir is not None and _heldout_render_frames_enabled()
+    if capture_renders:
+        renders_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        launcher = AppLauncher(headless=True, enable_cameras=capture_renders)
+    except TypeError:  # pragma: no cover
+        launcher = AppLauncher(headless=True)
+    simulation_app = launcher.app
     # Isaac Sim's SimulationApp.close() hard-terminates the process, so it must
     # NOT be called here (the held-out report has to be uploaded first). The
     # handle is stashed and closed by the component entrypoint after upload.
@@ -4312,12 +4520,17 @@ def _run_isaac_heldout_rollouts(
     max_steps = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_MAX_STEPS", "120")))
     reward_norm = float(os.environ.get("NPA_SIM2REAL_ISAAC_REWARD_NORM", "20.0"))
     success_dist = float(os.environ.get("NPA_SIM2REAL_ISAAC_SUCCESS_DIST", "0.05"))
+    render_steps = (
+        _heldout_render_step_indices(max_steps) if capture_renders else set()
+    )
     per_env: list[dict[str, Any]] = []
     for start in range(0, len(envs), batch_size):
         batch = envs[start : start + batch_size]
         seed = int(batch[0].get("seed") or (42 + start))
         torch.manual_seed(seed)
         env_cfg = parse_env_cfg(isaac_task, device=device, num_envs=len(batch))
+        if capture_renders and start == 0:
+            _attach_isaac_viz_camera(env_cfg)
         if usd_override:
             _set_isaac_object_usd(env_cfg, usd_override, scale=manip_scale)
         if robot_usd_override:
@@ -4328,11 +4541,27 @@ def _run_isaac_heldout_rollouts(
         n = len(batch)
         max_reward = torch.full((n,), -1.0e9, device=device)
         final_distance = torch.full((n,), 1.0e9, device=device)
+        if capture_renders and start == 0 and 0 in render_steps:
+            frame = _isaac_extract_rgb_frame(env, env_index=0)
+            if frame is not None:
+                env_id = str(batch[0].get("env_id") or "heldout-0000")
+                _write_render_png(
+                    renders_dir / env_id / "camera-000.png",
+                    frame,
+                )
         for step in range(max_steps):
             actions = _isaac_adapter_actions(
                 action_dim, adapter, n_envs=n, step=step, device=device
             )
             obs, reward, terminated, truncated, _ = env.step(actions)
+            if capture_renders and start == 0 and (step + 1) in render_steps:
+                frame = _isaac_extract_rgb_frame(env, env_index=0)
+                if frame is not None:
+                    env_id = str(batch[0].get("env_id") or "heldout-0000")
+                    _write_render_png(
+                        renders_dir / env_id / f"camera-{step + 1:03d}.png",
+                        frame,
+                    )
             reward_t = torch.as_tensor(reward, device=device, dtype=torch.float32).reshape(-1)
             max_reward = torch.maximum(max_reward, reward_t)
             final_distance = _isaac_goal_distance(env.unwrapped).reshape(-1).detach()

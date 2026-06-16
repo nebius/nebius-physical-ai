@@ -23,6 +23,8 @@ from typing import Any
 import numpy as np
 
 
+REFERENCE_ROLLOUT_SCHEMA = "npa.sim2real.action_rollout.v1"
+REFERENCE_STUB_FRAME_SHAPE = (32, 32)
 APPLICATION_ID = "npa_sim2real_loop"
 TIMELINE = "frame_time"
 ROLLOUT_FRAME_SECONDS = 0.5
@@ -48,6 +50,7 @@ class Sim2RealVizResult:
     rollout_count: int = 0
     frame_count: int = 0
     heldout_env_count: int = 0
+    heldout_frame_count: int = 0
     mp4_paths: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +61,7 @@ class Sim2RealVizResult:
             "rollout_count": self.rollout_count,
             "frame_count": self.frame_count,
             "heldout_env_count": self.heldout_env_count,
+            "heldout_frame_count": self.heldout_frame_count,
             "mp4_paths": list(self.mp4_paths),
         }
 
@@ -70,13 +74,7 @@ def emit_sim2real_rerun(
     output_rrd: Path | None = None,
     write_mp4: bool = False,
 ) -> Sim2RealVizResult:
-    """Write ``reports/sim2real.rrd`` for a completed run's artifacts.
-
-    Raises ``RerunUnavailableError`` when the ``rerun`` SDK is missing so the
-    caller can WARN and continue. Any other failure (rerun present but logging
-    failed) raises ``Sim2RealVizError`` so a broken recording is never silently
-    accepted.
-    """
+    """Write ``reports/sim2real.rrd`` for a completed run's artifacts."""
 
     rr, rrb = _import_rerun()
     local_dir = Path(local_dir)
@@ -85,7 +83,9 @@ def emit_sim2real_rerun(
         raise Sim2RealVizError(f"Rerun output path must end in .rrd, got: {output_rrd}")
     output_rrd.parent.mkdir(parents=True, exist_ok=True)
 
-    blueprint = _build_blueprint(rrb)
+    heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
+    has_heldout_cameras = bool(heldout_episodes)
+    blueprint = _build_blueprint(rrb, has_heldout_cameras=has_heldout_cameras)
     recording = rr.RecordingStream(APPLICATION_ID)
     rr.save(output_rrd, default_blueprint=blueprint, recording=recording)
     _send_blueprint(rr, blueprint, recording)
@@ -94,6 +94,7 @@ def emit_sim2real_rerun(
     seconds = 0.0
     rollout_count = 0
     frame_count = 0
+    heldout_frame_count = 0
     mp4_paths: list[str] = []
     critique_panel_rows: list[str] = []
 
@@ -104,12 +105,14 @@ def emit_sim2real_rerun(
         eval_dir = _maybe_path(record.get("vlm_eval_dir"))
         signal_dir = _maybe_path(record.get("signal_dir"))
         for rollout_dir in _rollout_dirs(actions_dir):
+            frames = _rollout_frames(rollout_dir)
+            if has_heldout_cameras and is_reference_stub_rollout(rollout_dir, frames):
+                continue
             rollout_id = rollout_dir.name
             iter_root = f"rollouts/iter_{iteration:02d}/{rollout_id}"
             evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
             signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
             manifest = _read_json(rollout_dir / "manifest.json")
-            frames = _rollout_frames(rollout_dir)
             seconds = _log_rollout(
                 rr,
                 recording,
@@ -131,6 +134,14 @@ def emit_sim2real_rerun(
 
     _log_vlm_critique_panel(rr, recording, critique_panel_rows, counts)
     _log_reward_trend(rr, recording, inner_evidence.get("reward_trend") or [], counts)
+    heldout_frame_count, heldout_seconds = _log_heldout_cameras(
+        rr,
+        recording,
+        heldout_episodes,
+        counts,
+        start_seconds=seconds,
+    )
+    seconds = max(seconds, heldout_seconds)
     heldout_env_count = _log_heldout(
         rr,
         recording,
@@ -143,9 +154,14 @@ def emit_sim2real_rerun(
 
     if not output_rrd.exists() or output_rrd.stat().st_size == 0:
         raise Sim2RealVizError(f"Rerun recording was not written: {output_rrd}")
-    if frame_count == 0 and rollout_count == 0 and heldout_env_count == 0:
+    if (
+        frame_count == 0
+        and rollout_count == 0
+        and heldout_env_count == 0
+        and heldout_frame_count == 0
+    ):
         raise Sim2RealVizError(
-            "Sim2Real Rerun recording has no rollout frames, signal, or held-out content"
+            "Sim2Real Rerun recording has no rollout frames, held-out cameras, signal, or held-out content"
         )
 
     return Sim2RealVizResult(
@@ -155,6 +171,7 @@ def emit_sim2real_rerun(
         rollout_count=rollout_count,
         frame_count=frame_count,
         heldout_env_count=heldout_env_count,
+        heldout_frame_count=heldout_frame_count,
         mp4_paths=mp4_paths,
     )
 
@@ -282,10 +299,108 @@ def _log_heldout(
     return logged
 
 
-def _build_blueprint(rrb: Any) -> Any:
+def _log_heldout_cameras(
+    rr: Any,
+    recording: Any,
+    episodes: list[tuple[str, list[np.ndarray]]],
+    counts: dict[str, int],
+    *,
+    start_seconds: float,
+) -> tuple[int, float]:
+    seconds = start_seconds
+    logged = 0
+    for env_id, frames in episodes:
+        root = f"heldout/camera/{env_id}"
+        for frame in frames:
+            _set_time(rr, recording, seconds)
+            rr.log(f"{root}/camera", rr.Image(frame), recording=recording)
+            _bump(counts, f"{root}/camera")
+            seconds += ROLLOUT_FRAME_SECONDS
+            logged += 1
+    return logged, seconds
+
+
+def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bool:
+    """Return True for stage-7 reference adapter solid-color PPM fixtures."""
+
+    manifest = _read_json(rollout_dir / "manifest.json")
+    if manifest.get("schema") != REFERENCE_ROLLOUT_SCHEMA:
+        return False
+    observations = list(manifest.get("camera_observations") or [])
+    if observations and not all(str(item).endswith(".ppm") for item in observations):
+        return False
+    if frames and not all(frame.shape[:2] == REFERENCE_STUB_FRAME_SHAPE for frame in frames):
+        return False
+    return "quality" in manifest
+
+
+def _heldout_render_episodes(
+    local_dir: Path,
+    heldout_report: dict[str, Any] | None,
+) -> list[tuple[str, list[np.ndarray]]]:
+    renders_root = local_dir / "eval" / "heldout" / "renders"
+    manifest = (heldout_report or {}).get("render_manifest") or {}
+    episodes: list[tuple[str, list[np.ndarray]]] = []
+    for item in manifest.get("episodes") or []:
+        if not isinstance(item, dict):
+            continue
+        env_id = str(item.get("env_id") or "")
+        if not env_id:
+            continue
+        env_dir = renders_root / env_id
+        frames = [
+            frame
+            for name in item.get("frames") or []
+            if (frame := _read_image(env_dir / str(name))) is not None
+        ]
+        if frames:
+            episodes.append((env_id, frames))
+    if episodes:
+        return episodes
+    if not renders_root.is_dir():
+        return []
+    for env_dir in sorted(path for path in renders_root.iterdir() if path.is_dir()):
+        frames = [
+            frame
+            for frame_path in sorted(env_dir.glob("camera-*.png"))
+            if (frame := _read_image(frame_path)) is not None
+        ]
+        if frames:
+            episodes.append((env_dir.name, frames))
+    return episodes
+
+
+def _build_blueprint(rrb: Any, *, has_heldout_cameras: bool = False) -> Any:
+    camera_view = (
+        rrb.Spatial2DView(
+            origin="heldout",
+            contents="heldout/**/camera",
+            name="Held-out sim cameras",
+        )
+        if has_heldout_cameras
+        else rrb.Spatial2DView(
+            origin="rollouts",
+            contents="rollouts/**",
+            name="Rollout cameras",
+        )
+    )
+    secondary_camera = (
+        rrb.Spatial2DView(
+            origin="rollouts",
+            contents="rollouts/**/camera",
+            name="Policy rollouts",
+        )
+        if has_heldout_cameras
+        else None
+    )
+    left_column = (
+        rrb.Vertical(camera_view, secondary_camera, row_shares=[2.0, 1.0])
+        if secondary_camera is not None
+        else camera_view
+    )
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="rollouts", contents="rollouts/**", name="Rollout cameras"),
+            left_column,
             rrb.TextDocumentView(origin="rollouts", contents="rollouts/**/critique", name="VLM critiques"),
             rrb.Vertical(
                 rrb.TimeSeriesView(origin="signal", contents="signal/**", name="VLM->RL signal"),
@@ -307,10 +422,70 @@ def _rollout_dirs(actions_dir: Path | None) -> list[Path]:
 def _rollout_frames(rollout_dir: Path) -> list[np.ndarray]:
     frames: list[np.ndarray] = []
     for frame_path in sorted(rollout_dir.glob("camera-*.ppm")):
-        frame = _read_ppm(frame_path)
+        frame = _read_image(frame_path)
         if frame is not None:
             frames.append(frame)
+    if frames:
+        return frames
+    for frame_path in sorted(rollout_dir.iterdir()):
+        if frame_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+            frame = _read_image(frame_path)
+            if frame is not None:
+                frames.append(frame)
     return frames
+
+
+def _read_image(path: Path) -> np.ndarray | None:
+    suffix = path.suffix.lower()
+    if suffix == ".ppm":
+        return _read_ppm(path)
+    if suffix == ".png":
+        return _read_png(path)
+    return None
+
+
+def _read_png(path: Path) -> np.ndarray | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    import struct
+    import zlib
+
+    index = 8
+    width = height = 0
+    idat = bytearray()
+    while index + 8 <= len(data):
+        length = struct.unpack("!I", data[index : index + 4])[0]
+        chunk_type = data[index + 4 : index + 8]
+        chunk = data[index + 8 : index + 8 + length]
+        index += 12 + length
+        if chunk_type == b"IHDR" and len(chunk) >= 8:
+            width, height = struct.unpack("!II", chunk[:8])
+        elif chunk_type == b"IDAT":
+            idat.extend(chunk)
+        elif chunk_type == b"IEND":
+            break
+    if width <= 0 or height <= 0 or not idat:
+        return None
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error:
+        return None
+    stride = width * 3 + 1
+    if len(raw) < height * stride:
+        return None
+    pixels = np.empty((height, width, 3), dtype=np.uint8)
+    offset = 0
+    for row in range(height):
+        offset += 1
+        pixels[row] = np.frombuffer(raw, dtype=np.uint8, count=width * 3, offset=offset).reshape(
+            width, 3
+        )
+        offset += width * 3
+    return pixels.copy()
 
 
 def _read_ppm(path: Path) -> np.ndarray | None:
@@ -336,7 +511,7 @@ def _read_ppm(path: Path) -> np.ndarray | None:
     if len(fields) < 3:
         return None
     width, height, _maxval = (int(field) for field in fields)
-    index += 1  # single whitespace separator after maxval
+    index += 1
     pixels = data[index:index + width * height * 3]
     if len(pixels) < width * height * 3:
         return None
@@ -344,8 +519,6 @@ def _read_ppm(path: Path) -> np.ndarray | None:
 
 
 def _maybe_write_mp4(rollout_dir: Path, frames: list[np.ndarray]) -> Path | None:
-    """Best-effort per-rollout MP4 via ffmpeg; returns None if ffmpeg is missing."""
-
     import shutil
     import subprocess
     import tempfile
@@ -470,7 +643,7 @@ def _import_rerun() -> tuple[Any, Any]:
     try:
         import rerun as rr
         import rerun.blueprint as rrb
-    except ImportError as exc:  # pragma: no cover - exercised via monkeypatch in tests
+    except ImportError as exc:  # pragma: no cover
         raise RerunUnavailableError(
             "rerun-sdk is not installed; skipping Sim2Real Rerun visualization"
         ) from exc

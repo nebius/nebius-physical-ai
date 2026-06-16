@@ -116,9 +116,10 @@ def test_sim2real_rerun_serve_deploy_emits_public_url(mocker) -> None:
                 "status": "deployed",
                 "run_id": "demo-run",
                 "rrd_s3_uri": "s3://bucket/sim2real-b/demo-run/reports/sim2real.rrd",
-                "public_url": "http://203.0.113.10:9090/",
+                "public_url": "http://203.0.113.10:9090/?url=rerun%2Bhttp%3A%2F%2F203.0.113.10%3A9876%2Fproxy",
+                "local_url": "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9876%2Fproxy",
                 "cluster_url": "http://svc.default.svc.cluster.local:9090",
-                "port_forward_command": "kubectl port-forward ...",
+                "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
             }
         ),
     )
@@ -130,9 +131,11 @@ def test_sim2real_rerun_serve_deploy_emits_public_url(mocker) -> None:
 
     assert result.exit_code == 0
     assert "public_url: http://203.0.113.10:9090/" in result.output
+    assert "local_url: http://127.0.0.1:9090/" in result.output
+    assert "port_forward:" in result.output
 
 
-def test_sim2real_rerun_serve_loadbalancer_pending_omits_port_forward(mocker) -> None:
+def test_sim2real_rerun_serve_deploy_emits_local_url_when_public_pending(mocker) -> None:
     mocker.patch(
         "npa.cli.workbench.sim2real._rerun_serve_credentials",
         return_value=("ak", "sk"),
@@ -151,11 +154,12 @@ def test_sim2real_rerun_serve_loadbalancer_pending_omits_port_forward(mocker) ->
                 "run_id": "demo-run",
                 "rrd_s3_uri": "s3://bucket/sim2real-b/demo-run/reports/sim2real.rrd",
                 "public_url": "",
+                "local_url": "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9876%2Fproxy",
                 "service_type": "LoadBalancer",
                 "deployment_name": "npa-sim2real-rerun-npa-rtxpro-mk8s",
                 "namespace": "default",
                 "cluster_url": "http://svc.default.svc.cluster.local:9090",
-                "port_forward_command": "kubectl port-forward ...",
+                "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
             }
         ),
     )
@@ -167,7 +171,8 @@ def test_sim2real_rerun_serve_loadbalancer_pending_omits_port_forward(mocker) ->
 
     assert result.exit_code == 0
     assert "public_url: pending" in result.output
-    assert "port_forward" not in result.output
+    assert "local_url: http://127.0.0.1:9090/" in result.output
+    assert "port_forward:" in result.output
 
 
 def test_sim2real_hidden_from_workbench_help() -> None:

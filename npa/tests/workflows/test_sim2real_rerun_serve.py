@@ -22,6 +22,7 @@ from npa.workflows.sim2real_rerun_serve import (
     deployment_name_for_run,
     destroy_rerun_serve,
     in_cluster_kubernetes,
+    local_viewer_url,
     maybe_auto_rerun_serve,
     public_viewer_url,
     redact_rerun_serve_manifest,
@@ -190,6 +191,14 @@ def test_public_viewer_url_points_at_external_grpc_proxy() -> None:
     assert "9876" in url
 
 
+def test_local_viewer_url_uses_loopback_grpc_origin() -> None:
+    url = local_viewer_url(http_port=9090, grpc_port=9876)
+    assert url == public_viewer_url("127.0.0.1", http_port=9090, grpc_port=9876)
+    assert "127.0.0.1" in url
+    assert "9876" in url
+    assert "rerun%2Bhttp" in url or "rerun+http" in url
+
+
 def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
     mocker.patch(
         "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
@@ -273,7 +282,10 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
     assert result.public_url == public_viewer_url(
         "203.0.113.10", http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
     )
+    assert result.local_url == local_viewer_url(http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT)
     assert "port-forward" in result.port_forward_command
+    assert f"{DEFAULT_PORT}:{DEFAULT_PORT}" in result.port_forward_command
+    assert f"{DEFAULT_GRPC_PORT}:{DEFAULT_GRPC_PORT}" in result.port_forward_command
 
 
 def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
@@ -441,6 +453,11 @@ def test_maybe_auto_rerun_serve_uses_in_cluster_kubectl_without_kubeconfig_file(
                         "http://203.0.113.10:9090/?url=rerun%2Bhttp%3A%2F%2F203.0.113.10"
                         "%3A9876%2Fproxy"
                     ),
+                    "local_url": (
+                        "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1"
+                        "%3A9876%2Fproxy"
+                    ),
+                    "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
                     "run_id": "sim2real-staged-20260615t180818z",
                     "deployment_name": "npa-sim2real-rerun-npa-rtxpro-mk8s",
                 }
@@ -494,6 +511,8 @@ def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) ->
                 "to_dict": lambda self: {
                     "status": "deployed",
                     "public_url": "http://203.0.113.10:9090/",
+                    "local_url": "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9876%2Fproxy",
+                    "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
                     "run_id": "sim2real-staged-20260615t180818z",
                     "deployment_name": "npa-sim2real-rerun-viewer",
                 }
@@ -510,4 +529,7 @@ def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) ->
         k8s_kubeconfig="/tmp/kubeconfig",
     )
     assert result["status"] == "deployed"
-    assert "public_url: http://203.0.113.10:9090/" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "public_url: http://203.0.113.10:9090/" in out
+    assert "local_url: http://127.0.0.1:9090/" in out
+    assert "port_forward:" in out

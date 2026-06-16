@@ -26,6 +26,15 @@ from npa.workflows.sim2real_loop import (
     run_full_loop,
     run_inner_loop,
 )
+from npa.workflows.sim2real_loop import build_config_from_env
+from npa.workflows.sim2real_rerun_regen import (
+    Sim2RealRerunRegenError,
+    default_regen_local_dir,
+    download_rrd_from_s3,
+    regen_sim2real_rrd,
+    rerun_heldout_eval_only,
+    resolve_local_rrd_path,
+)
 from npa.workflows.sim2real_rerun_serve import (
     DEFAULT_NAMESPACE,
     DEFAULT_PORT,
@@ -384,20 +393,25 @@ def _emit_rerun_serve_result(payload: dict, *, output: OutputFormat) -> None:
     typer.echo(f"rrd_s3_uri: {payload['rrd_s3_uri']}")
     if payload.get("public_url"):
         typer.echo(f"public_url: {payload['public_url']}")
-        return
-    service_type = str(payload.get("service_type", "")).strip().lower()
-    if service_type in {"loadbalancer", "lb"}:
-        deployment = payload.get("deployment_name", "npa-sim2real-rerun")
-        namespace = payload.get("namespace", DEFAULT_NAMESPACE)
-        typer.echo(
-            "public_url: pending — LoadBalancer external IP not assigned yet. "
-            "Wait and re-run serve, or inspect cluster networking (for example "
-            f"`kubectl describe svc {deployment} -n {namespace}` for quota or cloud-controller errors).",
-            err=True,
-        )
-        return
-    typer.echo(f"cluster_url: {payload['cluster_url']}")
-    typer.echo(f"port_forward: {payload['port_forward_command']}")
+    else:
+        service_type = str(payload.get("service_type", "")).strip().lower()
+        if service_type in {"loadbalancer", "lb"}:
+            deployment = payload.get("deployment_name", "npa-sim2real-rerun")
+            namespace = payload.get("namespace", DEFAULT_NAMESPACE)
+            typer.echo(
+                "public_url: pending — LoadBalancer external IP not assigned yet. "
+                "Wait and re-run serve, or inspect cluster networking (for example "
+                f"`kubectl describe svc {deployment} -n {namespace}` for quota or cloud-controller errors).",
+                err=True,
+            )
+    if payload.get("local_url"):
+        typer.echo(f"local_url: {payload['local_url']}")
+    if payload.get("port_forward_command"):
+        typer.echo(f"port_forward: {payload['port_forward_command']}")
+    if payload.get("local_rrd_path"):
+        typer.echo(f"local_rrd_path: {payload['local_rrd_path']}")
+    if not payload.get("public_url") and not payload.get("local_url"):
+        typer.echo(f"cluster_url: {payload['cluster_url']}")
 
 
 def _rerun_serve_credentials() -> tuple[str, str]:
@@ -462,6 +476,16 @@ def rerun_serve_command(
         help="When used with --destroy, wait for Kubernetes to confirm resource deletion.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
+    local_record: bool = typer.Option(
+        False,
+        "--local-record",
+        help="Also download reports/sim2real.rrd to disk (LOCAL_RRD_PATH or /tmp/sim2real-regen/<run-id>/reports/sim2real.rrd).",
+    ),
+    local_rrd_path: Optional[Path] = typer.Option(
+        None,
+        "--local-rrd-path",
+        help="Override local .rrd destination when using --local-record.",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
@@ -514,4 +538,136 @@ def rerun_serve_command(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    _emit_rerun_serve_result(result.to_dict(), output=output)
+    payload = result.to_dict()
+    if local_record and not destroy:
+        loop_config = build_config_from_env(
+            run_id=run_id,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=s3_endpoint,
+        )
+        dest = resolve_local_rrd_path(
+            run_id,
+            override=str(local_rrd_path) if local_rrd_path is not None else "",
+        )
+        try:
+            download_rrd_from_s3(loop_config, dest_path=dest)
+        except Sim2RealRerunRegenError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        payload["local_rrd_path"] = str(dest)
+
+    _emit_rerun_serve_result(payload, output=output)
+
+
+@rerun_app.command("regen")
+def rerun_regen_command(
+    run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
+    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    local_dir: Optional[Path] = typer.Option(
+        None,
+        "--local-dir",
+        help="Working directory for synced artifacts (default: /tmp/sim2real-regen/<run-id>).",
+    ),
+    local_rrd_path: Optional[Path] = typer.Option(
+        None,
+        "--local-rrd-path",
+        help="Destination .rrd path (default: LOCAL_RRD_PATH or <local-dir>/reports/sim2real.rrd).",
+    ),
+    upload: bool = typer.Option(
+        True,
+        "--upload/--no-upload",
+        help="Upload regenerated reports/sim2real.rrd (and held-out artifacts) to S3.",
+    ),
+    no_sync: bool = typer.Option(
+        False,
+        "--no-sync",
+        help="Skip S3 download; use artifacts already under --local-dir.",
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Regenerate reports/sim2real.rrd locally from S3 artifacts (held-out PNG sync included)."""
+    try:
+        config = build_config_from_env(
+            run_id=run_id,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=s3_endpoint,
+        )
+        work_dir = local_dir or default_regen_local_dir(run_id)
+        result = regen_sim2real_rrd(
+            config,
+            local_dir=work_dir,
+            local_rrd_path=local_rrd_path,
+            upload=upload,
+            sync_inputs=not no_sync,
+        )
+    except Sim2RealRerunRegenError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    payload = result.to_dict()
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(f"local_rrd_path: {payload['local_rrd_path']}")
+    typer.echo(f"heldout_frame_count: {payload['heldout_frame_count']}")
+    if payload.get("upload_uri"):
+        typer.echo(f"upload_uri: {payload['upload_uri']}")
+
+
+@rerun_app.command("heldout-only")
+def rerun_heldout_only_command(
+    run_id: str = typer.Option(..., "--run-id", help="Existing Sim2Real run id."),
+    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
+    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
+    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    local_dir: Optional[Path] = typer.Option(
+        None,
+        "--local-dir",
+        help="Local working directory (default: /tmp/sim2real-regen/<run-id>).",
+    ),
+    outer_iteration: int = typer.Option(1, "--outer-iteration", help="Outer loop index for stage 10."),
+    no_publish: bool = typer.Option(
+        False,
+        "--no-publish",
+        help="Skip uploading held-out report/renders to the run prefix on S3.",
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+) -> None:
+    """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
+    try:
+        config = build_config_from_env(
+            run_id=run_id,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=s3_endpoint,
+        )
+        work_dir = local_dir or default_regen_local_dir(run_id)
+        report = rerun_heldout_eval_only(
+            config,
+            local_dir=work_dir,
+            outer_iteration=outer_iteration,
+            publish=not no_publish,
+        )
+    except Sim2RealRerunRegenError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    payload = {
+        "run_id": run_id,
+        "success_rate": report.get("success_rate"),
+        "render_manifest_episodes": len((report.get("render_manifest") or {}).get("episodes") or []),
+        "sim_backend": report.get("sim_backend"),
+        "rollout_backend": report.get("rollout_backend"),
+    }
+    if output == OutputFormat.json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(f"run_id: {run_id}")
+    typer.echo(f"success_rate: {payload['success_rate']}")
+    typer.echo(f"render_manifest_episodes: {payload['render_manifest_episodes']}")
