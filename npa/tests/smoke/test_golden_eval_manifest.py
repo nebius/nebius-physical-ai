@@ -136,6 +136,16 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
             f"{name}: {spec.dockerfile} runs `{command}` but no COPY writes "
             f"{script_path} into the image"
         )
+    elif command.startswith("bash "):
+        script_path = command.split("bash ", 1)[1].split()[0]
+        assert any(
+            src.endswith(Path(script_path).name) or script_path in dest
+            for src in sources
+            for dest in dests
+        ) or script_path in dests, (
+            f"{name}: {spec.dockerfile} runs `{command}` but no COPY writes "
+            f"{script_path} into the image"
+        )
     else:  # pragma: no cover - guards against an unhandled command shape.
         raise AssertionError(f"{name}: unexpected in-image smoke command: {command!r}")
 

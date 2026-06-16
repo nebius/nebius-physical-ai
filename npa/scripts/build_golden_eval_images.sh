@@ -34,7 +34,7 @@ if [[ "${BUILD_ALL}" == "1" ]]; then
   TOOLS=(
     retargeting lancedb detection-training fiftyone genesis
     lerobot-policy sim2real-envgen sim2real-reference-policy
-    lerobot-vlm-rl sim2real-eval
+    lerobot-vlm-rl sim2real-eval cosmos2-transfer
   )
 fi
 
@@ -74,6 +74,12 @@ build_simple() {
 
 build_lancedb() {
   bash "${NPA_ROOT}/npa/docker/workbench/lancedb/build.sh" \
+    --registry "${REGISTRY}" \
+    $([[ "${PUSH}" == "1" ]] && echo --push)
+}
+
+build_cosmos2_transfer() {
+  bash "${NPA_ROOT}/npa/docker/workbench/cosmos2-transfer/build.sh" \
     --registry "${REGISTRY}" \
     $([[ "${PUSH}" == "1" ]] && echo --push)
 }
@@ -119,6 +125,9 @@ for tool in "${TOOLS[@]}"; do
       if [[ "${tool}" == "sim2real-envgen" ]]; then
         build_sim2real_stack
       fi
+      ;;
+    cosmos2-transfer)
+      build_cosmos2_transfer
       ;;
     *)
       echo "No build recipe for: ${tool}" >&2

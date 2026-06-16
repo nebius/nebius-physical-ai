@@ -109,13 +109,14 @@ eval's module or script. This would have caught all of the above at update time.
 
 ### Serverless fleet peak (feat/golden-eval)
 
-Batch `run-all --serverless` (excluding `blocked-on-upstream` by default) reached
-**15/16 PASS** on real Nebius Serverless GPUs. The sole non-pass container is
-`cosmos2-transfer`, now `blocked-on-upstream`: the published `2.5.0` image is
-built outside this repo and lacks a torch/npa smoke entrypoint on the default
-python (inline CUDA probe fails). `base-cuda13-b300` and `cosmos3-reason` remain
-`blocked-on-upstream` (B300/CUDA13 family) and are excluded from the default
-fleet count.
+Batch `run-all --serverless` (excluding `blocked-on-upstream` by default) targets
+**16/16 PASS** on real Nebius Serverless GPUs. The prior 15/16 gap was
+`cosmos2-transfer`: the published `2.5.0` image installs PyTorch in
+`/opt/cosmos/venv`, not on default `python`, so bare `python -c import torch`
+probes failed. The fix is a thin wrapper image (`2.5.1-golden-eval-smoke-*`)
+that copies `smoke_functional.sh` and runs the probe via the venv python.
+`base-cuda13-b300` and `cosmos3-reason` remain `blocked-on-upstream`
+(B300/CUDA13 family) and are excluded from the default fleet count.
 
 Infrastructure landed in this branch: batch continue-on-error (submit/runtime
 failures no longer abort the fleet), H100 routing for CPU-optional tools (L40S
@@ -155,7 +156,7 @@ pipeline. Key safety notes are condensed below.
 | `genesis` | Genesis physics sim + RL teacher + demos | `container-smoke` | required | gpu-gated |
 | `isaac-lab` | Isaac Lab RL sim (headless train/eval) | `container-smoke` | required | gpu-gated |
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
-| `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | blocked-on-upstream |
+| `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
@@ -203,7 +204,7 @@ Run these inside the corresponding built image (or via
 - `genesis` — `python -m npa.smoke.test_genesis_functional` (env: `test_genesis_env`)
 - `isaac-lab` — `python -m npa.smoke.test_isaac_lab_functional` (env: `test_isaac_lab_env`)
 - `cosmos` — `python -m npa.smoke.test_cosmos_functional` (env: `test_cosmos_env`)
-- `cosmos2-transfer` — inline CUDA probe (blocked-on-upstream until published image exposes smoke entrypoint)
+- `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (venv CUDA probe)
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`
