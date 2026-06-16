@@ -72,10 +72,21 @@ if [ -n "${TRIGGER_URI}" ] && [[ "${TRIGGER_URI}" != */ ]]; then
   TRIGGER_URI="${TRIGGER_URI}/"
 fi
 
+readarray -t _tags < <("${ROOT}/npa/.venv/bin/python" - <<'PY'
+from npa.deploy.images import supported_tool_version
+print(supported_tool_version("lerobot-vlm-rl"))
+print(supported_tool_version("sim2real-eval"))
+print(supported_tool_version("cosmos3-reason"))
+PY
+)
+TRAINER_TAG="${_tags[0]}"
+EVAL_TAG="${_tags[1]}"
+VLM_TAG="${_tags[2]}"
+
 # Preflight: every image must be registry-qualified before we apply the Job.
-TRAINER_IMAGE="${TRAINER_IMAGE:-${REG}/npa-lerobot-vlm-rl:0.1.0}"
-VLM_IMAGE="${VLM_IMAGE:-${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120}"
-EVAL_IMAGE="${EVAL_IMAGE:-${REG}/npa-sim2real-eval:0.1.1-genuine-sm120}"
+TRAINER_IMAGE="${TRAINER_IMAGE:-${REG}/npa-lerobot-vlm-rl:${TRAINER_TAG}}"
+VLM_IMAGE="${VLM_IMAGE:-${REG}/npa-cosmos3-reason:${VLM_TAG}}"
+EVAL_IMAGE="${EVAL_IMAGE:-${REG}/npa-sim2real-eval:${EVAL_TAG}}"
 AUGMENT_IMAGE="${AUGMENT_IMAGE:-${REG}/npa-cosmos2-transfer:2.5.0}"
 POLICY_IMAGE="${POLICY_IMAGE:-${TRAINER_IMAGE}}"
 ISAAC_IMAGE="${ISAAC_IMAGE:-${REG}/npa-isaac-lab:2.3.2.post1}"
@@ -246,7 +257,7 @@ spec:
             - name: NPA_SOURCE_REPO
               value: "https://github.com/nebius/nebius-physical-ai.git"
             - name: NPA_SOURCE_REF
-              value: "feat/sim2real-mandatory-stages"
+              value: "main"
             - name: NPA_SIM2REAL_K8S_NAMESPACE
               value: "default"
             - name: NPA_SIM2REAL_K8S_SERVICE_ACCOUNT
@@ -329,7 +340,7 @@ spec:
                 --k8s-gpu-product "\${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
                 --k8s-job-timeout-s "\${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-10800}"
                 --source-repo "\${NPA_SOURCE_REPO:-https://github.com/nebius/nebius-physical-ai.git}"
-                --source-ref "\${NPA_SOURCE_REF:-feat/sim2real-mandatory-stages}"
+                --source-ref "\${NPA_SOURCE_REF:-main}"
                 --upload-artifacts
               )
               python3 -m npa.workflows.sim2real run "\${common_args[@]}" \

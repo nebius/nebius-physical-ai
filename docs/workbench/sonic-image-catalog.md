@@ -96,7 +96,7 @@ vLLM image when you need pinned serving dependencies.
 
 The retargeting workflow uses `NPA_RETARGETING_IMAGE` for the CPU preprocess
 image. The committed default is
-`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.0`, a pushed
+`cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-retargeting:0.1.1`, a pushed
 image that installs this repository's `npa` package, CPU preprocess
 dependencies, and pinned upstream SONIC data-process scripts.
 

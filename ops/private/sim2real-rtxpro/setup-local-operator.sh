@@ -54,12 +54,16 @@ if k8s_context:
     env_lines.append(f"NPA_SIM2REAL_K8S_CONTEXT={k8s_context}")
 if registry:
     reg = registry.rstrip("/")
+    from npa.deploy.images import supported_tool_version
+    trainer_tag = supported_tool_version("lerobot-vlm-rl")
+    eval_tag = supported_tool_version("sim2real-eval")
+    vlm_tag = supported_tool_version("cosmos3-reason")
     env_lines.extend([
-        f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:0.1.0",
-        f"VLM_IMAGE={reg}/npa-cosmos3-reason:3.0.1-genuine-sm120",
+        f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:{trainer_tag}",
+        f"VLM_IMAGE={reg}/npa-cosmos3-reason:{vlm_tag}",
         f"AUGMENT_IMAGE={reg}/npa-cosmos2-transfer:2.5.0",
         f"POLICY_IMAGE={reg}/npa-sim2real-reference-policy:0.1.1",
-        f"EVAL_IMAGE={reg}/npa-sim2real-eval:0.1.1-genuine-sm120",
+        f"EVAL_IMAGE={reg}/npa-sim2real-eval:{eval_tag}",
         f"ISAAC_IMAGE={reg}/npa-isaac-lab:2.3.2.post1",
     ])
 (out / "env.local").write_text("\n".join(env_lines) + "\n", encoding="utf-8")

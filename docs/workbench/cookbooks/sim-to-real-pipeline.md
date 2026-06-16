@@ -51,7 +51,7 @@ export NPA_S3_BUCKET="$S3_BUCKET"
 export S3_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export AWS_ENDPOINT_URL="$S3_ENDPOINT_URL"
 export NEBIUS_S3_ENDPOINT="$S3_ENDPOINT_URL"
-export POLICY_IMAGE=npa-lerobot-policy:0.1.0
+export POLICY_IMAGE=npa-lerobot-policy:0.1.1
 export NPA_GPU_TYPE=H100:1
 export NPA_GPU_FAILOVER=H200:1,L40S:1
 export EVAL_BACKEND=state-success
@@ -172,7 +172,7 @@ report = sim_to_real.local_smoke(
     s3_endpoint="https://storage.eu-north1.nebius.cloud",
     s3_prefix="sim-to-real/sim-to-real-sdk-example",
     input_data_uri="s3://your-bucket-name/datasets/lerobot-pusht/",
-    policy_image="npa-lerobot-policy:0.1.0",
+    policy_image="npa-lerobot-policy:0.1.1",
     gpu="H100:1",
     gpu_failover="H200:1,L40S:1",
     eval_backend="state-success",
@@ -266,13 +266,13 @@ Build and push the policy image from the repo root:
 ```bash
 docker build \
   -f npa/docker/workbench/lerobot-policy/Dockerfile \
-  -t npa-lerobot-policy:0.1.0 \
+  -t npa-lerobot-policy:0.1.1 \
   npa
 
-docker tag npa-lerobot-policy:0.1.0 \
-  "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
-docker push "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
-export POLICY_IMAGE="cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.0"
+docker tag npa-lerobot-policy:0.1.1 \
+  "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.1"
+docker push "cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.1"
+export POLICY_IMAGE="cr.eu-north1.nebius.cloud/${NPA_REGISTRY_ID}/npa-lerobot-policy:0.1.1"
 ```
 
 ## Teardown
@@ -296,7 +296,7 @@ Both should show no in-progress clusters or managed jobs for the run.
 | `--input-data-uri` / `LEROBOT_DATASET_URI` | `s3://$S3_BUCKET/datasets/lerobot-pusht/` | Any LeRobotDataset S3 URI |
 | `--dataset-repo-id` | `lerobot/pusht` | Dataset repo ID |
 | `--dataset-revision` | `7628202a2180972f291ba1bc6723834921e72c19` | Dataset revision |
-| `POLICY_IMAGE` / `--policy-image` | `npa-lerobot-policy:0.1.0` | Custom LeRobot policy image or registry-qualified tag |
+| `POLICY_IMAGE` / `--policy-image` | `npa-lerobot-policy:0.1.1` | Custom LeRobot policy image or registry-qualified tag |
 | `--eval-backend` / `EVAL_BACKEND` / `eval_backend` | `state-success` | `vlm-frames` or `heldout-metrics` |
 | `--feedback-source` / `FEEDBACK_SOURCE` / `feedback_source` | `sim-env` | `none`, `vlm`, or `byo-container` |
 | `--feedback-type` / `FEEDBACK_TYPE` / `feedback_type` | `scalar` | `dense-per-step`, `pass-fail`, `critique`, or `preference` |

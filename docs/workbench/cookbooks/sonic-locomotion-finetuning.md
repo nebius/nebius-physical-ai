@@ -33,7 +33,7 @@ or SDK submission, pass the values to the SONIC materializer and it writes the
 literal YAML before calling SkyPilot.
 
 Retargeting uses `NPA_RETARGETING_IMAGE`, which defaults to the CPU
-`npa-retargeting:0.1.0` preprocess image. That image includes the `npa` CLI,
+`npa-retargeting:0.1.1` preprocess image. That image includes the `npa` CLI,
 CPU Python dependencies, and the pinned upstream
 `NVlabs/GR00T-WholeBodyControl` data-process scripts. MJLab still uses
 `NPA_WORKBENCH_IMAGE`, which defaults to the pushed generic Workbench image
