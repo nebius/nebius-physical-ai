@@ -10,9 +10,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
-from npa.cli.rerun import RERUN_VERSION
 from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
 
@@ -24,6 +23,10 @@ DEFAULT_RERUN_VIEWER_TOOL = "sim2real-rerun-viewer"
 DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
+DEFAULT_GRPC_PORT = 9876
+# 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer
+# viewers stall around wasm load (~37%) then fail to connect. Pin serve pods to 0.32+.
+DEFAULT_RERUN_SERVE_SDK_VERSION = "0.32.0"
 DEFAULT_S3_PREFIX = "sim2real-b"
 DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "LoadBalancer"
@@ -258,17 +261,42 @@ def _rerun_image_has_preinstalled_cli(image: str) -> bool:
     return "npa-sim2real-rerun-viewer" in lowered or lowered.startswith("rerunio/rerun:")
 
 
+def rerun_serve_sdk_version() -> str:
+    override = os.environ.get("NPA_SIM2REAL_RERUN_SERVE_VERSION", "").strip()
+    return override or DEFAULT_RERUN_SERVE_SDK_VERSION
+
+
+def _rerun_remote_cors_flags() -> str:
+    # rerun 0.32+ only; allow Nebius LoadBalancer origins (204.12.*) and any http host.
+    return (
+        "--cors-allow-origin 'http://*:*' "
+        "--cors-allow-origin 'http://204.12.*:*' "
+    )
+
+
 def _rerun_serve_command(config: RerunServeConfig) -> str:
+    sdk_version = rerun_serve_sdk_version()
     base_cmd = (
-        "rerun /data/sim2real.rrd --web-viewer "
-        f"--web-viewer-port {config.port} --bind 0.0.0.0"
+        "rerun /data/sim2real.rrd --serve-web --web-viewer "
+        f"--web-viewer-port {config.port} --port {DEFAULT_GRPC_PORT} --bind 0.0.0.0 "
+        f"{_rerun_remote_cors_flags()}"
     )
     if _rerun_image_has_preinstalled_cli(config.rerun_image):
         return base_cmd
     return (
-        f"python -m pip install --no-cache-dir 'rerun-sdk=={RERUN_VERSION}' "
+        f"python -m pip install --no-cache-dir 'rerun-sdk=={sdk_version}' "
         f"&& exec {base_cmd}"
     )
+
+
+def public_viewer_url(host: str, *, http_port: int, grpc_port: int = DEFAULT_GRPC_PORT) -> str:
+    """Return a LoadBalancer URL that points the browser at the external gRPC proxy."""
+
+    host = host.strip()
+    if not host:
+        return ""
+    proxy = f"rerun+http://{host}:{grpc_port}/proxy"
+    return f"http://{host}:{http_port}/?url={quote(proxy, safe='')}"
 
 
 def build_rerun_serve_config(
@@ -395,7 +423,10 @@ test -s /data/sim2real.rrd
                                     "image": config.rerun_image,
                                     "imagePullPolicy": "IfNotPresent",
                                     "command": ["/bin/sh", "-c", serve_command],
-                                    "ports": [{"name": "http", "containerPort": config.port}],
+                                    "ports": [
+                                        {"name": "http", "containerPort": config.port},
+                                        {"name": "grpc", "containerPort": DEFAULT_GRPC_PORT},
+                                    ],
                                     "readinessProbe": {
                                         "httpGet": {"path": "/", "port": "http"},
                                         "initialDelaySeconds": (
@@ -429,7 +460,14 @@ test -s /data/sim2real.rrd
                 "spec": {
                     "type": config.service_type,
                     "selector": {"app.kubernetes.io/instance": config.deployment_name},
-                    "ports": [{"name": "http", "port": config.port, "targetPort": "http"}],
+                    "ports": [
+                        {"name": "http", "port": config.port, "targetPort": "http"},
+                        {
+                            "name": "grpc",
+                            "port": DEFAULT_GRPC_PORT,
+                            "targetPort": "grpc",
+                        },
+                    ],
                 },
             },
         ],
@@ -516,7 +554,9 @@ def apply_rerun_serve(
             service = getter("service", config.deployment_name, kubeconfig)
             host = _service_external_host(service or {})
             if host:
-                public_url = f"http://{host}:{config.port}/"
+                public_url = public_viewer_url(
+                    host, http_port=config.port, grpc_port=DEFAULT_GRPC_PORT
+                )
                 break
             waiter(5)
 

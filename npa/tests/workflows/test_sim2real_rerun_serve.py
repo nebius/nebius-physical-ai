@@ -6,6 +6,7 @@ import pytest
 
 from npa.clients.config import StorageConfig
 from npa.workflows.sim2real_rerun_serve import (
+    DEFAULT_GRPC_PORT,
     DEFAULT_PORT,
     DEFAULT_RERUN_IMAGE,
     DEFAULT_S3_PREFIX,
@@ -17,6 +18,7 @@ from npa.workflows.sim2real_rerun_serve import (
     deployment_name_for_run,
     destroy_rerun_serve,
     maybe_auto_rerun_serve,
+    public_viewer_url,
     redact_rerun_serve_manifest,
     resolve_storage_bucket,
     rrd_s3_uri_from_report_uri,
@@ -151,8 +153,12 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert "aws s3 cp" in init_container["command"][-1]
     assert rerun_container["image"] == DEFAULT_RERUN_IMAGE
     assert "pip install" in rerun_container["command"][-1]
+    assert "rerun-sdk==0.32.0" in rerun_container["command"][-1]
+    assert "--serve-web" in rerun_container["command"][-1]
     assert f"--web-viewer-port {DEFAULT_PORT}" in rerun_container["command"][-1]
-    assert rerun_container["command"][-1].endswith("--bind 0.0.0.0")
+    assert f"--port {DEFAULT_GRPC_PORT}" in rerun_container["command"][-1]
+    assert "--cors-allow-origin" in rerun_container["command"][-1]
+    assert rerun_container["command"][-1].endswith("--cors-allow-origin 'http://204.12.*:*' ")
 
     secret = next(item for item in manifest["items"] if item["kind"] == "Secret")
     assert secret["metadata"]["name"] == f"{config.deployment_name}-s3"
@@ -161,6 +167,14 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     service = next(item for item in manifest["items"] if item["kind"] == "Service")
     assert service["spec"]["type"] == "LoadBalancer"
     assert service["spec"]["ports"][0]["port"] == DEFAULT_PORT
+    assert service["spec"]["ports"][1]["port"] == DEFAULT_GRPC_PORT
+
+
+def test_public_viewer_url_points_at_external_grpc_proxy() -> None:
+    url = public_viewer_url("203.0.113.10", http_port=9090, grpc_port=9876)
+    assert url.startswith("http://203.0.113.10:9090/?url=")
+    assert "203.0.113.10" in url
+    assert "9876" in url
 
 
 def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
@@ -178,7 +192,7 @@ def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
     deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
     rerun_container = deployment["spec"]["template"]["spec"]["containers"][0]
     assert "pip install" not in rerun_container["command"][-1]
-    assert rerun_container["command"][-1].startswith("rerun /data/sim2real.rrd")
+    assert rerun_container["command"][-1].startswith("rerun /data/sim2real.rrd --serve-web")
 
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:
@@ -233,7 +247,9 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
     assert json.loads(calls[0][1] or "{}")["kind"] == "List"
     assert calls[1][0][:3] == ["rollout", "status", f"deployment/{config.deployment_name}"]
     assert result.status == "deployed"
-    assert result.public_url == f"http://203.0.113.10:{DEFAULT_PORT}/"
+    assert result.public_url == public_viewer_url(
+        "203.0.113.10", http_port=DEFAULT_PORT, grpc_port=DEFAULT_GRPC_PORT
+    )
     assert "port-forward" in result.port_forward_command
 
 
