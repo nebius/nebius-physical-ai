@@ -72,6 +72,12 @@ sync_repo() {
 }
 
 run_unit_tests() {
+  log "image tag audit"
+  (
+    cd "${ROOT}"
+    "${PYTHON}" npa/scripts/audit_workbench_image_tags.py
+  ) 2>&1 | tee -a "${LOG}"
+
   log "unit tests: npa/tests/smoke/test_golden_eval_*.py"
   (
     cd "${ROOT}"

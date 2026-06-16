@@ -104,7 +104,7 @@ Common overrides:
 | S3 endpoint | `storage.endpoint_url` or `https://storage.eu-north1.nebius.cloud` | `--s3-endpoint`, `AWS_ENDPOINT_URL`, or `NEBIUS_S3_ENDPOINT` |
 | Run prefix | `sim-to-real/<run-id>` | `--s3-prefix` |
 | Source checkout | public repo `main` | `--source-repo` and `--source-ref` |
-| Policy image | `npa-lerobot-policy:0.1.0` | `--policy-image` or `POLICY_IMAGE` |
+| Policy image | `npa-lerobot-policy:0.1.1` | `--policy-image` or `POLICY_IMAGE` |
 | Dataset | pinned public LeRobot PushT staged under the run bucket | `--input-data-uri` |
 | GPU | `H100:1` | `--gpu` |
 | Step budget | 20 steps, one train/eval iteration | `--train-steps`, `--train-step-budget`, `--max-training-iterations` |

@@ -59,6 +59,17 @@ if ngc:
 PY
 )"
 
+readarray -t _tags < <("${ROOT}/npa/.venv/bin/python" - <<'PY'
+from npa.deploy.images import supported_tool_version
+print(supported_tool_version("lerobot-vlm-rl"))
+print(supported_tool_version("sim2real-eval"))
+print(supported_tool_version("cosmos3-reason"))
+PY
+)
+TRAINER_TAG="${_tags[0]}"
+EVAL_TAG="${_tags[1]}"
+VLM_TAG="${_tags[2]}"
+
 JOB="sim2real-${RUN_ID}"
 MANIFEST="/tmp/sim2real-cluster/${JOB}.yaml"
 
@@ -88,7 +99,7 @@ spec:
         - name: npa-nebius-registry
       containers:
         - name: orchestrator
-          image: ${REG}/npa-lerobot-vlm-rl:0.1.0
+          image: ${REG}/npa-lerobot-vlm-rl:${TRAINER_TAG}
           imagePullPolicy: Always
           resources:
             limits:
@@ -107,11 +118,11 @@ spec:
             - name: S3_ENDPOINT_URL
               value: "${ENDPOINT}"
             - name: TRAINER_IMAGE
-              value: "${REG}/npa-lerobot-vlm-rl:0.1.0"
+              value: "${REG}/npa-lerobot-vlm-rl:${TRAINER_TAG}"
             - name: VLM_IMAGE
-              value: "${REG}/npa-cosmos3-reason:3.0.1-genuine-sm120"
+              value: "${REG}/npa-cosmos3-reason:${VLM_TAG}"
             - name: EVAL_IMAGE
-              value: "${REG}/npa-sim2real-eval:0.1.1-genuine-sm120"
+              value: "${REG}/npa-sim2real-eval:${EVAL_TAG}"
             - name: NPA_SIM2REAL_SIM_BACKEND
               value: "genesis"
             - name: INNER_ITERATIONS
