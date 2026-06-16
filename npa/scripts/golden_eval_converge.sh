@@ -8,7 +8,7 @@
 #   golden_eval_converge.sh --unit-only     # pytest gate only (no fleet)
 #
 # Environment:
-#   GOLDEN_EVAL_SOURCE_REF          git branch (default feat/golden-eval)
+#   GOLDEN_EVAL_SOURCE_REF          git branch (default feat/golden-eval-capability-chart)
 #   GOLDEN_EVAL_MAX_IN_FLIGHT       tmux fleet parallelism (default 4)
 #   GOLDEN_EVAL_FLEET_TIMEOUT_S     wait for summary (default 7200)
 #   GOLDEN_EVAL_MAX_ATTEMPTS        retry cap (default 999)
@@ -24,11 +24,12 @@ DRIVER="${ROOT}/npa/scripts/run_golden_evals.py"
 TMUX_LAUNCHER="${SCRIPT_DIR}/start_golden_evals_tmux.sh"
 AUTOFIX="${SCRIPT_DIR}/golden_eval_autofix.sh"
 
-BRANCH="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval}"
+BRANCH="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval-capability-chart}"
 STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
 LOG="${STATE_DIR}/converge.log"
 COMPLETE_FILE="${STATE_DIR}/golden-evals-complete"
 PAUSED_IAM_FILE="${STATE_DIR}/PAUSED-IAM"
+FLEET_PAUSED=0
 MAX_IN_FLIGHT="${GOLDEN_EVAL_MAX_IN_FLIGHT:-2}"
 FLEET_TIMEOUT_S="${GOLDEN_EVAL_FLEET_TIMEOUT_S:-7200}"
 MAX_ATTEMPTS="${GOLDEN_EVAL_MAX_ATTEMPTS:-999}"
@@ -81,7 +82,7 @@ run_unit_tests() {
   log "unit tests: npa/tests/smoke/test_golden_eval_*.py"
   (
     cd "${ROOT}"
-    "${PYTHON}" -m pytest npa/tests/smoke/test_golden_eval_*.py -q
+    GOLDEN_EVAL_CONVERGE_LOOP=1 "${PYTHON}" -m pytest npa/tests/smoke/test_golden_eval_*.py -q
   ) 2>&1 | tee -a "${LOG}"
 }
 
@@ -135,13 +136,12 @@ Detected SubnetResolutionError / VPC PermissionDenied in fleet logs under:
   ${log_root}
 
 All serverless containers require VPC network listing permission on the project.
-Fix IAM grants for the VPC API, then remove this file and ${COMPLETE_FILE} before restarting converge.
+Fix IAM grants for the VPC API, then remove this file to re-enable serverless fleet runs.
 
 Paused at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
-  touch "${COMPLETE_FILE}"
-  log "FATAL: serverless blocked by VPC PermissionDenied — wrote ${PAUSED_IAM_FILE} and ${COMPLETE_FILE}"
-  exit 2
+  log "FATAL: serverless blocked by VPC PermissionDenied — wrote ${PAUSED_IAM_FILE} (fleet paused; unit gate continues)"
+  return 2
 }
 
 wait_for_fleet() {
@@ -152,11 +152,13 @@ wait_for_fleet() {
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
     if _fleet_iam_blocked "${log_root}"; then
       _pause_for_iam_block "${log_root}"
+      return 2
     fi
     if [[ -f "${summary}" ]] && _summary_done "${summary}"; then
       log "fleet complete summary=${summary}"
       if _fleet_iam_blocked "${log_root}"; then
         _pause_for_iam_block "${log_root}"
+        return 2
       fi
       return 0
     fi
@@ -239,6 +241,9 @@ run_fleet_tmux() {
 
   if ! wait_for_fleet "${log_root}/summary.json"; then
     harvest_failures "${run_id:-attempt-${attempt}}" "${log_root}"
+    if [[ -f "${PAUSED_IAM_FILE}" ]]; then
+      return 2
+    fi
     return 1
   fi
 
@@ -265,14 +270,18 @@ run_attempt() {
     log "unit-only success"
     return 0
   fi
+  if [[ "${FLEET_PAUSED}" == "1" ]]; then
+    log "unit gate pass; serverless fleet skipped (PAUSED-IAM)"
+    return 3
+  fi
   run_fleet_tmux "${attempt}"
 }
 
 log "golden-eval converge start branch=${BRANCH} max_attempts=${MAX_ATTEMPTS}"
 
 if [[ -f "${PAUSED_IAM_FILE}" ]]; then
-  log "PAUSED-IAM marker present (${PAUSED_IAM_FILE}) — serverless blocked by VPC PermissionDenied; exiting"
-  exit 2
+  FLEET_PAUSED=1
+  log "PAUSED-IAM marker present (${PAUSED_IAM_FILE}) — unit gate only until IAM fixed"
 fi
 
 require_tools
@@ -281,10 +290,24 @@ trap 'log "converge interrupted"' INT TERM
 
 attempt=1
 while [[ "${attempt}" -le "${MAX_ATTEMPTS}" ]]; do
-  if run_attempt "${attempt}"; then
+  set +e
+  run_attempt "${attempt}"
+  attempt_ec=$?
+  set -e
+  if [[ "${attempt_ec}" -eq 0 ]]; then
     touch "${COMPLETE_FILE}"
     log "golden-eval converge complete"
     exit 0
+  fi
+  if [[ "${attempt_ec}" -eq 3 ]]; then
+    log "unit gate ok; fleet paused — retry in ${RETRY_SLEEP_S}s"
+    if [[ "${ONCE}" == "1" ]]; then
+      log "unit gate ok (--once, fleet paused)"
+      exit 0
+    fi
+    sleep "${RETRY_SLEEP_S}"
+    attempt=$((attempt + 1))
+    continue
   fi
   if [[ "${ONCE}" == "1" ]]; then
     log "giving up (--once)"

@@ -23,7 +23,7 @@ SESSION="${GOLDEN_EVAL_CONVERGE_SESSION:-golden-evals-converge}"
 WATCHDOG_SESSION="${GOLDEN_EVAL_WATCHDOG_SESSION:-golden-evals-watchdog}"
 STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
 LOG="${STATE_DIR}/converge-tmux.log"
-export GOLDEN_EVAL_SOURCE_REF="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval}"
+export GOLDEN_EVAL_SOURCE_REF="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval-capability-chart}"
 
 IF_DEAD=0
 WITH_WATCHDOG=0
@@ -57,7 +57,7 @@ chmod +x "${SCRIPT_DIR}/golden_eval_converge.sh" \
   "${SCRIPT_DIR}/golden_eval_cursor_patch.sh" \
   "${SCRIPT_DIR}/start_golden_evals_tmux.sh" 2>/dev/null || true
 
-TMUX_ENV="cd \"${ROOT}\" && export GOLDEN_EVAL_STATE_DIR=\"${STATE_DIR}\" && export GOLDEN_EVAL_SOURCE_REF=\"\${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval}\" && export GOLDEN_EVAL_AUTO_COMMIT=\"\${GOLDEN_EVAL_AUTO_COMMIT:-1}\" && export GOLDEN_EVAL_AUTO_PUSH=\"\${GOLDEN_EVAL_AUTO_PUSH:-1}\" && export GOLDEN_EVAL_AUTOFIX_SKIP_GIT=\"\${GOLDEN_EVAL_AUTOFIX_SKIP_GIT:-0}\" && export REGISTRY=\"\${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}\""
+TMUX_ENV="cd \"${ROOT}\" && export GOLDEN_EVAL_STATE_DIR=\"${STATE_DIR}\" && export GOLDEN_EVAL_SOURCE_REF=\"${GOLDEN_EVAL_SOURCE_REF}\" && export GOLDEN_EVAL_AUTO_COMMIT=\"\${GOLDEN_EVAL_AUTO_COMMIT:-1}\" && export GOLDEN_EVAL_AUTO_PUSH=\"\${GOLDEN_EVAL_AUTO_PUSH:-1}\" && export GOLDEN_EVAL_AUTOFIX_SKIP_GIT=\"\${GOLDEN_EVAL_AUTOFIX_SKIP_GIT:-0}\" && export REGISTRY=\"\${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}\""
 
 if ! command -v tmux >/dev/null; then
   echo "tmux required" >&2
