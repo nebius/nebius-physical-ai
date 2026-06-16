@@ -29,6 +29,7 @@ DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "LoadBalancer"
 K8S_NAME_MAX_LEN = 63
 K8S_NAME_PREFIX = "npa-sim2real-rerun"
+DEFAULT_CLUSTER_VIEWER_SUFFIX = "viewer"
 ROLLOUT_TIMEOUT_SEC = 900
 DEPLOYMENT_PROGRESS_DEADLINE_SEC = 900
 KUBECTL_DELETE_TIMEOUT_SEC = 60
@@ -56,6 +57,7 @@ class RerunServeConfig:
     namespace: str = DEFAULT_NAMESPACE
     port: int = DEFAULT_PORT
     name: str = ""
+    cluster_context: str = ""
     rerun_image: str = DEFAULT_RERUN_IMAGE
     aws_cli_image: str = DEFAULT_AWS_CLI_IMAGE
     service_type: str = DEFAULT_SERVICE_TYPE
@@ -66,7 +68,7 @@ class RerunServeConfig:
 
     @property
     def deployment_name(self) -> str:
-        return self.name or deployment_name_for_run(self.run_id)
+        return self.name or deployment_name_for_cluster(self.cluster_context)
 
     @property
     def rrd_s3_uri(self) -> str:
@@ -161,17 +163,34 @@ def verify_rrd_exists_on_s3(
         ) from exc
 
 
-def deployment_name_for_run(run_id: str) -> str:
-    slug = re.sub(r"[^a-z0-9-]+", "-", run_id.strip().lower())
+def _k8s_name_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", value.strip().lower())
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug
+
+
+def deployment_name_for_cluster(cluster_context: str = "") -> str:
+    """Return the shared mk8s Deployment/Service name for one cluster viewer."""
+
+    context = cluster_context.strip()
+    if not context:
+        return f"{K8S_NAME_PREFIX}-{DEFAULT_CLUSTER_VIEWER_SUFFIX}"
+    slug = _k8s_name_slug(context)
     if not slug:
-        raise Sim2RealRerunServeError("run-id must contain at least one alphanumeric character")
+        return f"{K8S_NAME_PREFIX}-{DEFAULT_CLUSTER_VIEWER_SUFFIX}"
     base = f"{K8S_NAME_PREFIX}-{slug}"
     if len(base) <= K8S_NAME_MAX_LEN:
         return base
-    digest = re.sub(r"[^a-z0-9]", "", run_id.lower())[:8] or "run"
+    digest = re.sub(r"[^a-z0-9]", "", context.lower())[:8] or "ctx"
     trimmed = slug[: K8S_NAME_MAX_LEN - len(K8S_NAME_PREFIX) - len(digest) - 2].rstrip("-")
     return f"{K8S_NAME_PREFIX}-{trimmed}-{digest}"
+
+
+def deployment_name_for_run(run_id: str) -> str:
+    """Deprecated alias kept for tests; cluster viewers are not keyed by run_id."""
+
+    del run_id
+    return deployment_name_for_cluster("")
 
 
 def resolve_storage_bucket(storage: StorageConfig, *, override: str = "") -> str:
@@ -262,6 +281,7 @@ def build_rerun_serve_config(
     namespace: str = DEFAULT_NAMESPACE,
     port: int = DEFAULT_PORT,
     name: str = "",
+    cluster_context: str = "",
     rerun_image: str = DEFAULT_RERUN_IMAGE,
     aws_cli_image: str = DEFAULT_AWS_CLI_IMAGE,
     service_type: str = DEFAULT_SERVICE_TYPE,
@@ -291,6 +311,7 @@ def build_rerun_serve_config(
         namespace=namespace.strip() or DEFAULT_NAMESPACE,
         port=port,
         name=name.strip(),
+        cluster_context=cluster_context.strip(),
         rerun_image=rerun_image.strip() or default_rerun_image(),
         aws_cli_image=aws_cli_image.strip() or DEFAULT_AWS_CLI_IMAGE,
         service_type=normalized_service,
@@ -306,8 +327,11 @@ def build_rerun_serve_manifest(config: RerunServeConfig) -> dict[str, Any]:
         "app": config.deployment_name,
         "app.kubernetes.io/name": "npa-sim2real-rerun",
         "app.kubernetes.io/instance": config.deployment_name,
+        "app.kubernetes.io/component": "cluster-viewer",
         "npa.nebius.com/sim2real-run-id": _label_value(config.run_id),
     }
+    if config.cluster_context.strip():
+        labels["npa.nebius.com/k8s-context"] = _label_value(config.cluster_context)
     secret_data = {
         "AWS_ACCESS_KEY_ID": _b64(config.aws_access_key_id),
         "AWS_SECRET_ACCESS_KEY": _b64(config.aws_secret_access_key),
@@ -530,7 +554,10 @@ def destroy_rerun_serve(
             kubeconfig=kubeconfig,
             timeout_sec=KUBECTL_DELETE_TIMEOUT_SEC + 5,
         )
-    notify(f"Deleted rerun serve resources for {config.deployment_name}")
+    notify(
+        f"Deleted shared cluster Rerun viewer {config.deployment_name} "
+        f"(was serving run_id={config.run_id!r})"
+    )
     return rerun_serve_result(config, status="deleted", kubeconfig=kubeconfig)
 
 
@@ -798,9 +825,10 @@ def maybe_auto_rerun_serve(
 ) -> dict[str, Any]:
     """Deploy idempotent hosted Rerun for a completed run when gates pass.
 
-    One deployment per ``run_id`` (stable ``deployment_name``) exposes a shared
-    ``public_url`` for all teammates. Degrades to ``skipped`` / ``blocked`` with
-    a reason instead of failing the workflow.
+    One shared Deployment/LoadBalancer per mk8s cluster (stable
+    ``deployment_name`` and ``public_url``). Serving a new ``run_id`` updates the
+    synced ``sim2real.rrd`` without allocating a new external IP. Degrades to
+    ``skipped`` / ``blocked`` with a reason instead of failing the workflow.
     """
 
     upload_status = str(upload_info.get("status", ""))
@@ -830,16 +858,21 @@ def maybe_auto_rerun_serve(
             if aws_access_key_id.strip() and aws_secret_access_key.strip()
             else resolve_rerun_serve_credentials()
         )
+        cluster_context = resolve_cluster_name_from_config()
         serve_config = build_rerun_serve_config(
             run_id=normalized_run_id,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
             namespace=k8s_namespace,
+            cluster_context=cluster_context,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
         )
-        kubeconfig = resolve_kubeconfig_path(cluster_name="", kubeconfig=k8s_kubeconfig)
+        kubeconfig = resolve_kubeconfig_path(
+            cluster_name=cluster_context,
+            kubeconfig=k8s_kubeconfig,
+        )
         if not kubeconfig:
             return {
                 "status": "blocked",

@@ -37,6 +37,7 @@ from npa.workflows.sim2real_rerun_serve import (
     build_rerun_serve_manifest,
     destroy_rerun_serve,
     redact_rerun_serve_manifest,
+    resolve_cluster_name_from_config,
     require_kubeconfig,
 )
 
@@ -434,8 +435,16 @@ def rerun_serve_command(
         "--service-type",
         help="Kubernetes Service type: loadbalancer, nodeport, or clusterip.",
     ),
-    name: str = typer.Option("", "--name", help="Deployment/service name override."),
-    destroy: bool = typer.Option(False, "--destroy", help="Delete the hosted Rerun deployment."),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="Override the shared cluster viewer Deployment/Service name.",
+    ),
+    destroy: bool = typer.Option(
+        False,
+        "--destroy",
+        help="Delete the shared cluster Rerun viewer (not scoped to run_id).",
+    ),
     destroy_wait: bool = typer.Option(
         False,
         "--wait",
@@ -447,6 +456,7 @@ def rerun_serve_command(
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
     try:
         access_key, secret_key = _rerun_serve_credentials()
+        cluster_context = cluster_name.strip() or resolve_cluster_name_from_config()
         config = build_rerun_serve_config(
             run_id=run_id,
             project=project or None,
@@ -456,6 +466,7 @@ def rerun_serve_command(
             namespace=namespace,
             port=port,
             name=name,
+            cluster_context=cluster_context,
             rerun_image=rerun_image,
             service_type=service_type,
             aws_access_key_id=access_key,
@@ -470,7 +481,10 @@ def rerun_serve_command(
             else:
                 typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
             return
-        resolved_kubeconfig = require_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+        resolved_kubeconfig = require_kubeconfig(
+            cluster_name=cluster_context,
+            kubeconfig=kubeconfig,
+        )
         if destroy:
             result = destroy_rerun_serve(
                 config,

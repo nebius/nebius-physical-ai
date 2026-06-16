@@ -584,8 +584,8 @@ def run_finalize(
                     "stage_14_rerun_serve",
                     "WORKS",
                     (
-                        "Deployed hosted Rerun viewer on mk8s; one LoadBalancer per run_id "
-                        "shares public_url for all viewers."
+                        "Deployed shared hosted Rerun viewer on mk8s; one LoadBalancer "
+                        "per cluster with stable public_url for all teammates."
                     ),
                     {
                         "public_url": rerun_serve.get("public_url", ""),

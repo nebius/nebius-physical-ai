@@ -87,3 +87,33 @@ Replace `<RUN_ID>` with the timestamp id (for example `20260615t172625z`).
 5. Re-submit: `./run.sh trigger` (preflight must pass before apply)
 
 No re-seed needed if step 1 preflight already passes; re-trigger required after secret sync.
+
+## Hosted Rerun viewer (shared per cluster)
+
+Stage 14 uploads `reports/sim2real.rrd` to S3. NPA deploys **one LoadBalancer per mk8s
+cluster** (not per `run_id`). The `public_url` stays stable so teammates can bookmark it;
+pointing the viewer at a new run updates the served recording without a new external IP.
+
+```bash
+cd ~/npa-sim2real-demo
+./run.sh rerun-host sim2real-staged-<RUN_ID>
+
+# Or from the repo checkout:
+npa workbench sim2real rerun serve --run-id sim2real-staged-<RUN_ID>
+```
+
+Serve a different completed run on the **same** URL:
+
+```bash
+./run.sh rerun-host sim2real-staged-<OTHER_RUN_ID>
+```
+
+Teardown the shared viewer for this cluster (`--destroy` is cluster-scoped, not run-scoped):
+
+```bash
+npa workbench sim2real rerun serve --run-id sim2real-staged-<ANY_VALID_RUN_ID> --destroy
+```
+
+The E2E report JSON includes `rerun_serve.public_url` when auto-serve runs during
+`run_finalize`. Deployment name pattern: `npa-sim2real-rerun-viewer` or
+`npa-sim2real-rerun-<k8s-context-slug>` (for example `npa-sim2real-rerun-npa-rtxpro-mk8s`).

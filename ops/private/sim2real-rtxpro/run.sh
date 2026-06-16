@@ -39,6 +39,7 @@ Usage: $(basename "$0") <command> [args]
   demo                        cleanup + trigger (stock Franka customer path)
   rehearsal                   Sync golden run from S3 + Rerun (no cluster)
   full                        Submit + wait + sync + Rerun (cluster end-to-end)
+  rerun-host <run-id>         Deploy shared cluster Rerun viewer (stable public_url)
   help
 
 Env (trigger): TRIGGER_DATASET_URI, TRIGGER_DATASET_ID, WAIT, INNER_ITERATIONS, OUTER_ITERATIONS
@@ -96,6 +97,22 @@ case "${CMD}" in
     unset RUN_ID
     export WAIT=1 VISUALIZE="${VISUALIZE:-1}" SUBMIT=1
     exec "${OPS}/run-demo.sh"
+    ;;
+  rerun-host)
+    RUN_ID="$(operator_normalize_staged_run_id "${1:?usage: $(basename "$0") rerun-host <run-id>}")"
+    ROOT="${NPA_SIM2REAL_REPO}"
+    NPA="${ROOT}/npa/.venv/bin/npa"
+    CTX="${KUBECONTEXT:-}"
+    if [ -z "${CTX}" ]; then
+      npa_read_lines _cfg operator_read_config "${ROOT}"
+      CTX="${_cfg[3]:-}"
+    fi
+    if [ -n "${CTX}" ]; then
+      operator_export_kubeconfig "${CTX}" "${ROOT}" || true
+    fi
+    exec "${NPA}" workbench sim2real rerun serve \
+      --run-id "${RUN_ID}" \
+      ${CTX:+--cluster-name "${CTX}"}
     ;;
   help | -h | --help)
     _usage
