@@ -655,12 +655,27 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
     }
 
 
-def run_full_loop(
-    config: Sim2RealLoopConfig,
-    *,
-    upload: bool | None = None,
-) -> dict[str, Any]:
-    """Run the full local/executable Sim2Real loop and write all artifacts."""
+def _workflow_state_path(local_dir: Path) -> Path:
+    return local_dir / "state" / "workflow_state.json"
+
+
+def _write_workflow_state(local_dir: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    record = _write_json_artifact(_workflow_state_path(local_dir), payload)
+    return record["payload"]
+
+
+def _read_workflow_state(local_dir: Path) -> dict[str, Any]:
+    path = _workflow_state_path(local_dir)
+    if not path.exists():
+        raise Sim2RealLoopError(f"workflow state file not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise Sim2RealLoopError("workflow state payload must be a JSON object")
+    return payload
+
+
+def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
+    """Run stages 1-6 and persist workflow state."""
 
     config.validate()
     local_dir = config.output_dir or Path(
@@ -669,7 +684,6 @@ def run_full_loop(
     local_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(config.seed)
     components: list[ComponentRecord] = []
-    stage_artifacts: dict[str, str] = {}
     stage_records: list[dict[str, Any]] = []
 
     stage_records.append(
@@ -787,49 +801,83 @@ def run_full_loop(
             "status": "ready",
         },
     )
+    state = {
+        "schema": "npa.sim2real.workflow_state.v1",
+        "run_id": config.run_id,
+        "status": "preamble_completed",
+        "local_artifact_dir": str(local_dir),
+        "stage_records": stage_records,
+        "components": [asdict(component) for component in components],
+        "outer_history": [],
+        "final_inner": None,
+        "final_eval": None,
+        "final_decision": None,
+        "current_quality": 0.36 + rng.random() * 0.04,
+        "next_outer_iteration": 1,
+        "updated_at": _utc_now(),
+    }
+    return _write_workflow_state(local_dir, state)
 
-    outer_history: list[dict[str, Any]] = []
-    final_inner: dict[str, Any] | None = None
-    final_eval: dict[str, Any] | None = None
-    final_decision: dict[str, Any] | None = None
-    quality = 0.36 + rng.random() * 0.04
-    for outer_iteration in range(1, config.outer_iterations + 1):
-        inner = run_inner_loop(
-            config,
-            local_dir=local_dir,
-            initial_quality=quality,
-            outer_iteration=outer_iteration,
-        )
-        final_inner = inner
-        quality = float(inner["final_quality"])
-        heldout_report = run_heldout_eval(
-            config,
-            local_dir=local_dir,
-            inner_evidence=inner,
-            outer_iteration=outer_iteration,
-        )
-        final_eval = heldout_report
-        decision = threshold_decision(
-            config,
-            local_dir=local_dir,
-            heldout_report=heldout_report,
-            outer_iteration=outer_iteration,
-        )
-        final_decision = decision
-        outer_history.append(
-            {
-                "outer_iteration": outer_iteration,
-                "inner_loop": inner["evidence_uri"],
-                "heldout_report": heldout_report["report_uri"],
-                "decision": decision,
-            }
-        )
-        if decision["decision"] == "promote_checkpoint":
-            break
-        quality = min(0.95, quality + 0.12)
 
-    if final_decision is None or final_inner is None or final_eval is None:
-        raise Sim2RealLoopError("full loop did not execute an outer iteration")
+def run_single_outer_iteration(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    outer_iteration: int,
+    initial_quality: float,
+) -> dict[str, Any]:
+    """Run one stage 7-11 iteration and return its outcomes."""
+
+    inner = run_inner_loop(
+        config,
+        local_dir=local_dir,
+        initial_quality=initial_quality,
+        outer_iteration=outer_iteration,
+    )
+    quality = float(inner["final_quality"])
+    heldout_report = run_heldout_eval(
+        config,
+        local_dir=local_dir,
+        inner_evidence=inner,
+        outer_iteration=outer_iteration,
+    )
+    decision = threshold_decision(
+        config,
+        local_dir=local_dir,
+        heldout_report=heldout_report,
+        outer_iteration=outer_iteration,
+    )
+    next_quality = quality
+    if decision["decision"] != "promote_checkpoint":
+        next_quality = min(0.95, quality + 0.12)
+    return {
+        "outer_iteration": outer_iteration,
+        "inner": inner,
+        "heldout_report": heldout_report,
+        "decision": decision,
+        "history_entry": {
+            "outer_iteration": outer_iteration,
+            "inner_loop": inner["evidence_uri"],
+            "heldout_report": heldout_report["report_uri"],
+            "decision": decision,
+        },
+        "next_quality": next_quality,
+    }
+
+
+def run_finalize(
+    config: Sim2RealLoopConfig,
+    *,
+    local_dir: Path,
+    stage_records: list[dict[str, Any]],
+    components: list[dict[str, Any]],
+    outer_history: list[dict[str, Any]],
+    final_inner: dict[str, Any],
+    final_eval: dict[str, Any],
+    final_decision: dict[str, Any],
+    upload: bool | None = None,
+) -> dict[str, Any]:
+    """Run stages 12-13, visualization, and final report/upload."""
 
     stage_records.append(
         _write_stage(
@@ -848,15 +896,17 @@ def run_full_loop(
         )
     )
     components.append(
-        ComponentRecord(
-            "stage_12_external_validation",
-            "SEAM",
-            "External real-world validation is a documented BYO gate; loop-of-loops continues through Stage 13.",
-            {
-                "local": str(
-                    local_dir / "stage_12_external_validation" / "external_stub.json"
-                )
-            },
+        asdict(
+            ComponentRecord(
+                "stage_12_external_validation",
+                "SEAM",
+                "External real-world validation is a documented BYO gate; loop-of-loops continues through Stage 13.",
+                {
+                    "local": str(
+                        local_dir / "stage_12_external_validation" / "external_stub.json"
+                    )
+                },
+            )
         )
     )
 
@@ -879,11 +929,13 @@ def run_full_loop(
         )
     )
     components.append(
-        ComponentRecord(
-            "stage_13_retrigger",
-            "WORKS",
-            "Wrote loop-of-loops retrigger record with max-iteration cap.",
-            {"local": str(local_dir / "stage_13_retrigger" / "retrigger.json")},
+        asdict(
+            ComponentRecord(
+                "stage_13_retrigger",
+                "WORKS",
+                "Wrote loop-of-loops retrigger record with max-iteration cap.",
+                {"local": str(local_dir / "stage_13_retrigger" / "retrigger.json")},
+            )
         )
     )
 
@@ -893,27 +945,33 @@ def run_full_loop(
         inner_evidence=final_inner,
         heldout_report=final_eval,
     )
-    components.append(viz_component)
+    components.append(asdict(viz_component))
 
     components.extend(
         [
-            ComponentRecord(
-                "vlm_byo_seam",
-                "WORKS",
-                "VLM image/command are runtime-configurable; default model is nvidia/Cosmos-Reason1-7B.",
-                {"image": config.vlm_image},
+            asdict(
+                ComponentRecord(
+                    "vlm_byo_seam",
+                    "WORKS",
+                    "VLM image/command are runtime-configurable; default model is nvidia/Cosmos-Reason1-7B.",
+                    {"image": config.vlm_image},
+                )
             ),
-            ComponentRecord(
-                "trainer_byo_seam",
-                "WORKS",
-                "Trainer image/command are runtime-configurable; default reference consumes npa.sim2real.rl_signal.v1.",
-                {"image": config.trainer_image},
+            asdict(
+                ComponentRecord(
+                    "trainer_byo_seam",
+                    "WORKS",
+                    "Trainer image/command are runtime-configurable; default reference consumes npa.sim2real.rl_signal.v1.",
+                    {"image": config.trainer_image},
+                )
             ),
-            ComponentRecord(
-                "eval_byo_seam",
-                "WORKS",
-                "Held-out eval image/command and threshold are runtime-configurable.",
-                {"image": config.eval_image},
+            asdict(
+                ComponentRecord(
+                    "eval_byo_seam",
+                    "WORKS",
+                    "Held-out eval image/command and threshold are runtime-configurable.",
+                    {"image": config.eval_image},
+                )
             ),
         ]
     )
@@ -927,7 +985,7 @@ def run_full_loop(
         "s3_artifacts": artifact_uris(config),
         "config": _redacted_config(config),
         "byo_seams": byo_seams(config),
-        "components": [asdict(component) for component in components],
+        "components": components,
         "stage_records": stage_records,
         "inner_loop": final_inner,
         "outer_loop": {
@@ -957,17 +1015,68 @@ def run_full_loop(
     }
     report_path = local_dir / "reports" / "sim2real-report.json"
     _write_json_artifact(report_path, report)
-    stage_artifacts["report"] = str(report_path)
     upload_enabled = config.upload_artifacts if upload is None else upload
     if upload_enabled and config.s3_bucket:
         report["upload"] = upload_run_artifacts(config, local_dir)
-        _write_json_artifact(report_path, report)
     else:
         report["upload"] = {
             "status": "skipped",
             "reason": "upload_artifacts is false or no s3_bucket configured",
         }
-        _write_json_artifact(report_path, report)
+    _write_json_artifact(report_path, report)
+    return report
+
+
+def run_full_loop(
+    config: Sim2RealLoopConfig,
+    *,
+    upload: bool | None = None,
+) -> dict[str, Any]:
+    """Run the full local/executable Sim2Real loop and write all artifacts."""
+
+    state = run_preamble(config)
+    local_dir = Path(state["local_artifact_dir"])
+    quality = float(state["current_quality"])
+    for outer_iteration in range(1, config.outer_iterations + 1):
+        iteration = run_single_outer_iteration(
+            config,
+            local_dir=local_dir,
+            outer_iteration=outer_iteration,
+            initial_quality=quality,
+        )
+        state["final_inner"] = iteration["inner"]
+        state["final_eval"] = iteration["heldout_report"]
+        state["final_decision"] = iteration["decision"]
+        state["outer_history"].append(iteration["history_entry"])
+        state["current_quality"] = iteration["next_quality"]
+        state["next_outer_iteration"] = outer_iteration + 1
+        state["status"] = "outer_iteration_completed"
+        state["updated_at"] = _utc_now()
+        _write_workflow_state(local_dir, state)
+        if iteration["decision"]["decision"] == "promote_checkpoint":
+            break
+        quality = float(iteration["next_quality"])
+
+    if not state.get("final_decision") or not state.get("final_inner") or not state.get(
+        "final_eval"
+    ):
+        raise Sim2RealLoopError("full loop did not execute an outer iteration")
+
+    report = run_finalize(
+        config,
+        local_dir=local_dir,
+        stage_records=list(state["stage_records"]),
+        components=list(state["components"]),
+        outer_history=list(state["outer_history"]),
+        final_inner=dict(state["final_inner"]),
+        final_eval=dict(state["final_eval"]),
+        final_decision=dict(state["final_decision"]),
+        upload=upload,
+    )
+    state["status"] = "completed"
+    state["updated_at"] = _utc_now()
+    state["report_path"] = str(local_dir / "reports" / "sim2real-report.json")
+    _write_workflow_state(local_dir, state)
     return report
 
 
@@ -1368,6 +1477,19 @@ def evaluate_rollout_with_vlm(
             env=env,
             component="vlm_eval",
         )
+    elif not config.s3_bucket.strip():
+        payload = _reference_vlm_payload_from_rollout(
+            manifest,
+            rollout_dir=rollout_dir,
+            rollout_id=rollout_id,
+            config=config,
+        )
+        _write_json_artifact(output_path, payload)
+        invocation = {
+            "component": "vlm_eval",
+            "mode": "local_reference",
+            "image": config.vlm_image,
+        }
     else:
         attempt_id = _component_attempt_id(config, "vlm_eval", rollout_id)
         rollout_uri = _upload_component_directory(
@@ -1995,6 +2117,81 @@ def _read_component_json(output_path: Path, invocation: dict[str, Any]) -> dict[
     )
 
 
+def _reference_heldout_payload(
+    envs: list[dict[str, Any]],
+    *,
+    inner_evidence: dict[str, Any],
+    threshold: float,
+) -> dict[str, Any]:
+    """Deterministic held-out scores for local staged runs without sim backends."""
+
+    reward_trend = list(inner_evidence.get("reward_trend") or [0.0])
+    base = float(reward_trend[-1] if reward_trend else inner_evidence.get("final_quality", 0.4))
+    per_env: list[dict[str, Any]] = []
+    for index, env in enumerate(envs):
+        physics = env.get("physics") or {}
+        friction = float(physics.get("friction", 0.5))
+        score = max(0.0, min(1.0, base + 0.04 * (friction - 0.5) + 0.01 * index))
+        per_env.append(
+            {
+                "env_id": str(env.get("env_id") or f"heldout-{index:04d}"),
+                "success": score >= threshold,
+                "score": round(score, 6),
+                "details": {"mode": "local_reference", "physics": physics},
+            }
+        )
+    return {
+        "schema": SCHEMA_HELDOUT_REPORT,
+        "per_env": per_env,
+        "sim_backend": "local_reference",
+        "component_source": "local_reference",
+        "rollout_backend": "reference-heuristic",
+        "policy_source": "inner_evidence_adapter",
+    }
+
+
+def _reference_vlm_payload_from_rollout(
+    manifest: dict[str, Any],
+    *,
+    rollout_dir: Path,
+    rollout_id: str,
+    config: Sim2RealLoopConfig,
+) -> dict[str, Any]:
+    """In-process reference VLM when no S3 bucket is configured (local smoke/staged runs)."""
+
+    quality = float(manifest.get("quality", 0.4))
+    per_step: list[dict[str, Any]] = []
+    for item in manifest.get("actions", []):
+        step = int(item["step"])
+        frame = rollout_dir / f"camera-{step:03d}.ppm"
+        signal = sum(frame.read_bytes()[-12:]) % 17 if frame.exists() else step
+        tag = "minor_alignment" if signal % 3 else "ok"
+        per_step.append(
+            {
+                "step": step,
+                "critique_text": (
+                    f"Reference VLM: frame signal {signal}; rollout quality={quality:.3f}."
+                ),
+                "error_tags": [tag],
+                "action": item.get("action", []),
+                "camera_observation": frame.name,
+            }
+        )
+    if not per_step:
+        raise Sim2RealLoopError("reference VLM requires rollout actions in manifest")
+    score = max(0.05, min(0.95, quality + 0.06))
+    return {
+        "schema": SCHEMA_VLM_EVAL,
+        "rollout_id": rollout_id,
+        "success": score >= config.threshold,
+        "score": round(score, 6),
+        "per_step": per_step,
+        "summary": "Local reference VLM evaluation (no S3/K8s sibling job).",
+        "model": config.vlm_model,
+        "component_source": "local_reference",
+    }
+
+
 def _normalize_vlm_evaluation(
     payload: dict[str, Any],
     *,
@@ -2321,6 +2518,41 @@ def run_heldout_eval(
             env=env,
             component="heldout_eval",
         )
+    elif not config.s3_bucket.strip():
+        heldout_manifest = local_dir / "envs" / "heldout" / "manifest.json"
+        envs = json.loads(heldout_manifest.read_text(encoding="utf-8")).get("envs", [])
+        local_backend = config.sim_backend
+        if local_backend == SIM_BACKEND_ISAAC:
+            try:
+                import isaaclab  # noqa: F401
+            except ImportError:
+                local_backend = SIM_BACKEND_GENESIS
+        try:
+            import torch  # noqa: F401
+
+            has_sim = True
+        except ImportError:
+            has_sim = False
+        if has_sim:
+            payload = _component_heldout_payload(
+                envs,
+                inner_evidence=inner_evidence,
+                threshold=config.threshold,
+                sim_backend=local_backend,
+                isaac_task=config.isaac_task,
+            )
+        else:
+            payload = _reference_heldout_payload(
+                envs,
+                inner_evidence=inner_evidence,
+                threshold=config.threshold,
+            )
+        _write_json_artifact(output_path, payload)
+        invocation = {
+            "component": "heldout_eval",
+            "mode": "local_reference",
+            "image": config.heldout_backend_image(),
+        }
     else:
         attempt_id = _component_attempt_id(
             config, "heldout_eval", f"outer-{outer_iteration:02d}"
@@ -3926,6 +4158,20 @@ def main(argv: list[str] | None = None) -> int:
         "full-loop", help="Run the full Stage 1-13 Sim2Real workflow."
     )
     _add_common_args(full)
+    preamble = subparsers.add_parser(
+        "preamble", help="Run Stage 1-6 setup and persist workflow state."
+    )
+    _add_common_args(preamble)
+    outer = subparsers.add_parser(
+        "outer-iteration", help="Run one Stage 7-11 outer iteration from saved state."
+    )
+    _add_common_args(outer)
+    outer.add_argument("--outer-iteration", type=int, required=True)
+    outer.add_argument("--initial-quality", type=float, default=None)
+    finalize = subparsers.add_parser(
+        "finalize", help="Run Stage 12-13/report/upload from saved state."
+    )
+    _add_common_args(finalize)
     inner = subparsers.add_parser(
         "inner-loop", help="Run only the VLM-to-RL inner loop."
     )
@@ -4056,6 +4302,65 @@ def main(argv: list[str] | None = None) -> int:
         source_ref=args.source_ref,
         heldout_eval_limit=args.heldout_eval_limit,
     )
+    if args.command == "preamble":
+        state = run_preamble(config)
+        print(json.dumps(state, indent=2, sort_keys=True))
+        return 0
+    if args.command == "outer-iteration":
+        local_dir = config.output_dir
+        if local_dir is None:
+            raise Sim2RealLoopError("--output-dir is required for outer-iteration")
+        state = _read_workflow_state(local_dir)
+        initial_quality = (
+            float(args.initial_quality)
+            if args.initial_quality is not None
+            else float(state.get("current_quality", 0.38))
+        )
+        iteration = run_single_outer_iteration(
+            config,
+            local_dir=local_dir,
+            outer_iteration=int(args.outer_iteration),
+            initial_quality=initial_quality,
+        )
+        state["final_inner"] = iteration["inner"]
+        state["final_eval"] = iteration["heldout_report"]
+        state["final_decision"] = iteration["decision"]
+        state.setdefault("outer_history", []).append(iteration["history_entry"])
+        state["current_quality"] = iteration["next_quality"]
+        state["next_outer_iteration"] = int(args.outer_iteration) + 1
+        state["status"] = "outer_iteration_completed"
+        state["updated_at"] = _utc_now()
+        _write_workflow_state(local_dir, state)
+        print(json.dumps(iteration, indent=2, sort_keys=True))
+        return 0
+    if args.command == "finalize":
+        local_dir = config.output_dir
+        if local_dir is None:
+            raise Sim2RealLoopError("--output-dir is required for finalize")
+        state = _read_workflow_state(local_dir)
+        final_inner = state.get("final_inner")
+        final_eval = state.get("final_eval")
+        final_decision = state.get("final_decision")
+        if not final_inner or not final_eval or not final_decision:
+            raise Sim2RealLoopError(
+                "cannot finalize before an outer iteration has produced decision artifacts"
+            )
+        report = run_finalize(
+            config,
+            local_dir=local_dir,
+            stage_records=list(state.get("stage_records", [])),
+            components=list(state.get("components", [])),
+            outer_history=list(state.get("outer_history", [])),
+            final_inner=dict(final_inner),
+            final_eval=dict(final_eval),
+            final_decision=dict(final_decision),
+        )
+        state["status"] = "completed"
+        state["updated_at"] = _utc_now()
+        state["report_path"] = str(local_dir / "reports" / "sim2real-report.json")
+        _write_workflow_state(local_dir, state)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
     if args.command == "full-loop":
         report = run_full_loop(config)
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -4496,9 +4801,12 @@ __all__ = [
     "generate_action_rollouts",
     "new_run_id",
     "run_full_loop",
+    "run_finalize",
     "run_heldout_eval_component_from_s3",
     "run_heldout_eval",
     "run_inner_loop",
+    "run_preamble",
+    "run_single_outer_iteration",
     "run_vlm_eval_component_from_s3",
     "signal_mapping_rules",
     "threshold_decision",

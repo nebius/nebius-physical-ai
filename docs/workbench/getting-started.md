@@ -15,7 +15,9 @@ the H100 sim-to-real proof path, see
 path, see
 [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md).
 For the SkyPilot runtime details, see
-[orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md).
+[orchestration/skypilot-setup.md](../orchestration/skypilot-setup.md). For a
+Kubernetes-specific setup and operations checklist, see
+[kubernetes.md](kubernetes.md).
 
 ## Day Zero Preconditions
 
@@ -68,7 +70,7 @@ Verify the tools and platform setup:
 
 ```bash
 npa --version
-nebius iam get-access-token >/dev/null
+npa configure --show
 aws --version
 docker --version
 kubectl version --client
@@ -179,12 +181,14 @@ Verify the account can create SkyPilot pods in `default`:
 ```bash
 kubectl auth can-i create pods -n default
 kubectl get nodes
+kubectl get namespace workbench
 kubectl get secret npa-nebius-registry -n default
 ```
 
 Gate: `kubectl auth can-i` prints `yes`, `kubectl get nodes` lists the cluster
-nodes, and the registry secret exists. If SkyPilot later reports HTTP 403 as an
-anonymous user, the kube context is not authenticated for the cluster.
+nodes, the `workbench` namespace exists for deployed services, and the registry
+secret exists in the SkyPilot namespace. If SkyPilot later reports HTTP 403 as
+an anonymous user, the kube context is not authenticated for the cluster.
 
 ## Bootstrap SkyPilot
 
@@ -274,6 +278,8 @@ manifest from S3.
 
 - [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md): how to call any
   Workbench tool through the CLI, SDK, and SkyPilot YAML.
+- [kubernetes.md](kubernetes.md): Workbench services, SkyPilot task pods,
+  namespace checks, GPU routing, and Kubernetes troubleshooting.
 - [cookbooks/byof-isaac-lab/README.md](cookbooks/byof-isaac-lab/README.md):
   first Isaac Lab BYOF checkpoint.
 - [sim-to-real-quickstart.md](sim-to-real-quickstart.md): first H100

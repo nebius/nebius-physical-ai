@@ -19,6 +19,7 @@ from npa.cli.cluster import app as cluster_app
 from npa.cli.convert import app as convert_app
 from npa.cli.demo import app as demo_app
 from npa.cli.network import app as network_app
+from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.viz import app as viz_app
@@ -50,6 +51,7 @@ app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
 app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
 app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
 app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
+app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup")
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
@@ -62,8 +64,12 @@ RECOMMENDED_BUCKET_SIZE_GB = 50
 
 _SETUP_GUIDANCE = """Credential setup
 
-Run `npa configure` in a terminal for an interactive setup. With an
-authenticated Nebius profile it auto-creates your S3 bucket and access key, so
+Run `npa configure` in a terminal for interactive setup (use
+`npa configure --interactive` when stdin is not a TTY). The flow uses the
+installed Nebius CLI binary internally (profile setup stays inside
+`npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
+when needed, then with an authenticated profile
+auto-creates your S3 bucket and access key, so
 you only supply tenant/project/region (pre-filled from the profile) plus the
 Hugging Face and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
@@ -138,6 +144,42 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
     return getattr(result, "returncode", 1) == 0
 
 
+def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> list[str]:
+    """Return local Nebius CLI profile names, or [] when listing is unavailable."""
+
+    if not shutil.which("nebius"):
+        return []
+    try:
+        result = runner(
+            ["nebius", "profile", "list"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if getattr(result, "returncode", 1) != 0:
+        return []
+    stdout = getattr(result, "stdout", "") or ""
+    profiles: list[str] = []
+    for line in stdout.splitlines():
+        name = line.strip().split(maxsplit=1)[0] if line.strip() else ""
+        if name:
+            profiles.append(name)
+    return profiles
+
+
+def _region_from_registry_host(registry: str) -> str:
+    """Best-effort region from a container registry host such as cr.eu-north1.nebius.cloud."""
+
+    host = (registry or "").split("/", 1)[0].strip()
+    parts = host.split(".")
+    if len(parts) >= 4 and parts[0] == "cr" and parts[2] == "nebius":
+        return parts[1]
+    return ""
+
+
 def _create_nebius_profile(*, runner: Callable[..., object] = subprocess.run) -> bool:
     """Run the interactive `nebius profile create` flow."""
 
@@ -156,22 +198,35 @@ def _ensure_nebius_profile() -> None:
         return
     if not shutil.which("nebius"):
         typer.echo(
-            "Nebius CLI not found. Install it from https://docs.nebius.com/cli/install, "
-            "then re-run `npa configure` to create a local profile."
+            "Nebius CLI not found. Install the binary from "
+            "https://docs.nebius.com/cli/install (onboarding stays in "
+            "`npa configure`; no separate profile CLI steps), then re-run "
+            "`npa configure`."
         )
         return
-    if not typer.confirm(
-        "No authenticated Nebius CLI profile found. Create one now?",
-        default=True,
-    ):
-        typer.echo("Skipped Nebius profile creation. Run `nebius profile create` later.")
+    existing_profiles = _list_nebius_profiles()
+    if existing_profiles:
+        typer.echo(
+            "Nebius CLI profiles exist but `nebius iam get-access-token` failed. "
+            "Try `nebius profile activate <profile>` or recreate the active profile."
+        )
+        create_prompt = "Create a new Nebius CLI profile now?"
+        create_default = False
+    else:
+        create_prompt = "No authenticated Nebius CLI profile found. Create one now?"
+        create_default = True
+    if not typer.confirm(create_prompt, default=create_default):
+        typer.echo(
+            "Skipped Nebius profile creation. Re-run `npa configure` when ready "
+            "to create or refresh a profile."
+        )
         return
     if _create_nebius_profile() and _nebius_profile_ready():
         typer.echo("Nebius CLI profile is ready.")
     else:
         typer.echo(
-            "Could not verify a Nebius profile. Run `nebius profile create` manually, "
-            "then `nebius iam get-access-token` to confirm."
+            "Could not verify a Nebius profile. Re-run `npa configure` in a "
+            "terminal to retry profile creation."
         )
 
 
@@ -294,14 +349,17 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         ).strip()
 
-    project_id = ask("Nebius project id", default=nebius_client.current_project_id())
-    tenant_id = ask("Nebius tenant id", default=nebius_client.current_tenant_id())
-    region = ask("Region", default=DEFAULT_REGION)
-    registry = ask(
-        "Container registry",
-        default=nebius_client.discover_container_registry(project_id)
-        or DEFAULT_CONTAINER_REGISTRY,
+    project_default = nebius_client.current_project_id()
+    tenant_default = nebius_client.current_tenant_id()
+    project_id = ask("Nebius project id", default=project_default)
+    tenant_id = ask("Nebius tenant id", default=tenant_default)
+    registry_default = (
+        nebius_client.discover_container_registry(project_id or project_default)
+        or DEFAULT_CONTAINER_REGISTRY
     )
+    region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
+    region = ask("Region", default=region_default)
+    registry = ask("Container registry", default=registry_default)
 
     storage: dict[str, str] | None = None
     if provision and project_id and tenant_id:

@@ -29,8 +29,11 @@ from npa.workflows.sim2real_loop import (
     evaluate_rollout_with_vlm,
     generate_action_rollouts,
     run_full_loop,
+    run_finalize,
     run_heldout_eval,
     run_inner_loop,
+    run_preamble,
+    run_single_outer_iteration,
 )
 
 
@@ -924,7 +927,7 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
     )
 
 
-def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
+def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
     docs = [
         doc
         for doc in yaml.safe_load_all(RUNBOOK.read_text(encoding="utf-8"))
@@ -933,7 +936,7 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
 
     assert len(docs) == 1
     task = docs[0]
-    assert task["name"] == "sim2real-full-loop"
+    assert task["name"] == "sim2real-staged-loop"
     assert task["resources"]["cloud"] == "kubernetes"
     assert task["resources"]["accelerators"] == "RTX6000:1"
 
@@ -956,7 +959,10 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
         assert env_name in task["envs"]
         assert env_name in task["run"]
 
-    assert "npa.workflows.sim2real_loop full-loop" in task["run"]
+    assert "npa.workflows.sim2real_loop preamble" in task["run"]
+    assert "npa.workflows.sim2real_loop outer-iteration" in task["run"]
+    assert "npa.workflows.sim2real_loop finalize" in task["run"]
+    assert "for outer_iteration in $(seq 1" in task["run"]
     assert "--trigger-dataset-uri" in task["run"]
     assert "--byo-signal-converter" in task["run"]
     assert "--k8s-service-account" in task["run"]
@@ -964,6 +970,65 @@ def test_raw_runbook_invokes_full_loop_and_exposes_byo_envs() -> None:
     assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
     assert "--heldout-eval-limit" in task["run"]
     assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
+
+
+def test_staged_path_produces_same_decision_as_full_loop(tmp_path: Path) -> None:
+    full_dir = tmp_path / "full"
+    staged_dir = tmp_path / "staged"
+    command = _component_command(tmp_path)
+    kwargs = dict(
+        threshold=0.75,
+        inner_iterations=2,
+        outer_iterations=1,
+        rollout_count=2,
+        steps_per_rollout=3,
+        heldout_env_count=2,
+        seed=13,
+        rerun_enabled=False,
+        upload_artifacts=False,
+        byo_vlm_command=command,
+        byo_eval_command=command,
+    )
+    full_config = Sim2RealLoopConfig(run_id="sim2real-full", output_dir=full_dir, **kwargs)
+    full_report = run_full_loop(full_config)
+
+    staged_config = Sim2RealLoopConfig(
+        run_id="sim2real-staged",
+        output_dir=staged_dir,
+        **kwargs,
+    )
+    state = run_preamble(staged_config)
+    iteration = run_single_outer_iteration(
+        staged_config,
+        local_dir=staged_dir,
+        outer_iteration=1,
+        initial_quality=float(state["current_quality"]),
+    )
+    staged_report = run_finalize(
+        staged_config,
+        local_dir=staged_dir,
+        stage_records=list(state["stage_records"]),
+        components=list(state["components"]),
+        outer_history=[iteration["history_entry"]],
+        final_inner=iteration["inner"],
+        final_eval=iteration["heldout_report"],
+        final_decision=iteration["decision"],
+    )
+
+    assert (
+        staged_report["outer_loop"]["latest_decision"]["decision"]
+        == full_report["outer_loop"]["latest_decision"]["decision"]
+    )
+    assert staged_report["outer_loop"]["latest_decision"]["threshold"] == pytest.approx(
+        full_report["outer_loop"]["latest_decision"]["threshold"]
+    )
+    assert len(staged_report["inner_loop"]["iterations"]) == len(
+        full_report["inner_loop"]["iterations"]
+    )
+    assert staged_report["inner_loop"]["signal_converter_source"] == full_report["inner_loop"][
+        "signal_converter_source"
+    ]
+    assert (staged_dir / "state" / "workflow_state.json").exists()
 
 
 def test_sim_backend_defaults_to_isaac_and_validates() -> None:

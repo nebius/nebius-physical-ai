@@ -7,6 +7,11 @@ This workflow runs the full Sim2Real chain as one inspectable pipeline:
 Steps 2 and 12 are documented external stubs. Every other step writes local
 artifacts and, when `--upload-artifacts` is set, uploads the run tree to S3.
 
+Canonical operator routing after CLI namespace cleanup: use
+`npa workbench workflow submit` for cluster execution, module CLI staged
+subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
+and `npa workbench health sim2real` for preflight checks.
+
 ## Easy-Parameters Quickstart
 
 Use this when you want the canonical `lerobot/pusht` demo shape with the fewest
@@ -243,6 +248,31 @@ report = sim2real.run(
     inner_iterations=2,
     outer_iterations=1,
     upload_artifacts=True,
+)
+print(report["outer_loop"]["latest_decision"])
+```
+
+SDK staged helpers:
+
+```python
+from npa.sdk.workbench import sim2real
+
+state = sim2real.preamble(run_id="pusht-sdk-staged", output_dir="/tmp/s2r-staged")
+iteration = sim2real.outer_iteration(
+    run_id="pusht-sdk-staged",
+    output_dir="/tmp/s2r-staged",
+    outer_iteration=1,
+    initial_quality=float(state["current_quality"]),
+)
+report = sim2real.finalize(
+    run_id="pusht-sdk-staged",
+    output_dir="/tmp/s2r-staged",
+    stage_records=state["stage_records"],
+    components=state["components"],
+    outer_history=[iteration["history_entry"]],
+    final_inner=iteration["inner"],
+    final_eval=iteration["heldout_report"],
+    final_decision=iteration["decision"],
 )
 print(report["outer_loop"]["latest_decision"])
 ```
