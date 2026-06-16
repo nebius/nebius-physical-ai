@@ -117,3 +117,8 @@ npa workbench sim2real rerun serve --run-id sim2real-staged-<ANY_VALID_RUN_ID> -
 The E2E report JSON includes `rerun_serve.public_url` when auto-serve runs during
 `run_finalize`. Deployment name pattern: `npa-sim2real-rerun-viewer` or
 `npa-sim2real-rerun-<k8s-context-slug>` (for example `npa-sim2real-rerun-npa-rtxpro-mk8s`).
+
+If `public_url` is pending, the LoadBalancer is still provisioning or hit a VPC public-IP
+quota (`vpc.ipv4-address.public.count`). Wait and re-run serve; inspect
+`kubectl describe svc npa-sim2real-rerun-npa-rtxpro-mk8s`. Do not use laptop port-forward
+on the default operator path.

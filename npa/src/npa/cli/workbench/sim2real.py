@@ -384,9 +384,20 @@ def _emit_rerun_serve_result(payload: dict, *, output: OutputFormat) -> None:
     typer.echo(f"rrd_s3_uri: {payload['rrd_s3_uri']}")
     if payload.get("public_url"):
         typer.echo(f"public_url: {payload['public_url']}")
-    else:
-        typer.echo(f"cluster_url: {payload['cluster_url']}")
-        typer.echo(f"port_forward: {payload['port_forward_command']}")
+        return
+    service_type = str(payload.get("service_type", "")).strip().lower()
+    if service_type in {"loadbalancer", "lb"}:
+        deployment = payload.get("deployment_name", "npa-sim2real-rerun")
+        namespace = payload.get("namespace", DEFAULT_NAMESPACE)
+        typer.echo(
+            "public_url: pending — LoadBalancer external IP not assigned yet. "
+            "Wait and re-run serve, or inspect cluster networking (for example "
+            f"`kubectl describe svc {deployment} -n {namespace}` for quota or cloud-controller errors).",
+            err=True,
+        )
+        return
+    typer.echo(f"cluster_url: {payload['cluster_url']}")
+    typer.echo(f"port_forward: {payload['port_forward_command']}")
 
 
 def _rerun_serve_credentials() -> tuple[str, str]:
@@ -495,7 +506,7 @@ def rerun_serve_command(
             if service_type.strip().lower() in {"loadbalancer", "lb"} and not dry_run:
                 typer.echo(
                     "Warning: LoadBalancer exposes the Rerun web viewer without built-in auth. "
-                    "Restrict access at the network layer or use --service-type clusterip with port-forward.",
+                    "Restrict access at the network layer.",
                     err=True,
                 )
             result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
