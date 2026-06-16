@@ -120,6 +120,7 @@ def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     }
     heldout_report = {
         "schema": "npa.sim2real.heldout_eval.v1",
+        "success_rate": 0.5,
         "per_env": [
             {"env_id": "heldout-0000", "score": 0.7, "success": True},
             {"env_id": "heldout-0001", "score": 0.5, "success": False},
@@ -154,17 +155,24 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     assert any(e.endswith("/camera") and kinds[e] == "image" for e in entities)
     # VLM critique overlays.
     assert any(e.endswith("/critique") and kinds[e] == "text" for e in entities)
+    assert "rollouts/summary/critique" in entities
     # RL signal scalar timeseries.
     assert "signal/reward" in entities
     assert "signal/advantage" in entities
     assert "signal/reward_trend" in entities
+    # Action trajectories per rollout step.
+    assert any("/actions/dim_00" in e for e in entities)
+    assert any(e.endswith("/actions/l2_norm") for e in entities)
     # Held-out scores.
+    assert "heldout/success_rate" in entities
     assert "heldout/scores" in entities
     assert any(e.startswith("heldout/per_env/") for e in entities)
 
     counts = result.entity_counts
     assert counts["/signal/reward"] == 6
+    assert counts["/rollouts/iter_01/rollout-0000/actions/dim_00"] == 3
     assert counts["/heldout/scores"] == 2
+    assert counts["/heldout/success_rate"] == 1
 
 
 def test_emit_raises_when_rerun_unavailable(monkeypatch, tmp_path: Path) -> None:
