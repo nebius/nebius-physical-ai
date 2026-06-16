@@ -610,6 +610,17 @@ def run_finalize(
         report["components"] = components
 
     _write_json_artifact(report_path, report)
+    if (
+        str(report.get("upload", {}).get("status")) == "uploaded"
+        and rerun_serve.get("status") in {"deployed", "blocked"}
+        and config.s3_bucket
+    ):
+        report_refresh = _upload_final_report(config, report_path)
+        if report_refresh:
+            upload_meta = dict(report.get("upload") or {})
+            upload_meta["report_refresh"] = report_refresh
+            report["upload"] = upload_meta
+            _write_json_artifact(report_path, report)
     return report
 
 
@@ -3227,6 +3238,23 @@ def threshold_decision(
 # =============================================================================
 # Artifact upload (post-finalize)
 # =============================================================================
+
+
+def _upload_final_report(config: Sim2RealLoopConfig, report_path: Path) -> dict[str, Any]:
+    """Upload the finalized E2E report after optional auto rerun serve metadata is written."""
+
+    if not config.s3_bucket or not report_path.exists():
+        return {"status": "skipped", "reason": "report or s3_bucket missing"}
+    try:
+        uri = f"{_artifact_root_uri(config)}/reports/sim2real-report.json"
+        _storage_client(config).upload_file(str(report_path), uri)
+    except Exception as exc:
+        return {
+            "status": "blocked",
+            "reason": f"report re-upload failed: {exc}",
+            "next_action": "CONTINUE",
+        }
+    return {"status": "uploaded", "uri": uri, "artifact": "sim2real-report.json"}
 
 
 def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
