@@ -16,3 +16,8 @@ RUN uv python install 3.10 \
     && .venv/bin/python -c "import torch; print('torch', torch.__version__)"
 
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh /opt/cosmos2-transfer/smoke_functional.sh
+
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
+    && chown -R ubuntu:ubuntu /opt/cosmos2-transfer
+
+USER ubuntu
