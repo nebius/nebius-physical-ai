@@ -23,7 +23,12 @@ DEFAULT_RERUN_VIEWER_TOOL = "sim2real-rerun-viewer"
 DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
+# Rerun web viewer binds here; nginx sidecar exposes DEFAULT_PORT with cache headers.
+RERUN_INTERNAL_WEB_PORT = 9091
 DEFAULT_GRPC_PORT = 9876
+DEFAULT_NGINX_IMAGE = "nginx:1.27-alpine"
+# Browser-cache static wasm/js (~40 MiB) so refresh does not re-download the app bundle.
+RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 # 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer
 # viewers stall around wasm load (~37%) then fail to connect. Pin serve pods to 0.32+.
 DEFAULT_RERUN_SERVE_SDK_VERSION = "0.32.0"
@@ -83,6 +88,10 @@ class RerunServeConfig:
     @property
     def secret_name(self) -> str:
         return f"{self.deployment_name}-s3"
+
+    @property
+    def nginx_configmap_name(self) -> str:
+        return f"{self.deployment_name}-nginx"
 
 
 @dataclass(frozen=True)
@@ -274,11 +283,51 @@ def _rerun_remote_cors_flags() -> str:
     )
 
 
+def build_rerun_nginx_config(
+    *,
+    external_port: int = DEFAULT_PORT,
+    internal_port: int = RERUN_INTERNAL_WEB_PORT,
+    cache_control: str = RERUN_STATIC_CACHE_CONTROL,
+) -> str:
+    """Return nginx config: proxy static assets with long-lived browser cache."""
+
+    return f"""\
+worker_processes 1;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+events {{ worker_connections 1024; }}
+http {{
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /dev/stdout;
+    sendfile on;
+    upstream rerun_web {{
+        server 127.0.0.1:{internal_port};
+    }}
+    server {{
+        listen {external_port};
+        location ~* \\.(wasm|js|ico|svg)$ {{
+            proxy_pass http://rerun_web;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            add_header Cache-Control "{cache_control}" always;
+        }}
+        location / {{
+            proxy_pass http://rerun_web;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            add_header Cache-Control "no-cache" always;
+        }}
+    }}
+}}
+"""
+
+
 def _rerun_serve_command(config: RerunServeConfig) -> str:
     sdk_version = rerun_serve_sdk_version()
     base_cmd = (
         "rerun /data/sim2real.rrd --serve-web --web-viewer "
-        f"--web-viewer-port {config.port} --port {DEFAULT_GRPC_PORT} --bind 0.0.0.0 "
+        f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT} --port {DEFAULT_GRPC_PORT} --bind 0.0.0.0 "
         f"{_rerun_remote_cors_flags()}"
     )
     if _rerun_image_has_preinstalled_cli(config.rerun_image):
@@ -376,6 +425,7 @@ aws s3 cp "${S3_URI}" /data/sim2real.rrd
 test -s /data/sim2real.rrd
 """
     serve_command = _rerun_serve_command(config)
+    nginx_config = build_rerun_nginx_config(external_port=config.port)
     return {
         "apiVersion": "v1",
         "kind": "List",
@@ -390,6 +440,16 @@ test -s /data/sim2real.rrd
                 },
                 "type": "Opaque",
                 "data": secret_data,
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": config.nginx_configmap_name,
+                    "namespace": config.namespace,
+                    "labels": labels,
+                },
+                "data": {"nginx.conf": nginx_config},
             },
             {
                 "apiVersion": "apps/v1",
@@ -419,16 +479,45 @@ test -s /data/sim2real.rrd
                             ],
                             "containers": [
                                 {
+                                    "name": "nginx",
+                                    "image": DEFAULT_NGINX_IMAGE,
+                                    "imagePullPolicy": "IfNotPresent",
+                                    "ports": [{"name": "http", "containerPort": config.port}],
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/", "port": "http"},
+                                        "initialDelaySeconds": 5,
+                                        "periodSeconds": 5,
+                                        "timeoutSeconds": 3,
+                                    },
+                                    "volumeMounts": [
+                                        {
+                                            "name": "nginx-config",
+                                            "mountPath": "/etc/nginx/nginx.conf",
+                                            "subPath": "nginx.conf",
+                                        }
+                                    ],
+                                    "resources": {
+                                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                                        "limits": {"cpu": "500m", "memory": "128Mi"},
+                                    },
+                                },
+                                {
                                     "name": "rerun",
                                     "image": config.rerun_image,
                                     "imagePullPolicy": "IfNotPresent",
                                     "command": ["/bin/sh", "-c", serve_command],
                                     "ports": [
-                                        {"name": "http", "containerPort": config.port},
+                                        {
+                                            "name": "web-internal",
+                                            "containerPort": RERUN_INTERNAL_WEB_PORT,
+                                        },
                                         {"name": "grpc", "containerPort": DEFAULT_GRPC_PORT},
                                     ],
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/", "port": "http"},
+                                        "httpGet": {
+                                            "path": "/",
+                                            "port": RERUN_INTERNAL_WEB_PORT,
+                                        },
                                         "initialDelaySeconds": (
                                             15
                                             if _rerun_image_has_preinstalled_cli(config.rerun_image)
@@ -441,10 +530,18 @@ test -s /data/sim2real.rrd
                                         "requests": {"cpu": "250m", "memory": "512Mi"},
                                         "limits": {"cpu": "2", "memory": "2Gi"},
                                     },
-                                    "volumeMounts": [{"name": "rrd-data", "mountPath": "/data", "readOnly": True}],
-                                }
+                                    "volumeMounts": [
+                                        {"name": "rrd-data", "mountPath": "/data", "readOnly": True}
+                                    ],
+                                },
                             ],
-                            "volumes": [{"name": "rrd-data", "emptyDir": {}}],
+                            "volumes": [
+                                {"name": "rrd-data", "emptyDir": {}},
+                                {
+                                    "name": "nginx-config",
+                                    "configMap": {"name": config.nginx_configmap_name},
+                                },
+                            ],
                         },
                     },
                 },
@@ -573,8 +670,13 @@ def destroy_rerun_serve(
 ) -> RerunServeResult:
     runner = kubectl or _default_kubectl
     notify = progress or (lambda message: print(message, flush=True))
-    for kind in ("service", "deployment", "secret"):
-        name = config.deployment_name if kind != "secret" else config.secret_name
+    for kind in ("service", "deployment", "configmap", "secret"):
+        if kind == "secret":
+            name = config.secret_name
+        elif kind == "configmap":
+            name = config.nginx_configmap_name
+        else:
+            name = config.deployment_name
         notify(
             f"Deleting {kind}/{name} in namespace {config.namespace} "
             f"(wait={'true' if wait else 'false'}, "
@@ -599,6 +701,12 @@ def destroy_rerun_serve(
         f"(was serving run_id={config.run_id!r})"
     )
     return rerun_serve_result(config, status="deleted", kubeconfig=kubeconfig)
+
+
+def in_cluster_kubernetes() -> bool:
+    """True when running inside a Kubernetes pod with in-cluster API access."""
+
+    return bool(os.environ.get("KUBERNETES_SERVICE_HOST", "").strip())
 
 
 def resolve_kubeconfig_path(*, cluster_name: str, kubeconfig: str) -> str:
@@ -913,7 +1021,7 @@ def maybe_auto_rerun_serve(
             cluster_name=cluster_context,
             kubeconfig=k8s_kubeconfig,
         )
-        if not kubeconfig:
+        if not kubeconfig and not in_cluster_kubernetes():
             return {
                 "status": "blocked",
                 "reason": (

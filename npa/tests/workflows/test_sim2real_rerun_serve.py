@@ -7,16 +7,21 @@ import pytest
 from npa.clients.config import StorageConfig
 from npa.workflows.sim2real_rerun_serve import (
     DEFAULT_GRPC_PORT,
+    DEFAULT_NGINX_IMAGE,
     DEFAULT_PORT,
     DEFAULT_RERUN_IMAGE,
     DEFAULT_S3_PREFIX,
+    RERUN_INTERNAL_WEB_PORT,
+    RERUN_STATIC_CACHE_CONTROL,
     Sim2RealRerunServeError,
     apply_rerun_serve,
+    build_rerun_nginx_config,
     build_rerun_serve_config,
     build_rerun_serve_manifest,
     deployment_name_for_cluster,
     deployment_name_for_run,
     destroy_rerun_serve,
+    in_cluster_kubernetes,
     maybe_auto_rerun_serve,
     public_viewer_url,
     redact_rerun_serve_manifest,
@@ -144,21 +149,29 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     )
     manifest = build_rerun_serve_manifest(config)
     kinds = [item["kind"] for item in manifest["items"]]
-    assert kinds == ["Secret", "Deployment", "Service"]
+    assert kinds == ["Secret", "ConfigMap", "Deployment", "Service"]
 
     deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
     init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
-    rerun_container = deployment["spec"]["template"]["spec"]["containers"][0]
+    containers = deployment["spec"]["template"]["spec"]["containers"]
+    nginx_container = next(c for c in containers if c["name"] == "nginx")
+    rerun_container = next(c for c in containers if c["name"] == "rerun")
     assert init_container["name"] == "sync-rrd"
     assert "aws s3 cp" in init_container["command"][-1]
+    assert nginx_container["image"] == DEFAULT_NGINX_IMAGE
+    assert nginx_container["ports"][0]["containerPort"] == DEFAULT_PORT
     assert rerun_container["image"] == DEFAULT_RERUN_IMAGE
     assert "pip install" in rerun_container["command"][-1]
     assert "rerun-sdk==0.32.0" in rerun_container["command"][-1]
     assert "--serve-web" in rerun_container["command"][-1]
-    assert f"--web-viewer-port {DEFAULT_PORT}" in rerun_container["command"][-1]
+    assert f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT}" in rerun_container["command"][-1]
     assert f"--port {DEFAULT_GRPC_PORT}" in rerun_container["command"][-1]
     assert "--cors-allow-origin" in rerun_container["command"][-1]
     assert rerun_container["command"][-1].endswith("--cors-allow-origin 'http://204.12.*:*' ")
+
+    configmap = next(item for item in manifest["items"] if item["kind"] == "ConfigMap")
+    assert RERUN_STATIC_CACHE_CONTROL in configmap["data"]["nginx.conf"]
+    assert f"127.0.0.1:{RERUN_INTERNAL_WEB_PORT}" in configmap["data"]["nginx.conf"]
 
     secret = next(item for item in manifest["items"] if item["kind"] == "Secret")
     assert secret["metadata"]["name"] == f"{config.deployment_name}-s3"
@@ -190,9 +203,19 @@ def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
     )
     manifest = build_rerun_serve_manifest(config)
     deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
-    rerun_container = deployment["spec"]["template"]["spec"]["containers"][0]
+    rerun_container = next(
+        c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "rerun"
+    )
     assert "pip install" not in rerun_container["command"][-1]
     assert rerun_container["command"][-1].startswith("rerun /data/sim2real.rrd --serve-web")
+
+
+def test_build_rerun_nginx_config_sets_static_cache_headers() -> None:
+    config_text = build_rerun_nginx_config()
+    assert RERUN_STATIC_CACHE_CONTROL in config_text
+    assert f"listen {DEFAULT_PORT}" in config_text
+    assert f"127.0.0.1:{RERUN_INTERNAL_WEB_PORT}" in config_text
+    assert "(wasm|js|ico|svg)" in config_text
 
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:
@@ -280,8 +303,10 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
     assert deleted[0][:2] == ["delete", "service"]
     assert "--wait=false" in deleted[0]
     assert deleted[1][:2] == ["delete", "deployment"]
-    assert deleted[2][:2] == ["delete", "secret"]
-    assert deleted[2][2] == config.secret_name
+    assert deleted[2][:2] == ["delete", "configmap"]
+    assert deleted[2][2] == config.nginx_configmap_name
+    assert deleted[3][:2] == ["delete", "secret"]
+    assert deleted[3][2] == config.secret_name
     assert any("Deleting service/" in message for message in messages)
     assert any("Deleted shared cluster Rerun viewer" in message for message in messages)
 
@@ -381,6 +406,65 @@ def test_maybe_auto_rerun_serve_skips_when_upload_missing() -> None:
         viz_info={"status": "reference"},
     )
     assert result["status"] == "skipped"
+
+
+def test_maybe_auto_rerun_serve_uses_in_cluster_kubectl_without_kubeconfig_file(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_rerun_serve_credentials",
+        return_value=("ak", "sk"),
+    )
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.build_rerun_serve_config",
+        return_value=build_rerun_serve_config(
+            run_id="sim2real-staged-20260615t180818z",
+            s3_bucket="demo-bucket",
+            aws_access_key_id="ak",
+            aws_secret_access_key="sk",
+        ),
+    )
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_kubeconfig_path",
+        return_value="",
+    )
+    apply = mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.apply_rerun_serve",
+        return_value=type(
+            "Result",
+            (),
+            {
+                "to_dict": lambda self: {
+                    "status": "deployed",
+                    "public_url": (
+                        "http://203.0.113.10:9090/?url=rerun%2Bhttp%3A%2F%2F203.0.113.10"
+                        "%3A9876%2Fproxy"
+                    ),
+                    "run_id": "sim2real-staged-20260615t180818z",
+                    "deployment_name": "npa-sim2real-rerun-npa-rtxpro-mk8s",
+                }
+            },
+        )(),
+    )
+
+    result = maybe_auto_rerun_serve(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        rerun_enabled=True,
+        upload_info={"status": "uploaded"},
+        viz_info={"status": "reference"},
+    )
+    assert result["status"] == "deployed"
+    apply.assert_called_once()
+    assert apply.call_args.kwargs["kubeconfig"] == ""
+
+
+def test_in_cluster_kubernetes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    assert not in_cluster_kubernetes()
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+    assert in_cluster_kubernetes()
 
 
 def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) -> None:
