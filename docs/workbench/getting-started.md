@@ -1,7 +1,9 @@
 # Workbench Getting Started
 
 > Prerequisites: complete docs/quickstart.md first
-> ([open quickstart](../quickstart.md)).
+> ([open quickstart](../quickstart.md), including
+> [Fast install by platform](../quickstart.md#fast-install-by-platform) for
+> macOS, Linux, or WSL2).
 
 This guide assumes `npa` is already installed, the Nebius CLI is authenticated,
 and user-level credentials are already configured in
@@ -59,8 +61,8 @@ cr.eu-north1.nebius.cloud
 
 ## Install Workbench Tools
 
-The quickstart already covers Python, Git, Terraform, `npa`, and the Nebius CLI.
-Install these additional tools on the operator machine:
+The quickstart already covers Python, Git, Terraform, `npa`, and the Nebius CLI
+(macOS, Linux, or WSL2). Install these additional tools on the operator machine:
 
 - AWS CLI v2 for direct S3 verification.
 - Docker with registry login access.

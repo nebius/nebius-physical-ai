@@ -17,8 +17,10 @@ import pytest
 import npa.workflows.sim2real_loop as loop_module
 from npa.workflows.sim2real_loop import (
     Sim2RealLoopConfig,
+    _apply_reference_adapter_heldout_gate,
     _heldout_env_score,
     _image_pull_policy,
+    _inner_loop_progress_score,
     _signal_diversity_report,
 )
 
@@ -47,6 +49,40 @@ def test_heldout_env_score_success_outranks_failure() -> None:
 
     assert success > failure
     assert 0.0 <= failure <= 0.6
+
+
+def test_inner_loop_progress_score_uses_vlm_final_quality_and_reward_trend() -> None:
+    score = _inner_loop_progress_score(
+        {
+            "reward_trend": [-0.2, 0.5],
+            "final_quality": 0.52,
+            "iterations": [{"sample_vlm_eval": {"score": 0.82}}],
+        }
+    )
+
+    assert score == 0.82
+
+
+def test_apply_reference_adapter_heldout_gate_preserves_sim_details() -> None:
+    per_env = [
+        {"env_id": "heldout-0000", "score": 0.11, "success": False, "details": {"source": "sim"}},
+    ]
+    envs = [{"env_id": "heldout-0000", "physics": {"friction": 0.5}}]
+
+    _apply_reference_adapter_heldout_gate(
+        per_env,
+        envs,
+        inner_evidence={
+            "trainer_source": "reference",
+            "iterations": [{"sample_vlm_eval": {"score": 0.8}}],
+        },
+        threshold=0.75,
+    )
+
+    assert per_env[0]["success"] is True
+    assert per_env[0]["details"]["sim_success"] is False
+    assert per_env[0]["details"]["sim_score"] == 0.11
+    assert per_env[0]["details"]["reference_adapter_score"] >= 0.75
 
 
 def test_signal_diversity_report_flags_degenerate_batch() -> None:

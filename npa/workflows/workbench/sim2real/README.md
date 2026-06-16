@@ -1,11 +1,35 @@
 # Sim2Real VLM-to-RL Runbook
 
+**Docs:** [data contracts](../../../docs/workbench/guides/sim2real-data-contracts.md) ·
+[operator guide](../../../docs/workbench/guides/sim2real-workflow.md) ·
+[customer assets](../../../docs/workbench/guides/sim2real-customer-assets.md) ·
+[architecture](../../../docs/workbench/guides/sim2real-architecture.md)
+
 This workflow runs the full Sim2Real chain as one inspectable pipeline:
 
 `LeRobot dataset trigger -> augment -> env generation -> train/held-out split -> action rollouts -> VLM critique -> RL signal -> trainer update -> held-out eval -> promote or loop back -> external validation stub -> retrigger`.
 
-Steps 2 and 12 are documented external stubs. Every other step writes local
-artifacts and, when `--upload-artifacts` is set, uploads the run tree to S3.
+Steps 12 and 13 are documented external seams. Stage 2 materializes stock or BYO
+scene and robot specs. Every step writes local artifacts and, when
+`--upload-artifacts` is set, uploads the run tree to S3.
+
+Canonical operator routing after CLI namespace cleanup: use
+`npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml`
+for cluster execution (auto-routes to the direct K8s staged Job when SkyPilot is
+unavailable), `python -m npa.workflows.sim2real status <run-id> --watch` for live
+progress, module CLI staged subcommands (`preamble`, `outer-iteration`,
+`finalize`) for manual progression, and `npa workbench health sim2real` for
+preflight checks. The SDK (`npa.sdk.workbench.sim2real`) mirrors run/status.
+
+Canonical operator routing after CLI namespace cleanup: use
+`npa workbench workflow submit` for cluster execution, module CLI staged
+subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
+and `npa workbench health sim2real` for preflight checks.
+
+Canonical operator routing after CLI namespace cleanup: use
+`npa workbench workflow submit` for cluster execution, module CLI staged
+subcommands (`preamble`, `outer-iteration`, `finalize`) for manual progression,
+and `npa workbench health sim2real` for preflight checks.
 
 Canonical operator routing after CLI namespace cleanup: use
 `npa workbench workflow submit` for cluster execution, module CLI staged
@@ -53,6 +77,12 @@ export ROLLOUT_COUNT=3
 export STEPS_PER_ROLLOUT=4
 export HELDOUT_ENV_COUNT=8
 
+# 6. Self-hosted dual VLM models (accept on Hugging Face — see operator guide).
+export VLM_REASON2_MODEL=nvidia/Cosmos-Reason2-8B
+export VLM_REASON3_MODEL=nvidia/Cosmos-Reason2-2B
+export NPA_SIM2REAL_VLM_DUAL_REASON=1
+# Mirror HF_TOKEN into cluster secret hf-ngc-tokens before GPU sibling Jobs run.
+
 npa workbench workflow submit \
   npa/workflows/workbench/sim2real/runbook.yaml \
   --run-id "${NPA_SIM2REAL_RUN_ID}" \
@@ -69,7 +99,10 @@ npa workbench workflow submit \
   --var LOOP_OF_LOOPS_ITERATIONS="${LOOP_OF_LOOPS_ITERATIONS}" \
   --var ROLLOUT_COUNT="${ROLLOUT_COUNT}" \
   --var STEPS_PER_ROLLOUT="${STEPS_PER_ROLLOUT}" \
-  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}"
+  --var HELDOUT_ENV_COUNT="${HELDOUT_ENV_COUNT}" \
+  --var VLM_REASON2_MODEL="${VLM_REASON2_MODEL}" \
+  --var VLM_REASON3_MODEL="${VLM_REASON3_MODEL}" \
+  --var NPA_SIM2REAL_VLM_DUAL_REASON="${NPA_SIM2REAL_VLM_DUAL_REASON:-1}"
 ```
 
 Canonical S3 layout for the quickstart:
@@ -111,6 +144,10 @@ reports/sim2real.rrd
   - `npa-lerobot-vlm-rl:0.1.1`
   - `npa-sim2real-eval:0.1.2-genuine-sm120`
 - Gated model repository access accepted where required by the VLM image.
+  Self-hosted dual VLM defaults: `nvidia/Cosmos-Reason2-8B` (Reason2) and
+  `nvidia/Cosmos-Reason2-2B` (Reason3 sibling). Accept both on Hugging Face before launch.
+  `nvidia/Cosmos3-Super-Reasoner` is Token Factory–hosted only — not an HF repo.
+  See [sim2real-workflow.md](../../../docs/workbench/guides/sim2real-workflow.md#hugging-face-model-access-self-hosted-workbench).
 - `HF_TOKEN` and `NGC_API_KEY` supplied through environment variables or a
   Kubernetes secret such as `hf-ngc-tokens`.
 - S3-compatible storage credentials and endpoint configured through environment
@@ -307,8 +344,9 @@ npa/.venv/bin/python -m npa.workflows.sim2real_loop inner-loop \
 
 1. Trigger: consumes `--trigger-dataset-uri` and writes
    `stage_01_trigger/trigger.json`.
-2. External assets and SceneSpec: documented BYO stub at
-   `stage_02_assets/external_stub.json`.
+2. Sim assets: writes `stage_02_assets/consumed_scene_spec.json` and
+   `consumed_robot_spec.json` (stock Franka + tabletop by default; BYO via
+   `ASSETS_URI` / `SCENE_SPEC_URI` / `ROBOT_SPEC_URI`).
 3. Augmentation: writes `augment/manifest.json`.
 4. Environment generation: writes `envs/raw/manifest.json`.
 5. Train and held-out split: writes `envs/train/manifest.json` and

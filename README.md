@@ -13,6 +13,10 @@ orchestration, vLLM serving, managed Kubernetes, and GPU clusters.
 
 ## Quick Start
 
+Supported platforms: **macOS**, **Linux**, and **Windows (WSL2 Ubuntu)**.
+Native Windows shells are not supported — use WSL2. Full copy-paste blocks:
+[docs/quickstart.md § Fast install by platform](docs/quickstart.md#fast-install-by-platform).
+
 Install the `npa` package into a fresh virtual environment. The venv can live
 anywhere; activating it puts `npa` on your `PATH` (Python 3.10+ required):
 
@@ -26,6 +30,13 @@ pip install --upgrade pip
 pip install -e npa
 
 npa --version
+```
+
+Install the Nebius CLI if it is not on `PATH` yet (all platforms):
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc
 ```
 
 Run your first real result with **no cloud, GPU, or credentials** — score a

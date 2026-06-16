@@ -23,6 +23,7 @@ Builds the Sim2Real reference images one at a time:
   npa-sim2real-reference-policy:${ENVGEN_TAG}
   npa-lerobot-vlm-rl:${VLM_RL_TAG}
   npa-sim2real-eval:${EVAL_TAG}
+  npa-sim2real-rerun-viewer:${RERUN_VIEWER_TAG:-0.31.4}
 
 Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 / sm80-sm90-sm120 base
 and Genesis image tags before building. Set ENVGEN_TAG when the reference
@@ -93,3 +94,4 @@ build_one "npa-sim2real-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/D
 build_one "npa-sim2real-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-sim2real-envgen:${ENVGEN_TAG}"
 build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
 build_one "npa-sim2real-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
+build_one "npa-sim2real-rerun-viewer" "${RERUN_VIEWER_TAG:-0.31.4}" "${SCRIPT_DIR}/sim2real-rerun-viewer/Dockerfile" "RERUN_SDK_VERSION=${RERUN_VIEWER_TAG:-0.31.4}"

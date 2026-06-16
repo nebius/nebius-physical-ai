@@ -199,6 +199,19 @@ def _suffix_of(uri: str) -> str:
     return Path(str(uri).split("?", 1)[0].rstrip("/")).suffix.lower()
 
 
+def _infer_robot_source_from_uri(uri: str) -> str | None:
+    """Map a robot asset URI suffix to the matching BYO robot_source."""
+
+    suffix = _suffix_of(uri)
+    if suffix in URDF_SUFFIXES:
+        return ROBOT_SOURCE_BYO_URDF
+    if suffix in MJCF_SUFFIXES:
+        return ROBOT_SOURCE_BYO_MJCF
+    if suffix in USD_SUFFIXES:
+        return ROBOT_SOURCE_BYO_USD
+    return None
+
+
 def _validate_articulated_uri(uri: str, robot_source: str) -> None:
     """Reject a non-articulated file given as the robot (clear error)."""
 
@@ -370,12 +383,17 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
     preset_name = str(doc.get("preset") or "").strip().lower()
     spec = robot_spec_from_preset(preset_name) if preset_name else RobotSpec()
 
-    if doc.get("robot_source") is not None:
+    explicit_source = doc.get("robot_source") is not None
+    if explicit_source:
         spec.robot_source = str(doc["robot_source"]).strip()
     if doc.get("name"):
         spec.name = str(doc["name"]).strip()
     if doc.get("robot_uri") is not None:
         spec.robot_uri = str(doc["robot_uri"]).strip()
+    if not explicit_source and spec.robot_uri:
+        inferred = _infer_robot_source_from_uri(spec.robot_uri)
+        if inferred is not None:
+            spec.robot_source = inferred
     if doc.get("builtin_path") is not None:
         spec.builtin_path = str(doc["builtin_path"]).strip()
     if doc.get("ee_link"):
@@ -407,6 +425,21 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
 
     spec.validate()
     return spec
+
+
+def adapt_robot_spec_for_sim_backend(spec: RobotSpec, sim_backend: str) -> RobotSpec:
+    """Prefer URDF over MJCF when the held-out backend is Isaac Lab."""
+
+    backend = str(sim_backend or "").strip().lower()
+    if backend != "isaac" or not spec.robot_uri:
+        return spec
+    if spec.robot_source != ROBOT_SOURCE_BYO_MJCF:
+        return spec
+    suffix = _suffix_of(spec.robot_uri)
+    if suffix not in MJCF_SUFFIXES:
+        return spec
+    stem = str(spec.robot_uri).rsplit(".", 1)[0]
+    return replace(spec, robot_uri=f"{stem}.urdf", robot_source=ROBOT_SOURCE_BYO_URDF)
 
 
 def robot_spec_from_inputs(

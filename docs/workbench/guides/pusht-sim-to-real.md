@@ -110,7 +110,8 @@ you recorded in Genesis, or a [Reachy 2](reachy2-lerobot-policy.md) dataset.
 
 ## Dig deeper
 
-- Cookbook: [Sim-To-Real Pipeline Runbook](../cookbooks/sim-to-real-pipeline.md)
-- Quickstart: [../sim-to-real-quickstart.md](../sim-to-real-quickstart.md)
+- **13-stage production loop:** [Sim-to-real workflow](../sim2real-workflow.md) · [Data contracts](../sim2real-data-contracts.md)
+- Cookbook (legacy module): [Sim-To-Real Pipeline Runbook](../cookbooks/sim-to-real-pipeline.md)
+- Quickstart (legacy H100 proof): [../sim-to-real-quickstart.md](../sim-to-real-quickstart.md)
 - Workflow YAML: `npa/workflows/workbench/skypilot/sim-to-real-pipeline.yaml`
 - Skill: `.agents/skills/workbench/sim-to-real/SKILL.md`

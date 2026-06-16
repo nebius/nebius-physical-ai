@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real_loop import (
+from npa.workflows.sim2real import (
     Sim2RealLoopConfig,
     artifact_uris,
     build_config_from_env,
@@ -123,6 +123,29 @@ def output_paths(**overrides: Any) -> dict[str, str]:
     return artifact_uris(build_config_from_env(**overrides))
 
 
+def status(
+    *,
+    run_id: str,
+    watch: bool = False,
+    interval: float = 10.0,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Live stage progress for a staged cluster run."""
+
+    from npa.workflows.sim2real.monitor import watch_sim2real_status
+
+    return watch_sim2real_status(
+        run_id,
+        watch=watch,
+        interval=interval,
+        s3_bucket=str(overrides.get("s3_bucket") or ""),
+        s3_prefix=str(overrides.get("s3_prefix") or "sim2real-b"),
+        s3_endpoint=str(overrides.get("s3_endpoint") or ""),
+        k8s_context=str(overrides.get("k8s_context") or ""),
+        k8s_namespace=str(overrides.get("k8s_namespace") or "default"),
+    )
+
+
 def seams(**overrides: Any) -> dict[str, Any]:
     """Return all BYO plug points for the workflow."""
 
@@ -143,4 +166,5 @@ __all__ = [
     "run",
     "signal_mapping_rules",
     "seams",
+    "status",
 ]

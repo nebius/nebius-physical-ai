@@ -440,3 +440,85 @@ def test_apply_scene_spec_overrides_cube_and_target(env_module) -> None:
     assert env.cfg.cube_size == 0.06
     assert env.cfg.target_pos == (0.4, 0.25, 0.04)
     assert env.cfg.target_threshold == 0.07
+
+
+def test_parse_scene_spec_cameras_block() -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "part",
+                "asset_source": "byo_mesh",
+                "role": "manipuland",
+                "uri": "s3://bucket/part.obj",
+            }
+        ],
+        "cameras": {
+            "workspace": {
+                "placement": "custom",
+                "pos": [1.2, 0.0, 1.5],
+                "look_at": [0.5, 0.0, 0.0],
+                "resolution": [640, 480],
+                "fov": 55,
+            },
+            "wrist": {"placement": "stock_ee_mounted", "resolution": [640, 480]},
+        },
+    }
+    spec = sa.parse_scene_spec(doc)
+    assert tuple(spec.cameras.keys()) == ("workspace", "wrist")
+    ws = spec.cameras["workspace"]
+    assert ws.placement == "custom"
+    assert ws.pos == (1.2, 0.0, 1.5)
+    assert ws.resolution == (480, 640)
+    assert ws.fov == 55.0
+    assert spec.cameras["wrist"].fov == sa._STOCK_WRIST_FOV
+    payload = spec.to_dict()
+    assert "cameras" in payload
+    assert payload["cameras"]["workspace"]["resolution"] == [640, 480]
+
+
+def test_parse_cameras_doc_standalone() -> None:
+    doc = {
+        "cameras": {
+            "overhead": {
+                "placement": "stock_workspace",
+                "resolution": [1280, 720],
+            }
+        }
+    }
+    cameras = sa.parse_cameras_doc(doc)
+    assert "overhead" in cameras
+    assert cameras["overhead"].resolution == (720, 1280)
+
+
+def test_merge_cameras_into_scene() -> None:
+    scene = sa.synthesize_scene_spec(byo_mesh_uri="s3://bucket/part.obj")
+    assert not scene.cameras
+    cameras = sa.parse_cameras_doc(
+        {"cameras": {"workspace": {"placement": "stock_workspace"}}}
+    )
+    merged = sa.merge_cameras_into_scene(scene, cameras)
+    assert merged is scene
+    assert "workspace" in scene.cameras
+    unchanged = sa.merge_cameras_into_scene(scene, cameras)
+    assert unchanged.cameras["workspace"].placement == "stock_workspace"
+
+
+def test_camera_names_defaults_and_custom() -> None:
+    assert sa.camera_names() == sa.DEFAULT_CAMERA_NAMES
+    scene = sa.parse_scene_spec(
+        {
+            "objects": [
+                {
+                    "name": "part",
+                    "asset_source": "byo_mesh",
+                    "role": "manipuland",
+                    "uri": "s3://bucket/part.obj",
+                }
+            ],
+            "cameras": {
+                "overhead": {"placement": "custom", "pos": [0, 0, 2], "look_at": [0, 0, 0]}
+            },
+        }
+    )
+    assert sa.camera_names(scene) == ("overhead",)
+

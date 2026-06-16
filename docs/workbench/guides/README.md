@@ -82,3 +82,16 @@ them, but the workbench is built to be swapped:
 
 When you're ready for the production recipes, head to the
 [cookbooks](../cookbooks/README.md).
+
+## Sim-to-real (13-stage production loop)
+
+These guides are separate from the easy PushT walkthrough above. They document the
+full VLM→RL loop, data contracts, and cluster operations:
+
+| Doc | Use when |
+| --- | --- |
+| [sim2real-workflow.md](sim2real-workflow.md) | Run the loop (quickstart, CLI) |
+| [sim2real-data-contracts.md](sim2real-data-contracts.md) | **Canonical** formats, schemas, S3 layout |
+| [sim2real-customer-assets.md](sim2real-customer-assets.md) | Customer uploads, scorecard |
+| [sim2real-architecture.md](sim2real-architecture.md) | K8s sibling jobs, fallbacks |
+| [sim2real-demo-script-10min.md](sim2real-demo-script-10min.md) | Presentation walkthrough |
