@@ -23,6 +23,7 @@ SESSION="${GOLDEN_EVAL_CONVERGE_SESSION:-golden-evals-converge}"
 WATCHDOG_SESSION="${GOLDEN_EVAL_WATCHDOG_SESSION:-golden-evals-watchdog}"
 STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
 LOG="${STATE_DIR}/converge-tmux.log"
+export GOLDEN_EVAL_SOURCE_REF="${GOLDEN_EVAL_SOURCE_REF:-feat/golden-eval}"
 
 IF_DEAD=0
 WITH_WATCHDOG=0
