@@ -1,0 +1,103 @@
+name: Golden Evals (nightly)
+
+# INSTALL: copy this file to .github/workflows/golden-evals-nightly.yml to
+# activate it. It is staged here under docs/ci/ because it was added by an
+# OAuth credential without the GitHub `workflow` scope; a maintainer with that
+# scope should move it into .github/workflows/.
+#
+# Per-container golden-eval / hello-world reruns.
+#
+# The CPU-only `validate` + `cpu-evals` jobs run nightly on GitHub-hosted
+# runners. The GPU golden evals (lerobot, genesis, isaac-lab, cosmos, groot,
+# sonic, ...) require the built container images on a GPU host and are launched
+# via workflow_dispatch onto a self-hosted GPU runner (label: gpu).
+
+on:
+  schedule:
+    # 04:00 UTC nightly, after the weekly image security scan window.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      run_gpu_evals:
+        description: "Also run GPU golden evals on a self-hosted GPU runner"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-manifest:
+    name: Validate golden-eval manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e "." && pip install pytest
+
+      - name: Validate manifest (offline)
+        run: cd npa && python -m pytest tests/smoke/test_golden_eval_manifest.py -q
+
+      - name: Print golden-eval table
+        run: python npa/scripts/run_golden_evals.py list
+
+  cpu-evals:
+    name: CPU golden evals
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e "."
+
+      # Workflow-smoke evals whose entrypoints resolve from the base repo install
+      # (no GPU / heavy framework deps). These prove the workflow contracts behind
+      # the sim-to-real container commands actually load and parse.
+      - name: sim-to-real workflow entrypoints
+        run: |
+          python npa/scripts/run_golden_evals.py run sim2real-eval --execute
+          python npa/scripts/run_golden_evals.py run sim2real-envgen --execute
+          python npa/scripts/run_golden_evals.py run sim2real-reference-policy --execute
+          python npa/scripts/run_golden_evals.py run lerobot-vlm-rl --execute
+          python npa/scripts/run_golden_evals.py run cosmos3-reason --execute
+
+  gpu-evals:
+    name: Serverless GPU golden evals
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gpu_evals }}
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    strategy:
+      fail-fast: false
+      matrix:
+        container: [lerobot, genesis, isaac-lab, cosmos, groot, sonic, fiftyone, lancedb, detection-training, retargeting]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install npa
+        run: cd npa && pip install -e "."
+
+      # Submits the golden eval to a Nebius Serverless Job in the real container
+      # image on a GPU and waits for the PASS/FAIL result. Requires Nebius +
+      # storage credentials (configured via ~/.npa/credentials.yaml or env).
+      - name: Run container golden eval (serverless)
+        run: python npa/scripts/run_golden_evals.py run ${{ matrix.container }} --serverless

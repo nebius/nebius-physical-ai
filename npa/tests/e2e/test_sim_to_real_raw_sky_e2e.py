@@ -151,11 +151,11 @@ def _policy_image() -> str:
         return explicit
     registry = os.environ.get("NPA_REGISTRY")
     if registry:
-        return f"{registry.rstrip('/')}/npa-lerobot-policy:0.1.0"
+        return f"{registry.rstrip('/')}/npa-lerobot-policy:0.1.1"
     registry_id = os.environ.get("NPA_REGISTRY_ID")
     if registry_id:
-        return f"cr.eu-north1.nebius.cloud/{registry_id}/npa-lerobot-policy:0.1.0"
-    return "npa-lerobot-policy:0.1.0"
+        return f"cr.eu-north1.nebius.cloud/{registry_id}/npa-lerobot-policy:0.1.1"
+    return "npa-lerobot-policy:0.1.1"
 
 
 def _gpu_chain() -> tuple[str, ...]:

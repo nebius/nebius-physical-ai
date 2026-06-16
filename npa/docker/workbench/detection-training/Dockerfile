@@ -16,6 +16,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 RUN mkdir -p /app/npa/workbench
 RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
 COPY src/npa/workbench/detection_training /app/npa/workbench/detection_training
+# detection_training.schemas imports training_config at module load.
+COPY src/npa/workbench/training_config.py /app/npa/workbench/training_config.py
+# Golden-eval smoke (standalone; runs against the in-image service module).
+COPY src/npa/smoke/test_detection_training_functional.py /app/smoke_functional.py
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app

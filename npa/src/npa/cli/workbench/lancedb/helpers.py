@@ -18,7 +18,7 @@ from npa.clients.config import default_project_name, default_workbench_name, lis
 from npa.clients.credentials import load_credentials
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 
-LANCEDB_VERSION = "0.30.2"
+LANCEDB_VERSION = "0.30.3"
 DEFAULT_PORT = 8686
 DEFAULT_TOKEN_ENV = "LANCEDB_TOKEN"
 DEFAULT_API_KEY_ENV = "LANCEDB_API_KEY"

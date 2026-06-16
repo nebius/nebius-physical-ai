@@ -72,7 +72,7 @@ def test_sonic_mvp_materializer_sets_h100_spot_region_and_docker_payload(monkeyp
     ]
     retarget = docs[1]
     assert retarget["resources"]["cloud"] == "kubernetes"
-    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.0"
+    assert retarget["resources"]["image_id"] == "docker:registry.example/workbench/npa-retargeting:0.1.1"
     assert retarget["envs"]["AWS_PROFILE"] == "nebius"
     assert retarget["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
     for task in docs[2:]:

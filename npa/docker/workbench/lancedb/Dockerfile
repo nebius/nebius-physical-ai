@@ -14,8 +14,12 @@ COPY src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py
 COPY src/npa/workbench/lancedb/backfill.py /app/npa_lancedb_backfill.py
 COPY src/npa/workbench/lancedb/views.py /app/npa_lancedb_views.py
 COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
+# Golden-eval smoke (standalone; the image does not install the npa package).
+COPY src/npa/smoke/test_lancedb_functional.py /app/smoke_functional.py
 COPY docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+# The smoke starts uvicorn against the flattened server module in /app.
+ENV LANCEDB_SMOKE_APP=npa_lancedb_server:app
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app
