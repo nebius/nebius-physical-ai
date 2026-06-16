@@ -13,6 +13,7 @@ from npa.workflows.sim2real_viz import (
     RerunUnavailableError,
     Sim2RealVizError,
     emit_sim2real_rerun,
+    is_reference_stub_rollout,
 )
 
 
@@ -203,3 +204,117 @@ def test_emit_raises_when_no_content(monkeypatch, tmp_path: Path) -> None:
             heldout_report={"per_env": []},
             output_rrd=tmp_path / "reports" / "sim2real.rrd",
         )
+
+
+def _write_test_png(path: Path, *, red: int, green: int, blue: int) -> None:
+    import struct
+    import zlib
+
+    width = height = 64
+    raw = bytearray()
+    pixel = bytes([red, green, blue])
+    for _row in range(height):
+        raw.append(0)
+        raw.extend(pixel * width)
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _chunk(b"IHDR", header)
+    png += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    png += _chunk(b"IEND", b"")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
+
+
+def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> None:
+    actions_dir = tmp_path / "actions"
+    rollouts = generate_action_rollouts(actions_dir, count=1, steps_per_rollout=2, seed=3, quality=0.5)
+    frames = viz_module._rollout_frames(rollouts[0])
+    assert is_reference_stub_rollout(rollouts[0], frames) is True
+
+    rollout_dir = rollouts[0]
+    (rollout_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.policy_rollout.v1",
+                "rollout_id": rollout_dir.name,
+                "camera_observations": ["camera-000.png"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert is_reference_stub_rollout(rollout_dir, frames) is False
+
+
+def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_path: Path) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
+    _write_test_png(renders_dir / "camera-000.png", red=40, green=120, blue=200)
+    _write_test_png(renders_dir / "camera-001.png", red=50, green=130, blue=210)
+    heldout_report["render_manifest"] = {
+        "schema": "npa.sim2real.heldout_renders.v1",
+        "sim_backend": "isaac",
+        "isaac_task": "Isaac-Lift-Cube-Franka-v0",
+        "episodes": [
+            {
+                "env_id": "heldout-0000",
+                "frames": ["camera-000.png", "camera-001.png"],
+            }
+        ],
+    }
+
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    result = emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "sim2real.rrd",
+    )
+
+    entities = [entity for entity, _kind in fake.logged]
+    kinds = {entity: kind for entity, kind in fake.logged}
+    assert result.heldout_frame_count == 2
+    assert result.rollout_count == 0
+    assert result.frame_count == 0
+    assert "heldout/camera/heldout-0000/camera" in entities
+    assert kinds["heldout/camera/heldout-0000/camera"] == "image"
+    assert not any(
+        entity.startswith("rollouts/iter_01/rollout-") and entity.endswith("/camera")
+        for entity in entities
+    )
+    assert "signal/reward_trend" in entities
+    assert "heldout/success_rate" in entities
+
+
+def test_heldout_render_step_indices_samples_evenly() -> None:
+    from npa.workflows.sim2real.engine import _heldout_render_step_indices
+
+    indices = _heldout_render_step_indices(120, max_frames=8)
+    assert 0 in indices
+    assert 119 in indices
+    assert len(indices) <= 8
+
+
+def test_build_heldout_render_manifest_from_png_tree(tmp_path: Path) -> None:
+    from npa.workflows.sim2real.engine import _build_heldout_render_manifest
+
+    env_dir = tmp_path / "heldout-0000"
+    env_dir.mkdir(parents=True)
+    (env_dir / "camera-000.png").write_bytes(b"png")
+    (env_dir / "camera-001.png").write_bytes(b"png")
+    manifest = _build_heldout_render_manifest(
+        tmp_path,
+        sim_backend="isaac",
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
+    )
+    assert manifest["episodes"][0]["env_id"] == "heldout-0000"
+    assert manifest["episodes"][0]["frames"] == ["camera-000.png", "camera-001.png"]
