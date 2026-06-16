@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CONVERGE = REPO_ROOT / "npa" / "scripts" / "golden_eval_converge.sh"
 START = REPO_ROOT / "npa" / "scripts" / "start_golden_evals_converge_tmux.sh"
 AUTOFIX = REPO_ROOT / "npa" / "scripts" / "golden_eval_autofix.sh"
+IN_CONVERGE_LOOP = os.environ.get("GOLDEN_EVAL_CONVERGE_LOOP") == "1"
 
 
 def test_converge_script_help() -> None:
@@ -76,7 +78,9 @@ def test_fleet_iam_block_detection_pattern(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
-def test_converge_exits_when_paused_iam_marker_present(tmp_path: Path) -> None:
+def test_converge_unit_gate_runs_when_paused_iam_marker_present(tmp_path: Path) -> None:
+    if IN_CONVERGE_LOOP:
+        pytest.skip("avoid recursive converge subprocess inside converge loop")
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     (state_dir / "PAUSED-IAM").write_text("blocked\n", encoding="utf-8")
@@ -84,22 +88,24 @@ def test_converge_exits_when_paused_iam_marker_present(tmp_path: Path) -> None:
         [
             "bash",
             str(CONVERGE),
-            "--unit-only",
             "--once",
         ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        timeout=180,
         env={
             **os.environ,
             "GOLDEN_EVAL_STATE_DIR": str(state_dir),
             "GOLDEN_EVAL_AUTOFIX_SKIP_GIT": "1",
+            "GOLDEN_EVAL_PYTHON": sys.executable,
         },
     )
-    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PAUSED-IAM" in proc.stdout + proc.stderr
+    assert "unit gate pass" in proc.stdout + proc.stderr
+    assert not (state_dir / "golden-evals-complete").exists()
 
 
 def test_autofix_script_runs() -> None:
@@ -118,6 +124,10 @@ def test_autofix_script_runs() -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+@pytest.mark.skipif(
+    IN_CONVERGE_LOOP,
+    reason="avoid recursive tmux launcher inside converge loop",
+)
 @pytest.mark.skipif(
     subprocess.run(["bash", "-lc", "command -v tmux"], capture_output=True).returncode
     != 0,

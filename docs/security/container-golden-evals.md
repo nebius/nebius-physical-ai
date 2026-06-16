@@ -52,6 +52,68 @@ be overridden with `--gpu`. Implementation: `npa.smoke.serverless_runner`.
 The same logic is available as a script for CI:
 `python npa/scripts/run_golden_evals.py {validate,list,run}`.
 
+## Golden-eval capability chart
+
+Each container's golden eval proves specific **capabilities** (not just `--help` or
+import). Registry tags come from ``pyproject.toml`` → ``[tool.npa.supported-tools]``.
+
+```bash
+npa/.venv/bin/python npa/scripts/run_golden_evals.py list --capabilities
+npa/.venv/bin/python npa/scripts/audit_workbench_image_tags.py   # stale tag gate
+```
+
+```mermaid
+flowchart TB
+  subgraph cpu_ready["CPU-ready (no GPU)"]
+    retargeting["retargeting: motion-lib validate"]
+    fiftyone["fiftyone: import + CLI + app config"]
+    lancedb["lancedb: FastAPI + vector query"]
+    det_train["detection-training: health + system-info"]
+    rerun["sim2real-rerun-viewer: rerun SDK"]
+  end
+  subgraph gpu_gated["GPU-gated smokes"]
+    lerobot["lerobot: train + eval PushT"]
+    policy["lerobot-policy: short train + eval"]
+    vlm["lerobot-vlm-rl: VLM signal RL step"]
+    genesis["genesis: scene build + step"]
+    isaac["isaac-lab: headless env + step"]
+    cosmos["cosmos: model load + infer"]
+    transfer["cosmos2-transfer: CUDA venv probe"]
+    sonic["sonic: entrypoint smoke artifact"]
+    s2r["sim2real-*: envgen / policy / eval rollouts"]
+    groot["groot: GR00T inference"]
+  end
+  subgraph blocked["blocked-on-upstream"]
+    b300["base-cuda13-b300: flash_attn + CUDA13"]
+    reason["cosmos3-reason: Reason cache wiring"]
+  end
+```
+
+| container | registry tag | eval kind | capabilities tested | gpu | status |
+| --- | --- | --- | --- | --- | --- |
+| `base-cuda13-b300` | *(foundation)* | build-import | torch+CUDA; flash_attn import | required | blocked-on-upstream |
+| `groot` | `0.1.0` | container-smoke | GR00T repo; uv; standalone inference | required | gpu-gated |
+| `lerobot` | `0.5.1` | container-smoke | version; 50-step PushT train; checkpoint; eval; output | required | gpu-gated |
+| `lerobot-policy` | `0.1.1` | container-smoke | short train; short eval on checkpoint | optional | gpu-gated |
+| `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
+| `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
+| `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
+| `cosmos` | `1.0.9` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
+| `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
+| `cosmos3-reason` | `3.0.1-genuine-sm120` | container-smoke | CUDA; Reason cache wiring | optional | blocked-on-upstream |
+| `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
+| `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
+| `fiftyone` | `1.15.0` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
+| `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
+| `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
+| `sim2real-envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
+| `sim2real-reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
+| `sim2real-eval` | `0.1.2-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
+| `sim2real-rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+
+Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
+``npa/tests/smoke/test_golden_eval_capabilities.py``).
+
 ## Golden-eval kinds
 
 | kind | meaning |

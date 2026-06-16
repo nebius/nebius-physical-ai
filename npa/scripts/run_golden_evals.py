@@ -41,6 +41,21 @@ def _cmd_validate(_: argparse.Namespace) -> int:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     specs = load_manifest()
+    if args.capabilities:
+        from npa.deploy.images import supported_tool_version
+        from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
+
+        width = max(len(name) for name in specs)
+        for name in sorted(specs):
+            spec = specs[name]
+            ge = spec.golden_eval
+            tag = supported_tool_version(name) if name in CONTAINER_IMAGE_NAMES else "-"
+            checks = GOLDEN_EVAL_CAPABILITIES.get(name, [])
+            cap = "; ".join(checks)
+            print(
+                f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}"
+            )
+        return 0
     if args.json:
         payload = {
             name: {
@@ -150,6 +165,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_list = sub.add_parser("list", help="List golden evals.")
     p_list.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_list.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="Print registry tag + capability probes per container.",
+    )
     p_list.set_defaults(func=_cmd_list)
 
     p_run = sub.add_parser("run", help="Run one container's golden eval.")

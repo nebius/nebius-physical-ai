@@ -37,10 +37,14 @@ env_lines = [
 ]
 if registry:
     reg = registry.rstrip("/")
+    from npa.deploy.images import supported_tool_version
+    trainer_tag = supported_tool_version("lerobot-vlm-rl")
+    eval_tag = supported_tool_version("sim2real-eval")
+    vlm_tag = supported_tool_version("cosmos3-reason")
     env_lines.extend([
-        f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:0.1.0",
-        f"VLM_IMAGE={reg}/npa-cosmos3-reason:3.0.1-genuine-sm120",
-        f"EVAL_IMAGE={reg}/npa-sim2real-eval:0.1.1-genuine-sm120",
+        f"TRAINER_IMAGE={reg}/npa-lerobot-vlm-rl:{trainer_tag}",
+        f"VLM_IMAGE={reg}/npa-cosmos3-reason:{vlm_tag}",
+        f"EVAL_IMAGE={reg}/npa-sim2real-eval:{eval_tag}",
     ])
 (out / "env.local").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
 md = f"""# RTX PRO Sim2Real — Local Operator Runbook (generated)
