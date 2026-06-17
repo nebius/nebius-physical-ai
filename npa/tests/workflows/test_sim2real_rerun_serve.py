@@ -21,6 +21,7 @@ from npa.workflows.sim2real_rerun_serve import (
     deployment_name_for_cluster,
     deployment_name_for_run,
     destroy_rerun_serve,
+    fetch_rrd_sync_token,
     in_cluster_kubernetes,
     local_viewer_url,
     maybe_auto_rerun_serve,
@@ -227,6 +228,36 @@ def test_build_rerun_nginx_config_sets_static_cache_headers() -> None:
     assert "(wasm|js|ico|svg)" in config_text
 
 
+def test_build_rerun_serve_manifest_includes_rrd_sync_annotation(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    manifest = build_rerun_serve_manifest(config, rrd_sync_token="abc123etag")
+    deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
+    annotations = deployment["spec"]["template"]["metadata"]["annotations"]
+    assert annotations["npa.nebius.com/rrd-sync-token"] == "abc123etag"
+
+
+def test_fetch_rrd_sync_token_uses_head_object_etag() -> None:
+    config = build_rerun_serve_config(
+        run_id="sim2real-staged-20260615t180818z",
+        s3_bucket="demo-bucket",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    token = fetch_rrd_sync_token(
+        config,
+        head_object=lambda **_kwargs: {"ETag": '"etag-from-s3"'},
+    )
+    assert token == "etag-from-s3"
+
+
 def test_redact_manifest_hides_secret_values(mocker) -> None:
     mocker.patch(
         "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
@@ -249,6 +280,10 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
         return_value=_storage(),
     )
     mocker.patch("npa.workflows.sim2real_rerun_serve.verify_rrd_exists_on_s3")
+    mocker.patch(
+        "npa.workflows.sim2real_rerun_serve.fetch_rrd_sync_token",
+        return_value="etag-test",
+    )
     config = build_rerun_serve_config(
         run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",

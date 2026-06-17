@@ -199,7 +199,7 @@ def _log_rollout(
 
     for step, frame in enumerate(frames):
         _set_time(rr, recording, seconds)
-        rr.log(f"{root}/camera", rr.Image(frame), recording=recording)
+        rr.log(f"{root}/camera", _rerun_image(rr, frame), recording=recording)
         _bump(counts, f"{root}/camera")
 
         eval_step = per_step_eval.get(step, {})
@@ -313,7 +313,7 @@ def _log_heldout_cameras(
         root = f"heldout/camera/{env_id}"
         for frame in frames:
             _set_time(rr, recording, seconds)
-            rr.log(f"{root}/camera", rr.Image(frame), recording=recording)
+            rr.log(f"{root}/camera", _rerun_image(rr, frame), recording=recording)
             _bump(counts, f"{root}/camera")
             seconds += ROLLOUT_FRAME_SECONDS
             logged += 1
@@ -348,11 +348,13 @@ def _heldout_render_episodes(
         if not env_id:
             continue
         env_dir = renders_root / env_id
-        frames = [
-            frame
-            for name in item.get("frames") or []
-            if (frame := _read_image(env_dir / str(name))) is not None
-        ]
+        frames = _usable_camera_frames(
+            [
+                frame
+                for name in item.get("frames") or []
+                if (frame := _read_image(env_dir / str(name))) is not None
+            ]
+        )
         if frames:
             episodes.append((env_id, frames))
     if episodes:
@@ -360,11 +362,13 @@ def _heldout_render_episodes(
     if not renders_root.is_dir():
         return []
     for env_dir in sorted(path for path in renders_root.iterdir() if path.is_dir()):
-        frames = [
-            frame
-            for frame_path in sorted(env_dir.glob("camera-*.png"))
-            if (frame := _read_image(frame_path)) is not None
-        ]
+        frames = _usable_camera_frames(
+            [
+                frame
+                for frame_path in sorted(env_dir.glob("camera-*.png"))
+                if (frame := _read_image(frame_path)) is not None
+            ]
+        )
         if frames:
             episodes.append((env_dir.name, frames))
     return episodes
@@ -571,6 +575,29 @@ def _write_png(path: Path, frame: np.ndarray) -> None:
     png += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     png += _chunk(b"IEND", b"")
     path.write_bytes(png)
+
+
+def _usable_camera_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
+    """Drop blank Isaac warmup frames that otherwise render as black/purple tiles."""
+
+    usable: list[np.ndarray] = []
+    for frame in frames:
+        if frame.size == 0:
+            continue
+        if float(frame.mean()) < 1.0:
+            continue
+        usable.append(frame)
+    return usable
+
+
+def _rerun_image(rr: Any, frame: np.ndarray) -> Any:
+    array = np.ascontiguousarray(frame, dtype=np.uint8)
+    if hasattr(rr, "Image"):
+        try:
+            return rr.Image(array, color_model="RGB")
+        except TypeError:
+            return rr.Image(array)
+    return array
 
 
 def _scalar(rr: Any, value: float) -> Any:

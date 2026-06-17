@@ -615,11 +615,7 @@ def run_finalize(
         report["components"] = components
 
     _write_json_artifact(report_path, report)
-    if (
-        str(report.get("upload", {}).get("status")) == "uploaded"
-        and rerun_serve.get("status") in {"deployed", "blocked"}
-        and config.s3_bucket
-    ):
+    if str(report.get("upload", {}).get("status")) == "uploaded" and config.s3_bucket:
         report_refresh = _upload_final_report(config, report_path)
         if report_refresh:
             upload_meta = dict(report.get("upload") or {})
@@ -663,6 +659,16 @@ def _run_sim2real_viz_stage(
 
     if config.byo_rerun_command.strip():
         return _run_byo_rerun_command(config, local_dir=local_dir, rrd_path=rrd_path)
+
+    heldout_report = _ensure_heldout_renders_for_viz(
+        config,
+        local_dir,
+        heldout_report,
+    )
+    if heldout_report is not None:
+        heldout_path = local_dir / "eval" / "heldout" / "report.json"
+        if heldout_path.is_file():
+            _write_json_artifact(heldout_path, heldout_report)
 
     try:
         from npa.workflows.sim2real_viz import (
@@ -3118,6 +3124,13 @@ def run_heldout_eval(
         inner_evidence_uri=str(inner_path),
         invocation=invocation,
     )
+    report = _ensure_heldout_renders_for_viz(
+        config,
+        local_dir,
+        report,
+        invocation=invocation,
+        payload=payload,
+    )
     _write_json_artifact(output_path, report)
     return {**report, "report_uri": str(output_path)}
 
@@ -3187,6 +3200,70 @@ def _normalize_heldout_report(
         report["robot_fallback_used"] = bool(payload.get("robot_fallback_used", False))
     if payload.get("render_manifest"):
         report["render_manifest"] = payload["render_manifest"]
+    return report
+
+
+def _has_heldout_camera_pngs(renders_dir: Path) -> bool:
+    return any(renders_dir.rglob("camera-*.png"))
+
+
+def _ensure_heldout_renders_for_viz(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    heldout_report: dict[str, Any] | None,
+    *,
+    invocation: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Sync Isaac held-out camera PNGs locally and attach a render manifest."""
+
+    if not heldout_report:
+        return heldout_report
+
+    report = dict(heldout_report)
+    renders_dir = local_dir / "eval" / "heldout" / "renders"
+    renders_dir.mkdir(parents=True, exist_ok=True)
+
+    if config.s3_bucket.strip():
+        from npa.clients.storage import StorageError
+        from npa.workflows.sim2real_rerun_regen import sync_heldout_renders
+
+        client = _storage_client(config)
+
+        output_uri = str((invocation or {}).get("output_uri") or "").strip()
+        if output_uri:
+            try:
+                client.download_directory(
+                    _sibling_uri(output_uri, "renders/"), str(renders_dir)
+                )
+            except (StorageError, OSError):
+                pass
+            manifest_uri = _sibling_uri(output_uri, "render-manifest.json")
+            manifest_path = local_dir / "eval" / "heldout" / "render-manifest.sibling.json"
+            try:
+                client.download_path(manifest_uri, str(manifest_path))
+                if manifest_path.is_file():
+                    report["render_manifest"] = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+            except (StorageError, OSError, json.JSONDecodeError):
+                pass
+
+        if payload and payload.get("render_manifest") and not report.get("render_manifest"):
+            report["render_manifest"] = payload["render_manifest"]
+
+        sync_heldout_renders(config, local_dir, heldout_report=report, client=client)
+    elif payload and payload.get("render_manifest") and not report.get("render_manifest"):
+        report["render_manifest"] = payload["render_manifest"]
+
+    if not report.get("render_manifest") and _has_heldout_camera_pngs(renders_dir):
+        manifest = _build_heldout_render_manifest(
+            renders_dir,
+            sim_backend=str(report.get("sim_backend") or config.sim_backend),
+            isaac_task=config.isaac_task,
+        )
+        if manifest.get("episodes"):
+            report["render_manifest"] = manifest
     return report
 
 
