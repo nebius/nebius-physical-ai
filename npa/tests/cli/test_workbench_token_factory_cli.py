@@ -100,7 +100,7 @@ def test_token_factory_caption_writes_local_json(monkeypatch, tmp_path: Path) ->
 
 
 def test_token_factory_reason_writes_scene_json(monkeypatch, tmp_path: Path) -> None:
-    _install_fake_client(monkeypatch, "1. approach the box\n2. grasp it")
+    _install_fake_client(monkeypatch, "<think>inspect the scene</think>1. approach the box\n2. grasp it")
     scene = tmp_path / "scene"
     scene.mkdir()
     Image.new("RGB", (16, 16), (200, 40, 40)).save(scene / "frame.png")
@@ -129,7 +129,10 @@ def test_token_factory_reason_writes_scene_json(monkeypatch, tmp_path: Path) -> 
     assert payload["image_count"] == 1
     written = output / "scene_reasoning.json"
     assert written.exists()
-    assert "grasp" in json.loads(written.read_text(encoding="utf-8"))["analysis"]
+    written_payload = json.loads(written.read_text(encoding="utf-8"))
+    assert "grasp" in written_payload["analysis"]
+    assert "<think>" not in written_payload["analysis"]
+    assert "reasoning" not in written_payload
 
 
 def test_token_factory_generate_writes_jsonl(monkeypatch, tmp_path: Path) -> None:
