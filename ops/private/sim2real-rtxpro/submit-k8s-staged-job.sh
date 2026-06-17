@@ -227,9 +227,9 @@ spec:
             - name: NPA_SIM2REAL_SIM_BACKEND
               value: "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
             - name: INNER_ITERATIONS
-              value: "${INNER_ITERATIONS:-1}"
+              value: "${INNER_ITERATIONS:-3}"
             - name: OUTER_ITERATIONS
-              value: "${OUTER_ITERATIONS:-1}"
+              value: "${OUTER_ITERATIONS:-2}"
             - name: NPA_ENV_COUNT
               value: "${NPA_ENV_COUNT:-10000}"
             - name: NPA_TRAIN_FRACTION
@@ -247,19 +247,25 @@ spec:
             - name: NPA_SIM2REAL_VLM_DUAL_REASON
               value: "${NPA_SIM2REAL_VLM_DUAL_REASON:-1}"
             - name: HELDOUT_ENV_COUNT
-              value: "${HELDOUT_ENV_COUNT:-4}"
+              value: "${HELDOUT_ENV_COUNT:-8}"
             - name: NPA_SIM2REAL_HELDOUT_EVAL_LIMIT
-              value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-${HELDOUT_ENV_COUNT:-4}}"
+              value: "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-${HELDOUT_ENV_COUNT:-8}}"
+            - name: LEARNING_RATE
+              value: "${LEARNING_RATE:-0.08}"
+            - name: INITIAL_QUALITY
+              value: "${INITIAL_QUALITY:-0.42}"
+            - name: STEPS_PER_ROLLOUT
+              value: "${STEPS_PER_ROLLOUT:-6}"
             - name: NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES
               value: "${NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES:-24}"
             - name: NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S
               value: "${NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S:-20}"
             - name: SUCCESS_THRESHOLD
-              value: "0.45"
+              value: "${SUCCESS_THRESHOLD:-0.50}"
             - name: NPA_SOURCE_REPO
-              value: "https://github.com/nebius/nebius-physical-ai.git"
+              value: "${NPA_SOURCE_REPO:-https://github.com/nebius/nebius-physical-ai.git}"
             - name: NPA_SOURCE_REF
-              value: "main"
+              value: "${NPA_SOURCE_REF:-main}"
             - name: NPA_SIM2REAL_K8S_NAMESPACE
               value: "default"
             - name: NPA_SIM2REAL_K8S_SERVICE_ACCOUNT
@@ -281,7 +287,7 @@ spec:
             - name: NPA_SIM2REAL_K8S_GPU_PRODUCT
               value: "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
             - name: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S
-              value: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-10800}"
+              value: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-28800}"
           envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
@@ -308,15 +314,17 @@ spec:
                 --s3-bucket "\${NPA_SIM2REAL_BUCKET}"
                 --s3-prefix "\${NPA_SIM2REAL_PREFIX:-sim2real-b}"
                 --s3-endpoint "\${AWS_ENDPOINT_URL}"
-                --inner-iterations "\${INNER_ITERATIONS:-1}"
-                --outer-iterations "\${OUTER_ITERATIONS:-1}"
+                --inner-iterations "\${INNER_ITERATIONS:-3}"
+                --outer-iterations "\${OUTER_ITERATIONS:-2}"
                 --rollout-count "\${ROLLOUT_COUNT:-8}"
+                --steps-per-rollout "\${STEPS_PER_ROLLOUT:-6}"
                 --vlm-reason2-model "\${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
                 --vlm-reason3-model "\${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
                 --vlm-dual-reason
-                --heldout-env-count "\${HELDOUT_ENV_COUNT:-4}"
-                --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-4}}"
-                --threshold "\${SUCCESS_THRESHOLD:-0.45}"
+                --heldout-env-count "\${HELDOUT_ENV_COUNT:-8}"
+                --heldout-eval-limit "\${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-\${HELDOUT_ENV_COUNT:-8}}"
+                --threshold "\${SUCCESS_THRESHOLD:-0.50}"
+                --learning-rate "\${LEARNING_RATE:-0.08}"
                 --sim-backend "\${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
                 --isaac-image "\${ISAAC_IMAGE}"
                 --isaac-task "\${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"
@@ -346,7 +354,7 @@ spec:
                 --upload-artifacts
               )
               python3 -m npa.workflows.sim2real run "\${common_args[@]}" \
-                --initial-quality "\${INITIAL_QUALITY:-0.38}"
+                --initial-quality "\${INITIAL_QUALITY:-0.42}"
               python3 -c "import json; from pathlib import Path; r=json.loads(Path('\${output_dir}/reports/sim2real-report.json').read_text()); print('CLUSTER_METRICS', json.dumps({'run_id': r['run_id'], 'decision': r['outer_loop']['latest_decision'], 'reward_trend': r['inner_loop']['reward_trend']}))"
       nodeSelector:
         nvidia.com/gpu.product: NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition
