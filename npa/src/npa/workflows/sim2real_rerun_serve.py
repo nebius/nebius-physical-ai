@@ -413,7 +413,52 @@ def build_rerun_serve_config(
     )
 
 
-def build_rerun_serve_manifest(config: RerunServeConfig) -> dict[str, Any]:
+def fetch_rrd_sync_token(
+    config: RerunServeConfig,
+    *,
+    head_object: Callable[..., Any] | None = None,
+) -> str:
+    """Return an S3 ETag (or URI fallback) so serve rollouts re-sync updated .rrd files."""
+
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+
+    uri = config.rrd_s3_uri
+    if not uri.startswith("s3://"):
+        return uri
+    without_scheme = uri[5:]
+    bucket, _, key = without_scheme.partition("/")
+    if head_object is not None:
+        try:
+            response = head_object(Bucket=bucket, Key=key)
+        except ClientError:
+            return uri
+        etag = str(response.get("ETag") or "").strip('"')
+        return etag or uri
+
+    client_kwargs: dict[str, Any] = {
+        "aws_access_key_id": config.aws_access_key_id,
+        "aws_secret_access_key": config.aws_secret_access_key,
+        "config": Config(signature_version="s3v4"),
+        "region_name": config.aws_region,
+    }
+    if config.s3_endpoint:
+        client_kwargs["endpoint_url"] = config.s3_endpoint
+    client = boto3.client("s3", **client_kwargs)
+    try:
+        response = client.head_object(Bucket=bucket, Key=key)
+    except ClientError:
+        return uri
+    etag = str(response.get("ETag") or "").strip('"')
+    return etag or uri
+
+
+def build_rerun_serve_manifest(
+    config: RerunServeConfig,
+    *,
+    rrd_sync_token: str = "",
+) -> dict[str, Any]:
     labels = {
         "app": config.deployment_name,
         "app.kubernetes.io/name": "npa-sim2real-rerun",
@@ -440,6 +485,11 @@ test -s /data/sim2real.rrd
 """
     serve_command = _rerun_serve_command(config)
     nginx_config = build_rerun_nginx_config(external_port=config.port)
+    sync_token = (rrd_sync_token or config.run_id).strip()
+    pod_annotations = {
+        "npa.nebius.com/rrd-s3-uri": _label_value(config.rrd_s3_uri),
+        "npa.nebius.com/rrd-sync-token": _label_value(sync_token),
+    }
     return {
         "apiVersion": "v1",
         "kind": "List",
@@ -479,7 +529,7 @@ test -s /data/sim2real.rrd
                     "strategy": {"type": "Recreate"},
                     "selector": {"matchLabels": {"app.kubernetes.io/instance": config.deployment_name}},
                     "template": {
-                        "metadata": {"labels": labels},
+                        "metadata": {"labels": labels, "annotations": pod_annotations},
                         "spec": {
                             "initContainers": [
                                 {
@@ -639,8 +689,9 @@ def apply_rerun_serve(
     clock = now or time.monotonic
     waiter = sleep or time.sleep
 
-    manifest = build_rerun_serve_manifest(config)
     verify_rrd_exists_on_s3(config)
+    sync_token = fetch_rrd_sync_token(config)
+    manifest = build_rerun_serve_manifest(config, rrd_sync_token=sync_token)
     runner(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=kubeconfig)
     try:
         runner(
