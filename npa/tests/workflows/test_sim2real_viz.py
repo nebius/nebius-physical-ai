@@ -318,3 +318,31 @@ def test_build_heldout_render_manifest_from_png_tree(tmp_path: Path) -> None:
     )
     assert manifest["episodes"][0]["env_id"] == "heldout-0000"
     assert manifest["episodes"][0]["frames"] == ["camera-000.png", "camera-001.png"]
+
+
+def test_usable_camera_frames_drops_blank_warmup() -> None:
+    import numpy as np
+
+    from npa.workflows.sim2real_viz import _usable_camera_frames
+
+    blank = np.zeros((64, 64, 3), dtype=np.uint8)
+    real = np.full((64, 64, 3), 120, dtype=np.uint8)
+    assert _usable_camera_frames([blank, real]) == [real]
+
+
+def test_ensure_heldout_renders_builds_manifest_from_local_pngs(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real.engine import _ensure_heldout_renders_for_viz
+    from npa.workflows.sim2real.models import Sim2RealLoopConfig
+
+    config = Sim2RealLoopConfig(run_id="sim2real-staged-20260616t032140z")
+    renders_dir = tmp_path / "eval" / "heldout" / "renders" / "env-00003"
+    _write_test_png(renders_dir / "camera-000.png", red=40, green=120, blue=200)
+    heldout_report = {"success_rate": 1.0, "sim_backend": "isaac"}
+
+    updated = _ensure_heldout_renders_for_viz(config, tmp_path, heldout_report)
+
+    assert updated is not None
+    assert updated["render_manifest"]["episodes"][0]["env_id"] == "env-00003"
+    assert updated["render_manifest"]["episodes"][0]["frames"] == ["camera-000.png"]
