@@ -44,6 +44,18 @@ def test_health_static_checks_pass_with_bucket() -> None:
     assert "PASS" in result.output
 
 
+def test_health_checks_all_expands_to_full_set() -> None:
+    # `--checks all` is the documented shorthand used by operator runbooks and the
+    # 10-minute demo script; it must expand to the full check set, not error.
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "sim2real", "--checks", "all", "--s3-bucket", "real-bucket"],
+    )
+    assert "unknown check" not in result.output
+    assert "config" in result.output
+    assert "three-tier-coherence" in result.output
+
+
 def test_health_fails_without_required_bucket(monkeypatch) -> None:
     for key in ("NPA_S3_BUCKET", "NPA_SIM2REAL_BUCKET", "S3_BUCKET"):
         monkeypatch.delenv(key, raising=False)
