@@ -428,9 +428,25 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     typer.echo("Setup complete. Run `npa configure --show` to see the file layout.")
 
 
+def _store_token_factory_key(api_key: str) -> None:
+    from npa.clients.credentials import set_token_factory_api_key
+
+    path = set_token_factory_api_key(api_key)
+    typer.echo(
+        f"Stored Nebius Token Factory API key in {path} under tokens.NEBIUS_API_KEY."
+    )
+
+
 def _configure_impl(
-    *, show: bool, interactive: Optional[bool], provision: bool = True
+    *,
+    show: bool,
+    interactive: Optional[bool],
+    provision: bool = True,
+    token_factory_key: str = "",
 ) -> None:
+    if token_factory_key.strip():
+        _store_token_factory_key(token_factory_key.strip())
+        return
     if show:
         typer.echo(_SETUP_GUIDANCE)
         return
@@ -469,9 +485,22 @@ def configure(
             "(default). Use --no-provision to enter existing S3 credentials."
         ),
     ),
+    token_factory_key: str = typer.Option(
+        "",
+        "--token-factory-key",
+        help=(
+            "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
+            "under tokens.NEBIUS_API_KEY (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
-    _configure_impl(show=show, interactive=interactive, provision=provision)
+    _configure_impl(
+        show=show,
+        interactive=interactive,
+        provision=provision,
+        token_factory_key=token_factory_key,
+    )
 
 
 @app.command(
@@ -498,9 +527,22 @@ def init(
             "(default). Use --no-provision to enter existing S3 credentials."
         ),
     ),
+    token_factory_key: str = typer.Option(
+        "",
+        "--token-factory-key",
+        help=(
+            "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
+            "under tokens.NEBIUS_API_KEY (skips interactive setup)."
+        ),
+    ),
 ) -> None:
     """Interactively write ~/.npa credentials and config, or show guidance."""
-    _configure_impl(show=show, interactive=interactive, provision=provision)
+    _configure_impl(
+        show=show,
+        interactive=interactive,
+        provision=provision,
+        token_factory_key=token_factory_key,
+    )
 
 
 def app_entry() -> None:
