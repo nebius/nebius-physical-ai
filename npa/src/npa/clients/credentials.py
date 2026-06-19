@@ -51,7 +51,13 @@ class CredentialsConfig:
 
     @property
     def nebius_api_key(self) -> str:
+        """Nebius Token Factory API key (``tokens.NEBIUS_API_KEY``)."""
         return self.tokens.get(TOKEN_FACTORY_ENV_KEY, "")
+
+    @property
+    def token_factory_api_key(self) -> str:
+        """Explicit alias for the Nebius Token Factory hosted-inference key."""
+        return self.nebius_api_key
 
     @property
     def ngc_api_key(self) -> str:
@@ -278,6 +284,18 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
         elif value not in ("", None):
             pruned[key] = value
     return pruned
+
+
+def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
+    """Persist the Nebius Token Factory key under ``tokens.NEBIUS_API_KEY``."""
+
+    cleaned = api_key.strip()
+    if not cleaned:
+        raise ValueError("Token Factory API key must be non-empty")
+    return write_credentials_file(
+        {"tokens": {TOKEN_FACTORY_ENV_KEY: cleaned}},
+        path=path,
+    )
 
 
 def write_credentials_file(

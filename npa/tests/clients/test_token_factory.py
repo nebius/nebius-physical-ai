@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -37,6 +38,26 @@ def test_resolve_config_defaults_to_token_factory_base_url() -> None:
 def test_resolve_config_reads_nebius_api_key_from_env() -> None:
     config = resolve_config(environ={"NEBIUS_API_KEY": "env-key"})
     assert config.api_key == "env-key"
+
+
+def test_resolve_config_reads_token_factory_key_from_credentials_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+
+    from npa.clients import credentials as credentials_module
+
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file-key"}})
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_API_KEY", raising=False)
+
+    config = resolve_config()
+
+    assert config.api_key == "tf-file-key"
 
 
 def test_resolve_config_base_url_override() -> None:

@@ -77,7 +77,7 @@ def resolve_config(
     otherwise from ``api_key_env`` and the standard Token Factory env keys.
     """
 
-    env = environ if environ is not None else os.environ
+    env = _resolve_env(environ)
     resolved_base = base_url.strip() or _first_env(env, BASE_URL_ENV_KEYS) or DEFAULT_BASE_URL
     resolved_key = api_key.strip()
     if not resolved_key:
@@ -252,6 +252,26 @@ class TokenFactoryClient:
         finally:
             if owns_client:
                 client.close()
+
+
+def _resolve_env(environ: dict[str, str] | None) -> dict[str, str]:
+    """Build the env map used for Token Factory config resolution.
+
+    When callers use the default (``environ=None``), merge in
+    ``tokens.NEBIUS_API_KEY`` from ``~/.npa/credentials.yaml`` so hosted
+    inference works outside ``npa workbench`` entrypoints.
+    """
+
+    if environ is not None:
+        return environ
+    from npa.clients.credentials import load_credentials
+
+    env = dict(os.environ)
+    credentials = load_credentials(environ=env)
+    file_key = credentials.token_factory_api_key
+    if file_key and not _first_env(env, API_KEY_ENV_KEYS):
+        env[DEFAULT_API_KEY_ENV] = file_key
+    return env
 
 
 def _first_env(env: dict[str, str], keys: Sequence[str]) -> str:

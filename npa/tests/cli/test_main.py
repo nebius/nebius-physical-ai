@@ -376,6 +376,31 @@ def test_configure_non_tty_prints_guidance() -> None:
     assert "npa configure --interactive" in result.output
 
 
+def test_configure_token_factory_key_stores_under_tokens_nebius_api_key(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    creds_path.write_text(
+        yaml.safe_dump({"tokens": {"HF_TOKEN": "hf-existing"}})
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+
+    result = runner.invoke(
+        app,
+        ["configure", "--token-factory-key", "tf-cli-key"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "tokens.NEBIUS_API_KEY" in result.output
+    stored = yaml.safe_load(creds_path.read_text())
+    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-cli-key"
+    assert stored["tokens"]["HF_TOKEN"] == "hf-existing"
+
+
 def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
