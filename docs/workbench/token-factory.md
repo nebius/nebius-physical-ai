@@ -1,5 +1,9 @@
 # Nebius Token Factory Integration Guide
 
+> **Just want the fastest serverless copy-paste path (e.g. for a hackathon)?**
+> See [../hackathon-cosmos3-reasoner.md](../hackathon-cosmos3-reasoner.md). This
+> page is the full reference.
+
 Nebius Token Factory is an OpenAI-compatible hosted-inference API for open text
 and vision models. NPA uses it natively for zero-GPU workflows: captioning,
 batch text generation, and VLM-based rollout scoring all call the hosted API
@@ -9,6 +13,12 @@ Authentication is a single API key sent as an `Authorization: Bearer <key>`
 header. NPA reads it from the `NEBIUS_API_KEY` environment variable (or
 `~/.npa/credentials.yaml`). The default endpoint is
 `https://api.tokenfactory.nebius.com/v1/`.
+
+> **The Token Factory key is its own credential.** It is a long opaque token
+> that starts with `v1.` (not a `nebius_…` string). It is **not** your Nebius
+> IAM / `nebius` CLI access token — an IAM token returns `403` against Token
+> Factory. You must mint a Token Factory key in the Token Factory console
+> (step 1 below); having `nebius` CLI access is not enough.
 
 ## 1. Register and get an API key
 
@@ -58,7 +68,7 @@ npa configure
 
 ```yaml
 tokens:
-  NEBIUS_API_KEY: nebius_xxxxxxxxxxxxxxxxxxxxxxxx
+  NEBIUS_API_KEY: v1.XXXXXXXXXXXXXXXXXXXXXXXX   # your real key, paste it verbatim
 ```
 
 ```bash
@@ -68,7 +78,7 @@ chmod 600 ~/.npa/credentials.yaml
 **C. Environment variable** (good for CI / one-off shells):
 
 ```bash
-export NEBIUS_API_KEY=nebius_xxxxxxxxxxxxxxxxxxxxxxxx
+export NEBIUS_API_KEY=v1.XXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
 ## 3. Verify authentication

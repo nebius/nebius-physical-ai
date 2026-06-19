@@ -78,8 +78,9 @@ user-level tokens, object storage, and BYOVM SSH defaults:
 tokens:
   HF_TOKEN: hf_REPLACE_ME
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
-  # Get one at https://tokenfactory.nebius.com/ -> API keys.
-  NEBIUS_API_KEY: nebius_REPLACE_ME
+  # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
+  # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
+  NEBIUS_API_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
 ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
