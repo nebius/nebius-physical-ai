@@ -11,7 +11,7 @@ Every command block below was run end‑to‑end against the live API. Work top 
 bottom and stop at the first ❌ checkpoint that fails.
 
 > **Never paste your key into chat, screenshots, git, or Slack.** Treat it like
-> a password. Every block uses the `NEBIUS_API_KEY` environment variable so the
+> a password. Every block uses the `NEBIUS_TOKEN_FACTORY_KEY` environment variable so the
 > key itself never appears in a command you might copy somewhere public.
 
 ---
@@ -52,13 +52,13 @@ Steps:
 
 ```bash
 # Paste your real key between the quotes. It starts with v1.
-export NEBIUS_API_KEY='PASTE_YOUR_KEY_HERE'
+export NEBIUS_TOKEN_FACTORY_KEY='PASTE_YOUR_KEY_HERE'
 ```
 
 ✅ **Checkpoint** — this must print `key length: <a few hundred>` and **not** `0`:
 
 ```bash
-echo "key length: ${#NEBIUS_API_KEY}"
+echo "key length: ${#NEBIUS_TOKEN_FACTORY_KEY}"
 ```
 
 ---
@@ -67,7 +67,7 @@ echo "key length: ${#NEBIUS_API_KEY}"
 
 ```bash
 curl -s https://api.tokenfactory.nebius.com/v1/models \
-  -H "Authorization: Bearer ${NEBIUS_API_KEY}" \
+  -H "Authorization: Bearer ${NEBIUS_TOKEN_FACTORY_KEY}" \
   | grep -o '"id":"[^"]*"' | grep -i cosmos
 ```
 
@@ -89,7 +89,7 @@ from the list (e.g. `nvidia/Nemotron-3-Ultra-550b-a55b`).
 
 ```bash
 curl -s https://api.tokenfactory.nebius.com/v1/chat/completions \
-  -H "Authorization: Bearer ${NEBIUS_API_KEY}" \
+  -H "Authorization: Bearer ${NEBIUS_TOKEN_FACTORY_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "nvidia/Cosmos3-Super-Reasoner",
@@ -126,7 +126,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://api.tokenfactory.nebius.com/v1/",
-    api_key=os.environ["NEBIUS_API_KEY"],   # never hardcode the key
+    api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"],   # never hardcode the key
 )
 
 resp = client.chat.completions.create(
@@ -157,7 +157,7 @@ import base64, os
 from openai import OpenAI
 
 client = OpenAI(base_url="https://api.tokenfactory.nebius.com/v1/",
-                api_key=os.environ["NEBIUS_API_KEY"])
+                api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"])
 
 with open("scene.png", "rb") as f:                       # your scene photo
     data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
@@ -197,7 +197,7 @@ Store the key once (writes `~/.npa/credentials.yaml`, mode 0600 — no env var
 needed afterward):
 
 ```bash
-npa configure --token-factory-key "$NEBIUS_API_KEY"
+npa configure --token-factory-key "$NEBIUS_TOKEN_FACTORY_KEY"
 ```
 
 ✅ **Checkpoint** — authenticates and lists models (no key value printed):
@@ -285,12 +285,12 @@ npa workbench token-factory generate \
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `echo ${#NEBIUS_API_KEY}` prints `0` | key not exported in this shell | re‑run step 2 (new terminals don't keep it unless you persisted it) |
+| `echo ${#NEBIUS_TOKEN_FACTORY_KEY}` prints `0` | key not exported in this shell | re‑run step 2 (new terminals don't keep it unless you persisted it) |
 | `403` / `"You don't have access"` on `/models` | not a Token Factory key (e.g. an IAM token), or wrong project | mint a real key (step 1); the key starts with `v1.` |
 | `401` | key invalid/revoked | create a new key |
 | `402` / quota / billing error | project has no credit | add credit/payment in the Token Factory console |
 | `404` on a model id | model name typo or not enabled for your key | `curl …/v1/models` (step 3) and copy the exact id |
-| `NEBIUS_API_KEY is not set` (CLI) | CLI can't find the key | `npa configure --token-factory-key "$NEBIUS_API_KEY"` or `export NEBIUS_API_KEY=…` |
+| `NEBIUS_TOKEN_FACTORY_KEY is not set` (CLI) | CLI can't find the key | `npa configure --token-factory-key "$NEBIUS_TOKEN_FACTORY_KEY"` or `export NEBIUS_TOKEN_FACTORY_KEY=…` |
 | CLI: `No scene images found` | `--input-path` has no `.png/.jpg/.jpeg/.webp/.bmp/.ppm` | point it at a folder that contains images |
 | answer contains `<think>…</think>` | model's visible reasoning | keep it, or strip up to the last `</think>` |
 
@@ -315,4 +315,4 @@ You do **not** need to provision compute for the reasoner.
 - `docs/workbench/token-factory.md` — full integration reference (all tools,
   Python client, live tests).
 - `npa workbench token-factory --help` — every subcommand.
-- Model catalog for your key: `curl -s https://api.tokenfactory.nebius.com/v1/models -H "Authorization: Bearer $NEBIUS_API_KEY"`.
+- Model catalog for your key: `curl -s https://api.tokenfactory.nebius.com/v1/models -H "Authorization: Bearer $NEBIUS_TOKEN_FACTORY_KEY"`.

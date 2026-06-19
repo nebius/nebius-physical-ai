@@ -7,8 +7,9 @@ model-listing requests. Workbench tools and workflows call into here instead of
 duplicating endpoint, auth, or request-shaping logic.
 
 The default base URL is ``https://api.tokenfactory.nebius.com/v1/`` and the
-default credential is the ``NEBIUS_API_KEY`` environment variable, matching the
-upstream Token Factory documentation.
+default credential is the ``NEBIUS_TOKEN_FACTORY_KEY`` environment variable.
+Legacy names ``NEBIUS_API_KEY`` and ``NEBIUS_TOKEN_FACTORY_API_KEY`` are still
+accepted when reading.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any, Sequence
 import httpx
 
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
-DEFAULT_API_KEY_ENV = "NEBIUS_API_KEY"
+DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
 DEFAULT_TIMEOUT_S = 120.0
 DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
@@ -35,6 +36,7 @@ BASE_URL_ENV_KEYS = (
 )
 API_KEY_ENV_KEYS = (
     DEFAULT_API_KEY_ENV,
+    "NEBIUS_API_KEY",
     "NEBIUS_TOKEN_FACTORY_API_KEY",
 )
 
@@ -84,8 +86,9 @@ def resolve_config(
         resolved_key = _first_env(env, key_candidates)
     if require_api_key and not resolved_key:
         raise TokenFactoryError(
-            "Nebius Token Factory API key not found. Set NEBIUS_API_KEY in your "
-            "environment or ~/.npa/credentials.yaml (tokens.NEBIUS_API_KEY)."
+            "Nebius Token Factory API key not found. Set NEBIUS_TOKEN_FACTORY_KEY "
+            "in your environment or ~/.npa/credentials.yaml "
+            "(tokens.NEBIUS_TOKEN_FACTORY_KEY)."
         )
     if timeout_s <= 0:
         raise TokenFactoryError("timeout_s must be positive")
@@ -199,7 +202,7 @@ def _resolve_env(environ: dict[str, str] | None) -> dict[str, str]:
     """Build the env map used for Token Factory config resolution.
 
     When callers use the default (``environ=None``), merge in
-    ``tokens.NEBIUS_API_KEY`` from ``~/.npa/credentials.yaml`` so hosted
+    ``tokens.NEBIUS_TOKEN_FACTORY_KEY`` from ``~/.npa/credentials.yaml`` so hosted
     inference works outside ``npa workbench`` entrypoints.
     """
 

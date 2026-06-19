@@ -93,23 +93,38 @@ def test_load_credentials_reads_ngc_section_and_env_overrides(tmp_path: Path) ->
 def test_load_credentials_reads_nebius_token_factory_key(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_KEY": "tf-file"}})
     )
 
     resolved = load_credentials(path=credentials_path, environ={})
 
     assert resolved.nebius_api_key == "tf-file"
-    assert resolved.tokens["NEBIUS_API_KEY"] == "tf-file"
-    assert shared_credential_env(resolved)["NEBIUS_API_KEY"] == "tf-file"
+    assert resolved.tokens["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-file"
+    assert shared_credential_env(resolved)["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-file"
+
+
+def test_load_credentials_reads_legacy_nebius_api_key_in_file(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-file"}})
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.nebius_api_key == "tf-legacy-file"
+    assert shared_credential_env(resolved)["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-file"
 
 
 def test_nebius_api_key_env_overrides_file(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_KEY": "tf-file"}})
     )
 
-    resolved = load_credentials(path=credentials_path, environ={"NEBIUS_API_KEY": "tf-env"})
+    resolved = load_credentials(
+        path=credentials_path,
+        environ={"NEBIUS_TOKEN_FACTORY_KEY": "tf-env"},
+    )
 
     assert resolved.nebius_api_key == "tf-env"
     assert resolved.token_factory_api_key == "tf-env"
@@ -134,7 +149,7 @@ def test_set_token_factory_api_key_merges_into_existing_credentials(
     stored = yaml.safe_load(credentials_path.read_text())
     assert resolved.token_factory_api_key == "tf-new-key"
     assert resolved.hf_token == "hf-existing"
-    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-new-key"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-new-key"
     assert stored["storage"]["aws_access_key_id"] == "AKIAEXISTING"
 
 

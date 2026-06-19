@@ -10,7 +10,7 @@ batch text generation, and VLM-based rollout scoring all call the hosted API
 instead of starting a GPU server.
 
 Authentication is a single API key sent as an `Authorization: Bearer <key>`
-header. NPA reads it from the `NEBIUS_API_KEY` environment variable (or
+header. NPA reads it from the `NEBIUS_TOKEN_FACTORY_KEY` environment variable (or
 `~/.npa/credentials.yaml`). The default endpoint is
 `https://api.tokenfactory.nebius.com/v1/`.
 
@@ -61,14 +61,14 @@ Pick one (NPA checks them in this order: explicit arg → env var → credential
 
 ```bash
 npa configure
-# ... answer the "Nebius Token Factory API key (NEBIUS_API_KEY)" prompt
+# ... answer the "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY)" prompt
 ```
 
 **B. Credentials file by hand** — `~/.npa/credentials.yaml`:
 
 ```yaml
 tokens:
-  NEBIUS_API_KEY: v1.XXXXXXXXXXXXXXXXXXXXXXXX   # your real key, paste it verbatim
+  NEBIUS_TOKEN_FACTORY_KEY: v1.XXXXXXXXXXXXXXXXXXXXXXXX   # your real key, paste it verbatim
 ```
 
 ```bash
@@ -78,7 +78,7 @@ chmod 600 ~/.npa/credentials.yaml
 **C. Environment variable** (good for CI / one-off shells):
 
 ```bash
-export NEBIUS_API_KEY=v1.XXXXXXXXXXXXXXXXXXXXXXXX
+export NEBIUS_TOKEN_FACTORY_KEY=v1.XXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
 ## 3. Verify authentication
@@ -142,7 +142,7 @@ npa workbench vlm-eval run \
   --input-path ./rollouts/episode-000 \
   --output-path /tmp/vlm-eval \
   --backend api \
-  --api-key-env NEBIUS_API_KEY \
+  --api-key-env NEBIUS_TOKEN_FACTORY_KEY \
   --output json
 ```
 
@@ -152,7 +152,7 @@ The checked-in CPU-only workflows pass the key as a SkyPilot secret:
 
 ```bash
 sky jobs launch \
-  --secret NEBIUS_API_KEY \
+  --secret NEBIUS_TOKEN_FACTORY_KEY \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
   npa/workflows/workbench/skypilot/token-factory-caption.yaml
@@ -169,7 +169,7 @@ and are marked `token_factory_e2e`. They self-skip when no key is configured, so
 the only thing you need to run them is a real key:
 
 ```bash
-NEBIUS_API_KEY=nebius_xxx npa/.venv/bin/python -m pytest \
+NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_token_factory_e2e.py -v
 ```
 
@@ -185,7 +185,7 @@ NPA's client is a thin OpenAI-compatible wrapper, so you can call it directly:
 ```python
 from npa.clients.token_factory import TokenFactoryClient
 
-client = TokenFactoryClient()  # reads NEBIUS_API_KEY
+client = TokenFactoryClient()  # reads NEBIUS_TOKEN_FACTORY_KEY
 text = client.chat_completion_text(
     model="meta-llama/Llama-3.3-70B-Instruct",
     messages=[{"role": "user", "content": "Give me one robot task instruction."}],
@@ -198,11 +198,11 @@ if you are pointed at a non-default deployment.
 
 ## Troubleshooting
 
-- **`NEBIUS_API_KEY is not set`** — provide the key via step 2; confirm with
+- **`NEBIUS_TOKEN_FACTORY_KEY is not set`** — provide the key via step 2; confirm with
   `npa workbench token-factory status`.
 - **`Token Factory request failed (401)`** — the key is invalid or revoked;
   create a new one.
 - **`Token Factory request failed (404)` on a model** — the model id is wrong or
   retired; check `npa workbench token-factory models`.
-- **Workflow exits with "NEBIUS_API_KEY is required"** — you did not pass
-  `--secret NEBIUS_API_KEY` to `sky jobs launch`.
+- **Workflow exits with "NEBIUS_TOKEN_FACTORY_KEY is required"** — you did not pass
+  `--secret NEBIUS_TOKEN_FACTORY_KEY` to `sky jobs launch`.

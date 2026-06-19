@@ -45,15 +45,22 @@ def test_token_factory_list_capabilities() -> None:
     assert {"caption", "generate"} <= names
 
 
-def test_token_factory_verify_without_key_fails(monkeypatch) -> None:
+def test_token_factory_verify_without_key_fails(monkeypatch, tmp_path: Path) -> None:
+    from npa.clients import credentials as credentials_module
+
+    empty_credentials = tmp_path / "credentials.yaml"
+    empty_credentials.write_text("tokens: {}\n")
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", empty_credentials)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_KEY", raising=False)
     monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_API_KEY", raising=False)
     result = runner.invoke(app, ["workbench", "token-factory", "verify"])
     assert result.exit_code == 1
-    assert "NEBIUS_API_KEY is not set" in result.output
+    assert "NEBIUS_TOKEN_FACTORY_KEY is not set" in result.output
 
 
 def test_token_factory_verify_with_key_reports_authenticated(monkeypatch) -> None:
-    monkeypatch.setenv("NEBIUS_API_KEY", "test-key")
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "test-key")
 
     class _FakeClient:
         def list_models(self):
