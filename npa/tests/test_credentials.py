@@ -11,6 +11,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.credentials import (
     CredentialsConfig,
     load_credentials,
+    set_token_factory_api_key,
     shared_credential_env,
     warn_if_hf_token_missing,
 )
@@ -111,6 +112,30 @@ def test_nebius_api_key_env_overrides_file(tmp_path: Path) -> None:
     resolved = load_credentials(path=credentials_path, environ={"NEBIUS_API_KEY": "tf-env"})
 
     assert resolved.nebius_api_key == "tf-env"
+    assert resolved.token_factory_api_key == "tf-env"
+
+
+def test_set_token_factory_api_key_merges_into_existing_credentials(
+    tmp_path: Path,
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf-existing"},
+                "storage": {"aws_access_key_id": "AKIAEXISTING"},
+            }
+        )
+    )
+
+    set_token_factory_api_key("tf-new-key", path=credentials_path)
+
+    resolved = load_credentials(path=credentials_path, environ={})
+    stored = yaml.safe_load(credentials_path.read_text())
+    assert resolved.token_factory_api_key == "tf-new-key"
+    assert resolved.hf_token == "hf-existing"
+    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-new-key"
+    assert stored["storage"]["aws_access_key_id"] == "AKIAEXISTING"
 
 
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:
