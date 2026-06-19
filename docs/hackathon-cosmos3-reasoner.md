@@ -312,6 +312,8 @@ You do **not** need to provision compute for the reasoner.
 
 ## Going deeper
 
+- [hackathon-isaac-token-factory.md](hackathon-isaac-token-factory.md) — **Isaac Lab Franka sim
+  + Token Factory** (GPU capture → serverless reasoner; workflow + SDK example with visuals).
 - `docs/workbench/token-factory.md` — full integration reference (all tools,
   Python client, live tests).
 - `npa workbench token-factory --help` — every subcommand.
