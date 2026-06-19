@@ -12,7 +12,7 @@ manipulation plan.
 | **Token Factory** (`token-factory reason`) | Reads frames (local or S3); returns scene + plan JSON | No (hosted API) |
 
 Prerequisites for the **serverless** stage match
-[hackathon-cosmos3-reasoner.md](../hackathon-cosmos3-reasoner.md) (Token Factory key,
+[hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) (Token Factory key,
 `npa configure`, `verify`). The **sim** stage additionally needs Nebius Kubernetes
 + the `npa-isaac-lab` image (RT-core GPU).
 
@@ -184,7 +184,7 @@ npa workbench workflow submit \
 
 ## Related docs
 
-- [hackathon-cosmos3-reasoner.md](../hackathon-cosmos3-reasoner.md) — Token Factory only (no sim)
+- [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) — Token Factory only (no sim)
 - [composing-cloud-and-token-factory.md](../workbench/composing-cloud-and-token-factory.md) — general compute + TF composition
 - [tokenfactory-compute-combos.md](../workbench/cookbooks/tokenfactory-compute-combos.md) — LeRobot combo workflows
 - Isaac Lab tool skill: `skills/tools/isaac-lab/SKILL.md`

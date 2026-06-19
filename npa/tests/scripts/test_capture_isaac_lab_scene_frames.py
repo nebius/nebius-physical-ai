@@ -31,6 +31,7 @@ def test_isaac_franka_capture_reason_workflow_references_token_factory_key() -> 
     text = WORKFLOW.read_text()
     assert "Isaac-Lift-Cube-Franka-v0" in text
     assert "NEBIUS_TOKEN_FACTORY_KEY" in text
+    assert "NEBIUS_API_KEY" not in text
     assert "capture_isaac_lab_scene_frames.py" in text
     assert "token-factory reason" in text
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
