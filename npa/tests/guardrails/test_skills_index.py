@@ -28,6 +28,13 @@ def test_legacy_skill_paths_are_root_symlinks() -> None:
         assert legacy.is_symlink()
         assert os.readlink(legacy) == "../skills"
         assert legacy.resolve() == SKILLS_ROOT
+    # Single-tree rule: `skills` is the ONLY skills-like entry under .agents/ and
+    # .claude/. Reject stray `skills~<branch>` aliases left behind by merges.
+    for parent in (REPO_ROOT / ".agents", REPO_ROOT / ".claude"):
+        skills_like = sorted(p.name for p in parent.iterdir() if p.name.startswith("skills"))
+        assert skills_like == ["skills"], (
+            f"only `skills` may exist under {parent.name}/; found stray {skills_like}"
+        )
 
 
 def test_skills_index_covers_every_skill(skills_index: dict) -> None:

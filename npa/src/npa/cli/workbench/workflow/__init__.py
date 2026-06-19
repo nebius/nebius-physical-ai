@@ -808,31 +808,6 @@ def status_cmd(
 ) -> None:
     """Check the status of a workflow run."""
     resolved_run_id = _display_run_id(run_id)
-    if _uses_s3_monitor(
-        run_id,
-        project=project,
-        workflow_s3_uri=workflow_s3_uri,
-        workflow_s3_prefix=workflow_s3_prefix,
-        s3_bucket=s3_bucket,
-    ):
-        try:
-            while True:
-                result = _durable_workflow_status(
-                    run_id,
-                    project=project,
-                    workflow_s3_uri=workflow_s3_uri,
-                    workflow_s3_prefix=workflow_s3_prefix,
-                    s3_bucket=s3_bucket,
-                    s3_endpoint=s3_endpoint,
-                    sky_bin=sky_bin,
-                )
-                _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
-                if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
-                    return
-                time.sleep(interval)
-        except Exception as exc:
-            _fail(str(exc))
-            return
 
     from npa.workflows.sim2real.monitor import (
         emit_sim2real_status,
@@ -861,6 +836,32 @@ def status_cmd(
                 else:
                     _emit_workflow_status(result, output_format)
                 if not watch or status_is_terminal(str(result.get("status", ""))):
+                    return
+                time.sleep(interval)
+        except Exception as exc:
+            _fail(str(exc))
+            return
+
+    if _uses_s3_monitor(
+        run_id,
+        project=project,
+        workflow_s3_uri=workflow_s3_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+    ):
+        try:
+            while True:
+                result = _durable_workflow_status(
+                    run_id,
+                    project=project,
+                    workflow_s3_uri=workflow_s3_uri,
+                    workflow_s3_prefix=workflow_s3_prefix,
+                    s3_bucket=s3_bucket,
+                    s3_endpoint=s3_endpoint,
+                    sky_bin=sky_bin,
+                )
+                _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
+                if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
                     return
                 time.sleep(interval)
         except Exception as exc:

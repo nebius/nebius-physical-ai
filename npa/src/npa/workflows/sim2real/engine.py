@@ -1506,6 +1506,7 @@ def _run_policy_rollouts_via_command(
         config.byo_policy_command,
         cwd=actions_dir,
         env=env,
+        component="policy_actions",
     )
     payload = _read_component_json(output_path, invocation)
     if payload.get("rollout_dirs"):
@@ -3304,6 +3305,9 @@ def threshold_decision(
                 "schema": "npa.sim2real.candidate_checkpoint.v1",
                 "run_id": config.run_id,
                 "source": "vlm-rl-reference-update",
+                "deployable_policy": False,
+                "policy_artifact_kind": "reference_metadata",
+                "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
                 "promoted_at": _utc_now(),
