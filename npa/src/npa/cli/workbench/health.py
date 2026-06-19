@@ -122,7 +122,10 @@ def sim2real_command(
     checks: str = typer.Option(
         ",".join(ALL_CHECKS),
         "--checks",
-        help=f"Comma-separated checks to run. Choices: {', '.join(ALL_CHECKS)}.",
+        help=(
+            "Comma-separated checks to run, or 'all'. "
+            f"Choices: all, {', '.join(ALL_CHECKS)}."
+        ),
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when a check fails."
@@ -171,6 +174,10 @@ def sim2real_command(
     credentials = load_credentials()
 
     selected = [item.strip() for item in checks.split(",") if item.strip()]
+    # 'all' is the documented shorthand (operator runbooks and the 10-min demo
+    # script use `--checks all`) — expand it to the full check set.
+    if "all" in selected:
+        selected = list(ALL_CHECKS)
     unknown = [item for item in selected if item not in ALL_CHECKS]
     if unknown:
         raise typer.BadParameter(
