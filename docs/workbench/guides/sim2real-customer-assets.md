@@ -266,7 +266,7 @@ Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
 
 | Path | Format | Contents |
 | --- | --- | --- |
-| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold |
+| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold; **`deployable_policy: false`** (metadata only) |
 | `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` + local `checkpoint_uri` |
 | `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reference trainer `policy_output_after` (action bias), not LeRobot weights |
 | `stage_12_external_validation/external_stub.json` | `npa.sim2real.external_stub.v1` | **SEAM** — documents `input_checkpoint`; no robot deploy |
@@ -295,7 +295,7 @@ suitable for `npa workbench lerobot serve` without a BYO trainer or export step.
 
 | Deployable today | Status | Notes |
 | --- | --- | --- |
-| Promote metadata JSON on S3 | **WORKS** | Audit / handoff record |
+| Promote metadata JSON on S3 | **WORKS** | Audit / handoff record; `deployable_policy: false` in `candidate.json` |
 | LeRobot policy checkpoint for robot | **SEAM (BYO)** | Customer maps trainer output or runs `BYO_TRAINER_COMMAND` to write deployable weights |
 | `POLICY_IMAGE` container | **WORKS** in sim | Stage 7 rollouts in cluster — not the on-robot runtime |
 | New LeRobot trigger batch | **WORKS** | Stage 13 retrigger → upload dataset → `trigger-pipeline.sh` |
