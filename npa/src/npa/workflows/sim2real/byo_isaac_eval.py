@@ -330,13 +330,28 @@ try:
 except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
-# With enable_cameras the Isaac app hangs on normal exit, which blocks the bash
-# upload steps after this script. Force-close + hard-exit so the renders/distances
-# get uploaded.
+# With enable_cameras the Isaac app hangs on exit (even app.close() blocks), so the
+# post-script bash upload never runs. Upload distances + renders HERE from boto3,
+# then hard-exit the process so nothing hangs.
 try:
-    app.close()
-except Exception:
-    pass
+    import boto3
+    from urllib.parse import urlparse
+    s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+    ou = urlparse(os.environ["EVAL_OUT_S3"])
+    s3.upload_file(OUT, ou.netloc, ou.path.lstrip("/"))
+    print("UPLOADED_DISTANCES", os.environ["EVAL_OUT_S3"], flush=True)
+    ru = urlparse(os.environ.get("EVAL_RENDERS_S3", ""))
+    if ru.netloc:
+        import glob
+        base = ru.path.lstrip("/").rstrip("/")
+        n = 0
+        for p in glob.glob(os.environ["EVAL_RENDERS_DIR"] + "/**/*.png", recursive=True):
+            rel = os.path.relpath(p, os.environ["EVAL_RENDERS_DIR"])
+            s3.upload_file(p, ru.netloc, base + "/" + rel); n += 1
+        print("UPLOADED_RENDERS", n, os.environ.get("EVAL_RENDERS_S3"), flush=True)
+    print("BYO_EVAL_DONE", flush=True)
+except Exception as _e:
+    print("inproc_upload_err", repr(_e), flush=True)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
 '''
@@ -396,6 +411,8 @@ def build_isaac_eval_job_manifest(
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
+        f'EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} '
+        f'EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} '
         'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
         'EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt '
         'EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n'
