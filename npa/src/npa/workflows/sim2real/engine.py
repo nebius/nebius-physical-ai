@@ -3297,7 +3297,12 @@ def threshold_decision(
     promoted = success_rate >= config.threshold
     checkpoint_dir = local_dir / "checkpoints" / "candidate"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_uri = str(checkpoint_dir)
+    # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
+    # eval as policy_checkpoint), promote should reference those real weights and be
+    # deployable — not the reference-metadata stub.
+    real_checkpoint = str(heldout_report.get("policy_checkpoint") or "").strip()
+    is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(".pt")
+    checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
     decision = {
         "schema": SCHEMA_THRESHOLD_DECISION,
         "stage": 11,
@@ -3315,9 +3320,12 @@ def threshold_decision(
             {
                 "schema": "npa.sim2real.candidate_checkpoint.v1",
                 "run_id": config.run_id,
-                "source": "vlm-rl-reference-update",
-                "deployable_policy": False,
-                "policy_artifact_kind": "reference_metadata",
+                "source": "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update",
+                "deployable_policy": is_real_policy,
+                "policy_artifact_kind": (
+                    "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
+                ),
+                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
                 "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
