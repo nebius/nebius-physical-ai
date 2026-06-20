@@ -158,6 +158,22 @@ def test_reason_scene_sends_images_and_returns_plan(tmp_path: Path) -> None:
     assert len(image_parts) == 2
 
 
+def test_reason_scene_strips_think_block_from_analysis(tmp_path: Path) -> None:
+    # Cosmos 3 reasoners prefix the answer with an inline <think> trace; it must
+    # not surface in the stored analysis artifact.
+    scene = tmp_path / "scene"
+    _write_image(scene / "a.png", (10, 20, 30))
+
+    result = reason_scene(
+        input_path=str(scene),
+        output_path=str(tmp_path / "out"),
+        client=_client("<think>\nthe cup is in front of the cube\n</think>\n1. clear the cup 2. grasp"),
+    )
+
+    assert "<think>" not in result.analysis
+    assert result.analysis == "1. clear the cup 2. grasp"
+
+
 def test_reason_scene_respects_max_images(tmp_path: Path) -> None:
     scene = tmp_path / "scene"
     for index in range(5):
