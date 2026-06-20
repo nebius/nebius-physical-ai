@@ -122,3 +122,34 @@ def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
     parsed = VlmSignalUpdateResult.from_dict(payload)  # must not raise
     assert parsed.backend == "isaac_rsl_rl_ppo"
     assert parsed.steps == 3
+
+
+def test_vlm_reward_overrides_targets_error_tag_term():
+    # VLM says reaching is failing -> reaching_object weight boosted above default 1.0.
+    stats = {"mean_reward": 0.2, "mean_advantage": 0.0, "step_count": 5,
+             "error_tags": {"did_not_reach_object": 4, "minor": 1}}
+    ov = byo.vlm_reward_overrides(stats)
+    assert ov["env.rewards.reaching_object.weight"] > 1.0
+    # untouched term stays at its default weight
+    assert ov["env.rewards.lifting_object.weight"] == 15.0
+
+
+def test_vlm_reward_overrides_low_reward_broadly_boosts_and_is_bounded():
+    stats = {"mean_reward": -1.0, "mean_advantage": 0.0, "step_count": 3, "error_tags": {}}
+    ov = byo.vlm_reward_overrides(stats)
+    # broad boost applied (mult>1) but bounded to <= 2x default
+    assert ov["env.rewards.lifting_object.weight"] > 15.0
+    assert ov["env.rewards.lifting_object.weight"] <= 30.0
+    assert ov["env.rewards.reaching_object.weight"] <= 2.0
+
+
+def test_manifest_embeds_reward_overrides():
+    ov = {"env.rewards.reaching_object.weight": 1.6, "env.rewards.lifting_object.weight": 15.0}
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        reward_overrides=ov)
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "env.rewards.reaching_object.weight=1.6" in args

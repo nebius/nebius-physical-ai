@@ -61,12 +61,15 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
     signals = payload.get("signals") if isinstance(payload, dict) else payload
     rewards: list[float] = []
     advantages: list[float] = []
+    error_tags: dict[str, int] = {}
     for signal in signals or []:
         for step in (signal or {}).get("per_step", []) or []:
             if "reward" in step:
                 rewards.append(float(step["reward"]))
             if step.get("advantage") is not None:
                 advantages.append(float(step["advantage"]))
+            for tag in step.get("error_tags", []) or []:
+                error_tags[str(tag)] = error_tags.get(str(tag), 0) + 1
     if rewards:
         mean_reward = sum(rewards) / len(rewards)
         step_count = len(rewards)
@@ -76,7 +79,64 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
         "mean_reward": mean_reward,
         "mean_advantage": mean_advantage,
         "step_count": step_count,
+        "error_tags": error_tags,
     }
+
+
+# Canonical Isaac-Lift-Cube-Franka-v0 reward-term weights (manager-based Lift env)
+# — confirmed term names from the training log's Episode_Reward/* keys.
+DEFAULT_REWARD_WEIGHTS = {
+    "reaching_object": 1.0,
+    "lifting_object": 15.0,
+    "object_goal_tracking": 16.0,
+    "object_goal_tracking_fine_grained": 5.0,
+}
+# Which VLM error-tag substrings boost which reward term.
+_TAG_TO_TERM = {
+    "reach": "reaching_object",
+    "grasp": "reaching_object",
+    "approach": "reaching_object",
+    "lift": "lifting_object",
+    "raise": "lifting_object",
+    "goal": "object_goal_tracking",
+    "place": "object_goal_tracking",
+    "target": "object_goal_tracking",
+    "precis": "object_goal_tracking_fine_grained",
+    "align": "object_goal_tracking_fine_grained",
+}
+
+
+def vlm_reward_overrides(stats: dict[str, Any]) -> dict[str, float]:
+    """Map the VLM signal to bounded rsl_rl reward-term weight overrides.
+
+    The Cosmos-Reason critique drives PPO: error tags up-weight the reward term
+    for the skill the VLM says is failing, and a low overall VLM reward broadly
+    boosts the task terms (encourage task completion). Multipliers are bounded
+    to [0.5, 2.0] so the VLM shapes — never destabilizes — training. Returns
+    ``{"env.rewards.<term>.weight": value}`` hydra overrides.
+    """
+
+    mult = {term: 1.0 for term in DEFAULT_REWARD_WEIGHTS}
+    # Low mean VLM reward (range ~[-1,1]) -> broadly boost task terms.
+    mean_reward = float(stats.get("mean_reward", 0.0))
+    if mean_reward < 0.0:
+        broad = 1.0 + min(0.5, -mean_reward * 0.5)
+        for term in mult:
+            mult[term] *= broad
+    # Error tags -> targeted boost on the implicated term.
+    tags = stats.get("error_tags") or {}
+    total = sum(tags.values()) or 1
+    for tag, count in tags.items():
+        low = tag.lower()
+        for needle, term in _TAG_TO_TERM.items():
+            if needle in low:
+                mult[term] *= 1.0 + 0.6 * (count / total)
+                break
+    overrides: dict[str, float] = {}
+    for term, base in DEFAULT_REWARD_WEIGHTS.items():
+        m = max(0.5, min(2.0, mult[term]))
+        overrides[f"env.rewards.{term}.weight"] = round(base * m, 6)
+    return overrides
 
 
 def build_isaac_job_manifest(
@@ -93,20 +153,28 @@ def build_isaac_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    reward_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
-    Pure function: returns a manifest dict, no side effects.
+    Pure function: returns a manifest dict, no side effects. ``reward_overrides``
+    are VLM-derived ``env.rewards.<term>.weight`` hydra args appended to train.py
+    so the VLM critique shapes the PPO reward.
     """
 
+    override_str = " ".join(f"{k}={v}" for k, v in sorted((reward_overrides or {}).items()))
+    train_line = (
+        f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
+        f'--max_iterations {iterations} --headless agent.save_interval=25 {override_str}'
+    )
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-train.log) 2>&1\n'
         'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
+        f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
         "set +e\n"
-        f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-        f'--max_iterations {iterations} --headless agent.save_interval=25 2>&1 | tail -120\n'
+        f'{train_line} 2>&1 | tail -120\n'
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
@@ -186,6 +254,7 @@ def build_update_result(
     checkpoint_uri: str,
     status: str,
     duration_ms: float,
+    reward_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build a VlmSignalUpdateResult-shaped dict from a real training run.
 
@@ -222,7 +291,8 @@ def build_update_result(
         "control": False,
         "loss_integration_point": (
             "Isaac-Lab RSL-RL PPO sibling job (real policy training); VLM signal "
-            "summary attached as reward context."
+            "shapes reward via env.rewards weight overrides: "
+            f"{reward_overrides or {}}"
         ),
         "duration_ms": round(float(duration_ms), 3),
     }
@@ -260,6 +330,11 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{job_name}/"
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200") or 7200)
 
+    # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
+    stats = read_signal_stats(signal_json)
+    reward_overrides = vlm_reward_overrides(stats)
+    print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -272,6 +347,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         namespace=namespace,
         service_account=service_account,
         gpu_product=gpu_product,
+        reward_overrides=reward_overrides,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
@@ -292,7 +368,6 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             f"{wait.stderr}\n--- logs ---\n{logs.stdout}"
         )
     checkpoint_uri = s3_output + "model_latest.pt"
-    stats = read_signal_stats(signal_json)
     return build_update_result(
         stats=stats,
         initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
@@ -300,6 +375,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         checkpoint_uri=checkpoint_uri,
         status=status,
         duration_ms=(time.time() - start) * 1000.0,
+        reward_overrides=reward_overrides,
     )
 
 
