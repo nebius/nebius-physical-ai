@@ -128,3 +128,25 @@ def test_eval_manifest_embeds_custom_object_usd():
         object_usd="http://assets/custom.usd")
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert 'EVAL_OBJECT_USD="http://assets/custom.usd"' in args
+
+
+def test_normalize_heldout_preserves_render_manifest_and_provenance():
+    """BYO-eval render_manifest + provenance must survive engine normalization."""
+    from npa.workflows.sim2real.engine import _normalize_heldout_report
+    from npa.workflows.sim2real.config import build_config_from_env
+    payload = {
+        "per_env": [{"env_id": "env-00000", "success": True, "score": 0.9}],
+        "render_manifest": {"schema": "npa.sim2real.heldout_renders.v1",
+                            "episodes": [{"env_id": "env-00000", "frames": ["camera-0000.png"]}]},
+        "policy_checkpoint": "s3://b/run/model_latest.pt",
+        "deployable_policy_eval": True,
+        "generated_envs_tested": 1,
+        "generated_env_ids": ["env-00000"],
+    }
+    cfg = build_config_from_env(threshold=0.45, s3_bucket="", run_id="t")
+    report = _normalize_heldout_report(payload, config=cfg, outer_iteration=1,
+                                       inner_evidence_uri="x", invocation={})
+    assert report["render_manifest"]["episodes"][0]["env_id"] == "env-00000"
+    assert report["policy_checkpoint"].endswith("model_latest.pt")
+    assert report["deployable_policy_eval"] is True
+    assert report["generated_envs_tested"] == 1

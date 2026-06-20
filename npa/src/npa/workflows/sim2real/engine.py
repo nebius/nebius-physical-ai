@@ -3185,7 +3185,18 @@ def _normalize_heldout_report(
         "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
-    for key in ("component_source", "rollout_backend"):
+    for key in (
+        "component_source",
+        "rollout_backend",
+        # Preserve BYO-eval extras so heldout viz + provenance survive normalization:
+        # render_manifest drives stage-14 Rerun heldout/camera/**; the rest record
+        # which trained policy + generated envs were actually evaluated.
+        "render_manifest",
+        "generated_envs_tested",
+        "generated_env_ids",
+        "policy_checkpoint",
+        "deployable_policy_eval",
+    ):
         if payload.get(key):
             report[key] = payload[key]
     if "asset_provenance" in payload:
