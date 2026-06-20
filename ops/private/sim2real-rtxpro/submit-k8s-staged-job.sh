@@ -288,6 +288,8 @@ spec:
               value: "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
             - name: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S
               value: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-28800}"
+            - name: NPA_SIM2REAL_USE_DAG
+              value: "${NPA_SIM2REAL_USE_DAG:-0}"
           envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
@@ -353,6 +355,12 @@ spec:
                 --source-ref "\${NPA_SOURCE_REF:-main}"
                 --upload-artifacts
               )
+              # Opt-in: execute via the declarative DAG scheduler (true-YAML path).
+              # Default (0) keeps the canonical run_staged() path; both are parity-checked.
+              if [[ "\${NPA_SIM2REAL_USE_DAG:-0}" == "1" ]]; then
+                common_args+=(--dag)
+                echo "sim2real: executing via DAG scheduler (--dag, default sim2real.dag.yaml)"
+              fi
               python3 -m npa.workflows.sim2real run "\${common_args[@]}" \
                 --initial-quality "\${INITIAL_QUALITY:-0.42}"
               python3 -c "import json; from pathlib import Path; r=json.loads(Path('\${output_dir}/reports/sim2real-report.json').read_text()); print('CLUSTER_METRICS', json.dumps({'run_id': r['run_id'], 'decision': r['outer_loop']['latest_decision'], 'reward_trend': r['inner_loop']['reward_trend']}))"
