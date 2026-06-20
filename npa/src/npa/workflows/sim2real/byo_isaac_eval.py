@@ -235,19 +235,27 @@ try:
     N = realN
 
     def _policy_obs(o):
-        # rsl_rl inference needs the [N, obs_dim] policy tensor; with cameras on,
-        # get_observations returns a (Tensor)Dict — extract the 'policy' group.
-        if torch.is_tensor(o):
-            return o
-        for k in ("policy", "obs", "policy_obs"):
-            try:
-                v = o[k]
-                if torch.is_tensor(v):
-                    return v
-            except Exception:
-                pass
-        return o
-    print("STEP0 policy_obs_shape", tuple(getattr(_policy_obs(obs), "shape", ())), flush=True)
+        # rsl_rl inference needs a [N, obs_dim] policy tensor; with cameras on,
+        # get_observations returns a (Tensor)Dict — extract the 'policy' group and
+        # ensure a leading batch dim (the env may present a 1-D single-env obs).
+        t = o
+        if not torch.is_tensor(o):
+            for k in ("policy", "obs", "policy_obs"):
+                try:
+                    v = o[k]
+                    if torch.is_tensor(v):
+                        t = v
+                        break
+                except Exception:
+                    pass
+        if torch.is_tensor(t) and t.ndim == 1:
+            t = t.unsqueeze(0)
+        return t
+    _p0 = _policy_obs(obs)
+    # Trust the obs batch dim as the source of truth for N.
+    N = int(_p0.shape[0]) if torch.is_tensor(_p0) and _p0.ndim >= 1 else realN
+    print("STEP0 policy_obs_shape", tuple(getattr(_p0, "shape", ())),
+          "env.num_envs", getattr(env.unwrapped, "num_envs", "?"), "N", N, flush=True)
     # Per-env render dirs (labelled by generated env_id when provided).
     import json as _json
     env_ids = _json.loads(os.environ.get("EVAL_ENV_IDS", "[]") or "[]")
