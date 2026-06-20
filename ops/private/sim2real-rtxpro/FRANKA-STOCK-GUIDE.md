@@ -30,8 +30,16 @@ export BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval'
   derives `success_rate` from the task's object-to-goal distance — a genuine
   measurement (expect it to start low and climb with more `NPA_BYO_ISAAC_ITERATIONS`;
   it refuses to report success when no real checkpoint exists).
-- Use more iterations for real competence (`NPA_BYO_ISAAC_ITERATIONS=300+`); a
-  handful of iterations will honestly score near-zero success.
+- **Multi-env eval:** eval rolls `NPA_SIM2REAL_HELDOUT_ENV_COUNT` envs in parallel
+  (default 4; or one per generated held-out env) and reports a per-env distance
+  *distribution*, not a single point. A single env can read 1.0 by luck — always
+  read the distribution. Example (deep 1500-iter MultiColorCube policy, N=4):
+  distances `[0.031, 0.079, 0.085, 0.016] m` → `success@0.05m = 2/4 (0.50)`,
+  `@0.10m = 4/4`. Tune the threshold with `NPA_BYO_ISAAC_SUCCESS_DIST_M`
+  (default `0.05`; the Lift goal-tracking kernel std ≈ 0.1, so `0.10` is a
+  defensible "near goal").
+- Use more iterations for real competence (`NPA_BYO_ISAAC_ITERATIONS=300+`, deep
+  runs ~1500); a handful of iterations will honestly score near-zero success.
 
 `success_rate` only reflects a real policy when both BYO seams are set; without
 them you are looking at the reference stub.
