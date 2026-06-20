@@ -63,7 +63,9 @@ DEFAULT_VLM_IMAGE_TAG = "3.0.1-genuine-sm120"
 DEFAULT_ENVGEN_TAG = "0.1.2"
 DEFAULT_REFERENCE_POLICY_TAG = "0.1.2"
 DEFAULT_TRAINER_TAG = "0.1.1"
-DEFAULT_EVAL_TAG = "0.1.2-genuine-sm120"
+# 0.1.2-genuine-sm120 lost working Blackwell (sm_120) Genesis kernels and crashes
+# heldout_eval on RTX PRO 6000; 0.1.1 is the proven-good build. See images.py.
+DEFAULT_EVAL_TAG = "0.1.1-genuine-sm120"
 DEFAULT_ISAAC_TAG = "2.3.2.post1"
 # Pluggable held-out sim backend. Genesis remains fully supported; Isaac Lab
 # (Isaac Sim headless) is the default and requires RT-core GPUs (L40S / RTX Pro).

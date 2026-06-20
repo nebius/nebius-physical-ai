@@ -58,7 +58,12 @@ SUPPORTED_TOOL_VERSIONS = {
     "sim2real-envgen": "0.1.2",
     "sim2real-reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
-    "sim2real-eval": "0.1.2-genuine-sm120",
+    # 0.1.2-genuine-sm120 was rebuilt without working Blackwell (sm_120) Genesis
+    # kernels and crashes heldout_eval on RTX PRO 6000 with "CUDA error: no kernel
+    # image is available for execution on the device". 0.1.1 is the proven-good
+    # build (matches sim2real.constants.DEFAULT_EVAL_TAG). Re-bump only after a
+    # 0.1.3 rebuild restores sm_120 Genesis kernels.
+    "sim2real-eval": "0.1.1-genuine-sm120",
     "sim2real-rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
