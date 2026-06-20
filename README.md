@@ -57,6 +57,46 @@ You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
 That is the full local loop; the same command swaps `--backend stub` for a real
 `self-hosted` or `api` VLM backend once you add credentials.
 
+### Nebius AI Cloud account
+
+Before `npa configure`, sign in to Nebius AI Cloud and create the tenant and
+project that NPA will use:
+
+1. **Sign up and log in** — create an account at
+   [Nebius signup](https://docs.nebius.com/signup-billing/sign-up). Use a
+   standard email login (not SSO-only) so you can create tenants and projects.
+2. **Tenant** — Nebius creates a tenant on signup. To add another, follow
+   [Creating a tenant](https://docs.nebius.com/iam/create-tenants). Copy your
+   tenant id (`tenant-…`) from the tenant selector in the
+   [web console](https://console.nebius.com) or list tenants with the Nebius
+   CLI ([get tenants](https://docs.nebius.com/iam/get-tenants)).
+3. **Project** — create a project in that tenant for your workloads (for example
+   in `eu-north1`). Use the console
+   ([Manage projects](https://docs.nebius.com/iam/manage-projects)) or the CLI:
+
+   ```bash
+   nebius iam v2 project create --parent-id <tenant-id> --name npa-workbench --region eu-north1
+   ```
+
+   Copy the project id (`project-…`) from the console project selector or
+   `nebius iam v2 project list --parent-id <tenant-id>`.
+4. **Object Storage bucket (optional)** — `npa configure` can create a default
+   bucket for your project when you press Enter at the bucket prompt. To use your
+   own bucket instead, create one in the console (**Storage → Object Storage →
+   Create bucket**) or via the CLI
+   ([Manage buckets](https://docs.nebius.com/object-storage/buckets/manage)):
+
+   ```bash
+   nebius storage bucket create --parent-id <project-id> --name <your-bucket-name>
+   ```
+
+   See the [Object Storage quickstart](https://docs.nebius.com/object-storage/quickstart)
+   for naming rules.
+
+You will enter your project id and tenant id when `npa configure` prompts for
+them. No example ids or bucket names are shown — use the values from your
+account, or press Enter to let NPA create a default bucket.
+
 Next, run a single interactive NPA setup step (install the Nebius CLI binary
 first; `npa configure` reuses or creates the profile and writes your NPA
 credential/config files — see

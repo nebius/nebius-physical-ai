@@ -69,9 +69,9 @@ Run `npa configure` in a terminal for interactive setup (use
 installed Nebius CLI binary internally (profile setup stays inside
 `npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
 when needed, then with an authenticated profile
-auto-creates your S3 bucket and access key, so
-you only supply tenant/project/region (pre-filled from the profile) plus optional
-Hugging Face, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
+auto-creates an S3 bucket (and access key) when you press Enter at the bucket
+prompt, so you supply your Nebius tenant id, project id, and region plus optional
+bucket name, Hugging Face, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
@@ -270,8 +270,14 @@ def _provision_object_storage(
     if not (project_id and tenant_id):
         return None
 
-    suggested_bucket = nebius_client.bucket_name_for(tenant_id, project_id)
-    bucket_name = ask("Object-storage bucket name", default=suggested_bucket) or suggested_bucket
+    bucket_name = ask(
+        "Object-storage bucket name (Enter to create a default bucket for this project)"
+    )
+    if not bucket_name:
+        bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
+        typer.echo(
+            "  No bucket name provided; creating a default bucket for this project."
+        )
 
     try:
         already_exists = nebius_client.bucket_exists(project_id, bucket_name)
@@ -350,12 +356,10 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         ).strip()
 
-    project_default = nebius_client.current_project_id()
-    tenant_default = nebius_client.current_tenant_id()
-    project_id = ask("Nebius project id", default=project_default)
-    tenant_id = ask("Nebius tenant id", default=tenant_default)
+    project_id = ask("Nebius project id")
+    tenant_id = ask("Nebius tenant id")
     registry_default = (
-        nebius_client.discover_container_registry(project_id or project_default)
+        nebius_client.discover_container_registry(project_id)
         or DEFAULT_CONTAINER_REGISTRY
     )
     region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
@@ -385,7 +389,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
                 "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
             ),
             "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
-            "bucket": ask("S3 bucket (e.g. s3://my-bucket/)"),
+            "bucket": ask("S3 bucket URI (e.g. s3://<your-bucket>/)"),
         }
 
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
@@ -485,8 +489,9 @@ def configure(
         True,
         "--provision/--no-provision",
         help=(
-            "Auto-create the Nebius S3 bucket and access key from your profile "
-            "(default). Use --no-provision to enter existing S3 credentials."
+            "Auto-create a Nebius S3 bucket (when missing) and an access key "
+            "(default). Press Enter at the bucket prompt to use a project-default "
+            "name. Use --no-provision to enter existing S3 credentials."
         ),
     ),
     token_factory_key: str = typer.Option(
@@ -527,8 +532,9 @@ def init(
         True,
         "--provision/--no-provision",
         help=(
-            "Auto-create the Nebius S3 bucket and access key from your profile "
-            "(default). Use --no-provision to enter existing S3 credentials."
+            "Auto-create a Nebius S3 bucket (when missing) and an access key "
+            "(default). Press Enter at the bucket prompt to use a project-default "
+            "name. Use --no-provision to enter existing S3 credentials."
         ),
     ),
     token_factory_key: str = typer.Option(

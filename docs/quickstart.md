@@ -203,12 +203,21 @@ chmod 600 ~/.npa/credentials.yaml
 Nebius account authentication is handled by the `nebius` CLI profile, not by a
 long-lived `NEBIUS_TOKEN` in `~/.npa/credentials.yaml`.
 
+Before running `npa configure`, sign up for Nebius AI Cloud, note your tenant
+id, and create a project in the target region. An Object Storage bucket is
+optional — `npa configure` creates a default bucket when you press Enter at the
+bucket prompt. To use your own bucket, create one first; see the README
+**Nebius AI Cloud account** section,
+[Creating a tenant](https://docs.nebius.com/iam/create-tenants),
+[Manage projects](https://docs.nebius.com/iam/manage-projects), and
+[Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
+
 Run interactive setup in a terminal. `npa configure` detects an existing
-authenticated Nebius CLI profile (via `nebius iam get-access-token`), pre-fills
-project and tenant from that profile when available, and only runs profile
-creation when none is authenticated. It then writes `~/.npa/credentials.yaml` and
-`~/.npa/config.yaml` (re-run anytime to refresh NPA files from the active
-profile):
+authenticated Nebius CLI profile (via `nebius iam get-access-token`), prompts
+for your tenant id and project id (no defaults are shown), creates a default
+S3 bucket when you press Enter at the bucket prompt, and only runs profile
+creation when none is authenticated. It then writes `~/.npa/credentials.yaml`
+and `~/.npa/config.yaml`:
 
 ```bash
 npa configure
