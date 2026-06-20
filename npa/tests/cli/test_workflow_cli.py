@@ -481,6 +481,7 @@ def test_workflow_run_remote_requires_s3_bucket() -> None:
 
 
 def test_workflow_status_prints_status(mocker) -> None:
+    mocker.patch("npa.workflows.sim2real.monitor.sim2real_run_exists", return_value=False)
     mocker.patch(
         "npa.workflows.distill.get_run_status",
         return_value={"run_id": "run-1", "status": "success", "stages": {}},
@@ -494,6 +495,7 @@ def test_workflow_status_prints_status(mocker) -> None:
 
 
 def test_workflow_status_maps_distillation_error(mocker) -> None:
+    mocker.patch("npa.workflows.sim2real.monitor.sim2real_run_exists", return_value=False)
     mocker.patch(
         "npa.workflows.distill.get_run_status",
         side_effect=DistillationError("not found"),
@@ -520,6 +522,10 @@ def test_workflow_logs_prints_stage_logs(mocker) -> None:
 def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.sim2real_run_exists",
+        lambda *args, **kwargs: False,
+    )
     manifest = {
         "schema_version": 1,
         "run_id": "run-1",
