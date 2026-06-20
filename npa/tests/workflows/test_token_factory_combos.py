@@ -334,6 +334,32 @@ def test_sweep_runner_full_mode_resolves_rank_root_without_keyerror(monkeypatch)
     assert captured["rank_root"] == "s3://b/sweeps/demo/ranking"
 
 
+def test_sweep_runner_job_names_track_resolved_run_id() -> None:
+    """Without --run-id, per-variant Job names must use the resolved timestamped
+    run_id (matching sweep_root), not a fixed 'tf-sweep' literal that collides
+    across sweeps."""
+    module = _load_sweep_runner()
+    args = module._parse_args(["--num-variants", "2", "--bucket", "s3://b/tf"])
+    plan = module.build_plan(args)
+
+    run_id = plan["run_id"]
+    assert run_id.startswith("tf-sim-sweep-")
+    assert plan["sweep_root"].endswith(run_id)
+
+    job_names = []
+    for variant in plan["variants"]:
+        cmd = variant["train_command"]
+        job_names.append(cmd[cmd.index("--job-name") + 1])
+
+    # Job names embed the (sanitized) resolved run_id, so they are unique per
+    # sweep and never the bare fallback literal.
+    sanitized_run_id = run_id.lower()
+    for name in job_names:
+        assert name.startswith(sanitized_run_id)
+        assert not name.startswith("tf-sweep-v")
+    assert len(set(job_names)) == len(job_names)
+
+
 def test_sweep_runner_disambiguates_colliding_run_labels() -> None:
     module = _load_sweep_runner()
     # Distinct last segments keep their names...

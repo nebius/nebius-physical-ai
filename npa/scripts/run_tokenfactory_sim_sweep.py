@@ -103,7 +103,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         {
             **variant,
             "output_uri": sweep_variant_output_uri(sweep_root, variant["id"]),
-            "train_command": _train_command(args, variant, sweep_root),
+            "train_command": _train_command(args, variant, sweep_root, run_id),
         }
         for variant in variants
     ]
@@ -117,9 +117,13 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _train_command(
-    args: argparse.Namespace, variant: dict[str, Any], sweep_root: str
+    args: argparse.Namespace, variant: dict[str, Any], sweep_root: str, run_id: str
 ) -> list[str]:
-    job_name = triage_job_name(f"{args.run_id or 'tf-sweep'}-{variant['id']}")
+    # Derive the per-variant Job name from the *resolved* run_id (which is
+    # timestamped when --run-id is omitted), not the raw arg. Otherwise two
+    # sweeps launched without --run-id submit colliding serverless Job names
+    # even though their S3 output prefixes differ.
+    job_name = triage_job_name(f"{run_id}-{variant['id']}")
     cmd = [
         "workbench",
         "lerobot",
