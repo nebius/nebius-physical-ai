@@ -10,11 +10,10 @@ By default the staged loop's inner-loop "trainer" is a **reference hook**
 **not** a trained robot policy — `trainer_source: reference` in the report, and a
 `success_rate` of `1.0` from it is the stub, not a learned policy.
 
-For a **genuine RL-trained Franka policy**, supply the BYO seams (branch
-`feat/sim2real-real-rl-franka`):
+For a **genuine RL-trained Franka policy** (on npa `main`), supply the BYO seams:
 
 ```bash
-export NPA_SOURCE_REF=feat/sim2real-real-rl-franka
+export NPA_SOURCE_REF=main
 export EVAL_IMAGE="$REGISTRY/npa-sim2real-eval:0.1.1-genuine-sm120"   # sm_120 Blackwell-good
 export BYO_TRAINER_COMMAND='NPA_BYO_ISAAC_ITERATIONS=300 NPA_BYO_ISAAC_NUM_ENVS=1024 python3 -m npa.workflows.sim2real.byo_isaac_trainer'
 export BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval'
@@ -155,7 +154,7 @@ quota (`vpc.ipv4-address.public.count`). Wait and re-run serve; inspect
 `kubectl describe svc npa-sim2real-rerun-npa-rtxpro-mk8s`. Do not use laptop port-forward
 on the default operator path.
 
-## Custom asset actually simulated + authed cloud Rerun (branch feat/sim2real-real-rl-franka)
+## Custom asset actually simulated + authed cloud Rerun (on npa `main`)
 
 **Custom object in the Isaac sim (train + eval).** The Lift manipuland is a
 `RigidObjectCfg`/`UsdFileCfg`, so set a custom USD and the policy trains AND is
