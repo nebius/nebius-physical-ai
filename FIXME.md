@@ -84,11 +84,23 @@ work lives).
 #### [M] Cosmos requires manual serve after deploy/restart with no auto-load
 
 - **Surfaced by**: 2026-05-09 demo runbook dry-run.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: `cosmos status` reports unloaded after deploy or service
   restart until the operator manually runs `cosmos serve`.
 - **Next step**: Add an explicit deploy auto-serve option or make the post-deploy
   `serve` requirement prominent in CLI help and standard runbooks.
+
+#### [M] Cosmos deploy install failure dumps the full install script and traceback
+
+- **Surfaced by**: 2026-06-10 single-H200 Cosmos deploy (gated model download 403).
+- **Status**: Still active.
+- **Current issue**: When the remote install step fails (e.g. a gated Hugging Face
+  model download), `cosmos deploy` surfaces the entire multi-hundred-line install
+  bash command plus the raw remote Python traceback as the error, burying the
+  actual cause and remediation.
+- **Next step**: Catch install/SSH failures and report a concise, actionable error
+  (failing step plus remote stderr tail), keeping the full command and traceback
+  behind a verbose/debug flag.
 
 #### [M] Add standalone LeRobot library validation test
 
@@ -145,6 +157,19 @@ work lives).
   root can fail with `FileNotFoundError` for deploy template paths.
 - **Next step**: Resolve Terraform template fixture paths relative to the package
   root or test file instead of the process current working directory.
+
+#### [L] VM `deploy --destroy` runs Terraform destroy with no confirmation
+
+- **Surfaced by**: 2026-06-11 Cosmos VM teardown.
+- **Status**: Still active.
+- **Current issue**: For Terraform-managed (`--runtime vm`) aliases,
+  `cosmos deploy --destroy` proceeds straight to `terraform destroy` with no
+  confirmation prompt; `--yes` only gates `--replace`, so a mistyped `-n` alias
+  is destroyed immediately. BYOVM destroy is non-destructive (it only
+  unregisters the alias). The same unguarded VM-destroy path likely exists in the
+  other workbench deploy commands (groot, fiftyone, isaac-lab).
+- **Next step**: Prompt before VM destroy unless `--yes` (or `--dry-run`) is
+  passed, and apply the same guard consistently across the workbench tools.
 
 ## Resolved (recent)
 
