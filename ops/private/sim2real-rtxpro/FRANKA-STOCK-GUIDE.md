@@ -40,8 +40,21 @@ export BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval'
   defensible "near goal").
 - Use more iterations for real competence (`NPA_BYO_ISAAC_ITERATIONS=300+`, deep
   runs ~1500); a handful of iterations will honestly score near-zero success.
+- **BYO policy rollout / loop closure** (`byo_isaac_policy_rollout`, optional):
+  add `export BYO_POLICY_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout'`
+  to roll the **current** policy in Isaac and capture its real frames + actions for
+  the VLM to critique each inner iteration — instead of the synthetic
+  `generate_action_rollouts` fallback. The "current" policy is the newest
+  `model_latest.pt` for the run (an untrained net on the first inner iteration,
+  which is the correct RL loop). Without it, the VLM critiques synthetic rollouts.
 
-`success_rate` only reflects a real policy when both BYO seams are set; without
+A verified VLM-shaped deep staged run (`NPA_BYO_ISAAC_ITERATIONS=1000`,
+MultiColorCube, N=4 eval) measured per-env distances `[0.004, 0.020, 0.008,
+0.011] m` → `4/4 success@0.05m`, `trainer_source: byo_command`,
+`candidate.json deployable_policy: true` / `source: isaac-rsl-rl-ppo` (the VLM
+goal-tracking reward boost beat the no-VLM standalone deep run's 2/4).
+
+`success_rate` only reflects a real policy when the BYO seams are set; without
 them you are looking at the reference stub.
 
 **Monitor stage-status fix:** use NPA `main` — run `./setup.sh` in the walkthrough repo to refresh the venv before `npa workbench workflow status`.
