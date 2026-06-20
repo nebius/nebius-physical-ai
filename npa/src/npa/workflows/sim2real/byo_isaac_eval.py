@@ -233,6 +233,21 @@ try:
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
+
+    def _policy_obs(o):
+        # rsl_rl inference needs the [N, obs_dim] policy tensor; with cameras on,
+        # get_observations returns a (Tensor)Dict — extract the 'policy' group.
+        if torch.is_tensor(o):
+            return o
+        for k in ("policy", "obs", "policy_obs"):
+            try:
+                v = o[k]
+                if torch.is_tensor(v):
+                    return v
+            except Exception:
+                pass
+        return o
+    print("STEP0 policy_obs_shape", tuple(getattr(_policy_obs(obs), "shape", ())), flush=True)
     # Per-env render dirs (labelled by generated env_id when provided).
     import json as _json
     env_ids = _json.loads(os.environ.get("EVAL_ENV_IDS", "[]") or "[]")
@@ -262,14 +277,12 @@ try:
     min_dist = np.full(N, 1e9)
     for _step in range(STEPS):
         with torch.inference_mode():
-            actions = policy(obs)
+            actions = policy(_policy_obs(obs))
         if _step == 0:
-            print("STEP0 obs_type", type(obs).__name__,
-                  "act_shape", tuple(getattr(actions, "shape", ())), flush=True)
-        # rsl_rl inference can return a flat [N*act_dim] / [act_dim] tensor; the
-        # manager-based env needs [N, act_dim]. Coerce defensively.
-        if hasattr(actions, "ndim") and actions.ndim == 1:
-            actions = actions.reshape(N, -1)
+            print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
+        # Safety: manager-based env needs [N, act_dim].
+        if hasattr(actions, "ndim") and actions.ndim == 1 and N == 1:
+            actions = actions.reshape(1, -1)
         obs, _, dones, extras = env.step(actions)
         if _step % CAP_EVERY == 0:
             capture(_step)
