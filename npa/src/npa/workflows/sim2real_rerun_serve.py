@@ -323,10 +323,18 @@ def build_rerun_nginx_config(
     """
 
     auth_lines = ""
+    health_block = ""
     if auth_required:
         auth_lines = (
             f'\n            auth_basic "NPA Sim2Real Rerun";'
             f'\n            auth_basic_user_file {htpasswd_path};'
+        )
+        # Unauthenticated health endpoint so the readiness probe passes (GET / is 401).
+        health_block = (
+            '\n        location = /healthz {'
+            '\n            auth_basic off;'
+            '\n            return 200 "ok";'
+            '\n        }'
         )
     return f"""\
 worker_processes 1;
@@ -342,11 +350,7 @@ http {{
         server 127.0.0.1:{internal_port};
     }}
     server {{
-        listen {external_port};
-        location = /healthz {{
-            auth_basic off;
-            return 200 "ok";
-        }}
+        listen {external_port};{health_block}
         location ~* \\.(wasm|js|ico|svg)$ {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
