@@ -99,6 +99,12 @@ BYO_TRAINER_COMMAND_B64=""
 if [[ -n "${BYO_TRAINER_COMMAND:-}" ]]; then
   BYO_TRAINER_COMMAND_B64="$(printf '%s' "${BYO_TRAINER_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_TRAINER_COMMAND}" | base64)"
 fi
+# BYO held-out eval (rolls the TRAINED checkpoint for a real success_rate) — same
+# base64 passthrough as the trainer so colon/space-bearing commands survive YAML.
+BYO_EVAL_COMMAND_B64=""
+if [[ -n "${BYO_EVAL_COMMAND:-}" ]]; then
+  BYO_EVAL_COMMAND_B64="$(printf '%s' "${BYO_EVAL_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_EVAL_COMMAND}" | base64)"
+fi
 
 "${ROOT}/npa/.venv/bin/python" - \
   "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${VLM_IMAGE}" "${EVAL_IMAGE}" \
@@ -220,6 +226,14 @@ spec:
               value: "${POLICY_IMAGE}"
             - name: BYO_TRAINER_COMMAND_B64
               value: "${BYO_TRAINER_COMMAND_B64}"
+            - name: BYO_EVAL_COMMAND_B64
+              value: "${BYO_EVAL_COMMAND_B64}"
+            - name: NPA_BYO_ISAAC_OBJECT_USD
+              value: "${NPA_BYO_ISAAC_OBJECT_USD:-}"
+            - name: NPA_BYO_ISAAC_OBJECT_SCALE
+              value: "${NPA_BYO_ISAAC_OBJECT_SCALE:-}"
+            - name: NPA_BYO_ISAAC_SUCCESS_DIST_M
+              value: "${NPA_BYO_ISAAC_SUCCESS_DIST_M:-0.05}"
             - name: ISAAC_IMAGE
               value: "${ISAAC_IMAGE}"
             - name: NPA_SIM2REAL_ISAAC_TASK
@@ -300,6 +314,9 @@ spec:
               if [[ -n "\${BYO_TRAINER_COMMAND_B64:-}" ]]; then
                 export BYO_TRAINER_COMMAND="\$(printf '%s' "\${BYO_TRAINER_COMMAND_B64}" | base64 -d)"
               fi
+              if [[ -n "\${BYO_EVAL_COMMAND_B64:-}" ]]; then
+                export BYO_EVAL_COMMAND="\$(printf '%s' "\${BYO_EVAL_COMMAND_B64}" | base64 -d)"
+              fi
               if ! command -v kubectl >/dev/null; then
                 curl -fsSL -o /tmp/kubectl https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl
                 chmod +x /tmp/kubectl
@@ -331,6 +348,7 @@ spec:
                 --augment-image "\${AUGMENT_IMAGE}"
                 --policy-image "\${POLICY_IMAGE}"
                 --byo-trainer-command "\${BYO_TRAINER_COMMAND:-}"
+                --byo-eval-command "\${BYO_EVAL_COMMAND:-}"
                 --env-count "\${NPA_ENV_COUNT:-10000}"
                 --train-fraction "\${NPA_TRAIN_FRACTION:-0.8}"
                 --envgen-shard-count "\${NPA_ENVGEN_SHARD_COUNT:-16}"
