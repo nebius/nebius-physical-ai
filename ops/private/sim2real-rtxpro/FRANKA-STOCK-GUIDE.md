@@ -3,6 +3,40 @@
 **Audience:** RTX PRO demo operators on a Mac laptop. GPU work runs on Nebius mk8s; artifacts
 land on S3.
 
+## Real RL training vs. reference stub (read this first)
+
+By default the staged loop's inner-loop "trainer" is a **reference hook**
+(`run_vlm_signal_training_step`): one SGD step on a tiny scalar adapter. It is
+**not** a trained robot policy — `trainer_source: reference` in the report, and a
+`success_rate` of `1.0` from it is the stub, not a learned policy.
+
+For a **genuine RL-trained Franka policy**, supply the BYO seams (branch
+`feat/sim2real-real-rl-franka`):
+
+```bash
+export NPA_SOURCE_REF=feat/sim2real-real-rl-franka
+export EVAL_IMAGE="$REGISTRY/npa-sim2real-eval:0.1.1-genuine-sm120"   # sm_120 Blackwell-good
+export BYO_TRAINER_COMMAND='NPA_BYO_ISAAC_ITERATIONS=300 NPA_BYO_ISAAC_NUM_ENVS=1024 python3 -m npa.workflows.sim2real.byo_isaac_trainer'
+export BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval'
+./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+```
+
+- **BYO trainer** (`byo_isaac_trainer`): submits an Isaac-Lab `rsl_rl` PPO sibling
+  job on `Isaac-Lift-Cube-Franka-v0`, trains for real iterations, uploads a real
+  `model_*.pt`, and **shapes the PPO reward from the Cosmos-Reason VLM signal**
+  (VLM `error_tags`/mean reward → `env.rewards.<term>.weight` overrides; see
+  `VLM_REWARD_OVERRIDES` in the train job log). Report shows
+  `trainer_source: byo_command`, `backend: isaac_rsl_rl_ppo`.
+- **BYO eval** (`byo_isaac_eval`): rolls the **trained** checkpoint in Isaac and
+  derives `success_rate` from the task's object-to-goal distance — a genuine
+  measurement (expect it to start low and climb with more `NPA_BYO_ISAAC_ITERATIONS`;
+  it refuses to report success when no real checkpoint exists).
+- Use more iterations for real competence (`NPA_BYO_ISAAC_ITERATIONS=300+`); a
+  handful of iterations will honestly score near-zero success.
+
+`success_rate` only reflects a real policy when both BYO seams are set; without
+them you are looking at the reference stub.
+
 **Monitor stage-status fix:** use NPA `main` — run `./setup.sh` in the walkthrough repo to refresh the venv before `npa workbench workflow status`.
 
 ## First-time bucket setup (new region/bucket)
