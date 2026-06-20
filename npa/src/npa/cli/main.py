@@ -61,6 +61,7 @@ app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 DEFAULT_REGION = "eu-north1"
 # Recommended default cap for an auto-created object-storage bucket.
 RECOMMENDED_BUCKET_SIZE_GB = 50
+DEFAULT_BUCKET_STORAGE_CLASS = "standard"
 
 _SETUP_GUIDANCE = """Credential setup
 
@@ -69,9 +70,10 @@ Run `npa configure` in a terminal for interactive setup (use
 installed Nebius CLI binary internally (profile setup stays inside
 `npa configure`; no separate Nebius CLI onboarding commands), bootstraps a profile
 when needed, then with an authenticated profile
-auto-creates your S3 bucket and access key, so
-you only supply tenant/project/region (pre-filled from the profile) plus optional
-Hugging Face, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
+auto-creates an S3 bucket (and access key) when you press Enter at the bucket
+prompt, so you supply your Nebius tenant id, project id, and region plus optional
+bucket name, storage class (standard or enhanced), bucket size, Hugging Face,
+Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
@@ -258,6 +260,37 @@ def _as_bucket_uri(name: str) -> str:
     return f"s3://{value.rstrip('/')}/"
 
 
+def _prompt_new_bucket_settings(
+    ask: Callable[..., str],
+    *,
+    bucket_name: str,
+) -> tuple[str, int]:
+    """Prompt for storage class and size when creating a new bucket."""
+
+    from npa.clients import nebius as nebius_client
+
+    storage_raw = ask(
+        "New bucket storage class (standard/enhanced)",
+        default=DEFAULT_BUCKET_STORAGE_CLASS,
+    )
+    storage_class = nebius_client.normalize_bucket_storage_class(storage_raw)
+    if storage_class == DEFAULT_BUCKET_STORAGE_CLASS:
+        typer.echo("  Using standard storage (default).")
+    size_gb = ask(
+        f"New bucket size limit in GB (recommended {RECOMMENDED_BUCKET_SIZE_GB})",
+        default=str(RECOMMENDED_BUCKET_SIZE_GB),
+    )
+    max_size_bytes = _gb_to_bytes(size_gb)
+    if max_size_bytes == 0:
+        typer.echo("  Using no size limit (unlimited, up to quota).")
+    else:
+        typer.echo(
+            f"  Will create '{bucket_name}' with {storage_class} storage "
+            f"and a {size_gb or RECOMMENDED_BUCKET_SIZE_GB} GB cap."
+        )
+    return storage_class, max_size_bytes
+
+
 def _provision_object_storage(
     nebius_client,
     ask: Callable[..., str],
@@ -270,8 +303,14 @@ def _provision_object_storage(
     if not (project_id and tenant_id):
         return None
 
-    suggested_bucket = nebius_client.bucket_name_for(tenant_id, project_id)
-    bucket_name = ask("Object-storage bucket name", default=suggested_bucket) or suggested_bucket
+    typer.echo(
+        "\nObject storage: enter an existing bucket name to reuse it, "
+        "or press Enter to have npa create a default npa-bucket for this project."
+    )
+    bucket_name = ask("Object-storage bucket name")
+    if not bucket_name:
+        bucket_name = nebius_client.bucket_name_for(tenant_id, project_id)
+        typer.echo("  No bucket name provided; npa will create a default bucket.")
 
     try:
         already_exists = nebius_client.bucket_exists(project_id, bucket_name)
@@ -279,21 +318,14 @@ def _provision_object_storage(
         already_exists = False
 
     bucket_max_size_bytes = 0
+    bucket_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
     if already_exists:
         typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
-    elif typer.confirm(
-        f"Set a size limit on new bucket '{bucket_name}'?", default=True
-    ):
-        bucket_max_size_bytes = _gb_to_bytes(
-            ask(
-                f"Bucket size limit in GB (recommended {RECOMMENDED_BUCKET_SIZE_GB})",
-                default=str(RECOMMENDED_BUCKET_SIZE_GB),
-            )
-        )
-        if bucket_max_size_bytes == 0:
-            typer.echo("  Using no size limit (unlimited, up to quota).")
     else:
-        typer.echo("  Creating bucket without a size limit (unlimited, up to quota).")
+        bucket_storage_class, bucket_max_size_bytes = _prompt_new_bucket_settings(
+            ask,
+            bucket_name=bucket_name,
+        )
 
     try:
         typer.echo("Provisioning Nebius object storage (bucket + access key)...")
@@ -303,6 +335,7 @@ def _provision_object_storage(
             region,
             bucket_name=bucket_name,
             bucket_max_size_bytes=bucket_max_size_bytes,
+            bucket_storage_class=bucket_storage_class,
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
@@ -350,12 +383,10 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             )
         ).strip()
 
-    project_default = nebius_client.current_project_id()
-    tenant_default = nebius_client.current_tenant_id()
-    project_id = ask("Nebius project id", default=project_default)
-    tenant_id = ask("Nebius tenant id", default=tenant_default)
+    project_id = ask("Nebius project id")
+    tenant_id = ask("Nebius tenant id")
     registry_default = (
-        nebius_client.discover_container_registry(project_id or project_default)
+        nebius_client.discover_container_registry(project_id)
         or DEFAULT_CONTAINER_REGISTRY
     )
     region_default = _region_from_registry_host(registry_default) or DEFAULT_REGION
@@ -385,7 +416,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
                 "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
             ),
             "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
-            "bucket": ask("S3 bucket (e.g. s3://my-bucket/)"),
+            "bucket": ask("S3 bucket URI (e.g. s3://<your-bucket>/)"),
         }
 
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
@@ -485,8 +516,10 @@ def configure(
         True,
         "--provision/--no-provision",
         help=(
-            "Auto-create the Nebius S3 bucket and access key from your profile "
-            "(default). Use --no-provision to enter existing S3 credentials."
+            "Auto-create a Nebius S3 bucket (when missing) and an access key "
+            "(default). Reuse an existing bucket by name, or press Enter to "
+            "create a default npa-bucket with standard storage and a size cap. "
+            "Use --no-provision to enter existing S3 credentials."
         ),
     ),
     token_factory_key: str = typer.Option(
@@ -527,8 +560,10 @@ def init(
         True,
         "--provision/--no-provision",
         help=(
-            "Auto-create the Nebius S3 bucket and access key from your profile "
-            "(default). Use --no-provision to enter existing S3 credentials."
+            "Auto-create a Nebius S3 bucket (when missing) and an access key "
+            "(default). Reuse an existing bucket by name, or press Enter to "
+            "create a default npa-bucket with standard storage and a size cap. "
+            "Use --no-provision to enter existing S3 credentials."
         ),
     ),
     token_factory_key: str = typer.Option(

@@ -349,15 +349,52 @@ def ensure_access_key(
 
 # ── S3 bucket ────────────────────────────────────────────────────────────
 
+DEFAULT_BUCKET_BASENAME = "npa-bucket"
+DEFAULT_BUCKET_STORAGE_CLASS = "standard"
+
+
+def normalize_bucket_storage_class(value: str) -> str:
+    """Map user-facing storage class labels to Nebius CLI values."""
+
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"", "standard", "std", "storage_class_unspecified"}:
+        return DEFAULT_BUCKET_STORAGE_CLASS
+    if normalized in {"enhanced", "enhanced_throughput", "enhancedthroughput"}:
+        return "enhanced_throughput"
+    if normalized == "intelligent":
+        return "intelligent"
+    return DEFAULT_BUCKET_STORAGE_CLASS
+
 
 def bucket_name_for(tenant_id: str, project_id: str) -> str:
-    """Derive a deterministic bucket name from tenant + project IDs.
+    """Derive a deterministic default bucket name from tenant + project IDs.
 
     Matches the logic in ``environment.sh`` so existing buckets are reused.
     """
     raw = f"{tenant_id}-{project_id}"
     suffix = hashlib.md5(raw.encode()).hexdigest()[:8]
-    return f"lerobot-{suffix}"
+    return f"{DEFAULT_BUCKET_BASENAME}-{suffix}"
+
+
+def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
+    """Return the bucket list item for *bucket_name*, or ``None``."""
+
+    data = _run_json([
+        "storage", "bucket", "list",
+        "--parent-id", project_id,
+    ])
+    for item in data.get("items", []):
+        if item.get("metadata", {}).get("name") == bucket_name:
+            return item
+    return None
+
+
+def delete_bucket(bucket_id: str) -> None:
+    """Delete an object-storage bucket by resource id."""
+
+    if not bucket_id:
+        return
+    _run(["storage", "bucket", "delete", "--id", bucket_id])
 
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
@@ -377,20 +414,24 @@ def ensure_bucket(
     bucket_name: str,
     *,
     max_size_bytes: int = 0,
+    default_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
 ) -> str:
     """Get or create an S3 bucket, return its name.
 
     *max_size_bytes* caps a newly created bucket (0 = unlimited). It is only
     applied when the bucket is created; an existing bucket is reused unchanged.
+    *default_storage_class* is applied only when the bucket is created.
     """
     if bucket_exists(project_id, bucket_name):
         return bucket_name
 
+    storage_class = normalize_bucket_storage_class(default_storage_class)
     args = [
         "storage", "bucket", "create",
         "--name", bucket_name,
         "--parent-id", project_id,
         "--versioning-policy", "enabled",
+        "--default-storage-class", storage_class,
     ]
     if max_size_bytes > 0:
         args += ["--max-size-bytes", str(max_size_bytes)]
@@ -408,6 +449,7 @@ def bootstrap_environment(
     *,
     bucket_name: str | None = None,
     bucket_max_size_bytes: int = 0,
+    bucket_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
@@ -417,8 +459,9 @@ def bootstrap_environment(
     *bucket_name* selects the object-storage bucket; when omitted it falls back
     to the deterministic ``bucket_name_for`` name. *bucket_max_size_bytes* caps
     a newly created bucket (0 = unlimited); it is ignored when the bucket
-    already exists. *on_status* is an optional callback ``(message: str) ->
-    None`` for progress reporting.
+    already exists. *bucket_storage_class* applies only when the bucket is
+    created. *on_status* is an optional callback ``(message: str) -> None`` for
+    progress reporting.
     """
 
     def _status(msg: str) -> None:
@@ -436,7 +479,12 @@ def bootstrap_environment(
 
     _status("Setting up S3 bucket...")
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
-    ensure_bucket(project_id, bucket_name, max_size_bytes=bucket_max_size_bytes)
+    ensure_bucket(
+        project_id,
+        bucket_name,
+        max_size_bytes=bucket_max_size_bytes,
+        default_storage_class=bucket_storage_class,
+    )
 
     _status("Setting up access key for S3...")
     aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)

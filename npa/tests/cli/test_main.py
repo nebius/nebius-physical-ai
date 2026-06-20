@@ -125,6 +125,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         *,
         bucket_name=None,
         bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
         on_status=None,
     ):
         bootstrap_calls.append(
@@ -134,6 +135,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
                 "region": region,
                 "bucket_name": bucket_name,
                 "bucket_max_size_bytes": bucket_max_size_bytes,
+                "bucket_storage_class": bucket_storage_class,
             }
         )
         if on_status:
@@ -147,16 +149,16 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # Accept derived project/tenant + default region/registry; pick a custom
+    # Enter project/tenant + default region/registry; pick a custom
     # bucket name and a custom size; then HF + NGC.
     answers = "\n".join(
         [
-            "",                  # project id (accept derived)
-            "",                  # tenant id (accept derived)
+            "project-12345",     # project id
+            "tenant-abcde",      # tenant id
             "",                  # region (default eu-north1)
             "",                  # registry (default)
             "my-bucket",         # bucket name (customer choice)
-            "y",                 # set a size limit?
+            "",                  # storage class (standard default)
             "100",               # size in GB
             "hf_secret_token",   # HF token
             "nebius_secret_key", # Nebius Token Factory API key
@@ -176,6 +178,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     )
     assert call["bucket_name"] == "my-bucket"
     assert call["bucket_max_size_bytes"] == 100 * 1024**3
+    assert call["bucket_storage_class"] == "standard"
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
@@ -219,6 +222,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
         *,
         bucket_name=None,
         bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
         on_status=None,
     ):
         sizes.append(bucket_max_size_bytes)
@@ -231,16 +235,16 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # No size prompt is shown when the bucket already exists.
-    # proj, tenant, region, registry, bucket name (default), hf, token factory, ngc
-    answers = "\n".join(["", "", "", "", "", "", "", ""]) + "\n"
+    # proj, tenant, region, registry, bucket name (Enter = default), hf, token factory, ngc
+    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
+    assert "No bucket name provided" in result.output
     assert "Reusing existing object-storage bucket" in result.output
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
-    assert creds["storage"]["bucket"].startswith("s3://lerobot-")
+    assert creds["storage"]["bucket"].startswith("s3://npa-bucket-")
 
 
 def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path) -> None:
@@ -265,12 +269,12 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
 
     answers = "\n".join(
         [
-            "",                  # project id (accept derived)
-            "",                  # tenant id (accept derived)
+            "project-1",         # project id
+            "tenant-1",          # tenant id
             "",                  # region (default)
             "",                  # registry (default)
-            "",                  # bucket name (accept suggested)
-            "y",                 # set a size limit?
+            "provision-bucket",  # bucket name
+            "",                  # storage class (standard default)
             "",                  # size GB (default 50)
             "AKIAMANUAL",        # S3 access key (fallback)
             "manual-secret",     # S3 secret (fallback)
@@ -315,8 +319,8 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
 
     answers = "\n".join(
         [
-            "",                  # project id
-            "",                  # tenant id
+            "project-1",         # project id
+            "tenant-1",          # tenant id
             "me-central1",       # region
             "",                  # registry (default)
             "AKIAMANUAL",        # S3 access key
@@ -452,7 +456,7 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
     assert "Nebius CLI profile detected" in result.output
 
 
-def test_configure_existing_profile_prefills_and_writes_config(
+def test_configure_existing_profile_writes_config_with_explicit_ids(
     monkeypatch, tmp_path
 ) -> None:
     import yaml
@@ -487,11 +491,11 @@ def test_configure_existing_profile_prefills_and_writes_config(
 
     answers = "\n".join(
         [
-            "",                  # project id (accept profile default)
-            "",                  # tenant id (accept profile default)
+            "project-from-profile",  # project id (entered explicitly)
+            "tenant-from-profile",   # tenant id (entered explicitly)
             "",                  # region (accept eu-west1 from registry)
             "",                  # registry (accept discovered)
-            "",                  # bucket name (accept suggested)
+            "",                  # bucket name (Enter = default)
             "hf_from_profile",   # HF token
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
@@ -665,12 +669,13 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     answers = "\n".join(
         [
             "y",                 # create Nebius profile
-            "",                  # project id (accept derived)
-            "",                  # tenant id (accept derived)
+            "project-12345",     # project id
+            "tenant-abcde",      # tenant id
             "",                  # region (default eu-north1)
             "",                  # registry (default)
-            "",                  # bucket name (accept suggested)
-            "n",                 # no bucket size limit
+            "",                  # bucket name (Enter = default)
+            "",                  # storage class (standard default)
+            "",                  # size GB (default 50)
             "hf_secret_token",   # HF token
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
@@ -681,6 +686,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     assert result.exit_code == 0, result.output
     assert created == [True]
     assert "Nebius CLI profile is ready." in result.output
+    assert "No bucket name provided" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"

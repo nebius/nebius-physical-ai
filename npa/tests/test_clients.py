@@ -425,7 +425,7 @@ def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
         on_status=statuses.append,
     )
 
-    assert nebius.bucket_name_for("tenant", "project").startswith("lerobot-")
+    assert nebius.bucket_name_for("tenant", "project").startswith("npa-bucket-")
     editors.assert_called_once_with("tenant", "sa")
     bucket.assert_called_once()
     assert result["iam_token"] == "iam"
@@ -449,16 +449,21 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
     )
 
     assert result["s3_bucket"] == "chosen"
-    bucket.assert_called_once_with("project", "chosen", max_size_bytes=123)
+    bucket.assert_called_once_with(
+        "project",
+        "chosen",
+        max_size_bytes=123,
+        default_storage_class="standard",
+    )
 
 
 def test_nebius_bucket_exists(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "lerobot-abc"}}]},
+        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
     )
 
-    assert nebius.bucket_exists("project", "lerobot-abc") is True
+    assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
 
 
@@ -466,7 +471,7 @@ def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=True)
     run = mocker.patch("npa.clients.nebius._run")
 
-    assert nebius.ensure_bucket("project", "lerobot-abc", max_size_bytes=123) == "lerobot-abc"
+    assert nebius.ensure_bucket("project", "npa-bucket-abc", max_size_bytes=123) == "npa-bucket-abc"
     run.assert_not_called()
 
 
@@ -474,18 +479,40 @@ def test_nebius_ensure_bucket_applies_max_size_on_create(mocker) -> None:
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
     run = mocker.patch("npa.clients.nebius._run")
 
-    nebius.ensure_bucket("project", "lerobot-abc", max_size_bytes=50 * 1024**3)
+    nebius.ensure_bucket("project", "npa-bucket-abc", max_size_bytes=50 * 1024**3)
 
     args = run.call_args.args[0]
     assert "--max-size-bytes" in args
     assert args[args.index("--max-size-bytes") + 1] == str(50 * 1024**3)
+    assert "--default-storage-class" in args
+    assert args[args.index("--default-storage-class") + 1] == "standard"
+
+
+def test_nebius_ensure_bucket_applies_enhanced_storage_class(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    run = mocker.patch("npa.clients.nebius._run")
+
+    nebius.ensure_bucket(
+        "project",
+        "npa-bucket-abc",
+        default_storage_class="enhanced_throughput",
+    )
+
+    args = run.call_args.args[0]
+    assert args[args.index("--default-storage-class") + 1] == "enhanced_throughput"
+
+
+def test_nebius_normalize_bucket_storage_class() -> None:
+    assert nebius.normalize_bucket_storage_class("") == "standard"
+    assert nebius.normalize_bucket_storage_class("enhanced") == "enhanced_throughput"
+    assert nebius.normalize_bucket_storage_class("ENHANCED_THROUGHPUT") == "enhanced_throughput"
 
 
 def test_nebius_ensure_bucket_unlimited_omits_max_size(mocker) -> None:
     mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
     run = mocker.patch("npa.clients.nebius._run")
 
-    nebius.ensure_bucket("project", "lerobot-abc")
+    nebius.ensure_bucket("project", "npa-bucket-abc")
 
     assert "--max-size-bytes" not in run.call_args.args[0]
 

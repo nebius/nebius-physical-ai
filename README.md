@@ -57,13 +57,62 @@ You should see a ranked report with `accuracy: 1.0` over four labeled rollouts.
 That is the full local loop; the same command swaps `--backend stub` for a real
 `self-hosted` or `api` VLM backend once you add credentials.
 
-Next, run a single interactive NPA setup step (install the Nebius CLI binary
-first; `npa configure` reuses or creates the profile and writes your NPA
-credential/config files — see
-[docs/quickstart.md](docs/quickstart.md) for the full walkthrough):
+### Nebius AI Cloud account
+
+Before `npa configure --interactive`, sign in to Nebius AI Cloud and create the
+tenant and project that NPA will use:
+
+1. **Sign up and log in** — create an account at
+   [Nebius signup](https://docs.nebius.com/signup-billing/sign-up). Use a
+   standard email login (not SSO-only) so you can create tenants and projects.
+2. **Tenant** — Nebius creates a tenant on signup. To add another, follow
+   [Creating a tenant](https://docs.nebius.com/iam/create-tenants). Copy your
+   tenant id (`tenant-…`) from the tenant selector in the
+   [web console](https://console.nebius.com) or list tenants with the Nebius
+   CLI ([get tenants](https://docs.nebius.com/iam/get-tenants)).
+3. **Project** — create a project in that tenant for your workloads (for example
+   in `eu-north1`). Use the console
+   ([Manage projects](https://docs.nebius.com/iam/manage-projects)) or the CLI:
+
+   ```bash
+   nebius iam v2 project create --parent-id <tenant-id> --name npa-workbench --region eu-north1
+   ```
+
+   Copy the project id (`project-…`) from the console project selector or
+   `nebius iam v2 project list --parent-id <tenant-id>`.
+4. **Object Storage bucket (optional)** — `npa configure --interactive` can create
+   a default `npa-bucket` for your project when you press Enter at the bucket
+   prompt.
+   For new buckets it asks for **storage class** (`standard`, default, or
+   `enhanced`) and a **size limit in GB** (default 50). To reuse your own
+   bucket instead, create one in the console (**Storage → Object Storage →
+   Create bucket**) or via the CLI
+   ([Manage buckets](https://docs.nebius.com/object-storage/buckets/manage)):
+
+   ```bash
+   nebius storage bucket create --parent-id <project-id> --name <your-bucket-name> \
+     --default-storage-class standard --max-size-bytes 53687091200
+   ```
+
+   See the [Object Storage quickstart](https://docs.nebius.com/object-storage/quickstart)
+   for naming rules.
+
+You will enter your project id and tenant id when `npa configure --interactive`
+prompts for them. No example ids or bucket names are shown — use the values from
+your account, or press Enter to let NPA create a default `npa-bucket`.
+
+Next, run interactive NPA setup (install the Nebius CLI binary first). This is
+the supported onboarding path: `npa configure --interactive` reuses or creates
+the Nebius CLI profile, prompts for tenant id, project id, region, bucket
+(reuse or create `npa-bucket` with storage class and size), and optional
+Hugging Face, Token Factory, and NGC keys, then writes `~/.npa/credentials.yaml`
+and `~/.npa/config.yaml`. In a normal terminal, plain `npa configure` is
+equivalent; use `--interactive` explicitly when documenting copy-paste steps or
+when stdin is not a TTY. See
+[docs/quickstart.md](docs/quickstart.md) for the full walkthrough:
 
 ```bash
-npa configure
+npa configure --interactive
 ```
 
 The flagship GPU workload is **NVIDIA Cosmos** (world-foundation model for
@@ -92,7 +141,7 @@ need a `NEBIUS_API_KEY`. This includes physical-AI scene reasoning with
 
 ```bash
 # 1. Get a key at https://tokenfactory.nebius.com/ -> API keys, then:
-npa configure                       # stores NEBIUS_API_KEY in ~/.npa/credentials.yaml
+npa configure --interactive         # paste the key at the Token Factory prompt
 npa workbench token-factory verify  # confirms auth + lists served models
 
 # 2. Use it (zero GPU):
