@@ -260,6 +260,13 @@ try:
     for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(obs)
+        if _step == 0:
+            print("STEP0 obs_type", type(obs).__name__,
+                  "act_shape", tuple(getattr(actions, "shape", ())), flush=True)
+        # rsl_rl inference can return a flat [N*act_dim] / [act_dim] tensor; the
+        # manager-based env needs [N, act_dim]. Coerce defensively.
+        if hasattr(actions, "ndim") and actions.ndim == 1:
+            actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
         if _step % CAP_EVERY == 0:
             capture(_step)
