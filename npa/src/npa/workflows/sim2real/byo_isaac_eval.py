@@ -330,6 +330,15 @@ try:
 except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
+# With enable_cameras the Isaac app hangs on normal exit, which blocks the bash
+# upload steps after this script. Force-close + hard-exit so the renders/distances
+# get uploaded.
+try:
+    app.close()
+except Exception:
+    pass
+sys.stdout.flush(); sys.stderr.flush()
+os._exit(0)
 '''
 
 
