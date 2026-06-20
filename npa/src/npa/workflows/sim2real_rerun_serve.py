@@ -415,6 +415,8 @@ def build_rerun_serve_config(
     aws_region: str = "eu-north1",
     rrd_s3_uri: str = "",
     report_uri: str = "",
+    auth_user: str = "",
+    auth_password: str = "",
 ) -> RerunServeConfig:
     normalized_run_id = validate_staged_run_id(run_id)
     storage = resolve_project_storage(project)
@@ -444,6 +446,8 @@ def build_rerun_serve_config(
         aws_secret_access_key=aws_secret_access_key,
         aws_region=aws_region.strip() or "eu-north1",
         rrd_s3_uri_override=rrd_override,
+        auth_user=auth_user.strip(),
+        auth_password=auth_password,
     )
 
 
