@@ -179,7 +179,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
-    assert creds["tokens"]["NEBIUS_API_KEY"] == "nebius_secret_key"
+    assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius_secret_key"
     assert creds["ngc"]["api_key"] == "nvapi_secret"
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
     assert creds["storage"]["aws_secret_access_key"] == "provisioned-secret"
@@ -395,9 +395,9 @@ def test_configure_token_factory_key_stores_under_tokens_nebius_api_key(
     )
 
     assert result.exit_code == 0, result.output
-    assert "tokens.NEBIUS_API_KEY" in result.output
+    assert "tokens.NEBIUS_TOKEN_FACTORY_KEY" in result.output
     stored = yaml.safe_load(creds_path.read_text())
-    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-cli-key"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-cli-key"
     assert stored["tokens"]["HF_TOKEN"] == "hf-existing"
 
 

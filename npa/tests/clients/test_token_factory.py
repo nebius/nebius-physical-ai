@@ -35,9 +35,14 @@ def test_resolve_config_defaults_to_token_factory_base_url() -> None:
     assert config.models_url == "https://api.tokenfactory.nebius.com/v1/models"
 
 
-def test_resolve_config_reads_nebius_api_key_from_env() -> None:
-    config = resolve_config(environ={"NEBIUS_API_KEY": "env-key"})
+def test_resolve_config_reads_nebius_token_factory_key_from_env() -> None:
+    config = resolve_config(environ={"NEBIUS_TOKEN_FACTORY_KEY": "env-key"})
     assert config.api_key == "env-key"
+
+
+def test_resolve_config_reads_legacy_nebius_api_key_from_env() -> None:
+    config = resolve_config(environ={"NEBIUS_API_KEY": "legacy-env-key"})
+    assert config.api_key == "legacy-env-key"
 
 
 def test_resolve_config_reads_token_factory_key_from_credentials_file(
@@ -49,7 +54,7 @@ def test_resolve_config_reads_token_factory_key_from_credentials_file(
 
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-file-key"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_KEY": "tf-file-key"}})
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
     monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
