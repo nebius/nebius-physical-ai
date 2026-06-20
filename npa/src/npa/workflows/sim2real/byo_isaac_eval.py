@@ -229,7 +229,10 @@ try:
     except Exception:
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-    print("OBS_TYPE", type(obs).__name__, flush=True)
+    # Use the ACTUAL env count (not the requested N) for action reshape + sizing.
+    realN = int(getattr(env.unwrapped, "num_envs", N) or N)
+    print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
+    N = realN
     # Per-env render dirs (labelled by generated env_id when provided).
     import json as _json
     env_ids = _json.loads(os.environ.get("EVAL_ENV_IDS", "[]") or "[]")
