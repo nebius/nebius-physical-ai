@@ -81,13 +81,16 @@ project that NPA will use:
    Copy the project id (`project-…`) from the console project selector or
    `nebius iam v2 project list --parent-id <tenant-id>`.
 4. **Object Storage bucket (optional)** — `npa configure` can create a default
-   bucket for your project when you press Enter at the bucket prompt. To use your
-   own bucket instead, create one in the console (**Storage → Object Storage →
+   `npa-bucket` for your project when you press Enter at the bucket prompt.
+   For new buckets it asks for **storage class** (`standard`, default, or
+   `enhanced`) and a **size limit in GB** (default 50). To reuse your own
+   bucket instead, create one in the console (**Storage → Object Storage →
    Create bucket**) or via the CLI
    ([Manage buckets](https://docs.nebius.com/object-storage/buckets/manage)):
 
    ```bash
-   nebius storage bucket create --parent-id <project-id> --name <your-bucket-name>
+   nebius storage bucket create --parent-id <project-id> --name <your-bucket-name> \
+     --default-storage-class standard --max-size-bytes 53687091200
    ```
 
    See the [Object Storage quickstart](https://docs.nebius.com/object-storage/quickstart)
@@ -95,7 +98,7 @@ project that NPA will use:
 
 You will enter your project id and tenant id when `npa configure` prompts for
 them. No example ids or bucket names are shown — use the values from your
-account, or press Enter to let NPA create a default bucket.
+account, or press Enter to let NPA create a default `npa-bucket`.
 
 Next, run a single interactive NPA setup step (install the Nebius CLI binary
 first; `npa configure` reuses or creates the profile and writes your NPA

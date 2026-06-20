@@ -125,6 +125,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         *,
         bucket_name=None,
         bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
         on_status=None,
     ):
         bootstrap_calls.append(
@@ -134,6 +135,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
                 "region": region,
                 "bucket_name": bucket_name,
                 "bucket_max_size_bytes": bucket_max_size_bytes,
+                "bucket_storage_class": bucket_storage_class,
             }
         )
         if on_status:
@@ -156,7 +158,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
             "",                  # region (default eu-north1)
             "",                  # registry (default)
             "my-bucket",         # bucket name (customer choice)
-            "y",                 # set a size limit?
+            "",                  # storage class (standard default)
             "100",               # size in GB
             "hf_secret_token",   # HF token
             "nebius_secret_key", # Nebius Token Factory API key
@@ -176,6 +178,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     )
     assert call["bucket_name"] == "my-bucket"
     assert call["bucket_max_size_bytes"] == 100 * 1024**3
+    assert call["bucket_storage_class"] == "standard"
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
@@ -219,6 +222,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
         *,
         bucket_name=None,
         bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
         on_status=None,
     ):
         sizes.append(bucket_max_size_bytes)
@@ -240,7 +244,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
     assert "Reusing existing object-storage bucket" in result.output
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
-    assert creds["storage"]["bucket"].startswith("s3://lerobot-")
+    assert creds["storage"]["bucket"].startswith("s3://npa-bucket-")
 
 
 def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path) -> None:
@@ -270,7 +274,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "",                  # region (default)
             "",                  # registry (default)
             "provision-bucket",  # bucket name
-            "y",                 # set a size limit?
+            "",                  # storage class (standard default)
             "",                  # size GB (default 50)
             "AKIAMANUAL",        # S3 access key (fallback)
             "manual-secret",     # S3 secret (fallback)
@@ -670,7 +674,8 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
             "",                  # region (default eu-north1)
             "",                  # registry (default)
             "",                  # bucket name (Enter = default)
-            "n",                 # no bucket size limit
+            "",                  # storage class (standard default)
+            "",                  # size GB (default 50)
             "hf_secret_token",   # HF token
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
