@@ -35,6 +35,11 @@ DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Object-to-goal distance (metres) under which a Lift episode counts as success.
 DEFAULT_SUCCESS_DIST_M = 0.05
 
+# Set by main() so run_isaac_eval_job can sync rendered frames to the heldout
+# renders dir + surface the render manifest into the report (for Rerun viz).
+_RENDERS_LOCAL_DIR = ""
+_RENDER_MANIFEST: dict[str, Any] = {}
+
 
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
@@ -154,16 +159,19 @@ TASK = os.environ["EVAL_TASK"]
 CKPT = os.environ["EVAL_CKPT_LOCAL"]
 OUT = os.environ["EVAL_OUT_JSON"]
 SEED = int(os.environ.get("EVAL_SEED", "0"))  # generated-env seed (envgen envs.jsonl)
-def dump(distances, note):
-    json.dump({"object_goal_distances": list(distances), "note": note},
+def dump(distances, note, episodes=None):
+    json.dump({"object_goal_distances": list(distances), "note": note,
+               "render_episodes": episodes or []},
               open(OUT, "w"))
-    print("EVAL_WROTE", OUT, note, flush=True)
+    print("EVAL_WROTE", OUT, note, "episodes", len(episodes or []), flush=True)
 try:
     from isaaclab.app import AppLauncher
-    app = AppLauncher(headless=True).app
+    app = AppLauncher(headless=True, enable_cameras=True).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401  registers tasks
     from isaaclab_tasks.utils import parse_env_cfg
+    import isaaclab.sim as sim_utils
+    from isaaclab.sensors import TiledCameraCfg
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
@@ -191,6 +199,11 @@ try:
         except Exception:
             pass
         print("EVAL_SEED_APPLIED", SEED, flush=True)
+    # Add a workspace camera so we can RENDER the (custom) object for Rerun viz.
+    env_cfg.scene.heldout_cam = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/heldout_cam",
+        offset=TiledCameraCfg.OffsetCfg(pos=(1.2, 0.0, 0.8), rot=(0.6, 0.0, 0.35, 0.0), convention="world"),
+        data_types=["rgb"], width=128, height=128, spawn=sim_utils.PinholeCameraCfg())
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
@@ -217,11 +230,39 @@ try:
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
     print("OBS_TYPE", type(obs).__name__, flush=True)
+    # Per-env render dirs (labelled by generated env_id when provided).
+    import json as _json
+    env_ids = _json.loads(os.environ.get("EVAL_ENV_IDS", "[]") or "[]")
+    rend_root = os.environ.get("EVAL_RENDERS_DIR", "/tmp/evalwork/renders")
+    def _env_id(i):
+        return env_ids[i] if i < len(env_ids) else f"heldout-{i:04d}"
+    frame_names = {i: [] for i in range(N)}
+    try:
+        from PIL import Image as _PILImage
+        _have_pil = True
+    except Exception:
+        _have_pil = False
+    CAP_EVERY = max(1, STEPS // 16)
+    def capture(step):
+        if not _have_pil:
+            return
+        try:
+            rgb = env.unwrapped.scene["heldout_cam"].data.output["rgb"]
+            arr = rgb.detach().cpu().numpy()
+            for i in range(min(N, arr.shape[0])):
+                d = os.path.join(rend_root, _env_id(i)); os.makedirs(d, exist_ok=True)
+                name = f"camera-{len(frame_names[i]):04d}.png"
+                _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(os.path.join(d, name))
+                frame_names[i].append(name)
+        except Exception as e:
+            print("capture_err", repr(e), flush=True)
     min_dist = np.full(N, 1e9)
-    for _ in range(STEPS):
+    for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(obs)
         obs, _, dones, extras = env.step(actions)
+        if _step % CAP_EVERY == 0:
+            capture(_step)
         # object-to-goal distance: prefer an explicit metric, else infer.
         d = None
         log = (extras or {}).get("log") or {}
@@ -245,7 +286,9 @@ try:
             pass
         if d is not None:
             min_dist = np.minimum(min_dist, np.full(N, d))
-    dump([float(x if x < 1e8 else 0.5) for x in min_dist], "rollout_ok")
+    capture(STEPS)  # final frame
+    episodes = [{"env_id": _env_id(i), "frames": frame_names[i]} for i in range(N) if frame_names[i]]
+    dump([float(x if x < 1e8 else 0.5) for x in min_dist], "rollout_ok", episodes)
 except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
@@ -268,23 +311,45 @@ def build_isaac_eval_job_manifest(
     gpu_resource: str = "nvidia.com/gpu",
     seed: int = 0,
     object_usd: str = "",
+    env_ids_json: str = "[]",
+    renders_s3_prefix: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
     ``seed`` (from the generated env spec) drives the env randomization so the
     policy is evaluated on the envgen-produced env distribution. ``object_usd``
     overrides the manipuland so eval scores the policy on the same CUSTOM asset
-    it was trained on (physically simulated, not the stock cube).
+    it was trained on. RGB frames of the (custom) object are rendered and, when
+    ``renders_s3_prefix`` is set, uploaded for Rerun visualization.
     """
 
+    import shlex as _shlex
+
+    render_upload = ""
+    if renders_s3_prefix:
+        render_upload = (
+            'RENDERS_URI=' + _shlex.quote(renders_s3_prefix) + ' "$PY" - <<\'RLEOF\'\n'
+            "import os, boto3, glob\n"
+            "from urllib.parse import urlparse\n"
+            "u = urlparse(os.environ['RENDERS_URI'])\n"
+            "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+            "base = u.path.lstrip('/').rstrip('/')\n"
+            "n = 0\n"
+            "for p in glob.glob('/tmp/evalwork/renders/**/*.png', recursive=True):\n"
+            "    rel = os.path.relpath(p, '/tmp/evalwork/renders')\n"
+            "    s3.upload_file(p, u.netloc, base + '/' + rel); n += 1\n"
+            "print('UPLOADED_RENDERS', n, os.environ['RENDERS_URI'])\n"
+            "RLEOF\n"
+        )
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
         'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
-        '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
-        "mkdir -p /tmp/evalwork; cd /tmp/evalwork\n"
+        '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
+        "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
-        f'EVAL_OBJECT_USD="{object_usd}" '
+        f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
+        'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
         'EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt '
         'EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n'
         f'CKPT_URI="{checkpoint_uri}" OUT_URI="{per_env_s3_uri}" "$PY" - <<\'DLEOF\'\n'
@@ -307,7 +372,8 @@ def build_isaac_eval_job_manifest(
         "s3.upload_file('/tmp/evalwork/per_env_distances.json', u.netloc, u.path.lstrip('/'))\n"
         "print('UPLOADED_DISTANCES', os.environ['OUT_URI'])\n"
         "ULEOF\n"
-        'echo "BYO_EVAL_DONE"\n'
+        + render_upload
+        + 'echo "BYO_EVAL_DONE"\n'
     )
     return {
         "apiVersion": "batch/v1",
@@ -403,12 +469,14 @@ def run_isaac_eval_job(
     seeds = [e["seed"] for e in gen] or None
     seed = int(gen[0]["seed"]) if gen else 0  # drive randomization from a generated-env seed
     object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
+    renders_prefix = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/renders"
 
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
         checkpoint_uri=checkpoint_uri, per_env_s3_uri=per_env_uri,
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
+        env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
@@ -421,7 +489,30 @@ def run_isaac_eval_job(
     if wait.returncode != 0:
         logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
         raise SystemExit(f"byo_isaac_eval: eval job {job_name} did not complete: {wait.stderr}\n{logs.stdout}")
-    distances = _download_json(per_env_uri).get("object_goal_distances", [])
+    out = _download_json(per_env_uri)
+    distances = out.get("object_goal_distances", [])
+    # Pull the rendered frames of the (custom) object down to the local heldout
+    # renders dir so stage-14 Rerun viz logs them under heldout/camera/**.
+    episodes = out.get("render_episodes") or []
+    if episodes and _RENDERS_LOCAL_DIR:
+        try:
+            import boto3
+            from urllib.parse import urlparse
+            u = urlparse(renders_prefix)
+            s3 = boto3.client("s3", endpoint_url=_env("AWS_ENDPOINT_URL") or None)
+            base = u.path.lstrip("/").rstrip("/")
+            for ep in episodes:
+                eid = ep["env_id"]
+                for name in ep.get("frames", []):
+                    dst = Path(_RENDERS_LOCAL_DIR) / eid / name
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    s3.download_file(u.netloc, f"{base}/{eid}/{name}", str(dst))
+            print(f"byo_isaac_eval: synced {sum(len(e.get('frames',[])) for e in episodes)} frames", flush=True)
+        except Exception as e:
+            print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
+    global _RENDER_MANIFEST
+    _RENDER_MANIFEST = {"schema": "npa.sim2real.heldout_renders.v1", "sim_backend": "isaac",
+                        "isaac_task": task, "episodes": episodes}
     return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
 
 
@@ -433,6 +524,9 @@ def main() -> int:
     run_id = _env("NPA_SIM2REAL_RUN_ID") or _env("RUN_ID") or "byo-isaac"
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     num_envs = int(_env("NPA_SIM2REAL_HELDOUT_ENV_COUNT", "4") or 4)
+    # Heldout renders live next to the report so stage-14 viz finds them.
+    global _RENDERS_LOCAL_DIR
+    _RENDERS_LOCAL_DIR = str(Path(output_json).parent / "renders")
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
 
     inner_evidence = {}
@@ -469,6 +563,8 @@ def main() -> int:
     )
     report["generated_envs_tested"] = len(generated_envs)
     report["generated_env_ids"] = [e["env_id"] for e in generated_envs]
+    if _RENDER_MANIFEST.get("episodes"):
+        report["render_manifest"] = _RENDER_MANIFEST
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(report, indent=2), encoding="utf-8")
     passed = sum(1 for r in per_env if r["success"])
