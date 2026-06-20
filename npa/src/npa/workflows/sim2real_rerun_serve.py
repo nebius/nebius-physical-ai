@@ -343,6 +343,10 @@ http {{
     }}
     server {{
         listen {external_port};
+        location = /healthz {{
+            auth_basic off;
+            return 200 "ok";
+        }}
         location ~* \\.(wasm|js|ico|svg)$ {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
@@ -603,7 +607,10 @@ test -s /data/sim2real.rrd
                                     "imagePullPolicy": "IfNotPresent",
                                     "ports": [{"name": "http", "containerPort": config.port}],
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/", "port": "http"},
+                                        "httpGet": {
+                                            "path": "/healthz" if config.auth_enabled else "/",
+                                            "port": "http",
+                                        },
                                         "initialDelaySeconds": 5,
                                         "periodSeconds": 5,
                                         "timeoutSeconds": 3,

@@ -44,3 +44,15 @@ def test_manifest_basic_auth_secret_volume_mount_when_enabled():
     nginx = next(c for c in spec["containers"] if c["name"] == "nginx")
     mounts = [vm["mountPath"] for vm in nginx["volumeMounts"]]
     assert "/etc/nginx/auth" in mounts
+
+
+def test_nginx_healthz_unauthed_and_probe_uses_it():
+    from npa.workflows.sim2real_rerun_serve import RerunServeConfig, build_rerun_serve_manifest, build_rerun_nginx_config
+    cfg = build_rerun_nginx_config(auth_required=True)
+    assert "location = /healthz" in cfg and "auth_basic off;" in cfg
+    c = RerunServeConfig(run_id="sim2real-staged-20260620t010101z", s3_bucket="b", name="npa-rerun",
+                         auth_user="demo", auth_password="pw")
+    m = build_rerun_serve_manifest(c)
+    dep = next(i for i in m["items"] if i["kind"] == "Deployment")
+    nginx = next(x for x in dep["spec"]["template"]["spec"]["containers"] if x["name"] == "nginx")
+    assert nginx["readinessProbe"]["httpGet"]["path"] == "/healthz"
