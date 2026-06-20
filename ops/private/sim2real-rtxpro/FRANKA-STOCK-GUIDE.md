@@ -154,3 +154,39 @@ If `public_url` is pending, the LoadBalancer is still provisioning or hit a VPC 
 quota (`vpc.ipv4-address.public.count`). Wait and re-run serve; inspect
 `kubectl describe svc npa-sim2real-rerun-npa-rtxpro-mk8s`. Do not use laptop port-forward
 on the default operator path.
+
+## Custom asset actually simulated + authed cloud Rerun (branch feat/sim2real-real-rl-franka)
+
+**Custom object in the Isaac sim (train + eval).** The Lift manipuland is a
+`RigidObjectCfg`/`UsdFileCfg`, so set a custom USD and the policy trains AND is
+evaluated on it (physically simulated, not the stock DexCube):
+
+```bash
+export NPA_BYO_ISAAC_OBJECT_USD="$NUC/Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
+export BYO_TRAINER_COMMAND="NPA_BYO_ISAAC_ITERATIONS=120 NPA_BYO_ISAAC_NUM_ENVS=512 NPA_BYO_ISAAC_OBJECT_USD='$NPA_BYO_ISAAC_OBJECT_USD' python3 -m npa.workflows.sim2real.byo_isaac_trainer"
+export BYO_EVAL_COMMAND="NPA_BYO_ISAAC_OBJECT_USD='$NPA_BYO_ISAAC_OBJECT_USD' python3 -m npa.workflows.sim2real.byo_isaac_eval"
+export NPA_SIM2REAL_HELDOUT_RENDER_FRAMES=1 HELDOUT_ENV_COUNT=1
+```
+
+- **Rigid-body requirement:** the USD must have `RigidBodyAPI` (collision + mass).
+  Rigid-ready instanceables (e.g. `Props/Blocks/MultiColorCube/...`,
+  YCB `Props/YCB/Axis_Aligned_Physics/*`) work; a raw visual mesh (YCB
+  `Axis_Aligned/*`, most BYO meshes) fails to spawn (`Failed to find a rigid body`).
+  Wrapping arbitrary meshes with rigid/collision/mass props is a follow-up.
+- The BYO eval renders the trained policy acting on the custom object to
+  `eval/heldout/renders/<env_id>/camera-*.png` and writes `render_manifest`
+  (Rerun `heldout/camera/**`). Eval runs at `num_envs=1` (this env presents a
+  single-env obs).
+
+**Authed hosted Rerun (cloud LoadBalancer + HTTP basic-auth):**
+
+```bash
+npa workbench sim2real rerun serve --run-id <run> --auth-user demo --auth-password <pw>
+# prints public_url + creds; viewer returns 401 without creds, 200 with -u demo:<pw>
+```
+
+**Honest scope:** Isaac Lab is the real physics engine for **training + eval**;
+the asset/envgen stages are a spec layer (simready URIs not loaded into Isaac).
+The VLM (Cosmos-Reason) signal shapes PPO via `env.rewards.<term>.weight`
+overrides. `success_rate` reflects the trained policy (low at small iteration
+counts — increase `NPA_BYO_ISAAC_ITERATIONS` for real competence).
