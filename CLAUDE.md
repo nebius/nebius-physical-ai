@@ -22,6 +22,11 @@ making architecture, review, or domain judgments.
   workflows.
 - `skills/workflows/sim-to-real/SKILL.md`: generic sim-to-real workflow
   planning.
+- `skills/workflows/sim2real-operate/SKILL.md`: run, monitor, and debug the
+  staged Sim2Real pipeline on a K8s GPU cluster (runbook, direct-K8s submit,
+  health checks, job monitoring).
+- `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
+  (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 
 Compatibility symlinks exist at `.claude/skills` and `.agents/skills`; do not
 create a new split skill tree.

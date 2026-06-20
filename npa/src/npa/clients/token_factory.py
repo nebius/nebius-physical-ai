@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -95,6 +96,36 @@ def resolve_config(
     return TokenFactoryConfig(base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s)
 
 
+_THINK_RE = re.compile(r"\A\s*<think>(?P<reasoning>.*?)</think>\s*", re.DOTALL)
+
+
+def split_reasoning(message: dict[str, Any]) -> tuple[str, str | None]:
+    """Return ``(visible_text, reasoning_text)`` from a chat message.
+
+    Reasoning models on Token Factory deliver their reasoning trace in different
+    shapes. Cosmos 3 emits it inline as a leading ``<think>...</think>`` block in
+    ``content``; Kimi K2.6 / GLM-5.1 leave ``content`` null and put the trace in a
+    separate ``reasoning`` field. This normalizes both so callers get clean
+    visible text plus the trace, instead of a raw ``<think>`` prefix or the
+    literal string ``"None"``.
+    """
+
+    content = message.get("content")
+    reasoning = message.get("reasoning") or message.get("reasoning_content")
+    if reasoning is not None and not isinstance(reasoning, str):
+        reasoning = str(reasoning)  # normalize to str | None
+    if isinstance(content, str):
+        match = _THINK_RE.match(content)
+        if match:  # Cosmos 3: leading <think>...</think>
+            return content[match.end():].strip(), (match.group("reasoning").strip() or reasoning)
+        if "<think>" in content and "</think>" not in content:
+            # Truncated mid-think (finish_reason=length): all reasoning, no answer.
+            return "", (content.split("<think>", 1)[1].strip() or reasoning)
+        return content.strip(), reasoning
+    # content is null/non-string (Kimi/GLM reasoning-only)
+    return "", (reasoning.strip() if reasoning else None)
+
+
 class TokenFactoryClient:
     """Thin OpenAI-compatible client for Nebius Token Factory."""
 
@@ -145,16 +176,44 @@ class TokenFactoryClient:
             raise TokenFactoryError("Token Factory returned a non-object response")
         return data
 
-    def chat_completion_text(self, **kwargs: Any) -> str:
-        """Return the assistant message text from a chat completion."""
+    def chat_completion_message(self, **kwargs: Any) -> tuple[str, str | None]:
+        """Return ``(visible_text, reasoning_text)`` from a chat completion.
+
+        Handles reasoning models whose response splits visible output from the
+        reasoning trace (inline ``<think>`` for Cosmos 3, a separate
+        ``reasoning`` field for Kimi/GLM). See :func:`split_reasoning`.
+        """
 
         data = self.chat_completion(**kwargs)
         try:
-            return str(data["choices"][0]["message"]["content"])
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise TokenFactoryError(
-                "Token Factory response missing choices[0].message.content"
+                "Token Factory response missing choices[0].message"
             ) from exc
+        return split_reasoning(message)
+
+    def chat_completion_text(self, **kwargs: Any) -> str:
+        """Return the visible assistant text from a chat completion.
+
+        Strips any inline ``<think>`` reasoning trace. Raises when the model
+        returned no visible answer (reasoning-only response) instead of
+        returning the literal string ``"None"``.
+        """
+
+        visible, reasoning = self.chat_completion_message(**kwargs)
+        if not visible:
+            if reasoning:
+                raise TokenFactoryError(
+                    "Token Factory returned a reasoning-only response with no "
+                    "visible answer. Disable thinking with "
+                    "chat_template_kwargs.thinking=false or use "
+                    "chat_completion_message to read the reasoning trace."
+                )
+            raise TokenFactoryError(
+                "Token Factory response missing choices[0].message.content"
+            )
+        return visible
 
     def list_models(self) -> list[str]:
         """Return the list of model IDs available to this API key."""

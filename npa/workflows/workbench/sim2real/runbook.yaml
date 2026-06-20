@@ -233,17 +233,17 @@ run: |
     --vlm-reason2-model "${VLM_REASON2_MODEL:-nvidia/Cosmos-Reason2-8B}"
     --vlm-reason3-model "${VLM_REASON3_MODEL:-nvidia/Cosmos-Reason2-2B}"
     --vlm-dual-reason
-    --threshold "${SUCCESS_THRESHOLD:-0.75}"
-    --inner-iterations "${INNER_ITERATIONS:-2}"
-    --outer-iterations "${OUTER_ITERATIONS:-1}"
+    --threshold "${SUCCESS_THRESHOLD:-0.50}"
+    --inner-iterations "${INNER_ITERATIONS:-3}"
+    --outer-iterations "${OUTER_ITERATIONS:-2}"
     --env-count "${NPA_ENV_COUNT:-10000}"
     --train-fraction "${NPA_TRAIN_FRACTION:-0.8}"
     --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}"
-    --rollout-count "${ROLLOUT_COUNT:-3}"
-    --steps-per-rollout "${STEPS_PER_ROLLOUT:-4}"
+    --rollout-count "${ROLLOUT_COUNT:-8}"
+    --steps-per-rollout "${STEPS_PER_ROLLOUT:-6}"
     --heldout-env-count "${HELDOUT_ENV_COUNT:-8}"
     --signal-loss-weight "${SIGNAL_LOSS_WEIGHT:-1.0}"
-    --learning-rate "${LEARNING_RATE:-0.05}"
+    --learning-rate "${LEARNING_RATE:-0.08}"
     --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}"
     --byo-trainer-command "${BYO_TRAINER_COMMAND:-}"
     --byo-vlm-command "${BYO_VLM_COMMAND:-}"
@@ -265,5 +265,5 @@ run: |
 
   ./npa/.venv/bin/python -m npa.workflows.sim2real run \
     "${common_args[@]}" \
-    --initial-quality "${INITIAL_QUALITY:-0.38}" \
+    --initial-quality "${INITIAL_QUALITY:-0.42}" \
     --upload-artifacts

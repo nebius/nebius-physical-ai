@@ -11,7 +11,16 @@ from npa.clients.token_factory import (
     TokenFactoryClient,
     TokenFactoryError,
     resolve_config,
+    split_reasoning,
 )
+
+
+def _message_client(message: dict) -> TokenFactoryClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": message}]})
+
+    config = resolve_config(api_key="test-key", environ={})
+    return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
 
 
 def _client(handler) -> TokenFactoryClient:
@@ -138,3 +147,61 @@ def test_chat_completion_requires_model_and_messages() -> None:
         client.chat_completion(model="", messages=[{"role": "user", "content": "x"}])
     with pytest.raises(TokenFactoryError):
         client.chat_completion(model="m", messages=[])
+
+
+# --- reasoning-model response shapes -----------------------------------------
+
+
+def test_split_reasoning_strips_inline_think_block() -> None:
+    # Cosmos 3 shape: reasoning trace inline as a leading <think>...</think>.
+    visible, reasoning = split_reasoning(
+        {"content": "<think>\nweigh the options\n</think>\n1. approach 2. grasp"}
+    )
+    assert visible == "1. approach 2. grasp"
+    assert reasoning == "weigh the options"
+
+
+def test_split_reasoning_uses_reasoning_field_when_content_null() -> None:
+    # Kimi/GLM shape: content null, trace in a separate reasoning field.
+    visible, reasoning = split_reasoning({"content": None, "reasoning": "thinking hard"})
+    assert visible == ""
+    assert reasoning == "thinking hard"
+
+
+def test_split_reasoning_truncated_think_has_no_visible_text() -> None:
+    # finish_reason=length mid-think: opening tag, no close, no answer.
+    visible, reasoning = split_reasoning({"content": "<think>still reasoning when it ran"})
+    assert visible == ""
+    assert reasoning == "still reasoning when it ran"
+
+
+def test_split_reasoning_plain_content_unchanged() -> None:
+    visible, reasoning = split_reasoning({"content": "just the answer"})
+    assert visible == "just the answer"
+    assert reasoning is None
+
+
+def test_chat_completion_message_returns_visible_and_reasoning() -> None:
+    client = _message_client({"content": "<think>plan</think>do it", "reasoning": None})
+    visible, reasoning = client.chat_completion_message(
+        model="nvidia/Cosmos3-Super-Reasoner", messages=[{"role": "user", "content": "x"}]
+    )
+    assert visible == "do it"
+    assert reasoning == "plan"
+
+
+def test_chat_completion_text_strips_inline_think() -> None:
+    client = _message_client({"content": "<think>plan</think>do it"})
+    text = client.chat_completion_text(
+        model="m", messages=[{"role": "user", "content": "x"}]
+    )
+    assert "<think>" not in text
+    assert text == "do it"
+
+
+def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
+    # Regression: str(None) used to return the literal string "None".
+    client = _message_client({"content": None, "reasoning": "all thinking, no answer"})
+    with pytest.raises(TokenFactoryError) as exc:
+        client.chat_completion_text(model="m", messages=[{"role": "user", "content": "x"}])
+    assert "reasoning-only" in str(exc.value)

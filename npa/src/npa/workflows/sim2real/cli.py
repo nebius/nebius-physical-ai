@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -553,6 +554,19 @@ def main(argv: list[str] | None = None) -> int:
             initial_quality=getattr(args, "initial_quality", None),
         )
         print(json.dumps(report, indent=2, sort_keys=True))
+        # A command that orchestrates sub-operations must exit non-zero when one
+        # of them failed — a "blocked"/"failed" upload recorded in the JSON report
+        # is NOT a substitute for a non-zero exit code (set -e, CI gates, and the
+        # submit/monitor wrappers all rely on the exit code). rerun-serve stays a
+        # best-effort warning (the engine itself records it as WARN/CONTINUE).
+        upload_status = str((report.get("upload") or {}).get("status", ""))
+        if upload_status in {"blocked", "failed"}:
+            reason = str((report.get("upload") or {}).get("reason", "")) or "see report"
+            print(
+                f"ERROR: artifact upload {upload_status}: {reason}",
+                file=sys.stderr,
+            )
+            return 1
         return 0
     if args.command == "preamble":
         state = run_preamble(config)

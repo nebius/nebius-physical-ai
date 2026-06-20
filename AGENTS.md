@@ -15,6 +15,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/`: workflow-level procedures such as sim-to-real, policy training, Cosmos3 inference, and reference SkyPilot workflows.
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, and Cosmos3 setup/troubleshooting.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, and Nebius infra.
+- `skills/workflows/sim2real-operate/SKILL.md`: operate the staged Sim2Real pipeline on a K8s GPU cluster — runbook, direct-K8s submit, preflight health checks, storage secret sync, and job monitoring.
 - `skills/workbench/sim2real-engine/SKILL.md`: canonical 14-stage Sim2Real engine map (`run_preamble` / `run_inner_loop` / `run_single_outer_iteration` / `run_finalize`) and K8s sibling job glue.
 
 Compatibility symlinks exist at `.agents/skills` and `.claude/skills`; do not add new skills there directly.

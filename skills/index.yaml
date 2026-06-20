@@ -267,6 +267,18 @@ skills:
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
+  - name: sim2real-operate
+    category: workflows
+    when_to_use: "Run, monitor, or debug the staged Sim2Real pipeline on a K8s GPU cluster — runbook, direct-K8s submit, preflight health checks, storage secret sync, and job monitoring."
+    path: skills/workflows/sim2real-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/workflows/workbench/sim2real/runbook.yaml
+      - type: file_exists
+        path: ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+      - type: cli_help
+        args: ["workbench", "health", "sim2real", "--help"]
+        contains: "checks"
   - name: sim2real-engine
     category: tools
     when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
