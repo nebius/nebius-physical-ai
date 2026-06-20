@@ -234,27 +234,35 @@ try:
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
 
-    def _policy_obs(o):
-        # rsl_rl inference needs a [N, obs_dim] policy tensor; with cameras on,
-        # get_observations returns a (Tensor)Dict — extract the 'policy' group and
-        # ensure a leading batch dim (the env may present a 1-D single-env obs).
-        t = o
-        if not torch.is_tensor(o):
-            for k in ("policy", "obs", "policy_obs"):
-                try:
-                    v = o[k]
-                    if torch.is_tensor(v):
-                        t = v
-                        break
-                except Exception:
-                    pass
-        if torch.is_tensor(t) and t.ndim == 1:
-            t = t.unsqueeze(0)
-        return t
-    _p0 = _policy_obs(obs)
-    # Trust the obs batch dim as the source of truth for N.
-    N = int(_p0.shape[0]) if torch.is_tensor(_p0) and _p0.ndim >= 1 else realN
-    print("STEP0 policy_obs_shape", tuple(getattr(_p0, "shape", ())),
+    def _batched_obs(o):
+        # rsl_rl act_inference does obs[group] internally, so pass the WHOLE obs
+        # (Tensor)Dict — but ensure each group tensor has a leading batch dim
+        # (this env can present 1-D single-env group tensors).
+        if torch.is_tensor(o):
+            return o.unsqueeze(0) if o.ndim == 1 else o
+        try:
+            for k in list(o.keys()):
+                v = o[k]
+                if torch.is_tensor(v) and v.ndim == 1:
+                    o[k] = v.unsqueeze(0)
+        except Exception:
+            pass
+        return o
+    def _policy_tensor(o):
+        if torch.is_tensor(o):
+            return o
+        for k in ("policy", "obs", "policy_obs"):
+            try:
+                v = o[k]
+                if torch.is_tensor(v):
+                    return v
+            except Exception:
+                pass
+        return o
+    obs = _batched_obs(obs)
+    _pt = _policy_tensor(obs)
+    N = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
+    print("STEP0 policy_obs_shape", tuple(getattr(_pt, "shape", ())),
           "env.num_envs", getattr(env.unwrapped, "num_envs", "?"), "N", N, flush=True)
     # Per-env render dirs (labelled by generated env_id when provided).
     import json as _json
@@ -285,12 +293,11 @@ try:
     min_dist = np.full(N, 1e9)
     for _step in range(STEPS):
         with torch.inference_mode():
-            actions = policy(_policy_obs(obs))
+            actions = policy(_batched_obs(obs))
         if _step == 0:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
-        # Safety: manager-based env needs [N, act_dim].
-        if hasattr(actions, "ndim") and actions.ndim == 1 and N == 1:
-            actions = actions.reshape(1, -1)
+        if hasattr(actions, "ndim") and actions.ndim == 1:
+            actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
         if _step % CAP_EVERY == 0:
             capture(_step)
