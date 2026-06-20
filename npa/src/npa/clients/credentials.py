@@ -13,8 +13,14 @@ import yaml
 
 CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
-TOKEN_FACTORY_ENV_KEY = "NEBIUS_API_KEY"
-KNOWN_TOKEN_KEYS = ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY, *NGC_ENV_KEYS)
+TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
+TOKEN_FACTORY_LEGACY_ENV_KEYS = ("NEBIUS_API_KEY", "NEBIUS_TOKEN_FACTORY_API_KEY")
+KNOWN_TOKEN_KEYS = (
+    "HF_TOKEN",
+    TOKEN_FACTORY_ENV_KEY,
+    *TOKEN_FACTORY_LEGACY_ENV_KEYS,
+    *NGC_ENV_KEYS,
+)
 HF_TOKEN_MISSING_WARNING = (
     "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
     "Gated model downloads will fail."
@@ -51,8 +57,8 @@ class CredentialsConfig:
 
     @property
     def nebius_api_key(self) -> str:
-        """Nebius Token Factory API key (``tokens.NEBIUS_API_KEY``)."""
-        return self.tokens.get(TOKEN_FACTORY_ENV_KEY, "")
+        """Nebius Token Factory API key (``tokens.NEBIUS_TOKEN_FACTORY_KEY``)."""
+        return resolve_token_factory_key(self.tokens)
 
     @property
     def token_factory_api_key(self) -> str:
@@ -70,6 +76,15 @@ class CredentialsConfig:
     @property
     def ngc_team(self) -> str:
         return self.tokens.get("NGC_TEAM", "")
+
+
+def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
+    """Return the Token Factory key from a token map (canonical + legacy names)."""
+    for key in (TOKEN_FACTORY_ENV_KEY, *TOKEN_FACTORY_LEGACY_ENV_KEYS):
+        value = tokens.get(key, "")
+        if value:
+            return value
+    return ""
 
 
 def _is_readable_by_other_users(path: Path) -> bool:
@@ -287,7 +302,7 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
-    """Persist the Nebius Token Factory key under ``tokens.NEBIUS_API_KEY``."""
+    """Persist the Nebius Token Factory key under ``tokens.NEBIUS_TOKEN_FACTORY_KEY``."""
 
     cleaned = api_key.strip()
     if not cleaned:
@@ -357,7 +372,10 @@ def shared_credential_env(credentials: CredentialsConfig) -> dict[str, str]:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     tokens = getattr(credentials, "tokens", {}) or {}
-    for key in (TOKEN_FACTORY_ENV_KEY, *NGC_ENV_KEYS):
+    token_factory_key = resolve_token_factory_key(tokens)
+    if token_factory_key:
+        env[TOKEN_FACTORY_ENV_KEY] = token_factory_key
+    for key in NGC_ENV_KEYS:
         value = tokens.get(key, "")
         if value:
             env[key] = value

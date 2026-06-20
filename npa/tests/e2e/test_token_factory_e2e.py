@@ -1,10 +1,10 @@
 """Live Nebius Token Factory API tests.
 
 These are first-class live tests: they hit the real Token Factory endpoint and
-require a real ``NEBIUS_API_KEY``. They self-skip when no key is configured, so
+require a real ``NEBIUS_TOKEN_FACTORY_KEY``. They self-skip when no key is configured, so
 they are safe to leave in the suite. Run explicitly with:
 
-    NEBIUS_API_KEY=... npa/.venv/bin/python -m pytest \
+    NEBIUS_TOKEN_FACTORY_KEY=... npa/.venv/bin/python -m pytest \
         npa/tests/e2e/test_token_factory_e2e.py -v
 
 They live under ``tests/e2e`` (excluded from the default unit run via
@@ -33,8 +33,8 @@ def _require_key() -> str:
     config = resolve_config(require_api_key=False)
     if not config.api_key:
         pytest.skip(
-            "Live Token Factory test requires NEBIUS_API_KEY in the environment "
-            "or ~/.npa/credentials.yaml (tokens.NEBIUS_API_KEY)."
+            "Live Token Factory test requires NEBIUS_TOKEN_FACTORY_KEY in the environment "
+            "or ~/.npa/credentials.yaml (tokens.NEBIUS_TOKEN_FACTORY_KEY)."
         )
     return config.api_key
 

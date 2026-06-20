@@ -78,8 +78,9 @@ user-level tokens, object storage, and BYOVM SSH defaults:
 tokens:
   HF_TOKEN: hf_REPLACE_ME
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
-  # Get one at https://tokenfactory.nebius.com/ -> API keys.
-  NEBIUS_API_KEY: nebius_REPLACE_ME
+  # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
+  # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
+  NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
 ngc:
   api_key: nvapi_REPLACE_ME
   # org: optional-ngc-org
@@ -389,13 +390,16 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
 
     hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
     nebius_api_key = ask(
-        "Nebius Token Factory API key (NEBIUS_API_KEY, optional)", secret=True
+        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)", secret=True
     )
     ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
 
     credentials_path = write_credentials_file(
         {
-            "tokens": {"HF_TOKEN": hf_token, "NEBIUS_API_KEY": nebius_api_key},
+            "tokens": {
+                "HF_TOKEN": hf_token,
+                "NEBIUS_TOKEN_FACTORY_KEY": nebius_api_key,
+            },
             "ngc": {"api_key": ngc_api_key},
             "storage": storage,
         }
@@ -433,7 +437,7 @@ def _store_token_factory_key(api_key: str) -> None:
 
     path = set_token_factory_api_key(api_key)
     typer.echo(
-        f"Stored Nebius Token Factory API key in {path} under tokens.NEBIUS_API_KEY."
+        f"Stored Nebius Token Factory API key in {path} under tokens.NEBIUS_TOKEN_FACTORY_KEY."
     )
 
 
@@ -490,7 +494,7 @@ def configure(
         "--token-factory-key",
         help=(
             "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_API_KEY (skips interactive setup)."
+            "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
         ),
     ),
 ) -> None:
@@ -532,7 +536,7 @@ def init(
         "--token-factory-key",
         help=(
             "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_API_KEY (skips interactive setup)."
+            "under tokens.NEBIUS_TOKEN_FACTORY_KEY (skips interactive setup)."
         ),
     ),
 ) -> None:

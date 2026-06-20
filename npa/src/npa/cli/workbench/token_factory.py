@@ -193,15 +193,16 @@ def verify_cmd(
 ) -> None:
     """Verify Token Factory authentication with a live models call.
 
-    Confirms NEBIUS_API_KEY is resolvable and the key authenticates against the
+    Confirms NEBIUS_TOKEN_FACTORY_KEY is resolvable and the key authenticates against the
     configured base URL. Exits non-zero on any auth or connectivity failure.
     """
 
     config = resolve_config(require_api_key=False)
     if not config.api_key:
         _fail(
-            "NEBIUS_API_KEY is not set. Add it under tokens: in "
-            "~/.npa/credentials.yaml (run `npa configure`) or export NEBIUS_API_KEY."
+            "NEBIUS_TOKEN_FACTORY_KEY is not set. Add it under tokens: in "
+            "~/.npa/credentials.yaml (run `npa configure`) or export "
+            "NEBIUS_TOKEN_FACTORY_KEY."
         )
         return
     try:
