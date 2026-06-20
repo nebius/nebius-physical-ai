@@ -1290,6 +1290,23 @@ sudo systemctl --no-pager status {COSMOS_SERVICE} || true
     return _remote_bash(script)
 
 
+def _build_load_command(port: int, model: str) -> str:
+    body = json.dumps({"model": model})
+    script = f"""\
+set -euo pipefail
+for _ in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:{port}/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+curl -fsS -X POST "http://127.0.0.1:{port}/serve" \\
+  -H 'content-type: application/json' \\
+  -d {shlex.quote(body)}
+"""
+    return _remote_bash(script)
+
+
 def _deploy_step_count(skip_infra: bool, skip_app: bool, destroy: bool) -> int:
     if destroy:
         return 2
@@ -2044,6 +2061,15 @@ def deploy_cmd(
         "--verify-env/--no-verify-env",
         help="Audit deployed shared credentials after app deploy.",
     ),
+    auto_serve: bool = typer.Option(
+        True,
+        "--auto-serve/--no-auto-serve",
+        help=(
+            "After a healthy deploy, load the model so the server is ready "
+            "(status: healthy) without a manual serve. Use --no-auto-serve to "
+            "leave the model cold."
+        ),
+    ),
     model: str = typer.Option(
         DEFAULT_MODEL,
         "--model",
@@ -2765,6 +2791,22 @@ def deploy_cmd(
                 fail_app(f"Server not healthy at {endpoint}/health.")
                 return
 
+            if auto_serve:
+                console.print(
+                    f"    Loading model {model} so the server is ready (auto-serve)..."
+                )
+                try:
+                    ssh.run_or_raise(
+                        _build_load_command(server_port, model), stream=True
+                    )
+                    console.print("    Model loaded; server is ready.")
+                except SSHError as exc:
+                    console.print(
+                        "    [yellow]Warning:[/yellow] auto-serve could not load the "
+                        f"model: {exc}\n    The server is deployed; run `cosmos serve` "
+                        "to load it."
+                    )
+
         step += 1
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
@@ -2966,7 +3008,13 @@ def serve_cmd(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Start or pre-warm the saved Cosmos model server."""
+    """Load (pre-warm) the saved Cosmos model so the server is ready to serve.
+
+    Deploy auto-serves by default, so you normally only need this after a service
+    restart (the server comes back up with the model unloaded) or after deploying
+    with --no-auto-serve. Run it whenever `cosmos status` reports `degraded` /
+    model not loaded.
+    """
     _ensure_basic_backend(backend)
     cfg = _get_config()
 
@@ -3016,6 +3064,7 @@ def serve_cmd(
             _, out, err = ssh.run_or_raise(
                 _build_serve_command(model, port, no_guardrails=no_guardrails)
             )
+            ssh.run_or_raise(_build_load_command(port, model))
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return
