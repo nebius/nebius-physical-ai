@@ -14,7 +14,7 @@ For a **genuine RL-trained Franka policy** (on npa `main`), supply the BYO seams
 
 ```bash
 export NPA_SOURCE_REF=main
-export EVAL_IMAGE="$REGISTRY/npa-sim2real-eval:0.1.1-genuine-sm120"   # sm_120 Blackwell-good
+export EVAL_IMAGE="$REGISTRY/npa-sim2real-eval:0.1.2-genuine-sm120"   # sm_120 Blackwell-good
 export BYO_TRAINER_COMMAND='NPA_BYO_ISAAC_ITERATIONS=300 NPA_BYO_ISAAC_NUM_ENVS=1024 python3 -m npa.workflows.sim2real.byo_isaac_trainer'
 export BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval'
 ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
