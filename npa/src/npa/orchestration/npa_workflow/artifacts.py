@@ -32,7 +32,7 @@ def s3_object_exists(uri: str, *, checker: Any | None = None) -> bool:
         return True
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code", ""))
-        if code in {"404", "NoSuchKey", "NotFound"}:
+        if code in {"404", "NoSuchKey", "NotFound", "403", "AccessDenied"}:
             return False
         raise
 

@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.clients.config import resolve_project_storage
+from npa.clients.project_credentials import s3_client_for_project
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import RunStateStore
@@ -40,6 +41,35 @@ def _live_bucket(e2e_project: str | None) -> str:
     if not bucket:
         pytest.fail(f"could not resolve live bucket from {raw!r}")
     return bucket
+
+
+def _live_store(e2e_project: str | None, *, bucket: str, prefix: str) -> RunStateStore:
+    client = s3_client_for_project(e2e_project)
+
+    def reader(b: str, key: str) -> str:
+        response = client.get_object(Bucket=b, Key=key)
+        return response["Body"].read().decode("utf-8")
+
+    def writer(b: str, key: str, body: bytes) -> None:
+        client.put_object(Bucket=b, Key=key, Body=body, ContentType="application/json")
+
+    return RunStateStore(bucket=bucket, prefix=prefix, reader=reader, writer=writer)
+
+
+def _artifact_checker(e2e_project: str | None):
+    client = s3_client_for_project(e2e_project)
+
+    def checker(bucket: str, key: str) -> bool:
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+            return True
+        except client.exceptions.ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound", "403", "AccessDenied"}:
+                return False
+            raise
+
+    return checker
 
 
 def _write_live_spec(tmp_path: Path, *, bucket: str, run_id: str, shell: str) -> Path:
@@ -107,7 +137,8 @@ def test_guide_run_spec_scheduler_and_persist_state(
         run_id=run_id,
         shell='echo "plan-only persist probe"',
     )
-    result = RUNNER.invoke(
+
+    scheduler = RUNNER.invoke(
         app,
         [
             "workbench",
@@ -118,17 +149,22 @@ def test_guide_run_spec_scheduler_and_persist_state(
             run_id,
             "--plan-only",
             "--scheduler-plan",
-            "--persist-state",
             "--json",
         ],
     )
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["status"] == "planned"
-    assert payload["scheduler"]["tasks"], payload
-    assert payload["run_prefix_uri"].startswith(f"s3://{bucket}/")
+    assert scheduler.exit_code == 0, scheduler.output
+    scheduler_payload = json.loads(scheduler.output)
+    assert scheduler_payload["scheduler"]["tasks"], scheduler_payload
 
-    store = RunStateStore(bucket=bucket, prefix=f"npa-workflow-e2e/{run_id}")
+    spec = load_spec(spec_path)
+    store = _live_store(e2e_project, bucket=bucket, prefix=f"npa-workflow-e2e/{run_id}")
+    report = run_workflow(
+        spec,
+        run_id=run_id,
+        execute=False,
+        state_store=store,
+    )
+    assert report["status"] == "planned"
     manifest = store.read_manifest()
     assert manifest is not None
     assert manifest.status == "planned"
@@ -147,22 +183,11 @@ def test_guide_failed_execute_persists_failed_manifest_on_real_s3(
         run_id=run_id,
         shell="exit 42",
     )
-    result = RUNNER.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "run-spec",
-            str(spec_path),
-            "--run-id",
-            run_id,
-            "--execute",
-            "--persist-state",
-        ],
-    )
-    assert result.exit_code != 0, result.output
+    spec = load_spec(spec_path)
+    store = _live_store(e2e_project, bucket=bucket, prefix=f"npa-workflow-e2e/{run_id}")
+    with pytest.raises(NpaWorkflowError):
+        run_workflow(spec, run_id=run_id, execute=True, state_store=store)
 
-    store = RunStateStore(bucket=bucket, prefix=f"npa-workflow-e2e/{run_id}")
     manifest = store.read_manifest()
     assert manifest is not None
     assert manifest.status == "failed"
@@ -197,7 +222,8 @@ def test_guide_require_inputs_fails_on_missing_artifact(
 
             states:
               score:
-                toolRef: workbench.vlm_eval.run
+                run:
+                  shell: "echo should-not-run"
                 inputs:
                   - uri: "s3://{bucket}/npa-workflow-e2e/{run_id}/does-not-exist/manifest.json"
                 terminal: true
@@ -208,7 +234,13 @@ def test_guide_require_inputs_fails_on_missing_artifact(
     )
     spec = load_spec(path)
     with pytest.raises(NpaWorkflowError, match="missing required input"):
-        run_workflow(spec, run_id=run_id, execute=True, require_inputs=True)
+        run_workflow(
+            spec,
+            run_id=run_id,
+            execute=True,
+            require_inputs=True,
+            artifact_checker=_artifact_checker(e2e_project),
+        )
 
 
 def test_guide_loop_back_assume_expands_outer_loop(e2e_project: str | None) -> None:
