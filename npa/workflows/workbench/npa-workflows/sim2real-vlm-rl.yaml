@@ -108,7 +108,7 @@ states:
     needs: [heldout]
     run:
       shell: |
-        echo "decision -> {{config.decision_uri}} threshold={{config.success_threshold}}"
+        python -c "from npa.orchestration.npa_workflow.decisions import write_decision; write_decision('{{config.decision_uri}}', '{{config.plan_assume_decision}}')"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1

@@ -14,10 +14,11 @@ specs.
 
 ## Spec Contract
 
+- **Guide:** `docs/workbench/npa-workflow-guide.md` (canonical examples + verify commands).
 - **apiVersion:** `npa.workflow/v0.0.1` only (beta).
 - **kind:** `Workflow`
 - **States:** declarative nodes with `run` (shell/argv), `toolRef`, or `sequence`.
-- **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}` — no Jinja, no eval.
+- **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: config.attr` or integer; `loop.until` for dynamic exit.
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema` (documentation + future validation).
@@ -34,7 +35,7 @@ inventing shell when a catalog entry exists.
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
 npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
-npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --json
+npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --persist-state --json
 ```
 
 For live infra (optional):

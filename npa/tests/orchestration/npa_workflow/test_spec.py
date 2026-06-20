@@ -45,6 +45,16 @@ def test_token_unknown_config_raises() -> None:
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
 
 
+def test_state_output_token() -> None:
+    text = resolve_tokens(
+        "{{state.decide.uri}}",
+        config={},
+        run={"id": "run-1"},
+        state_outputs={"decide": {"uri": "s3://bucket/decision.json"}},
+    )
+    assert text == "s3://bucket/decision.json"
+
+
 def test_sim2real_plan_expands_loops() -> None:
     spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")

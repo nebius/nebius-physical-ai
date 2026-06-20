@@ -20,6 +20,9 @@ exposing a tool to workflow specs.
 | `{{config.*}}` | Value from spec `config` block (after run-id expansion) |
 | `{{run.id}}` | Run identifier passed to plan/run commands |
 | `{{run.prefix}}` | Default `"{metadata.name}/{run.id}"` or `config.prefix` |
+| `{{state.NAME.uri}}` | Primary output URI recorded after state `NAME` executes |
+
+See `docs/workbench/npa-workflow-guide.md` for the full authoring guide.
 
 ## Predicates
 

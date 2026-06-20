@@ -6,9 +6,12 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
+from npa.orchestration.npa_workflow.decisions import refresh_context_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
+from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore, store_for_config
 from npa.orchestration.npa_workflow.spec import (
     NpaWorkflowSpec,
     StateSpec,
@@ -27,7 +30,9 @@ class PlanStep:
     shell: str = ""
     tool_ref: str = ""
     resources: str = "default"
+    resources_profile: dict[str, Any] = field(default_factory=dict)
     outputs: list[dict[str, str]] = field(default_factory=list)
+    inputs: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -53,7 +58,9 @@ class ExecutionPlan:
                     "shell": step.shell,
                     "tool_ref": step.tool_ref,
                     "resources": step.resources,
+                    "resources_profile": step.resources_profile,
                     "outputs": step.outputs,
+                    "inputs": step.inputs,
                 }
                 for step in self.steps
             ],
@@ -103,25 +110,63 @@ def run_workflow(
     run_id: str,
     execute: bool = False,
     assume_decision: str = "",
+    persist_state: bool = False,
+    require_inputs: bool = False,
     on_step: Callable[[PlanStep], None] | None = None,
+    decision_reader: Any | None = None,
+    artifact_checker: Any | None = None,
+    state_store: RunStateStore | None = None,
 ) -> dict[str, Any]:
-    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    results: list[dict[str, Any]] = []
-    for step in plan.steps:
-        if on_step is not None:
-            on_step(step)
-        results.append(_execute_step(step, execute=execute))
+    assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    ctx = _make_context(spec, run_id=run_id)
+    store = state_store or (store_for_config(ctx.config, run_id=run_id) if persist_state else None)
+    manifest = RunManifest(
+        workflow=spec.name,
+        run_id=run_id,
+        api_version=spec.api_version,
+        status="running" if execute else "planned",
+    )
+    if store is not None:
+        store.write_manifest(manifest)
+
+    if execute:
+        results = _execute_state_machine(
+            spec,
+            spec.initial,
+            ctx,
+            assume_decision=assume,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            decision_reader=decision_reader,
+            artifact_checker=artifact_checker,
+        )
+    else:
+        plan = build_plan(spec, run_id=run_id, assume_decision=assume)
+        results = []
+        for step in plan.steps:
+            if on_step is not None:
+                on_step(step)
+            results.append(_execute_step(step, execute=False))
+
     status = "completed"
     if any(r.get("status") == "failed" for r in results):
         status = "failed"
     elif not execute:
         status = "planned"
+
+    if store is not None:
+        manifest.status = status
+        manifest.steps = results
+        store.write_manifest(manifest)
+
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume)
     return {
         "workflow": spec.name,
         "run_id": run_id,
         "status": status,
         "steps": results,
         "plan": plan.to_dict(),
+        "run_prefix_uri": store.run_prefix_uri if store is not None else "",
     }
 
 
@@ -248,9 +293,257 @@ def _append_state_step(
             shell=shell,
             tool_ref=tool_ref,
             resources=state.resources,
+            resources_profile=_resources_profile(spec, state.resources),
             outputs=outputs,
+            inputs=_resolved_inputs(state, ctx),
         )
     )
+
+
+def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
+    raw = spec.resources.get(profile) or spec.resources.get("default") or {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _resolved_inputs(state: StateSpec, ctx: RunContext) -> list[dict[str, str]]:
+    return [
+        {
+            "uri": resolve_tokens(
+                artifact.uri,
+                config=ctx.config,
+                run=ctx.run,
+                state_outputs=ctx.state_outputs,
+            ),
+            "schema": artifact.schema,
+        }
+        for artifact in state.inputs
+        if artifact.uri
+    ]
+
+
+def _record_state_outputs(state: StateSpec, ctx: RunContext, step: PlanStep) -> None:
+    if not step.outputs:
+        return
+    ctx.state_outputs[state.name] = {
+        f"output_{index}": output["uri"] for index, output in enumerate(step.outputs, start=1)
+    }
+    primary = step.outputs[0]["uri"]
+    ctx.state_outputs[state.name]["uri"] = primary
+
+
+def _refresh_decision(
+    ctx: RunContext,
+    *,
+    reader: Any | None = None,
+    read_s3: bool = False,
+) -> None:
+    if read_s3:
+        ctx.last_decision = refresh_context_decision(ctx.as_predicate_context(), reader=reader)
+
+
+def _execute_state_machine(
+    spec: NpaWorkflowSpec,
+    state_name: str,
+    ctx: RunContext,
+    *,
+    assume_decision: str,
+    require_inputs: bool,
+    on_step: Callable[[PlanStep], None] | None,
+    decision_reader: Any | None,
+    artifact_checker: Any | None,
+    loop_label: str = "",
+    follow_transitions: bool = True,
+) -> list[dict[str, Any]]:
+    state = spec.states[state_name]
+    results: list[dict[str, Any]] = []
+
+    if state.sequence:
+        if state.loop:
+            max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
+            for iteration in range(1, max_iter + 1):
+                ctx.outer_iteration = iteration
+                ctx.last_decision = ""
+                for child in state.sequence:
+                    results.extend(
+                        _execute_state_machine(
+                            spec,
+                            child,
+                            ctx,
+                            assume_decision=assume_decision,
+                            require_inputs=require_inputs,
+                            on_step=on_step,
+                            decision_reader=decision_reader,
+                            artifact_checker=artifact_checker,
+                            loop_label=state.name,
+                            follow_transitions=False,
+                        )
+                    )
+                if not ctx.last_decision:
+                    _refresh_decision(
+                        ctx,
+                        reader=decision_reader,
+                        read_s3="decide" in state.sequence,
+                    )
+                if not ctx.last_decision:
+                    ctx.last_decision = assume_decision
+                if state.loop.until and evaluate_predicate(
+                    state.loop.until, ctx.as_predicate_context()
+                ):
+                    break
+            next_name = _resolve_transition(state, ctx) or state.next
+            if next_name:
+                results.extend(
+                    _execute_state_machine(
+                        spec,
+                        next_name,
+                        ctx,
+                        assume_decision=assume_decision,
+                        require_inputs=require_inputs,
+                        on_step=on_step,
+                        decision_reader=decision_reader,
+                        artifact_checker=artifact_checker,
+                    )
+                )
+            return results
+
+        for child in state.sequence:
+            results.extend(
+                _execute_state_machine(
+                    spec,
+                    child,
+                    ctx,
+                    assume_decision=assume_decision,
+                    require_inputs=require_inputs,
+                    on_step=on_step,
+                    decision_reader=decision_reader,
+                    artifact_checker=artifact_checker,
+                    loop_label=state.name,
+                    follow_transitions=False,
+                )
+            )
+        if state.next:
+            results.extend(
+                _execute_state_machine(
+                    spec,
+                    state.next,
+                    ctx,
+                    assume_decision=assume_decision,
+                    require_inputs=require_inputs,
+                    on_step=on_step,
+                    decision_reader=decision_reader,
+                    artifact_checker=artifact_checker,
+                )
+            )
+        return results
+
+    if state.loop:
+        max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
+        for iteration in range(1, max_iter + 1):
+            ctx.inner_iteration = iteration
+            record = _run_single_state(
+                spec,
+                state,
+                ctx,
+                iteration=iteration,
+                loop_label=loop_label,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                artifact_checker=artifact_checker,
+            )
+            results.append(record)
+            _refresh_decision(ctx, reader=decision_reader, read_s3=False)
+            if not ctx.last_decision:
+                ctx.last_decision = assume_decision
+            if state.loop.until and evaluate_predicate(state.loop.until, ctx.as_predicate_context()):
+                break
+        next_name = _resolve_transition(state, ctx) or state.next
+        if next_name:
+            results.extend(
+                _execute_state_machine(
+                    spec,
+                    next_name,
+                    ctx,
+                    assume_decision=assume_decision,
+                    require_inputs=require_inputs,
+                    on_step=on_step,
+                    decision_reader=decision_reader,
+                    artifact_checker=artifact_checker,
+                )
+            )
+        return results
+
+    record = _run_single_state(
+        spec,
+        state,
+        ctx,
+        loop_label=loop_label,
+        require_inputs=require_inputs,
+        on_step=on_step,
+        artifact_checker=artifact_checker,
+    )
+    results.append(record)
+    if state.terminal:
+        return results
+    if state.transitions:
+        _refresh_decision(ctx, reader=decision_reader, read_s3=True)
+        if not ctx.last_decision:
+            ctx.last_decision = assume_decision
+    next_name = ""
+    if follow_transitions:
+        next_name = _resolve_transition(state, ctx) or state.next
+    elif not state.transitions:
+        next_name = state.next
+    if next_name:
+        results.extend(
+            _execute_state_machine(
+                spec,
+                next_name,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+            )
+        )
+    return results
+
+
+def _run_single_state(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    *,
+    iteration: int | None = None,
+    loop_label: str = "",
+    require_inputs: bool,
+    on_step: Callable[[PlanStep], None] | None,
+    artifact_checker: Any | None,
+) -> dict[str, Any]:
+    plan = ExecutionPlan(
+        workflow=spec.name,
+        api_version=spec.api_version,
+        initial=spec.initial,
+    )
+    _append_state_step(
+        spec,
+        state,
+        ctx,
+        plan,
+        iteration=iteration,
+        loop_label=loop_label,
+    )
+    step = plan.steps[-1]
+    if require_inputs and step.inputs:
+        require_input_artifacts(
+            [item["uri"] for item in step.inputs],
+            checker=artifact_checker,
+        )
+    if on_step is not None:
+        on_step(step)
+    record = _execute_step(step, execute=True)
+    _record_state_outputs(state, ctx, step)
+    return record
 
 
 def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, str]:
