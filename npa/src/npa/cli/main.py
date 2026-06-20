@@ -269,12 +269,13 @@ def _prompt_new_bucket_settings(
 
     from npa.clients import nebius as nebius_client
 
-    storage_class = nebius_client.normalize_bucket_storage_class(
-        ask(
-            "New bucket storage class (standard/enhanced)",
-            default=DEFAULT_BUCKET_STORAGE_CLASS,
-        )
+    storage_raw = ask(
+        "New bucket storage class (standard/enhanced)",
+        default=DEFAULT_BUCKET_STORAGE_CLASS,
     )
+    storage_class = nebius_client.normalize_bucket_storage_class(storage_raw)
+    if storage_class == DEFAULT_BUCKET_STORAGE_CLASS:
+        typer.echo("  Using standard storage (default).")
     size_gb = ask(
         f"New bucket size limit in GB (recommended {RECOMMENDED_BUCKET_SIZE_GB})",
         default=str(RECOMMENDED_BUCKET_SIZE_GB),
