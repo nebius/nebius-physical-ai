@@ -86,3 +86,34 @@ def test_dryrun_refuses_without_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_INNER_EVIDENCE_JSON", str(ev_json))
     monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(tmp_path / "r.json"))
     assert ev.main() == 3
+
+
+def test_read_generated_envs(tmp_path):
+    d = tmp_path / "heldout"; d.mkdir()
+    (d / "envs.jsonl").write_text(
+        '{"env_id":"env-00000","seed":111,"scene":{"simready_asset":"a"}}\n'
+        '{"env_id":"env-00001","seed":222}\n', encoding="utf-8")
+    envs = ev.read_generated_envs(str(d))
+    assert [e["env_id"] for e in envs] == ["env-00000", "env-00001"]
+    assert envs[0]["seed"] == 111 and envs[1]["seed"] == 222
+    assert ev.read_generated_envs(str(tmp_path / "missing")) == []
+
+
+def test_per_env_labelled_by_generated_env_id_and_seed():
+    rows = ev.per_env_from_distances(
+        [0.03, 0.2], success_dist_m=0.05,
+        env_ids=["env-00007", "env-00008"], seeds=[111, 222])
+    assert rows[0]["env_id"] == "env-00007"
+    assert rows[0]["details"]["generated_env_seed"] == 111
+    assert rows[1]["env_id"] == "env-00008" and rows[1]["success"] is False
+
+
+def test_eval_manifest_embeds_generated_seed():
+    m = ev.build_isaac_eval_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=2, checkpoint_uri="s3://b/m.pt",
+        per_env_s3_uri="s3://b/o/d.json", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=1744247227)
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert 'EVAL_SEED="1744247227"' in args

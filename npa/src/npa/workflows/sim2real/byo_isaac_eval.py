@@ -75,25 +75,67 @@ def build_heldout_report(
     }
 
 
+def read_generated_envs(envs_dir: str, *, limit: int = 0) -> list[dict[str, Any]]:
+    """Read the GENERATED held-out env specs (env_id + seed) from envs.jsonl.
+
+    The envgen stage emits one record per generated env with a per-env ``seed``
+    and scene composition. We use those seeds to drive the Isaac eval so the
+    trained policy is tested on the generated env distribution (not just stock
+    copies), and label results by the real generated ``env_id``.
+    """
+
+    path = Path(envs_dir) / "envs.jsonl"
+    envs: list[dict[str, Any]] = []
+    if not path.is_file():
+        return envs
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        envs.append(
+            {
+                "env_id": str(rec.get("env_id") or f"env-{len(envs):05d}"),
+                "seed": int(rec.get("seed") or 0),
+                "scene": rec.get("scene") or {},
+            }
+        )
+        if limit and len(envs) >= limit:
+            break
+    return envs
+
+
 def per_env_from_distances(
-    distances: list[float], *, success_dist_m: float
+    distances: list[float],
+    *,
+    success_dist_m: float,
+    env_ids: list[str] | None = None,
+    seeds: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert per-env final object-to-goal distances into scored per-env rows.
 
     score = clamp(1 - dist/(2*success_dist), 0, 1); success = dist < threshold.
     A genuine measurement of the trained policy, grounded in the task metric.
+    When provided, rows are labelled by the GENERATED env_id/seed they came from.
     """
 
     rows: list[dict[str, Any]] = []
     for index, dist in enumerate(distances):
         d = max(0.0, float(dist))
         score = max(0.0, min(1.0, 1.0 - d / (2.0 * success_dist_m)))
+        env_id = env_ids[index] if env_ids and index < len(env_ids) else f"heldout-{index:04d}"
+        details: dict[str, Any] = {"object_goal_distance_m": round(d, 6)}
+        if seeds and index < len(seeds):
+            details["generated_env_seed"] = int(seeds[index])
         rows.append(
             {
-                "env_id": f"heldout-{index:04d}",
+                "env_id": env_id,
                 "success": bool(d < success_dist_m),
                 "score": round(score, 6),
-                "details": {"object_goal_distance_m": round(d, 6)},
+                "details": details,
             }
         )
     return rows
@@ -111,6 +153,7 @@ STEPS = int(os.environ.get("EVAL_MAX_STEPS", "300"))
 TASK = os.environ["EVAL_TASK"]
 CKPT = os.environ["EVAL_CKPT_LOCAL"]
 OUT = os.environ["EVAL_OUT_JSON"]
+SEED = int(os.environ.get("EVAL_SEED", "0"))  # generated-env seed (envgen envs.jsonl)
 def dump(distances, note):
     json.dump({"object_goal_distances": list(distances), "note": note},
               open(OUT, "w"))
@@ -127,6 +170,18 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    # Drive randomization from the GENERATED env seed so the trained policy is
+    # tested on the envgen-produced env distribution, not stock defaults.
+    if SEED:
+        try:
+            env_cfg.seed = SEED
+        except Exception as e:
+            print("could not set env_cfg.seed:", repr(e), flush=True)
+        try:
+            torch.manual_seed(SEED); np.random.seed(SEED % (2**32))
+        except Exception:
+            pass
+        print("EVAL_SEED_APPLIED", SEED, flush=True)
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
@@ -202,8 +257,13 @@ def build_isaac_eval_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    seed: int = 0,
 ) -> dict[str, Any]:
-    """Isaac eval Job: download checkpoint, roll trained policy, upload distances."""
+    """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
+
+    ``seed`` (from the generated env spec) drives the env randomization so the
+    policy is evaluated on the envgen-produced env distribution.
+    """
 
     script = (
         "set -uo pipefail\n"
@@ -211,7 +271,7 @@ def build_isaac_eval_job_manifest(
         'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
         '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork; cd /tmp/evalwork\n"
-        f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" '
+        f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         'EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt '
         'EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n'
         f'CKPT_URI="{checkpoint_uri}" OUT_URI="{per_env_s3_uri}" "$PY" - <<\'DLEOF\'\n'
@@ -307,7 +367,13 @@ def _download_json(uri: str) -> dict[str, Any]:
     return json.loads(Path(local).read_text())
 
 
-def run_isaac_eval_job(run_id: str, *, checkpoint_uri: str, num_envs: int) -> list[dict[str, Any]]:
+def run_isaac_eval_job(
+    run_id: str,
+    *,
+    checkpoint_uri: str,
+    num_envs: int,
+    generated_envs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET") or _env("NPA_SIM2REAL_S3_BUCKET")
@@ -319,24 +385,30 @@ def run_isaac_eval_job(run_id: str, *, checkpoint_uri: str, num_envs: int) -> li
     job_name = f"s2r-byo-isaac-eval-{run_id}"[:63]
     per_env_uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/per_env_distances.json"
 
+    gen = generated_envs or []
+    env_ids = [e["env_id"] for e in gen] or None
+    seeds = [e["seed"] for e in gen] or None
+    seed = int(gen[0]["seed"]) if gen else 0  # drive randomization from a generated-env seed
+
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
         checkpoint_uri=checkpoint_uri, per_env_s3_uri=per_env_uri,
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
-        service_account=sa, gpu_product=gpu_product,
+        service_account=sa, gpu_product=gpu_product, seed=seed,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
     if apply.returncode != 0:
         raise SystemExit(f"byo_isaac_eval: kubectl apply failed: {apply.stderr}")
-    print(f"byo_isaac_eval: applied {job_name}; waiting up to {timeout_s}s", flush=True)
+    print(f"byo_isaac_eval: applied {job_name} (seed={seed}, generated_envs={len(gen)}); "
+          f"waiting up to {timeout_s}s", flush=True)
     wait = _kubectl(["wait", f"job/{job_name}", "-n", namespace,
                      "--for=condition=complete", f"--timeout={timeout_s}s"], timeout=timeout_s + 60)
     if wait.returncode != 0:
         logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
         raise SystemExit(f"byo_isaac_eval: eval job {job_name} did not complete: {wait.stderr}\n{logs.stdout}")
     distances = _download_json(per_env_uri).get("object_goal_distances", [])
-    return per_env_from_distances(distances, success_dist_m=success_dist)
+    return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
 
 
 def main() -> int:
@@ -355,19 +427,34 @@ def main() -> int:
         inner_evidence = json.loads(Path(ev_path).read_text())
     checkpoint_uri = extract_checkpoint_uri(inner_evidence)
 
+    # GENERATED held-out env specs (env_id + seed) — drive eval on the envgen
+    # distribution and label results by the real generated env_id.
+    envs_dir = _env("NPA_SIM2REAL_HELDOUT_ENVS_DIR")
+    generated_envs = read_generated_envs(envs_dir, limit=num_envs) if envs_dir else []
+    if generated_envs:
+        num_envs = len(generated_envs)
+
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
-        per_env = per_env_from_distances([0.02, 0.04, 0.08, 0.12][:num_envs], success_dist_m=success_dist)
+        gids = [e["env_id"] for e in generated_envs] or None
+        seeds = [e["seed"] for e in generated_envs] or None
+        per_env = per_env_from_distances(
+            [0.02, 0.04, 0.08, 0.12][:num_envs], success_dist_m=success_dist,
+            env_ids=gids, seeds=seeds)
     elif not checkpoint_uri:
         print("byo_isaac_eval: no trained checkpoint in inner evidence — refusing to fake success",
               file=sys.stderr)
         return 3
     else:
-        per_env = run_isaac_eval_job(run_id, checkpoint_uri=checkpoint_uri, num_envs=num_envs)
+        per_env = run_isaac_eval_job(
+            run_id, checkpoint_uri=checkpoint_uri, num_envs=num_envs,
+            generated_envs=generated_envs)
 
     report = build_heldout_report(
         per_env, isaac_task=task, checkpoint_uri=checkpoint_uri,
         source="byo_isaac_eval_dryrun" if _env("NPA_BYO_ISAAC_DRYRUN") == "1" else "byo_isaac_eval",
     )
+    report["generated_envs_tested"] = len(generated_envs)
+    report["generated_env_ids"] = [e["env_id"] for e in generated_envs]
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(report, indent=2), encoding="utf-8")
     passed = sum(1 for r in per_env if r["success"])
