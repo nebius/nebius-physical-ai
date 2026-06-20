@@ -170,6 +170,15 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    # CUSTOM asset: override the manipuland USD so eval scores the policy on the
+    # same custom object it trained on (physically simulated, not the stock cube).
+    OBJECT_USD = os.environ.get("EVAL_OBJECT_USD", "").strip()
+    if OBJECT_USD:
+        try:
+            env_cfg.scene.object.spawn.usd_path = OBJECT_USD
+            print("EVAL_OBJECT_USD_APPLIED", OBJECT_USD, flush=True)
+        except Exception as e:
+            print("could not set object usd:", repr(e), flush=True)
     # Drive randomization from the GENERATED env seed so the trained policy is
     # tested on the envgen-produced env distribution, not stock defaults.
     if SEED:
@@ -258,11 +267,14 @@ def build_isaac_eval_job_manifest(
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
     seed: int = 0,
+    object_usd: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
     ``seed`` (from the generated env spec) drives the env randomization so the
-    policy is evaluated on the envgen-produced env distribution.
+    policy is evaluated on the envgen-produced env distribution. ``object_usd``
+    overrides the manipuland so eval scores the policy on the same CUSTOM asset
+    it was trained on (physically simulated, not the stock cube).
     """
 
     script = (
@@ -272,6 +284,7 @@ def build_isaac_eval_job_manifest(
         '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
+        f'EVAL_OBJECT_USD="{object_usd}" '
         'EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt '
         'EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n'
         f'CKPT_URI="{checkpoint_uri}" OUT_URI="{per_env_s3_uri}" "$PY" - <<\'DLEOF\'\n'
@@ -389,12 +402,13 @@ def run_isaac_eval_job(
     env_ids = [e["env_id"] for e in gen] or None
     seeds = [e["seed"] for e in gen] or None
     seed = int(gen[0]["seed"]) if gen else 0  # drive randomization from a generated-env seed
+    object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
 
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
         checkpoint_uri=checkpoint_uri, per_env_s3_uri=per_env_uri,
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
-        service_account=sa, gpu_product=gpu_product, seed=seed,
+        service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)

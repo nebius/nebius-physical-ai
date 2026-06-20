@@ -154,15 +154,23 @@ def build_isaac_job_manifest(
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
     reward_overrides: dict[str, float] | None = None,
+    object_usd: str = "",
+    object_scale: str = "",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
     Pure function: returns a manifest dict, no side effects. ``reward_overrides``
-    are VLM-derived ``env.rewards.<term>.weight`` hydra args appended to train.py
-    so the VLM critique shapes the PPO reward.
+    are VLM-derived ``env.rewards.<term>.weight`` hydra args; ``object_usd``
+    overrides the manipuland (``env.scene.object.spawn.usd_path``) so the policy
+    is trained on a CUSTOM asset physically simulated in Isaac, not the stock cube.
     """
 
-    override_str = " ".join(f"{k}={v}" for k, v in sorted((reward_overrides or {}).items()))
+    overrides = dict(reward_overrides or {})
+    if object_usd:
+        overrides["env.scene.object.spawn.usd_path"] = object_usd
+        if object_scale:
+            overrides["env.scene.object.spawn.scale"] = object_scale
+    override_str = " ".join(f"{k}={v}" for k, v in sorted(overrides.items()))
     train_line = (
         f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
         f'--max_iterations {iterations} --headless agent.save_interval=25 {override_str}'
@@ -334,6 +342,10 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     stats = read_signal_stats(signal_json)
     reward_overrides = vlm_reward_overrides(stats)
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
+    object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
+    object_scale = _env("NPA_BYO_ISAAC_OBJECT_SCALE")
+    if object_usd:
+        print(f"byo_isaac_trainer: CUSTOM object USD -> {object_usd} scale={object_scale}", flush=True)
 
     manifest = build_isaac_job_manifest(
         job_name=job_name,
@@ -348,6 +360,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         service_account=service_account,
         gpu_product=gpu_product,
         reward_overrides=reward_overrides,
+        object_usd=object_usd,
+        object_scale=object_scale,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)

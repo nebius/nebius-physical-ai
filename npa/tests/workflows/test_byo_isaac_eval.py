@@ -117,3 +117,14 @@ def test_eval_manifest_embeds_generated_seed():
         seed=1744247227)
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert 'EVAL_SEED="1744247227"' in args
+
+
+def test_eval_manifest_embeds_custom_object_usd():
+    m = ev.build_isaac_eval_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=2, checkpoint_uri="s3://b/m.pt",
+        per_env_s3_uri="s3://b/o/d.json", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        object_usd="http://assets/custom.usd")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert 'EVAL_OBJECT_USD="http://assets/custom.usd"' in args

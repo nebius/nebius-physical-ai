@@ -153,3 +153,15 @@ def test_manifest_embeds_reward_overrides():
         reward_overrides=ov)
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "env.rewards.reaching_object.weight=1.6" in args
+
+
+def test_manifest_embeds_custom_object_usd():
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        object_usd="s3orhttp://assets/custom_sugar_box.usd", object_scale="(0.8, 0.8, 0.8)")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "env.scene.object.spawn.usd_path=s3orhttp://assets/custom_sugar_box.usd" in args
+    assert "env.scene.object.spawn.scale=(0.8, 0.8, 0.8)" in args

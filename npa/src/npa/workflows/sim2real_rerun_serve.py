@@ -286,14 +286,30 @@ def _rerun_remote_cors_flags() -> str:
     )
 
 
+RERUN_HTPASSWD_PATH = "/etc/nginx/auth/.htpasswd"
+
+
 def build_rerun_nginx_config(
     *,
     external_port: int = DEFAULT_PORT,
     internal_port: int = RERUN_INTERNAL_WEB_PORT,
     cache_control: str = RERUN_STATIC_CACHE_CONTROL,
+    auth_required: bool = False,
+    htpasswd_path: str = RERUN_HTPASSWD_PATH,
 ) -> str:
-    """Return nginx config: proxy static assets with long-lived browser cache."""
+    """Return nginx config: proxy static assets with long-lived browser cache.
 
+    When ``auth_required`` the public viewer is gated behind HTTP basic-auth
+    (``auth_basic`` + htpasswd file), so the cloud LoadBalancer URL needs
+    credentials instead of being open to anyone with the IP.
+    """
+
+    auth_lines = ""
+    if auth_required:
+        auth_lines = (
+            f'\n            auth_basic "NPA Sim2Real Rerun";'
+            f'\n            auth_basic_user_file {htpasswd_path};'
+        )
     return f"""\
 worker_processes 1;
 error_log /dev/stderr warn;
@@ -313,13 +329,13 @@ http {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            add_header Cache-Control "{cache_control}" always;
+            add_header Cache-Control "{cache_control}" always;{auth_lines}
         }}
         location / {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            add_header Cache-Control "no-cache" always;
+            add_header Cache-Control "no-cache" always;{auth_lines}
         }}
     }}
 }}
