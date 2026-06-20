@@ -129,17 +129,30 @@ try:
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
-    # Minimal agent cfg for loading; OnPolicyRunner needs a cfg dict.
-    agent_cfg = {"policy": {"class_name": "ActorCritic",
-                            "actor_hidden_dims": [256,128,64],
-                            "critic_hidden_dims": [256,128,64],
-                            "activation": "elu"},
-                 "algorithm": {"class_name": "PPO"}, "num_steps_per_env": 24,
-                 "empirical_normalization": False}
-    runner = OnPolicyRunner(env, agent_cfg, log_dir=None, device="cuda:0")
+    # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
+    # network dims, etc.) — a hand-built cfg is missing keys OnPolicyRunner needs.
+    agent_cfg = None
+    for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
+        try:
+            mod = __import__(loader, fromlist=["load_cfg_from_registry"])
+            agent_cfg = mod.load_cfg_from_registry(TASK, "rsl_rl_cfg_entry_point")
+            print("loaded agent cfg via", loader, flush=True)
+            break
+        except Exception as e:
+            print("cfg loader", loader, "failed:", repr(e), flush=True)
+    if agent_cfg is None:
+        raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+    print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
+    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
     runner.load(CKPT)
     policy = runner.get_inference_policy(device="cuda:0")
-    obs, _ = env.get_observations()
+    try:
+        obs, _ = env.get_observations()
+    except Exception:
+        reset_out = env.reset()
+        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+    print("OBS_TYPE", type(obs).__name__, flush=True)
     min_dist = np.full(N, 1e9)
     for _ in range(STEPS):
         with torch.inference_mode():
