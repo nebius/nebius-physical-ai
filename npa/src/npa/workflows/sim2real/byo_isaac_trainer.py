@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -170,7 +171,11 @@ def build_isaac_job_manifest(
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
             overrides["env.scene.object.spawn.scale"] = object_scale
-    override_str = " ".join(f"{k}={v}" for k, v in sorted(overrides.items()))
+    # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
+    # metacharacters (parens, spaces) that otherwise break the bash train command.
+    override_str = " ".join(
+        f"{k}={shlex.quote(str(v))}" for k, v in sorted(overrides.items())
+    )
     train_line = (
         f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
         f'--max_iterations {iterations} --headless agent.save_interval=25 {override_str}'

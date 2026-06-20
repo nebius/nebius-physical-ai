@@ -164,4 +164,4 @@ def test_manifest_embeds_custom_object_usd():
         object_usd="s3orhttp://assets/custom_sugar_box.usd", object_scale="(0.8, 0.8, 0.8)")
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "env.scene.object.spawn.usd_path=s3orhttp://assets/custom_sugar_box.usd" in args
-    assert "env.scene.object.spawn.scale=(0.8, 0.8, 0.8)" in args
+    assert "env.scene.object.spawn.scale='(0.8, 0.8, 0.8)'" in args
