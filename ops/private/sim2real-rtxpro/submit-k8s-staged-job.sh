@@ -105,6 +105,12 @@ BYO_EVAL_COMMAND_B64=""
 if [[ -n "${BYO_EVAL_COMMAND:-}" ]]; then
   BYO_EVAL_COMMAND_B64="$(printf '%s' "${BYO_EVAL_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_EVAL_COMMAND}" | base64)"
 fi
+# BYO inner-loop policy rollout (rolls the CURRENT policy in Isaac for the VLM to
+# critique = closes the loop, vs the synthetic rollout fallback).
+BYO_POLICY_COMMAND_B64=""
+if [[ -n "${BYO_POLICY_COMMAND:-}" ]]; then
+  BYO_POLICY_COMMAND_B64="$(printf '%s' "${BYO_POLICY_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_POLICY_COMMAND}" | base64)"
+fi
 
 "${ROOT}/npa/.venv/bin/python" - \
   "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${VLM_IMAGE}" "${EVAL_IMAGE}" \
@@ -228,6 +234,8 @@ spec:
               value: "${BYO_TRAINER_COMMAND_B64}"
             - name: BYO_EVAL_COMMAND_B64
               value: "${BYO_EVAL_COMMAND_B64}"
+            - name: BYO_POLICY_COMMAND_B64
+              value: "${BYO_POLICY_COMMAND_B64}"
             - name: NPA_BYO_ISAAC_OBJECT_USD
               value: "${NPA_BYO_ISAAC_OBJECT_USD:-}"
             - name: NPA_BYO_ISAAC_OBJECT_SCALE
@@ -317,6 +325,9 @@ spec:
               if [[ -n "\${BYO_EVAL_COMMAND_B64:-}" ]]; then
                 export BYO_EVAL_COMMAND="\$(printf '%s' "\${BYO_EVAL_COMMAND_B64}" | base64 -d)"
               fi
+              if [[ -n "\${BYO_POLICY_COMMAND_B64:-}" ]]; then
+                export BYO_POLICY_COMMAND="\$(printf '%s' "\${BYO_POLICY_COMMAND_B64}" | base64 -d)"
+              fi
               if ! command -v kubectl >/dev/null; then
                 curl -fsSL -o /tmp/kubectl https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl
                 chmod +x /tmp/kubectl
@@ -349,6 +360,7 @@ spec:
                 --policy-image "\${POLICY_IMAGE}"
                 --byo-trainer-command "\${BYO_TRAINER_COMMAND:-}"
                 --byo-eval-command "\${BYO_EVAL_COMMAND:-}"
+                --byo-policy-command "\${BYO_POLICY_COMMAND:-}"
                 --env-count "\${NPA_ENV_COUNT:-10000}"
                 --train-fraction "\${NPA_TRAIN_FRACTION:-0.8}"
                 --envgen-shard-count "\${NPA_ENVGEN_SHARD_COUNT:-16}"
