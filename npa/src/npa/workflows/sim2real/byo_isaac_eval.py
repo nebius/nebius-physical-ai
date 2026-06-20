@@ -224,27 +224,37 @@ try:
     runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
     runner.load(CKPT)
     policy = runner.get_inference_policy(device="cuda:0")
+    # The ACTUAL env count is the single source of truth for per-env sizing.
+    realN = int(getattr(env.unwrapped, "num_envs", N) or N)
+    # Reset FIRST to force a fully-batched [realN, obs_dim] observation. Calling
+    # get_observations() before any reset can hand back a stale/collapsed
+    # single-env buffer — that batch-1-vs-num_envs mismatch is what pinned earlier
+    # eval runs to num_envs=1. Reset gives a properly batched obs for N>1.
     try:
-        obs, _ = env.get_observations()
-    except Exception:
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-    # Use the ACTUAL env count (not the requested N) for action reshape + sizing.
-    realN = int(getattr(env.unwrapped, "num_envs", N) or N)
+    except Exception:
+        obs, _ = env.get_observations()
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
 
+    def _to_batched(v):
+        # Ensure a group tensor is [realN, feat]. A 1-D tensor is either a single
+        # env's obs (-> [1, feat]) or a flattened realN*feat batch (-> [realN, feat]).
+        if not torch.is_tensor(v) or v.ndim != 1:
+            return v
+        n = int(v.shape[0])
+        if realN > 1 and n % realN == 0:
+            return v.reshape(realN, n // realN)
+        return v.unsqueeze(0)
     def _batched_obs(o):
         # rsl_rl act_inference does obs[group] internally, so pass the WHOLE obs
-        # (Tensor)Dict — but ensure each group tensor has a leading batch dim
-        # (this env can present 1-D single-env group tensors).
+        # (Tensor)Dict — but ensure each group tensor is [realN, feat].
         if torch.is_tensor(o):
-            return o.unsqueeze(0) if o.ndim == 1 else o
+            return _to_batched(o)
         try:
             for k in list(o.keys()):
-                v = o[k]
-                if torch.is_tensor(v) and v.ndim == 1:
-                    o[k] = v.unsqueeze(0)
+                o[k] = _to_batched(o[k])
         except Exception:
             pass
         return o
@@ -261,9 +271,14 @@ try:
         return o
     obs = _batched_obs(obs)
     _pt = _policy_tensor(obs)
-    N = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
+    _pb = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
+    # N stays the true env count; only WARN if the policy obs batch disagrees so a
+    # genuine multi-env mismatch is visible in logs rather than silently collapsing.
     print("STEP0 policy_obs_shape", tuple(getattr(_pt, "shape", ())),
-          "env.num_envs", getattr(env.unwrapped, "num_envs", "?"), "N", N, flush=True)
+          "env.num_envs", getattr(env.unwrapped, "num_envs", "?"), "N", N,
+          "policy_batch", _pb, flush=True)
+    if _pb != N:
+        print("WARN policy_obs_batch %d != env_count %d" % (_pb, N), flush=True)
     # Per-env render dirs (labelled by generated env_id when provided).
     import json as _json
     env_ids = _json.loads(os.environ.get("EVAL_ENV_IDS", "[]") or "[]")
