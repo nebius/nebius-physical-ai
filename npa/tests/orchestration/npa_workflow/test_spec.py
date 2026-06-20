@@ -68,6 +68,7 @@ def test_sim2real_plan_promote_early_exit() -> None:
     plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
     states = [step.state for step in plan.steps]
     assert states.count("rollouts") == spec.config["inner_iterations"]
+    assert states.count("finalize") == 1
     assert states[-1] == "finalize"
 
 
@@ -77,7 +78,7 @@ def test_invalid_api_version() -> None:
     broken = SPECS.parent / "_tmp-broken.yaml"
     broken.write_text(text)
     try:
-        with pytest.raises(NpaWorkflowError, match="unsupported apiVersion"):
+        with pytest.raises(NpaWorkflowError, match="apiVersion"):
             load_spec(broken)
     finally:
         broken.unlink(missing_ok=True)

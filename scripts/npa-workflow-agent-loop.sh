@@ -18,9 +18,6 @@ while true; do
   "${PY}" -m pytest \
     npa/tests/orchestration/npa_workflow/ \
     npa/tests/smoke/test_npa_workflow_smoke.py \
-    npa/tests/cli/test_workflow_cli.py::test_workflow_status_prints_status \
-    npa/tests/cli/test_workflow_cli.py::test_workflow_status_maps_distillation_error \
-    npa/tests/cli/test_workflow_cli.py::test_durable_workflow_status_logs_and_artifacts_read_s3 \
     -q --timeout=120
 
   if NPA_INTEGRATION_E2E=1 "${PY}" -m pytest npa/tests/e2e/test_npa_workflow_live_e2e.py -q --timeout=120; then

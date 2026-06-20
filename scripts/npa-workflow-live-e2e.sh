@@ -45,7 +45,14 @@ while true; do
       --run-id "${RUN_ID}-r${round}" \
       --plan-only \
       --assume-decision promote_checkpoint \
-      --json | "${PY}" -c "import json,sys; d=json.load(sys.stdin); assert d.get('steps'), d"
+      --json | "${PY}" -c "
+import json, sys
+report = json.load(sys.stdin)
+steps = [s['state'] for s in report['plan']['steps']]
+assert steps, report
+if report['workflow'] == 'sim2real-vlm-rl':
+    assert steps.count('finalize') == 1, steps
+"
   done
 
   echo "--- pytest live e2e (NPA_INTEGRATION_E2E=1) ---"

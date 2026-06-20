@@ -1317,10 +1317,7 @@ def validate_spec_cmd(
 ) -> None:
     """Validate an NPA workflow specification file."""
 
-    from npa.orchestration.npa_workflow import validate_spec
-
     spec = _load_npa_workflow(yaml_path)
-    validate_spec(spec)
     payload = {
         "status": "valid",
         "apiVersion": spec.api_version,

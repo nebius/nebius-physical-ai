@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
 from npa.orchestration.npa_workflow.catalog import argv_for_tool
-from npa.orchestration.npa_workflow.decisions import refresh_context_decision
+from npa.orchestration.npa_workflow.decisions import normalize_decision, refresh_context_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore, store_for_config
@@ -92,7 +92,8 @@ def build_plan(
     run_id: str = "plan-run",
     assume_decision: str = "",
 ) -> ExecutionPlan:
-    assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    raw_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    assume = normalize_decision(raw_assume)
     ctx = _make_context(spec, run_id=run_id)
     plan = ExecutionPlan(
         workflow=spec.name,
@@ -117,7 +118,8 @@ def run_workflow(
     artifact_checker: Any | None = None,
     state_store: RunStateStore | None = None,
 ) -> dict[str, Any]:
-    assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    raw_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    assume = normalize_decision(raw_assume)
     ctx = _make_context(spec, run_id=run_id)
     store = state_store or (store_for_config(ctx.config, run_id=run_id) if persist_state else None)
     manifest = RunManifest(
@@ -129,38 +131,41 @@ def run_workflow(
     if store is not None:
         store.write_manifest(manifest)
 
-    if execute:
-        results = _execute_state_machine(
-            spec,
-            spec.initial,
-            ctx,
-            assume_decision=assume,
-            require_inputs=require_inputs,
-            on_step=on_step,
-            decision_reader=decision_reader,
-            artifact_checker=artifact_checker,
-        )
-    else:
-        plan = build_plan(spec, run_id=run_id, assume_decision=assume)
-        results = []
-        for step in plan.steps:
-            if on_step is not None:
-                on_step(step)
-            results.append(_execute_step(step, execute=False))
-
-    status = "completed"
-    if any(r.get("status") == "failed" for r in results):
+    results: list[dict[str, Any]] = []
+    status = "planned"
+    error: NpaWorkflowError | None = None
+    try:
+        if execute:
+            _execute_state_machine(
+                spec,
+                spec.initial,
+                ctx,
+                assume_decision=assume,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                results_out=results,
+            )
+            status = "completed"
+        else:
+            plan = build_plan(spec, run_id=run_id, assume_decision=assume)
+            for step in plan.steps:
+                if on_step is not None:
+                    on_step(step)
+                results.append(_execute_step(step, execute=False))
+            status = "planned"
+    except NpaWorkflowError as exc:
         status = "failed"
-    elif not execute:
-        status = "planned"
-
-    if store is not None:
-        manifest.status = status
-        manifest.steps = results
-        store.write_manifest(manifest)
+        error = exc
+    finally:
+        if store is not None:
+            manifest.status = status
+            manifest.steps = results
+            store.write_manifest(manifest)
 
     plan = build_plan(spec, run_id=run_id, assume_decision=assume)
-    return {
+    report = {
         "workflow": spec.name,
         "run_id": run_id,
         "status": status,
@@ -168,6 +173,9 @@ def run_workflow(
         "plan": plan.to_dict(),
         "run_prefix_uri": store.run_prefix_uri if store is not None else "",
     }
+    if error is not None:
+        raise error
+    return report
 
 
 def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
@@ -202,14 +210,17 @@ def _expand_state(
     *,
     assume_decision: str,
     loop_label: str = "",
+    follow_transitions: bool = True,
 ) -> None:
     state = spec.states[state_name]
+    _guard_plan_size(spec, plan)
 
     if state.sequence:
         if state.loop:
             max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
             for iteration in range(1, max_iter + 1):
                 ctx.outer_iteration = iteration
+                ctx.last_decision = ""
                 for child in state.sequence:
                     _expand_state(
                         spec,
@@ -218,20 +229,32 @@ def _expand_state(
                         plan,
                         assume_decision=assume_decision,
                         loop_label=state.name,
+                        follow_transitions=False,
                     )
                 ctx.last_decision = assume_decision
                 if state.loop.until and evaluate_predicate(
                     state.loop.until, ctx.as_predicate_context()
                 ):
                     break
-            next_name = _resolve_transition(state, ctx) or state.next
-            if next_name:
-                _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+            if state.next:
+                _expand_state(
+                    spec,
+                    state.next,
+                    ctx,
+                    plan,
+                    assume_decision=assume_decision,
+                )
             return
 
         for child in state.sequence:
             _expand_state(
-                spec, child, ctx, plan, assume_decision=assume_decision, loop_label=state.name
+                spec,
+                child,
+                ctx,
+                plan,
+                assume_decision=assume_decision,
+                loop_label=state.name,
+                follow_transitions=False,
             )
         if state.next:
             _expand_state(spec, state.next, ctx, plan, assume_decision=assume_decision)
@@ -249,16 +272,40 @@ def _expand_state(
                 break
         next_name = _resolve_transition(state, ctx) or state.next
         if next_name:
-            _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+            _expand_state(
+                spec,
+                next_name,
+                ctx,
+                plan,
+                assume_decision=assume_decision,
+            )
         return
 
     _append_state_step(spec, state, ctx, plan, loop_label=loop_label)
     if state.terminal:
         return
     ctx.last_decision = assume_decision if state.transitions else ctx.last_decision
-    next_name = _resolve_transition(state, ctx) or state.next
+    next_name = ""
+    if follow_transitions:
+        next_name = _resolve_transition(state, ctx) or state.next
+    elif not state.transitions:
+        next_name = state.next
     if next_name:
-        _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+        _expand_state(
+            spec,
+            next_name,
+            ctx,
+            plan,
+            assume_decision=assume_decision,
+        )
+
+
+def _guard_plan_size(spec: NpaWorkflowSpec, plan: ExecutionPlan) -> None:
+    limit = max(256, len(spec.states) * 64)
+    if len(plan.steps) >= limit:
+        raise NpaWorkflowError(
+            "plan exceeded step limit; check for unbounded control-flow cycles"
+        )
 
 
 def _append_state_step(
@@ -353,9 +400,10 @@ def _execute_state_machine(
     artifact_checker: Any | None,
     loop_label: str = "",
     follow_transitions: bool = True,
+    results_out: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     state = spec.states[state_name]
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = results_out if results_out is not None else []
 
     if state.sequence:
         if state.loop:
@@ -364,19 +412,18 @@ def _execute_state_machine(
                 ctx.outer_iteration = iteration
                 ctx.last_decision = ""
                 for child in state.sequence:
-                    results.extend(
-                        _execute_state_machine(
-                            spec,
-                            child,
-                            ctx,
-                            assume_decision=assume_decision,
-                            require_inputs=require_inputs,
-                            on_step=on_step,
-                            decision_reader=decision_reader,
-                            artifact_checker=artifact_checker,
-                            loop_label=state.name,
-                            follow_transitions=False,
-                        )
+                    _execute_state_machine(
+                        spec,
+                        child,
+                        ctx,
+                        assume_decision=assume_decision,
+                        require_inputs=require_inputs,
+                        on_step=on_step,
+                        decision_reader=decision_reader,
+                        artifact_checker=artifact_checker,
+                        loop_label=state.name,
+                        follow_transitions=False,
+                        results_out=results,
                     )
                 if not ctx.last_decision:
                     _refresh_decision(
@@ -390,39 +437,7 @@ def _execute_state_machine(
                     state.loop.until, ctx.as_predicate_context()
                 ):
                     break
-            next_name = _resolve_transition(state, ctx) or state.next
-            if next_name:
-                results.extend(
-                    _execute_state_machine(
-                        spec,
-                        next_name,
-                        ctx,
-                        assume_decision=assume_decision,
-                        require_inputs=require_inputs,
-                        on_step=on_step,
-                        decision_reader=decision_reader,
-                        artifact_checker=artifact_checker,
-                    )
-                )
-            return results
-
-        for child in state.sequence:
-            results.extend(
-                _execute_state_machine(
-                    spec,
-                    child,
-                    ctx,
-                    assume_decision=assume_decision,
-                    require_inputs=require_inputs,
-                    on_step=on_step,
-                    decision_reader=decision_reader,
-                    artifact_checker=artifact_checker,
-                    loop_label=state.name,
-                    follow_transitions=False,
-                )
-            )
-        if state.next:
-            results.extend(
+            if state.next:
                 _execute_state_machine(
                     spec,
                     state.next,
@@ -432,7 +447,35 @@ def _execute_state_machine(
                     on_step=on_step,
                     decision_reader=decision_reader,
                     artifact_checker=artifact_checker,
+                    results_out=results,
                 )
+            return results
+
+        for child in state.sequence:
+            _execute_state_machine(
+                spec,
+                child,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                loop_label=state.name,
+                follow_transitions=False,
+                results_out=results,
+            )
+        if state.next:
+            _execute_state_machine(
+                spec,
+                state.next,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                results_out=results,
             )
         return results
 
@@ -451,6 +494,8 @@ def _execute_state_machine(
                 artifact_checker=artifact_checker,
             )
             results.append(record)
+            if record.get("status") == "failed":
+                raise NpaWorkflowError(str(record.get("error") or f"state {state.name} failed"))
             _refresh_decision(ctx, reader=decision_reader, read_s3=False)
             if not ctx.last_decision:
                 ctx.last_decision = assume_decision
@@ -458,17 +503,16 @@ def _execute_state_machine(
                 break
         next_name = _resolve_transition(state, ctx) or state.next
         if next_name:
-            results.extend(
-                _execute_state_machine(
-                    spec,
-                    next_name,
-                    ctx,
-                    assume_decision=assume_decision,
-                    require_inputs=require_inputs,
-                    on_step=on_step,
-                    decision_reader=decision_reader,
-                    artifact_checker=artifact_checker,
-                )
+            _execute_state_machine(
+                spec,
+                next_name,
+                ctx,
+                assume_decision=assume_decision,
+                require_inputs=require_inputs,
+                on_step=on_step,
+                decision_reader=decision_reader,
+                artifact_checker=artifact_checker,
+                results_out=results,
             )
         return results
 
@@ -482,6 +526,8 @@ def _execute_state_machine(
         artifact_checker=artifact_checker,
     )
     results.append(record)
+    if record.get("status") == "failed":
+        raise NpaWorkflowError(str(record.get("error") or f"state {state.name} failed"))
     if state.terminal:
         return results
     if state.transitions:
@@ -494,17 +540,16 @@ def _execute_state_machine(
     elif not state.transitions:
         next_name = state.next
     if next_name:
-        results.extend(
-            _execute_state_machine(
-                spec,
-                next_name,
-                ctx,
-                assume_decision=assume_decision,
-                require_inputs=require_inputs,
-                on_step=on_step,
-                decision_reader=decision_reader,
-                artifact_checker=artifact_checker,
-            )
+        _execute_state_machine(
+            spec,
+            next_name,
+            ctx,
+            assume_decision=assume_decision,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            decision_reader=decision_reader,
+            artifact_checker=artifact_checker,
+            results_out=results,
         )
     return results
 
@@ -541,8 +586,17 @@ def _run_single_state(
         )
     if on_step is not None:
         on_step(step)
-    record = _execute_step(step, execute=True)
-    _record_state_outputs(state, ctx, step)
+    try:
+        record = _execute_step(step, execute=True)
+    except NpaWorkflowError as exc:
+        record = {
+            "state": step.state,
+            "iteration": step.iteration,
+            "status": "failed",
+            "error": str(exc),
+        }
+    else:
+        _record_state_outputs(state, ctx, step)
     return record
 
 

@@ -82,6 +82,9 @@ def load_spec(path: str | Path) -> NpaWorkflowSpec:
     data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise NpaWorkflowError(f"workflow spec must be a mapping, got {type(data).__name__}")
+    from npa.orchestration.npa_workflow.schema_validation import validate_document
+
+    validate_document(data)
     spec = _parse_document(data)
     validate_spec(spec)
     return spec
@@ -231,8 +234,23 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
         if state.run and state.run.is_empty() and not state.tool_ref and not state.sequence:
             raise NpaWorkflowError(f"state {state.name}: empty run block")
 
+        if state.loop:
+            _validate_loop_max(state, spec.config)
+
     _assert_acyclic_needs(spec)
-    _assert_single_terminal_reachable(spec)
+    _assert_terminal_exists(spec)
+    _assert_bounded_control_flow_cycles(spec)
+
+
+def _validate_loop_max(state: StateSpec, config: dict[str, Any]) -> None:
+    if state.loop is None or state.loop.max is None:
+        return
+    try:
+        resolved = resolve_config_int(state.loop.max, config)
+    except NpaWorkflowError:
+        return
+    if resolved < 1:
+        raise NpaWorkflowError(f"state {state.name}: loop.max must be >= 1, got {resolved}")
 
 
 def _assert_acyclic_needs(spec: NpaWorkflowSpec) -> None:
@@ -256,10 +274,40 @@ def _assert_acyclic_needs(spec: NpaWorkflowSpec) -> None:
         dfs(name)
 
 
-def _assert_single_terminal_reachable(spec: NpaWorkflowSpec) -> None:
+def _assert_terminal_exists(spec: NpaWorkflowSpec) -> None:
     terminals = [name for name, state in spec.states.items() if state.terminal]
     if not terminals:
         raise NpaWorkflowError("workflow must declare at least one terminal: true state")
+
+
+def _assert_bounded_control_flow_cycles(spec: NpaWorkflowSpec) -> None:
+    graph: dict[str, set[str]] = {name: set() for name in spec.states}
+    for name, state in spec.states.items():
+        if state.next:
+            graph[name].add(state.next)
+        for transition in state.transitions:
+            graph[name].add(transition.goto)
+
+    visited: set[str] = set()
+    stack: list[str] = []
+
+    def dfs(node: str) -> None:
+        if node in stack:
+            cycle = stack[stack.index(node) :] + [node]
+            if not any(spec.states[item].loop for item in cycle):
+                joined = " -> ".join(cycle)
+                raise NpaWorkflowError(f"unbounded control-flow cycle detected: {joined}")
+            return
+        if node in visited:
+            return
+        stack.append(node)
+        for nxt in sorted(graph.get(node, ())):
+            dfs(nxt)
+        stack.pop()
+        visited.add(node)
+
+    for name in spec.states:
+        dfs(name)
 
 
 def resolve_config_int(value: Any, config: dict[str, Any]) -> int:

@@ -23,13 +23,17 @@ def evaluate_predicate(name: str, context: Mapping[str, Any]) -> bool:
 
 
 def _promote_checkpoint(context: Mapping[str, Any]) -> bool:
-    decision = str(context.get("last_decision") or "")
-    return decision == "promote_checkpoint"
+    from npa.orchestration.npa_workflow.decisions import DECISION_PROMOTE, normalize_decision
+
+    decision = normalize_decision(str(context.get("last_decision") or ""))
+    return decision == DECISION_PROMOTE
 
 
 def _loop_back(context: Mapping[str, Any]) -> bool:
-    decision = str(context.get("last_decision") or "")
-    return decision == "loop_back_to_inner_loop"
+    from npa.orchestration.npa_workflow.decisions import DECISION_LOOP_BACK, normalize_decision
+
+    decision = normalize_decision(str(context.get("last_decision") or ""))
+    return decision == DECISION_LOOP_BACK
 
 
 register_predicate("promote_checkpoint", _promote_checkpoint)

@@ -137,4 +137,6 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 - JSON Schema validation of artifact payloads
 - Unified `workflow status` for npa.workflow runs (sim2real path is separate today)
 
-Those belong in spec v0.0.2+ as explicit fields (`parallel`, `gang`, `foreach`), not Jinja.
+`run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
+
+Those advanced scheduling features belong in spec v0.0.2+ as explicit fields (`parallel`, `gang`, `foreach`), not Jinja.
