@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from npa.orchestration.npa_workflow import (
+    NpaWorkflowError,
+    build_plan,
+    load_spec,
+    validate_spec,
+)
+from npa.orchestration.npa_workflow.predicates import evaluate_predicate
+from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "vlm-eval-single.yaml",
+        "tokenfactory-rollout-judge.yaml",
+        "sim2real-vlm-rl.yaml",
+    ],
+)
+def test_example_specs_validate(name: str) -> None:
+    spec = load_spec(SPECS / name)
+    validate_spec(spec)
+    assert spec.api_version == "npa.workflow/v0.0.1"
+
+
+def test_token_resolution() -> None:
+    text = resolve_tokens(
+        "s3://{{config.bucket}}/{{run.id}}/out/",
+        config={"bucket": "b"},
+        run={"id": "run-1"},
+    )
+    assert text == "s3://b/run-1/out/"
+
+
+def test_token_unknown_config_raises() -> None:
+    with pytest.raises(TokenError):
+        resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
+
+
+def test_sim2real_plan_expands_loops() -> None:
+    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")
+    states = [step.state for step in plan.steps]
+    assert states.count("rollouts") == spec.config["inner_iterations"] * spec.config["outer_iterations"]
+    assert "finalize" in states
+
+
+def test_sim2real_plan_promote_early_exit() -> None:
+    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
+    states = [step.state for step in plan.steps]
+    assert states.count("rollouts") == spec.config["inner_iterations"]
+    assert states[-1] == "finalize"
+
+
+def test_invalid_api_version() -> None:
+    path = SPECS / "vlm-eval-single.yaml"
+    text = path.read_text().replace("v0.0.1", "v9.9.9")
+    broken = SPECS.parent / "_tmp-broken.yaml"
+    broken.write_text(text)
+    try:
+        with pytest.raises(NpaWorkflowError, match="unsupported apiVersion"):
+            load_spec(broken)
+    finally:
+        broken.unlink(missing_ok=True)
+
+
+def test_predicate_promote() -> None:
+    assert evaluate_predicate("promote_checkpoint", {"last_decision": "promote_checkpoint"})
+    assert not evaluate_predicate("promote_checkpoint", {"last_decision": "loop_back_to_inner_loop"})

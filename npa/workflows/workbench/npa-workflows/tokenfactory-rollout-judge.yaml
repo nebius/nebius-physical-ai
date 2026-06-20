@@ -1,0 +1,45 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: tokenfactory-rollout-judge
+  description: Reason over scene inputs, then VLM-score synthetic rollouts.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/tokenfactory"
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+  vlm_backend: api
+
+resources:
+  default:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+
+initial: reason-scene
+
+states:
+  reason-scene:
+    description: Token Factory Cosmos reasoner over captured scene frames.
+    toolRef: workbench.token_factory.reason
+    resources: default
+    outputs:
+      - uri: "{{config.plan_uri}}plan.json"
+        schema: npa.token_factory.plan.v1
+    next: judge-rollouts
+
+  judge-rollouts:
+    description: VLM eval over generated rollouts.
+    needs: [reason-scene]
+    toolRef: workbench.vlm_eval.run
+    resources: default
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    outputs:
+      - uri: "{{config.scores_uri}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true

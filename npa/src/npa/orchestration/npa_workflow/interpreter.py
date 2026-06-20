@@ -1,0 +1,341 @@
+"""Build execution plans and run NPA workflow state machines."""
+
+from __future__ import annotations
+
+import subprocess
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from npa.orchestration.npa_workflow.catalog import argv_for_tool
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.predicates import evaluate_predicate
+from npa.orchestration.npa_workflow.spec import (
+    NpaWorkflowSpec,
+    StateSpec,
+    config_truthy,
+    resolve_config_int,
+)
+from npa.orchestration.npa_workflow.tokens import resolve_tokens
+
+
+@dataclass
+class PlanStep:
+    state: str
+    iteration: int | None = None
+    loop_label: str = ""
+    argv: list[str] = field(default_factory=list)
+    shell: str = ""
+    tool_ref: str = ""
+    resources: str = "default"
+    outputs: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class ExecutionPlan:
+    workflow: str
+    api_version: str
+    initial: str
+    assume_decision: str = ""
+    steps: list[PlanStep] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workflow": self.workflow,
+            "api_version": self.api_version,
+            "initial": self.initial,
+            "assume_decision": self.assume_decision,
+            "steps": [
+                {
+                    "state": step.state,
+                    "iteration": step.iteration,
+                    "loop_label": step.loop_label,
+                    "argv": step.argv,
+                    "shell": step.shell,
+                    "tool_ref": step.tool_ref,
+                    "resources": step.resources,
+                    "outputs": step.outputs,
+                }
+                for step in self.steps
+            ],
+        }
+
+
+@dataclass
+class RunContext:
+    config: dict[str, Any]
+    run: dict[str, Any]
+    last_decision: str = ""
+    state_outputs: dict[str, dict[str, str]] = field(default_factory=dict)
+    outer_iteration: int = 0
+    inner_iteration: int = 0
+
+    def as_predicate_context(self) -> dict[str, Any]:
+        return {
+            "last_decision": self.last_decision,
+            "outer_iteration": self.outer_iteration,
+            "inner_iteration": self.inner_iteration,
+            "config": self.config,
+            "run": self.run,
+        }
+
+
+def build_plan(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str = "plan-run",
+    assume_decision: str = "",
+) -> ExecutionPlan:
+    assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
+    ctx = _make_context(spec, run_id=run_id)
+    plan = ExecutionPlan(
+        workflow=spec.name,
+        api_version=spec.api_version,
+        initial=spec.initial,
+        assume_decision=assume,
+    )
+    _expand_state(spec, spec.initial, ctx, plan, assume_decision=assume)
+    return plan
+
+
+def run_workflow(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str,
+    execute: bool = False,
+    assume_decision: str = "",
+    on_step: Callable[[PlanStep], None] | None = None,
+) -> dict[str, Any]:
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    results: list[dict[str, Any]] = []
+    for step in plan.steps:
+        if on_step is not None:
+            on_step(step)
+        results.append(_execute_step(step, execute=execute))
+    status = "completed"
+    if any(r.get("status") == "failed" for r in results):
+        status = "failed"
+    elif not execute:
+        status = "planned"
+    return {
+        "workflow": spec.name,
+        "run_id": run_id,
+        "status": status,
+        "steps": results,
+        "plan": plan.to_dict(),
+    }
+
+
+def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
+    run = {"id": run_id, "prefix": f"{spec.name}/{run_id}", **dict(spec.run_defaults)}
+    run["id"] = run_id
+    config = _resolve_config_strings(dict(spec.config), run=run)
+    if config.get("prefix"):
+        run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
+    return RunContext(config=config, run=run)
+
+
+def _resolve_config_strings(config: dict[str, Any], *, run: dict[str, Any]) -> dict[str, Any]:
+    resolved: dict[str, Any] = dict(config)
+    for _ in range(4):
+        changed = False
+        for key, value in list(resolved.items()):
+            if isinstance(value, str) and "{{" in value:
+                new_value = resolve_tokens(value, config=resolved, run=run)
+                if new_value != value:
+                    resolved[key] = new_value
+                    changed = True
+        if not changed:
+            break
+    return resolved
+
+
+def _expand_state(
+    spec: NpaWorkflowSpec,
+    state_name: str,
+    ctx: RunContext,
+    plan: ExecutionPlan,
+    *,
+    assume_decision: str,
+    loop_label: str = "",
+) -> None:
+    state = spec.states[state_name]
+
+    if state.sequence:
+        if state.loop:
+            max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
+            for iteration in range(1, max_iter + 1):
+                ctx.outer_iteration = iteration
+                for child in state.sequence:
+                    _expand_state(
+                        spec,
+                        child,
+                        ctx,
+                        plan,
+                        assume_decision=assume_decision,
+                        loop_label=state.name,
+                    )
+                ctx.last_decision = assume_decision
+                if state.loop.until and evaluate_predicate(
+                    state.loop.until, ctx.as_predicate_context()
+                ):
+                    break
+            next_name = _resolve_transition(state, ctx) or state.next
+            if next_name:
+                _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+            return
+
+        for child in state.sequence:
+            _expand_state(
+                spec, child, ctx, plan, assume_decision=assume_decision, loop_label=state.name
+            )
+        if state.next:
+            _expand_state(spec, state.next, ctx, plan, assume_decision=assume_decision)
+        return
+
+    if state.loop:
+        max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
+        for iteration in range(1, max_iter + 1):
+            ctx.inner_iteration = iteration
+            _append_state_step(
+                spec, state, ctx, plan, iteration=iteration, loop_label=loop_label
+            )
+            ctx.last_decision = assume_decision
+            if state.loop.until and evaluate_predicate(state.loop.until, ctx.as_predicate_context()):
+                break
+        next_name = _resolve_transition(state, ctx) or state.next
+        if next_name:
+            _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+        return
+
+    _append_state_step(spec, state, ctx, plan, loop_label=loop_label)
+    if state.terminal:
+        return
+    ctx.last_decision = assume_decision if state.transitions else ctx.last_decision
+    next_name = _resolve_transition(state, ctx) or state.next
+    if next_name:
+        _expand_state(spec, next_name, ctx, plan, assume_decision=assume_decision)
+
+
+def _append_state_step(
+    spec: NpaWorkflowSpec,
+    state: StateSpec,
+    ctx: RunContext,
+    plan: ExecutionPlan,
+    *,
+    iteration: int | None = None,
+    loop_label: str = "",
+) -> None:
+    argv, shell, tool_ref = _resolved_run(state, ctx)
+    outputs = [
+        {
+            "uri": resolve_tokens(
+                artifact.uri,
+                config=ctx.config,
+                run=ctx.run,
+                state_outputs=ctx.state_outputs,
+            ),
+            "schema": artifact.schema,
+        }
+        for artifact in state.outputs
+        if artifact.uri
+    ]
+    plan.steps.append(
+        PlanStep(
+            state=state.name,
+            iteration=iteration,
+            loop_label=loop_label,
+            argv=argv,
+            shell=shell,
+            tool_ref=tool_ref,
+            resources=state.resources,
+            outputs=outputs,
+        )
+    )
+
+
+def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, str]:
+    if state.tool_ref:
+        argv = [
+            resolve_tokens(
+                token,
+                config=ctx.config,
+                run=ctx.run,
+                state_outputs=ctx.state_outputs,
+            )
+            for token in argv_for_tool(state.tool_ref)
+        ]
+        return argv, "", state.tool_ref
+    if state.run is None:
+        return [], "", ""
+    shell = resolve_tokens(
+        state.run.shell,
+        config=ctx.config,
+        run=ctx.run,
+        state_outputs=ctx.state_outputs,
+    )
+    argv = [
+        resolve_tokens(token, config=ctx.config, run=ctx.run, state_outputs=ctx.state_outputs)
+        for token in state.run.argv
+    ]
+    return argv, shell, ""
+
+
+def _resolve_transition(state: StateSpec, ctx: RunContext) -> str:
+    for tr in state.transitions:
+        if tr.if_config and not config_truthy(tr.if_config, ctx.config):
+            continue
+        if tr.when is None:
+            return tr.goto
+        if evaluate_predicate(tr.when, ctx.as_predicate_context()):
+            return tr.goto
+    return ""
+
+
+def _execute_step(step: PlanStep, *, execute: bool) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "state": step.state,
+        "iteration": step.iteration,
+        "status": "planned",
+    }
+    if not execute:
+        if step.argv:
+            record["argv"] = step.argv
+        if step.shell:
+            record["shell"] = step.shell
+        if step.tool_ref:
+            record["tool_ref"] = step.tool_ref
+        return record
+
+    if step.argv:
+        proc = subprocess.run(step.argv, capture_output=True, text=True, check=False)
+        record["argv"] = step.argv
+        record["returncode"] = proc.returncode
+        record["status"] = "ok" if proc.returncode == 0 else "failed"
+        if proc.returncode != 0:
+            raise NpaWorkflowError(
+                f"state {step.state} failed (exit {proc.returncode}): "
+                f"{proc.stderr or proc.stdout}"
+            )
+        return record
+
+    if step.shell.strip():
+        proc = subprocess.run(
+            step.shell,
+            shell=True,
+            executable="/bin/bash",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        record["shell"] = step.shell
+        record["returncode"] = proc.returncode
+        record["status"] = "ok" if proc.returncode == 0 else "failed"
+        if proc.returncode != 0:
+            raise NpaWorkflowError(
+                f"state {step.state} failed (exit {proc.returncode}): "
+                f"{proc.stderr or proc.stdout}"
+            )
+        return record
+
+    record["status"] = "skipped"
+    return record

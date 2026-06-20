@@ -1,0 +1,32 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: vlm-eval-single
+  description: Score a rollout prefix with the workbench VLM eval tool.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/vlm-eval"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+  vlm_backend: self-hosted
+
+resources:
+  default:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: score-rollouts
+
+states:
+  score-rollouts:
+    description: Evaluate rollouts and write a gating report.
+    toolRef: workbench.vlm_eval.run
+    resources: default
+    outputs:
+      - uri: "{{config.scores_uri}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+    terminal: true

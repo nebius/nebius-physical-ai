@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nebius.com/npa/npa.workflow.v0.0.1.schema.json",
+  "title": "NPA Workflow",
+  "type": "object",
+  "required": ["apiVersion", "kind", "states"],
+  "properties": {
+    "apiVersion": { "const": "npa.workflow/v0.0.1" },
+    "kind": { "const": "Workflow" },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "config": { "type": "object" },
+    "run": { "type": "object" },
+    "resources": { "type": "object" },
+    "initial": { "type": "string" },
+    "states": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/state" }
+    }
+  },
+  "$defs": {
+    "state": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "needs": { "type": "array", "items": { "type": "string" } },
+        "run": {
+          "type": "object",
+          "properties": {
+            "shell": { "type": "string" },
+            "argv": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "toolRef": { "type": "string" },
+        "sequence": { "type": "array", "items": { "type": "string" } },
+        "loop": {
+          "type": "object",
+          "properties": {
+            "max": {},
+            "until": { "type": "string" }
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["goto"],
+            "properties": {
+              "when": { "type": "string" },
+              "goto": { "type": "string" },
+              "if": { "type": "string" }
+            }
+          }
+        },
+        "next": { "type": "string" },
+        "inputs": { "$ref": "#/$defs/artifacts" },
+        "outputs": { "$ref": "#/$defs/artifacts" },
+        "resources": { "type": "string" },
+        "terminal": { "type": "boolean" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["uri"],
+        "properties": {
+          "uri": { "type": "string" },
+          "schema": { "type": "string" }
+        }
+      }
+    }
+  }
+}
