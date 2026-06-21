@@ -84,22 +84,8 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
     }
 
 
-def read_generated_train_env(envs_dir: str) -> dict[str, Any]:
-    """Read a representative GENERATED train-env spec (seed + physics).
-
-    The envgen stage writes one record per generated env with a per-env ``seed``
-    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
-    first record so the trainer can train on the generated env distribution (its
-    seed drives Isaac randomization) rather than stock defaults. Returns ``{}``
-    when no spec is present (envgen not wired / stock run).
-    """
-
-    from pathlib import Path as _Path
-
-    path = _Path(envs_dir) / "envs.jsonl"
-    if not envs_dir or not path.is_file():
-        return {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+def _first_env_record(text: str) -> dict[str, Any]:
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -112,6 +98,39 @@ def read_generated_train_env(envs_dir: str) -> dict[str, Any]:
             "seed": int(rec.get("seed") or 0),
             "physics": rec.get("physics") or {},
         }
+    return {}
+
+
+def read_generated_train_env(envs_dir: str, *, envs_uri: str = "") -> dict[str, Any]:
+    """Read a representative GENERATED train-env spec (seed + physics).
+
+    The envgen stage writes one record per generated env with a per-env ``seed``
+    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
+    first record so the trainer can train on the generated env distribution (its
+    seed + friction/mass) rather than stock defaults.
+
+    Prefers the local ``envs_dir/envs.jsonl``; falls back to downloading
+    ``envs_uri`` (the S3 ``.../envs/train/envs.jsonl``) when the orchestrator
+    didn't sync the train envs locally (it only localizes the held-out split).
+    Returns ``{}`` when neither source is available (stock run / envgen off).
+    """
+
+    from pathlib import Path as _Path
+
+    path = _Path(envs_dir) / "envs.jsonl" if envs_dir else None
+    if path and path.is_file():
+        return _first_env_record(path.read_text(encoding="utf-8"))
+    if envs_uri.startswith("s3://"):
+        try:
+            import boto3
+            from urllib.parse import urlparse
+
+            u = urlparse(envs_uri)
+            s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+            obj = s3.get_object(Bucket=u.netloc, Key=u.path.lstrip("/"))
+            return _first_env_record(obj["Body"].read().decode("utf-8"))
+        except Exception as exc:  # pragma: no cover - network/credentials
+            print(f"byo_isaac_trainer: train-env S3 read failed ({envs_uri}): {exc!r}", flush=True)
     return {}
 
 
@@ -189,6 +208,7 @@ def build_isaac_job_manifest(
     object_usd: str = "",
     object_scale: str = "",
     seed: int = 0,
+    physics: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -198,6 +218,15 @@ def build_isaac_job_manifest(
     is trained on a CUSTOM asset physically simulated in Isaac, not the stock cube.
     ``seed`` (from a GENERATED train-env spec) drives env + agent randomization so
     training runs on the envgen-produced env distribution.
+
+    ``physics`` (generated ``{friction, mass_scale}``) selects a different code
+    path: a task VARIANT that adds friction/mass startup events (registered
+    post-boot via the shipped ``isaac_physics_task`` wrapper), because the stock
+    Lift task has no friction/mass field a hydra override could touch. This path
+    is opt-in (the caller gates it on ``NPA_BYO_ISAAC_PHYSICS``) and currently
+    trains the variant's stock cube with default reward weights + the generated
+    seed; it does not also apply VLM reward overrides / custom object (the proven
+    default path below keeps those).
     """
 
     overrides = dict(reward_overrides or {})
@@ -215,18 +244,47 @@ def build_isaac_job_manifest(
     # env cfg types `seed` as None, so hydra rejects an int there ("Incorrect type
     # under namespace: /seed. Expected: NoneType, Received: int").
     seed_arg = f" --seed {int(seed)}" if seed else ""
-    train_line = (
-        f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-        f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
-    )
+
+    if physics:
+        # Generated-physics path: ship the isaac_physics_task module + its
+        # post-boot train wrapper into the container and run the wrapper (it
+        # registers the friction/mass variant AFTER AppLauncher boots, then
+        # trains via the rsl_rl runner, saving model_*.pt into $OUT).
+        from npa.workflows.sim2real import isaac_physics_task as _physmod
+
+        module_src = _physmod.module_source()
+        wrapper_src = _physmod.TRAIN_WRAPPER_SCRIPT
+        fr = float(physics.get("friction", 1.0))
+        ms = float(physics.get("mass_scale", 1.0))
+        train_block = (
+            "mkdir -p /tmp/npa_phys\n"
+            "cat > /tmp/npa_phys/isaac_physics_task.py <<'PHYSEOF'\n"
+            + module_src + "\nPHYSEOF\n"
+            "cat > /tmp/npa_phys/runner.py <<'RUNEOF'\n"
+            + wrapper_src + "\nRUNEOF\n"
+            f'echo "PHYSICS_INJECTION: friction={fr} mass_scale={ms} seed={int(seed)}"\n'
+            f'export NPA_PHYS_MODULE_DIR=/tmp/npa_phys PHYS_OUT_DIR="$OUT" '
+            f'PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} PHYS_SEED={int(seed)} '
+            f'NPA_GEN_FRICTION={fr} NPA_GEN_MASS_SCALE={ms}\n'
+            '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
+        )
+    else:
+        train_line = (
+            f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
+            f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
+        )
+        train_block = (
+            f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
+            f'{train_line} 2>&1 | tail -120\n'
+        )
+
     script = (
         "set -uo pipefail\n"
         'exec > >(tee -a /tmp/byo-train.log) 2>&1\n'
         'PY="/isaac-sim/python.sh"; [ -x "$PY" ] || PY="$(command -v python3 || command -v python)"\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
-        f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
         "set +e\n"
-        f'{train_line} 2>&1 | tail -120\n'
+        f'{train_block}'
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
@@ -393,11 +451,28 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
 
     # GENERATED train-env spec: seed drives Isaac randomization so the policy
     # trains on the envgen-produced distribution (matches the held-out eval).
-    train_env = read_generated_train_env(_env("NPA_SIM2REAL_TRAIN_ENVS_DIR"))
+    train_env = read_generated_train_env(
+        _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"), envs_uri=_env("NPA_SIM2REAL_TRAIN_ENVS_URI"))
     gen_seed = int(train_env.get("seed") or 0)
     if train_env:
         print(f"byo_isaac_trainer: GENERATED train env {train_env.get('env_id')} "
               f"seed={gen_seed} physics={train_env.get('physics')}", flush=True)
+
+    # Opt-in generated-physics injection (guarded; default path unchanged): map the
+    # generated env's friction/mass_scale onto NPA_GEN_* and use the physics-variant
+    # task (friction/mass startup events) instead of stock train.py.
+    physics = None
+    if _env("NPA_BYO_ISAAC_PHYSICS") == "1":
+        from npa.workflows.sim2real import isaac_physics_task as _physmod
+
+        gen_phys = (train_env.get("physics") or {}) if train_env else {}
+        phys_env = {
+            "NPA_GEN_FRICTION": _env("NPA_GEN_FRICTION") or str(gen_phys.get("friction", "")),
+            "NPA_GEN_MASS_SCALE": _env("NPA_GEN_MASS_SCALE") or str(gen_phys.get("mass_scale", "")),
+        }
+        physics = _physmod.physics_params_from_env(phys_env)
+        print(f"byo_isaac_trainer: PHYSICS injection {'ON' if physics else 'OFF (no params)'} "
+              f"-> {physics}", flush=True)
 
     manifest = build_isaac_job_manifest(
         job_name=job_name,
@@ -415,6 +490,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         object_usd=object_usd,
         object_scale=object_scale,
         seed=gen_seed,
+        physics=physics,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
