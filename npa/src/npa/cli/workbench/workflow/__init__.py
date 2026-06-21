@@ -1301,4 +1301,134 @@ def distill_cmd(
             console.print(f"  {stage}: {tag}")
 
 
+def _load_npa_workflow(path: Path):
+    from npa.orchestration.npa_workflow import NpaWorkflowError, load_spec
+
+    try:
+        return load_spec(path)
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+
+
+@app.command("validate-spec")
+def validate_spec_cmd(
+    yaml_path: Path = typer.Argument(help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON result."),
+) -> None:
+    """Validate an NPA workflow specification file."""
+
+    spec = _load_npa_workflow(yaml_path)
+    payload = {
+        "status": "valid",
+        "apiVersion": spec.api_version,
+        "name": spec.name,
+        "states": sorted(spec.states),
+        "initial": spec.initial,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"valid: {spec.name} ({spec.api_version})")
+        typer.echo(f"states: {', '.join(sorted(spec.states))}")
+
+
+@app.command("plan-spec")
+def plan_spec_cmd(
+    yaml_path: Path = typer.Argument(help="NPA workflow spec path."),
+    run_id: str = typer.Option("", "--run-id", help="Run id for token expansion."),
+    assume_decision: str = typer.Option(
+        "",
+        "--assume-decision",
+        help="Plan branch after decide states (promote_checkpoint or loop_back).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
+) -> None:
+    """Expand an NPA workflow spec into an execution plan (dry-run)."""
+
+    from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan
+
+    spec = _load_npa_workflow(yaml_path)
+    resolved_run_id = run_id or f"{spec.name}-plan"
+    try:
+        plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+    if json_output:
+        typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+        return
+    typer.echo(f"workflow: {plan.workflow}")
+    typer.echo(f"assume_decision: {plan.assume_decision}")
+    for index, step in enumerate(plan.steps, start=1):
+        label = step.state
+        if step.iteration is not None:
+            label = f"{label}#{step.iteration}"
+        if step.tool_ref:
+            typer.echo(f"  {index:02d}. {label} toolRef={step.tool_ref}")
+        elif step.argv:
+            typer.echo(f"  {index:02d}. {label} argv={' '.join(step.argv[:4])}...")
+        else:
+            typer.echo(f"  {index:02d}. {label} shell=<{len(step.shell)} chars>")
+
+
+@app.command("run-spec")
+def run_spec_cmd(
+    yaml_path: Path = typer.Argument(help="NPA workflow spec path."),
+    run_id: str = typer.Option("", "--run-id", help="Run identifier."),
+    execute: bool = typer.Option(
+        False,
+        "--execute/--plan-only",
+        help="Execute tool commands locally (default: plan only).",
+    ),
+    assume_decision: str = typer.Option("", "--assume-decision", help="Branch assumption for planning."),
+    persist_state: bool = typer.Option(
+        False,
+        "--persist-state",
+        help="Write run manifest and status to S3 (config.bucket + config.prefix).",
+    ),
+    require_inputs: bool = typer.Option(
+        False,
+        "--require-inputs",
+        help="Fail before each step when declared input URIs are missing on S3.",
+    ),
+    scheduler_plan: bool = typer.Option(
+        False,
+        "--scheduler-plan",
+        help="Include portable scheduler task documents in JSON output.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
+) -> None:
+    """Run or plan an NPA workflow spec."""
+
+    from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, run_workflow
+    from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
+
+    spec = _load_npa_workflow(yaml_path)
+    resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
+    resolved_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "")
+    try:
+        report = run_workflow(
+            spec,
+            run_id=resolved_run_id,
+            execute=execute,
+            assume_decision=resolved_assume,
+            persist_state=persist_state,
+            require_inputs=require_inputs,
+        )
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+    if scheduler_plan:
+        plan = build_plan(spec, run_id=resolved_run_id, assume_decision=resolved_assume)
+        report["scheduler"] = build_scheduler_plan(spec, plan.steps, run_id=resolved_run_id)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {report['status']}")
+        typer.echo(f"run_id: {report['run_id']}")
+        if report.get("run_prefix_uri"):
+            typer.echo(f"run_prefix_uri: {report['run_prefix_uri']}")
+        typer.echo(f"steps: {len(report['plan']['steps'])}")
+
+
 app.add_typer(trigger_app, name="trigger")

@@ -1,5 +1,9 @@
 # Raw SkyPilot Workbench YAMLs
 
+Declarative authoring specs (`apiVersion: npa.workflow/v0.0.1`) live in
+[`../npa-workflows/`](../npa-workflows/README.md). Prefer those for readable
+stage graphs; use this directory for SkyPilot execution and GPU task details.
+
 This directory contains standalone SkyPilot task YAMLs for Workbench
 reference paths. The supported first path is the Python wrapper or `npa`
 CLI for each workflow because wrappers inject secrets, validate image

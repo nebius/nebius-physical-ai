@@ -29,7 +29,7 @@ s3://<bucket>/<prefix>/<run-id>/
 1. **Pre-stage a golden run** — Sync the validated run tree for offline walkthrough:
 
    ```bash
-   ./ops/private/sim2real-rtxpro/prestage-offline-run.sh <pre-staged-run-id>
+   <private-operator-pack>/sim2real-rtxpro/prestage-offline-run.sh <pre-staged-run-id>
    # -> /tmp/sim2real-prestage/<run-id>/
    rerun /tmp/sim2real-prestage/<pre-staged-run-id>/reports/sim2real.rrd
    ```
@@ -40,7 +40,7 @@ s3://<bucket>/<prefix>/<run-id>/
    ```bash
    export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
    INNER_ITERATIONS=1 OUTER_ITERATIONS=2 \
-     ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+     <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
    # note run_id= from output; monitor with monitor-k8s-job.sh
    ```
 
@@ -231,10 +231,10 @@ npa workbench health sim2real \
 export KUBECONFIG=~/.npa/clusters/<cluster>/kubeconfig
 INNER_ITERATIONS=1 OUTER_ITERATIONS=2 ROLLOUT_COUNT=2 HELDOUT_ENV_COUNT=4 \
   SUCCESS_THRESHOLD=0.45 \
-  ./ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+  <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
 
 # Monitor
-./ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<live-run-id>
+<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<live-run-id>
 
 # Canonical URIs from code (optional)
 npa/.venv/bin/python -c "

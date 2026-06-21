@@ -1,0 +1,353 @@
+"""Catalog of workbench tools referenced by ``toolRef`` in NPA workflow specs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+
+@dataclass(frozen=True)
+class ToolEntry:
+    name: str
+    argv_template: list[str]
+    description: str = ""
+
+
+TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.vlm_eval.run": ToolEntry(
+        name="workbench.vlm_eval.run",
+        description="Score rollout directories with the VLM eval workbench tool.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "vlm-eval",
+            "run",
+            "--input-path",
+            "{{config.rollouts_uri}}",
+            "--output-path",
+            "{{config.scores_uri}}",
+            "--backend",
+            "{{config.vlm_backend}}",
+        ],
+    ),
+    "workbench.token_factory.reason": ToolEntry(
+        name="workbench.token_factory.reason",
+        description="Run Cosmos reasoner over scene inputs.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "reason",
+            "--input-path",
+            "{{config.scene_uri}}",
+            "--output-path",
+            "{{config.plan_uri}}",
+        ],
+    ),
+    "workbench.cosmos2.transfer": ToolEntry(
+        name="workbench.cosmos2.transfer",
+        description="Cosmos Transfer augment stage.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-path",
+            "{{config.trigger_uri}}",
+            "--output-path",
+            "{{config.augment_uri}}",
+        ],
+    ),
+    "workbench.sim2real_envgen.raw_shard": ToolEntry(
+        name="workbench.sim2real_envgen.raw_shard",
+        description="Generate raw simulation env shard.",
+        argv_template=[
+            "python",
+            "-m",
+            "npa.workflows.sim2real_envgen",
+            "raw-shard",
+            "--output-uri",
+            "{{config.raw_envs_uri}}",
+            "--env-count",
+            "{{config.env_count}}",
+        ],
+    ),
+    "workbench.sim2real.policy_rollouts": ToolEntry(
+        name="workbench.sim2real.policy_rollouts",
+        description="Policy rollouts on train envs (workflow stub until sim2real step wiring).",
+        argv_template=["echo", "policy rollouts -> {{config.rollouts_uri}}"],
+    ),
+    "workbench.sim2real.heldout_eval": ToolEntry(
+        name="workbench.sim2real.heldout_eval",
+        description="Held-out simulation eval (workflow stub).",
+        argv_template=["echo", "heldout eval -> {{config.heldout_report_uri}}"],
+    ),
+    "workbench.sim2real.write_decision": ToolEntry(
+        name="workbench.sim2real.write_decision",
+        description="Write threshold decision artifact for dynamic transitions (demo stub).",
+        argv_template=[
+            "python",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision; "
+                "write_decision('{{config.decision_uri}}', '{{config.default_decision}}')"
+            ),
+        ],
+    ),
+    "workbench.sim2real.finalize": ToolEntry(
+        name="workbench.sim2real.finalize",
+        description="Finalize run artifacts (workflow stub).",
+        argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
+    ),
+    "workbench.lancedb.import_bdd100k": ToolEntry(
+        name="workbench.lancedb.import_bdd100k",
+        description="Import BDD100K rows into LanceDB through the workbench service.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lancedb",
+            "import-bdd100k",
+            "--source",
+            "{{config.source_uri}}",
+            "--table",
+            "{{config.lance_table}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--limit",
+            "{{config.bdd100k_limit}}",
+            "--split",
+            "train",
+            "--split",
+            "val",
+            "--service",
+            "--endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.lancedb.backfill_cpu_bundle": ToolEntry(
+        name="workbench.lancedb.backfill_cpu_bundle",
+        description="Backfill all CPU UDF columns required by BDD100K failure-mode views.",
+        argv_template=[
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail; "
+                "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
+                "npa workbench lancedb backfill "
+                "--udf \"${udf}\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--batch-size 512 "
+                "--service "
+                "--endpoint {{config.lancedb_endpoint}}; "
+                "done"
+            ),
+        ],
+    ),
+    "workbench.lancedb.backfill_clip": ToolEntry(
+        name="workbench.lancedb.backfill_clip",
+        description="Backfill CLIP embeddings for BDD100K rows.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lancedb",
+            "backfill",
+            "--udf",
+            "clip_embedding",
+            "--table",
+            "{{config.lance_table}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--batch-size",
+            "32",
+            "--service",
+            "--endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.lancedb.create_failure_views": ToolEntry(
+        name="workbench.lancedb.create_failure_views",
+        description="Create rider, nighttime-person, and distant-person materialized views.",
+        argv_template=[
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.rider_view}} "
+                "--filter \"has_rider = true AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.nighttime_view}} "
+                "--filter \"timeofday = 'night' AND has_person = true AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.distant_view}} "
+                "--filter \"has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}"
+            ),
+        ],
+    ),
+    "workbench.detection_training.train_rider": ToolEntry(
+        name="workbench.detection_training.train_rider",
+        description="Train a detector on the rider failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.rider_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.rider_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.train_nighttime": ToolEntry(
+        name="workbench.detection_training.train_nighttime",
+        description="Train a detector on the nighttime-person failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.nighttime_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.nighttime_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.train_distant": ToolEntry(
+        name="workbench.detection_training.train_distant",
+        description="Train a detector on the distant-person failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.distant_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.distant_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_rider": ToolEntry(
+        name="workbench.detection_training.eval_rider",
+        description="Evaluate the rider detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.rider_train_uri}}",
+            "--eval-view",
+            "{{config.rider_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.rider_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_nighttime": ToolEntry(
+        name="workbench.detection_training.eval_nighttime",
+        description="Evaluate the nighttime-person detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.nighttime_train_uri}}",
+            "--eval-view",
+            "{{config.nighttime_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.nighttime_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_distant": ToolEntry(
+        name="workbench.detection_training.eval_distant",
+        description="Evaluate the distant-person detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.distant_train_uri}}",
+            "--eval-view",
+            "{{config.distant_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.distant_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.fiftyone.launch_app": ToolEntry(
+        name="workbench.fiftyone.launch_app",
+        description="Launch FiftyOne App for pipeline review (workflow stage hook).",
+        argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+    ),
+}
+
+
+def validate_tool_ref(tool_ref: str) -> ToolEntry:
+    entry = TOOL_CATALOG.get(tool_ref)
+    if entry is None:
+        known = ", ".join(sorted(TOOL_CATALOG))
+        raise NpaWorkflowError(f"unknown toolRef {tool_ref!r} (known: {known})")
+    return entry
+
+
+def argv_for_tool(tool_ref: str) -> list[str]:
+    return list(validate_tool_ref(tool_ref).argv_template)

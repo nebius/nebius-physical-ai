@@ -151,7 +151,8 @@ def test_cosmos3_fetch_clones_and_downloads_without_token_args(
     commands = [call[0] for call in calls]
     assert commands[0][:3] == ["git", "ls-remote", "--exit-code"]
     assert commands[1][:3] == ["git", "clone", "--depth"]
-    assert commands[2][:2] == ["huggingface-cli", "download"]
+    assert Path(commands[2][0]).name == "huggingface-cli"
+    assert commands[2][1] == "download"
     assert "--include" in commands[2]
     assert "gh-secret" not in " ".join(" ".join(command) for command in commands)
     assert "hf-secret" not in " ".join(" ".join(command) for command in commands)

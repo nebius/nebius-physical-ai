@@ -1,0 +1,127 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-vlm-rl
+  description: >
+    VLM-to-RL staged loop with fixed inner iterations and promote/loop-back gate.
+    Planning dynamic branches uses --assume-decision on the CLI.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-b/{{run.id}}"
+
+  inner_iterations: 3
+  outer_iterations: 2
+
+  default_decision: loop_back
+
+  env_count: "10000"
+  vlm_backend: self-hosted
+
+  trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
+  heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/outer_loop/decision.json"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real-report.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+
+initial: augment
+
+states:
+  augment:
+    description: Cosmos Transfer augment of LeRobot trigger data.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.sim2real.augment.v1
+    next: envgen
+
+  envgen:
+    description: Generate raw env shard catalog on object storage.
+    needs: [augment]
+    toolRef: workbench.sim2real_envgen.raw_shard
+    resources: gpu
+    outputs:
+      - uri: "{{config.raw_envs_uri}}manifest.json"
+        schema: npa.sim2real.split_manifest.v1
+    next: outer
+
+  outer:
+    description: Outer loop — inner train pass, held-out eval, threshold gate.
+    needs: [envgen]
+    loop:
+      max: "{{config.outer_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - inner
+      - heldout
+      - decide
+    next: finalize
+
+  inner:
+    description: Inner loop — rollouts and VLM critique per iteration.
+    loop:
+      max: "{{config.inner_iterations}}"
+    sequence:
+      - rollouts
+      - vlm-score
+
+  rollouts:
+    description: Policy action rollouts on train envs.
+    toolRef: workbench.sim2real.policy_rollouts
+    resources: gpu
+    outputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.sim2real.action_rollout.v1
+
+  vlm-score:
+    description: VLM eval over train rollouts.
+    needs: [rollouts]
+    toolRef: workbench.vlm_eval.run
+    resources: gpu
+    outputs:
+      - uri: "{{config.scores_uri}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  heldout:
+    description: Held-out simulation eval report.
+    toolRef: workbench.sim2real.heldout_eval
+    resources: gpu
+    outputs:
+      - uri: "{{config.heldout_report_uri}}"
+        schema: npa.sim2real.heldout_eval.v1
+
+  decide:
+    description: Threshold decision for promote vs loop-back.
+    writesDecision: true
+    needs: [heldout]
+    toolRef: workbench.sim2real.write_decision
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: finalize
+      - when: loop_back
+        goto: outer
+
+  finalize:
+    description: Report upload and visualization artifacts.
+    needs: [outer]
+    toolRef: workbench.sim2real.finalize
+    outputs:
+      - uri: "{{config.finalize_report_uri}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true

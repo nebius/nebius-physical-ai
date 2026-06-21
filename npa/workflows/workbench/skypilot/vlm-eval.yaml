@@ -1,4 +1,9 @@
 # Evaluate rollout artifacts with a self-hosted open VLM.
+#
+# Declarative: npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+# Guide:       docs/workbench/npa-workflow-guide.md
+# Index:       npa/workflows/workbench/skypilot/README.md
+#
 name: vlm-eval
 execution: serial
 ---
