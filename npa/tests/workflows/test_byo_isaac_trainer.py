@@ -193,12 +193,13 @@ def test_manifest_embeds_generated_seed():
         service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         seed=516456434)
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
-    # generated env seed drives both env + agent randomization
-    assert "env.seed=516456434" in args
-    assert "agent.seed=516456434" in args
+    # generated env seed drives randomization via train.py --seed (NOT a hydra
+    # env.seed= override, which the Lift cfg rejects as a type error).
+    assert "--seed 516456434" in args
+    assert "env.seed=" not in args
 
 
-def test_manifest_no_seed_overrides_when_zero():
+def test_manifest_no_seed_arg_when_zero():
     m = byo.build_isaac_job_manifest(
         job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
         task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
@@ -206,4 +207,4 @@ def test_manifest_no_seed_overrides_when_zero():
         service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         seed=0)
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
-    assert "env.seed=" not in args
+    assert "--seed" not in args

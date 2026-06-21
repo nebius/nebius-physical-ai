@@ -205,18 +205,19 @@ def build_isaac_job_manifest(
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
             overrides["env.scene.object.spawn.scale"] = object_scale
-    if seed:
-        # Drive Isaac env + rsl_rl agent randomization from the generated env seed.
-        overrides["env.seed"] = int(seed)
-        overrides["agent.seed"] = int(seed)
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
         f"{k}={shlex.quote(str(v))}" for k, v in sorted(overrides.items())
     )
+    # Seed the run from the GENERATED env spec via train.py's --seed CLI flag (sets
+    # both the env and rsl_rl agent seed). NOT a hydra `env.seed=` override: the Lift
+    # env cfg types `seed` as None, so hydra rejects an int there ("Incorrect type
+    # under namespace: /seed. Expected: NoneType, Received: int").
+    seed_arg = f" --seed {int(seed)}" if seed else ""
     train_line = (
         f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-        f'--max_iterations {iterations} --headless agent.save_interval=25 {override_str}'
+        f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
     )
     script = (
         "set -uo pipefail\n"
