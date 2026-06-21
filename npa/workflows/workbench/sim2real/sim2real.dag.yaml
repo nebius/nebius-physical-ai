@@ -1,0 +1,59 @@
+# Sim2Real staged workflow — declarative DAG spec ("true YAML").
+#
+# This file expresses the workflow's *shape* as data: the stage dependency
+# graph, the outer loop with its conditional promote_checkpoint early-exit, and
+# the fixed-count inner loop. It is executed by
+# npa.workflows.sim2real.scheduler, which maps each executable node to an
+# existing Sim2RealWorkflow method — the stage implementations are unchanged.
+#
+# Run it with:
+#   python -m npa.workflows.sim2real run --dag <this-file> [--upload-artifacts ...]
+#
+# The default `run` path (no --dag) still uses runner.run_staged(); the scheduler
+# drives the same methods in the same order, so the two paths produce identical
+# stage records (see tests/workflows/test_sim2real_scheduler.py).
+#
+# Loop bounds resolve from config fields (config.<attr>) or integer literals.
+# The `until` condition is a named predicate (no eval); currently only
+# `promote_checkpoint` is supported, mapping to WorkflowState.should_promote().
+apiVersion: npa.workflow/v1
+name: sim2real-staged-loop
+
+nodes:
+  # ---- preamble: stages 1-6 (trigger, assets, augment, envgen, split, tokens) ----
+  - id: preamble
+    executor: preamble
+    stages:                       # descriptive — implemented inside run_preamble()
+      - stage_01_trigger
+      - stage_02_assets
+      - stage_03_augment
+      - stage_04_envs_raw
+      - stage_05_envs_train
+      - stage_06_tokens
+
+  # ---- outer loop: stages 7-11, conditional promote early-exit ----
+  - id: outer_loop
+    executor: outer_iteration
+    needs: [preamble]
+    loop:
+      max_iterations: config.outer_iterations
+      until: promote_checkpoint
+    body:                         # descriptive — implemented inside run_outer_iteration()
+      inner_loop:
+        repeat: config.inner_iterations
+        stages:
+          - stage_07_actions_train
+          - stage_08_vlm_eval_train
+          - stage_09_training_signal
+      stages:
+        - stage_10_eval_heldout
+        - stage_11_outer_loop_decision
+
+  # ---- finalize: stages 12-14 (external validation, retrigger, rerun viz) ----
+  - id: finalize
+    executor: finalize
+    needs: [outer_loop]
+    stages:                       # descriptive — implemented inside run_finalize()
+      - stage_12_external_validation
+      - stage_13_retrigger
+      - stage_14_rerun_viz

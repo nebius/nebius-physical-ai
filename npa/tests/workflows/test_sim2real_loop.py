@@ -2280,3 +2280,34 @@ def test_cosmos2_transfer_component_uploads_result_json_to_explicit_uri(
     manifest_uploads = [uri for name, uri in uploads if name == "cosmos2-transfer-manifest.json"]
     assert manifest_uploads
     assert manifest_uploads[0].endswith("/augment/manifest.json")
+
+
+def test_byo_policy_rollout_passes_component(monkeypatch, tmp_path) -> None:
+    """Regression: the --byo-policy-command path must pass component= to
+    _run_component_command (it was omitted, raising TypeError mid-run)."""
+
+    captured = {}
+
+    def _fake_run_component_command(command, *, cwd, env, component, **kwargs):
+        captured["component"] = component
+        captured["command"] = command
+        return {"ok": True}
+
+    def _fake_read_component_json(path, invocation):
+        return {"rollout_dirs": [str(tmp_path / "rollout-0000")]}
+
+    monkeypatch.setattr(loop_module, "_run_component_command", _fake_run_component_command)
+    monkeypatch.setattr(loop_module, "_read_component_json", _fake_read_component_json)
+    config = Sim2RealLoopConfig(
+        run_id="r",
+        byo_policy_command="python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout",
+    )
+    out = loop_module._run_policy_rollouts_via_command(
+        config,
+        actions_dir=tmp_path,
+        outer_iteration=1,
+        iteration=1,
+        train_envs_uri="s3://b/run/envs/train/envs.jsonl",
+    )
+    assert captured["component"] == "policy_actions"
+    assert [str(p) for p in out] == [str(tmp_path / "rollout-0000")]

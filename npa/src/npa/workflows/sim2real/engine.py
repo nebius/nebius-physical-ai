@@ -896,6 +896,7 @@ def run_inner_loop(
                 output_dir=trainer_dir,
                 initial_reward_head=reward_head,
                 initial_action_bias=action_bias,
+                train_envs_dir=local_dir / "envs" / "train",
             )
             trainer_source = "byo_command"
         else:
@@ -2922,6 +2923,7 @@ def _run_trainer_via_command(
     output_dir: Path,
     initial_reward_head: float,
     initial_action_bias: float,
+    train_envs_dir: Path | None = None,
 ) -> VlmSignalUpdateResult:
     """Run the BYO trainer command and parse its update result.
 
@@ -2936,18 +2938,24 @@ def _run_trainer_via_command(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "byo-trainer-update.json"
+    extra = {
+        "NPA_SIM2REAL_SIGNAL_JSON": str(signal_batch_path),
+        "NPA_SIM2REAL_INITIAL_REWARD_HEAD": str(initial_reward_head),
+        "NPA_SIM2REAL_INITIAL_ACTION_BIAS": str(initial_action_bias),
+        "NPA_SIM2REAL_LEARNING_RATE": str(config.learning_rate),
+        "NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT": str(config.signal_loss_weight),
+        "NPA_SIM2REAL_TRAINER_IMAGE": config.trainer_image,
+    }
+    # Expose the GENERATED train-env specs (envgen seed + per-env physics) so a BYO
+    # trainer can train on the generated env distribution, not stock defaults
+    # (mirrors how the held-out eval consumes NPA_SIM2REAL_HELDOUT_ENVS_DIR).
+    if train_envs_dir is not None:
+        extra["NPA_SIM2REAL_TRAIN_ENVS_DIR"] = str(train_envs_dir)
     env = _component_env(
         config,
         component="trainer",
         output_json=output_path,
-        extra={
-            "NPA_SIM2REAL_SIGNAL_JSON": str(signal_batch_path),
-            "NPA_SIM2REAL_INITIAL_REWARD_HEAD": str(initial_reward_head),
-            "NPA_SIM2REAL_INITIAL_ACTION_BIAS": str(initial_action_bias),
-            "NPA_SIM2REAL_LEARNING_RATE": str(config.learning_rate),
-            "NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT": str(config.signal_loss_weight),
-            "NPA_SIM2REAL_TRAINER_IMAGE": config.trainer_image,
-        },
+        extra=extra,
     )
     invocation = _run_component_command(
         config.byo_trainer_command,
@@ -3185,7 +3193,18 @@ def _normalize_heldout_report(
         "component_invocation": _public_invocation(invocation),
         "generated_at": _utc_now(),
     }
-    for key in ("component_source", "rollout_backend"):
+    for key in (
+        "component_source",
+        "rollout_backend",
+        # Preserve BYO-eval extras so heldout viz + provenance survive normalization:
+        # render_manifest drives stage-14 Rerun heldout/camera/**; the rest record
+        # which trained policy + generated envs were actually evaluated.
+        "render_manifest",
+        "generated_envs_tested",
+        "generated_env_ids",
+        "policy_checkpoint",
+        "deployable_policy_eval",
+    ):
         if payload.get(key):
             report[key] = payload[key]
     if "asset_provenance" in payload:
@@ -3286,7 +3305,12 @@ def threshold_decision(
     promoted = success_rate >= config.threshold
     checkpoint_dir = local_dir / "checkpoints" / "candidate"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_uri = str(checkpoint_dir)
+    # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
+    # eval as policy_checkpoint), promote should reference those real weights and be
+    # deployable — not the reference-metadata stub.
+    real_checkpoint = str(heldout_report.get("policy_checkpoint") or "").strip()
+    is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(".pt")
+    checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
     decision = {
         "schema": SCHEMA_THRESHOLD_DECISION,
         "stage": 11,
@@ -3304,9 +3328,12 @@ def threshold_decision(
             {
                 "schema": "npa.sim2real.candidate_checkpoint.v1",
                 "run_id": config.run_id,
-                "source": "vlm-rl-reference-update",
-                "deployable_policy": False,
-                "policy_artifact_kind": "reference_metadata",
+                "source": "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update",
+                "deployable_policy": is_real_policy,
+                "policy_artifact_kind": (
+                    "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
+                ),
+                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
                 "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,

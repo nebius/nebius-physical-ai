@@ -184,6 +184,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
     parser.add_argument("--byo-eval-command", default="")
+    parser.add_argument("--byo-policy-command", default="")
     parser.add_argument("--byo-rerun-command", default="")
     parser.add_argument(
         "--rerun",
@@ -296,6 +297,18 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help="Override quality seed when resuming staged state.",
+    )
+    run_cmd.add_argument(
+        "--dag",
+        nargs="?",
+        const="__default__",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "Execute via the declarative DAG scheduler instead of run_staged(). "
+            "Pass a spec path, or bare --dag for the shipped sim2real.dag.yaml. "
+            "Drives the same stage methods in the same order (parity-checked)."
+        ),
     )
     inner = subparsers.add_parser(
         "inner-loop", help="Run only the VLM-to-RL inner loop."
@@ -549,10 +562,29 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         workflow = Sim2RealWorkflow(config)
-        report = workflow.run_staged(
-            upload=True if args.upload_artifacts else None,
-            initial_quality=getattr(args, "initial_quality", None),
-        )
+        upload = True if args.upload_artifacts else None
+        initial_quality = getattr(args, "initial_quality", None)
+        dag_arg = getattr(args, "dag", None)
+        if dag_arg is not None:
+            from npa.workflows.sim2real.scheduler import (
+                DEFAULT_DAG_SPEC,
+                load_spec,
+                run_dag,
+            )
+
+            spec_path = DEFAULT_DAG_SPEC if dag_arg == "__default__" else dag_arg
+            spec = load_spec(spec_path)
+            report = run_dag(
+                workflow,
+                spec,
+                upload=upload,
+                initial_quality=initial_quality,
+            )
+        else:
+            report = workflow.run_staged(
+                upload=upload,
+                initial_quality=initial_quality,
+            )
         print(json.dumps(report, indent=2, sort_keys=True))
         # A command that orchestrates sub-operations must exit non-zero when one
         # of them failed — a "blocked"/"failed" upload recorded in the JSON report
