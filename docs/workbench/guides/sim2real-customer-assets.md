@@ -18,7 +18,7 @@
 | LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Trace env names from `ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh`, `runbook.yaml` `envs:`, and `npa.workflows.sim2real.config.build_config_from_env`.
+Trace env names from `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`, `runbook.yaml` `envs:`, and `npa.workflows.sim2real.config.build_config_from_env`.
 
 ---
 
@@ -50,10 +50,10 @@ Customer trigger URI and train-env URI definitions: [data contracts § Customer 
 export CUSTOMER_ASSET_PROFILE=industrial
 export CUSTOMER_TASK_ID=my-batch-20260614       # substitutes YOUR-TASK-ID in profile URIs
 export CUSTOMER_ROBOT_PRESET=flexiv             # optional; default ur5e in industrial profile
-./ops/private/sim2real-rtxpro/trigger-pipeline.sh
+<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh
 ```
 
-Profiles: `ops/private/sim2real-rtxpro/customer-asset-profiles/*.profile.example`.
+Profiles: `<private-operator-pack>/sim2real-rtxpro/customer-asset-profiles/*.profile.example`.
 Copy to `~/.npa/customer-asset.profile` and set `CUSTOMER_ASSET_PROFILE` to that path.
 
 | Profile | Robot | Scene | Objects | Cameras |
@@ -64,7 +64,7 @@ Copy to `~/.npa/customer-asset.profile` and set `CUSTOMER_ASSET_PROFILE` to that
 Dry-run:
 
 ```bash
-CUSTOMER_ASSET_PROFILE=industrial ./ops/private/sim2real-rtxpro/apply-customer-asset-profile.sh
+CUSTOMER_ASSET_PROFILE=industrial <private-operator-pack>/sim2real-rtxpro/apply-customer-asset-profile.sh
 ```
 
 Customer JSON templates (`YOUR-BUCKET` / `YOUR-TASK-ID` placeholders):
@@ -223,7 +223,7 @@ gap is third-party asset catalogs, LanceDB stage, live real-world loop, and UR/F
 URDF upload before full embodiment parity.
 
 **PR stack:** [#109](https://github.com/nebius/nebius-physical-ai/pull/109) staged
-runbook + direct K8s submit (`ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh`);
+runbook + direct K8s submit (`<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`);
 [#110](https://github.com/nebius/nebius-physical-ai/pull/110) mandatory stages +
 Stage 2 asset materialization + `POLICY_IMAGE` / augment placeholder fallbacks.
 
@@ -248,7 +248,7 @@ Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.
 ## Customer onboarding checklist
 
 1. **Upload** — Land a complete **LeRobot dataset** at your chosen S3 prefix.
-2. **Trigger** — `export TRIGGER_DATASET_URI=s3://…/` then `./ops/private/sim2real-rtxpro/trigger-pipeline.sh` (or workflow submit with the same URI).
+2. **Trigger** — `export TRIGGER_DATASET_URI=s3://…/` then `<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh` (or workflow submit with the same URI).
 3. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
 4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
 5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.

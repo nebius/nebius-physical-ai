@@ -274,8 +274,6 @@ skills:
     smoke:
       - type: file_exists
         path: npa/workflows/workbench/sim2real/runbook.yaml
-      - type: file_exists
-        path: ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
