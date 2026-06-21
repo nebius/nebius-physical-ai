@@ -99,18 +99,6 @@ BYO_TRAINER_COMMAND_B64=""
 if [[ -n "${BYO_TRAINER_COMMAND:-}" ]]; then
   BYO_TRAINER_COMMAND_B64="$(printf '%s' "${BYO_TRAINER_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_TRAINER_COMMAND}" | base64)"
 fi
-# BYO held-out eval (rolls the TRAINED checkpoint for a real success_rate) — same
-# base64 passthrough as the trainer so colon/space-bearing commands survive YAML.
-BYO_EVAL_COMMAND_B64=""
-if [[ -n "${BYO_EVAL_COMMAND:-}" ]]; then
-  BYO_EVAL_COMMAND_B64="$(printf '%s' "${BYO_EVAL_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_EVAL_COMMAND}" | base64)"
-fi
-# BYO inner-loop policy rollout (rolls the CURRENT policy in Isaac for the VLM to
-# critique = closes the loop, vs the synthetic rollout fallback).
-BYO_POLICY_COMMAND_B64=""
-if [[ -n "${BYO_POLICY_COMMAND:-}" ]]; then
-  BYO_POLICY_COMMAND_B64="$(printf '%s' "${BYO_POLICY_COMMAND}" | base64 -w0 2>/dev/null || printf '%s' "${BYO_POLICY_COMMAND}" | base64)"
-fi
 
 "${ROOT}/npa/.venv/bin/python" - \
   "${ORCHESTRATOR_IMAGE}" "${TRAINER_IMAGE}" "${VLM_IMAGE}" "${EVAL_IMAGE}" \
@@ -232,16 +220,6 @@ spec:
               value: "${POLICY_IMAGE}"
             - name: BYO_TRAINER_COMMAND_B64
               value: "${BYO_TRAINER_COMMAND_B64}"
-            - name: BYO_EVAL_COMMAND_B64
-              value: "${BYO_EVAL_COMMAND_B64}"
-            - name: BYO_POLICY_COMMAND_B64
-              value: "${BYO_POLICY_COMMAND_B64}"
-            - name: NPA_BYO_ISAAC_OBJECT_USD
-              value: "${NPA_BYO_ISAAC_OBJECT_USD:-}"
-            - name: NPA_BYO_ISAAC_OBJECT_SCALE
-              value: "${NPA_BYO_ISAAC_OBJECT_SCALE:-}"
-            - name: NPA_BYO_ISAAC_SUCCESS_DIST_M
-              value: "${NPA_BYO_ISAAC_SUCCESS_DIST_M:-0.05}"
             - name: ISAAC_IMAGE
               value: "${ISAAC_IMAGE}"
             - name: NPA_SIM2REAL_ISAAC_TASK
@@ -310,6 +288,8 @@ spec:
               value: "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
             - name: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S
               value: "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-28800}"
+            - name: NPA_SIM2REAL_USE_DAG
+              value: "${NPA_SIM2REAL_USE_DAG:-0}"
           envFrom:${ENV_FROM_YAML}
           command: ["/bin/bash", "-lc"]
           args:
@@ -321,12 +301,6 @@ spec:
               python3 -c "import npa.workflows.sim2real as m; print(m.__file__)"
               if [[ -n "\${BYO_TRAINER_COMMAND_B64:-}" ]]; then
                 export BYO_TRAINER_COMMAND="\$(printf '%s' "\${BYO_TRAINER_COMMAND_B64}" | base64 -d)"
-              fi
-              if [[ -n "\${BYO_EVAL_COMMAND_B64:-}" ]]; then
-                export BYO_EVAL_COMMAND="\$(printf '%s' "\${BYO_EVAL_COMMAND_B64}" | base64 -d)"
-              fi
-              if [[ -n "\${BYO_POLICY_COMMAND_B64:-}" ]]; then
-                export BYO_POLICY_COMMAND="\$(printf '%s' "\${BYO_POLICY_COMMAND_B64}" | base64 -d)"
               fi
               if ! command -v kubectl >/dev/null; then
                 curl -fsSL -o /tmp/kubectl https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl
@@ -359,8 +333,6 @@ spec:
                 --augment-image "\${AUGMENT_IMAGE}"
                 --policy-image "\${POLICY_IMAGE}"
                 --byo-trainer-command "\${BYO_TRAINER_COMMAND:-}"
-                --byo-eval-command "\${BYO_EVAL_COMMAND:-}"
-                --byo-policy-command "\${BYO_POLICY_COMMAND:-}"
                 --env-count "\${NPA_ENV_COUNT:-10000}"
                 --train-fraction "\${NPA_TRAIN_FRACTION:-0.8}"
                 --envgen-shard-count "\${NPA_ENVGEN_SHARD_COUNT:-16}"
@@ -383,6 +355,12 @@ spec:
                 --source-ref "\${NPA_SOURCE_REF:-main}"
                 --upload-artifacts
               )
+              # Opt-in: execute via the declarative DAG scheduler (true-YAML path).
+              # Default (0) keeps the canonical run_staged() path; both are parity-checked.
+              if [[ "\${NPA_SIM2REAL_USE_DAG:-0}" == "1" ]]; then
+                common_args+=(--dag)
+                echo "sim2real: executing via DAG scheduler (--dag, default sim2real.dag.yaml)"
+              fi
               python3 -m npa.workflows.sim2real run "\${common_args[@]}" \
                 --initial-quality "\${INITIAL_QUALITY:-0.42}"
               python3 -c "import json; from pathlib import Path; r=json.loads(Path('\${output_dir}/reports/sim2real-report.json').read_text()); print('CLUSTER_METRICS', json.dumps({'run_id': r['run_id'], 'decision': r['outer_loop']['latest_decision'], 'reward_trend': r['inner_loop']['reward_trend']}))"
