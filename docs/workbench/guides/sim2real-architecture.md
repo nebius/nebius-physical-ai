@@ -10,7 +10,7 @@ roadmap or desired-state design.
 | SkyPilot runbook | `npa/workflows/workbench/sim2real/runbook.yaml` (`run:` block) |
 | Stage CLI | `npa/src/npa/workflows/sim2real_loop.py` |
 | SDK wrappers | `npa/src/npa/sdk/workbench/sim2real.py` |
-| Direct K8s submit | `ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh` |
+| Direct K8s submit | `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh` |
 
 User-facing guide: [sim2real-workflow.md](./sim2real-workflow.md)
 

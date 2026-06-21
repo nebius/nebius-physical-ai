@@ -19,7 +19,7 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 - `npa/workflows/workbench/sim2real/runbook.yaml` — the standalone, materialized
   raw-SkyPilot runbook. Read its header first: it documents every env var, the
   trigger-bucket vs artifact-bucket split, and the S3-compatible endpoint map.
-- `ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh` — the direct-Kubernetes
+- `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh` — the direct-Kubernetes
   submit path (bypasses the SkyPilot 0.12.2 getcwd/kubeconfig blocker). This is
   the route that actually reaches GPUs today. It applies a one-GPU orchestrator
   Job that clones `NPA_SOURCE_REF` and runs `python -m npa.workflows.sim2real run`,
@@ -31,18 +31,18 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 
 1. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
    `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens). Generate
-   operator files with `ops/private/sim2real-rtxpro/setup-local-operator.sh`.
+   operator files with `<private-operator-pack>/sim2real-rtxpro/setup-local-operator.sh`.
 2. **Seed the trigger** on a new bucket: `seed-stock-trigger.sh`, then set
    `storage.sim2real_stock_trigger_uri`.
 3. **Sync the cluster storage secret** so pods get the endpoint + keys:
-   `ops/private/sim2real-rtxpro/sync-cluster-storage-secret.sh`.
+   `<private-operator-pack>/sim2real-rtxpro/sync-cluster-storage-secret.sh`.
 4. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or
    a comma list: `config,coherence,s3,registry,tokens,cluster`). Expect PASS on
    s3, tokens, cluster; WARN on registry only when `NPA_REGISTRY` is unset.
 5. **Submit:** `INNER_ITERATIONS=… OUTER_ITERATIONS=… submit-k8s-staged-job.sh`
    (or `run.sh trigger`). It registry-qualifies every image, refreshes the
    `npa-nebius-registry` pull secret, and preflights the trigger + S3 write.
-6. **Monitor:** `ops/private/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
+6. **Monitor:** `<private-operator-pack>/sim2real-rtxpro/monitor-k8s-job.sh sim2real-<run-id>`
    or `npa workbench sim2real status <run-id> --watch`.
 7. **View results:** `run.sh sync <run-id>` (Rerun), or read
    `reports/sim2real-report.json` (`.outer_loop.latest_decision`,
@@ -74,5 +74,5 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 npa workbench health sim2real --checks all
-bash -n ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh
+bash -n <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh
 ```
