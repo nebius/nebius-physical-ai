@@ -38,3 +38,24 @@ def test_physics_params_garbage_is_bounded_not_crash():
     p = pt.physics_params_from_env({"NPA_GEN_FRICTION": "-9", "NPA_GEN_MASS_SCALE": "999"})
     assert p["friction"] == pt.FRICTION_MIN
     assert p["mass_scale"] == pt.MASS_SCALE_MAX
+
+
+def test_module_source_is_self_contained():
+    src = pt.module_source()
+    # Shipped into the Isaac container, so it must carry the helpers + register.
+    assert "def physics_params_from_env" in src
+    assert "def register(" in src
+    assert "randomize_rigid_body_material" in src
+
+
+def test_train_wrapper_enforces_boot_before_isaac_imports():
+    s = pt.TRAIN_WRAPPER_SCRIPT
+    # AppLauncher boot MUST precede any isaaclab/isaac_physics_task import — the
+    # whole point of the wrapper (pre-boot isaaclab import pulls pxr and dies).
+    boot = s.index("AppLauncher(headless=True).app")
+    assert boot < s.index("import isaaclab_tasks")
+    assert boot < s.index("import isaac_physics_task")
+    assert s.index("import isaaclab_tasks") < s.index("physmod.register")
+    # trains via the rsl_rl runner and emits the done/ckpt markers
+    assert "OnPolicyRunner" in s and "runner.learn" in s
+    assert "PHYS_TRAIN_DONE" in s

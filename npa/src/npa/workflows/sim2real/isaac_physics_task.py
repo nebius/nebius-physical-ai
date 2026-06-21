@@ -119,3 +119,108 @@ def register(params: dict[str, float] | None = None) -> str | None:
         },
     )
     return NPA_PHYSICS_TASK_ID
+
+
+def module_source() -> str:
+    """Return this module's own source, for shipping into the Isaac container.
+
+    The Isaac-Lab image has no ``npa`` package, so the BYO trainer writes this
+    file into the job (via heredoc) and the train wrapper imports it post-boot.
+    """
+    from pathlib import Path
+
+    return Path(__file__).read_text(encoding="utf-8")
+
+
+# Post-boot train wrapper (runs INSIDE the Isaac-Lab container). The hard
+# constraint (verified on-cluster): isaaclab.envs/mdp + gym.spec of the stock
+# task pull USD ``pxr``, which only exists AFTER ``AppLauncher`` boots — so the
+# variant registration MUST happen post-boot. This wrapper enforces the order:
+#   (1) boot AppLauncher  (2) import isaaclab_tasks  (3) register the variant
+#   (4) run the rsl_rl OnPolicyRunner like stock train.py.
+# It reuses isaac_physics_task.register() (shipped alongside) as the single
+# source of truth for the friction/mass event terms.
+TRAIN_WRAPPER_SCRIPT = r'''
+import os, sys, traceback
+SYS_DIR = os.environ.get("NPA_PHYS_MODULE_DIR", "/tmp/npa_phys")
+sys.path.insert(0, SYS_DIR)
+NUM_ENVS = int(os.environ.get("PHYS_NUM_ENVS", "64"))
+ITERS = int(os.environ.get("PHYS_ITERS", "2"))
+SEED = int(os.environ.get("PHYS_SEED", "0"))
+OUT = os.environ.get("PHYS_OUT_DIR", "/tmp/physrun")
+os.makedirs(OUT, exist_ok=True)
+# (1) boot the sim app FIRST — everything Isaac/pxr must come after this.
+from isaaclab.app import AppLauncher
+app = AppLauncher(headless=True).app
+import torch
+import gymnasium as gym
+# (2) register the stock tasks, then (3) the physics variant (post-boot import).
+import isaaclab_tasks  # noqa: F401
+import isaac_physics_task as physmod
+params = physmod.physics_params_from_env()
+print("PHYS_PARAMS", params, flush=True)
+try:
+    task = physmod.register(params)
+except Exception:
+    print("PHYS_REGISTER_FAILED", flush=True); traceback.print_exc(); os._exit(42)
+task = task or physmod.STOCK_TASK_ID
+print("PHYS_TASK", task, flush=True)
+# (4) build env + rsl_rl runner and train, like stock train.py.
+try:
+    from isaaclab_tasks.utils import parse_env_cfg, load_cfg_from_registry
+    try:
+        from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+    except Exception:
+        from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
+    from rsl_rl.runners import OnPolicyRunner
+    env_cfg = parse_env_cfg(task, device="cuda:0", num_envs=NUM_ENVS)
+    if SEED:
+        try:
+            env_cfg.seed = SEED
+        except Exception as e:
+            print("could not set env_cfg.seed:", repr(e), flush=True)
+        torch.manual_seed(SEED)
+    agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+    acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+    acfg["max_iterations"] = ITERS
+    # Guarantee a checkpoint even for a tiny probe run.
+    acfg["save_interval"] = max(1, min(int(acfg.get("save_interval", 50) or 50), ITERS))
+    if SEED:
+        acfg["seed"] = SEED
+    print("PHYS_AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
+    env = gym.make(task, cfg=env_cfg)
+    # Definitive check that the generated-physics events are LIVE (not a silent
+    # stock fallback): the variant's event manager must carry our startup terms.
+    try:
+        ev_terms = list(getattr(env.unwrapped, "event_manager").active_terms.get("startup", []))
+    except Exception:
+        try:
+            ev_terms = list(env.unwrapped.event_manager.active_terms)
+        except Exception:
+            ev_terms = []
+    has_phys = any("npa_object_material" in str(t) for t in ev_terms) and \
+               any("npa_object_mass" in str(t) for t in ev_terms)
+    print("PHYS_EVENT_TERMS", ev_terms, "has_physics_events", has_phys, flush=True)
+    env = RslRlVecEnvWrapper(env)
+    runner = OnPolicyRunner(env, acfg, log_dir=OUT, device="cuda:0")
+    runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
+    # Defensive explicit save (learn saves at save_interval; ensure one exists).
+    try:
+        runner.save(os.path.join(OUT, "model_%d.pt" % ITERS))
+    except Exception as e:
+        print("explicit save failed (learn may have saved already):", repr(e), flush=True)
+    import glob
+    ckpts = sorted(glob.glob(os.path.join(OUT, "**", "model_*.pt"), recursive=True))
+    # Final summary (survives any upstream log truncation): task + applied physics
+    # + whether the injected events were present + checkpoint count.
+    print("PHYS_SUMMARY task=%s friction=%s mass_scale=%s physics_events=%s ckpts=%d"
+          % (task, (params or {}).get("friction"), (params or {}).get("mass_scale"),
+             has_phys, len(ckpts)), flush=True)
+    print("PHYS_CKPTS", ckpts, flush=True)
+    print("PHYS_TRAIN_DONE" if (ckpts and has_phys) else "PHYS_TRAIN_NO_CKPT", flush=True)
+except Exception:
+    print("PHYS_TRAIN_FAILED", flush=True); traceback.print_exc(); os._exit(43)
+sys.stdout.flush(); sys.stderr.flush()
+os._exit(0)
+'''
+
