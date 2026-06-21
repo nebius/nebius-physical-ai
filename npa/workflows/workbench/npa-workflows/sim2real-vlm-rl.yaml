@@ -14,7 +14,6 @@ config:
   inner_iterations: 3
   outer_iterations: 2
 
-  success_threshold: "0.50"
   default_decision: loop_back
 
   env_count: "10000"

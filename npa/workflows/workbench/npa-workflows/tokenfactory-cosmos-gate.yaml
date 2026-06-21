@@ -17,6 +17,7 @@ config:
 
   scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
   plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
+  # Cosmos transfer reads trigger_uri; same scene prefix as reason-scene output.
   trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
@@ -49,7 +50,7 @@ states:
     toolRef: workbench.cosmos2.transfer
     resources: gpu
     inputs:
-      - uri: "{{config.scene_uri}}"
+      - uri: "{{config.trigger_uri}}"
         schema: npa.token_factory.scene.v1
     outputs:
       - uri: "{{config.augment_uri}}manifest.json"

@@ -80,7 +80,10 @@ def load_spec(path: str | Path) -> NpaWorkflowSpec:
     spec_path = Path(path)
     if not spec_path.is_file():
         raise NpaWorkflowError(f"workflow spec not found: {spec_path}")
-    data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise NpaWorkflowError(f"workflow spec is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise NpaWorkflowError(f"workflow spec must be a mapping, got {type(data).__name__}")
     from npa.orchestration.npa_workflow.schema_validation import validate_document

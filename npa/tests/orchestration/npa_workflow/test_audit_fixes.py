@@ -278,3 +278,84 @@ states:
     )
     assert plan.exit_code == 1, plan.output
     assert "cycle" in plan.output.lower() or "step limit" in plan.output.lower()
+
+
+def test_malformed_yaml_raises_npa_workflow_error(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nconfig: [\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(NpaWorkflowError, match="not valid YAML"):
+        load_spec(path)
+
+
+def test_cli_malformed_yaml_exits_1(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("metadata:\n  name: x\n  bad indent\nfoo:\n", encoding="utf-8")
+    result = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path)])
+    assert result.exit_code == 1, result.output
+    assert "not valid YAML" in result.output or "Error:" in result.output
+    assert "Unexpected error" not in result.output
+
+
+def test_persist_state_without_bucket_raises(tmp_path: Path) -> None:
+    path = tmp_path / "no-bucket.yaml"
+    path.write_text(
+        """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: no-bucket
+config:
+  prefix: runs/test
+initial: x
+states:
+  x:
+    run:
+      shell: echo ok
+    terminal: true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    spec = load_spec(path)
+    with pytest.raises(NpaWorkflowError, match="persist_state requires config.bucket"):
+        run_workflow(spec, run_id="no-bucket-run", persist_state=True)
+
+
+def test_cli_persist_state_without_bucket_exits_1(tmp_path: Path) -> None:
+    path = tmp_path / "no-bucket.yaml"
+    path.write_text(
+        """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: no-bucket
+config:
+  prefix: runs/test
+initial: x
+states:
+  x:
+    run:
+      shell: echo ok
+    terminal: true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "run-spec",
+            str(path),
+            "--run-id",
+            "cli-no-bucket",
+            "--plan-only",
+            "--persist-state",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "persist_state requires config.bucket" in result.output

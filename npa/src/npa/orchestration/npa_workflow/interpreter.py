@@ -121,7 +121,13 @@ def run_workflow(
     raw_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "loop_back")
     assume = normalize_decision(raw_assume)
     ctx = _make_context(spec, run_id=run_id)
-    store = state_store or (store_for_config(ctx.config, run_id=run_id) if persist_state else None)
+    store = state_store
+    if store is None and persist_state:
+        store = store_for_config(ctx.config, run_id=run_id)
+        if store is None:
+            raise NpaWorkflowError(
+                "persist_state requires config.bucket to be set in the workflow spec"
+            )
     manifest = RunManifest(
         workflow=spec.name,
         run_id=run_id,

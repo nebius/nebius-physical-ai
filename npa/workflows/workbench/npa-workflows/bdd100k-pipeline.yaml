@@ -17,8 +17,6 @@ config:
   synthetic_rows: "0"
 
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
-  training_root: "s3://{{config.bucket}}/{{config.prefix}}/training/"
-  eval_root: "s3://{{config.bucket}}/{{config.prefix}}/eval/"
 
   lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
   detection_endpoint: http://npa-detection-training.workbench.svc.cluster.local:8790
