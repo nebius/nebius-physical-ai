@@ -241,3 +241,31 @@ def test_manifest_default_path_unchanged_without_physics():
     assert byo.TRAIN_SCRIPT in args
     assert "isaac_physics_task.py" not in args
     assert "--seed 42" in args
+
+
+def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
+    # Local dir missing -> falls back to the S3 URI (orchestrator only syncs heldout).
+    captured = {}
+
+    class _FakeBody:
+        def read(self_inner):
+            return (b'{"env_id": "env-00006", "seed": 99, '
+                    b'"physics": {"friction": 0.71, "mass_scale": 0.93}}\n')
+
+    class _FakeS3:
+        def get_object(self_inner, Bucket, Key):
+            captured["bucket"] = Bucket
+            captured["key"] = Key
+            return {"Body": _FakeBody()}
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: _FakeS3())
+    rec = byo.read_generated_train_env(
+        str(tmp_path / "nope"),
+        envs_uri="s3://bucket/sim2real-b/run1/envs/train/envs.jsonl",
+    )
+    assert rec["env_id"] == "env-00006"
+    assert rec["physics"]["friction"] == 0.71
+    assert captured["bucket"] == "bucket"
+    assert captured["key"] == "sim2real-b/run1/envs/train/envs.jsonl"

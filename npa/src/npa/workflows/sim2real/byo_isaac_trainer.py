@@ -84,22 +84,8 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
     }
 
 
-def read_generated_train_env(envs_dir: str) -> dict[str, Any]:
-    """Read a representative GENERATED train-env spec (seed + physics).
-
-    The envgen stage writes one record per generated env with a per-env ``seed``
-    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
-    first record so the trainer can train on the generated env distribution (its
-    seed drives Isaac randomization) rather than stock defaults. Returns ``{}``
-    when no spec is present (envgen not wired / stock run).
-    """
-
-    from pathlib import Path as _Path
-
-    path = _Path(envs_dir) / "envs.jsonl"
-    if not envs_dir or not path.is_file():
-        return {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+def _first_env_record(text: str) -> dict[str, Any]:
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -112,6 +98,39 @@ def read_generated_train_env(envs_dir: str) -> dict[str, Any]:
             "seed": int(rec.get("seed") or 0),
             "physics": rec.get("physics") or {},
         }
+    return {}
+
+
+def read_generated_train_env(envs_dir: str, *, envs_uri: str = "") -> dict[str, Any]:
+    """Read a representative GENERATED train-env spec (seed + physics).
+
+    The envgen stage writes one record per generated env with a per-env ``seed``
+    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
+    first record so the trainer can train on the generated env distribution (its
+    seed + friction/mass) rather than stock defaults.
+
+    Prefers the local ``envs_dir/envs.jsonl``; falls back to downloading
+    ``envs_uri`` (the S3 ``.../envs/train/envs.jsonl``) when the orchestrator
+    didn't sync the train envs locally (it only localizes the held-out split).
+    Returns ``{}`` when neither source is available (stock run / envgen off).
+    """
+
+    from pathlib import Path as _Path
+
+    path = _Path(envs_dir) / "envs.jsonl" if envs_dir else None
+    if path and path.is_file():
+        return _first_env_record(path.read_text(encoding="utf-8"))
+    if envs_uri.startswith("s3://"):
+        try:
+            import boto3
+            from urllib.parse import urlparse
+
+            u = urlparse(envs_uri)
+            s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+            obj = s3.get_object(Bucket=u.netloc, Key=u.path.lstrip("/"))
+            return _first_env_record(obj["Body"].read().decode("utf-8"))
+        except Exception as exc:  # pragma: no cover - network/credentials
+            print(f"byo_isaac_trainer: train-env S3 read failed ({envs_uri}): {exc!r}", flush=True)
     return {}
 
 
@@ -432,7 +451,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
 
     # GENERATED train-env spec: seed drives Isaac randomization so the policy
     # trains on the envgen-produced distribution (matches the held-out eval).
-    train_env = read_generated_train_env(_env("NPA_SIM2REAL_TRAIN_ENVS_DIR"))
+    train_env = read_generated_train_env(
+        _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"), envs_uri=_env("NPA_SIM2REAL_TRAIN_ENVS_URI"))
     gen_seed = int(train_env.get("seed") or 0)
     if train_env:
         print(f"byo_isaac_trainer: GENERATED train env {train_env.get('env_id')} "
