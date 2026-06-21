@@ -20,7 +20,7 @@ specs.
 - **States:** declarative nodes with `run` (shell/argv), `toolRef`, or `sequence`.
 - **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
-- **Loops:** `loop.max: config.attr` or integer; `loop.until` for dynamic exit.
+- **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema` (documentation + future validation).
 
 ## Tool References
@@ -48,7 +48,7 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 
 1. One workflow file = one variant; do not add sim2real-specific Python orchestrators.
 2. Keep **terminal: true** on leaf completion states.
-3. Use `plan_assume_decision` in config when planning dynamic loops (`loop_back` vs `promote_checkpoint`).
+3. Use `--assume-decision` when planning dynamic loops (`loop_back` vs `promote_checkpoint`).
 4. SkyPilot submits each planned step; the spec does not call `engine.py` or schedulers per workflow.
 5. Cross-stage data uses S3 URIs in config — tools are stateless.
 

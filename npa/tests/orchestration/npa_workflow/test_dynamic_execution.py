@@ -13,7 +13,6 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 
 def test_dynamic_execute_reads_decision_for_promote(monkeypatch) -> None:
     spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
-    spec.config["plan_assume_decision"] = "promote_checkpoint"
     def fake_reader(_bucket: str, _key: str) -> str:
         return json.dumps({"decision": DECISION_PROMOTE})
 
@@ -35,7 +34,6 @@ def test_dynamic_execute_reads_decision_for_promote(monkeypatch) -> None:
 
 def test_dynamic_execute_reads_decision_for_loop_back(monkeypatch) -> None:
     spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
-    spec.config["plan_assume_decision"] = "loop_back"
     decisions = iter([DECISION_LOOP_BACK, DECISION_PROMOTE])
 
     def fake_reader(_bucket: str, _key: str) -> str:

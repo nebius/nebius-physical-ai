@@ -5,24 +5,34 @@ metadata:
   name: sim2real-vlm-rl
   description: >
     VLM-to-RL staged loop with fixed inner iterations and promote/loop-back gate.
-    Each state invokes a workbench tool; loops and transitions are declarative.
+    Planning dynamic branches uses --assume-decision on the CLI.
 
 config:
+  # Run identity
   bucket: example-bucket
   prefix: "sim2real-b/{{run.id}}"
+
+  # Loop bounds
   inner_iterations: 3
   outer_iterations: 2
+
+  # Threshold gate (default_decision is the execute stub until real scoring lands)
   success_threshold: "0.50"
+  default_decision: loop_back
+
+  # Tool parameters
   env_count: "10000"
-  plan_assume_decision: loop_back
-  trigger_uri: "s3://example-bucket/sim2real-triggers/{{run.id}}/lerobot-pusht/"
-  augment_uri: "s3://example-bucket/sim2real-b/{{run.id}}/augment/"
-  raw_envs_uri: "s3://example-bucket/sim2real-b/{{run.id}}/envs/raw/"
-  rollouts_uri: "s3://example-bucket/sim2real-b/{{run.id}}/actions/train/"
-  scores_uri: "s3://example-bucket/sim2real-b/{{run.id}}/vlm_eval/train/"
-  heldout_report_uri: "s3://example-bucket/sim2real-b/{{run.id}}/eval/heldout/report.json"
-  decision_uri: "s3://example-bucket/sim2real-b/{{run.id}}/outer_loop/decision.json"
   vlm_backend: self-hosted
+
+  # Artifact URIs
+  trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
+  heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/outer_loop/decision.json"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real-report.json"
 
 resources:
   gpu:
@@ -58,7 +68,7 @@ states:
     description: Outer loop — inner train pass, held-out eval, threshold gate.
     needs: [envgen]
     loop:
-      max: config.outer_iterations
+      max: "{{config.outer_iterations}}"
       until: promote_checkpoint
     sequence:
       - inner
@@ -69,16 +79,14 @@ states:
   inner:
     description: Inner loop — rollouts and VLM critique per iteration.
     loop:
-      max: config.inner_iterations
+      max: "{{config.inner_iterations}}"
     sequence:
       - rollouts
       - vlm-score
 
   rollouts:
     description: Policy action rollouts on train envs.
-    run:
-      shell: |
-        echo "policy rollouts -> {{config.rollouts_uri}} outer={{run.prefix}}"
+    toolRef: workbench.sim2real.policy_rollouts
     resources: gpu
     outputs:
       - uri: "{{config.rollouts_uri}}"
@@ -95,9 +103,7 @@ states:
 
   heldout:
     description: Held-out simulation eval report.
-    run:
-      shell: |
-        echo "heldout eval -> {{config.heldout_report_uri}}"
+    toolRef: workbench.sim2real.heldout_eval
     resources: gpu
     outputs:
       - uri: "{{config.heldout_report_uri}}"
@@ -106,9 +112,7 @@ states:
   decide:
     description: Threshold decision for promote vs loop-back.
     needs: [heldout]
-    run:
-      shell: |
-        python -c "from npa.orchestration.npa_workflow.decisions import write_decision; write_decision('{{config.decision_uri}}', '{{config.plan_assume_decision}}')"
+    toolRef: workbench.sim2real.write_decision
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
@@ -121,10 +125,8 @@ states:
   finalize:
     description: Report upload and visualization artifacts.
     needs: [outer]
-    run:
-      shell: |
-        echo "finalize run {{run.id}} prefix {{run.prefix}}"
+    toolRef: workbench.sim2real.finalize
     outputs:
-      - uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real-report.json"
+      - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1
     terminal: true

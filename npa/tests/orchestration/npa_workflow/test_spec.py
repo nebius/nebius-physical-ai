@@ -72,6 +72,12 @@ def test_sim2real_plan_promote_early_exit() -> None:
     assert states[-1] == "finalize"
 
 
+def test_loop_max_accepts_braced_config_ref() -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_config_int
+
+    assert resolve_config_int("{{config.outer_iterations}}", {"outer_iterations": 4}) == 4
+
+
 def test_invalid_api_version() -> None:
     path = SPECS / "vlm-eval-single.yaml"
     text = path.read_text().replace("v0.0.1", "v9.9.9")

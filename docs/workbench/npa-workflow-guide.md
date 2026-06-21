@@ -89,8 +89,8 @@ states:
 | `promote_checkpoint` | Decision artifact says promote |
 | `loop_back` | Decision artifact says loop back |
 
-**Planning:** dynamic branches need `--assume-decision` (or `config.plan_assume_decision`)
-because the full graph is not known until runtime.
+**Planning:** dynamic branches need `--assume-decision promote_checkpoint|loop_back` on
+`plan-spec` / `run-spec --plan-only` because the full graph is not known until runtime.
 
 **Execution:** with `--execute`, the interpreter walks the graph dynamically and reads
 `config.decision_uri` from S3 after decision states (see `decisions.py`).

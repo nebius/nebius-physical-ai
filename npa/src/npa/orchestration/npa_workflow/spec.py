@@ -317,8 +317,13 @@ def resolve_config_int(value: Any, config: dict[str, Any]) -> int:
         return value
     if isinstance(value, str):
         text = value.strip()
-        if text.startswith("config."):
+        if text.startswith("{{config.") and text.endswith("}}"):
+            attr = text[len("{{config.") : -2].strip()
+        elif text.startswith("config."):
             attr = text[len("config.") :]
+        else:
+            attr = ""
+        if attr:
             if attr not in config:
                 raise NpaWorkflowError(f"config has no attribute {attr!r}")
             return int(config[attr])

@@ -9,6 +9,10 @@ invoked as a container command; artifacts pass via S3 URIs in `config`.
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` |
 | `workbench.sim2real_envgen.raw_shard` | `python -m npa.workflows.sim2real_envgen raw-shard` | `config.raw_envs_uri`, `config.env_count` | raw env manifest on S3 |
+| `workbench.sim2real.policy_rollouts` | workflow stub (`echo`) | `config.rollouts_uri` | rollout prefix on S3 |
+| `workbench.sim2real.heldout_eval` | workflow stub (`echo`) | — | `config.heldout_report_uri` |
+| `workbench.sim2real.write_decision` | demo decision writer | `config.decision_uri`, `config.default_decision` | threshold decision JSON |
+| `workbench.sim2real.finalize` | workflow stub (`echo`) | `config.finalize_report_uri` | final report URI |
 
 Add new entries in `npa/src/npa/orchestration/npa_workflow/catalog.py` when
 exposing a tool to workflow specs.

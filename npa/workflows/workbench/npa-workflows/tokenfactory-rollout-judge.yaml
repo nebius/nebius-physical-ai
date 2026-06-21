@@ -8,14 +8,15 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/tokenfactory"
+  vlm_backend: api
+
   scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
   plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
   scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
-  vlm_backend: api
 
 resources:
-  default:
+  gpu:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
 
@@ -25,7 +26,7 @@ states:
   reason-scene:
     description: Token Factory Cosmos reasoner over captured scene frames.
     toolRef: workbench.token_factory.reason
-    resources: default
+    resources: gpu
     outputs:
       - uri: "{{config.plan_uri}}plan.json"
         schema: npa.token_factory.plan.v1
@@ -35,7 +36,7 @@ states:
     description: VLM eval over generated rollouts.
     needs: [reason-scene]
     toolRef: workbench.vlm_eval.run
-    resources: default
+    resources: gpu
     inputs:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.workbench.rollout_set.v1

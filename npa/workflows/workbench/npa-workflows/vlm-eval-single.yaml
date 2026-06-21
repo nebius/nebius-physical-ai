@@ -8,12 +8,13 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/vlm-eval"
-  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
-  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
   vlm_backend: self-hosted
 
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+
 resources:
-  default:
+  gpu:
     cloud: kubernetes
     accelerators: H100:1
     cpus: 16
@@ -25,7 +26,7 @@ states:
   score-rollouts:
     description: Evaluate rollouts and write a gating report.
     toolRef: workbench.vlm_eval.run
-    resources: default
+    resources: gpu
     outputs:
       - uri: "{{config.scores_uri}}report.json"
         schema: npa.workbench.vlm_eval.report.v1
