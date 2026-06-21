@@ -1,0 +1,103 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: tokenfactory-cosmos-gate
+  description: >
+    Creative mashup — Token Factory scene reasoning, Cosmos Transfer augment,
+    and a VLM quality gate loop until the synthetic batch is promoted.
+
+config:
+  bucket: example-bucket
+  prefix: "tokenfactory-cosmos-gate/{{run.id}}"
+  vlm_backend: api
+
+  refinement_iterations: 3
+  default_decision: loop_back
+
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
+  # Cosmos transfer reads trigger_uri; same scene prefix as reason-scene output.
+  trigger_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/scores/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 80Gi
+
+initial: reason-scene
+
+states:
+  reason-scene:
+    description: Cosmos reasoner over captured scene frames.
+    toolRef: workbench.token_factory.reason
+    resources: gpu
+    outputs:
+      - uri: "{{config.plan_uri}}plan.json"
+        schema: npa.token_factory.plan.v1
+    next: augment-scene
+
+  augment-scene:
+    description: Cosmos Transfer augment driven by the scene plan.
+    needs: [reason-scene]
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.token_factory.scene.v1
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.sim2real.augment.v1
+    next: refine
+
+  refine:
+    description: VLM critique loop with promote vs re-augment gate.
+    needs: [augment-scene]
+    loop:
+      max: "{{config.refinement_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - vlm-critique
+      - quality-gate
+    next: publish
+
+  vlm-critique:
+    description: Score augmented frames before the quality gate.
+    toolRef: workbench.vlm_eval.run
+    resources: gpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.workbench.rollout_set.v1
+    outputs:
+      - uri: "{{config.scores_uri}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  quality-gate:
+    description: Promote good batches or loop back for another augment pass.
+    writesDecision: true
+    needs: [vlm-critique]
+    toolRef: workbench.sim2real.write_decision
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: publish
+      - when: loop_back
+        goto: augment-scene
+
+  publish:
+    description: Write final report when the batch is promoted.
+    needs: [refine]
+    toolRef: workbench.sim2real.finalize
+    outputs:
+      - uri: "{{config.finalize_report_uri}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true

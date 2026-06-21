@@ -120,6 +120,11 @@ backends — see `npa/workflows/workbench/skypilot/vlm-eval.yaml`.
 with `--var KEY=VALUE`. SONIC image routing is manifest-driven — see
 [docs/workbench/sonic-image-catalog.md](docs/workbench/sonic-image-catalog.md).
 
+Declarative **NPA workflow** specs (`apiVersion: npa.workflow/v0.0.1`) — tool
+chains, loops, and S3 artifact handoff — see
+[docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md)
+(golden YAMLs under `npa/workflows/workbench/npa-workflows/`).
+
 CLI reference and cookbooks: [docs/cli/README.md](docs/cli/README.md),
 [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md).
 
@@ -143,6 +148,8 @@ live in `~/.npa/credentials.yaml`; machine-managed config in
 ## Docs
 
 - [docs/quickstart.md](docs/quickstart.md) — install, Nebius auth, credentials
+- [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) —
+  authoring NPA workflow YAML (`npa.workflow/v0.0.1` state machines)
 - [docs/workbench/getting-started.md](docs/workbench/getting-started.md) —
   Workbench setup and first workload
 - [docs/workbench/preemptible-vms.md](docs/workbench/preemptible-vms.md) —
@@ -150,5 +157,13 @@ live in `~/.npa/credentials.yaml`; machine-managed config in
 - [docs/workbench/guides/README.md](docs/workbench/guides/README.md) —
   beginner-friendly robot guides
 - [docs/workbench/](docs/workbench/) — guides, cookbooks, troubleshooting
+- [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md) —
+  end-to-end cookbooks, including the
+  [BDD100K + LanceDB pipeline](docs/workbench/cookbooks/bdd100k-pipeline.md)
+- [docs/cli/README.md](docs/cli/README.md) — generated CLI reference
+- [docs/architecture/solutions-model.md](docs/architecture/solutions-model.md) —
+  solution namespace model
+- [docs/architecture/cli-namespaces.md](docs/architecture/cli-namespaces.md) —
+  CLI namespace conventions
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution guidelines
 - [LICENSE](LICENSE) — Apache License 2.0
