@@ -3,7 +3,7 @@
 #
 # Usage:
 #   source .../sync-operator-repo.sh
-#   sync_operator_repo /path/to/nebius-physical-ai feat/sim2real-mandatory-stages
+#   sync_operator_repo /path/to/nebius-physical-ai main
 
 sync_operator_find_git() {
   local candidate

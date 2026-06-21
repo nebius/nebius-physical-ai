@@ -11,7 +11,7 @@ When `storage.bucket` changes (for example `lerobot-ccc9d3c7` in `us-central1`),
 
 ```bash
 cd ~/npa-sim2real-demo/nebius-physical-ai
-git pull origin feat/sim2real-mandatory-stages
+git pull origin main
 
 # 1) Copy validated stock LeRobot pusht trigger into your bucket
 ./ops/private/sim2real-rtxpro/seed-stock-trigger.sh
@@ -66,7 +66,7 @@ Replace `<RUN_ID>` with the timestamp id (for example `20260615t172625z`).
 | `ValueError: Invalid endpoint:` (empty) during preflight or secret sync | `AWS_ENDPOINT_URL` empty — credentials lacked endpoint while shell exported blank | Re-run `./setup-local-operator.sh` or ensure `~/.npa/config.yaml` has `storage.endpoint_url: https://storage.us-central1.nebius.cloud`; `./sync-cluster-storage-secret.sh` reads config, not empty env |
 | `./run.sh trigger` syncs old failed run instead of submitting | Stale `RUN_ID` still exported in shell | `unset RUN_ID` then `./run.sh trigger` (trigger always clears RUN_ID; unset if you exported it earlier) |
 | Pod: `AccessDenied` on trigger read | Same credential/endpoint mismatch | Sync secret; confirm trigger exists with `seed-stock-trigger.sh` |
-| `git clone` failure in pod | Wrong `NPA_SOURCE_REF` or GitHub outage | Job uses `feat/sim2real-mandatory-stages` by default |
+| `git clone` failure in pod | Wrong `NPA_SOURCE_REF` or GitHub outage | Job uses `main` by default |
 | ImagePullBackOff | Stale registry token | Re-run submit (refreshes `npa-nebius-registry`) |
 
 ### RUN_ID `sim2real-staged-20260615t172625z` (investigated)
