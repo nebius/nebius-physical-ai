@@ -61,6 +61,8 @@ These guides were exercised against live Nebius (via `npa`), not just read:
 | `sim_to_real.local_smoke` | local, no cluster | runs the spine; reports `blocked` unless `lerobot` is installed locally |
 | `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-a`) | **capacity-blocked** — `NotEnoughResources` / VM schedule timeout |
 | `isaac-lab train --runtime serverless` | Nebius AI Job (`gpu-l40s-d`) | job schedules and completes; minimal run produced no artifact yet (small step budget / `W9-isaac-lab-e2e-fix`) |
+| `lerobot` / `fiftyone` deploy `--preemptible --dry-run` | Nebius Terraform VM path | CLI + dry-run OK; full apply needs IAM bootstrap on your project |
+| Preemptible VM flags and resume | — | [preemptible-vms.md](../preemptible-vms.md) |
 
 Isaac Lab needs RT cores, and serverless RT-core capacity varies by SKU: the
 default `gpu-l40s-a` pool failed to schedule, while `gpu-l40s-d` had capacity and
