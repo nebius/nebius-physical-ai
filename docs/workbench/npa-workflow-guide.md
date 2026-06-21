@@ -25,6 +25,7 @@ Golden specs (all pytest-guarded):
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic `transitions` |
+| `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 
 ## Document shape
 

@@ -24,7 +24,7 @@ RUNNER = CliRunner()
 
 @pytest.mark.parametrize(
     "name",
-    ["vlm-eval-single.yaml", "tokenfactory-rollout-judge.yaml", "sim2real-vlm-rl.yaml"],
+    ["vlm-eval-single.yaml", "tokenfactory-rollout-judge.yaml", "sim2real-vlm-rl.yaml", "bdd100k-pipeline.yaml"],
 )
 def test_live_npa_workflow_specs_plan(name: str) -> None:
     """Ensure golden specs load and expand on the operator machine."""
@@ -37,7 +37,7 @@ def test_live_npa_workflow_specs_plan(name: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["vlm-eval-single.yaml", "tokenfactory-rollout-judge.yaml", "sim2real-vlm-rl.yaml"],
+    ["vlm-eval-single.yaml", "tokenfactory-rollout-judge.yaml", "sim2real-vlm-rl.yaml", "bdd100k-pipeline.yaml"],
 )
 def test_live_npa_workflow_cli_validate_and_plan(name: str) -> None:
     """Exercise validate-spec / plan-spec / run-spec --plan-only on live creds."""

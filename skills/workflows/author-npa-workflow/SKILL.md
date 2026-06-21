@@ -59,6 +59,7 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 | `npa-workflows/vlm-eval-single.yaml` | Single-tool minimal |
 | `npa-workflows/tokenfactory-rollout-judge.yaml` | Serial two-tool |
 | `npa-workflows/sim2real-vlm-rl.yaml` | Fixed + dynamic loops |
+| `npa-workflows/bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
 
 ## Verify
 

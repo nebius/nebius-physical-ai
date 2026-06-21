@@ -8,23 +8,18 @@ metadata:
     Planning dynamic branches uses --assume-decision on the CLI.
 
 config:
-  # Run identity
   bucket: example-bucket
   prefix: "sim2real-b/{{run.id}}"
 
-  # Loop bounds
   inner_iterations: 3
   outer_iterations: 2
 
-  # Threshold gate (default_decision is the execute stub until real scoring lands)
   success_threshold: "0.50"
   default_decision: loop_back
 
-  # Tool parameters
   env_count: "10000"
   vlm_backend: self-hosted
 
-  # Artifact URIs
   trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
   augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
   raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"

@@ -23,6 +23,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real-vlm-rl.yaml",
+        "bdd100k-pipeline.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:
@@ -76,6 +77,25 @@ def test_loop_max_accepts_braced_config_ref() -> None:
     from npa.orchestration.npa_workflow.spec import resolve_config_int
 
     assert resolve_config_int("{{config.outer_iterations}}", {"outer_iterations": 4}) == 4
+
+
+def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
+    spec = load_spec(SPECS / "bdd100k-pipeline.yaml")
+    plan = build_plan(spec, run_id="bdd100k-plan")
+    states = [step.state for step in plan.steps]
+    assert states == [
+        "ingest",
+        "backfill-cpu",
+        "backfill-clip",
+        "curate-views",
+        "train-rider",
+        "train-nighttime",
+        "train-distant",
+        "eval-rider",
+        "eval-nighttime",
+        "eval-distant",
+        "review",
+    ]
 
 
 def test_invalid_api_version() -> None:

@@ -1,5 +1,10 @@
 # BDD100K SkyPilot Pipeline
 
+**Declarative spec:** [bdd100k-pipeline.yaml](../../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+(`npa.workflow/v0.0.1`) — readable stage graph with `toolRef`s. See
+[npa-workflow-guide.md](../npa-workflow-guide.md). **SkyPilot execution** (below)
+uses `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
+
 This cookbook describes the SkyPilot workflow at
 `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 

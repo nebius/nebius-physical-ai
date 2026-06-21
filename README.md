@@ -264,7 +264,13 @@ checked-in SkyPilot template is
 
 ### Workflows And Routing
 
-Workbench workflow orchestration lives under the Workbench solution:
+Workbench workflow orchestration lives under the Workbench solution. For
+**declarative state-machine specs** (`apiVersion: npa.workflow/v0.0.1`) — tool
+chains, loops, and S3 artifact handoff — see
+[docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md)
+(golden YAMLs under `npa/workflows/workbench/npa-workflows/`).
+
+SkyPilot pipeline submission (checked-in YAML under `npa/workflows/workbench/skypilot/`):
 
 ```bash
 npa workbench workflow submit npa/workflows/workbench/skypilot/vlm-eval.yaml --run-id vlm-eval
@@ -332,6 +338,8 @@ Workbench runs on Nebius infrastructure rather than hiding it:
 
 - [docs/quickstart.md](docs/quickstart.md): install, Nebius auth, and
   credential setup.
+- [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md):
+  authoring **NPA workflow YAML** (`npa.workflow/v0.0.1` state machines).
 - [docs/workbench/getting-started.md](docs/workbench/getting-started.md):
   Workbench setup and first workload path.
 - [docs/workbench/guides/README.md](docs/workbench/guides/README.md): easy,

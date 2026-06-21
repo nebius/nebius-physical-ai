@@ -12,7 +12,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 
 
-@pytest.mark.parametrize("name", ["vlm-eval-single.yaml", "sim2real-vlm-rl.yaml"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "vlm-eval-single.yaml",
+        "tokenfactory-rollout-judge.yaml",
+        "sim2real-vlm-rl.yaml",
+        "bdd100k-pipeline.yaml",
+    ],
+)
 def test_cli_validate_spec(name: str) -> None:
     runner = CliRunner()
     result = runner.invoke(

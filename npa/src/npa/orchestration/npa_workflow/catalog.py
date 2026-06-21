@@ -100,6 +100,244 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description="Finalize run artifacts (workflow stub).",
         argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
     ),
+    "workbench.lancedb.import_bdd100k": ToolEntry(
+        name="workbench.lancedb.import_bdd100k",
+        description="Import BDD100K rows into LanceDB through the workbench service.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lancedb",
+            "import-bdd100k",
+            "--source",
+            "{{config.source_uri}}",
+            "--table",
+            "{{config.lance_table}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--limit",
+            "{{config.bdd100k_limit}}",
+            "--split",
+            "train",
+            "--split",
+            "val",
+            "--service",
+            "--endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.lancedb.backfill_cpu_bundle": ToolEntry(
+        name="workbench.lancedb.backfill_cpu_bundle",
+        description="Backfill all CPU UDF columns required by BDD100K failure-mode views.",
+        argv_template=[
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail; "
+                "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
+                "npa workbench lancedb backfill "
+                "--udf \"${udf}\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--batch-size 512 "
+                "--service "
+                "--endpoint {{config.lancedb_endpoint}}; "
+                "done"
+            ),
+        ],
+    ),
+    "workbench.lancedb.backfill_clip": ToolEntry(
+        name="workbench.lancedb.backfill_clip",
+        description="Backfill CLIP embeddings for BDD100K rows.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lancedb",
+            "backfill",
+            "--udf",
+            "clip_embedding",
+            "--table",
+            "{{config.lance_table}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--batch-size",
+            "32",
+            "--service",
+            "--endpoint",
+            "{{config.lancedb_endpoint}}",
+        ],
+    ),
+    "workbench.lancedb.create_failure_views": ToolEntry(
+        name="workbench.lancedb.create_failure_views",
+        description="Create rider, nighttime-person, and distant-person materialized views.",
+        argv_template=[
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.rider_view}} "
+                "--filter \"has_rider = true AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.nighttime_view}} "
+                "--filter \"timeofday = 'night' AND has_person = true AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}; "
+                "npa workbench lancedb create-mv "
+                "--name {{config.distant_view}} "
+                "--filter \"has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'\" "
+                "--table {{config.lance_table}} "
+                "--lance-uri {{config.lance_uri}} "
+                "--service --endpoint {{config.lancedb_endpoint}}"
+            ),
+        ],
+    ),
+    "workbench.detection_training.train_rider": ToolEntry(
+        name="workbench.detection_training.train_rider",
+        description="Train a detector on the rider failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.rider_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.rider_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.train_nighttime": ToolEntry(
+        name="workbench.detection_training.train_nighttime",
+        description="Train a detector on the nighttime-person failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.nighttime_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.nighttime_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.train_distant": ToolEntry(
+        name="workbench.detection_training.train_distant",
+        description="Train a detector on the distant-person failure-mode view.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "train",
+            "--view",
+            "{{config.distant_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.distant_train_uri}}",
+            "--epochs",
+            "{{config.train_epochs}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--learning-rate",
+            "{{config.train_learning_rate}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_rider": ToolEntry(
+        name="workbench.detection_training.eval_rider",
+        description="Evaluate the rider detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.rider_train_uri}}",
+            "--eval-view",
+            "{{config.rider_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.rider_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_nighttime": ToolEntry(
+        name="workbench.detection_training.eval_nighttime",
+        description="Evaluate the nighttime-person detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.nighttime_train_uri}}",
+            "--eval-view",
+            "{{config.nighttime_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.nighttime_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.detection_training.eval_distant": ToolEntry(
+        name="workbench.detection_training.eval_distant",
+        description="Evaluate the distant-person detector checkpoint.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "detection-training",
+            "eval",
+            "--checkpoint-uri",
+            "{{config.distant_train_uri}}",
+            "--eval-view",
+            "{{config.distant_view}}",
+            "--lance-uri",
+            "{{config.lance_uri}}",
+            "--output-uri",
+            "{{config.distant_eval_uri}}",
+            "--service",
+            "--endpoint",
+            "{{config.detection_endpoint}}",
+        ],
+    ),
+    "workbench.fiftyone.launch_app": ToolEntry(
+        name="workbench.fiftyone.launch_app",
+        description="Launch FiftyOne App for pipeline review (workflow stage hook).",
+        argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+    ),
 }
 
 

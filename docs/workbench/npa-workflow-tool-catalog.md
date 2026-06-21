@@ -13,6 +13,13 @@ invoked as a container command; artifacts pass via S3 URIs in `config`.
 | `workbench.sim2real.heldout_eval` | workflow stub (`echo`) | — | `config.heldout_report_uri` |
 | `workbench.sim2real.write_decision` | demo decision writer | `config.decision_uri`, `config.default_decision` | threshold decision JSON |
 | `workbench.sim2real.finalize` | workflow stub (`echo`) | `config.finalize_report_uri` | final report URI |
+| `workbench.lancedb.import_bdd100k` | `npa workbench lancedb import-bdd100k --service` | `config.source_uri`, `config.lance_uri` | LanceDB table |
+| `workbench.lancedb.backfill_cpu_bundle` | five CPU UDF backfills | `config.lance_table`, `config.lance_uri` | enriched table |
+| `workbench.lancedb.backfill_clip` | CLIP embedding UDF | `config.lance_uri` | `clip_embedding` column |
+| `workbench.lancedb.create_failure_views` | three materialized views | `config.rider_view`, … | failure-mode views |
+| `workbench.detection_training.train_*` | `npa workbench detection-training train --service` | view + output URIs | checkpoints |
+| `workbench.detection_training.eval_*` | `npa workbench detection-training eval --service` | checkpoint + view | metrics JSON |
+| `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session |
 
 Add new entries in `npa/src/npa/orchestration/npa_workflow/catalog.py` when
 exposing a tool to workflow specs.
