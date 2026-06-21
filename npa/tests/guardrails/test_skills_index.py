@@ -85,6 +85,12 @@ def test_skill_smoke_examples_run(skills_index: dict, tmp_path: Path, monkeypatc
                         assert payload.get("name") or payload.get("resources"), relative_path
             elif smoke_type == "file_exists":
                 assert (REPO_ROOT / smoke["path"]).exists(), smoke["path"]
+            elif smoke_type == "npa_workflow_yaml":
+                from npa.orchestration.npa_workflow import load_spec, validate_spec
+
+                for relative_path in smoke["paths"]:
+                    spec = load_spec(REPO_ROOT / relative_path)
+                    validate_spec(spec)
             elif smoke_type == "configure_provision_dry_run":
                 _assert_configure_provision_dry_run(runner, tmp_path, monkeypatch)
             else:

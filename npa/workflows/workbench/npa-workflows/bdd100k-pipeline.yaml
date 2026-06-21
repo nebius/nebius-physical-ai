@@ -1,0 +1,165 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: bdd100k-pipeline
+  description: >
+    BDD100K failure-mode pipeline — LanceDB ingest, UDF backfill, materialized
+    views, per-mode detector training and evaluation, FiftyOne review.
+
+config:
+  bucket: example-bucket
+  prefix: "bdd100k-pipeline/{{run.id}}"
+  lance_table: bdd100k
+
+  source_uri: "s3://{{config.bucket}}/raw-bdd100k/subset-demo/"
+  bdd100k_limit: "10000"
+  synthetic_rows: "0"
+
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
+
+  lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
+  detection_endpoint: http://npa-detection-training.workbench.svc.cluster.local:8790
+
+  train_epochs: "10"
+  train_batch_size: "8"
+  train_learning_rate: "0.005"
+
+  rider_view: bdd100k_rider_train
+  nighttime_view: bdd100k_nighttime_person_train
+  distant_view: bdd100k_distant_person_train
+
+  rider_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_rider_train"
+  nighttime_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_nighttime_person_train"
+  distant_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_distant_person_train"
+
+  rider_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_rider_train"
+  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_nighttime_person_train"
+  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_distant_person_train"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu-embed:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+  gpu-train:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+  gpu-eval:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+
+initial: ingest
+
+states:
+  ingest:
+    description: Import BDD100K rows into a per-run LanceDB table.
+    toolRef: workbench.lancedb.import_bdd100k
+    resources: cpu
+    outputs:
+      - uri: "{{config.lance_uri}}"
+        schema: npa.lancedb.table.v1
+    next: backfill-cpu
+
+  backfill-cpu:
+    description: Backfill CPU UDF columns for views and duplicate detection.
+    toolRef: workbench.lancedb.backfill_cpu_bundle
+    resources: cpu
+    needs: [ingest]
+    next: backfill-clip
+
+  backfill-clip:
+    description: Backfill CLIP embeddings through the GPU UDF path.
+    toolRef: workbench.lancedb.backfill_clip
+    resources: gpu-embed
+    needs: [backfill-cpu]
+    next: curate-views
+
+  curate-views:
+    description: Create rider, nighttime-person, and distant-person training views.
+    toolRef: workbench.lancedb.create_failure_views
+    resources: cpu
+    needs: [backfill-clip]
+    next: train-models
+
+  train-models:
+    description: Train one detector per failure mode.
+    needs: [curate-views]
+    sequence:
+      - train-rider
+      - train-nighttime
+      - train-distant
+    next: evaluate-models
+
+  train-rider:
+    description: Train on the rider failure-mode view.
+    toolRef: workbench.detection_training.train_rider
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.rider_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+
+  train-nighttime:
+    description: Train on the nighttime-person failure-mode view.
+    toolRef: workbench.detection_training.train_nighttime
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.nighttime_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+
+  train-distant:
+    description: Train on the distant-person failure-mode view.
+    toolRef: workbench.detection_training.train_distant
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.distant_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+
+  evaluate-models:
+    description: Evaluate each trained detector on its training view.
+    needs: [train-models]
+    sequence:
+      - eval-rider
+      - eval-nighttime
+      - eval-distant
+    next: review
+
+  eval-rider:
+    description: Evaluate the rider model.
+    toolRef: workbench.detection_training.eval_rider
+    resources: gpu-eval
+    outputs:
+      - uri: "{{config.rider_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+
+  eval-nighttime:
+    description: Evaluate the nighttime-person model.
+    toolRef: workbench.detection_training.eval_nighttime
+    resources: gpu-eval
+    outputs:
+      - uri: "{{config.nighttime_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+
+  eval-distant:
+    description: Evaluate the distant-person model.
+    toolRef: workbench.detection_training.eval_distant
+    resources: gpu-eval
+    outputs:
+      - uri: "{{config.distant_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+
+  review:
+    description: Launch FiftyOne for human review of pipeline artifacts.
+    needs: [evaluate-models]
+    toolRef: workbench.fiftyone.launch_app
+    resources: cpu
+    terminal: true
