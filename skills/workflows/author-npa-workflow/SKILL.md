@@ -50,10 +50,18 @@ npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --schedule
 
 Dynamic branches: add `--assume-decision promote_checkpoint|loop_back`.
 
-Live infra (optional):
+Live infra (required before merge):
 
 ```bash
-NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_workflow_live_e2e.py -q
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_npa_workflow_live_e2e.py \
+  npa/tests/e2e/test_npa_workflow_live_infra.py -q
+```
+
+Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
+
+```bash
+./scripts/npa-workflow-real-infra-tmux.sh
 ```
 
 ## Authoring Rules
