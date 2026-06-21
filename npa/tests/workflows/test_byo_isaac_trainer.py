@@ -208,3 +208,36 @@ def test_manifest_no_seed_arg_when_zero():
         seed=0)
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "--seed" not in args
+
+
+def test_manifest_physics_path_ships_wrapper_and_skips_stock_train():
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=64, iterations=2,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=736958930, physics={"friction": 0.7, "mass_scale": 0.95})
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    # ships the module + wrapper, sets the generated physics, runs the wrapper
+    assert "isaac_physics_task.py" in args and "runner.py" in args
+    assert "NPA_GEN_FRICTION=0.7" in args and "NPA_GEN_MASS_SCALE=0.95" in args
+    assert "PHYS_SEED=736958930" in args
+    assert "/tmp/npa_phys/runner.py" in args
+    # physics path does NOT invoke stock train.py
+    assert byo.TRAIN_SCRIPT not in args
+    # still uploads model_latest.pt via the shared tail
+    assert "model_latest.pt" in args
+
+
+def test_manifest_default_path_unchanged_without_physics():
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=42)
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    # proven path: stock train.py, no physics wrapper
+    assert byo.TRAIN_SCRIPT in args
+    assert "isaac_physics_task.py" not in args
+    assert "--seed 42" in args
