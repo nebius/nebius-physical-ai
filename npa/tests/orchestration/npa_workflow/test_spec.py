@@ -24,6 +24,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "tokenfactory-rollout-judge.yaml",
         "sim2real-vlm-rl.yaml",
         "bdd100k-pipeline.yaml",
+        "tokenfactory-cosmos-gate.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:
@@ -96,6 +97,16 @@ def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
         "eval-distant",
         "review",
     ]
+
+
+def test_tokenfactory_cosmos_gate_plan_expands_refinement_loop() -> None:
+    spec = load_spec(SPECS / "tokenfactory-cosmos-gate.yaml")
+    plan = build_plan(spec, run_id="gate-plan", assume_decision="loop_back")
+    states = [step.state for step in plan.steps]
+    assert states[:2] == ["reason-scene", "augment-scene"]
+    assert states.count("vlm-critique") == spec.config["refinement_iterations"]
+    assert states.count("quality-gate") == spec.config["refinement_iterations"]
+    assert states[-1] == "publish"
 
 
 def test_invalid_api_version() -> None:

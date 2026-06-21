@@ -12,33 +12,45 @@ Load when creating or editing **NPA workflow YAML** under
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
 
+For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
+
 ## Spec Contract
 
 - **Guide:** `docs/workbench/npa-workflow-guide.md` (canonical examples + verify commands).
+- **Catalog:** `docs/workbench/npa-workflow-tool-catalog.md` +
+  `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 - **apiVersion:** `npa.workflow/v0.0.1` only (beta).
 - **kind:** `Workflow`
 - **States:** declarative nodes with `run` (shell/argv), `toolRef`, or `sequence`.
 - **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
-- **I/O:** `inputs` / `outputs` with `uri` + optional `schema` (documentation + future validation).
+- **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
+- **needs:** ordering hints only (validated acyclic; not enforced at runtime).
+- **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
 
-## Tool References
+## Validation Hardening (v0.0.1)
 
-Use `toolRef` from the catalog in
-`docs/workbench/npa-workflow-tool-catalog.md` and
-`npa/src/npa/orchestration/npa_workflow/catalog.py`. Prefer toolRef over
-inventing shell when a catalog entry exists.
+| Check | When |
+| --- | --- |
+| Unknown `toolRef` / predicate | `validate-spec` |
+| Unbounded transition cycles | `validate-spec` (loops do **not** whitelist cycles) |
+| Missing `{{config.*}}`, bad loop max | `validate-spec` via token resolution |
+| Forward `{{state.*}}` refs | Allowed at validate; resolved during plan/execute |
+| Execution depth | Guarded at `--execute` (no stack blowups) |
+| `run.shell` | Resolves config tokens; spec authors are trusted (injection risk if config is untrusted) |
 
-## Commands (agent harness)
+## Commands
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
 npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
-npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --persist-state --json
+npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 ```
 
-For live infra (optional):
+Dynamic branches: add `--assume-decision promote_checkpoint|loop_back`.
+
+Live infra (optional):
 
 ```bash
 NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_workflow_live_e2e.py -q
@@ -48,21 +60,27 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 
 1. One workflow file = one variant; do not add sim2real-specific Python orchestrators.
 2. Keep **terminal: true** on leaf completion states.
-3. Use `--assume-decision` when planning dynamic loops (`loop_back` vs `promote_checkpoint`).
-4. SkyPilot submits each planned step; the spec does not call `engine.py` or schedulers per workflow.
-5. Cross-stage data uses S3 URIs in config — tools are stateless.
+3. Use `--assume-decision` when planning specs with `transitions`.
+4. SkyPilot submits each planned step; the spec does not call `engine.py` per workflow.
+5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
+6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
 
-## Examples
+## Golden Examples
 
 | Spec | Purpose |
 | --- | --- |
-| `npa-workflows/vlm-eval-single.yaml` | Single-tool minimal |
-| `npa-workflows/tokenfactory-rollout-judge.yaml` | Serial two-tool |
-| `npa-workflows/sim2real-vlm-rl.yaml` | Fixed + dynamic loops |
-| `npa-workflows/bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
+| `vlm-eval-single.yaml` | Single-tool minimal |
+| `tokenfactory-rollout-judge.yaml` | Serial two-tool |
+| `sim2real-vlm-rl.yaml` | Nested loops + dynamic gate |
+| `bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
+| `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 
 ## Verify
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/ npa/tests/smoke/test_npa_workflow_smoke.py -q --tb=no
+npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/ \
+  npa/tests/smoke/test_npa_workflow_smoke.py \
+  npa/tests/smoke/test_all_workflow_yamls.py -q --tb=no
 ```
+
+Tmux matrix: `./scripts/npa-workflow-creative-tmux.sh`

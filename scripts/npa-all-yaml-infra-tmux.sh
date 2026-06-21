@@ -122,7 +122,7 @@ YAML
     base=$(basename "$spec")
     echo "plan: ${base}"
     extra=()
-    if [[ "${base}" == "sim2real-vlm-rl.yaml" ]]; then
+    if [[ "${base}" == "sim2real-vlm-rl.yaml" || "${base}" == "tokenfactory-cosmos-gate.yaml" ]]; then
       extra=(--assume-decision loop_back)
     fi
     if ! "${NPA}" workbench workflow plan-spec "${spec}" --run-id "${RUN_ID}" "${extra[@]}"; then

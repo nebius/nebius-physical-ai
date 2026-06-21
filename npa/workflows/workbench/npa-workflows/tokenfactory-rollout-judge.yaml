@@ -3,7 +3,8 @@ kind: Workflow
 
 metadata:
   name: tokenfactory-rollout-judge
-  description: Reason over scene inputs, then VLM-score synthetic rollouts.
+  description: >
+    Reason over scene inputs with Token Factory, then VLM-score synthetic rollouts.
 
 config:
   bucket: example-bucket

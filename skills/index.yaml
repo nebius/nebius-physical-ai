@@ -314,6 +314,18 @@ skills:
           - npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
           - npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge.yaml
           - npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml
+          - npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml
+          - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
+  - name: generate-npa-workflow
+    category: workflows
+    when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, golden YAML)."
+    path: skills/workflows/generate-npa-workflow/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/npa-workflow-guide.md
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
   - name: workbench-reference-workflows
     category: workflows
     when_to_use: "Reference SkyPilot YAMLs, runner scripts, cookbooks, and customer-adaptable pipeline implementations."

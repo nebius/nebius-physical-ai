@@ -26,6 +26,7 @@ Golden specs (all pytest-guarded):
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic `transitions` |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
+| `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 
 ## Document shape
 
@@ -71,6 +72,7 @@ states:
 | `loop.until` | Stop when predicate is true (`promote_checkpoint`) |
 | `transitions` | Branch on predicates after the state runs |
 | `needs` | Ordering hint only (validated acyclic; not enforced at runtime) |
+| `writesDecision` | State writes `config.decision_uri`; engine reads S3 after this state |
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
 
@@ -137,6 +139,14 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 - Gang scheduling, parallel fan-out, runtime manifest-driven `foreach`
 - JSON Schema validation of artifact payloads
 - Unified `workflow status` for npa.workflow runs (sim2real path is separate today)
+
+## YAML beauty conventions
+
+- Group `config`: runtime knobs (`bucket`, `prefix`, backends, iteration counts), blank line, then `*_uri` keys.
+- Fold long `metadata.description` with `>`.
+- Every state gets a one-line `description`.
+- Prefer `toolRef`; use `run.shell` only when no catalog entry exists.
+- Decision states that write threshold JSON must set `writesDecision: true`.
 
 `run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
 

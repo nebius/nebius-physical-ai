@@ -21,6 +21,8 @@ invoked as a container command; artifacts pass via S3 URIs in `config`.
 | `workbench.detection_training.eval_*` | `npa workbench detection-training eval --service` | checkpoint + view | metrics JSON |
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session |
 
+Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
+
 Add new entries in `npa/src/npa/orchestration/npa_workflow/catalog.py` when
 exposing a tool to workflow specs.
 

@@ -56,7 +56,10 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
     payload = json.loads(validate.output)
     assert payload["status"] == "valid"
 
-    assume = "loop_back" if path.name == "sim2real-vlm-rl.yaml" else "promote_checkpoint"
+    assume = "loop_back" if path.name in {
+        "sim2real-vlm-rl.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+    } else "promote_checkpoint"
     plan_args = [
         "workbench",
         "workflow",
@@ -66,7 +69,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
         f"smoke-{path.stem}",
         "--json",
     ]
-    if path.name == "sim2real-vlm-rl.yaml":
+    if path.name in {"sim2real-vlm-rl.yaml", "tokenfactory-cosmos-gate.yaml"}:
         plan_args.extend(["--assume-decision", assume])
     plan = RUNNER.invoke(app, plan_args)
     assert plan.exit_code == 0, plan.output
@@ -89,7 +92,10 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
             "--plan-only",
             "--scheduler-plan",
             "--json",
-            *(["--assume-decision", assume] if path.name == "sim2real-vlm-rl.yaml" else []),
+            *(["--assume-decision", assume] if path.name in {
+                "sim2real-vlm-rl.yaml",
+                "tokenfactory-cosmos-gate.yaml",
+            } else []),
         ],
     )
     assert scheduler.exit_code == 0, scheduler.output
