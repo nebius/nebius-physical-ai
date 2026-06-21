@@ -1948,6 +1948,7 @@ def _run_policy_rollouts_via_command(
         config.byo_policy_command,
         cwd=actions_dir,
         env=env,
+        component="policy_actions",
     )
     payload = _read_component_json(output_path, invocation)
     if payload.get("rollout_dirs"):

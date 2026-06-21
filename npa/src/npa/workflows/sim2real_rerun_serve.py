@@ -75,6 +75,24 @@ class RerunServeConfig:
     aws_secret_access_key: str = ""
     aws_region: str = "eu-north1"
     rrd_s3_uri_override: str = ""
+    auth_user: str = ""
+    auth_password: str = ""
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_password and self.auth_user)
+
+    @property
+    def auth_secret_name(self) -> str:
+        return f"{self.deployment_name}-auth"
+
+    @property
+    def htpasswd_line(self) -> str:
+        """nginx basic-auth line using the {SHA} scheme (pure-Python, no apache2-utils)."""
+        import hashlib
+
+        digest = base64.b64encode(hashlib.sha1(self.auth_password.encode()).digest()).decode()
+        return f"{self.auth_user}:{{SHA}}{digest}\n"
 
     @property
     def deployment_name(self) -> str:
@@ -286,14 +304,38 @@ def _rerun_remote_cors_flags() -> str:
     )
 
 
+RERUN_HTPASSWD_PATH = "/etc/nginx/auth/.htpasswd"
+
+
 def build_rerun_nginx_config(
     *,
     external_port: int = DEFAULT_PORT,
     internal_port: int = RERUN_INTERNAL_WEB_PORT,
     cache_control: str = RERUN_STATIC_CACHE_CONTROL,
+    auth_required: bool = False,
+    htpasswd_path: str = RERUN_HTPASSWD_PATH,
 ) -> str:
-    """Return nginx config: proxy static assets with long-lived browser cache."""
+    """Return nginx config: proxy static assets with long-lived browser cache.
 
+    When ``auth_required`` the public viewer is gated behind HTTP basic-auth
+    (``auth_basic`` + htpasswd file), so the cloud LoadBalancer URL needs
+    credentials instead of being open to anyone with the IP.
+    """
+
+    auth_lines = ""
+    health_block = ""
+    if auth_required:
+        auth_lines = (
+            f'\n            auth_basic "NPA Sim2Real Rerun";'
+            f'\n            auth_basic_user_file {htpasswd_path};'
+        )
+        # Unauthenticated health endpoint so the readiness probe passes (GET / is 401).
+        health_block = (
+            '\n        location = /healthz {'
+            '\n            auth_basic off;'
+            '\n            return 200 "ok";'
+            '\n        }'
+        )
     return f"""\
 worker_processes 1;
 error_log /dev/stderr warn;
@@ -308,18 +350,18 @@ http {{
         server 127.0.0.1:{internal_port};
     }}
     server {{
-        listen {external_port};
+        listen {external_port};{health_block}
         location ~* \\.(wasm|js|ico|svg)$ {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            add_header Cache-Control "{cache_control}" always;
+            add_header Cache-Control "{cache_control}" always;{auth_lines}
         }}
         location / {{
             proxy_pass http://rerun_web;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            add_header Cache-Control "no-cache" always;
+            add_header Cache-Control "no-cache" always;{auth_lines}
         }}
     }}
 }}
@@ -381,6 +423,8 @@ def build_rerun_serve_config(
     aws_region: str = "eu-north1",
     rrd_s3_uri: str = "",
     report_uri: str = "",
+    auth_user: str = "",
+    auth_password: str = "",
 ) -> RerunServeConfig:
     normalized_run_id = validate_staged_run_id(run_id)
     storage = resolve_project_storage(project)
@@ -410,6 +454,8 @@ def build_rerun_serve_config(
         aws_secret_access_key=aws_secret_access_key,
         aws_region=aws_region.strip() or "eu-north1",
         rrd_s3_uri_override=rrd_override,
+        auth_user=auth_user.strip(),
+        auth_password=auth_password,
     )
 
 
@@ -484,7 +530,9 @@ aws s3 cp "${S3_URI}" /data/sim2real.rrd
 test -s /data/sim2real.rrd
 """
     serve_command = _rerun_serve_command(config)
-    nginx_config = build_rerun_nginx_config(external_port=config.port)
+    nginx_config = build_rerun_nginx_config(
+        external_port=config.port, auth_required=config.auth_enabled
+    )
     sync_token = (rrd_sync_token or config.run_id).strip()
     pod_annotations = {
         "npa.nebius.com/rrd-s3-uri": _label_value(config.rrd_s3_uri),
@@ -505,6 +553,21 @@ test -s /data/sim2real.rrd
                 "type": "Opaque",
                 "data": secret_data,
             },
+            *(
+                [{
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {
+                        "name": config.auth_secret_name,
+                        "namespace": config.namespace,
+                        "labels": labels,
+                    },
+                    "type": "Opaque",
+                    "data": {".htpasswd": _b64(config.htpasswd_line)},
+                }]
+                if config.auth_enabled
+                else []
+            ),
             {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
@@ -548,7 +611,10 @@ test -s /data/sim2real.rrd
                                     "imagePullPolicy": "IfNotPresent",
                                     "ports": [{"name": "http", "containerPort": config.port}],
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/", "port": "http"},
+                                        "httpGet": {
+                                            "path": "/healthz" if config.auth_enabled else "/",
+                                            "port": "http",
+                                        },
                                         "initialDelaySeconds": 5,
                                         "periodSeconds": 5,
                                         "timeoutSeconds": 3,
@@ -559,7 +625,13 @@ test -s /data/sim2real.rrd
                                             "mountPath": "/etc/nginx/nginx.conf",
                                             "subPath": "nginx.conf",
                                         }
-                                    ],
+                                    ] + (
+                                        [{
+                                            "name": "nginx-auth",
+                                            "mountPath": "/etc/nginx/auth",
+                                            "readOnly": True,
+                                        }] if config.auth_enabled else []
+                                    ),
                                     "resources": {
                                         "requests": {"cpu": "50m", "memory": "64Mi"},
                                         "limits": {"cpu": "500m", "memory": "128Mi"},
@@ -605,7 +677,15 @@ test -s /data/sim2real.rrd
                                     "name": "nginx-config",
                                     "configMap": {"name": config.nginx_configmap_name},
                                 },
-                            ],
+                            ] + (
+                                [{
+                                    "name": "nginx-auth",
+                                    "secret": {
+                                        "secretName": config.auth_secret_name,
+                                        "items": [{"key": ".htpasswd", "path": ".htpasswd"}],
+                                    },
+                                }] if config.auth_enabled else []
+                            ),
                         },
                     },
                 },
