@@ -113,8 +113,10 @@ serverless paths where your tool supports them.
 | Check | Result |
 | --- | --- |
 | CLI wiring (`enable_preemptible=true` on GPU deploy) | `pytest npa/tests/cli/test_fiftyone_cli.py::test_fiftyone_deploy_accepts_gpu_flags_and_installs_app` — pass |
-| Dry-run deploy path (`lerobot`, `fiftyone`, `--preemptible`) | pass against configured `rtxpro` project alias |
-| Full Terraform apply on live project | **blocked** on this runner — `PermissionDenied` creating IAM service account (`project-u00…`); rerun deploy on an account with compute + IAM bootstrap permissions to complete end-to-end verification |
+| Preemptible / non-preemptible CLI regression | `pytest npa/tests/cli/test_preemptible_deploy.py` — pass |
+| IAM-restricted bootstrap reuse | `bootstrap_environment()` reuses saved S3 credentials when access-key provisioning is blocked; `ensure_service_account()` parses the service-account id from restricted `get-by-name` responses |
+| Dry-run deploy path (`lerobot`, `fiftyone`, `--preemptible`) | pass against configured project alias |
+| Full live deploy + instance verify | run `NPA_PREEMPTIBLE_E2E=1 pytest npa/tests/e2e/test_preemptible_live_e2e.py` on a profile with compute + IAM permissions |
 
 Related: [getting-started.md](getting-started.md),
 [guides/README.md](guides/README.md), [CLI.md](../../CLI.md).

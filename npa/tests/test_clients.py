@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -350,6 +349,74 @@ def test_nebius_service_account_reuses_existing(mocker) -> None:
 
     assert nebius.ensure_service_account("project", name="svc") == "sa-id"
     run_json.assert_called_once()
+
+
+def test_nebius_service_account_reuses_id_from_permission_denied(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=nebius.NebiusError(
+            "nebius iam service-account get-by-name failed (exit 15):\n"
+            "Permission denied PermissionDenied: service iam, "
+            "resource ID: serviceaccount-u00example"
+        ),
+    )
+    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="")
+
+    assert nebius.ensure_service_account("project") == "serviceaccount-u00example"
+
+
+def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> None:
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
+    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="sa-id")
+    mocker.patch(
+        "npa.clients.credentials.load_credentials",
+        return_value=SimpleNamespace(
+            s3_access_key_id="key",
+            s3_secret_access_key="secret",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+        ),
+    )
+
+    result = nebius._saved_storage_credentials(
+        project_id="project",
+        tenant_id="tenant",
+        region="us-central1",
+        bucket_name="npa-bucket-default",
+        service_account_id="sa-id",
+    )
+
+    assert result is not None
+    assert result["s3_bucket"] == "lerobot-ccc9d3c7"
+
+
+def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(mocker) -> None:
+    mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
+    mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
+    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
+    mocker.patch(
+        "npa.clients.nebius.ensure_access_key",
+        side_effect=nebius.NebiusError("Permission denied PermissionDenied"),
+    )
+    mocker.patch(
+        "npa.clients.nebius._saved_storage_credentials",
+        return_value={
+            "iam_token": "iam",
+            "service_account_id": "sa-id",
+            "nebius_api_key": "key",
+            "nebius_secret_key": "secret",
+            "s3_bucket": "bucket",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "nebius_project_id": "project",
+            "nebius_region": "eu-north1",
+        },
+    )
+
+    result = nebius.bootstrap_environment("project", "tenant", "eu-north1")
+
+    assert result["nebius_api_key"] == "key"
+    assert result["service_account_id"] == "sa-id"
 
 
 def test_nebius_find_active_access_key_prefers_requested_name(mocker) -> None:
