@@ -32,11 +32,11 @@
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
 #   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
 #   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE` or --env-file
-#   4. Direct K8s submit — ops/private/sim2real-rtxpro/submit-k8s-staged-job.sh reads
+#   4. Direct K8s submit — <private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh reads
 #      S3_BUCKET + NPA_SIM2REAL_TRIGGER_DATASET_URI from the environment
 #
 # Seed stock trigger on a new bucket before first submit:
-#   ./ops/private/sim2real-rtxpro/seed-stock-trigger.sh
+#   <private-operator-pack>/sim2real-rtxpro/seed-stock-trigger.sh
 # Then set storage.sim2real_stock_trigger_uri to the destination prefix and run
 # sync-cluster-storage-secret.sh so cluster pods get AWS_ENDPOINT_URL + keys.
 #
