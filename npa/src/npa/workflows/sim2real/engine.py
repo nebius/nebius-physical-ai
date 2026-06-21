@@ -2951,6 +2951,12 @@ def _run_trainer_via_command(
     # (mirrors how the held-out eval consumes NPA_SIM2REAL_HELDOUT_ENVS_DIR).
     if train_envs_dir is not None:
         extra["NPA_SIM2REAL_TRAIN_ENVS_DIR"] = str(train_envs_dir)
+        # S3 fallback: the orchestrator localizes only the held-out split, so the
+        # trainer reads the generated train-env spec (seed + physics) from S3 when
+        # the local dir is absent.
+        extra["NPA_SIM2REAL_TRAIN_ENVS_URI"] = (
+            f"{_artifact_root_uri(config)}/envs/train/envs.jsonl"
+        )
     env = _component_env(
         config,
         component="trainer",
