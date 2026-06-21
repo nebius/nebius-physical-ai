@@ -29,9 +29,8 @@ while true; do
   echo "========== ROUND ${round} $(date -u +%Y-%m-%dT%H:%M:%SZ) =========="
   FAILED=0
 
-  echo "--- [1/8] skills index smoke (npa workflow entries) ---"
-  if ! "${PY}" -m pytest npa/tests/guardrails/test_skills_index.py -q --timeout=120 \
-    -k "author-npa-workflow or generate-npa-workflow"; then
+  echo "--- [1/8] skills index smoke (full guardrail) ---"
+  if ! "${PY}" -m pytest npa/tests/guardrails/test_skills_index.py -q --timeout=120; then
     FAILED=1
   fi
 
