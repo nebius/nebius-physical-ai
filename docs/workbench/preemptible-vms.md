@@ -116,6 +116,7 @@ serverless paths where your tool supports them.
 | Preemptible / non-preemptible CLI regression | `pytest npa/tests/cli/test_preemptible_deploy.py` — pass |
 | IAM-restricted bootstrap reuse | `bootstrap_environment()` reuses saved S3 credentials when access-key provisioning is blocked; `ensure_service_account()` parses the service-account id from restricted `get-by-name` responses |
 | Dry-run deploy path (`lerobot`, `fiftyone`, `--preemptible`) | pass against configured project alias |
+| Live deploy + instance verify (`agent-live`, `gpu-l40s-a`, eu-north1) | pass — `preemptible { on_preemption = STOP }` confirmed via `nebius compute instance get` |
 | Full live deploy + instance verify | run `NPA_PREEMPTIBLE_E2E=1 pytest npa/tests/e2e/test_preemptible_live_e2e.py` on a profile with compute + IAM permissions |
 
 Related: [getting-started.md](getting-started.md),
