@@ -165,3 +165,45 @@ def test_manifest_embeds_custom_object_usd():
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "env.scene.object.spawn.usd_path=s3orhttp://assets/custom_sugar_box.usd" in args
     assert "env.scene.object.spawn.scale='(0.8, 0.8, 0.8)'" in args
+
+
+def test_read_generated_train_env(tmp_path):
+    envs = tmp_path / "envs.jsonl"
+    envs.write_text(
+        '{"env_id": "env-00006", "seed": 516456434, "physics": {"friction": 0.717, "mass_scale": 0.969}}\n'
+        '{"env_id": "env-00007", "seed": 42, "physics": {}}\n',
+        encoding="utf-8",
+    )
+    rec = byo.read_generated_train_env(str(tmp_path))
+    assert rec["env_id"] == "env-00006"
+    assert rec["seed"] == 516456434
+    assert rec["physics"]["friction"] == 0.717
+
+
+def test_read_generated_train_env_absent(tmp_path):
+    assert byo.read_generated_train_env(str(tmp_path)) == {}
+    assert byo.read_generated_train_env("") == {}
+
+
+def test_manifest_embeds_generated_seed():
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=516456434)
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    # generated env seed drives both env + agent randomization
+    assert "env.seed=516456434" in args
+    assert "agent.seed=516456434" in args
+
+
+def test_manifest_no_seed_overrides_when_zero():
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=0)
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "env.seed=" not in args

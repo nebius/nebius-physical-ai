@@ -84,6 +84,37 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
     }
 
 
+def read_generated_train_env(envs_dir: str) -> dict[str, Any]:
+    """Read a representative GENERATED train-env spec (seed + physics).
+
+    The envgen stage writes one record per generated env with a per-env ``seed``
+    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
+    first record so the trainer can train on the generated env distribution (its
+    seed drives Isaac randomization) rather than stock defaults. Returns ``{}``
+    when no spec is present (envgen not wired / stock run).
+    """
+
+    from pathlib import Path as _Path
+
+    path = _Path(envs_dir) / "envs.jsonl"
+    if not envs_dir or not path.is_file():
+        return {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        return {
+            "env_id": str(rec.get("env_id") or "env-00000"),
+            "seed": int(rec.get("seed") or 0),
+            "physics": rec.get("physics") or {},
+        }
+    return {}
+
+
 # Canonical Isaac-Lift-Cube-Franka-v0 reward-term weights (manager-based Lift env)
 # — confirmed term names from the training log's Episode_Reward/* keys.
 DEFAULT_REWARD_WEIGHTS = {
@@ -157,6 +188,7 @@ def build_isaac_job_manifest(
     reward_overrides: dict[str, float] | None = None,
     object_usd: str = "",
     object_scale: str = "",
+    seed: int = 0,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -164,6 +196,8 @@ def build_isaac_job_manifest(
     are VLM-derived ``env.rewards.<term>.weight`` hydra args; ``object_usd``
     overrides the manipuland (``env.scene.object.spawn.usd_path``) so the policy
     is trained on a CUSTOM asset physically simulated in Isaac, not the stock cube.
+    ``seed`` (from a GENERATED train-env spec) drives env + agent randomization so
+    training runs on the envgen-produced env distribution.
     """
 
     overrides = dict(reward_overrides or {})
@@ -171,6 +205,10 @@ def build_isaac_job_manifest(
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
             overrides["env.scene.object.spawn.scale"] = object_scale
+    if seed:
+        # Drive Isaac env + rsl_rl agent randomization from the generated env seed.
+        overrides["env.seed"] = int(seed)
+        overrides["agent.seed"] = int(seed)
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
@@ -352,6 +390,14 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     if object_usd:
         print(f"byo_isaac_trainer: CUSTOM object USD -> {object_usd} scale={object_scale}", flush=True)
 
+    # GENERATED train-env spec: seed drives Isaac randomization so the policy
+    # trains on the envgen-produced distribution (matches the held-out eval).
+    train_env = read_generated_train_env(_env("NPA_SIM2REAL_TRAIN_ENVS_DIR"))
+    gen_seed = int(train_env.get("seed") or 0)
+    if train_env:
+        print(f"byo_isaac_trainer: GENERATED train env {train_env.get('env_id')} "
+              f"seed={gen_seed} physics={train_env.get('physics')}", flush=True)
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -367,6 +413,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         reward_overrides=reward_overrides,
         object_usd=object_usd,
         object_scale=object_scale,
+        seed=gen_seed,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)

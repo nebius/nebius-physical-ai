@@ -896,6 +896,7 @@ def run_inner_loop(
                 output_dir=trainer_dir,
                 initial_reward_head=reward_head,
                 initial_action_bias=action_bias,
+                train_envs_dir=local_dir / "envs" / "train",
             )
             trainer_source = "byo_command"
         else:
@@ -2922,6 +2923,7 @@ def _run_trainer_via_command(
     output_dir: Path,
     initial_reward_head: float,
     initial_action_bias: float,
+    train_envs_dir: Path | None = None,
 ) -> VlmSignalUpdateResult:
     """Run the BYO trainer command and parse its update result.
 
@@ -2936,18 +2938,24 @@ def _run_trainer_via_command(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "byo-trainer-update.json"
+    extra = {
+        "NPA_SIM2REAL_SIGNAL_JSON": str(signal_batch_path),
+        "NPA_SIM2REAL_INITIAL_REWARD_HEAD": str(initial_reward_head),
+        "NPA_SIM2REAL_INITIAL_ACTION_BIAS": str(initial_action_bias),
+        "NPA_SIM2REAL_LEARNING_RATE": str(config.learning_rate),
+        "NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT": str(config.signal_loss_weight),
+        "NPA_SIM2REAL_TRAINER_IMAGE": config.trainer_image,
+    }
+    # Expose the GENERATED train-env specs (envgen seed + per-env physics) so a BYO
+    # trainer can train on the generated env distribution, not stock defaults
+    # (mirrors how the held-out eval consumes NPA_SIM2REAL_HELDOUT_ENVS_DIR).
+    if train_envs_dir is not None:
+        extra["NPA_SIM2REAL_TRAIN_ENVS_DIR"] = str(train_envs_dir)
     env = _component_env(
         config,
         component="trainer",
         output_json=output_path,
-        extra={
-            "NPA_SIM2REAL_SIGNAL_JSON": str(signal_batch_path),
-            "NPA_SIM2REAL_INITIAL_REWARD_HEAD": str(initial_reward_head),
-            "NPA_SIM2REAL_INITIAL_ACTION_BIAS": str(initial_action_bias),
-            "NPA_SIM2REAL_LEARNING_RATE": str(config.learning_rate),
-            "NPA_SIM2REAL_SIGNAL_LOSS_WEIGHT": str(config.signal_loss_weight),
-            "NPA_SIM2REAL_TRAINER_IMAGE": config.trainer_image,
-        },
+        extra=extra,
     )
     invocation = _run_component_command(
         config.byo_trainer_command,
