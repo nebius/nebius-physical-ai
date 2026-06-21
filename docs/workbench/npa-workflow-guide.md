@@ -70,7 +70,7 @@ states:
 | `loop.max` | Fixed iteration count (`int` or `config.attr`) |
 | `loop.until` | Stop when predicate is true (`promote_checkpoint`) |
 | `transitions` | Branch on predicates after the state runs |
-| `needs` | Declared dependency on other states (validated) |
+| `needs` | Ordering hint only (validated acyclic; not enforced at runtime) |
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
 

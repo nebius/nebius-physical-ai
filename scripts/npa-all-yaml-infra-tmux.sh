@@ -30,7 +30,84 @@ while true; do
   echo "========== ROUND ${round} $(date -u +%Y-%m-%dT%H:%M:%SZ) =========="
   FAILED=0
 
-  echo "--- [1/6] npa.workflow validate (all golden specs) ---"
+  echo "--- [0/7] PR audit repro + audit_fixes pytest ---"
+  AUDIT_DIR="${REPO}/.tmp-audit-repro"
+  mkdir -p "${AUDIT_DIR}"
+  cat > "${AUDIT_DIR}/cycle.yaml" <<'YAML'
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: cycle
+config: {}
+initial: a
+states:
+  a:
+    run:
+      shell: echo a
+    next: b
+  b:
+    run:
+      shell: echo b
+    next: a
+  done:
+    terminal: true
+YAML
+  cat > "${AUDIT_DIR}/bad-token.yaml" <<'YAML'
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: bad-token
+config:
+  bucket: example-bucket
+initial: x
+states:
+  x:
+    run:
+      shell: echo ok
+    outputs:
+      - uri: "{{config.does_not_exist}}"
+    terminal: true
+YAML
+  cat > "${AUDIT_DIR}/bad-loop-max.yaml" <<'YAML'
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: bad-loop-max
+config:
+  n: not-an-int
+initial: outer
+states:
+  outer:
+    sequence: [inner]
+    loop:
+      max: "{{config.n}}"
+    next: done
+  inner:
+    run:
+      shell: echo inner
+  done:
+    terminal: true
+YAML
+  echo "audit: cycle.yaml must fail validate (exit 1)"
+  if "${NPA}" workbench workflow validate-spec "${AUDIT_DIR}/cycle.yaml"; then
+    echo "FAIL: cycle.yaml should not validate"
+    FAILED=1
+  fi
+  echo "audit: bad-token.yaml must fail validate (exit 1)"
+  if "${NPA}" workbench workflow validate-spec "${AUDIT_DIR}/bad-token.yaml"; then
+    echo "FAIL: bad-token.yaml should not validate"
+    FAILED=1
+  fi
+  echo "audit: bad-loop-max.yaml must fail validate (exit 1)"
+  if "${NPA}" workbench workflow validate-spec "${AUDIT_DIR}/bad-loop-max.yaml"; then
+    echo "FAIL: bad-loop-max.yaml should not validate"
+    FAILED=1
+  fi
+  if ! "${PY}" -m pytest npa/tests/orchestration/npa_workflow/test_audit_fixes.py -q --timeout=120; then
+    FAILED=1
+  fi
+
+  echo "--- [1/7] npa.workflow validate (all golden specs) ---"
   for spec in "${NPA_SPECS}"/*.yaml; do
     base=$(basename "$spec")
     echo "validate: ${base}"
@@ -39,7 +116,7 @@ while true; do
     fi
   done
 
-  echo "--- [2/6] npa.workflow plan + scheduler (all golden specs) ---"
+  echo "--- [2/7] npa.workflow plan + scheduler (all golden specs) ---"
   RUN_ID="tmux-all-r${round}-$(date -u +%H%M%S)"
   for spec in "${NPA_SPECS}"/*.yaml; do
     base=$(basename "$spec")
@@ -62,7 +139,7 @@ while true; do
     fi
   done
 
-  echo "--- [3/6] skypilot YAML parse (all files) ---"
+  echo "--- [3/7] skypilot YAML parse (all files) ---"
   if ! "${PY}" - <<'PY'; then
 from pathlib import Path
 import yaml
@@ -83,12 +160,12 @@ PY
     FAILED=1
   fi
 
-  echo "--- [4/6] smoke: all workflow YAMLs ---"
+  echo "--- [4/7] smoke: all workflow YAMLs ---"
   if ! "${PY}" -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q --timeout=180; then
     FAILED=1
   fi
 
-  echo "--- [5/6] npa.workflow unit + live infra ---"
+  echo "--- [5/7] npa.workflow unit + live infra ---"
   if ! "${PY}" -m pytest \
     npa/tests/orchestration/npa_workflow/ \
     npa/tests/smoke/test_npa_workflow_smoke.py \
@@ -98,7 +175,7 @@ PY
     FAILED=1
   fi
 
-  echo "--- [6/6] SkyPilot workflow + BDD100K + guardrails ---"
+  echo "--- [6/7] SkyPilot workflow + BDD100K + guardrails ---"
   if ! "${PY}" -m pytest \
     npa/tests/workflows/test_bdd100k_pipeline.py \
     npa/tests/workflows/test_vlm_eval_workflow.py \

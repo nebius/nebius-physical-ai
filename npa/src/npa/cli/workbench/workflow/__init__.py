@@ -1345,11 +1345,15 @@ def plan_spec_cmd(
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
 
-    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan
 
     spec = _load_npa_workflow(yaml_path)
     resolved_run_id = run_id or f"{spec.name}-plan"
-    plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+    try:
+        plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
     if json_output:
         typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
         return
@@ -1425,8 +1429,6 @@ def run_spec_cmd(
         if report.get("run_prefix_uri"):
             typer.echo(f"run_prefix_uri: {report['run_prefix_uri']}")
         typer.echo(f"steps: {len(report['plan']['steps'])}")
-    if report["status"] == "failed":
-        raise typer.Exit(1)
 
 
 app.add_typer(trigger_app, name="trigger")

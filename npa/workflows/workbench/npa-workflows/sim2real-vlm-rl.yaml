@@ -106,6 +106,7 @@ states:
 
   decide:
     description: Threshold decision for promote vs loop-back.
+    writesDecision: true
     needs: [heldout]
     toolRef: workbench.sim2real.write_decision
     outputs:

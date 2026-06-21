@@ -55,6 +55,7 @@ class StateSpec:
     outputs: list[ArtifactSpec] = field(default_factory=list)
     resources: str = "default"
     terminal: bool = False
+    writes_decision: bool = False
 
 
 @dataclass
@@ -187,6 +188,7 @@ def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
         outputs=outputs,
         resources=str(entry.get("resources") or "default"),
         terminal=bool(entry.get("terminal")),
+        writes_decision=bool(entry.get("writesDecision") or entry.get("writes_decision")),
     )
 
 
@@ -240,15 +242,50 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
+    _validate_resolvable(spec)
+
+
+def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
+    """Resolve tokens and loop bounds so user errors surface at validate time."""
+
+    from npa.orchestration.npa_workflow.interpreter import _make_context, _resolved_run
+    from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
+
+    ctx = _make_context(spec, run_id="validate-run")
+    for state in spec.states.values():
+        if state.loop and state.loop.max is not None:
+            try:
+                resolved = resolve_config_int(state.loop.max, ctx.config)
+            except NpaWorkflowError as exc:
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+            if resolved < 1:
+                raise NpaWorkflowError(
+                    f"state {state.name}: loop.max must be >= 1, got {resolved}"
+                )
+        try:
+            _resolved_run(state, ctx)
+        except TokenError as exc:
+            if not str(exc).startswith("unknown state token:"):
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        for artifact in [*state.inputs, *state.outputs]:
+            if not artifact.uri:
+                continue
+            try:
+                resolve_tokens(
+                    artifact.uri,
+                    config=ctx.config,
+                    run=ctx.run,
+                    state_outputs=ctx.state_outputs,
+                )
+            except TokenError as exc:
+                if not str(exc).startswith("unknown state token:"):
+                    raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
 
 
 def _validate_loop_max(state: StateSpec, config: dict[str, Any]) -> None:
     if state.loop is None or state.loop.max is None:
         return
-    try:
-        resolved = resolve_config_int(state.loop.max, config)
-    except NpaWorkflowError:
-        return
+    resolved = resolve_config_int(state.loop.max, config)
     if resolved < 1:
         raise NpaWorkflowError(f"state {state.name}: loop.max must be >= 1, got {resolved}")
 
@@ -294,10 +331,8 @@ def _assert_bounded_control_flow_cycles(spec: NpaWorkflowSpec) -> None:
     def dfs(node: str) -> None:
         if node in stack:
             cycle = stack[stack.index(node) :] + [node]
-            if not any(spec.states[item].loop for item in cycle):
-                joined = " -> ".join(cycle)
-                raise NpaWorkflowError(f"unbounded control-flow cycle detected: {joined}")
-            return
+            joined = " -> ".join(cycle)
+            raise NpaWorkflowError(f"unbounded control-flow cycle detected: {joined}")
         if node in visited:
             return
         stack.append(node)
@@ -326,7 +361,12 @@ def resolve_config_int(value: Any, config: dict[str, Any]) -> int:
         if attr:
             if attr not in config:
                 raise NpaWorkflowError(f"config has no attribute {attr!r}")
-            return int(config[attr])
+            try:
+                return int(config[attr])
+            except (TypeError, ValueError) as exc:
+                raise NpaWorkflowError(
+                    f"config.{attr} must be an integer loop bound, got {config[attr]!r}"
+                ) from exc
         if text.isdigit():
             return int(text)
     raise NpaWorkflowError(f"cannot resolve loop max from {value!r}")

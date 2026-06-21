@@ -129,7 +129,10 @@ def run_workflow(
         status="running" if execute else "planned",
     )
     if store is not None:
-        store.write_manifest(manifest)
+        try:
+            store.write_manifest(manifest)
+        except Exception as exc:
+            raise NpaWorkflowError(f"failed to persist workflow manifest: {exc}") from exc
 
     results: list[dict[str, Any]] = []
     status = "planned"
@@ -162,9 +165,25 @@ def run_workflow(
         if store is not None:
             manifest.status = status
             manifest.steps = results
-            store.write_manifest(manifest)
+            try:
+                store.write_manifest(manifest)
+            except Exception as exc:
+                persist_error = NpaWorkflowError(
+                    f"failed to persist workflow manifest: {exc}"
+                )
+                if error is None:
+                    error = persist_error
+                    status = "failed"
 
-    plan = build_plan(spec, run_id=run_id, assume_decision=assume)
+    if error is None:
+        plan = build_plan(spec, run_id=run_id, assume_decision=assume)
+    else:
+        plan = ExecutionPlan(
+            workflow=spec.name,
+            api_version=spec.api_version,
+            initial=spec.initial,
+            assume_decision=assume,
+        )
     report = {
         "workflow": spec.name,
         "run_id": run_id,
@@ -301,11 +320,30 @@ def _expand_state(
 
 
 def _guard_plan_size(spec: NpaWorkflowSpec, plan: ExecutionPlan) -> None:
-    limit = max(256, len(spec.states) * 64)
+    limit = _execution_step_limit(spec)
     if len(plan.steps) >= limit:
         raise NpaWorkflowError(
             "plan exceeded step limit; check for unbounded control-flow cycles"
         )
+
+
+def _execution_step_limit(spec: NpaWorkflowSpec) -> int:
+    return max(256, len(spec.states) * 64)
+
+
+def _guard_execution_depth(spec: NpaWorkflowSpec, depth: int) -> None:
+    if depth >= _execution_step_limit(spec):
+        raise NpaWorkflowError(
+            "execution exceeded step limit; check for unbounded control-flow cycles"
+        )
+
+
+def _sequence_refreshes_decision(spec: NpaWorkflowSpec, state: StateSpec) -> bool:
+    return any(
+        spec.states[child].writes_decision
+        for child in state.sequence
+        if child in spec.states
+    )
 
 
 def _append_state_step(
@@ -345,6 +383,7 @@ def _append_state_step(
             inputs=_resolved_inputs(state, ctx),
         )
     )
+    _record_state_outputs(state, ctx, plan.steps[-1])
 
 
 def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
@@ -401,7 +440,9 @@ def _execute_state_machine(
     loop_label: str = "",
     follow_transitions: bool = True,
     results_out: list[dict[str, Any]] | None = None,
+    depth: int = 0,
 ) -> list[dict[str, Any]]:
+    _guard_execution_depth(spec, depth)
     state = spec.states[state_name]
     results: list[dict[str, Any]] = results_out if results_out is not None else []
 
@@ -424,12 +465,13 @@ def _execute_state_machine(
                         loop_label=state.name,
                         follow_transitions=False,
                         results_out=results,
+                        depth=depth + 1,
                     )
                 if not ctx.last_decision:
                     _refresh_decision(
                         ctx,
                         reader=decision_reader,
-                        read_s3="decide" in state.sequence,
+                        read_s3=_sequence_refreshes_decision(spec, state),
                     )
                 if not ctx.last_decision:
                     ctx.last_decision = assume_decision
@@ -448,6 +490,7 @@ def _execute_state_machine(
                     decision_reader=decision_reader,
                     artifact_checker=artifact_checker,
                     results_out=results,
+                    depth=depth + 1,
                 )
             return results
 
@@ -464,6 +507,7 @@ def _execute_state_machine(
                 loop_label=state.name,
                 follow_transitions=False,
                 results_out=results,
+                depth=depth + 1,
             )
         if state.next:
             _execute_state_machine(
@@ -476,6 +520,7 @@ def _execute_state_machine(
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
                 results_out=results,
+                depth=depth + 1,
             )
         return results
 
@@ -513,6 +558,7 @@ def _execute_state_machine(
                 decision_reader=decision_reader,
                 artifact_checker=artifact_checker,
                 results_out=results,
+                depth=depth + 1,
             )
         return results
 
@@ -550,6 +596,7 @@ def _execute_state_machine(
             decision_reader=decision_reader,
             artifact_checker=artifact_checker,
             results_out=results,
+            depth=depth + 1,
         )
     return results
 
@@ -666,6 +713,8 @@ def _execute_step(step: PlanStep, *, execute: bool) -> dict[str, Any]:
         return record
 
     if step.shell.strip():
+        # shell=True interpolates resolved config tokens into a bash string.
+        # Spec authors are trusted today; untrusted config values would be an injection surface.
         proc = subprocess.run(
             step.shell,
             shell=True,
