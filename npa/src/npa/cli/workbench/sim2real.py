@@ -486,13 +486,26 @@ def rerun_serve_command(
         "--local-rrd-path",
         help="Override local .rrd destination when using --local-record.",
     ),
+    auth_user: str = typer.Option(
+        "", "--auth-user", help="Enable HTTP basic-auth on the hosted viewer with this username."
+    ),
+    auth_password: str = typer.Option(
+        "", "--auth-password",
+        help="Password for --auth-user (generated if --auth-user is set without one).",
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
     try:
         access_key, secret_key = _rerun_serve_credentials()
         cluster_context = cluster_name.strip() or resolve_cluster_name_from_config()
+        # Basic-auth: gate the cloud LoadBalancer URL behind credentials.
+        if auth_user.strip() and not auth_password:
+            import secrets
+            auth_password = secrets.token_urlsafe(12)
         config = build_rerun_serve_config(
+            auth_user=auth_user,
+            auth_password=auth_password,
             run_id=run_id,
             project=project or None,
             s3_bucket=s3_bucket,
@@ -527,10 +540,15 @@ def rerun_serve_command(
                 wait=destroy_wait,
             )
         else:
-            if service_type.strip().lower() in {"loadbalancer", "lb"} and not dry_run:
+            if (
+                service_type.strip().lower() in {"loadbalancer", "lb"}
+                and not dry_run
+                and not config.auth_enabled
+            ):
                 typer.echo(
-                    "Warning: LoadBalancer exposes the Rerun web viewer without built-in auth. "
-                    "Restrict access at the network layer.",
+                    "Warning: LoadBalancer exposes the Rerun web viewer without auth. "
+                    "Pass --auth-user (and optionally --auth-password) to gate it, "
+                    "or restrict access at the network layer.",
                     err=True,
                 )
             result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
@@ -539,6 +557,13 @@ def rerun_serve_command(
         raise typer.Exit(1) from exc
 
     payload = result.to_dict()
+    if config.auth_enabled and not destroy:
+        payload["auth_user"] = config.auth_user
+        payload["auth_password"] = config.auth_password
+        typer.echo(
+            f"basic-auth enabled — user={config.auth_user} password={config.auth_password}",
+            err=True,
+        )
     if local_record and not destroy:
         loop_config = build_config_from_env(
             run_id=run_id,

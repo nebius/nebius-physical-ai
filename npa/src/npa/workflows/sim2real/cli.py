@@ -184,6 +184,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--byo-trainer-command", default="")
     parser.add_argument("--byo-vlm-command", default="")
     parser.add_argument("--byo-eval-command", default="")
+    parser.add_argument("--byo-policy-command", default="")
     parser.add_argument("--byo-rerun-command", default="")
     parser.add_argument(
         "--rerun",
