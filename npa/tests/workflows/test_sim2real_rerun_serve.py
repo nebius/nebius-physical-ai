@@ -21,6 +21,7 @@ from npa.workflows.sim2real_rerun_serve import (
     deployment_name_for_cluster,
     deployment_name_for_run,
     destroy_rerun_serve,
+    default_rerun_image,
     fetch_rrd_sync_token,
     in_cluster_kubernetes,
     local_viewer_url,
@@ -45,12 +46,12 @@ def _storage() -> StorageConfig:
 
 
 def test_deployment_name_for_cluster_default_viewer() -> None:
-    assert deployment_name_for_cluster() == "npa-sim2real-rerun-viewer"
-    assert deployment_name_for_run("rtxpro-staged-20260615T040034Z") == "npa-sim2real-rerun-viewer"
+    assert deployment_name_for_cluster() == "npa-rerun-viewer"
+    assert deployment_name_for_run("rtxpro-staged-20260615T040034Z") == "npa-rerun-viewer"
 
 
 def test_deployment_name_for_cluster_slugifies_context() -> None:
-    assert deployment_name_for_cluster("npa-rtxpro-mk8s") == "npa-sim2real-rerun-npa-rtxpro-mk8s"
+    assert deployment_name_for_cluster("npa-rtxpro-mk8s") == "npa-rerun-npa-rtxpro-mk8s"
 
 
 def test_same_cluster_deployment_name_for_different_runs(mocker) -> None:
@@ -70,7 +71,7 @@ def test_same_cluster_deployment_name_for_different_runs(mocker) -> None:
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
     )
-    assert first.deployment_name == second.deployment_name == "npa-sim2real-rerun-npa-rtxpro-mk8s"
+    assert first.deployment_name == second.deployment_name == "npa-rerun-npa-rtxpro-mk8s"
     assert first.rrd_s3_uri != second.rrd_s3_uri
 
 
@@ -83,6 +84,12 @@ def test_validate_staged_run_id_accepts_canonical() -> None:
     assert validate_staged_run_id("sim2real-staged-20260615t180818z") == (
         "sim2real-staged-20260615t180818z"
     )
+
+
+def test_default_rerun_image_prefers_generic_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_RERUN_IMAGE", "legacy/image:1")
+    monkeypatch.setenv("NPA_RERUN_VIEWER_IMAGE", "generic/image:2")
+    assert default_rerun_image() == "generic/image:2"
 
 
 def test_manifest_sets_progress_deadline(mocker) -> None:
@@ -209,7 +216,7 @@ def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
         run_id="sim2real-staged-20260615t180818z",
         aws_access_key_id="ak",
         aws_secret_access_key="sk",
-        rerun_image="cr.eu-north1.nebius.cloud/demo/npa-sim2real-rerun-viewer:0.31.4",
+        rerun_image="cr.eu-north1.nebius.cloud/demo/npa-rerun-viewer:0.31.4",
     )
     manifest = build_rerun_serve_manifest(config)
     deployment = next(item for item in manifest["items"] if item["kind"] == "Deployment")
@@ -494,7 +501,7 @@ def test_maybe_auto_rerun_serve_uses_in_cluster_kubectl_without_kubeconfig_file(
                     ),
                     "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
                     "run_id": "sim2real-staged-20260615t180818z",
-                    "deployment_name": "npa-sim2real-rerun-npa-rtxpro-mk8s",
+                    "deployment_name": "npa-rerun-npa-rtxpro-mk8s",
                 }
             },
         )(),
@@ -549,7 +556,7 @@ def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) ->
                     "local_url": "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9876%2Fproxy",
                     "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",
                     "run_id": "sim2real-staged-20260615t180818z",
-                    "deployment_name": "npa-sim2real-rerun-viewer",
+                    "deployment_name": "npa-rerun-viewer",
                 }
             },
         )(),

@@ -35,7 +35,7 @@ from npa.workflows.sim2real_rerun_regen import (
     rerun_heldout_eval_only,
     resolve_local_rrd_path,
 )
-from npa.workflows.sim2real_rerun_serve import (
+from npa.workflows.rerun_serve import (
     DEFAULT_NAMESPACE,
     DEFAULT_PORT,
     DEFAULT_RERUN_IMAGE,
@@ -451,8 +451,8 @@ def rerun_serve_command(
         "--rerun-image",
         help=(
             "Rerun viewer container image (default: python:3.11-slim-bookworm with pip-installed "
-            "rerun-sdk; override with npa-sim2real-rerun-viewer from Nebius CR or "
-            "NPA_SIM2REAL_RERUN_IMAGE)."
+            "rerun-sdk; override with npa-rerun-viewer (legacy alias: npa-sim2real-rerun-viewer) "
+            "or NPA_RERUN_VIEWER_IMAGE (legacy alias: NPA_SIM2REAL_RERUN_IMAGE)."
         ),
     ),
     service_type: str = typer.Option(

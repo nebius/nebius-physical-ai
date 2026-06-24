@@ -8,7 +8,7 @@ def test_nginx_config_no_auth_by_default():
 
 def test_nginx_config_basic_auth_when_required():
     cfg = build_rerun_nginx_config(auth_required=True)
-    assert 'auth_basic "NPA Sim2Real Rerun";' in cfg
+    assert 'auth_basic "NPA Rerun";' in cfg
     assert f"auth_basic_user_file {RERUN_HTPASSWD_PATH};" in cfg
 
 
@@ -36,7 +36,7 @@ def test_manifest_basic_auth_secret_volume_mount_when_enabled():
     names = [(i["kind"], i["metadata"]["name"]) for i in _items(m)]
     assert ("Secret", "npa-rerun-auth") in names
     cm = next(i for i in _items(m) if i["kind"] == "ConfigMap")
-    assert 'auth_basic "NPA Sim2Real Rerun";' in cm["data"]["nginx.conf"]
+    assert 'auth_basic "NPA Rerun";' in cm["data"]["nginx.conf"]
     dep = next(i for i in _items(m) if i["kind"] == "Deployment")
     spec = dep["spec"]["template"]["spec"]
     vols = [v["name"] for v in spec["volumes"]]

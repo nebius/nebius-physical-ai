@@ -10,16 +10,16 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
 
 # rerunio/rerun:* is not published on Docker Hub; serve via PyPI bootstrap or a
-# registry-built npa-sim2real-rerun-viewer image (see sim2real-build.sh).
+# registry-built npa-rerun-viewer image (legacy alias: npa-sim2real-rerun-viewer).
 DEFAULT_RERUN_BOOTSTRAP_IMAGE = "python:3.11-slim-bookworm"
 DEFAULT_RERUN_IMAGE = DEFAULT_RERUN_BOOTSTRAP_IMAGE
-DEFAULT_RERUN_VIEWER_TOOL = "sim2real-rerun-viewer"
+DEFAULT_RERUN_VIEWER_TOOL = "rerun-viewer"
 DEFAULT_AWS_CLI_IMAGE = "amazon/aws-cli:2.22.12"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_PORT = 9090
@@ -38,7 +38,8 @@ DEFAULT_S3_PREFIX = "sim2real-b"
 DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "LoadBalancer"
 K8S_NAME_MAX_LEN = 63
-K8S_NAME_PREFIX = "npa-sim2real-rerun"
+K8S_NAME_PREFIX = "npa-rerun"
+LEGACY_K8S_NAME_PREFIX = "npa-sim2real-rerun"
 DEFAULT_CLUSTER_VIEWER_SUFFIX = "viewer"
 ROLLOUT_TIMEOUT_SEC = 900
 DEPLOYMENT_PROGRESS_DEADLINE_SEC = 900
@@ -54,7 +55,7 @@ PLACEHOLDER_RUN_ID_RE = re.compile(
 )
 
 
-class Sim2RealRerunServeError(ValueError):
+class RerunServeError(ValueError):
     """Raised when rerun serve manifest generation or deployment fails."""
 
 
@@ -132,17 +133,23 @@ class RerunServeResult:
         return asdict(self)
 
 
+# Backward-compatible aliases for existing imports.
+Sim2RealRerunServeError = RerunServeError
+Sim2RealRerunServeConfig = RerunServeConfig
+Sim2RealRerunServeResult = RerunServeResult
+
+
 def validate_staged_run_id(run_id: str) -> str:
     value = run_id.strip()
     if not value:
-        raise Sim2RealRerunServeError("--run-id is required")
+        raise RerunServeError("--run-id is required")
     if PLACEHOLDER_RUN_ID_RE.search(value):
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             f"run-id looks like a template placeholder: {value!r}. "
             "Use a real id from submit output (e.g. sim2real-staged-20260615t180818z)."
         )
     if not STAGED_RUN_ID_RE.fullmatch(value):
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "run-id must match sim2real-staged-YYYYMMDDtHHMMSSz with digit timestamps "
             f"(got {value!r})."
         )
@@ -160,18 +167,18 @@ def verify_rrd_exists_on_s3(
 
     uri = config.rrd_s3_uri
     if not uri.startswith("s3://"):
-        raise Sim2RealRerunServeError(f"invalid rrd s3 uri: {uri}")
+        raise RerunServeError(f"invalid rrd s3 uri: {uri}")
     without_scheme = uri[5:]
     bucket, _, key = without_scheme.partition("/")
     if not bucket or not key:
-        raise Sim2RealRerunServeError(f"invalid rrd s3 uri: {uri}")
+        raise RerunServeError(f"invalid rrd s3 uri: {uri}")
 
     if head_object is not None:
         try:
             head_object(Bucket=bucket, Key=key)
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "missing")
-            raise Sim2RealRerunServeError(
+            raise RerunServeError(
                 f"Rerun recording not found at {uri} ({code}). "
                 "Wait for reports/sim2real.rrd on S3 before rerun serve."
             ) from exc
@@ -190,7 +197,7 @@ def verify_rrd_exists_on_s3(
         client.head_object(Bucket=bucket, Key=key)
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             f"Rerun recording not found at {uri} ({code}). "
             "Wait for reports/sim2real.rrd on S3 before rerun serve."
         ) from exc
@@ -232,7 +239,7 @@ def resolve_storage_bucket(storage: StorageConfig, *, override: str = "") -> str
         return bucket_from_s3_uri(value) if value.startswith("s3://") else value
     configured = storage.checkpoint_bucket
     if not configured:
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "S3 bucket is not configured. Pass --s3-bucket or configure storage.bucket."
         )
     return bucket_from_s3_uri(configured) if configured.startswith("s3://") else configured
@@ -241,12 +248,12 @@ def resolve_storage_bucket(storage: StorageConfig, *, override: str = "") -> str
 def rrd_s3_uri_from_report_uri(report_uri: str) -> str:
     uri = report_uri.strip()
     if not uri.startswith("s3://"):
-        raise Sim2RealRerunServeError("--report-uri must be an s3:// URI")
+        raise RerunServeError("--report-uri must be an s3:// URI")
     if uri.endswith("/sim2real-report.json"):
         return uri[: -len("sim2real-report.json")] + "sim2real.rrd"
     if uri.endswith("sim2real-report.json"):
         return uri.replace("sim2real-report.json", "sim2real.rrd")
-    raise Sim2RealRerunServeError(
+    raise RerunServeError(
         "--report-uri must end with reports/sim2real-report.json"
     )
 
@@ -280,7 +287,10 @@ def resolve_cluster_name_from_config() -> str:
 def default_rerun_image() -> str:
     """Return the Rerun viewer container image for mk8s serve deployments."""
 
-    override = os.environ.get("NPA_SIM2REAL_RERUN_IMAGE", "").strip()
+    override = (
+        os.environ.get("NPA_RERUN_VIEWER_IMAGE", "").strip()
+        or os.environ.get("NPA_SIM2REAL_RERUN_IMAGE", "").strip()
+    )
     if override:
         return override
     return DEFAULT_RERUN_BOOTSTRAP_IMAGE
@@ -288,11 +298,18 @@ def default_rerun_image() -> str:
 
 def _rerun_image_has_preinstalled_cli(image: str) -> bool:
     lowered = image.strip().lower()
-    return "npa-sim2real-rerun-viewer" in lowered or lowered.startswith("rerunio/rerun:")
+    return (
+        "npa-rerun-viewer" in lowered
+        or "npa-sim2real-rerun-viewer" in lowered
+        or lowered.startswith("rerunio/rerun:")
+    )
 
 
 def rerun_serve_sdk_version() -> str:
-    override = os.environ.get("NPA_SIM2REAL_RERUN_SERVE_VERSION", "").strip()
+    override = (
+        os.environ.get("NPA_RERUN_SERVE_VERSION", "").strip()
+        or os.environ.get("NPA_SIM2REAL_RERUN_SERVE_VERSION", "").strip()
+    )
     return override or DEFAULT_RERUN_SERVE_SDK_VERSION
 
 
@@ -326,7 +343,7 @@ def build_rerun_nginx_config(
     health_block = ""
     if auth_required:
         auth_lines = (
-            f'\n            auth_basic "NPA Sim2Real Rerun";'
+            f'\n            auth_basic "NPA Rerun";'
             f'\n            auth_basic_user_file {htpasswd_path};'
         )
         # Unauthenticated health endpoint so the readiness probe passes (GET / is 401).
@@ -431,7 +448,7 @@ def build_rerun_serve_config(
     bucket = resolve_storage_bucket(storage, override=s3_bucket)
     endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
     if not aws_access_key_id or not aws_secret_access_key:
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "S3 credentials are required to sync sim2real.rrd into the cluster pod."
         )
     rrd_override = rrd_s3_uri.strip()
@@ -507,7 +524,7 @@ def build_rerun_serve_manifest(
 ) -> dict[str, Any]:
     labels = {
         "app": config.deployment_name,
-        "app.kubernetes.io/name": "npa-sim2real-rerun",
+        "app.kubernetes.io/name": "npa-rerun-viewer",
         "app.kubernetes.io/instance": config.deployment_name,
         "app.kubernetes.io/component": "cluster-viewer",
         "npa.nebius.com/sim2real-run-id": _label_value(config.run_id),
@@ -785,10 +802,10 @@ def apply_rerun_serve(
             ],
             kubeconfig=kubeconfig,
         )
-    except Sim2RealRerunServeError as exc:
+    except RerunServeError as exc:
         detail = _rollout_failure_diagnostics(config, kubeconfig, runner)
         if detail:
-            raise Sim2RealRerunServeError(f"{exc}\n{detail}") from exc
+            raise RerunServeError(f"{exc}\n{detail}") from exc
         raise
 
     public_url = ""
@@ -878,7 +895,7 @@ def require_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
     resolved = resolve_kubeconfig_path(cluster_name=cluster_name, kubeconfig=kubeconfig)
     if not resolved:
         profile = cluster_name.strip() or resolve_cluster_name_from_config() or DEFAULT_CLUSTER_NAME
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "No kubeconfig found. Pass --kubeconfig, export KUBECONFIG, or configure "
             f"~/.npa/clusters/{profile}/kubeconfig."
         )
@@ -903,7 +920,7 @@ def _rollout_failure_diagnostics(
     ]
     try:
         pod_names = kubectl(pod_cmd, kubeconfig=kubeconfig).strip().splitlines()
-    except Sim2RealRerunServeError:
+    except RerunServeError:
         return ""
 
     for pod_name in pod_names:
@@ -922,7 +939,7 @@ def _rollout_failure_diagnostics(
             ]
             try:
                 logs = kubectl(log_cmd, kubeconfig=kubeconfig).strip()
-            except Sim2RealRerunServeError:
+            except RerunServeError:
                 logs = ""
             if logs:
                 lines.append(f"--- {container} logs ---")
@@ -930,7 +947,7 @@ def _rollout_failure_diagnostics(
         describe_cmd = ["describe", "pod", "-n", config.namespace, pod_name]
         try:
             desc = kubectl(describe_cmd, kubeconfig=kubeconfig)
-        except Sim2RealRerunServeError:
+        except RerunServeError:
             desc = ""
         for marker in ("Init Containers:", "State:", "Reason:", "Message:", "Warning"):
             for raw in desc.splitlines():
@@ -955,7 +972,7 @@ def _default_kubectl(
     import subprocess
 
     if shutil.which("kubectl") is None:
-        raise Sim2RealRerunServeError("kubectl is not installed or not on PATH")
+        raise RerunServeError("kubectl is not installed or not on PATH")
     cmd = ["kubectl"]
     if kubeconfig:
         cmd.extend(["--kubeconfig", kubeconfig])
@@ -970,12 +987,12 @@ def _default_kubectl(
             timeout=timeout_sec,
         )
     except subprocess.TimeoutExpired as exc:
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             f"kubectl command timed out after {timeout_sec}s: {' '.join(args[:4])}"
         ) from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
-        raise Sim2RealRerunServeError(f"kubectl command failed: {detail}") from exc
+        raise RerunServeError(f"kubectl command failed: {detail}") from exc
     return result.stdout
 
 
@@ -1055,7 +1072,7 @@ def _normalize_service_type(service_type: str) -> str:
         "clusterip": "ClusterIP",
     }
     if normalized not in mapping:
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "--service-type must be one of: LoadBalancer, NodePort, ClusterIP"
         )
     return mapping[normalized]
@@ -1086,7 +1103,10 @@ def should_auto_rerun_serve(
 ) -> bool:
     """Return True when finalize should deploy the hosted Rerun viewer on mk8s."""
 
-    if not _env_bool(os.environ.get("NPA_SIM2REAL_RERUN_SERVE", "1")):
+    if not _env_bool(
+        os.environ.get("NPA_RERUN_SERVE", "").strip()
+        or os.environ.get("NPA_SIM2REAL_RERUN_SERVE", "1")
+    ):
         return False
     if not rerun_enabled:
         return False
@@ -1113,7 +1133,7 @@ def resolve_rerun_serve_credentials() -> tuple[str, str]:
     except Exception:
         pass
     if not access_key or not secret_key:
-        raise Sim2RealRerunServeError(
+        raise RerunServeError(
             "S3 credentials are required for auto rerun serve. Configure ~/.npa/credentials.yaml "
             "or export AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
         )
@@ -1160,7 +1180,7 @@ def maybe_auto_rerun_serve(
 
     try:
         normalized_run_id = validate_staged_run_id(run_id)
-    except Sim2RealRerunServeError as exc:
+    except RerunServeError as exc:
         return {"status": "skipped", "reason": str(exc)}
 
     try:
@@ -1196,7 +1216,7 @@ def maybe_auto_rerun_serve(
                 "deployment_name": serve_config.deployment_name,
             }
         result = apply_rerun_serve(serve_config, kubeconfig=kubeconfig)
-    except Sim2RealRerunServeError as exc:
+    except RerunServeError as exc:
         return {"status": "blocked", "reason": str(exc), "run_id": run_id}
 
     payload = result.to_dict()

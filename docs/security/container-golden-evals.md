@@ -69,7 +69,7 @@ flowchart TB
     fiftyone["fiftyone: import + CLI + app config"]
     lancedb["lancedb: FastAPI + vector query"]
     det_train["detection-training: health + system-info"]
-    rerun["sim2real-rerun-viewer: rerun SDK"]
+    rerun["rerun-viewer (alias sim2real-rerun-viewer): rerun SDK"]
   end
   subgraph gpu_gated["GPU-gated smokes"]
     lerobot["lerobot: train + eval PushT"]
@@ -109,7 +109,7 @@ flowchart TB
 | `sim2real-envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
 | `sim2real-reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `sim2real-eval` | `0.1.2-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
-| `sim2real-rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+| `rerun-viewer` (`sim2real-rerun-viewer` alias) | `0.31.4` | build-import | rerun SDK import + version | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
