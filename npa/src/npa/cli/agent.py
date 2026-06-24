@@ -1066,9 +1066,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
       document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun — use Load Franka in Rerun or check /api/sim-viz/status."));
       let lastRrdUpdatedAt = "";
+      function sameOriginApiUrl(path) {{
+        const base = String(window.location.origin || "").replace(/\/$/, "");
+        const suffix = String(path || "").startsWith("/") ? String(path) : "/" + String(path || "");
+        return base + suffix;
+      }}
       function rerunIframeSrc(camera) {{
         const cam = String(camera || "workspace");
-        const source = "/api/sim-viz/rrd";
+        // Use explicit same-origin API URL so the Rerun viewer gets a concrete proxy target.
+        const source = sameOriginApiUrl("/api/sim-viz/rrd");
         return (
           "/rerun/?url=" +
           encodeURIComponent(source) +
@@ -1100,9 +1106,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await refresh();
         return true;
       }}
+      async function apiJson(path, init) {{
+        const req = init || {{}};
+        const opts = {{
+          ...req,
+          credentials: "include",
+          headers: {{
+            ...(req.headers || {{}}),
+          }},
+        }};
+        const resp = await fetch(path, opts);
+        let data = null;
+        try {{
+          data = await resp.json();
+        }} catch (_err) {{
+          data = null;
+        }}
+        if (!resp.ok) {{
+          const detail =
+            (data && (data.detail || data.error || data.message)) ||
+            resp.statusText ||
+            "request failed";
+          throw new Error(String(detail));
+        }}
+        return data;
+      }}
       async function loadJson(path) {{
-        const resp = await fetch(path, {{ credentials: "include" }});
-        return await resp.json();
+        return await apiJson(path);
       }}
       async function refresh() {{
         try {{
@@ -1140,6 +1170,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (updatedAt && updatedAt !== lastRrdUpdatedAt) {{
             lastRrdUpdatedAt = updatedAt;
             reloadRerunIframe(simViz.camera || activeName);
+          }} else {{
+            const iframe = document.getElementById("rerunFrame");
+            if (!String(iframe.src || "").includes("/api/sim-viz/rrd")) {{
+              reloadRerunIframe(simViz.camera || activeName);
+            }}
           }}
         }} catch (err) {{
           document.getElementById("simvizCta").hidden = false;
@@ -1210,26 +1245,28 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function selectCamera(camera) {{
         const selected = String(camera || "");
-        await fetch("/api/sim-assets/cameras/selection", {{
-          method: "PUT",
-          headers: {{ "content-type": "application/json" }},
-          credentials: "include",
-          body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
-        }});
-        await fetch("/api/sim-assets/selection", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          credentials: "include",
-          body: JSON.stringify({{
-            scene_spec_uri: "stock://scene/default",
-            robot_spec_uri: "stock://robot/franka",
-            cameras_uri: "stock://cameras/default",
-            robot_preset: String(document.getElementById("robotPreset").value || "franka"),
-            sim_backend: "isaac",
-            props: ["cube"],
-          }}),
-        }});
-        await refresh();
+        try {{
+          await apiJson("/api/sim-assets/cameras/selection", {{
+            method: "PUT",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
+          }});
+          await apiJson("/api/sim-assets/selection", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{
+              scene_spec_uri: "stock://scene/default",
+              robot_spec_uri: "stock://robot/franka",
+              cameras_uri: "stock://cameras/default",
+              robot_preset: String(document.getElementById("robotPreset").value || "franka"),
+              sim_backend: "isaac",
+              props: ["cube"],
+            }}),
+          }});
+          await refresh();
+        }} catch (err) {{
+          appendChat("error", "Failed to select camera: " + String(err));
+        }}
       }}
       async function previewCamera(camera) {{
         const resp = await fetch("/api/sim-viz/camera-preview", {{
@@ -1903,6 +1940,8 @@ def verify_live_cmd(
         **dict(os.environ),
         "NPA_INTEGRATION_E2E": "1",
         "NPA_AGENT_LIVE": "1",
+        "NPA_AGENT_PROJECT": project,
+        "NPA_AGENT_NAME": name,
     }
     unit = subprocess.run(
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
