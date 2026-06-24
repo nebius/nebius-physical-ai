@@ -43,6 +43,40 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "\\r?\\n" in bootstrap_split
     assert "restoreSession" in source
     assert "bootPage()" in source
+    assert "startApp()" in source
+    assert "function bindClick(" in source
+    assert "function wireUi()" in source
+    assert "function showToast(" in source
+    assert "id=\"statusBar\"" in source
+    assert "id=\"toastHost\"" in source
+    assert "DOMContentLoaded" in source
+    assert "initNpaAgentUi" in source
+    assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
+    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
+
+
+def test_bootstrap_ui_button_wiring_patterns() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    for control_id in (
+        "chatSend",
+        "chatActionS3",
+        "chatActionCosmos",
+        "chatActionWatch",
+        "loadFrankaRerun",
+        "openRerun",
+        "applySelection",
+        "submitWorkflow",
+        "workflowStatus",
+    ):
+        assert f'bindClick("{control_id}"' in source
+    assert "await apiJson(\"/api/chat\"" in source
+    assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
+    assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
+    assert "await apiJson(\"/api/sim-assets/selection\"" in source
+    assert "setChatBusy(false)" in source
+    assert "finally {" in source.split("async function sendChat")[1].split("async function")[0]
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -163,15 +197,29 @@ def test_agent_status_json(monkeypatch) -> None:
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
     class _Resp:
-        def __init__(self, payload: dict[str, object], *, status_code: int = 200) -> None:
+        def __init__(self, payload: dict[str, object] | str | bytes, *, status_code: int = 200) -> None:
             self.status_code = status_code
             self._payload = payload
+            if isinstance(payload, (bytes, str)):
+                self.content = payload.encode("utf-8") if isinstance(payload, str) else payload
+                self.text = payload.decode("utf-8") if isinstance(payload, bytes) else payload
+            else:
+                self.content = b""
+                self.text = ""
 
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, object]:
-            return self._payload
+            if isinstance(self._payload, dict):
+                return self._payload
+            return {"ok": True}
+
+        @property
+        def headers(self) -> dict[str, str]:
+            if isinstance(self._payload, (bytes, str)):
+                return {"content-type": "application/octet-stream"}
+            return {"content-type": "application/json"}
 
     class _Proc:
         def __init__(self, code: int = 0) -> None:
@@ -194,7 +242,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
     def _fake_http_get(url, *_args, **_kwargs):
         url_s = str(url)
-        if str(url).endswith("/api/tools"):
+        if url_s.endswith("/api/tools"):
             return _Resp({"tool_refs": [f"tool.{idx}" for idx in range(19)]})
         if url_s.endswith("/api/sim-assets"):
             return _Resp({"scene_spec": {"schema": "x"}, "robot_spec": {"schema": "y"}})
@@ -210,6 +258,24 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             )
         if url_s.endswith("/api/sim-assets/selection"):
             return _Resp({"scene_spec_uri": "stock://scene/default"})
+        if url_s.endswith("/api/session"):
+            return _Resp({"chat_history": [], "selection": {}})
+        if url_s.endswith("/api/sim-viz/status"):
+            return _Resp({"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd", "stage": "demo"})
+        if url_s.endswith("/api/sim-viz/rrd"):
+            return _Resp(b"RRD" * 32, status_code=200)
+        if url_s.endswith("/api/health"):
+            return _Resp({"ok": True})
+        if url_s.endswith("/api/workflows/sim2real/status"):
+            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
+        if "/rerun/" in url_s:
+            return _Resp(b"console.log('rerun');", status_code=200)
+        if url_s.rstrip("/").endswith(":8088"):
+            html = (
+                '<html><head><meta name="npa-ui-version" content="2025062501"></head>'
+                '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi</script></body></html>'
+            )
+            return _Resp(html, status_code=200)
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
 
     def _fake_http_post(url, *_args, **_kwargs):
@@ -218,6 +284,10 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
             return _Resp({"ok": True, "run_id": "agent-run-123"})
+        if url_s.endswith("/api/sim-viz/load-franka-demo"):
+            return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
+        if url_s.endswith("/api/sim-viz/camera-preview"):
+            return _Resp({"ok": True, "entity_path": "world/cameras/workspace"})
         return _Resp({"ok": True})
 
     monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)
@@ -234,6 +304,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
     assert calls == [
+        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/smoke/test_agent_smoke.py", "-q"],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]

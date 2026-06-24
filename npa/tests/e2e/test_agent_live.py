@@ -5,10 +5,18 @@ import os
 import httpx
 import pytest
 
-from npa.cli.agent import DEFAULT_AGENT_NAME, DEFAULT_PROJECT_ALIAS, _agent_record, _load_auth_secret
+from .agent_live_helpers import (
+    RERUN_STATIC_CANDIDATES,
+    STOCK_FRANKA_SELECTION,
+    UI_BUTTON_IDS,
+    UI_WIRING_MARKERS,
+    AgentLiveContext,
+    load_agent_live_context,
+)
 
 pytestmark = [
     pytest.mark.e2e,
+    pytest.mark.agent_live,
     pytest.mark.skipif(
         os.environ.get("NPA_AGENT_LIVE") != "1" or os.environ.get("NPA_INTEGRATION_E2E") != "1",
         reason="Set NPA_AGENT_LIVE=1 and NPA_INTEGRATION_E2E=1 for live agent checks.",
@@ -16,104 +24,163 @@ pytestmark = [
 ]
 
 
-def test_agent_live_endpoints_and_catalog() -> None:
-    project = os.environ.get("NPA_AGENT_PROJECT", DEFAULT_PROJECT_ALIAS)
-    name = os.environ.get("NPA_AGENT_NAME", DEFAULT_AGENT_NAME)
-    record = _agent_record(project, name)
-    assert record, f"missing agent config for {project}/{name}"
+@pytest.fixture(scope="module")
+def ctx() -> AgentLiveContext:
+    return load_agent_live_context()
 
-    auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
-    ui_url = str(record.get("agent_url", ""))
-    rerun_url = str(record.get("rerun_url", ""))
-    sim_viz_url = str(record.get("sim_viz_url", rerun_url))
-    sim_assets_url = str(record.get("sim_assets_url", ui_url))
-    tools_url = f"{ui_url.rstrip('/')}/api/tools"
 
-    ui = httpx.get(ui_url, auth=(auth_user, auth_password), timeout=10.0)
-    assert ui.status_code == 200
+def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
+    resp = ctx.get(ctx.agent_url)
+    assert resp.status_code == 200
+    html = resp.text
+    for marker in UI_WIRING_MARKERS:
+        assert marker in html, f"missing UI marker: {marker}"
+    for control_id in UI_BUTTON_IDS:
+        assert f'id="{control_id}"' in html
+        assert f'bindClick("{control_id}"' in html
 
-    rerun = httpx.get(sim_viz_url, auth=(auth_user, auth_password), timeout=10.0)
-    assert rerun.status_code == 200
 
-    sim_assets = httpx.get(
-        f"{sim_assets_url.rstrip('/')}/api/sim-assets",
-        auth=(auth_user, auth_password),
-        timeout=10.0,
-    )
-    sim_assets.raise_for_status()
-    sim_assets_payload = sim_assets.json()
-    assert "scene_spec" in sim_assets_payload
-    assert "robot_spec" in sim_assets_payload
+def test_agent_health_and_session(ctx: AgentLiveContext) -> None:
+    health = ctx.get("/api/health")
+    health.raise_for_status()
+    assert health.json().get("ok") is True
 
-    cameras = httpx.get(
-        f"{sim_assets_url.rstrip('/')}/api/sim-assets/cameras",
-        auth=(auth_user, auth_password),
-        timeout=10.0,
-    )
+    session = ctx.get("/api/session")
+    session.raise_for_status()
+    payload = session.json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("chat_history", []), list)
+
+
+def test_agent_sim_assets_and_catalog(ctx: AgentLiveContext) -> None:
+    assets = ctx.get("/api/sim-assets")
+    assets.raise_for_status()
+    payload = assets.json()
+    assert "scene_spec" in payload
+    assert "robot_spec" in payload
+    assert "selection" in payload
+
+    catalog = ctx.get("/api/sim-assets/catalog")
+    catalog.raise_for_status()
+    catalog_payload = catalog.json()
+    assert isinstance(catalog_payload, dict)
+
+
+def test_agent_cameras_and_selection_roundtrip(ctx: AgentLiveContext) -> None:
+    cameras = ctx.get("/api/sim-assets/cameras")
     cameras.raise_for_status()
     cameras_payload = cameras.json()
-    assert isinstance(cameras_payload.get("cameras"), list)
-    assert len(cameras_payload["cameras"]) >= 1
+    camera_list = cameras_payload.get("cameras", [])
+    assert isinstance(camera_list, list) and camera_list
 
-    selection_payload = {
-        "scene_spec_uri": "stock://scene/default",
-        "robot_spec_uri": "stock://robot/franka",
-        "cameras_uri": "stock://cameras/default",
-        "robot_preset": "franka",
-        "sim_backend": "isaac",
-        "props": ["cube"],
-    }
-    selection_set = httpx.post(
-        f"{sim_assets_url.rstrip('/')}/api/sim-assets/selection",
-        auth=(auth_user, auth_password),
-        json=selection_payload,
-        timeout=10.0,
-    )
+    selection_set = ctx.post("/api/sim-assets/selection", json=STOCK_FRANKA_SELECTION)
     selection_set.raise_for_status()
-    selection_get = httpx.get(
-        f"{sim_assets_url.rstrip('/')}/api/sim-assets/selection",
-        auth=(auth_user, auth_password),
-        timeout=10.0,
-    )
-    selection_get.raise_for_status()
-    selection = selection_get.json()
-    assert selection.get("scene_spec_uri") == selection_payload["scene_spec_uri"]
 
-    submit = httpx.post(
-        f"{ui_url.rstrip('/')}/api/workflows/sim2real/submit",
-        auth=(auth_user, auth_password),
-        json={},
-        timeout=10.0,
+    selection_get = ctx.get("/api/sim-assets/selection")
+    selection_get.raise_for_status()
+    selected = selection_get.json()
+    assert selected.get("scene_spec_uri") == STOCK_FRANKA_SELECTION["scene_spec_uri"]
+
+    camera_name = str(camera_list[0]["name"])
+    camera_put = ctx.put(
+        "/api/sim-assets/cameras/selection",
+        json={"selected": [camera_name]},
     )
+    camera_put.raise_for_status()
+
+
+def test_agent_workflow_submit_and_status(ctx: AgentLiveContext) -> None:
+    submit = ctx.post("/api/workflows/sim2real/submit", json={})
     submit.raise_for_status()
     submit_payload = submit.json()
     assert submit_payload.get("run_id")
 
-    tools = httpx.get(tools_url, auth=(auth_user, auth_password), timeout=10.0)
+    status = ctx.get("/api/workflows/sim2real/status")
+    status.raise_for_status()
+    status_payload = status.json()
+    assert isinstance(status_payload, dict)
+    assert "latest_submit" in status_payload or "sim_viz" in status_payload
+
+
+def test_agent_tools_catalog(ctx: AgentLiveContext) -> None:
+    tools = ctx.get("/api/tools")
     tools.raise_for_status()
-    payload = tools.json()
-    refs = payload.get("tool_refs", [])
+    refs = tools.json().get("tool_refs", [])
     assert isinstance(refs, list)
     assert len(refs) >= 19
-    resolve = httpx.get(
-        f"{ui_url.rstrip('/')}/api/tools/{refs[0]}",
-        auth=(auth_user, auth_password),
-        timeout=10.0,
-    )
+
+    resolve = ctx.get(f"/api/tools/{refs[0]}")
     resolve.raise_for_status()
     resolved = resolve.json()
     assert resolved.get("ok") is True
     assert isinstance(resolved.get("argv_template"), list)
 
-    load_demo = httpx.post(
-        f"{ui_url.rstrip('/')}/api/sim-viz/load-franka-demo",
-        auth=(auth_user, auth_password),
-        json={"camera": "workspace"},
-        timeout=30.0,
-    )
+
+def test_agent_workbench_actions(ctx: AgentLiveContext) -> None:
+    actions = ctx.get("/api/workbench/actions")
+    actions.raise_for_status()
+    payload = actions.json()
+    assert isinstance(payload, dict)
+
+
+def test_agent_rerun_iframe_endpoint(ctx: AgentLiveContext) -> None:
+    rerun = httpx.get(ctx.sim_viz_url, auth=ctx.auth(), timeout=15.0)
+    assert rerun.status_code == 200
+    assert rerun.text.strip()
+
+
+def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
+    base = ctx.agent_url.rstrip("/")
+    ok_paths: list[str] = []
+    for path in RERUN_STATIC_CANDIDATES:
+        resp = httpx.get(f"{base}{path}", auth=ctx.auth(), timeout=15.0)
+        if resp.status_code == 200 and resp.content:
+            ok_paths.append(path)
+    assert ok_paths, f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"
+
+
+def test_agent_load_franka_demo_and_rrd(ctx: AgentLiveContext) -> None:
+    load_demo = ctx.post("/api/sim-viz/load-franka-demo", json={"camera": "workspace"})
     load_demo.raise_for_status()
     demo_payload = load_demo.json()
     assert demo_payload.get("ok") is True
     sim_viz = demo_payload.get("sim_viz", {})
     assert isinstance(sim_viz, dict)
     assert sim_viz.get("rerun_ready") or sim_viz.get("rrd_uri")
+
+    status = ctx.get("/api/sim-viz/status")
+    status.raise_for_status()
+    status_payload = status.json()
+    assert status_payload.get("rerun_ready") or status_payload.get("rrd_uri")
+
+    rrd = ctx.get("/api/sim-viz/rrd")
+    rrd.raise_for_status()
+    content_type = rrd.headers.get("content-type", "")
+    if "application/json" in content_type:
+        assert rrd.json().get("ok") is True
+    else:
+        assert len(rrd.content) > 64, "expected non-trivial .rrd payload"
+
+
+def test_agent_camera_preview(ctx: AgentLiveContext) -> None:
+    preview = ctx.post("/api/sim-viz/camera-preview", json={"camera": "workspace"})
+    preview.raise_for_status()
+    payload = preview.json()
+    assert payload.get("ok") is True
+    assert payload.get("entity_path")
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
+    reason="Set NPA_AGENT_CHAT_LIVE=1 to smoke-test Token Factory chat on the live agent.",
+)
+def test_agent_chat_live(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "Reply with the word ok."}]},
+        timeout=60.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("reply")

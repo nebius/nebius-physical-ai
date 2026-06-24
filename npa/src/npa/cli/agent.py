@@ -44,6 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+AGENT_UI_VERSION = "2025062501"
 
 
 @dataclass(frozen=True)
@@ -950,6 +951,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <html>
   <head>
     <meta charset="utf-8">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+    <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
     <title>NPA Agent</title>
     <style>
       :root {{
@@ -968,6 +971,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       * {{ box-sizing: border-box; }}
       body {{
         margin: 0;
+        padding-bottom: 36px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: var(--bg);
         color: var(--text);
@@ -1167,6 +1171,48 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .quick-pill:hover {{ background: #ede9ff; }}
       .hint {{ font-size: 13px; color: var(--muted); }}
+      .status-bar {{
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 900;
+        padding: 8px 14px;
+        font-size: 12px;
+        color: #334155;
+        background: rgba(255, 255, 255, 0.96);
+        border-top: 1px solid var(--border);
+        box-shadow: 0 -4px 16px rgba(30, 31, 34, 0.06);
+      }}
+      .toast-host {{
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: min(420px, calc(100vw - 28px));
+        pointer-events: none;
+      }}
+      .toast {{
+        pointer-events: auto;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 13px;
+        border: 1px solid #d6d9e4;
+        background: #fff;
+        color: #1f2430;
+        box-shadow: var(--shadow);
+        animation: toast-in 0.18s ease-out;
+      }}
+      .toast-info {{ border-color: #c8c0f5; background: #f6f4ff; color: #3d2f9c; }}
+      .toast-success {{ border-color: #86efac; background: var(--ok-bg); color: var(--ok-text); }}
+      .toast-error {{ border-color: #fca5a5; background: #fef2f2; color: #991b1b; }}
+      @keyframes toast-in {{
+        from {{ opacity: 0; transform: translateY(-6px); }}
+        to {{ opacity: 1; transform: translateY(0); }}
+      }}
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
       }}
@@ -1278,9 +1324,113 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </div>
       </main>
     </div>
+    <div id="statusBar" class="status-bar" aria-live="polite">Ready</div>
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
     <script>
+      (function initNpaAgentUi() {{
+      "use strict";
       const chatHistory = [];
       let thinkingNode = null;
+      function setStatus(text) {{
+        const bar = document.getElementById("statusBar");
+        if (bar) bar.textContent = String(text || "");
+      }}
+      function showToast(message, kind) {{
+        const host = document.getElementById("toastHost");
+        if (!host) return;
+        const toast = document.createElement("div");
+        const tone = kind === "error" ? "toast-error" : kind === "success" ? "toast-success" : "toast-info";
+        toast.className = "toast " + tone;
+        toast.textContent = String(message || "");
+        host.appendChild(toast);
+        window.setTimeout(() => {{
+          if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }}, 4200);
+      }}
+      function bindClick(id, fn, label) {{
+        const el = document.getElementById(id);
+        if (!el) {{
+          console.error("Missing UI control:", id);
+          showToast("Missing control: " + id, "error");
+          return;
+        }}
+        el.addEventListener("click", async (event) => {{
+          event.preventDefault();
+          const actionLabel = String(label || id);
+          setStatus(actionLabel + "...");
+          showToast(actionLabel, "info");
+        try {{
+          const result = await fn(event);
+          if (result === false) {{
+            setStatus("Ready");
+            return;
+          }}
+          setStatus(actionLabel + " done");
+          showToast(actionLabel + " done", "success");
+        }} catch (err) {{
+            const msg = String(err && err.message ? err.message : err);
+            setStatus(actionLabel + " failed");
+            showToast(msg, "error");
+            console.error(actionLabel, err);
+          }}
+        }});
+      }}
+      function wireUi() {{
+        bindClick("chatSend", sendChat, "Send chat");
+        bindClick("chatActionS3", () => {{
+          setChatInput("Help me configure S3 credentials and bucket for NPA workflows.");
+        }}, "Insert S3 prompt");
+        bindClick("chatActionCosmos", () => {{
+          setChatInput("How do I set up Cosmos3 in the NPA workbench?");
+        }}, "Insert Cosmos3 prompt");
+        bindClick("chatActionWatch", () => {{
+          setChatInput("Watch the sim in Rerun - use Load Franka in Rerun or check /api/sim-viz/status.");
+        }}, "Insert watch-sim prompt");
+        bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
+        bindClick("openRerun", openRerunTab, "Open Rerun");
+        bindClick("applySelection", applySelection, "Apply stock selection");
+        bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
+        bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
+        const chatInput = document.getElementById("chatInput");
+        if (chatInput) {{
+          chatInput.addEventListener("keydown", (e) => {{
+            if (e.key === "Enter" && !e.shiftKey) {{
+              e.preventDefault();
+              sendChat().catch((err) => showToast(String(err), "error"));
+            }}
+          }});
+        }}
+        const cameraSelect = document.getElementById("cameraSelect");
+        if (cameraSelect) {{
+          cameraSelect.addEventListener("change", async (e) => {{
+            try {{
+              await selectCamera(String(e.target.value || ""));
+              showToast("Camera selected", "success");
+            }} catch (err) {{
+              showToast(String(err), "error");
+            }}
+          }});
+        }}
+        const robotPreset = document.getElementById("robotPreset");
+        if (robotPreset) {{
+          robotPreset.addEventListener("change", async (e) => {{
+            try {{
+              const data = await apiJson("/api/sim-assets/selection", {{
+                method: "POST",
+                headers: {{ "content-type": "application/json" }},
+                body: JSON.stringify(selectionPayloadFromUi()),
+              }});
+              if (String(e.target.value || "franka") === "franka" && data.sim_viz) {{
+                reloadRerunIframe(data.sim_viz.camera || "workspace");
+              }}
+              await refresh();
+              showToast("Robot preset updated", "success");
+            }} catch (err) {{
+              showToast(String(err), "error");
+            }}
+          }});
+        }}
+      }}
       function escapeHtml(text) {{
         return String(text || "")
           .replace(/&/g, "&amp;")
@@ -1398,25 +1548,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function sendChat() {{
         const input = document.getElementById("chatInput");
         const text = String(input.value || "").trim();
-        if (!text) return;
+        if (!text) {{
+          showToast("Enter a message first", "info");
+          return false;
+        }}
         input.value = "";
         appendChat("user", text);
         chatHistory.push({{ role: "user", content: text }});
         setChatBusy(true);
         showThinkingBubble();
         try {{
-          const resp = await fetch("/api/chat", {{
+          const data = await apiJson("/api/chat", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            credentials: "include",
             body: JSON.stringify({{ messages: chatHistory }}),
           }});
-          const data = await resp.json();
           clearThinkingBubble();
-          if (!resp.ok) {{
-            appendChat("error", data.detail || resp.statusText || "chat failed");
-            return;
-          }}
           const reply = normalizeAssistantReply(data.reply || "");
           if (reply) {{
             appendChat("assistant", reply);
@@ -1427,26 +1574,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }} catch (err) {{
           clearThinkingBubble();
           appendChat("error", String(err));
+          throw err;
         }} finally {{
           setChatBusy(false);
           input.focus();
         }}
       }}
-      document.getElementById("chatSend").addEventListener("click", sendChat);
-      document.getElementById("chatInput").addEventListener("keydown", (e) => {{
-        if (e.key === "Enter" && !e.shiftKey) {{
-          e.preventDefault();
-          sendChat();
-        }}
-      }});
       function setChatInput(text) {{
         const input = document.getElementById("chatInput");
         input.value = text;
         input.focus();
       }}
-      document.getElementById("chatActionS3").addEventListener("click", () => setChatInput("Help me configure S3 credentials and bucket for NPA workflows."));
-      document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
-      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun - use Load Franka in Rerun or check /api/sim-viz/status."));
       let lastRrdUpdatedAt = "";
       function sameOriginApiUrl(path) {{
         const base = String(window.location.origin || "").replace(/\/$/, "");
@@ -1472,17 +1610,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadFrankaDemo() {{
         const camera = String(document.getElementById("cameraSelect").value || "workspace");
-        const resp = await fetch("/api/sim-viz/load-franka-demo", {{
+        await apiJson("/api/sim-viz/load-franka-demo", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "include",
           body: JSON.stringify({{ camera }}),
         }});
-        const data = await resp.json();
-        if (!resp.ok) {{
-          appendChat("error", data.detail || "failed to load Franka demo");
-          return false;
-        }}
         reloadRerunIframe(camera);
         appendChat("assistant", "Loaded **stock Franka** tabletop demo in Rerun (`" + camera + "` camera).");
         await refresh();
@@ -1601,7 +1733,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "-";
           const res = Array.isArray(cam.resolution) ? cam.resolution.join("x") : "640x480";
           card.innerHTML = `
-            <h4>${{name}}${{selected ? " <span class=\\"badge\\">selected</span>" : ""}}</h4>
+            <h4>` + name + (selected ? ' <span class="badge">selected</span>' : '') + `</h4>
             <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} - fov ${{Number(cam.fov || 60)}}deg - ${{res}}</div>
             <div class="camera-meta">pos [${{pos}}] - look_at [${{look}}]</div>
             <div class="camera-frustum">${{frustumSvg(cam, selected)}}</div>
@@ -1618,12 +1750,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             ? "Rerun entities: " + entity + " (frustum) - " + rollout + " (rollout frames when available)"
             : "Preview in Rerun to log camera frustums; rollout frames appear after Sim2Real runs.";
         holder.querySelectorAll("button[data-action]").forEach((btn) => {{
-          btn.addEventListener("click", async () => {{
+          btn.addEventListener("click", async (event) => {{
+            event.preventDefault();
             const camera = String(btn.getAttribute("data-camera") || "");
-            if (btn.getAttribute("data-action") === "select") {{
-              await selectCamera(camera);
-            }} else {{
-              await previewCamera(camera);
+            const action = String(btn.getAttribute("data-action") || "");
+            const label = action === "select" ? "Select " + camera : "Preview " + camera;
+            setStatus(label + "...");
+            showToast(label, "info");
+            try {{
+              if (action === "select") {{
+                await selectCamera(camera);
+              }} else {{
+                await previewCamera(camera);
+              }}
+              setStatus(label + " done");
+              showToast(label + " done", "success");
+            }} catch (err) {{
+              setStatus(label + " failed");
+              showToast(String(err), "error");
             }}
           }});
         }});
@@ -1661,97 +1805,65 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function selectCamera(camera) {{
         const selected = String(camera || "");
-        try {{
-          await apiJson("/api/sim-assets/cameras/selection", {{
-            method: "PUT",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
-          }});
-          await apiJson("/api/sim-assets/selection", {{
-            method: "POST",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify(selectionPayloadFromUi()),
-          }});
-          await refresh();
-        }} catch (err) {{
-          appendChat("error", "Failed to select camera: " + String(err));
-        }}
-      }}
-      async function previewCamera(camera) {{
-        const resp = await fetch("/api/sim-viz/camera-preview", {{
+        await apiJson("/api/sim-assets/cameras/selection", {{
+          method: "PUT",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
+        }});
+        await apiJson("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "include",
+          body: JSON.stringify(selectionPayloadFromUi()),
+        }});
+        await refresh();
+      }}
+      async function previewCamera(camera) {{
+        const data = await apiJson("/api/sim-viz/camera-preview", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
-        const data = await resp.json();
-        if (!resp.ok) {{
-          appendChat("error", data.detail || "camera preview failed");
-          return;
-        }}
         reloadRerunIframe(camera);
         const entity = String(data.entity_path || ("world/cameras/" + camera));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }}
-      document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
-        await selectCamera(String(e.target.value || ""));
-      }});
-      document.getElementById("robotPreset").addEventListener("change", async (e) => {{
-        const resp = await fetch("/api/sim-assets/selection", {{
+      async function applySelection() {{
+        const data = await apiJson("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "include",
           body: JSON.stringify(selectionPayloadFromUi()),
         }});
-        const data = await resp.json();
-        if (String(e.target.value || "franka") === "franka" && data.sim_viz) {{
-          reloadRerunIframe(data.sim_viz.camera || "workspace");
-        }}
-        await refresh();
-      }});
-      document.getElementById("loadFrankaRerun").addEventListener("click", loadFrankaDemo);
-      document.getElementById("openRerun").addEventListener("click", async () => {{
-        const simViz = await loadJson("/api/sim-viz/status");
-        const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
-        window.open(rerunIframeSrc(camera), "_blank", "noopener");
-      }});
-      document.getElementById("applySelection").addEventListener("click", async () => {{
-        const resp = await fetch("/api/sim-assets/selection", {{
-          method: "POST",
-          headers: {{ "content-type": "application/json" }},
-          credentials: "include",
-          body: JSON.stringify(selectionPayloadFromUi()),
-        }});
-        const data = await resp.json();
         if (data.sim_viz) {{
           reloadRerunIframe(data.sim_viz.camera || "workspace");
         }}
         await refresh();
-      }});
-      document.getElementById("submitWorkflow").addEventListener("click", async () => {{
-        const resp = await fetch("/api/workflows/sim2real/submit", {{
+      }}
+      async function submitWorkflow() {{
+        const data = await apiJson("/api/workflows/sim2real/submit", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "include",
           body: JSON.stringify({{}}),
         }});
-        const data = await resp.json();
-        if (!resp.ok) {{
-          appendChat("error", data.detail || "failed to submit sim2real");
-          return;
-        }}
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
         await refresh();
-      }});
-      document.getElementById("workflowStatus").addEventListener("click", async () => {{
-        try {{
-          const status = await loadJson("/api/workflows/sim2real/status");
-          appendChat("assistant", "Latest workflow status:\\n- run_id: `" + String((status.latest_submit || {{}}).run_id || "none") + "`\\n- stage: `" + String((status.sim_viz || {{}}).stage || "idle") + "`");
-        }} catch (err) {{
-          appendChat("error", String(err));
-        }}
-      }});
+      }}
+      async function showWorkflowStatus() {{
+        const status = await loadJson("/api/workflows/sim2real/status");
+        appendChat(
+          "assistant",
+          "Latest workflow status:\\n- run_id: `" +
+            String((status.latest_submit || {{}}).run_id || "none") +
+            "`\\n- stage: `" +
+            String((status.sim_viz || {{}}).stage || "idle") +
+            "`"
+        );
+      }}
+      async function openRerunTab() {{
+        const simViz = await loadJson("/api/sim-viz/status");
+        const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
+        window.open(rerunIframeSrc(camera), "_blank", "noopener");
+      }}
       async function restoreSession() {{
         try {{
           const session = await loadJson("/api/session");
@@ -1781,8 +1893,28 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           // refresh() already surfaces sim viz errors in the panel.
         }}
       }}
-      bootPage();
-      setInterval(refresh, 10000);
+      function startApp() {{
+        try {{
+          wireUi();
+          setStatus("UI wired");
+        }} catch (err) {{
+          showToast("UI wiring failed: " + String(err), "error");
+          console.error(err);
+        }}
+        bootPage().catch((err) => {{
+          showToast("Boot failed: " + String(err), "error");
+          console.error(err);
+        }});
+        setInterval(() => {{
+          refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
+        }}, 10000);
+      }}
+      if (document.readyState === "loading") {{
+        document.addEventListener("DOMContentLoaded", startApp);
+      }} else {{
+        startApp();
+      }}
+      }})();
     </script>
   </body>
 </html>
@@ -1851,6 +1983,8 @@ server {{
     root /opt/npa-agent;
     index ui.html;
     try_files /ui.html =404;
+    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    add_header Pragma "no-cache" always;
   }}
 }}
 NGINX
@@ -2314,6 +2448,133 @@ def verify_live_cmd(
         _fail("workflow submit endpoint did not return run_id")
 
     try:
+        load_demo_resp = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/load-franka-demo",
+            auth=(auth_user, auth_password),
+            json={"camera": "workspace"},
+            timeout=30.0,
+        )
+        load_demo_resp.raise_for_status()
+        load_demo_payload = load_demo_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"load-franka-demo endpoint failed: {exc}")
+    if not isinstance(load_demo_payload, dict) or not load_demo_payload.get("ok"):
+        _fail("load-franka-demo endpoint did not return ok=true")
+    sim_viz_after_demo = load_demo_payload.get("sim_viz", {})
+    if not isinstance(sim_viz_after_demo, dict) or not (
+        sim_viz_after_demo.get("rerun_ready") or sim_viz_after_demo.get("rrd_uri")
+    ):
+        _fail("load-franka-demo did not mark rerun_ready/rrd_uri")
+
+    try:
+        preview_resp = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/camera-preview",
+            auth=(auth_user, auth_password),
+            json={"camera": "workspace"},
+            timeout=15.0,
+        )
+        preview_resp.raise_for_status()
+        preview_payload = preview_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"camera-preview endpoint failed: {exc}")
+    if not isinstance(preview_payload, dict) or not preview_payload.get("ok"):
+        _fail("camera-preview endpoint did not return ok=true")
+
+    agent_base = str(record.get("agent_url", "")).rstrip("/")
+    try:
+        rrd_resp = httpx.get(
+            f"{agent_base}/api/sim-viz/rrd",
+            auth=(auth_user, auth_password),
+            timeout=15.0,
+        )
+        rrd_resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"sim-viz rrd endpoint failed after load-franka-demo: {exc}")
+    rrd_ct = str(rrd_resp.headers.get("content-type", ""))
+    if "application/json" in rrd_ct:
+        if not isinstance(rrd_resp.json(), dict):
+            _fail("sim-viz rrd JSON response was not an object")
+    elif len(rrd_resp.content) < 64:
+        _fail("sim-viz rrd endpoint returned unexpectedly small payload")
+
+    rerun_static_ok = False
+    for static_path in (
+        "/rerun/index.js",
+        "/rerun/re_viewer.js",
+        "/rerun/favicon.ico",
+        "/rerun/version",
+    ):
+        try:
+            static_resp = httpx.get(
+                f"{agent_base}{static_path}",
+                auth=(auth_user, auth_password),
+                timeout=15.0,
+            )
+            if static_resp.status_code == 200 and static_resp.content:
+                rerun_static_ok = True
+                break
+        except httpx.HTTPError:
+            continue
+    if not rerun_static_ok:
+        _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
+
+    try:
+        health_resp = httpx.get(
+            f"{agent_base}/api/health",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        health_resp.raise_for_status()
+        health_payload = health_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"health endpoint failed: {exc}")
+    if not isinstance(health_payload, dict) or not health_payload.get("ok"):
+        _fail("health endpoint did not return ok=true")
+
+    try:
+        workflow_status_resp = httpx.get(
+            f"{agent_base}/api/workflows/sim2real/status",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        workflow_status_resp.raise_for_status()
+        workflow_status_payload = workflow_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"workflow status endpoint failed: {exc}")
+    if not isinstance(workflow_status_payload, dict):
+        _fail("workflow status endpoint did not return JSON object")
+
+    ui_resp = httpx.get(
+        str(record.get("agent_url", "")),
+        auth=(auth_user, auth_password),
+        timeout=10.0,
+    )
+    if ui_resp.status_code != 200:
+        _fail(f"UI html fetch failed (status={ui_resp.status_code})")
+    ui_html = ui_resp.text
+    for marker in (
+        'bindClick("chatSend"',
+        "function wireUi(",
+        "initNpaAgentUi",
+        f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
+    ):
+        if marker not in ui_html:
+            _fail(f"UI html missing wiring marker: {marker}")
+
+    try:
+        session_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/session",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        session_resp.raise_for_status()
+        session_payload = session_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"session endpoint failed: {exc}")
+    if not isinstance(session_payload, dict):
+        _fail("session endpoint did not return JSON object")
+
+    try:
         tools_resp = httpx.get(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools",
             auth=(auth_user, auth_password),
@@ -2361,6 +2622,13 @@ def verify_live_cmd(
         "NPA_AGENT_PROJECT": project,
         "NPA_AGENT_NAME": name,
     }
+    smoke = subprocess.run(
+        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/smoke/test_agent_smoke.py", "-q"],
+        check=False,
+        env=test_env,
+    )
+    if smoke.returncode != 0:
+        _fail("pytest npa/tests/smoke/test_agent_smoke.py failed")
     unit = subprocess.run(
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
         check=False,

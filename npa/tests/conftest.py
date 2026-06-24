@@ -14,6 +14,7 @@ os.environ.setdefault("NPA_S3_BUCKET", "test-bucket-00000000")
 # Live markers whose tests intentionally use real ambient credentials.
 _LIVE_MARKERS = frozenset(
     {
+        "agent_live",
         "byovm_live",
         "e2e",
         "e2e_pipeline",
