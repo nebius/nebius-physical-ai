@@ -972,6 +972,35 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; }}
       .panel p {{ margin: 0; color: var(--muted); }}
+      .subsection {{
+        border: 1px solid #e7e8ee;
+        border-radius: 10px;
+        background: #fafbff;
+        padding: 10px;
+        margin-top: 10px;
+      }}
+      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #303649; }}
+      .field-row {{ display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }}
+      .field label {{ display: block; font-size: 12px; color: #4f5668; margin-bottom: 4px; }}
+      .field select, .field input {{
+        width: 100%;
+        border: 1px solid #d4d8e2;
+        border-radius: 9px;
+        padding: 8px;
+        font-family: inherit;
+        background: #fff;
+      }}
+      .pill-list {{ display: flex; gap: 6px; flex-wrap: wrap; }}
+      .pill {{
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid #d8dbeb;
+        color: #394056;
+        background: #fff;
+        padding: 4px 9px;
+        font-size: 12px;
+      }}
       .cameras-panel {{ border-color: #d7dbf6; }}
       .camera-card {{
         border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
@@ -1056,10 +1085,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
       iframe {{ width: 100%; height: 380px; border: 1px solid var(--border); border-radius: 10px; }}
-      pre {{
-        white-space: pre-wrap; word-break: break-word; background: #f7f7fb; padding: 10px;
-        border: 1px solid #ececf5; border-radius: 8px;
-      }}
       .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
       .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
       .btn {{
@@ -1119,12 +1144,52 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <div class="layout layout-3">
           <section class="panel">
             <h3>Sim Assets</h3>
-            <label for="robotPreset">Robot preset</label>
-            <select id="robotPreset">
-              <option value="franka" selected>Franka (stock tabletop)</option>
-              <option value="ur5e">UR5e</option>
-            </select>
-            <div id="assets"></div>
+            <div class="subsection">
+              <h4>Selection</h4>
+              <div class="field-row">
+                <div class="field">
+                  <label for="sceneMode">Scene mode</label>
+                  <select id="sceneMode">
+                    <option value="stock" selected>stock</option>
+                    <option value="byo_mesh">byo_mesh</option>
+                    <option value="scene_spec">scene_spec</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="robotPreset">Robot preset</label>
+                  <select id="robotPreset">
+                    <option value="franka" selected>stock_franka</option>
+                    <option value="ur5e">preset:ur5e</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="cameraMode">Camera mode</label>
+                  <select id="cameraMode">
+                    <option value="stock" selected>stock</option>
+                    <option value="custom">custom</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="simBackend">Sim backend</label>
+                  <select id="simBackend">
+                    <option value="isaac" selected>isaac</option>
+                    <option value="genesis">genesis</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="subsection">
+              <h4>Props</h4>
+              <div class="pill-list">
+                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
+              </div>
+            </div>
+            <div class="subsection">
+              <h4>Resolved assets</h4>
+              <div id="assetsSummary" class="hint"></div>
+            </div>
             <div class="btn-row">
               <button id="applySelection" class="btn" type="button">Apply stock selection</button>
               <button id="loadFrankaRerun" class="btn" type="button">Load Franka in Rerun</button>
@@ -1361,7 +1426,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const assets = await loadJson("/api/sim-assets");
           const cameras = await loadJson("/api/sim-assets/cameras");
           const simViz = await loadJson("/api/sim-viz/status");
-          document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
+          renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
@@ -1372,6 +1437,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (assets.selection && assets.selection.robot_preset) {{
             robotPreset.value = String(assets.selection.robot_preset);
           }}
+          document.getElementById("simBackend").value = String((assets.selection && assets.selection.sim_backend) || "isaac");
+          const props = Array.isArray(assets.selection && assets.selection.props) ? assets.selection.props.map(String) : [];
+          document.getElementById("propCube").checked = props.includes("cube");
           const select = document.getElementById("cameraSelect");
           const selected = new Set((cameras.selected || []).map(String));
           const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
@@ -1465,6 +1533,37 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }});
         }});
       }}
+      function renderAssetsSummary(assets) {{
+        const selection = (assets && assets.selection) || {{}};
+        const resolved = (assets && assets.resolved_uris) || {{}};
+        const scene = String(selection.scene_spec_uri || "stock://scene/default");
+        const robot = String(selection.robot_spec_uri || "stock://robot/franka");
+        const cameras = String(selection.cameras_uri || "stock://cameras/default");
+        const backend = String(selection.sim_backend || "isaac");
+        const props = Array.isArray(selection.props) ? selection.props : [];
+        const propsText = props.length ? props.join(", ") : "none";
+        document.getElementById("assetsSummary").innerHTML =
+          "<div><span class='pill'>scene: " + escapeHtml(scene) + "</span></div>" +
+          "<div style='margin-top:6px;'><span class='pill'>robot: " + escapeHtml(robot) + "</span></div>" +
+          "<div style='margin-top:6px;'><span class='pill'>cameras: " + escapeHtml(cameras) + "</span></div>" +
+          "<div style='margin-top:6px;'><span class='pill'>backend: " + escapeHtml(backend) + "</span></div>" +
+          "<div style='margin-top:6px;'>props: " + escapeHtml(propsText) + "</div>" +
+          "<div style='margin-top:6px;'>resolved scene URI: <code>" + escapeHtml(String(resolved.scene_spec_uri || scene)) + "</code></div>";
+      }}
+      function selectionPayloadFromUi() {{
+        const robotPreset = String(document.getElementById("robotPreset").value || "franka");
+        const sceneMode = String(document.getElementById("sceneMode").value || "stock");
+        const cameraMode = String(document.getElementById("cameraMode").value || "stock");
+        const backend = String(document.getElementById("simBackend").value || "isaac");
+        return {{
+          scene_spec_uri: sceneMode === "stock" ? "stock://scene/default" : "",
+          robot_spec_uri: robotPreset === "franka" ? "stock://robot/franka" : "",
+          cameras_uri: cameraMode === "stock" ? "stock://cameras/default" : "",
+          robot_preset: robotPreset,
+          sim_backend: backend,
+          props: document.getElementById("propCube").checked ? ["cube"] : []
+        }};
+      }}
       async function selectCamera(camera) {{
         const selected = String(camera || "");
         try {{
@@ -1476,14 +1575,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           await apiJson("/api/sim-assets/selection", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{
-              scene_spec_uri: "stock://scene/default",
-              robot_spec_uri: "stock://robot/franka",
-              cameras_uri: "stock://cameras/default",
-              robot_preset: String(document.getElementById("robotPreset").value || "franka"),
-              sim_backend: "isaac",
-              props: ["cube"],
-            }}),
+            body: JSON.stringify(selectionPayloadFromUi()),
           }});
           await refresh();
         }} catch (err) {{
@@ -1511,22 +1603,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await selectCamera(String(e.target.value || ""));
       }});
       document.getElementById("robotPreset").addEventListener("change", async (e) => {{
-        const preset = String(e.target.value || "franka");
         const resp = await fetch("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           credentials: "include",
-          body: JSON.stringify({{
-            scene_spec_uri: "stock://scene/default",
-            robot_spec_uri: preset === "franka" ? "stock://robot/franka" : "",
-            cameras_uri: "stock://cameras/default",
-            robot_preset: preset,
-            sim_backend: "isaac",
-            props: ["cube"]
-          }}),
+          body: JSON.stringify(selectionPayloadFromUi()),
         }});
         const data = await resp.json();
-        if (preset === "franka" && data.sim_viz) {{
+        if (String(e.target.value || "franka") === "franka" && data.sim_viz) {{
           reloadRerunIframe(data.sim_viz.camera || "workspace");
         }}
         await refresh();
@@ -1542,14 +1626,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           credentials: "include",
-          body: JSON.stringify({{
-            scene_spec_uri: "stock://scene/default",
-            robot_spec_uri: "stock://robot/franka",
-            cameras_uri: "stock://cameras/default",
-            robot_preset: "franka",
-            sim_backend: "isaac",
-            props: ["cube"]
-          }}),
+          body: JSON.stringify(selectionPayloadFromUi()),
         }});
         const data = await resp.json();
         if (data.sim_viz) {{

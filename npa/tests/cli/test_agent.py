@@ -29,6 +29,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "renderInlineMarkdownLite" in source
     assert "showThinkingBubble" in source
     assert "thinking-dots" in source
+    assert "font-family: Inter, system-ui" in source
+    assert "font-family: monospace" not in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -44,6 +46,7 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "The **Cameras** panel is the center column below chat" in source
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
+    assert "frustumSvg" in source
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
@@ -75,6 +78,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "robotPreset" in source
     assert "/rerun/?url=%2Fapi%2Fsim-viz%2Frrd" in source
     assert '"/rerun/?url=/api/sim-viz/rrd&camera=' in source
+    assert "renderAssetsSummary" in source
+    assert "selectionPayloadFromUi" in source
 
 
 def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
@@ -85,6 +90,7 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
     assert "setChatBusy(false)" in source
+    assert "JSON.stringify(assets.selection" not in source
 
 
 def test_bootstrap_system_prompt_no_localhost() -> None:
