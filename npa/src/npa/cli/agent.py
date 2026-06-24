@@ -247,6 +247,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -258,6 +259,8 @@ app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
+RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
+RERUN_UNIT = "npa-rerun"
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
     "goal_pos": [0.5, 0.3, 0.04],
@@ -309,6 +312,9 @@ DEFAULT_SIM_VIZ = {{
     "rrd_updated_at": "",
     "live_grpc_url": "",
     "mode": "static",
+    "camera": "workspace",
+    "rerun_ready": False,
+    "rerun_iframe_url": "/rerun/",
 }}
 
 def _now_iso() -> str:
@@ -344,6 +350,94 @@ def _load_state() -> dict:
 def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 
+def _stock_franka_selection() -> dict:
+    return {{
+        "scene_spec_uri": "stock://scene/default",
+        "assets_uri": "",
+        "robot_spec_uri": "stock://robot/franka",
+        "cameras_uri": "stock://cameras/default",
+        "robot_preset": "franka",
+        "sim_backend": "isaac",
+        "props": ["cube"],
+    }}
+
+def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
+    import rerun as rr
+
+    target = RRD_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    rr.init("npa-franka-tabletop-demo", spawn=False)
+    rr.log(
+        "world/table",
+        rr.Boxes3D(
+            centers=[[0.5, 0.0, 0.0]],
+            half_sizes=[[0.4, 0.3, 0.02]],
+            colors=[[180, 180, 180, 255]],
+        ),
+    )
+    rr.log(
+        "world/cube",
+        rr.Boxes3D(
+            centers=[[0.5, 0.3, 0.04]],
+            half_sizes=[[0.025, 0.025, 0.025]],
+            colors=[[59, 130, 246, 255]],
+        ),
+    )
+    rr.log(
+        "robot/franka",
+        rr.TextDocument(
+            "Franka Panda — stock tabletop pick-and-place demo (NPA agent preview)"
+        ),
+    )
+    camera_specs = {{
+        "workspace": ([1.0, 0.0, 0.8], 60.0),
+        "wrist": ([0.4, 0.0, 0.4], 90.0),
+    }}
+    for cam_name, (pos, fov) in camera_specs.items():
+        rr.log(f"cameras/{{cam_name}}", rr.Pinhole(fov_y=fov))
+        rr.log(f"cameras/{{cam_name}}", rr.Transform3D(translation=pos))
+    active = camera if camera in camera_specs else "workspace"
+    rr.log("demo/active_camera", rr.TextLog(active))
+    rr.save(str(target))
+    return target
+
+def _restart_rerun_serve() -> bool:
+    try:
+        subprocess.run(
+            ["sudo", "systemctl", "restart", RERUN_UNIT],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        return True
+    except Exception:
+        return False
+
+def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
+    selection = _stock_franka_selection()
+    state["selection"] = selection
+    cam = (camera or "workspace").strip() or "workspace"
+    state["camera_selection"] = [cam]
+    target = _generate_franka_demo_rrd(camera=cam)
+    restarted = _restart_rerun_serve()
+    now = _now_iso()
+    prior = state.get("sim_viz", {{}})
+    run_id = str(prior.get("run_id") or "").strip() or "franka-demo"
+    viz = {{
+        "run_id": run_id,
+        "stage": "demo",
+        "rrd_uri": f"file://{{target}}",
+        "rrd_updated_at": now,
+        "live_grpc_url": "",
+        "mode": "static",
+        "camera": cam,
+        "rerun_ready": restarted or target.is_file(),
+        "rerun_iframe_url": f"/rerun/?camera={{cam}}",
+    }}
+    state["sim_viz"] = viz
+    _save_state(state)
+    return viz
+
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
 TF_BASE_URL = os.environ.get(
     "NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"
@@ -358,11 +452,16 @@ def _agent_system_prompt() -> str:
         "Help operators configure NPA: provision infrastructure, Cosmos3, S3 storage,",
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
         "",
-        "Agent HTTP APIs on this VM (behind nginx /api/):",
-        "- GET /sim-assets, /sim-assets/selection, /sim-assets/cameras",
-        "- GET /sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
-        "- POST /workflows/sim2real/submit — submit Sim2Real with current asset selection",
-        "- GET /tools — workbench toolRef catalog",
+        "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
+        "- GET /api/sim-assets, /api/sim-assets/selection, /api/sim-assets/cameras",
+        "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
+        "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
+        "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
+        "- GET /api/tools — workbench toolRef catalog",
+        "",
+        "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
+        "(or POST /api/sim-viz/load-franka-demo). Open the embedded viewer at /rerun/.",
+        "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
         "",
         "Workbench toolRefs (invoke via npa workbench / npa.workflow on operator machine):",
     ]
@@ -374,7 +473,7 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
-            "After submit, point users to /rerun/ and poll sim-viz status until rrd_uri is set.",
+            "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
         ]
     )
     return "\\n".join(lines)
@@ -475,7 +574,29 @@ def sim_viz_status():
     payload = dict(DEFAULT_SIM_VIZ)
     if isinstance(sim_viz, dict):
         payload.update(sim_viz)
+    selected = state.get("camera_selection", ["workspace"])
+    camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
+    payload["camera"] = camera
+    payload["rerun_iframe_url"] = f"/rerun/?camera={{camera}}"
+    if not payload.get("rrd_uri") and RRD_PATH.is_file():
+        payload["rrd_uri"] = f"file://{{RRD_PATH}}"
+    payload["rerun_ready"] = bool(payload.get("rrd_uri")) or RRD_PATH.is_file()
     return payload
+
+@app.post("/sim-viz/load-franka-demo")
+def load_franka_demo(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    camera = str(body.get("camera") or "").strip()
+    if not camera:
+        state = _load_state()
+        selected = state.get("camera_selection", ["workspace"])
+        if isinstance(selected, list) and selected:
+            camera = str(selected[0])
+        else:
+            camera = "workspace"
+    state = _load_state()
+    viz = _wire_franka_demo(state, camera=camera)
+    return {{"ok": True, "sim_viz": viz, "selection": state["selection"]}}
 
 @app.get("/sim-viz/rrd")
 def sim_viz_rrd():
@@ -489,6 +610,140 @@ def sim_viz_rrd():
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     return JSONResponse({{"ok": True, "rrd_uri": uri}}, status_code=200)
+
+def _camera_frustum_lines(pos: list[float], look_at: list[float], fov: float, *, depth: float = 0.35):
+    import math
+
+    px, py, pz = (float(pos[0]), float(pos[1]), float(pos[2]))
+    lx, ly, lz = (float(look_at[0]), float(look_at[1]), float(look_at[2]))
+    fx, fy, fz = (lx - px, ly - py, lz - pz)
+    norm = math.sqrt(fx * fx + fy * fy + fz * fz) or 1.0
+    fx, fy, fz = (fx / norm, fy / norm, fz / norm)
+    upx, upy, upz = (0.0, 0.0, 1.0)
+    rx = fy * upz - fz * upy
+    ry = fz * upx - fx * upz
+    rz = fx * upy - fy * upx
+    rnorm = math.sqrt(rx * rx + ry * ry + rz * rz) or 1.0
+    rx, ry, rz = (rx / rnorm, ry / rnorm, rz / rnorm)
+    ux = ry * fz - rz * fy
+    uy = rz * fx - rx * fz
+    uz = rx * fy - ry * fx
+    half_h = depth * math.tan(math.radians(float(fov) / 2.0))
+    half_w = half_h * (4.0 / 3.0)
+    cx = px + fx * depth
+    cy = py + fy * depth
+    cz = pz + fz * depth
+    corners = []
+    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        corners.append(
+            [
+                cx + rx * half_w * sx + ux * half_h * sy,
+                cy + ry * half_w * sx + uy * half_h * sy,
+                cz + rz * half_w * sx + uz * half_h * sy,
+            ]
+        )
+    origin = [px, py, pz]
+    strips = [
+        [origin, corners[0]],
+        [origin, corners[1]],
+        [origin, corners[2]],
+        [origin, corners[3]],
+        corners + [corners[0]],
+    ]
+    return origin, strips
+
+def _write_camera_preview_rrd(camera_name: str) -> str:
+    import math
+    import subprocess
+
+    import rerun as rr
+
+    cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
+    if camera_name not in cameras:
+        raise HTTPException(status_code=404, detail=f"unknown camera: {{camera_name}}")
+    target = Path("/opt/npa-agent/sim2real.rrd")
+    rr.init("npa-agent-cameras", spawn=False)
+    rr.log(
+        "agent/camera_inspector",
+        rr.TextDocument(
+            "Camera inspector preview. Highlighted entity is selected for the next rollout."
+        ),
+    )
+    for name, cam in cameras.items():
+        if not isinstance(cam, dict):
+            continue
+        pos = list(cam.get("pos") or [0.0, 0.0, 0.0])
+        look_at = list(cam.get("look_at") or [0.0, 1.0, 0.0])
+        fov = float(cam.get("fov") or 60.0)
+        res = cam.get("resolution") or [640, 480]
+        width = int(res[0]) if len(res) > 0 else 640
+        height = int(res[1]) if len(res) > 1 else 480
+        entity = f"world/cameras/{{name}}"
+        focal = width / (2.0 * math.tan(math.radians(fov / 2.0)))
+        rr.log(entity, rr.Pinhole(focal_length=focal, width=width, height=height))
+        rr.log(entity, rr.Transform3D(translation=pos))
+        origin, strips = _camera_frustum_lines(pos, look_at, fov)
+        color = [59, 130, 246] if name == camera_name else [148, 163, 184]
+        rr.log(
+            f"{{entity}}/frustum",
+            rr.LineStrips3D(strips, colors=[color] * len(strips)),
+        )
+        rr.log(f"{{entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
+        label = (
+            f"**{{name}}** (selected for next rollout)"
+            if name == camera_name
+            else f"**{{name}}**"
+        )
+        rr.log(
+            f"{{entity}}/label",
+            rr.TextDocument(
+                f"{{label}}\\n"
+                f"pos={{pos}} look_at={{look_at}} fov={{fov}}° resolution={{width}}x{{height}}"
+            ),
+        )
+        rollout_path = f"rollouts/latest/{{name}}/camera"
+        rr.log(
+            rollout_path,
+            rr.TextDocument(
+                f"Sim2Real rollout camera stream path for `{{name}}` "
+                f"(populated when a run writes frames to the recording)."
+            ),
+        )
+    rr.save(str(target))
+    subprocess.run(
+        ["systemctl", "restart", "npa-rerun"],
+        check=False,
+        timeout=30.0,
+    )
+    return f"world/cameras/{{camera_name}}"
+
+@app.post("/sim-viz/camera-preview")
+def sim_viz_camera_preview(payload: dict):
+    camera_name = str(payload.get("camera", "")).strip()
+    state = _load_state()
+    if not camera_name:
+        selected = state.get("camera_selection", ["workspace"])
+        if isinstance(selected, list) and selected:
+            camera_name = str(selected[0])
+        else:
+            camera_name = "workspace"
+    entity_path = _write_camera_preview_rrd(camera_name)
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict):
+        sim_viz = dict(DEFAULT_SIM_VIZ)
+    sim_viz["preview_camera"] = camera_name
+    sim_viz["preview_entity"] = entity_path
+    sim_viz["rrd_updated_at"] = _now_iso()
+    sim_viz["mode"] = "camera_preview"
+    state["sim_viz"] = sim_viz
+    _save_state(state)
+    return {{
+        "ok": True,
+        "camera": camera_name,
+        "entity_path": entity_path,
+        "rollout_entity_guess": f"rollouts/latest/{{camera_name}}/camera",
+        "hint": "Open the Rerun panel and expand world/cameras/<name>.",
+    }}
 
 @app.get("/sim-assets")
 def sim_assets():
@@ -533,6 +788,11 @@ def set_camera_selection(payload: dict):
         raise HTTPException(status_code=400, detail="selected must be a list")
     state = _load_state()
     state["camera_selection"] = [str(item) for item in selected if str(item).strip()]
+    cam = state["camera_selection"][0] if state["camera_selection"] else "workspace"
+    preset = str((state.get("selection") or {{}}).get("robot_preset", "")).strip().lower()
+    if preset == "franka":
+        viz = _wire_franka_demo(state, camera=cam)
+        return {{"selected": state["camera_selection"], "sim_viz": viz}}
     _save_state(state)
     return {{"selected": state["camera_selection"]}}
 
@@ -549,6 +809,11 @@ def set_sim_assets_selection(payload: dict):
     if "props" in payload and isinstance(payload["props"], list):
         selection["props"] = [str(item) for item in payload["props"] if str(item).strip()]
     state["selection"] = selection
+    preset = str(selection.get("robot_preset", "")).strip().lower()
+    if preset == "franka":
+        cam = str((state.get("camera_selection") or ["workspace"])[0])
+        viz = _wire_franka_demo(state, camera=cam)
+        return {{"ok": True, "selection": selection, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
 
@@ -636,10 +901,31 @@ from pathlib import Path
 import rerun as rr
 
 target = Path("/opt/npa-agent/sim2real.rrd")
-if not target.exists():
-    rr.init("npa-agent-bootstrap", spawn=False)
-    rr.log("agent/bootstrap", rr.TextDocument("Rerun viewer bootstrap recording"))
-    rr.save(str(target))
+target.parent.mkdir(parents=True, exist_ok=True)
+rr.init("npa-franka-tabletop-demo", spawn=False)
+rr.log(
+    "world/table",
+    rr.Boxes3D(
+        centers=[[0.5, 0.0, 0.0]],
+        half_sizes=[[0.4, 0.3, 0.02]],
+        colors=[[180, 180, 180, 255]],
+    ),
+)
+rr.log(
+    "world/cube",
+    rr.Boxes3D(
+        centers=[[0.5, 0.3, 0.04]],
+        half_sizes=[[0.025, 0.025, 0.025]],
+        colors=[[59, 130, 246, 255]],
+    ),
+)
+rr.log(
+    "robot/franka",
+    rr.TextDocument("Franka Panda — stock tabletop demo (bootstrap)"),
+)
+rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
+rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
+rr.save(str(target))
 PY
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <!doctype html>
@@ -666,6 +952,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       iframe {{ width: 100%; height: 360px; border: 1px solid #ddd; }}
       pre {{ white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: 8px; }}
+      .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
+      .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
+      .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 4px; padding: 8px; }}
+      .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e0e7ff; color: #1e3a8a; font-size: 12px; }}
     </style>
   </head>
   <body>
@@ -687,10 +977,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <div class="layout">
       <section class="panel">
         <h3>Sim Assets</h3>
+        <label for="robotPreset">Robot preset</label>
+        <select id="robotPreset">
+          <option value="franka" selected>Franka (stock tabletop)</option>
+          <option value="ur5e">UR5e</option>
+        </select>
         <div id="assets"></div>
-        <button id="applySelection" type="button">Apply stock selection</button>
-        <button id="submitWorkflow" type="button">Submit Sim2Real</button>
-        <button id="workflowStatus" type="button">Workflow status</button>
+        <div class="btn-row">
+          <button id="applySelection" type="button">Apply stock selection</button>
+          <button id="loadFrankaRerun" type="button">Load Franka in Rerun</button>
+          <button id="submitWorkflow" type="button">Submit Sim2Real</button>
+          <button id="workflowStatus" type="button">Workflow status</button>
+        </div>
         <h3>Cameras</h3>
         <label for="cameraSelect">Select camera</label>
         <select id="cameraSelect"></select>
@@ -699,8 +997,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       </section>
       <section class="panel">
         <h3>Rerun (embedded)</h3>
-        <div id="simviz"></div>
-        <iframe title="rerun" src="/rerun/"></iframe>
+        <div id="simviz">
+          <div class="status-row">
+            <span>Run: <strong id="simRunId">—</strong></span>
+            <span>Stage: <span id="simStage" class="badge">idle</span></span>
+            <span>Camera: <strong id="simCamera">workspace</strong></span>
+          </div>
+          <div class="btn-row">
+            <button id="openRerun" type="button">Open in Rerun</button>
+          </div>
+          <p id="simvizCta" class="cta" hidden>No .rrd yet — click <strong>Load Franka in Rerun</strong> or submit Sim2Real.</p>
+        </div>
+        <iframe id="rerunFrame" title="rerun" src="/rerun/"></iframe>
       </section>
     </div>
     <script>
@@ -762,7 +1070,31 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       document.getElementById("chatActionS3").addEventListener("click", () => setChatInput("Help me configure S3 credentials and bucket for NPA workflows."));
       document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
-      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim and show current rerun status."));
+      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun — use Load Franka in Rerun or check /api/sim-viz/status."));
+      let lastRrdUpdatedAt = "";
+      function reloadRerunIframe(camera) {{
+        const iframe = document.getElementById("rerunFrame");
+        const cam = String(camera || "workspace");
+        iframe.src = "/rerun/?camera=" + encodeURIComponent(cam) + "&t=" + Date.now();
+      }}
+      async function loadFrankaDemo() {{
+        const camera = String(document.getElementById("cameraSelect").value || "workspace");
+        const resp = await fetch("/api/sim-viz/load-franka-demo", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{ camera }}),
+        }});
+        const data = await resp.json();
+        if (!resp.ok) {{
+          appendChat("error", data.detail || "failed to load Franka demo");
+          return false;
+        }}
+        reloadRerunIframe(camera);
+        appendChat("assistant", "Loaded stock Franka tabletop demo in Rerun (" + camera + " camera).");
+        await refresh();
+        return true;
+      }}
       async function loadJson(path) {{
         const resp = await fetch(path, {{ credentials: "same-origin" }});
         return await resp.json();
@@ -774,7 +1106,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const simViz = await loadJson("/api/sim-viz/status");
           document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
           document.getElementById("cameras").innerHTML = "<pre>" + JSON.stringify(cameras, null, 2) + "</pre>";
-          document.getElementById("simviz").innerHTML = "<pre>" + JSON.stringify(simViz, null, 2) + "</pre>";
+          document.getElementById("simRunId").textContent = String(simViz.run_id || "—");
+          document.getElementById("simStage").textContent = String(simViz.stage || "idle");
+          document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
+          const cta = document.getElementById("simvizCta");
+          const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
+          cta.hidden = ready;
+          const robotPreset = document.getElementById("robotPreset");
+          if (assets.selection && assets.selection.robot_preset) {{
+            robotPreset.value = String(assets.selection.robot_preset);
+          }}
           const select = document.getElementById("cameraSelect");
           const selected = new Set((cameras.selected || []).map(String));
           const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
@@ -787,8 +1128,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             select.appendChild(opt);
           }}
           renderFrustum(list.find((c) => String(c.name || "") === String(select.value || "")) || list[0] || null);
+          const updatedAt = String(simViz.rrd_updated_at || "");
+          if (updatedAt && updatedAt !== lastRrdUpdatedAt) {{
+            lastRrdUpdatedAt = updatedAt;
+            reloadRerunIframe(simViz.camera || select.value || "workspace");
+          }}
         }} catch (err) {{
-          document.getElementById("simviz").textContent = "Failed to fetch API status";
+          document.getElementById("simvizCta").hidden = false;
+          document.getElementById("simvizCta").textContent = "Failed to fetch sim viz status";
         }}
       }}
       function renderFrustum(camera) {{
@@ -819,16 +1166,47 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
         const selected = String(e.target.value || "");
-        await fetch("/api/sim-assets/cameras/selection", {{
+        const resp = await fetch("/api/sim-assets/cameras/selection", {{
           method: "PUT",
           headers: {{ "content-type": "application/json" }},
           credentials: "same-origin",
           body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
         }});
+        const data = await resp.json();
+        if (data.sim_viz) {{
+          reloadRerunIframe(selected || "workspace");
+        }}
         await refresh();
       }});
+      document.getElementById("robotPreset").addEventListener("change", async (e) => {{
+        const preset = String(e.target.value || "franka");
+        const resp = await fetch("/api/sim-assets/selection", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{
+            scene_spec_uri: "stock://scene/default",
+            robot_spec_uri: preset === "franka" ? "stock://robot/franka" : "",
+            cameras_uri: "stock://cameras/default",
+            robot_preset: preset,
+            sim_backend: "isaac",
+            props: ["cube"]
+          }}),
+        }});
+        const data = await resp.json();
+        if (preset === "franka" && data.sim_viz) {{
+          reloadRerunIframe(data.sim_viz.camera || "workspace");
+        }}
+        await refresh();
+      }});
+      document.getElementById("loadFrankaRerun").addEventListener("click", loadFrankaDemo);
+      document.getElementById("openRerun").addEventListener("click", async () => {{
+        const simViz = await loadJson("/api/sim-viz/status");
+        const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
+        window.open("/rerun/?camera=" + encodeURIComponent(camera), "_blank", "noopener");
+      }});
       document.getElementById("applySelection").addEventListener("click", async () => {{
-        await fetch("/api/sim-assets/selection", {{
+        const resp = await fetch("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           credentials: "same-origin",
@@ -841,6 +1219,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             props: ["cube"]
           }}),
         }});
+        const data = await resp.json();
+        if (data.sim_viz) {{
+          reloadRerunIframe(data.sim_viz.camera || "workspace");
+        }}
         await refresh();
       }});
       document.getElementById("submitWorkflow").addEventListener("click", async () => {{
@@ -866,7 +1248,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           appendChat("error", String(err));
         }}
       }});
-      refresh();
+      refresh().then(async () => {{
+        const simViz = await loadJson("/api/sim-viz/status");
+        if (!simViz.rerun_ready && !simViz.rrd_uri) {{
+          await loadFrankaDemo();
+        }}
+      }});
       setInterval(refresh, 10000);
     </script>
   </body>
@@ -876,6 +1263,7 @@ sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
+sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
 [Unit]
 Description=NPA agent backend

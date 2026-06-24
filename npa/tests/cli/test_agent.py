@@ -28,6 +28,28 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "llm.env" in source
 
 
+def test_bootstrap_embeds_franka_rerun_ux() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert '@app.post("/sim-viz/load-franka-demo")' in source
+    assert "_wire_franka_demo" in source
+    assert "_generate_franka_demo_rrd" in source
+    assert "Load Franka in Rerun" in source
+    assert "Open in Rerun" in source
+    assert "robotPreset" in source
+
+
+def test_bootstrap_system_prompt_no_localhost() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "Never suggest localhost" in source
+    assert "Load Franka in Rerun" in source
+    assert "/api/sim-viz/load-franka-demo" in source
+    assert "localhost:8080" not in source.split("_agent_system_prompt")[1].split("return")[0]
+
+
 def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",

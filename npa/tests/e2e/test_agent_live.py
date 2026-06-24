@@ -104,3 +104,16 @@ def test_agent_live_endpoints_and_catalog() -> None:
     resolved = resolve.json()
     assert resolved.get("ok") is True
     assert isinstance(resolved.get("argv_template"), list)
+
+    load_demo = httpx.post(
+        f"{ui_url.rstrip('/')}/api/sim-viz/load-franka-demo",
+        auth=(auth_user, auth_password),
+        json={"camera": "workspace"},
+        timeout=30.0,
+    )
+    load_demo.raise_for_status()
+    demo_payload = load_demo.json()
+    assert demo_payload.get("ok") is True
+    sim_viz = demo_payload.get("sim_viz", {})
+    assert isinstance(sim_viz, dict)
+    assert sim_viz.get("rerun_ready") or sim_viz.get("rrd_uri")
