@@ -43,13 +43,15 @@ def test_agent_status_json(monkeypatch) -> None:
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
     class _Resp:
-        status_code = 200
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.status_code = 200
+            self._payload = payload
 
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, object]:
-            return {"tool_refs": [f"tool.{idx}" for idx in range(19)]}
+            return self._payload
 
     class _Proc:
         def __init__(self, code: int = 0) -> None:
@@ -67,7 +69,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     )
     monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
     monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
-    monkeypatch.setattr("npa.cli.agent.httpx.get", lambda *_args, **_kwargs: _Resp())
+    def _fake_http_get(url, *_args, **_kwargs):
+        if str(url).endswith("/api/tools"):
+            return _Resp({"tool_refs": [f"tool.{idx}" for idx in range(19)]})
+        return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
+
+    monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)
     calls: list[list[str]] = []
 
     def _fake_run(args, **_kwargs):

@@ -156,6 +156,17 @@ def _tool_catalog_keys() -> list[str]:
     return sorted(TOOL_CATALOG.keys())
 
 
+def _tool_catalog_payload() -> dict[str, dict[str, Any]]:
+    payload: dict[str, dict[str, Any]] = {}
+    for key in _tool_catalog_keys():
+        entry = TOOL_CATALOG[key]
+        payload[key] = {
+            "description": entry.description,
+            "argv_template": list(entry.argv_template),
+        }
+    return payload
+
+
 def _bootstrap_agent_stack(
     *,
     host: str,
@@ -176,7 +187,7 @@ def _bootstrap_agent_stack(
             name=None,
         ).ssh
     )
-    catalog_json = json.dumps(_tool_catalog_keys())
+    catalog_json = json.dumps(_tool_catalog_payload())
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip
@@ -185,7 +196,8 @@ cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 from fastapi import FastAPI
 
 app = FastAPI(title="npa-agent")
-TOOL_REFS = {catalog_json}
+TOOL_CATALOG = {catalog_json}
+TOOL_REFS = sorted(TOOL_CATALOG.keys())
 
 @app.get("/health")
 def health():
@@ -194,6 +206,13 @@ def health():
 @app.get("/tools")
 def tools():
     return {{"tool_refs": TOOL_REFS}}
+
+@app.get("/tools/{{tool_ref:path}}")
+def tool(tool_ref: str):
+    payload = TOOL_CATALOG.get(tool_ref)
+    if payload is None:
+        return {{"ok": False, "error": "unknown toolRef", "tool_ref": tool_ref}}
+    return {{"ok": True, "tool_ref": tool_ref, **payload}}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/rerun_stub.py >/dev/null
 from fastapi import FastAPI
@@ -569,6 +588,17 @@ def verify_live_cmd(
         _fail(f"agent toolRef catalog request failed: {exc}")
     if len(tool_refs) < 19:
         _fail(f"toolRef catalog too small: expected >=19, got {len(tool_refs)}")
+    resolve_resp = httpx.get(
+        f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools/{tool_refs[0]}",
+        auth=(auth_user, auth_password),
+        timeout=5.0,
+    )
+    resolve_resp.raise_for_status()
+    resolved = resolve_resp.json()
+    if not resolved.get("ok"):
+        _fail("agent failed to resolve toolRef catalog entry")
+    if not isinstance(resolved.get("argv_template"), list):
+        _fail("resolved toolRef entry missing argv_template list")
 
     test_env = {
         **dict(os.environ),

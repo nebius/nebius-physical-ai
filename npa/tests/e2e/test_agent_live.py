@@ -39,3 +39,12 @@ def test_agent_live_endpoints_and_catalog() -> None:
     refs = payload.get("tool_refs", [])
     assert isinstance(refs, list)
     assert len(refs) >= 19
+    resolve = httpx.get(
+        f"{ui_url.rstrip('/')}/api/tools/{refs[0]}",
+        auth=(auth_user, auth_password),
+        timeout=10.0,
+    )
+    resolve.raise_for_status()
+    resolved = resolve.json()
+    assert resolved.get("ok") is True
+    assert isinstance(resolved.get("argv_template"), list)
