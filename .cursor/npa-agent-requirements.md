@@ -24,11 +24,12 @@ Rerun in this repo is **batch-first**: `.rrd` is written after stages complete. 
 | Concern | Choice |
 | --- | --- |
 | **Primary viewer** | VM-co-located Rerun on the agent VM, same **nginx origin** as the agent UI (`/rerun/` iframe + basic auth). |
-| **Runtime** | Reuse workbench **`npa-sim2real-rerun-viewer`** Docker image **or** `rerun-sdk>=0.32` on the VM. |
+| **Runtime** | Prefer workbench **`npa-rerun-viewer`** Docker image (alias **`npa-sim2real-rerun-viewer`** until renamed) **or** `rerun-sdk>=0.32` on the VM. |
 | **Shared code** | Factor shared helpers from `sim2real_rerun_serve.py` (serve command, nginx config, CORS, S3 sync) so agent deploy and workbench K8s serve share one implementation surface. |
 | **K8s rerun serve pod** | **Not** primary iframe — avoids region, lifecycle, and auth split (cluster LB vs VM nginx). Remains the workbench operator path for post-run `.rrd` on cluster. |
 | **v2 (optional)** | Agent backend proxies **gRPC** to in-cluster serve (`DEFAULT_GRPC_PORT=9876`) for live rollouts; v1 static `.rrd` polling stays default and fallback. |
 
+**Image vs orchestration:** The viewer image is **generic** (rerun-sdk CLI / web viewer only). **Sim2Real-specific** wiring — S3 `.rrd` sync, nginx basic auth, K8s LoadBalancer lifecycle — lives in orchestration (`sim2real_rerun_serve.py`, agent deploy), not in the container image name or contents.
 
 ### Agent UI requirement — live sim run visualization
 
@@ -212,7 +213,7 @@ Exit 0 **only** when **all** true:
 - VM public IP in `us-central1` (not localhost-only)
 - HTTP basic auth at nginx edge (htpasswd pattern from sim2real rerun serve)
 - Full workbench **toolRef catalog** (≥19 entries) via `npa.workflow` `TOOL_CATALOG`
-- Real **Rerun web viewer** at `/rerun/` on agent VM (workbench image or `rerun-sdk>=0.32`; replace stub when implementing §1)
+- Real **Rerun web viewer** at `/rerun/` on agent VM (`npa-rerun-viewer` / legacy `npa-sim2real-rerun-viewer` image or `rerun-sdk>=0.32`; replace stub when implementing §1)
 - `npa agent deploy|status|destroy|verify-live` registered in `npa/src/npa/cli/main.py`
 - No credential leaks; use `redact_value` helpers
 - Commit when tests pass; keep diff focused
