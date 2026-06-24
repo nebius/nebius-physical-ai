@@ -23,9 +23,12 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '@app.post("/chat")' in source
-    assert "Workbench chat" in source
+    assert "Workbench Chat" in source
     assert "NEBIUS_TOKEN_FACTORY_KEY" in source
     assert "llm.env" in source
+    assert "renderInlineMarkdownLite" in source
+    assert "showThinkingBubble" in source
+    assert "thinking-dots" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -80,6 +83,8 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert 'credentials: "include"' in source
     assert 'credentials: "same-origin"' not in source
+    assert "setChatBusy(true)" in source
+    assert "setChatBusy(false)" in source
 
 
 def test_bootstrap_system_prompt_no_localhost() -> None:

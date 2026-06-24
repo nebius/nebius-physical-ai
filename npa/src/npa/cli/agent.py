@@ -913,107 +913,327 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <meta charset="utf-8">
     <title>NPA Agent</title>
     <style>
-      body {{ font-family: sans-serif; margin: 16px; max-width: 1600px; }}
-      .layout {{ display: grid; gap: 12px; }}
-      .layout-3 {{ grid-template-columns: 1fr 1.15fr 1.25fr; }}
-      .panel {{ border: 1px solid #ddd; border-radius: 6px; padding: 10px; }}
-      .cameras-panel {{ border-color: #93c5fd; background: #f8fafc; }}
+      :root {{
+        --bg: #f5f6f8;
+        --surface: #ffffff;
+        --text: #1f2430;
+        --muted: #5f6573;
+        --border: #e0e0e0;
+        --brand: #5e43f3;
+        --brand-strong: #4d35d4;
+        --sidebar: #1e1f22;
+        --ok-bg: #e8f7ee;
+        --ok-text: #18794e;
+        --shadow: 0 8px 22px rgba(30, 31, 34, 0.08);
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }}
+      .chrome {{
+        max-width: 1640px;
+        margin: 0 auto;
+        min-height: 100vh;
+      }}
+      .topbar {{
+        background: var(--sidebar);
+        color: #eef0f3;
+        padding: 14px 18px;
+        border-bottom: 1px solid #2a2c31;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }}
+      .brand {{
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        font-size: 13px;
+      }}
+      .brand-sub {{
+        color: #abb2bf;
+        font-size: 12px;
+      }}
+      .page {{
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }}
+      .layout {{ display: grid; gap: 14px; }}
+      .layout-3 {{ grid-template-columns: 1fr 0.95fr 1.35fr; }}
+      .panel {{
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }}
+      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; }}
+      .panel p {{ margin: 0; color: var(--muted); }}
+      .cameras-panel {{ border-color: #d7dbf6; }}
       .camera-card {{
-        border: 1px solid #dbeafe; border-radius: 6px; padding: 8px; margin-bottom: 8px;
+        border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
         background: #fff;
       }}
-      .camera-card.selected {{ border: 2px solid #3b82f6; box-shadow: 0 0 0 1px #bfdbfe; }}
+      .camera-card.selected {{ border: 2px solid #5e43f3; box-shadow: 0 0 0 1px rgba(94, 67, 243, 0.18); }}
       .camera-card h4 {{ margin: 0 0 6px 0; }}
-      .camera-meta {{ font-size: 12px; color: #475569; margin-bottom: 6px; }}
+      .camera-meta {{ font-size: 12px; color: #4b5568; margin-bottom: 6px; }}
       .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
       .camera-frustum {{ display: flex; justify-content: center; }}
-      .rollout-hint {{ font-size: 13px; color: #334155; margin: 0 0 10px 0; }}
+      .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-log {{
-        height: 280px; overflow-y: auto; background: #fafafa; border: 1px solid #eee;
-        border-radius: 4px; padding: 8px; margin-bottom: 8px;
+        height: 300px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
+        border-radius: 10px; padding: 10px; margin-bottom: 10px;
       }}
-      .chat-msg {{ margin: 6px 0; }}
-      .chat-msg.user {{ color: #111; }}
-      .chat-msg.assistant {{ color: #1e40af; }}
-      .chat-msg.error {{ color: #b91c1c; }}
-      .chat-input {{ display: flex; gap: 8px; }}
+      .msg-row {{
+        display: flex;
+        margin: 8px 0;
+      }}
+      .msg-row.user {{ justify-content: flex-end; }}
+      .msg-row.assistant, .msg-row.error, .msg-row.thinking {{ justify-content: flex-start; }}
+      .bubble {{
+        max-width: 78%;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        padding: 10px 12px;
+        font-size: 14px;
+        line-height: 1.45;
+      }}
+      .bubble p {{ margin: 0 0 6px 0; color: inherit; }}
+      .bubble p:last-child {{ margin-bottom: 0; }}
+      .bubble ul {{ margin: 4px 0 6px 18px; padding: 0; }}
+      .bubble li {{ margin: 2px 0; }}
+      .bubble code {{
+        background: #f0f1f6;
+        border: 1px solid #e4e6f0;
+        border-radius: 6px;
+        padding: 1px 5px;
+        font-size: 12px;
+      }}
+      .msg-row.user .bubble {{
+        background: var(--brand);
+        border-color: var(--brand);
+        color: #fff;
+      }}
+      .msg-row.error .bubble {{
+        border-color: #e9b8b8;
+        background: #fff8f8;
+      }}
+      .msg-row.thinking .bubble {{
+        min-width: 90px;
+        background: #f2f3f8;
+      }}
+      .thinking-dots {{
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }}
+      .thinking-dots span {{
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #6f7785;
+        display: inline-block;
+        animation: pulse 1s infinite ease-in-out;
+      }}
+      .thinking-dots span:nth-child(2) {{ animation-delay: 0.18s; }}
+      .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
+      @keyframes pulse {{
+        0%, 80%, 100% {{ opacity: 0.35; transform: translateY(0); }}
+        40% {{ opacity: 1; transform: translateY(-1px); }}
+      }}
+      .chat-input {{ display: flex; gap: 10px; align-items: flex-end; }}
       .chat-input textarea {{
-        flex: 1; min-height: 56px; resize: vertical; font-family: inherit; padding: 8px;
+        flex: 1; min-height: 58px; resize: vertical; font-family: inherit; padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        outline: none;
       }}
-      iframe {{ width: 100%; height: 360px; border: 1px solid #ddd; }}
-      pre {{ white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: 8px; }}
+      .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
+      iframe {{ width: 100%; height: 380px; border: 1px solid var(--border); border-radius: 10px; }}
+      pre {{
+        white-space: pre-wrap; word-break: break-word; background: #f7f7fb; padding: 10px;
+        border: 1px solid #ececf5; border-radius: 8px;
+      }}
       .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
       .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
-      .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 4px; padding: 8px; }}
-      .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e0e7ff; color: #1e3a8a; font-size: 12px; }}
+      .btn {{
+        border: 1px solid #d6d9e4;
+        background: #fff;
+        border-radius: 999px;
+        color: #2d3342;
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+      }}
+      .btn:hover {{ background: #f5f6fb; }}
+      .btn-primary {{
+        background: var(--brand);
+        border-color: var(--brand);
+        color: #fff;
+      }}
+      .btn-primary:hover {{ background: var(--brand-strong); }}
+      .btn[disabled], .btn:disabled {{
+        opacity: 0.65;
+        cursor: not-allowed;
+      }}
+      .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; }}
+      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
+      .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
+      .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
+      .hint {{ font-size: 13px; color: var(--muted); }}
+      @media (max-width: 1280px) {{
+        .layout-3 {{ grid-template-columns: 1fr; }}
+      }}
     </style>
   </head>
   <body>
-    <h2>NPA Agent</h2>
-    <section class="panel chat-panel">
-      <h3>Workbench chat</h3>
-      <p>Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun viz.</p>
-      <div id="chatLog" class="chat-log"></div>
-      <div class="chat-input">
-        <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
-        <button id="chatSend" type="button">Send</button>
-      </div>
-      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button id="chatActionS3" type="button">Configure S3</button>
-        <button id="chatActionCosmos" type="button">Setup Cosmos3</button>
-        <button id="chatActionWatch" type="button">Watch sim</button>
-      </div>
-    </section>
-    <div class="layout layout-3">
-      <section class="panel">
-        <h3>Sim Assets</h3>
-        <label for="robotPreset">Robot preset</label>
-        <select id="robotPreset">
-          <option value="franka" selected>Franka (stock tabletop)</option>
-          <option value="ur5e">UR5e</option>
-        </select>
-        <div id="assets"></div>
-        <div class="btn-row">
-          <button id="applySelection" type="button">Apply stock selection</button>
-          <button id="loadFrankaRerun" type="button">Load Franka in Rerun</button>
-          <button id="submitWorkflow" type="button">Submit Sim2Real</button>
-          <button id="workflowStatus" type="button">Workflow status</button>
+    <div class="chrome">
+      <header class="topbar">
+        <div>
+          <div class="brand">NEBIUS | NPA WORKBENCH AGENT</div>
+          <div class="brand-sub">Sim2Real operations, assets, cameras, and Rerun visualization</div>
         </div>
-      </section>
-      <section class="panel cameras-panel">
-        <h3>Cameras</h3>
-        <p id="cameraRolloutHint" class="rollout-hint">Active for next rollout: <strong id="activeCameraLabel">workspace</strong></p>
-        <p class="rollout-hint">Stock workspace and wrist cameras from the Sim2Real default scene spec.</p>
-        <div id="cameraCards"></div>
-        <select id="cameraSelect" hidden aria-hidden="true"></select>
-        <div id="rerunEntityHint" class="rollout-hint"></div>
-      </section>
-      <section class="panel">
-        <h3>Rerun (embedded)</h3>
-        <div id="simviz">
-          <div class="status-row">
-            <span>Run: <strong id="simRunId">—</strong></span>
-            <span>Stage: <span id="simStage" class="badge">idle</span></span>
-            <span>Camera: <strong id="simCamera">workspace</strong></span>
+        <span class="badge badge-ok">Protected by basic auth</span>
+      </header>
+      <main class="page">
+        <section class="panel chat-panel">
+          <h3>Workbench Chat</h3>
+          <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+          <div id="chatLog" class="chat-log"></div>
+          <div class="chat-input">
+            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
+            <button id="chatSend" class="btn btn-primary" type="button">Send</button>
           </div>
-          <div class="btn-row">
-            <button id="openRerun" type="button">Open in Rerun</button>
+          <div class="actions-inline">
+            <button id="chatActionS3" class="btn" type="button">Configure S3</button>
+            <button id="chatActionCosmos" class="btn" type="button">Setup Cosmos3</button>
+            <button id="chatActionWatch" class="btn" type="button">Watch sim</button>
           </div>
-          <p id="simvizCta" class="cta" hidden>No .rrd yet — click <strong>Load Franka in Rerun</strong> or submit Sim2Real.</p>
+        </section>
+        <div class="layout layout-3">
+          <section class="panel">
+            <h3>Sim Assets</h3>
+            <label for="robotPreset">Robot preset</label>
+            <select id="robotPreset">
+              <option value="franka" selected>Franka (stock tabletop)</option>
+              <option value="ur5e">UR5e</option>
+            </select>
+            <div id="assets"></div>
+            <div class="btn-row">
+              <button id="applySelection" class="btn" type="button">Apply stock selection</button>
+              <button id="loadFrankaRerun" class="btn" type="button">Load Franka in Rerun</button>
+              <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
+              <button id="workflowStatus" class="btn" type="button">Workflow status</button>
+            </div>
+          </section>
+          <section class="panel cameras-panel">
+            <h3>Cameras</h3>
+            <p id="cameraRolloutHint" class="rollout-hint">Active for next rollout: <strong id="activeCameraLabel">workspace</strong></p>
+            <p class="rollout-hint">Stock workspace and wrist cameras from the Sim2Real default scene spec.</p>
+            <div id="cameraCards"></div>
+            <select id="cameraSelect" hidden aria-hidden="true"></select>
+            <div id="rerunEntityHint" class="rollout-hint"></div>
+          </section>
+          <section class="panel">
+            <h3>Rerun (embedded)</h3>
+            <div id="simviz">
+              <div class="status-row">
+                <span>Run: <strong id="simRunId">—</strong></span>
+                <span>Stage: <span id="simStage" class="badge">idle</span></span>
+                <span>Camera: <strong id="simCamera">workspace</strong></span>
+              </div>
+              <div class="btn-row">
+                <button id="openRerun" class="btn" type="button">Open in Rerun</button>
+              </div>
+              <p id="simvizCta" class="cta" hidden>No .rrd yet - click <strong>Load Franka in Rerun</strong> or submit Sim2Real.</p>
+            </div>
+            <iframe id="rerunFrame" title="rerun" src="/rerun/?url=%2Fapi%2Fsim-viz%2Frrd"></iframe>
+          </section>
         </div>
-        <iframe id="rerunFrame" title="rerun" src="/rerun/?url=%2Fapi%2Fsim-viz%2Frrd"></iframe>
-      </section>
+      </main>
     </div>
     <script>
       const chatHistory = [];
-      function appendChat(role, text) {{
+      let thinkingNode = null;
+      function escapeHtml(text) {{
+        return String(text || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }}
+      function renderInlineMarkdownLite(text) {{
+        let value = escapeHtml(text);
+        value = value.replace(/`([^`]+)`/g, "<code>$1</code>");
+        value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        return value;
+      }}
+      function markdownLiteHtml(text) {{
+        const lines = String(text || "").split(/\r?\n/);
+        let html = "";
+        let inList = false;
+        for (const raw of lines) {{
+          const line = String(raw || "");
+          if (/^\s*[-*]\s+/.test(line)) {{
+            if (!inList) {{
+              html += "<ul>";
+              inList = true;
+            }}
+            html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*[-*]\s+/, "")) + "</li>";
+            continue;
+          }}
+          if (inList) {{
+            html += "</ul>";
+            inList = false;
+          }}
+          if (!line.trim()) {{
+            html += "<p></p>";
+          }} else {{
+            html += "<p>" + renderInlineMarkdownLite(line) + "</p>";
+          }}
+        }}
+        if (inList) {{
+          html += "</ul>";
+        }}
+        return html || "<p></p>";
+      }}
+      function appendChat(role, text, opts) {{
+        const options = opts || {{}};
         const log = document.getElementById("chatLog");
-        const div = document.createElement("div");
-        div.className = "chat-msg " + role;
-        div.textContent = (role === "user" ? "You: " : role === "error" ? "Error: " : "Agent: ") + text;
-        log.appendChild(div);
+        const row = document.createElement("div");
+        row.className = "msg-row " + role;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        if (options.thinking) {{
+          bubble.innerHTML = '<span class="thinking-dots"><span></span><span></span><span></span></span>';
+        }} else {{
+          bubble.innerHTML = markdownLiteHtml(String(text || ""));
+        }}
+        row.appendChild(bubble);
+        log.appendChild(row);
         log.scrollTop = log.scrollHeight;
+        return row;
+      }}
+      function showThinkingBubble() {{
+        if (thinkingNode) return;
+        thinkingNode = appendChat("thinking", "", {{ thinking: true }});
+      }}
+      function clearThinkingBubble() {{
+        if (thinkingNode && thinkingNode.parentNode) {{
+          thinkingNode.parentNode.removeChild(thinkingNode);
+        }}
+        thinkingNode = null;
+      }}
+      function setChatBusy(isBusy) {{
+        const btn = document.getElementById("chatSend");
+        const input = document.getElementById("chatInput");
+        btn.disabled = Boolean(isBusy);
+        input.disabled = Boolean(isBusy);
       }}
       async function sendChat() {{
         const input = document.getElementById("chatInput");
@@ -1022,8 +1242,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         input.value = "";
         appendChat("user", text);
         chatHistory.push({{ role: "user", content: text }});
-        const btn = document.getElementById("chatSend");
-        btn.disabled = true;
+        setChatBusy(true);
+        showThinkingBubble();
         try {{
           const resp = await fetch("/api/chat", {{
             method: "POST",
@@ -1032,6 +1252,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             body: JSON.stringify({{ messages: chatHistory }}),
           }});
           const data = await resp.json();
+          clearThinkingBubble();
           if (!resp.ok) {{
             appendChat("error", data.detail || resp.statusText || "chat failed");
             return;
@@ -1044,9 +1265,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             appendChat("error", "empty reply from model");
           }}
         }} catch (err) {{
+          clearThinkingBubble();
           appendChat("error", String(err));
         }} finally {{
-          btn.disabled = false;
+          setChatBusy(false);
           input.focus();
         }}
       }}
@@ -1064,7 +1286,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       document.getElementById("chatActionS3").addEventListener("click", () => setChatInput("Help me configure S3 credentials and bucket for NPA workflows."));
       document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
-      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun — use Load Franka in Rerun or check /api/sim-viz/status."));
+      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun - use Load Franka in Rerun or check /api/sim-viz/status."));
       let lastRrdUpdatedAt = "";
       function sameOriginApiUrl(path) {{
         const base = String(window.location.origin || "").replace(/\/$/, "");
@@ -1102,7 +1324,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return false;
         }}
         reloadRerunIframe(camera);
-        appendChat("assistant", "Loaded stock Franka tabletop demo in Rerun (" + camera + " camera).");
+        appendChat("assistant", "Loaded **stock Franka** tabletop demo in Rerun (`" + camera + "` camera).");
         await refresh();
         return true;
       }}
@@ -1140,7 +1362,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const cameras = await loadJson("/api/sim-assets/cameras");
           const simViz = await loadJson("/api/sim-viz/status");
           document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
-          document.getElementById("simRunId").textContent = String(simViz.run_id || "—");
+          document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
           const cta = document.getElementById("simvizCta");
@@ -1196,8 +1418,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const p1y = cy + r * Math.sin(angle - spread);
         const p2x = cx + r * Math.cos(angle + spread);
         const p2y = cy + r * Math.sin(angle + spread);
-        const stroke = selected ? "#2563eb" : "#94a3b8";
-        const fill = selected ? "rgba(37,99,235,0.18)" : "rgba(148,163,184,0.15)";
+        const stroke = selected ? "#5e43f3" : "#94a3b8";
+        const fill = selected ? "rgba(94,67,243,0.18)" : "rgba(148,163,184,0.15)";
         return `<svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="camera frustum">
           <circle cx="${{cx}}" cy="${{cy}}" r="4" fill="${{stroke}}"/>
           <polygon points="${{cx}},${{cy}} ${{p1x}},${{p1y}} ${{p2x}},${{p2y}}" fill="${{fill}}" stroke="${{stroke}}"/>
@@ -1212,17 +1434,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const selected = name === activeName;
           const card = document.createElement("div");
           card.className = "camera-card" + (selected ? " selected" : "");
-          const pos = Array.isArray(cam.pos) ? cam.pos.map((v) => Number(v).toFixed(2)).join(", ") : "—";
-          const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "—";
-          const res = Array.isArray(cam.resolution) ? cam.resolution.join("×") : "640×480";
+          const pos = Array.isArray(cam.pos) ? cam.pos.map((v) => Number(v).toFixed(2)).join(", ") : "-";
+          const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "-";
+          const res = Array.isArray(cam.resolution) ? cam.resolution.join("x") : "640x480";
           card.innerHTML = `
             <h4>${{name}}${{selected ? " <span class=\\"badge\\">selected</span>" : ""}}</h4>
-            <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} · fov ${{Number(cam.fov || 60)}}° · ${{res}}</div>
-            <div class="camera-meta">pos [${{pos}}] · look_at [${{look}}]</div>
+            <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} - fov ${{Number(cam.fov || 60)}}deg - ${{res}}</div>
+            <div class="camera-meta">pos [${{pos}}] - look_at [${{look}}]</div>
             <div class="camera-frustum">${{frustumSvg(cam, selected)}}</div>
             <div class="camera-actions">
-              <button type="button" data-action="select" data-camera="${{name}}">Select</button>
-              <button type="button" data-action="preview" data-camera="${{name}}">Preview in Rerun</button>
+              <button class="btn" type="button" data-action="select" data-camera="${{name}}">Select</button>
+              <button class="btn" type="button" data-action="preview" data-camera="${{name}}">Preview in Rerun</button>
             </div>`;
           holder.appendChild(card);
         }}
@@ -1230,7 +1452,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const rollout = "rollouts/latest/" + activeName + "/camera";
         document.getElementById("rerunEntityHint").textContent =
           (simViz.rerun_ready || simViz.rrd_uri)
-            ? "Rerun entities: " + entity + " (frustum) · " + rollout + " (rollout frames when available)"
+            ? "Rerun entities: " + entity + " (frustum) - " + rollout + " (rollout frames when available)"
             : "Preview in Rerun to log camera frustums; rollout frames appear after Sim2Real runs.";
         holder.querySelectorAll("button[data-action]").forEach((btn) => {{
           btn.addEventListener("click", async () => {{
@@ -1282,7 +1504,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         reloadRerunIframe(camera);
         const entity = String(data.entity_path || ("world/cameras/" + camera));
-        appendChat("assistant", "Previewing " + camera + " in Rerun at " + entity + ".");
+        appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }}
       document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
@@ -1347,13 +1569,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           appendChat("error", data.detail || "failed to submit sim2real");
           return;
         }}
-        appendChat("assistant", `Submitted sim2real run: ${{data.run_id || "unknown"}}`);
+        appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
         await refresh();
       }});
       document.getElementById("workflowStatus").addEventListener("click", async () => {{
         try {{
           const status = await loadJson("/api/workflows/sim2real/status");
-          appendChat("assistant", "Latest workflow status: " + JSON.stringify(status));
+          appendChat("assistant", "Latest workflow status:\n- run_id: `" + String((status.latest_submit || {{}}).run_id || "none") + "`\n- stage: `" + String((status.sim_viz || {{}}).stage || "idle") + "`");
         }} catch (err) {{
           appendChat("error", String(err));
         }}
