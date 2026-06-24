@@ -1111,6 +1111,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
+      .quick-pill {{
+        border-radius: 999px;
+        border: 1px solid #cbcfe1;
+        background: #f8f9fd;
+        color: #2f3650;
+        font-size: 12px;
+        padding: 7px 12px;
+      }}
+      .quick-pill:hover {{ background: #eef0fa; }}
       .hint {{ font-size: 13px; color: var(--muted); }}
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
@@ -1136,9 +1145,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <button id="chatSend" class="btn btn-primary" type="button">Send</button>
           </div>
           <div class="actions-inline">
-            <button id="chatActionS3" class="btn" type="button">Configure S3</button>
-            <button id="chatActionCosmos" class="btn" type="button">Setup Cosmos3</button>
-            <button id="chatActionWatch" class="btn" type="button">Watch sim</button>
+            <button id="chatActionS3" class="btn quick-pill" type="button">Configure S3</button>
+            <button id="chatActionCosmos" class="btn quick-pill" type="button">Setup Cosmos3</button>
+            <button id="chatActionWatch" class="btn quick-pill" type="button">Watch sim</button>
           </div>
         </section>
         <div class="layout layout-3">
@@ -1242,28 +1251,46 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const lines = String(text || "").split(/\r?\n/);
         let html = "";
         let inList = false;
+        let listKind = "";
         for (const raw of lines) {{
           const line = String(raw || "");
           if (/^\s*[-*]\s+/.test(line)) {{
-            if (!inList) {{
+            if (!inList || listKind !== "ul") {{
+              if (inList) {{
+                html += listKind === "ol" ? "</ol>" : "</ul>";
+              }}
               html += "<ul>";
               inList = true;
+              listKind = "ul";
             }}
             html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*[-*]\s+/, "")) + "</li>";
             continue;
           }}
+          if (/^\s*\d+\.\s+/.test(line)) {{
+            if (!inList || listKind !== "ol") {{
+              if (inList) {{
+                html += listKind === "ol" ? "</ol>" : "</ul>";
+              }}
+              html += "<ol>";
+              inList = true;
+              listKind = "ol";
+            }}
+            html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*\d+\.\s+/, "")) + "</li>";
+            continue;
+          }}
           if (inList) {{
-            html += "</ul>";
+            html += listKind === "ol" ? "</ol>" : "</ul>";
             inList = false;
+            listKind = "";
           }}
           if (!line.trim()) {{
-            html += "<p></p>";
+            continue;
           }} else {{
             html += "<p>" + renderInlineMarkdownLite(line) + "</p>";
           }}
         }}
         if (inList) {{
-          html += "</ul>";
+          html += listKind === "ol" ? "</ol>" : "</ul>";
         }}
         return html || "<p></p>";
       }}

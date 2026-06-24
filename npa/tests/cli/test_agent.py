@@ -31,6 +31,10 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "thinking-dots" in source
     assert "font-family: Inter, system-ui" in source
     assert "font-family: monospace" not in source
+    assert "quick-pill" in source
+    assert "--brand: #5e43f3;" in source
+    assert "--sidebar: #1e1f22;" in source
+    assert "markdownLiteHtml" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -90,6 +94,8 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
     assert "setChatBusy(false)" in source
+    assert "btn.disabled = Boolean(isBusy);" in source
+    assert "input.disabled = Boolean(isBusy);" in source
     assert "JSON.stringify(assets.selection" not in source
 
 
