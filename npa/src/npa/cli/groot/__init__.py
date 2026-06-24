@@ -2526,7 +2526,7 @@ def deploy_cmd(
         "nebius_project_id",
         "nebius_region",
     ):
-        if key in nebius_creds and key not in merged_vars:
+        if key in nebius_creds:
             merged_vars[key] = nebius_creds[key]
     if use_remote_state and (destroy or skip_infra):
         _apply_saved_terraform_state(

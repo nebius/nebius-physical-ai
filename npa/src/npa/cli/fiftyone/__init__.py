@@ -2803,7 +2803,7 @@ def deploy_cmd(
         k, v = item.split("=", 1)
         extra_vars[k] = v
     storage_endpoint_override = storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
-    if storage_endpoint_override and "s3_endpoint" not in extra_vars:
+    if storage_endpoint_override and "s3_endpoint" not in extra_vars and not use_remote_state:
         extra_vars["s3_endpoint"] = storage_endpoint_url(storage_endpoint_override)
     endpoint_warning = storage_endpoint_warning(
         storage_endpoint_override
@@ -2932,7 +2932,7 @@ def deploy_cmd(
         "nebius_project_id",
         "nebius_region",
     ):
-        if key in nebius_creds and key not in merged_vars:
+        if key in nebius_creds:
             merged_vars[key] = nebius_creds[key]
     if use_remote_state and (destroy or skip_infra):
         _apply_saved_terraform_state(

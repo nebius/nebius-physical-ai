@@ -182,6 +182,112 @@ def discover_container_registry(project_id: str) -> str:
 # ── Service account ──────────────────────────────────────────────────────
 
 
+_SA_RESOURCE_ID_RE = re.compile(
+    r"resource ID:\s*(serviceaccount-[a-z0-9]+)",
+    re.IGNORECASE,
+)
+
+
+def _resource_id_from_nebius_error(message: str, *, prefix: str) -> str:
+    """Best-effort parse of a Nebius resource id embedded in CLI stderr."""
+
+    if prefix == "serviceaccount-":
+        match = _SA_RESOURCE_ID_RE.search(message)
+        return match.group(1) if match else ""
+    match = re.search(rf"resource ID:\s*({re.escape(prefix)}[a-z0-9-]+)", message, re.I)
+    return match.group(1) if match else ""
+
+
+def _is_permission_denied(message: str) -> bool:
+    lowered = message.lower()
+    return "permissiondenied" in lowered or "permission denied" in lowered or "no permission" in lowered
+
+
+def _normalize_bucket_name(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("s3://"):
+        from urllib.parse import urlparse
+
+        return urlparse(cleaned).netloc
+    return cleaned.split("/", 1)[0]
+
+
+def _saved_service_account_id() -> str:
+    import os
+
+    from npa.clients.credentials import CREDENTIALS_PATH
+
+    env_value = os.environ.get("NPA_SERVICE_ACCOUNT_ID", "").strip()
+    if env_value:
+        return env_value
+    if not CREDENTIALS_PATH.exists():
+        return ""
+    try:
+        import yaml
+
+        with CREDENTIALS_PATH.open(encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle)
+    except Exception:
+        return ""
+    if not isinstance(loaded, dict):
+        return ""
+    nebius = loaded.get("nebius", {})
+    if isinstance(nebius, dict):
+        return str(nebius.get("service_account_id", "") or "").strip()
+    return ""
+
+
+def _saved_storage_credentials(
+    *,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    bucket_name: str | None,
+    service_account_id: str = "",
+) -> dict[str, str] | None:
+    """Reuse configured object-storage credentials when IAM provisioning is blocked."""
+
+    from npa.clients.credentials import load_credentials
+    from npa.clients.config import resolve_project_storage
+
+    creds = load_credentials()
+    access_key = creds.s3_access_key_id.strip()
+    secret_key = creds.s3_secret_access_key.strip()
+    if not access_key or not secret_key:
+        return None
+
+    endpoint = creds.s3_endpoint.strip() or f"https://storage.{region}.nebius.cloud"
+
+    bucket = _normalize_bucket_name(creds.s3_bucket)
+    if not bucket:
+        try:
+            storage = resolve_project_storage(None)
+            bucket = _normalize_bucket_name(getattr(storage, "checkpoint_bucket", ""))
+        except Exception:
+            bucket = ""
+    if not bucket:
+        bucket = _normalize_bucket_name(bucket_name or "")
+    if not bucket:
+        bucket = bucket_name_for(tenant_id, project_id)
+
+    sa_id = service_account_id.strip() or _saved_service_account_id()
+    if not sa_id:
+        return None
+
+    return {
+        "iam_token": get_iam_token(),
+        "service_account_id": sa_id,
+        "nebius_api_key": access_key,
+        "nebius_secret_key": secret_key,
+        "s3_bucket": bucket,
+        "s3_endpoint": endpoint,
+        "nebius_project_id": project_id,
+        "nebius_region": region,
+    }
+
+
 def ensure_service_account(
     project_id: str,
     name: str = "lerobot-training",
@@ -197,8 +303,21 @@ def ensure_service_account(
         sa_id = data.get("metadata", {}).get("id", "")
         if sa_id:
             return sa_id
-    except NebiusError:
-        pass  # Not found — create below.
+    except NebiusError as exc:
+        message = str(exc)
+        sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
+        if sa_id:
+            return sa_id
+        saved = _saved_service_account_id()
+        if saved:
+            return saved
+        if _is_permission_denied(message):
+            raise NebiusError(
+                f"Cannot read or create service account {name!r}: {exc}. "
+                "Set NPA_SERVICE_ACCOUNT_ID or nebius.service_account_id in "
+                "~/.npa/credentials.yaml when IAM management is restricted."
+            ) from exc
+        # Not found — create below.
 
     data = _run_json([
         "iam", "service-account", "create",
@@ -475,19 +594,54 @@ def bootstrap_environment(
     sa_id = ensure_service_account(project_id)
 
     _status("Configuring service account permissions...")
-    ensure_editors_membership(tenant_id, sa_id)
+    try:
+        ensure_editors_membership(tenant_id, sa_id)
+    except NebiusError as exc:
+        if not _is_permission_denied(str(exc)):
+            raise
+
+    bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
 
     _status("Setting up S3 bucket...")
-    bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
-    ensure_bucket(
-        project_id,
-        bucket_name,
-        max_size_bytes=bucket_max_size_bytes,
-        default_storage_class=bucket_storage_class,
-    )
+    try:
+        ensure_bucket(
+            project_id,
+            bucket_name,
+            max_size_bytes=bucket_max_size_bytes,
+            default_storage_class=bucket_storage_class,
+        )
+    except NebiusError as exc:
+        if not _is_permission_denied(str(exc)):
+            raise
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id,
+        )
+        if fallback is None:
+            raise
+        _status("Reusing saved object-storage credentials (bucket provisioning skipped).")
+        return fallback
 
     _status("Setting up access key for S3...")
-    aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)
+    try:
+        aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)
+    except NebiusError as exc:
+        if not _is_permission_denied(str(exc)):
+            raise
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id,
+        )
+        if fallback is None:
+            raise
+        _status("Reusing saved object-storage credentials (access-key provisioning skipped).")
+        return fallback
 
     s3_endpoint = f"https://storage.{region}.nebius.cloud"
 
