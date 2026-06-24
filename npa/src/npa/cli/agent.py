@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -174,6 +175,31 @@ def _tool_catalog_payload() -> dict[str, dict[str, Any]]:
     return payload
 
 
+def _resolve_deploy_llm_credentials() -> tuple[str, str]:
+    """Return Token Factory API key and default model for agent VM bootstrap."""
+    from npa.clients.credentials import load_credentials
+
+    creds = load_credentials()
+    return creds.token_factory_api_key, DEFAULT_LLM_MODEL
+
+
+def _write_agent_llm_env(
+    ssh: SSHClient,
+    *,
+    tf_api_key: str,
+    llm_model: str,
+) -> None:
+    """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
+    if not tf_api_key.strip():
+        return
+    env_content = f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\nNPA_AGENT_LLM_MODEL={llm_model}\n"
+    env_b64 = base64.b64encode(env_content.encode("utf-8")).decode("ascii")
+    ssh.run_or_raise(
+        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/llm.env >/dev/null "
+        "&& sudo chmod 600 /opt/npa-agent/llm.env"
+    )
+
+
 def _is_routable_public_ip(value: str) -> bool:
     candidate = (value or "").strip()
     if not candidate:
@@ -199,6 +225,8 @@ def _bootstrap_agent_stack(
     agent_port: int,
     backend_port: int,
     rerun_port: int,
+    llm_model: str = DEFAULT_LLM_MODEL,
+    tf_api_key: str = "",
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -216,10 +244,13 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils pytho
 sudo mkdir -p /opt/npa-agent
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
+import os
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -312,6 +343,115 @@ def _load_state() -> dict:
 
 def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
+TF_BASE_URL = os.environ.get(
+    "NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"
+).rstrip("/")
+_THINK_RE = re.compile(
+    r"\\A\\s*<think>(?P<reasoning>.*?)</think>\\s*", re.DOTALL
+)
+
+def _agent_system_prompt() -> str:
+    lines = [
+        "You are the NPA workbench assistant on a Nebius Physical AI agent VM.",
+        "Help operators configure NPA: provision infrastructure, Cosmos3, S3 storage,",
+        "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
+        "",
+        "Agent HTTP APIs on this VM (behind nginx /api/):",
+        "- GET /sim-assets, /sim-assets/selection, /sim-assets/cameras",
+        "- GET /sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
+        "- POST /workflows/sim2real/submit — submit Sim2Real with current asset selection",
+        "- GET /tools — workbench toolRef catalog",
+        "",
+        "Workbench toolRefs (invoke via npa workbench / npa.workflow on operator machine):",
+    ]
+    for key in TOOL_REFS:
+        entry = TOOL_CATALOG.get(key, {{}})
+        desc = entry.get("description", "")
+        lines.append(f"- {{key}}: {{desc}}")
+    lines.extend(
+        [
+            "",
+            "Before Sim2Real submit, confirm scene/robot/camera selection.",
+            "After submit, point users to /rerun/ and poll sim-viz status until rrd_uri is set.",
+        ]
+    )
+    return "\\n".join(lines)
+
+def _split_reasoning(message: dict) -> tuple[str, str | None]:
+    content = message.get("content")
+    reasoning = message.get("reasoning") or message.get("reasoning_content")
+    if reasoning is not None and not isinstance(reasoning, str):
+        reasoning = str(reasoning)
+    if isinstance(content, str):
+        match = _THINK_RE.match(content)
+        if match:
+            visible = content[match.end() :].strip()
+            trace = (match.group("reasoning").strip() or reasoning)
+            return visible, trace
+        return content.strip(), reasoning
+    return "", (reasoning.strip() if reasoning else None)
+
+def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
+    api_key = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Token Factory API key not configured on agent VM")
+    url = f"{{TF_BASE_URL}}/chat/completions"
+    payload = {{
+        "model": model or LLM_MODEL,
+        "messages": messages,
+        "temperature": 0.2,
+    }}
+    try:
+        response = httpx.post(
+            url,
+            headers={{
+                "Authorization": f"Bearer {{api_key}}",
+                "Content-Type": "application/json",
+            }},
+            json=payload,
+            timeout=120.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Token Factory request failed: {{exc}}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Token Factory returned non-object response")
+    return data
+
+@app.post("/chat")
+def chat(payload: dict):
+    raw_messages = payload.get("messages", [])
+    if not isinstance(raw_messages, list) or not raw_messages:
+        raise HTTPException(status_code=400, detail="messages must be a non-empty list")
+    model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    messages: list[dict] = [{{"role": "system", "content": _agent_system_prompt()}}]
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "user")).strip() or "user"
+        content = str(item.get("content", "")).strip()
+        if content:
+            messages.append({{"role": role, "content": content}})
+    if len(messages) < 2:
+        raise HTTPException(status_code=400, detail="at least one user message is required")
+    data = _token_factory_chat(messages=messages, model=model)
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Token Factory response missing assistant message") from exc
+    reply, reasoning = _split_reasoning(message)
+    if not reply and reasoning:
+        reply = reasoning
+        reasoning = None
+    return {{
+        "ok": True,
+        "model": model,
+        "reply": reply,
+        "reasoning": reasoning,
+    }}
 
 @app.get("/health")
 def health():
@@ -470,16 +610,37 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <meta charset="utf-8">
     <title>NPA Agent</title>
     <style>
-      body {{ font-family: sans-serif; margin: 16px; }}
+      body {{ font-family: sans-serif; margin: 16px; max-width: 1400px; }}
       .layout {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
       .panel {{ border: 1px solid #ddd; border-radius: 6px; padding: 10px; }}
+      .chat-panel {{ margin-bottom: 12px; }}
+      .chat-log {{
+        height: 280px; overflow-y: auto; background: #fafafa; border: 1px solid #eee;
+        border-radius: 4px; padding: 8px; margin-bottom: 8px;
+      }}
+      .chat-msg {{ margin: 6px 0; }}
+      .chat-msg.user {{ color: #111; }}
+      .chat-msg.assistant {{ color: #1e40af; }}
+      .chat-msg.error {{ color: #b91c1c; }}
+      .chat-input {{ display: flex; gap: 8px; }}
+      .chat-input textarea {{
+        flex: 1; min-height: 56px; resize: vertical; font-family: inherit; padding: 8px;
+      }}
       iframe {{ width: 100%; height: 360px; border: 1px solid #ddd; }}
       pre {{ white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: 8px; }}
     </style>
   </head>
   <body>
     <h2>NPA Agent</h2>
-    <p>Chat/control surfaces + sim assets + rerun panel are co-located on this VM.</p>
+    <section class="panel chat-panel">
+      <h3>Workbench chat</h3>
+      <p>Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun viz.</p>
+      <div id="chatLog" class="chat-log"></div>
+      <div class="chat-input">
+        <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
+        <button id="chatSend" type="button">Send</button>
+      </div>
+    </section>
     <div class="layout">
       <section class="panel">
         <h3>Sim Assets</h3>
@@ -498,6 +659,57 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       </section>
     </div>
     <script>
+      const chatHistory = [];
+      function appendChat(role, text) {{
+        const log = document.getElementById("chatLog");
+        const div = document.createElement("div");
+        div.className = "chat-msg " + role;
+        div.textContent = (role === "user" ? "You: " : role === "error" ? "Error: " : "Agent: ") + text;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+      }}
+      async function sendChat() {{
+        const input = document.getElementById("chatInput");
+        const text = String(input.value || "").trim();
+        if (!text) return;
+        input.value = "";
+        appendChat("user", text);
+        chatHistory.push({{ role: "user", content: text }});
+        const btn = document.getElementById("chatSend");
+        btn.disabled = true;
+        try {{
+          const resp = await fetch("/api/chat", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            credentials: "same-origin",
+            body: JSON.stringify({{ messages: chatHistory }}),
+          }});
+          const data = await resp.json();
+          if (!resp.ok) {{
+            appendChat("error", data.detail || resp.statusText || "chat failed");
+            return;
+          }}
+          const reply = String(data.reply || "").trim();
+          if (reply) {{
+            appendChat("assistant", reply);
+            chatHistory.push({{ role: "assistant", content: reply }});
+          }} else {{
+            appendChat("error", "empty reply from model");
+          }}
+        }} catch (err) {{
+          appendChat("error", String(err));
+        }} finally {{
+          btn.disabled = false;
+          input.focus();
+        }}
+      }}
+      document.getElementById("chatSend").addEventListener("click", sendChat);
+      document.getElementById("chatInput").addEventListener("keydown", (e) => {{
+        if (e.key === "Enter" && !e.shiftKey) {{
+          e.preventDefault();
+          sendChat();
+        }}
+      }});
       async function loadJson(path) {{
         const resp = await fetch(path, {{ credentials: "same-origin" }});
         return await resp.json();
@@ -586,7 +798,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
-sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
 [Unit]
@@ -594,6 +806,7 @@ Description=NPA agent backend
 After=network.target
 [Service]
 Type=simple
+EnvironmentFile=-/opt/npa-agent/llm.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -626,8 +839,21 @@ server {{
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
   }}
+  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
+    rewrite ^/rerun/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{rerun_port};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    gzip on;
+    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
+    gzip_min_length 256;
+    add_header Cache-Control "public, max-age=604800, immutable" always;
+  }}
   location /rerun/ {{
     proxy_pass http://127.0.0.1:{rerun_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    add_header Cache-Control "no-cache" always;
   }}
   location / {{
     root /opt/npa-agent;
@@ -640,8 +866,10 @@ sudo ln -sf /etc/nginx/sites-available/npa-agent /etc/nginx/sites-enabled/npa-ag
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo systemctl daemon-reload
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
+sudo systemctl restart npa-agent-backend nginx
 """
     ssh.run_or_raise(setup_script)
+    _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
 
 
 def _health(url: str, *, user: str, password: str, timeout: float = 5.0) -> tuple[bool, int]:
@@ -748,6 +976,13 @@ def deploy_cmd(
         user=DEFAULT_AGENT_USER,
         password=auth_password,
     )
+    tf_api_key, llm_model = _resolve_deploy_llm_credentials()
+    if not tf_api_key:
+        typer.echo(
+            "Warning: Token Factory API key not found in credentials; "
+            "agent chat will return 503 until `npa agent bootstrap` with a configured key.",
+            err=True,
+        )
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -758,6 +993,8 @@ def deploy_cmd(
             agent_port=agent_port,
             backend_port=backend_port,
             rerun_port=rerun_port,
+            llm_model=llm_model,
+            tf_api_key=tf_api_key,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -818,6 +1055,60 @@ def deploy_cmd(
     typer.echo(f"auth_user: {DEFAULT_AGENT_USER}")
     typer.echo(f"auth_secret_path: {auth_path}")
     typer.echo(f"auth_password: {redact_value(auth_password)}")
+
+
+@app.command("bootstrap")
+def bootstrap_cmd(
+    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
+    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
+    agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
+    backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
+    rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+) -> None:
+    """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
+    record = _agent_record(project, name)
+    if not record:
+        _fail(f"Agent config not found for {project}/{name}")
+    public_ip = str(record.get("public_ip", "")).strip()
+    if not _is_routable_public_ip(public_ip):
+        _fail("agent VM does not have a routable public IP")
+    ssh_key_path = resolve_ssh_config(
+        ssh_host=public_ip,
+        ssh_user=ssh_user,
+        ssh_key=None,
+        project=None,
+        name=None,
+    ).ssh.key_path or str(Path.home() / ".ssh" / "id_ed25519")
+    try:
+        auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
+    except ValueError as exc:
+        _fail(str(exc))
+    tf_api_key, llm_model = _resolve_deploy_llm_credentials()
+    llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
+    if isinstance(llm_block.get("model"), str) and llm_block["model"].strip():
+        llm_model = llm_block["model"].strip()
+    if not tf_api_key:
+        typer.echo(
+            "Warning: Token Factory API key not found; chat endpoint will return 503.",
+            err=True,
+        )
+    try:
+        _bootstrap_agent_stack(
+            host=public_ip,
+            ssh_user=ssh_user,
+            ssh_key_path=ssh_key_path,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            agent_port=agent_port,
+            backend_port=backend_port,
+            rerun_port=rerun_port,
+            llm_model=llm_model,
+            tf_api_key=tf_api_key,
+        )
+    except (ConfigError, SSHError, ValueError) as exc:
+        _fail(f"VM bootstrap failed: {exc}")
+    typer.echo(f"bootstrapped: {project}/{name} at http://{public_ip}:{agent_port}/")
 
 
 @app.command("status")

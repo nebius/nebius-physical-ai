@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -13,7 +14,30 @@ def test_agent_help_smoke() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "deploy" in result.output
+    assert "bootstrap" in result.output
     assert "verify-live" in result.output
+
+
+def test_bootstrap_embeds_chat_endpoint() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert '@app.post("/chat")' in source
+    assert "Workbench chat" in source
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in source
+    assert "llm.env" in source
+
+
+def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: type("Creds", (), {"token_factory_api_key": "tf-test-key"})(),
+    )
+    from npa.cli.agent import _resolve_deploy_llm_credentials
+
+    key, model = _resolve_deploy_llm_credentials()
+    assert key == "tf-test-key"
+    assert model == "nvidia/Cosmos3-Super-Reasoner"
 
 
 def test_agent_status_json(monkeypatch) -> None:
