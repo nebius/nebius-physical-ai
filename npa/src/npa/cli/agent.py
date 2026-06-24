@@ -452,76 +452,16 @@ def submit_sim2real(payload: dict):
     _save_state(state)
     return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
 PY
-cat <<'PY' | sudo tee /opt/npa-agent/rerun_stub.py >/dev/null
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py >/dev/null
+from pathlib import Path
 
-app = FastAPI(title="npa-agent-rerun")
+import rerun as rr
 
-@app.get("/healthz")
-def health():
-    return {{"ok": True}}
-
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return '''<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>NPA Sim Viz</title>
-    <style>
-      body {{ font-family: sans-serif; margin: 12px; }}
-      .meta {{ margin-bottom: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; }}
-      .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; margin-left: 6px; }}
-      iframe {{ width: 100%; height: 540px; border: 1px solid #ddd; border-radius: 6px; }}
-      .hint {{ color: #555; margin-top: 8px; }}
-    </style>
-  </head>
-  <body>
-    <div class="meta">
-      <strong>Run:</strong> <span id="run_id">-</span>
-      <span class="badge" id="stage">idle</span>
-      <span class="badge" id="mode">static</span>
-    </div>
-    <iframe id="viz" title="sim-viz" src="about:blank"></iframe>
-    <p class="hint">Panel polls <code>/api/sim-viz/status</code> and reloads when a newer recording appears.</p>
-    <script>
-      let lastUri = "";
-      let lastUpdated = "";
-      function setText(id, value) {{
-        const el = document.getElementById(id);
-        if (el) el.textContent = value || "-";
-      }}
-      async function poll() {{
-        try {{
-          const resp = await fetch("/api/sim-viz/status", {{ credentials: "same-origin" }});
-          if (!resp.ok) return;
-          const payload = await resp.json();
-          const runId = String(payload.run_id || "");
-          const stage = String(payload.stage || "idle");
-          const mode = String(payload.mode || "static");
-          const rrdUri = String(payload.rrd_uri || "");
-          const updated = String(payload.rrd_updated_at || "");
-          setText("run_id", runId || "-");
-          setText("stage", stage);
-          setText("mode", mode);
-          if (rrdUri && (rrdUri !== lastUri || updated !== lastUpdated)) {{
-            lastUri = rrdUri;
-            lastUpdated = updated;
-            // The backend can return a local file response or JSON pointer.
-            const viewer = document.getElementById("viz");
-            viewer.src = "/api/sim-viz/rrd";
-          }}
-        }} catch (_err) {{
-          // Keep polling; transient fetch failures are expected during startup.
-        }}
-      }}
-      poll();
-      setInterval(poll, 5000);
-    </script>
-  </body>
-</html>
-'''
+target = Path("/opt/npa-agent/sim2real.rrd")
+if not target.exists():
+    rr.init("npa-agent-bootstrap", spawn=False)
+    rr.log("agent/bootstrap", rr.TextDocument("Rerun viewer bootstrap recording"))
+    rr.save(str(target))
 PY
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <!doctype html>
@@ -646,7 +586,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
-sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn
+sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
 [Unit]
 Description=NPA agent backend
@@ -665,7 +606,7 @@ Description=NPA rerun service
 After=network.target
 [Service]
 Type=simple
-ExecStart=/opt/npa-agent/venv/bin/uvicorn rerun_stub:app --host 0.0.0.0 --port {rerun_port}
+ExecStart=/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd --serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
 WorkingDirectory=/opt/npa-agent
 Restart=always
 [Install]
