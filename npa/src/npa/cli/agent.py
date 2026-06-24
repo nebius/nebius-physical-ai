@@ -361,12 +361,62 @@ def _stock_franka_selection() -> dict:
         "props": ["cube"],
     }}
 
+def _camera_frustum_lines(pos: list[float], look_at: list[float], fov: float, *, depth: float = 0.35):
+    import math
+
+    px, py, pz = (float(pos[0]), float(pos[1]), float(pos[2]))
+    lx, ly, lz = (float(look_at[0]), float(look_at[1]), float(look_at[2]))
+    fx, fy, fz = (lx - px, ly - py, lz - pz)
+    norm = math.sqrt(fx * fx + fy * fy + fz * fz) or 1.0
+    fx, fy, fz = (fx / norm, fy / norm, fz / norm)
+    upx, upy, upz = (0.0, 0.0, 1.0)
+    rx = fy * upz - fz * upy
+    ry = fz * upx - fx * upz
+    rz = fx * upy - fy * upx
+    rnorm = math.sqrt(rx * rx + ry * ry + rz * rz) or 1.0
+    rx, ry, rz = (rx / rnorm, ry / rnorm, rz / rnorm)
+    ux = ry * fz - rz * fy
+    uy = rz * fx - rx * fz
+    uz = rx * fy - ry * fx
+    half_h = depth * math.tan(math.radians(float(fov) / 2.0))
+    half_w = half_h * (4.0 / 3.0)
+    cx = px + fx * depth
+    cy = py + fy * depth
+    cz = pz + fz * depth
+    corners = []
+    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        corners.append(
+            [
+                cx + rx * half_w * sx + ux * half_h * sy,
+                cy + ry * half_w * sx + uy * half_h * sy,
+                cz + rz * half_w * sx + uz * half_h * sy,
+            ]
+        )
+    origin = [px, py, pz]
+    strips = [
+        [origin, corners[0]],
+        [origin, corners[1]],
+        [origin, corners[2]],
+        [origin, corners[3]],
+        corners + [corners[0]],
+    ]
+    return origin, strips
+
 def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
+    import math
+
     import rerun as rr
 
     target = RRD_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     rr.init("npa-franka-tabletop-demo", spawn=False)
+    rr.log(
+        "agent/camera_inspector",
+        rr.TextDocument(
+            "Stock Franka tabletop demo with workspace and wrist camera frustums. "
+            "Highlighted camera is selected for the next rollout."
+        ),
+    )
     rr.log(
         "world/table",
         rr.Boxes3D(
@@ -389,14 +439,47 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
             "Franka Panda — stock tabletop pick-and-place demo (NPA agent preview)"
         ),
     )
-    camera_specs = {{
-        "workspace": ([1.0, 0.0, 0.8], 60.0),
-        "wrist": ([0.4, 0.0, 0.4], 90.0),
-    }}
-    for cam_name, (pos, fov) in camera_specs.items():
-        rr.log(f"cameras/{{cam_name}}", rr.Pinhole(fov_y=fov))
-        rr.log(f"cameras/{{cam_name}}", rr.Transform3D(translation=pos))
-    active = camera if camera in camera_specs else "workspace"
+    cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
+    active = camera if camera in cameras else "workspace"
+    for name, cam in cameras.items():
+        if not isinstance(cam, dict):
+            continue
+        pos = list(cam.get("pos") or [0.0, 0.0, 0.0])
+        look_at = list(cam.get("look_at") or [0.0, 1.0, 0.0])
+        fov = float(cam.get("fov") or 60.0)
+        res = cam.get("resolution") or [640, 480]
+        width = int(res[0]) if len(res) > 0 else 640
+        height = int(res[1]) if len(res) > 1 else 480
+        entity = f"world/cameras/{{name}}"
+        focal = width / (2.0 * math.tan(math.radians(fov / 2.0)))
+        rr.log(entity, rr.Pinhole(focal_length=focal, width=width, height=height))
+        rr.log(entity, rr.Transform3D(translation=pos))
+        origin, strips = _camera_frustum_lines(pos, look_at, fov)
+        color = [59, 130, 246] if name == active else [148, 163, 184]
+        rr.log(
+            f"{{entity}}/frustum",
+            rr.LineStrips3D(strips, colors=[color] * len(strips)),
+        )
+        rr.log(f"{{entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
+        label = (
+            f"**{{name}}** (selected for next rollout)"
+            if name == active
+            else f"**{{name}}**"
+        )
+        rr.log(
+            f"{{entity}}/label",
+            rr.TextDocument(
+                f"{{label}}\\n"
+                f"pos={{pos}} look_at={{look_at}} fov={{fov}}° resolution={{width}}x{{height}}"
+            ),
+        )
+        rr.log(
+            f"rollouts/latest/{{name}}/camera",
+            rr.TextDocument(
+                f"Sim2Real rollout camera stream for `{{name}}` "
+                f"(populated when a run writes frames to the recording)."
+            ),
+        )
     rr.log("demo/active_camera", rr.TextLog(active))
     rr.save(str(target))
     return target
@@ -429,8 +512,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
         "live_grpc_url": "",
-        "mode": "static",
+        "mode": "camera_preview",
         "camera": cam,
+        "preview_camera": cam,
+        "preview_entity": f"world/cameras/{{cam}}",
         "rerun_ready": restarted or target.is_file(),
         "rerun_iframe_url": f"/rerun/?camera={{cam}}",
     }}
@@ -461,6 +546,8 @@ def _agent_system_prompt() -> str:
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
         "(or POST /api/sim-viz/load-franka-demo). Open the embedded viewer at /rerun/.",
+        "The **Cameras** panel is the center column below chat: stock workspace and wrist cameras",
+        "with 2D frustum schematics, selection, and **Preview in Rerun**.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
         "",
         "Workbench toolRefs (invoke via npa workbench / npa.workflow on operator machine):",
@@ -598,6 +685,32 @@ def load_franka_demo(payload: dict | None = None):
     viz = _wire_franka_demo(state, camera=camera)
     return {{"ok": True, "sim_viz": viz, "selection": state["selection"]}}
 
+@app.post("/sim-viz/camera-preview")
+def sim_viz_camera_preview(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    camera = str(body.get("camera") or "").strip()
+    if not camera:
+        state = _load_state()
+        selected = state.get("camera_selection", ["workspace"])
+        if isinstance(selected, list) and selected:
+            camera = str(selected[0])
+        else:
+            camera = "workspace"
+    cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
+    if camera not in cameras:
+        raise HTTPException(status_code=404, detail=f"unknown camera: {{camera}}")
+    state = _load_state()
+    viz = _wire_franka_demo(state, camera=camera)
+    entity_path = f"world/cameras/{{camera}}"
+    return {{
+        "ok": True,
+        "camera": camera,
+        "entity_path": entity_path,
+        "rollout_entity_guess": f"rollouts/latest/{{camera}}/camera",
+        "sim_viz": viz,
+        "hint": "Open the Rerun panel and expand world/cameras/<name>.",
+    }}
+
 @app.get("/sim-viz/rrd")
 def sim_viz_rrd():
     state = _load_state()
@@ -610,140 +723,6 @@ def sim_viz_rrd():
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
     return JSONResponse({{"ok": True, "rrd_uri": uri}}, status_code=200)
-
-def _camera_frustum_lines(pos: list[float], look_at: list[float], fov: float, *, depth: float = 0.35):
-    import math
-
-    px, py, pz = (float(pos[0]), float(pos[1]), float(pos[2]))
-    lx, ly, lz = (float(look_at[0]), float(look_at[1]), float(look_at[2]))
-    fx, fy, fz = (lx - px, ly - py, lz - pz)
-    norm = math.sqrt(fx * fx + fy * fy + fz * fz) or 1.0
-    fx, fy, fz = (fx / norm, fy / norm, fz / norm)
-    upx, upy, upz = (0.0, 0.0, 1.0)
-    rx = fy * upz - fz * upy
-    ry = fz * upx - fx * upz
-    rz = fx * upy - fy * upx
-    rnorm = math.sqrt(rx * rx + ry * ry + rz * rz) or 1.0
-    rx, ry, rz = (rx / rnorm, ry / rnorm, rz / rnorm)
-    ux = ry * fz - rz * fy
-    uy = rz * fx - rx * fz
-    uz = rx * fy - ry * fx
-    half_h = depth * math.tan(math.radians(float(fov) / 2.0))
-    half_w = half_h * (4.0 / 3.0)
-    cx = px + fx * depth
-    cy = py + fy * depth
-    cz = pz + fz * depth
-    corners = []
-    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-        corners.append(
-            [
-                cx + rx * half_w * sx + ux * half_h * sy,
-                cy + ry * half_w * sx + uy * half_h * sy,
-                cz + rz * half_w * sx + uz * half_h * sy,
-            ]
-        )
-    origin = [px, py, pz]
-    strips = [
-        [origin, corners[0]],
-        [origin, corners[1]],
-        [origin, corners[2]],
-        [origin, corners[3]],
-        corners + [corners[0]],
-    ]
-    return origin, strips
-
-def _write_camera_preview_rrd(camera_name: str) -> str:
-    import math
-    import subprocess
-
-    import rerun as rr
-
-    cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
-    if camera_name not in cameras:
-        raise HTTPException(status_code=404, detail=f"unknown camera: {{camera_name}}")
-    target = Path("/opt/npa-agent/sim2real.rrd")
-    rr.init("npa-agent-cameras", spawn=False)
-    rr.log(
-        "agent/camera_inspector",
-        rr.TextDocument(
-            "Camera inspector preview. Highlighted entity is selected for the next rollout."
-        ),
-    )
-    for name, cam in cameras.items():
-        if not isinstance(cam, dict):
-            continue
-        pos = list(cam.get("pos") or [0.0, 0.0, 0.0])
-        look_at = list(cam.get("look_at") or [0.0, 1.0, 0.0])
-        fov = float(cam.get("fov") or 60.0)
-        res = cam.get("resolution") or [640, 480]
-        width = int(res[0]) if len(res) > 0 else 640
-        height = int(res[1]) if len(res) > 1 else 480
-        entity = f"world/cameras/{{name}}"
-        focal = width / (2.0 * math.tan(math.radians(fov / 2.0)))
-        rr.log(entity, rr.Pinhole(focal_length=focal, width=width, height=height))
-        rr.log(entity, rr.Transform3D(translation=pos))
-        origin, strips = _camera_frustum_lines(pos, look_at, fov)
-        color = [59, 130, 246] if name == camera_name else [148, 163, 184]
-        rr.log(
-            f"{{entity}}/frustum",
-            rr.LineStrips3D(strips, colors=[color] * len(strips)),
-        )
-        rr.log(f"{{entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
-        label = (
-            f"**{{name}}** (selected for next rollout)"
-            if name == camera_name
-            else f"**{{name}}**"
-        )
-        rr.log(
-            f"{{entity}}/label",
-            rr.TextDocument(
-                f"{{label}}\\n"
-                f"pos={{pos}} look_at={{look_at}} fov={{fov}}° resolution={{width}}x{{height}}"
-            ),
-        )
-        rollout_path = f"rollouts/latest/{{name}}/camera"
-        rr.log(
-            rollout_path,
-            rr.TextDocument(
-                f"Sim2Real rollout camera stream path for `{{name}}` "
-                f"(populated when a run writes frames to the recording)."
-            ),
-        )
-    rr.save(str(target))
-    subprocess.run(
-        ["systemctl", "restart", "npa-rerun"],
-        check=False,
-        timeout=30.0,
-    )
-    return f"world/cameras/{{camera_name}}"
-
-@app.post("/sim-viz/camera-preview")
-def sim_viz_camera_preview(payload: dict):
-    camera_name = str(payload.get("camera", "")).strip()
-    state = _load_state()
-    if not camera_name:
-        selected = state.get("camera_selection", ["workspace"])
-        if isinstance(selected, list) and selected:
-            camera_name = str(selected[0])
-        else:
-            camera_name = "workspace"
-    entity_path = _write_camera_preview_rrd(camera_name)
-    sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict):
-        sim_viz = dict(DEFAULT_SIM_VIZ)
-    sim_viz["preview_camera"] = camera_name
-    sim_viz["preview_entity"] = entity_path
-    sim_viz["rrd_updated_at"] = _now_iso()
-    sim_viz["mode"] = "camera_preview"
-    state["sim_viz"] = sim_viz
-    _save_state(state)
-    return {{
-        "ok": True,
-        "camera": camera_name,
-        "entity_path": entity_path,
-        "rollout_entity_guess": f"rollouts/latest/{{camera_name}}/camera",
-        "hint": "Open the Rerun panel and expand world/cameras/<name>.",
-    }}
 
 @app.get("/sim-assets")
 def sim_assets():
@@ -934,9 +913,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <meta charset="utf-8">
     <title>NPA Agent</title>
     <style>
-      body {{ font-family: sans-serif; margin: 16px; max-width: 1400px; }}
-      .layout {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
+      body {{ font-family: sans-serif; margin: 16px; max-width: 1600px; }}
+      .layout {{ display: grid; gap: 12px; }}
+      .layout-3 {{ grid-template-columns: 1fr 1.15fr 1.25fr; }}
       .panel {{ border: 1px solid #ddd; border-radius: 6px; padding: 10px; }}
+      .cameras-panel {{ border-color: #93c5fd; background: #f8fafc; }}
+      .camera-card {{
+        border: 1px solid #dbeafe; border-radius: 6px; padding: 8px; margin-bottom: 8px;
+        background: #fff;
+      }}
+      .camera-card.selected {{ border: 2px solid #3b82f6; box-shadow: 0 0 0 1px #bfdbfe; }}
+      .camera-card h4 {{ margin: 0 0 6px 0; }}
+      .camera-meta {{ font-size: 12px; color: #475569; margin-bottom: 6px; }}
+      .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
+      .camera-frustum {{ display: flex; justify-content: center; }}
+      .rollout-hint {{ font-size: 13px; color: #334155; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-log {{
         height: 280px; overflow-y: auto; background: #fafafa; border: 1px solid #eee;
@@ -974,7 +965,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <button id="chatActionWatch" type="button">Watch sim</button>
       </div>
     </section>
-    <div class="layout">
+    <div class="layout layout-3">
       <section class="panel">
         <h3>Sim Assets</h3>
         <label for="robotPreset">Robot preset</label>
@@ -989,11 +980,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           <button id="submitWorkflow" type="button">Submit Sim2Real</button>
           <button id="workflowStatus" type="button">Workflow status</button>
         </div>
+      </section>
+      <section class="panel cameras-panel">
         <h3>Cameras</h3>
-        <label for="cameraSelect">Select camera</label>
-        <select id="cameraSelect"></select>
-        <div id="frustum"></div>
-        <div id="cameras"></div>
+        <p id="cameraRolloutHint" class="rollout-hint">Active for next rollout: <strong id="activeCameraLabel">workspace</strong></p>
+        <p class="rollout-hint">Stock workspace and wrist cameras from the Sim2Real default scene spec.</p>
+        <div id="cameraCards"></div>
+        <select id="cameraSelect" hidden aria-hidden="true"></select>
+        <div id="rerunEntityHint" class="rollout-hint"></div>
       </section>
       <section class="panel">
         <h3>Rerun (embedded)</h3>
@@ -1105,7 +1099,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const cameras = await loadJson("/api/sim-assets/cameras");
           const simViz = await loadJson("/api/sim-viz/status");
           document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
-          document.getElementById("cameras").innerHTML = "<pre>" + JSON.stringify(cameras, null, 2) + "</pre>";
           document.getElementById("simRunId").textContent = String(simViz.run_id || "—");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
@@ -1119,31 +1112,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const select = document.getElementById("cameraSelect");
           const selected = new Set((cameras.selected || []).map(String));
           const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
+          const activeName = String(
+            (selected.size ? [...selected][0] : null) || simViz.camera || "workspace"
+          );
+          document.getElementById("activeCameraLabel").textContent = activeName;
           select.innerHTML = "";
           for (const cam of list) {{
             const opt = document.createElement("option");
             opt.value = String(cam.name || "");
             opt.textContent = String(cam.name || "");
-            if (selected.has(opt.value)) opt.selected = true;
+            if (selected.has(opt.value) || opt.value === activeName) opt.selected = true;
             select.appendChild(opt);
           }}
-          renderFrustum(list.find((c) => String(c.name || "") === String(select.value || "")) || list[0] || null);
+          renderCameraCards(list, activeName, simViz);
           const updatedAt = String(simViz.rrd_updated_at || "");
           if (updatedAt && updatedAt !== lastRrdUpdatedAt) {{
             lastRrdUpdatedAt = updatedAt;
-            reloadRerunIframe(simViz.camera || select.value || "workspace");
+            reloadRerunIframe(simViz.camera || activeName);
           }}
         }} catch (err) {{
           document.getElementById("simvizCta").hidden = false;
           document.getElementById("simvizCta").textContent = "Failed to fetch sim viz status";
         }}
       }}
-      function renderFrustum(camera) {{
-        const holder = document.getElementById("frustum");
-        if (!camera) {{
-          holder.innerHTML = "<p>No camera selected</p>";
-          return;
-        }}
+      function frustumSvg(camera, selected) {{
         const pos = Array.isArray(camera.pos) ? camera.pos : [0, 0, 0];
         const lookAt = Array.isArray(camera.look_at) ? camera.look_at : [0, 1, 0];
         const fov = Number(camera.fov || 60);
@@ -1151,32 +1143,102 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const dy = lookAt[1] - pos[1];
         const angle = Math.atan2(dy, dx);
         const spread = (fov * Math.PI / 180) / 2;
-        const r = 55;
-        const cx = 90;
-        const cy = 90;
+        const r = 50;
+        const cx = 80;
+        const cy = 80;
         const p1x = cx + r * Math.cos(angle - spread);
         const p1y = cy + r * Math.sin(angle - spread);
         const p2x = cx + r * Math.cos(angle + spread);
         const p2y = cy + r * Math.sin(angle + spread);
-        holder.innerHTML = `<svg width="180" height="180" viewBox="0 0 180 180">
-          <circle cx="${{cx}}" cy="${{cy}}" r="4" fill="#111"/>
-          <polygon points="${{cx}},${{cy}} ${{p1x}},${{p1y}} ${{p2x}},${{p2y}}" fill="rgba(59,130,246,0.2)" stroke="#3b82f6"/>
-          <text x="10" y="170" font-size="12">${{String(camera.name || "")}}</text>
+        const stroke = selected ? "#2563eb" : "#94a3b8";
+        const fill = selected ? "rgba(37,99,235,0.18)" : "rgba(148,163,184,0.15)";
+        return `<svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="camera frustum">
+          <circle cx="${{cx}}" cy="${{cy}}" r="4" fill="${{stroke}}"/>
+          <polygon points="${{cx}},${{cy}} ${{p1x}},${{p1y}} ${{p2x}},${{p2y}}" fill="${{fill}}" stroke="${{stroke}}"/>
+          <text x="8" y="152" font-size="11" fill="#334155">${{String(camera.name || "")}}</text>
         </svg>`;
       }}
-      document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
-        const selected = String(e.target.value || "");
-        const resp = await fetch("/api/sim-assets/cameras/selection", {{
+      function renderCameraCards(list, activeName, simViz) {{
+        const holder = document.getElementById("cameraCards");
+        holder.innerHTML = "";
+        for (const cam of list) {{
+          const name = String(cam.name || "");
+          const selected = name === activeName;
+          const card = document.createElement("div");
+          card.className = "camera-card" + (selected ? " selected" : "");
+          const pos = Array.isArray(cam.pos) ? cam.pos.map((v) => Number(v).toFixed(2)).join(", ") : "—";
+          const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "—";
+          const res = Array.isArray(cam.resolution) ? cam.resolution.join("×") : "640×480";
+          card.innerHTML = `
+            <h4>${{name}}${{selected ? " <span class=\\"badge\\">selected</span>" : ""}}</h4>
+            <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} · fov ${{Number(cam.fov || 60)}}° · ${{res}}</div>
+            <div class="camera-meta">pos [${{pos}}] · look_at [${{look}}]</div>
+            <div class="camera-frustum">${{frustumSvg(cam, selected)}}</div>
+            <div class="camera-actions">
+              <button type="button" data-action="select" data-camera="${{name}}">Select</button>
+              <button type="button" data-action="preview" data-camera="${{name}}">Preview in Rerun</button>
+            </div>`;
+          holder.appendChild(card);
+        }}
+        const entity = String(simViz.preview_entity || ("world/cameras/" + activeName));
+        const rollout = "rollouts/latest/" + activeName + "/camera";
+        document.getElementById("rerunEntityHint").textContent =
+          (simViz.rerun_ready || simViz.rrd_uri)
+            ? "Rerun entities: " + entity + " (frustum) · " + rollout + " (rollout frames when available)"
+            : "Preview in Rerun to log camera frustums; rollout frames appear after Sim2Real runs.";
+        holder.querySelectorAll("button[data-action]").forEach((btn) => {{
+          btn.addEventListener("click", async () => {{
+            const camera = String(btn.getAttribute("data-camera") || "");
+            if (btn.getAttribute("data-action") === "select") {{
+              await selectCamera(camera);
+            }} else {{
+              await previewCamera(camera);
+            }}
+          }});
+        }});
+      }}
+      async function selectCamera(camera) {{
+        const selected = String(camera || "");
+        await fetch("/api/sim-assets/cameras/selection", {{
           method: "PUT",
           headers: {{ "content-type": "application/json" }},
           credentials: "same-origin",
           body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
         }});
-        const data = await resp.json();
-        if (data.sim_viz) {{
-          reloadRerunIframe(selected || "workspace");
-        }}
+        await fetch("/api/sim-assets/selection", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{
+            scene_spec_uri: "stock://scene/default",
+            robot_spec_uri: "stock://robot/franka",
+            cameras_uri: "stock://cameras/default",
+            robot_preset: String(document.getElementById("robotPreset").value || "franka"),
+            sim_backend: "isaac",
+            props: ["cube"],
+          }}),
+        }});
         await refresh();
+      }}
+      async function previewCamera(camera) {{
+        const resp = await fetch("/api/sim-viz/camera-preview", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{ camera }}),
+        }});
+        const data = await resp.json();
+        if (!resp.ok) {{
+          appendChat("error", data.detail || "camera preview failed");
+          return;
+        }}
+        reloadRerunIframe(camera);
+        const entity = String(data.entity_path || ("world/cameras/" + camera));
+        appendChat("assistant", "Previewing " + camera + " in Rerun at " + entity + ".");
+        await refresh();
+      }}
+      document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
+        await selectCamera(String(e.target.value || ""));
       }});
       document.getElementById("robotPreset").addEventListener("change", async (e) => {{
         const preset = String(e.target.value || "franka");

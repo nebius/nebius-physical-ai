@@ -28,6 +28,38 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "llm.env" in source
 
 
+def test_bootstrap_embeds_cameras_panel() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "cameras-panel" in source
+    assert "Preview in Rerun" in source
+    assert "cameraCards" in source
+    assert '@app.get("/sim-assets/cameras")' in source
+    assert '@app.post("/sim-viz/camera-preview")' in source
+    assert "world/cameras/" in source
+    assert "The **Cameras** panel is the center column below chat" in source
+    assert "stock_workspace" in source
+    assert "stock_ee_mounted" in source
+
+
+def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
+    from npa.cli import agent as agent_module
+    from npa.genesis.scene_assets import (
+        CAMERA_PLACEMENT_STOCK_EE_MOUNTED,
+        CAMERA_PLACEMENT_STOCK_WORKSPACE,
+        DEFAULT_CAMERA_NAMES,
+    )
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    for name in DEFAULT_CAMERA_NAMES:
+        assert f'"name": "{name}"' in source
+    assert CAMERA_PLACEMENT_STOCK_WORKSPACE in source
+    assert CAMERA_PLACEMENT_STOCK_EE_MOUNTED in source
+    assert '"pos": [1.0, 0.0, 0.8]' in source
+    assert '"pos": [0.4, 0.0, 0.4]' in source
+
+
 def test_bootstrap_embeds_franka_rerun_ux() -> None:
     from npa.cli import agent as agent_module
 
@@ -131,7 +163,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/sim-assets"):
             return _Resp({"scene_spec": {"schema": "x"}, "robot_spec": {"schema": "y"}})
         if url_s.endswith("/api/sim-assets/cameras"):
-            return _Resp({"cameras": [{"name": "workspace"}]})
+            return _Resp(
+                {
+                    "cameras": [
+                        {"name": "workspace", "placement": "stock_workspace", "fov": 60.0},
+                        {"name": "wrist", "placement": "stock_ee_mounted", "fov": 90.0},
+                    ],
+                    "selected": ["workspace"],
+                }
+            )
         if url_s.endswith("/api/sim-assets/selection"):
             return _Resp({"scene_spec_uri": "stock://scene/default"})
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
