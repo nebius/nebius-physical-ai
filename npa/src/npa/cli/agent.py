@@ -517,7 +517,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
         "rerun_ready": restarted or target.is_file(),
-        "rerun_iframe_url": f"/rerun/?camera={{cam}}",
+        "rerun_iframe_url": f"/rerun/?url=/api/sim-viz/rrd&camera={{cam}}",
     }}
     state["sim_viz"] = viz
     _save_state(state)
@@ -664,7 +664,7 @@ def sim_viz_status():
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
-    payload["rerun_iframe_url"] = f"/rerun/?camera={{camera}}"
+    payload["rerun_iframe_url"] = f"/rerun/?url=/api/sim-viz/rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     payload["rerun_ready"] = bool(payload.get("rrd_uri")) or RRD_PATH.is_file()
@@ -1002,7 +1002,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
           <p id="simvizCta" class="cta" hidden>No .rrd yet — click <strong>Load Franka in Rerun</strong> or submit Sim2Real.</p>
         </div>
-        <iframe id="rerunFrame" title="rerun" src="/rerun/"></iframe>
+        <iframe id="rerunFrame" title="rerun" src="/rerun/?url=%2Fapi%2Fsim-viz%2Frrd"></iframe>
       </section>
     </div>
     <script>
@@ -1028,7 +1028,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const resp = await fetch("/api/chat", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            credentials: "same-origin",
+            credentials: "include",
             body: JSON.stringify({{ messages: chatHistory }}),
           }});
           const data = await resp.json();
@@ -1066,17 +1066,28 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
       document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim in Rerun — use Load Franka in Rerun or check /api/sim-viz/status."));
       let lastRrdUpdatedAt = "";
+      function rerunIframeSrc(camera) {{
+        const cam = String(camera || "workspace");
+        const source = "/api/sim-viz/rrd";
+        return (
+          "/rerun/?url=" +
+          encodeURIComponent(source) +
+          "&camera=" +
+          encodeURIComponent(cam) +
+          "&t=" +
+          Date.now()
+        );
+      }}
       function reloadRerunIframe(camera) {{
         const iframe = document.getElementById("rerunFrame");
-        const cam = String(camera || "workspace");
-        iframe.src = "/rerun/?camera=" + encodeURIComponent(cam) + "&t=" + Date.now();
+        iframe.src = rerunIframeSrc(camera);
       }}
       async function loadFrankaDemo() {{
         const camera = String(document.getElementById("cameraSelect").value || "workspace");
         const resp = await fetch("/api/sim-viz/load-franka-demo", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{ camera }}),
         }});
         const data = await resp.json();
@@ -1090,7 +1101,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return true;
       }}
       async function loadJson(path) {{
-        const resp = await fetch(path, {{ credentials: "same-origin" }});
+        const resp = await fetch(path, {{ credentials: "include" }});
         return await resp.json();
       }}
       async function refresh() {{
@@ -1202,13 +1213,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await fetch("/api/sim-assets/cameras/selection", {{
           method: "PUT",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
         }});
         await fetch("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{
             scene_spec_uri: "stock://scene/default",
             robot_spec_uri: "stock://robot/franka",
@@ -1224,7 +1235,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const resp = await fetch("/api/sim-viz/camera-preview", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{ camera }}),
         }});
         const data = await resp.json();
@@ -1245,7 +1256,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const resp = await fetch("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{
             scene_spec_uri: "stock://scene/default",
             robot_spec_uri: preset === "franka" ? "stock://robot/franka" : "",
@@ -1265,13 +1276,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       document.getElementById("openRerun").addEventListener("click", async () => {{
         const simViz = await loadJson("/api/sim-viz/status");
         const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
-        window.open("/rerun/?camera=" + encodeURIComponent(camera), "_blank", "noopener");
+        window.open(rerunIframeSrc(camera), "_blank", "noopener");
       }});
       document.getElementById("applySelection").addEventListener("click", async () => {{
         const resp = await fetch("/api/sim-assets/selection", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{
             scene_spec_uri: "stock://scene/default",
             robot_spec_uri: "stock://robot/franka",
@@ -1291,7 +1302,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const resp = await fetch("/api/workflows/sim2real/submit", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({{}}),
         }});
         const data = await resp.json();

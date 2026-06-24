@@ -70,6 +70,16 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Load Franka in Rerun" in source
     assert "Open in Rerun" in source
     assert "robotPreset" in source
+    assert "/rerun/?url=%2Fapi%2Fsim-viz%2Frrd" in source
+    assert '"/rerun/?url=/api/sim-viz/rrd&camera=' in source
+
+
+def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'credentials: "include"' in source
+    assert 'credentials: "same-origin"' not in source
 
 
 def test_bootstrap_system_prompt_no_localhost() -> None:
