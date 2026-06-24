@@ -176,7 +176,7 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT}" in rerun_container["command"][-1]
     assert f"--port {DEFAULT_GRPC_PORT}" in rerun_container["command"][-1]
     assert "--cors-allow-origin" in rerun_container["command"][-1]
-    assert rerun_container["command"][-1].endswith("--cors-allow-origin 'http://204.12.*:*' ")
+    assert rerun_container["command"][-1].endswith("--cors-allow-origin 'http://*:*' ")
 
     configmap = next(item for item in manifest["items"] if item["kind"] == "ConfigMap")
     assert RERUN_STATIC_CACHE_CONTROL in configmap["data"]["nginx.conf"]

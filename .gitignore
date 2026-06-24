@@ -67,6 +67,7 @@ htmlcov/
 # Editor and OS files
 .DS_Store
 .cursor/
+.tmp-paste-verify-demo/
 .vscode/
 .idea/
 *.swp

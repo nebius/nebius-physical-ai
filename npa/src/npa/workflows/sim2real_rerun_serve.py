@@ -314,11 +314,8 @@ def rerun_serve_sdk_version() -> str:
 
 
 def _rerun_remote_cors_flags() -> str:
-    # rerun 0.32+ only; allow Nebius LoadBalancer origins (204.12.*) and any http host.
-    return (
-        "--cors-allow-origin 'http://*:*' "
-        "--cors-allow-origin 'http://204.12.*:*' "
-    )
+    # rerun 0.32+ only; allow remote viewer origins (no hardcoded host/IP ranges).
+    return "--cors-allow-origin 'http://*:*' "
 
 
 RERUN_HTPASSWD_PATH = "/etc/nginx/auth/.htpasswd"
