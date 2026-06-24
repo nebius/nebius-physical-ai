@@ -353,12 +353,16 @@ def _provision_object_storage(
 
     bucket = _as_bucket_uri(creds.get("s3_bucket", ""))
     typer.echo(f"  Provisioned bucket {bucket} and an S3 access key.")
-    return {
+    payload: dict[str, str] = {
         "aws_access_key_id": access_key,
         "aws_secret_access_key": secret_key,
         "endpoint_url": creds.get("s3_endpoint", "") or _endpoint_for_region(region),
         "bucket": bucket,
     }
+    sa_id = creds.get("service_account_id", "").strip()
+    if sa_id:
+        payload["service_account_id"] = sa_id
+    return payload
 
 
 def _run_interactive_configure(*, provision: bool = True) -> None:
@@ -425,16 +429,23 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     )
     ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
 
-    credentials_path = write_credentials_file(
-        {
-            "tokens": {
-                "HF_TOKEN": hf_token,
-                "NEBIUS_TOKEN_FACTORY_KEY": nebius_api_key,
-            },
-            "ngc": {"api_key": ngc_api_key},
-            "storage": storage,
-        }
-    )
+    credentials_payload: dict[str, object] = {
+        "tokens": {
+            "HF_TOKEN": hf_token,
+            "NEBIUS_TOKEN_FACTORY_KEY": nebius_api_key,
+        },
+        "ngc": {"api_key": ngc_api_key},
+        "storage": {
+            key: value
+            for key, value in storage.items()
+            if key != "service_account_id" and value
+        },
+    }
+    sa_id = str(storage.get("service_account_id", "") or "").strip()
+    if sa_id:
+        credentials_payload["nebius"] = {"service_account_id": sa_id}
+
+    credentials_path = write_credentials_file(credentials_payload)
 
     project_stanza = {
         key: value
