@@ -870,6 +870,8 @@ sudo systemctl restart npa-agent-backend nginx
 """
     ssh.run_or_raise(setup_script)
     _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
+    if tf_api_key.strip():
+        ssh.run_or_raise("sudo systemctl restart npa-agent-backend")
 
 
 def _health(url: str, *, user: str, password: str, timeout: float = 5.0) -> tuple[bool, int]:
