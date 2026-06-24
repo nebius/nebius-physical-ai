@@ -7,6 +7,7 @@ import os
 import secrets
 import shlex
 import subprocess
+import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,9 @@ class AgentConfig:
     instance_id: str
     agent_url: str
     rerun_url: str
+    sim_viz_url: str
+    sim_assets_url: str
+    cameras_api_url: str
     auth_user: str
     auth_secret_path: str
     llm_provider: str
@@ -69,6 +73,9 @@ class AgentConfig:
             "instance_id": self.instance_id,
             "agent_url": self.agent_url,
             "rerun_url": self.rerun_url,
+            "sim_viz_url": self.sim_viz_url,
+            "sim_assets_url": self.sim_assets_url,
+            "cameras_api_url": self.cameras_api_url,
             "auth_user": self.auth_user,
             "auth_secret_path": self.auth_secret_path,
             "llm": {"provider": self.llm_provider, "model": self.llm_model},
@@ -167,6 +174,21 @@ def _tool_catalog_payload() -> dict[str, dict[str, Any]]:
     return payload
 
 
+def _is_routable_public_ip(value: str) -> bool:
+    candidate = (value or "").strip()
+    if not candidate:
+        return False
+    if candidate == "localhost":
+        return False
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
+        return False
+    return True
+
+
 def _bootstrap_agent_stack(
     *,
     host: str,
@@ -193,11 +215,103 @@ sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip
 sudo mkdir -p /opt/npa-agent
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
-from fastapi import FastAPI
+import json
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 
 app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
+STATE_PATH = Path("/opt/npa-agent/session_state.json")
+DEFAULT_SCENE_SPEC = {{
+    "schema": "npa.sim2real.manip_scene_spec.v1",
+    "goal_pos": [0.5, 0.3, 0.04],
+    "goal_threshold": 0.05,
+    "objects": [{{"name": "cube", "asset_source": "primitive", "role": "manipuland", "primitive": "box"}}],
+    "cameras": {{
+        "workspace": {{
+            "name": "workspace",
+            "placement": "stock_workspace",
+            "pos": [1.0, 0.0, 0.8],
+            "look_at": [0.5, 0.0, 0.0],
+            "fov": 60.0,
+            "resolution": [640, 480],
+        }},
+        "wrist": {{
+            "name": "wrist",
+            "placement": "stock_ee_mounted",
+            "pos": [0.4, 0.0, 0.4],
+            "look_at": [0.5, 0.0, 0.0],
+            "fov": 90.0,
+            "resolution": [640, 480],
+        }},
+    }},
+}}
+DEFAULT_ROBOT_SPEC = {{
+    "schema": "npa.sim2real.robot_spec.v1",
+    "preset": "franka",
+    "robot_source": "stock_franka",
+    "name": "franka_panda",
+}}
+DEFAULT_ASSETS_MANIFEST = {{
+    "schema": "npa.sim2real.assets_manifest.v1",
+    "scene_status": "stock_tabletop",
+    "robot_status": "stock_franka",
+}}
+DEFAULT_SELECTION = {{
+    "scene_spec_uri": "",
+    "assets_uri": "",
+    "robot_spec_uri": "",
+    "cameras_uri": "",
+    "robot_preset": "franka",
+    "sim_backend": "isaac",
+    "props": [],
+}}
+DEFAULT_SIM_VIZ = {{
+    "run_id": "",
+    "stage": "idle",
+    "rrd_uri": "",
+    "rrd_updated_at": "",
+    "live_grpc_url": "",
+    "mode": "static",
+}}
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _default_state() -> dict:
+    return {{
+        "selection": dict(DEFAULT_SELECTION),
+        "camera_selection": ["workspace"],
+        "sim_viz": dict(DEFAULT_SIM_VIZ),
+        "latest_submit": {{}},
+    }}
+
+def _load_state() -> dict:
+    if not STATE_PATH.exists():
+        return _default_state()
+    try:
+        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_state()
+    if not isinstance(data, dict):
+        return _default_state()
+    merged = _default_state()
+    merged.update(data)
+    if not isinstance(merged.get("selection"), dict):
+        merged["selection"] = dict(DEFAULT_SELECTION)
+    if not isinstance(merged.get("camera_selection"), list):
+        merged["camera_selection"] = ["workspace"]
+    if not isinstance(merged.get("sim_viz"), dict):
+        merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
+    return merged
+
+def _save_state(state: dict) -> None:
+    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 
 @app.get("/health")
 def health():
@@ -213,6 +327,130 @@ def tool(tool_ref: str):
     if payload is None:
         return {{"ok": False, "error": "unknown toolRef", "tool_ref": tool_ref}}
     return {{"ok": True, "tool_ref": tool_ref, **payload}}
+
+@app.get("/sim-viz/status")
+def sim_viz_status():
+    state = _load_state()
+    sim_viz = state.get("sim_viz", {{}})
+    payload = dict(DEFAULT_SIM_VIZ)
+    if isinstance(sim_viz, dict):
+        payload.update(sim_viz)
+    return payload
+
+@app.get("/sim-viz/rrd")
+def sim_viz_rrd():
+    state = _load_state()
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict) or not sim_viz.get("rrd_uri"):
+        raise HTTPException(status_code=404, detail="No sim2real.rrd available yet")
+    uri = str(sim_viz.get("rrd_uri"))
+    if uri.startswith("file://"):
+        file_path = Path(uri[len("file://"):])
+        if file_path.is_file():
+            return FileResponse(str(file_path), media_type="application/octet-stream")
+    return JSONResponse({{"ok": True, "rrd_uri": uri}}, status_code=200)
+
+@app.get("/sim-assets")
+def sim_assets():
+    state = _load_state()
+    selection = state.get("selection", {{}})
+    if not isinstance(selection, dict):
+        selection = dict(DEFAULT_SELECTION)
+    return {{
+        "scene_spec": DEFAULT_SCENE_SPEC,
+        "robot_spec": DEFAULT_ROBOT_SPEC,
+        "assets_manifest": DEFAULT_ASSETS_MANIFEST,
+        "selection": selection,
+        "resolved_uris": {{
+            "scene_spec_uri": selection.get("scene_spec_uri", ""),
+            "assets_uri": selection.get("assets_uri", ""),
+            "robot_spec_uri": selection.get("robot_spec_uri", ""),
+            "cameras_uri": selection.get("cameras_uri", ""),
+        }},
+    }}
+
+@app.get("/sim-assets/catalog")
+def sim_assets_catalog():
+    return {{
+        "entries": [
+            {{"name": "stock_scene", "uri": "stock://scene/default"}},
+            {{"name": "stock_robot_franka", "uri": "stock://robot/franka"}},
+            {{"name": "customer_assets_root", "uri": "s3://customer-assets/"}},
+        ]
+    }}
+
+@app.get("/sim-assets/cameras")
+def sim_assets_cameras():
+    state = _load_state()
+    selected = state.get("camera_selection", ["workspace"])
+    cameras = list(DEFAULT_SCENE_SPEC["cameras"].values())
+    return {{"cameras": cameras, "selected": selected}}
+
+@app.put("/sim-assets/cameras/selection")
+def set_camera_selection(payload: dict):
+    selected = payload.get("selected", [])
+    if not isinstance(selected, list):
+        raise HTTPException(status_code=400, detail="selected must be a list")
+    state = _load_state()
+    state["camera_selection"] = [str(item) for item in selected if str(item).strip()]
+    _save_state(state)
+    return {{"selected": state["camera_selection"]}}
+
+@app.post("/sim-assets/selection")
+def set_sim_assets_selection(payload: dict):
+    state = _load_state()
+    selection = dict(DEFAULT_SELECTION)
+    current = state.get("selection", {{}})
+    if isinstance(current, dict):
+        selection.update(current)
+    for key in ("scene_spec_uri", "assets_uri", "robot_spec_uri", "cameras_uri", "robot_preset", "sim_backend"):
+        if key in payload and payload[key] is not None:
+            selection[key] = str(payload[key]).strip()
+    if "props" in payload and isinstance(payload["props"], list):
+        selection["props"] = [str(item) for item in payload["props"] if str(item).strip()]
+    state["selection"] = selection
+    _save_state(state)
+    return {{"ok": True, "selection": selection}}
+
+@app.get("/sim-assets/selection")
+def get_sim_assets_selection():
+    state = _load_state()
+    selection = state.get("selection", {{}})
+    if not isinstance(selection, dict):
+        selection = dict(DEFAULT_SELECTION)
+    return selection
+
+@app.post("/workflows/sim2real/submit")
+def submit_sim2real(payload: dict):
+    state = _load_state()
+    selection = state.get("selection", {{}})
+    if not isinstance(selection, dict):
+        selection = dict(DEFAULT_SELECTION)
+    run_id = f"agent-run-{{secrets.token_hex(6)}}"
+    env_block = {{
+        "NPA_SIM2REAL_SCENE_SPEC_URI": selection.get("scene_spec_uri", ""),
+        "NPA_SIM2REAL_ASSETS_URI": selection.get("assets_uri", ""),
+        "NPA_SIM2REAL_CAMERAS_URI": selection.get("cameras_uri", ""),
+        "NPA_SIM2REAL_ROBOT_SPEC_URI": selection.get("robot_spec_uri", ""),
+        "NPA_SIM2REAL_ROBOT_PRESET": selection.get("robot_preset", "franka"),
+        "NPA_SIM2REAL_SIM_BACKEND": selection.get("sim_backend", "isaac") or "isaac",
+    }}
+    state["latest_submit"] = {{
+        "run_id": run_id,
+        "submitted_at": _now_iso(),
+        "selection": selection,
+        "env": env_block,
+    }}
+    state["sim_viz"] = {{
+        "run_id": run_id,
+        "stage": "submitted",
+        "rrd_uri": "",
+        "rrd_updated_at": _now_iso(),
+        "live_grpc_url": "",
+        "mode": "static",
+    }}
+    _save_state(state)
+    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/rerun_stub.py >/dev/null
 from fastapi import FastAPI
@@ -226,16 +464,58 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return "<html><body><h3>Rerun panel ready</h3></body></html>"
+    return "<html><body><h3>Rerun panel</h3><p>Use /api/sim-viz/status for latest run state.</p></body></html>"
 PY
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>NPA Agent</title></head>
+  <head>
+    <meta charset="utf-8">
+    <title>NPA Agent</title>
+    <style>
+      body {{ font-family: sans-serif; margin: 16px; }}
+      .layout {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
+      .panel {{ border: 1px solid #ddd; border-radius: 6px; padding: 10px; }}
+      iframe {{ width: 100%; height: 360px; border: 1px solid #ddd; }}
+      pre {{ white-space: pre-wrap; word-break: break-word; background: #fafafa; padding: 8px; }}
+    </style>
+  </head>
   <body>
     <h2>NPA Agent</h2>
-    <p>Agent UI is live.</p>
-    <iframe title="rerun" src="/rerun/" style="width:100%;height:75vh;border:1px solid #ddd;"></iframe>
+    <p>Chat/control surfaces + sim assets + rerun panel are co-located on this VM.</p>
+    <div class="layout">
+      <section class="panel">
+        <h3>Sim Assets</h3>
+        <div id="assets"></div>
+        <h3>Cameras</h3>
+        <div id="cameras"></div>
+      </section>
+      <section class="panel">
+        <h3>Rerun (embedded)</h3>
+        <div id="simviz"></div>
+        <iframe title="rerun" src="/rerun/"></iframe>
+      </section>
+    </div>
+    <script>
+      async function loadJson(path) {{
+        const resp = await fetch(path, {{ credentials: "same-origin" }});
+        return await resp.json();
+      }}
+      async function refresh() {{
+        try {{
+          const assets = await loadJson("/api/sim-assets");
+          const cameras = await loadJson("/api/sim-assets/cameras");
+          const simViz = await loadJson("/api/sim-viz/status");
+          document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
+          document.getElementById("cameras").innerHTML = "<pre>" + JSON.stringify(cameras, null, 2) + "</pre>";
+          document.getElementById("simviz").innerHTML = "<pre>" + JSON.stringify(simViz, null, 2) + "</pre>";
+        }} catch (err) {{
+          document.getElementById("simviz").textContent = "Failed to fetch API status";
+        }}
+      }}
+      refresh();
+      setInterval(refresh, 10000);
+    </script>
   </body>
 </html>
 HTML
@@ -392,7 +672,7 @@ def deploy_cmd(
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
     ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
-    if not public_ip or public_ip.startswith("127.") or public_ip == "localhost":
+    if not _is_routable_public_ip(public_ip):
         _fail("Terraform output did not include a routable public IP")
 
     auth_password = secrets.token_urlsafe(18)
@@ -423,6 +703,9 @@ def deploy_cmd(
 
     agent_url = f"http://{public_ip}:{agent_port}/"
     rerun_url = f"http://{public_ip}:{agent_port}/rerun/"
+    sim_viz_url = f"http://{public_ip}:{agent_port}/rerun/"
+    sim_assets_url = f"http://{public_ip}:{agent_port}/"
+    cameras_api_url = f"http://{public_ip}:{agent_port}/api/sim-assets/cameras"
     record = AgentConfig(
         project_alias=project,
         name=name,
@@ -433,6 +716,9 @@ def deploy_cmd(
         instance_id=instance_id,
         agent_url=agent_url,
         rerun_url=rerun_url,
+        sim_viz_url=sim_viz_url,
+        sim_assets_url=sim_assets_url,
+        cameras_api_url=cameras_api_url,
         auth_user=DEFAULT_AGENT_USER,
         auth_secret_path=str(auth_path),
         llm_provider=DEFAULT_LLM_PROVIDER,
@@ -459,6 +745,9 @@ def deploy_cmd(
 
     typer.echo(f"public_url: {agent_url}")
     typer.echo(f"rerun_url: {rerun_url}")
+    typer.echo(f"sim_viz_url: {sim_viz_url}")
+    typer.echo(f"sim_assets_url: {sim_assets_url}")
+    typer.echo(f"cameras_api_url: {cameras_api_url}")
     typer.echo(f"llm: {DEFAULT_LLM_PROVIDER}:{DEFAULT_LLM_MODEL}")
     typer.echo(f"auth_user: {DEFAULT_AGENT_USER}")
     typer.echo(f"auth_secret_path: {auth_path}")
@@ -481,14 +770,22 @@ def status_cmd(
         _fail(str(exc))
     agent_url = str(record.get("agent_url", ""))
     rerun_url = str(record.get("rerun_url", ""))
+    sim_viz_url = str(record.get("sim_viz_url", rerun_url))
+    sim_assets_url = str(record.get("sim_assets_url", agent_url))
+    cameras_api_url = str(
+        record.get("cameras_api_url", f"{agent_url.rstrip('/')}/api/sim-assets/cameras")
+    )
     ui_ok, ui_code = _health(agent_url, user=auth_user, password=auth_password)
-    rerun_ok, rerun_code = _health(rerun_url, user=auth_user, password=auth_password)
+    rerun_ok, rerun_code = _health(sim_viz_url, user=auth_user, password=auth_password)
     payload = {
         "project": project,
         "name": name,
         "public_ip": record.get("public_ip", ""),
         "ui_url": agent_url,
         "rerun_url": rerun_url,
+        "sim_viz_url": sim_viz_url,
+        "sim_assets_url": sim_assets_url,
+        "cameras_api_url": cameras_api_url,
         "health": bool(ui_ok and rerun_ok),
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
@@ -558,6 +855,8 @@ def verify_live_cmd(
     region = str(record.get("region", "")).strip()
     if not public_ip or public_ip in {"localhost", "127.0.0.1"} or public_ip.startswith("127."):
         _fail("agent VM does not have a non-localhost public IP")
+    if not _is_routable_public_ip(public_ip):
+        _fail("agent VM does not have a non-localhost public IP")
     if region != "us-central1":
         _fail(f"agent region mismatch: expected us-central1, got {region!r}")
     try:
@@ -568,13 +867,88 @@ def verify_live_cmd(
     ui_ok, ui_code = _health(str(record.get("agent_url", "")), user=auth_user, password=auth_password)
     if not ui_ok:
         _fail(f"UI health failed behind basic auth (status={ui_code})")
+    sim_viz_url = str(record.get("sim_viz_url", record.get("rerun_url", "")))
     rerun_ok, rerun_code = _health(
-        str(record.get("rerun_url", "")),
+        sim_viz_url,
         user=auth_user,
         password=auth_password,
     )
     if not rerun_ok:
         _fail(f"embedded rerun iframe endpoint unhealthy (status={rerun_code})")
+
+    sim_assets_base = str(record.get("sim_assets_url", record.get("agent_url", ""))).rstrip("/")
+    if not sim_assets_base:
+        _fail("sim_assets_url missing from agent config")
+    try:
+        sim_assets_resp = httpx.get(
+            f"{sim_assets_base}/api/sim-assets",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        sim_assets_resp.raise_for_status()
+        sim_assets_payload = sim_assets_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"sim assets endpoint unhealthy: {exc}")
+    if not isinstance(sim_assets_payload, dict) or "scene_spec" not in sim_assets_payload or "robot_spec" not in sim_assets_payload:
+        _fail("sim assets endpoint missing scene_spec/robot_spec payload")
+
+    try:
+        cameras_resp = httpx.get(
+            f"{sim_assets_base}/api/sim-assets/cameras",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        cameras_resp.raise_for_status()
+        cameras_payload = cameras_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"cameras endpoint unhealthy: {exc}")
+    cameras = cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
+    if not isinstance(cameras, list) or not cameras:
+        _fail("cameras endpoint returned no cameras")
+
+    selection_body = {
+        "robot_preset": "franka",
+        "sim_backend": "isaac",
+        "scene_spec_uri": "stock://scene/default",
+        "robot_spec_uri": "stock://robot/franka",
+        "cameras_uri": "stock://cameras/default",
+        "props": ["cube"],
+    }
+    try:
+        selection_set = httpx.post(
+            f"{sim_assets_base}/api/sim-assets/selection",
+            auth=(auth_user, auth_password),
+            json=selection_body,
+            timeout=5.0,
+        )
+        selection_set.raise_for_status()
+        selection_get = httpx.get(
+            f"{sim_assets_base}/api/sim-assets/selection",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        selection_get.raise_for_status()
+        selected_payload = selection_get.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"sim asset selection round-trip failed: {exc}")
+    if not isinstance(selected_payload, dict):
+        _fail("sim asset selection GET did not return JSON object")
+    if selected_payload.get("scene_spec_uri") != selection_body["scene_spec_uri"]:
+        _fail("sim asset selection round-trip did not persist scene_spec_uri")
+
+    try:
+        submit_resp = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/workflows/sim2real/submit",
+            auth=(auth_user, auth_password),
+            json={},
+            timeout=5.0,
+        )
+        submit_resp.raise_for_status()
+        submit_payload = submit_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"workflow submit endpoint failed: {exc}")
+    if not isinstance(submit_payload, dict) or not submit_payload.get("run_id"):
+        _fail("workflow submit endpoint did not return run_id")
 
     try:
         tools_resp = httpx.get(
@@ -588,13 +962,16 @@ def verify_live_cmd(
         _fail(f"agent toolRef catalog request failed: {exc}")
     if len(tool_refs) < 19:
         _fail(f"toolRef catalog too small: expected >=19, got {len(tool_refs)}")
-    resolve_resp = httpx.get(
-        f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools/{tool_refs[0]}",
-        auth=(auth_user, auth_password),
-        timeout=5.0,
-    )
-    resolve_resp.raise_for_status()
-    resolved = resolve_resp.json()
+    try:
+        resolve_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools/{tool_refs[0]}",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        resolve_resp.raise_for_status()
+        resolved = resolve_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"agent toolRef resolve failed: {exc}")
     if not resolved.get("ok"):
         _fail("agent failed to resolve toolRef catalog entry")
     if not isinstance(resolved.get("argv_template"), list):
