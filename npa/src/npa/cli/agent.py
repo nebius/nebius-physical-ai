@@ -1014,7 +1014,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-log {{
-        height: 300px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
+        height: 320px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
         border-radius: 10px; padding: 10px; margin-bottom: 10px;
       }}
       .msg-row {{
@@ -1113,13 +1113,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
-        border: 1px solid #cbcfe1;
-        background: #f8f9fd;
-        color: #2f3650;
+        border: 1px solid #d3d7e6;
+        background: #ffffff;
+        color: #30364a;
         font-size: 12px;
         padding: 7px 12px;
       }}
-      .quick-pill:hover {{ background: #eef0fa; }}
+      .quick-pill:hover {{ background: #f3f5fb; }}
       .hint {{ font-size: 13px; color: var(--muted); }}
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
@@ -1247,6 +1247,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
         return value;
       }}
+      function normalizeAssistantReply(text) {{
+        const raw = String(text || "").trim();
+        if (!raw) return raw;
+        if (!/^[\[\{{]/.test(raw)) return raw;
+        try {{
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {{
+            const lines = [];
+            for (const [key, value] of Object.entries(parsed)) {{
+              lines.push("- **" + key + "**: `" + String(value) + "`");
+            }}
+            return lines.join("\\n");
+          }}
+        }} catch (_err) {{
+          // Keep original non-JSON text.
+        }}
+        return raw;
+      }}
       function markdownLiteHtml(text) {{
         const lines = String(text || "").split(/\r?\n/);
         let html = "";
@@ -1349,7 +1367,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             appendChat("error", data.detail || resp.statusText || "chat failed");
             return;
           }}
-          const reply = String(data.reply || "").trim();
+          const reply = normalizeAssistantReply(data.reply || "");
           if (reply) {{
             appendChat("assistant", reply);
             chatHistory.push({{ role: "assistant", content: reply }});
