@@ -23,6 +23,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '@app.post("/chat")' in source
+    assert '@app.get("/session")' in source
     assert "Workbench Chat" in source
     assert "NEBIUS_TOKEN_FACTORY_KEY" in source
     assert "llm.env" in source
@@ -37,6 +38,11 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
+    bootstrap_split = f'        const lines = String(text || "").split(/\\r?\\n/);'
+    assert "\r" not in bootstrap_split
+    assert "\\r?\\n" in bootstrap_split
+    assert "restoreSession" in source
+    assert "bootPage()" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:

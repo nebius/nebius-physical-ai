@@ -326,6 +326,7 @@ def _default_state() -> dict:
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "latest_submit": {{}},
+        "chat_history": [],
     }}
 
 def _load_state() -> dict:
@@ -345,6 +346,8 @@ def _load_state() -> dict:
         merged["camera_selection"] = ["workspace"]
     if not isinstance(merged.get("sim_viz"), dict):
         merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
+    if not isinstance(merged.get("chat_history"), list):
+        merged["chat_history"] = []
     return merged
 
 def _save_state(state: dict) -> None:
@@ -632,6 +635,19 @@ def chat(payload: dict):
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
+    state = _load_state()
+    history: list[dict] = []
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "user")).strip() or "user"
+        content = str(item.get("content", "")).strip()
+        if role in {{"user", "assistant"}} and content:
+            history.append({{"role": role, "content": content}})
+    if reply:
+        history.append({{"role": "assistant", "content": reply}})
+    state["chat_history"] = history[-50:]
+    _save_state(state)
     return {{
         "ok": True,
         "model": model,
@@ -642,6 +658,29 @@ def chat(payload: dict):
 @app.get("/health")
 def health():
     return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
+
+@app.get("/session")
+def session_bootstrap():
+    state = _load_state()
+    sim_viz = dict(DEFAULT_SIM_VIZ)
+    if isinstance(state.get("sim_viz"), dict):
+        sim_viz.update(state["sim_viz"])
+    selected = state.get("camera_selection", ["workspace"])
+    camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
+    sim_viz["camera"] = camera
+    if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
+        sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
+    sim_viz["rerun_ready"] = bool(sim_viz.get("rrd_uri")) or RRD_PATH.is_file()
+    history = state.get("chat_history", [])
+    if not isinstance(history, list):
+        history = []
+    return {{
+        "selection": state.get("selection", dict(DEFAULT_SELECTION)),
+        "sim_viz": sim_viz,
+        "latest_submit": state.get("latest_submit", {{}}),
+        "camera_selection": state.get("camera_selection", ["workspace"]),
+        "chat_history": history,
+    }}
 
 @app.get("/tools")
 def tools():
@@ -1276,7 +1315,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return raw;
       }}
       function markdownLiteHtml(text) {{
-        const lines = String(text || "").split(/\r?\n/);
+        const lines = String(text || "").split(/\\r?\\n/);
         let html = "";
         let inList = false;
         let listKind = "";
@@ -1708,17 +1747,41 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       document.getElementById("workflowStatus").addEventListener("click", async () => {{
         try {{
           const status = await loadJson("/api/workflows/sim2real/status");
-          appendChat("assistant", "Latest workflow status:\n- run_id: `" + String((status.latest_submit || {{}}).run_id || "none") + "`\n- stage: `" + String((status.sim_viz || {{}}).stage || "idle") + "`");
+          appendChat("assistant", "Latest workflow status:\\n- run_id: `" + String((status.latest_submit || {{}}).run_id || "none") + "`\\n- stage: `" + String((status.sim_viz || {{}}).stage || "idle") + "`");
         }} catch (err) {{
           appendChat("error", String(err));
         }}
       }});
-      refresh().then(async () => {{
-        const simViz = await loadJson("/api/sim-viz/status");
-        if (!simViz.rerun_ready && !simViz.rrd_uri) {{
-          await loadFrankaDemo();
+      async function restoreSession() {{
+        try {{
+          const session = await loadJson("/api/session");
+          const hist = Array.isArray(session.chat_history) ? session.chat_history : [];
+          for (const msg of hist) {{
+            const role = String(msg.role || "");
+            const content = String(msg.content || "").trim();
+            if (!content || (role !== "user" && role !== "assistant")) continue;
+            appendChat(role, content);
+            chatHistory.push({{ role, content }});
+          }}
+        }} catch (_err) {{
+          // Session restore is best-effort on first load.
         }}
-      }});
+      }}
+      async function bootPage() {{
+        await restoreSession();
+        await refresh();
+        try {{
+          const simViz = await loadJson("/api/sim-viz/status");
+          if (!simViz.rerun_ready && !simViz.rrd_uri) {{
+            await loadFrankaDemo();
+          }} else if (simViz.rerun_ready) {{
+            reloadRerunIframe(simViz.camera || "workspace");
+          }}
+        }} catch (_err) {{
+          // refresh() already surfaces sim viz errors in the panel.
+        }}
+      }}
+      bootPage();
       setInterval(refresh, 10000);
     </script>
   </body>
