@@ -35,6 +35,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "--brand: #5e43f3;" in source
     assert "--sidebar: #1e1f22;" in source
     assert "markdownLiteHtml" in source
+    assert "Secure basic-auth session" in source
+    assert "sparkle" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -96,6 +98,7 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert "setChatBusy(false)" in source
     assert "btn.disabled = Boolean(isBusy);" in source
     assert "input.disabled = Boolean(isBusy);" in source
+    assert "JSON.stringify(value)" in source
     assert "JSON.stringify(assets.selection" not in source
 
 

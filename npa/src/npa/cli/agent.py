@@ -1016,6 +1016,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .chat-log {{
         height: 320px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
         border-radius: 10px; padding: 10px; margin-bottom: 10px;
+        font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       }}
       .msg-row {{
         display: flex;
@@ -1072,6 +1073,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .thinking-dots span:nth-child(2) {{ animation-delay: 0.18s; }}
       .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
+      .sparkle {{
+        display: inline-block;
+        color: #5e43f3;
+        margin-right: 6px;
+        font-size: 13px;
+      }}
       @keyframes pulse {{
         0%, 80%, 100% {{ opacity: 0.35; transform: translateY(0); }}
         40% {{ opacity: 1; transform: translateY(-1px); }}
@@ -1113,13 +1120,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
-        border: 1px solid #d3d7e6;
-        background: #ffffff;
-        color: #30364a;
+        border: 1px solid #c8c0f5;
+        background: #f6f4ff;
+        color: #3d2f9c;
         font-size: 12px;
         padding: 7px 12px;
       }}
-      .quick-pill:hover {{ background: #f3f5fb; }}
+      .quick-pill:hover {{ background: #ede9ff; }}
       .hint {{ font-size: 13px; color: var(--muted); }}
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
@@ -1133,7 +1140,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           <div class="brand">NEBIUS | NPA WORKBENCH AGENT</div>
           <div class="brand-sub">Sim2Real operations, assets, cameras, and Rerun visualization</div>
         </div>
-        <span class="badge badge-ok">Protected by basic auth</span>
+        <span class="badge badge-ok">Secure basic-auth session</span>
       </header>
       <main class="page">
         <section class="panel chat-panel">
@@ -1256,7 +1263,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (parsed && typeof parsed === "object") {{
             const lines = [];
             for (const [key, value] of Object.entries(parsed)) {{
-              lines.push("- **" + key + "**: `" + String(value) + "`");
+              const rendered = (value !== null && typeof value === "object")
+                ? "`" + JSON.stringify(value) + "`"
+                : "`" + String(value) + "`";
+              lines.push("- **" + key + "**: " + rendered);
             }}
             return lines.join("\\n");
           }}
@@ -1320,7 +1330,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         if (options.thinking) {{
-          bubble.innerHTML = '<span class="thinking-dots"><span></span><span></span><span></span></span>';
+          bubble.innerHTML =
+            '<span class="sparkle">✦</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
         }} else {{
           bubble.innerHTML = markdownLiteHtml(String(text || ""));
         }}
