@@ -560,6 +560,44 @@ def get_sim_assets_selection():
         selection = dict(DEFAULT_SELECTION)
     return selection
 
+@app.get("/workflows/sim2real/status")
+def sim2real_status():
+    state = _load_state()
+    latest = state.get("latest_submit", {{}})
+    sim_viz = state.get("sim_viz", {{}})
+    return {{
+        "ok": True,
+        "latest_submit": latest if isinstance(latest, dict) else {{}},
+        "sim_viz": sim_viz if isinstance(sim_viz, dict) else dict(DEFAULT_SIM_VIZ),
+    }}
+
+@app.get("/workbench/actions")
+def workbench_actions():
+    return {{
+        "actions": [
+            {{
+                "id": "configure_s3",
+                "title": "Configure S3",
+                "hint": "Run `npa configure` on operator machine to set storage credentials.",
+            }},
+            {{
+                "id": "setup_cosmos",
+                "title": "Setup Cosmos3",
+                "hint": "Use `npa workbench cosmos check|fetch` before inference workflows.",
+            }},
+            {{
+                "id": "submit_sim2real",
+                "title": "Submit Sim2Real",
+                "hint": "POST /api/workflows/sim2real/submit after confirming selection.",
+            }},
+            {{
+                "id": "watch_sim",
+                "title": "Watch sim",
+                "hint": "GET /api/sim-viz/status and open /rerun/ iframe.",
+            }},
+        ]
+    }}
+
 @app.post("/workflows/sim2real/submit")
 def submit_sim2real(payload: dict):
     state = _load_state()
@@ -640,12 +678,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
         <button id="chatSend" type="button">Send</button>
       </div>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="chatActionS3" type="button">Configure S3</button>
+        <button id="chatActionCosmos" type="button">Setup Cosmos3</button>
+        <button id="chatActionWatch" type="button">Watch sim</button>
+      </div>
     </section>
     <div class="layout">
       <section class="panel">
         <h3>Sim Assets</h3>
         <div id="assets"></div>
         <button id="applySelection" type="button">Apply stock selection</button>
+        <button id="submitWorkflow" type="button">Submit Sim2Real</button>
+        <button id="workflowStatus" type="button">Workflow status</button>
         <h3>Cameras</h3>
         <label for="cameraSelect">Select camera</label>
         <select id="cameraSelect"></select>
@@ -710,6 +755,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           sendChat();
         }}
       }});
+      function setChatInput(text) {{
+        const input = document.getElementById("chatInput");
+        input.value = text;
+        input.focus();
+      }}
+      document.getElementById("chatActionS3").addEventListener("click", () => setChatInput("Help me configure S3 credentials and bucket for NPA workflows."));
+      document.getElementById("chatActionCosmos").addEventListener("click", () => setChatInput("How do I set up Cosmos3 in the NPA workbench?"));
+      document.getElementById("chatActionWatch").addEventListener("click", () => setChatInput("Watch the sim and show current rerun status."));
       async function loadJson(path) {{
         const resp = await fetch(path, {{ credentials: "same-origin" }});
         return await resp.json();
@@ -789,6 +842,29 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}),
         }});
         await refresh();
+      }});
+      document.getElementById("submitWorkflow").addEventListener("click", async () => {{
+        const resp = await fetch("/api/workflows/sim2real/submit", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{}}),
+        }});
+        const data = await resp.json();
+        if (!resp.ok) {{
+          appendChat("error", data.detail || "failed to submit sim2real");
+          return;
+        }}
+        appendChat("assistant", `Submitted sim2real run: ${{data.run_id || "unknown"}}`);
+        await refresh();
+      }});
+      document.getElementById("workflowStatus").addEventListener("click", async () => {{
+        try {{
+          const status = await loadJson("/api/workflows/sim2real/status");
+          appendChat("assistant", "Latest workflow status: " + JSON.stringify(status));
+        }} catch (err) {{
+          appendChat("error", String(err));
+        }}
       }});
       refresh();
       setInterval(refresh, 10000);
@@ -1347,6 +1423,20 @@ def verify_live_cmd(
         _fail("agent failed to resolve toolRef catalog entry")
     if not isinstance(resolved.get("argv_template"), list):
         _fail("resolved toolRef entry missing argv_template list")
+    if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
+        try:
+            chat_smoke = httpx.post(
+                f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
+                auth=(auth_user, auth_password),
+                json={"messages": [{"role": "user", "content": "status"}]},
+                timeout=30.0,
+            )
+            chat_smoke.raise_for_status()
+            chat_payload = chat_smoke.json()
+        except Exception as exc:  # noqa: BLE001
+            _fail(f"chat endpoint smoke failed: {exc}")
+        if not isinstance(chat_payload, dict) or not chat_payload.get("ok"):
+            _fail("chat endpoint did not return ok=true")
 
     test_env = {
         **dict(os.environ),
