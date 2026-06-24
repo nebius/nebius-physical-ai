@@ -464,7 +464,64 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return "<html><body><h3>Rerun panel</h3><p>Use /api/sim-viz/status for latest run state.</p></body></html>"
+    return '''<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>NPA Sim Viz</title>
+    <style>
+      body {{ font-family: sans-serif; margin: 12px; }}
+      .meta {{ margin-bottom: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; }}
+      .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; margin-left: 6px; }}
+      iframe {{ width: 100%; height: 540px; border: 1px solid #ddd; border-radius: 6px; }}
+      .hint {{ color: #555; margin-top: 8px; }}
+    </style>
+  </head>
+  <body>
+    <div class="meta">
+      <strong>Run:</strong> <span id="run_id">-</span>
+      <span class="badge" id="stage">idle</span>
+      <span class="badge" id="mode">static</span>
+    </div>
+    <iframe id="viz" title="sim-viz" src="about:blank"></iframe>
+    <p class="hint">Panel polls <code>/api/sim-viz/status</code> and reloads when a newer recording appears.</p>
+    <script>
+      let lastUri = "";
+      let lastUpdated = "";
+      function setText(id, value) {{
+        const el = document.getElementById(id);
+        if (el) el.textContent = value || "-";
+      }}
+      async function poll() {{
+        try {{
+          const resp = await fetch("/api/sim-viz/status", {{ credentials: "same-origin" }});
+          if (!resp.ok) return;
+          const payload = await resp.json();
+          const runId = String(payload.run_id || "");
+          const stage = String(payload.stage || "idle");
+          const mode = String(payload.mode || "static");
+          const rrdUri = String(payload.rrd_uri || "");
+          const updated = String(payload.rrd_updated_at || "");
+          setText("run_id", runId || "-");
+          setText("stage", stage);
+          setText("mode", mode);
+          if (rrdUri && (rrdUri !== lastUri || updated !== lastUpdated)) {{
+            lastUri = rrdUri;
+            lastUpdated = updated;
+            // The backend can return a local file response or JSON pointer.
+            const viewer = document.getElementById("viz");
+            viewer.src = "/api/sim-viz/rrd";
+          }}
+        }} catch (_err) {{
+          // Keep polling; transient fetch failures are expected during startup.
+        }}
+      }}
+      poll();
+      setInterval(poll, 5000);
+    </script>
+  </body>
+</html>
+'''
 PY
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <!doctype html>
@@ -487,7 +544,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       <section class="panel">
         <h3>Sim Assets</h3>
         <div id="assets"></div>
+        <button id="applySelection" type="button">Apply stock selection</button>
         <h3>Cameras</h3>
+        <label for="cameraSelect">Select camera</label>
+        <select id="cameraSelect"></select>
+        <div id="frustum"></div>
         <div id="cameras"></div>
       </section>
       <section class="panel">
@@ -509,10 +570,74 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.getElementById("assets").innerHTML = "<pre>" + JSON.stringify(assets.selection, null, 2) + "</pre>";
           document.getElementById("cameras").innerHTML = "<pre>" + JSON.stringify(cameras, null, 2) + "</pre>";
           document.getElementById("simviz").innerHTML = "<pre>" + JSON.stringify(simViz, null, 2) + "</pre>";
+          const select = document.getElementById("cameraSelect");
+          const selected = new Set((cameras.selected || []).map(String));
+          const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
+          select.innerHTML = "";
+          for (const cam of list) {{
+            const opt = document.createElement("option");
+            opt.value = String(cam.name || "");
+            opt.textContent = String(cam.name || "");
+            if (selected.has(opt.value)) opt.selected = true;
+            select.appendChild(opt);
+          }}
+          renderFrustum(list.find((c) => String(c.name || "") === String(select.value || "")) || list[0] || null);
         }} catch (err) {{
           document.getElementById("simviz").textContent = "Failed to fetch API status";
         }}
       }}
+      function renderFrustum(camera) {{
+        const holder = document.getElementById("frustum");
+        if (!camera) {{
+          holder.innerHTML = "<p>No camera selected</p>";
+          return;
+        }}
+        const pos = Array.isArray(camera.pos) ? camera.pos : [0, 0, 0];
+        const lookAt = Array.isArray(camera.look_at) ? camera.look_at : [0, 1, 0];
+        const fov = Number(camera.fov || 60);
+        const dx = lookAt[0] - pos[0];
+        const dy = lookAt[1] - pos[1];
+        const angle = Math.atan2(dy, dx);
+        const spread = (fov * Math.PI / 180) / 2;
+        const r = 55;
+        const cx = 90;
+        const cy = 90;
+        const p1x = cx + r * Math.cos(angle - spread);
+        const p1y = cy + r * Math.sin(angle - spread);
+        const p2x = cx + r * Math.cos(angle + spread);
+        const p2y = cy + r * Math.sin(angle + spread);
+        holder.innerHTML = `<svg width="180" height="180" viewBox="0 0 180 180">
+          <circle cx="${{cx}}" cy="${{cy}}" r="4" fill="#111"/>
+          <polygon points="${{cx}},${{cy}} ${{p1x}},${{p1y}} ${{p2x}},${{p2y}}" fill="rgba(59,130,246,0.2)" stroke="#3b82f6"/>
+          <text x="10" y="170" font-size="12">${{String(camera.name || "")}}</text>
+        </svg>`;
+      }}
+      document.getElementById("cameraSelect").addEventListener("change", async (e) => {{
+        const selected = String(e.target.value || "");
+        await fetch("/api/sim-assets/cameras/selection", {{
+          method: "PUT",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{ selected: selected ? [selected] : [] }}),
+        }});
+        await refresh();
+      }});
+      document.getElementById("applySelection").addEventListener("click", async () => {{
+        await fetch("/api/sim-assets/selection", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          credentials: "same-origin",
+          body: JSON.stringify({{
+            scene_spec_uri: "stock://scene/default",
+            robot_spec_uri: "stock://robot/franka",
+            cameras_uri: "stock://cameras/default",
+            robot_preset: "franka",
+            sim_backend: "isaac",
+            props: ["cube"]
+          }}),
+        }});
+        await refresh();
+      }});
       refresh();
       setInterval(refresh, 10000);
     </script>
@@ -875,6 +1000,18 @@ def verify_live_cmd(
     )
     if not rerun_ok:
         _fail(f"embedded rerun iframe endpoint unhealthy (status={rerun_code})")
+    try:
+        sim_viz_status_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+        )
+        sim_viz_status_resp.raise_for_status()
+        sim_viz_status = sim_viz_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"sim viz status endpoint unhealthy: {exc}")
+    if not isinstance(sim_viz_status, dict):
+        _fail("sim viz status endpoint did not return JSON object")
 
     sim_assets_base = str(record.get("sim_assets_url", record.get("agent_url", ""))).rstrip("/")
     if not sim_assets_base:
