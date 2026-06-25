@@ -291,14 +291,19 @@ def build_isaac_job_manifest(
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
         '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
-        'CKPT_PATH="$CKPT" OUT_URI="' + s3_output_uri + '" "$PY" - <<\'PYEOF\'\n'
-        "import os, boto3\n"
+        'CKPT_PATH="$CKPT" OUT_DIR="$OUT" OUT_URI="' + s3_output_uri + '" "$PY" - <<\'PYEOF\'\n'
+        "import os, glob, boto3\n"
         "from urllib.parse import urlparse\n"
         "u = urlparse(os.environ['OUT_URI'])\n"
+        "base = u.path.lstrip('/')\n"
         "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-        "key = u.path.lstrip('/') + 'model_latest.pt'\n"
-        "s3.upload_file(os.environ['CKPT_PATH'], u.netloc, key)\n"
-        "print('UPLOADED_CKPT s3://%s/%s' % (u.netloc, key))\n"
+        "s3.upload_file(os.environ['CKPT_PATH'], u.netloc, base + 'model_latest.pt')\n"
+        "print('UPLOADED_CKPT s3://%s/%s' % (u.netloc, base + 'model_latest.pt'))\n"
+        "# Periodic checkpoints (agent.save_interval) -> accuracy-vs-iteration eval sweep.\n"
+        "for p in sorted(glob.glob(os.environ['OUT_DIR'] + '/**/model_*.pt', recursive=True)):\n"
+        "    key = base + 'checkpoints/' + os.path.basename(p)\n"
+        "    s3.upload_file(p, u.netloc, key)\n"
+        "    print('UPLOADED_PERIODIC s3://%s/%s' % (u.netloc, key))\n"
         "PYEOF\n"
         'echo "BYO_TRAIN_DONE rc=$rc"\n'
         "exit $rc\n"
