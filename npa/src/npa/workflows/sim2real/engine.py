@@ -3030,9 +3030,23 @@ def run_heldout_eval(
             "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
         },
     )
-    if config.byo_eval_command.strip():
+    # Default the genuine-RL Isaac path to the real-policy held-out eval
+    # (byo_isaac_eval loads the trained rsl_rl checkpoint and rolls it in Isaac
+    # Lab), instead of the scalar action-bias adapter rollout. Gate on a genuine
+    # trainer (a real checkpoint must exist) + a ready K8s image; the reference
+    # trainer has no Isaac checkpoint, so it keeps the adapter/reference path.
+    eval_command = config.byo_eval_command.strip()
+    if (
+        not eval_command
+        and config.sim_backend == SIM_BACKEND_ISAAC
+        and config.byo_trainer_command.strip()
+        and config.s3_bucket.strip()
+        and _heldout_k8s_image_ready(config)
+    ):
+        eval_command = "python3 -m npa.workflows.sim2real.byo_isaac_eval"
+    if eval_command:
         invocation = _run_component_command(
-            config.byo_eval_command,
+            eval_command,
             cwd=local_dir,
             env=env,
             component="heldout_eval",
