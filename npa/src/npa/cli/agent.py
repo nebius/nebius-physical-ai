@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062510"
+AGENT_UI_VERSION = "2025062511"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -380,7 +380,7 @@ def _nginx_agent_site_body(
     gzip on;
     gzip_types application/wasm application/javascript text/javascript image/svg+xml;
     gzip_min_length 256;
-    add_header Cache-Control "public, max-age=604800, immutable" always;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
   }}
   location /rerun/ {{
     proxy_pass http://127.0.0.1:{rerun_port}/;
@@ -389,7 +389,7 @@ def _nginx_agent_site_body(
     proxy_connect_timeout 30s;
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
-    add_header Cache-Control "no-cache" always;
+    add_header Cache-Control "public, max-age=3600" always;
   }}
   location / {{
     root /opt/npa-agent;
@@ -622,6 +622,110 @@ def _camera_frustum_lines(pos: list[float], look_at: list[float], fov: float, *,
     ]
     return origin, strips
 
+_FRANKA_HOME_JOINTS = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
+
+def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]]:
+    import math
+
+    dh = [
+        (0.0, 0.0, 0.333),
+        (0.0, -math.pi / 2.0, 0.0),
+        (0.0, math.pi / 2.0, 0.316),
+        (0.0825, math.pi / 2.0, 0.0),
+        (-0.0825, -math.pi / 2.0, 0.384),
+        (0.0, math.pi / 2.0, 0.0),
+        (0.088, math.pi / 2.0, 0.0),
+    ]
+
+    def _matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+        return [
+            [sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)
+        ]
+
+    transform = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    positions = [[0.0, 0.0, 0.0]]
+    for index, (a, alpha, d) in enumerate(dh):
+        theta = float(joint_angles[index])
+        ct, st = math.cos(theta), math.sin(theta)
+        ca, sa = math.cos(alpha), math.sin(alpha)
+        step = [
+            [ct, -st * ca, st * sa, a * ct],
+            [st, ct * ca, -ct * sa, a * st],
+            [0.0, sa, ca, d],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        transform = _matmul(transform, step)
+        positions.append([transform[0][3], transform[1][3], transform[2][3]])
+    ee = [transform[0][3], transform[1][3], transform[2][3] + 0.103]
+    positions.append(ee)
+    positions.append([ee[0], ee[1] + 0.04, ee[2]])
+    positions.append([ee[0], ee[1] - 0.04, ee[2]])
+    return positions
+
+def _log_franka_robot_geometry(rr) -> None:
+    positions = _franka_joint_positions(_FRANKA_HOME_JOINTS)
+    arm_points = positions[:8]
+    segments: list[list[list[float]]] = []
+    for left, right in zip(arm_points, arm_points[1:]):
+        dx = left[0] - right[0]
+        dy = left[1] - right[1]
+        dz = left[2] - right[2]
+        if dx * dx + dy * dy + dz * dz < 1e-8:
+            continue
+        segments.append([left, right])
+    link_color = [234, 88, 12]
+    link_rgba = link_color + [255]
+    rr.log(
+        "robot/franka/base",
+        rr.Boxes3D(
+            centers=[[0.0, 0.0, 0.05]],
+            half_sizes=[[0.085, 0.085, 0.05]],
+            colors=[[100, 116, 139, 255]],
+        ),
+    )
+    rr.log(
+        "robot/franka/joints",
+        rr.Points3D(
+            arm_points,
+            colors=[link_rgba] * len(arm_points),
+            radii=[0.028] * len(arm_points),
+        ),
+    )
+    if segments:
+        rr.log(
+            "robot/franka/links",
+            rr.LineStrips3D(
+                segments,
+                colors=[link_color] * len(segments),
+                radii=[0.018] * len(segments),
+            ),
+        )
+    gripper_segments = [
+        [positions[7], positions[8]],
+        [positions[8], positions[9]],
+        [positions[8], positions[10]],
+    ]
+    gripper_color = [59, 130, 246]
+    rr.log(
+        "robot/franka/gripper",
+        rr.LineStrips3D(
+            gripper_segments,
+            colors=[gripper_color] * len(gripper_segments),
+            radii=[0.012] * len(gripper_segments),
+        ),
+    )
+    rr.log(
+        "robot/franka",
+        rr.TextDocument(
+            "Franka Panda — stock tabletop pick-and-place demo (NPA agent preview)"
+        ),
+    )
+
 def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
     import math
 
@@ -653,12 +757,7 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
             colors=[[59, 130, 246, 255]],
         ),
     )
-    rr.log(
-        "robot/franka",
-        rr.TextDocument(
-            "Franka Panda — stock tabletop pick-and-place demo (NPA agent preview)"
-        ),
-    )
+    _log_franka_robot_geometry(rr)
     cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
     active = camera if camera in cameras else "workspace"
     for name, cam in cameras.items():
@@ -1308,9 +1407,110 @@ def submit_sim2real(payload: dict):
     return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py >/dev/null
+import math
 from pathlib import Path
 
 import rerun as rr
+
+_FRANKA_HOME = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
+
+def _franka_joint_positions(joint_angles):
+    dh = [
+        (0.0, 0.0, 0.333),
+        (0.0, -math.pi / 2.0, 0.0),
+        (0.0, math.pi / 2.0, 0.316),
+        (0.0825, math.pi / 2.0, 0.0),
+        (-0.0825, -math.pi / 2.0, 0.384),
+        (0.0, math.pi / 2.0, 0.0),
+        (0.088, math.pi / 2.0, 0.0),
+    ]
+
+    def _matmul(a, b):
+        return [
+            [sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)
+        ]
+
+    transform = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    positions = [[0.0, 0.0, 0.0]]
+    for index, (a, alpha, d) in enumerate(dh):
+        theta = float(joint_angles[index])
+        ct, st = math.cos(theta), math.sin(theta)
+        ca, sa = math.cos(alpha), math.sin(alpha)
+        step = [
+            [ct, -st * ca, st * sa, a * ct],
+            [st, ct * ca, -ct * sa, a * st],
+            [0.0, sa, ca, d],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        transform = _matmul(transform, step)
+        positions.append([transform[0][3], transform[1][3], transform[2][3]])
+    ee = [transform[0][3], transform[1][3], transform[2][3] + 0.103]
+    positions.append(ee)
+    positions.append([ee[0], ee[1] + 0.04, ee[2]])
+    positions.append([ee[0], ee[1] - 0.04, ee[2]])
+    return positions
+
+def _log_franka_robot_geometry():
+    positions = _franka_joint_positions(_FRANKA_HOME)
+    arm_points = positions[:8]
+    segments = []
+    for left, right in zip(arm_points, arm_points[1:]):
+        dx = left[0] - right[0]
+        dy = left[1] - right[1]
+        dz = left[2] - right[2]
+        if dx * dx + dy * dy + dz * dz < 1e-8:
+            continue
+        segments.append([left, right])
+    link_color = [234, 88, 12]
+    link_rgba = link_color + [255]
+    rr.log(
+        "robot/franka/base",
+        rr.Boxes3D(
+            centers=[[0.0, 0.0, 0.05]],
+            half_sizes=[[0.085, 0.085, 0.05]],
+            colors=[[100, 116, 139, 255]],
+        ),
+    )
+    rr.log(
+        "robot/franka/joints",
+        rr.Points3D(
+            arm_points,
+            colors=[link_rgba] * len(arm_points),
+            radii=[0.028] * len(arm_points),
+        ),
+    )
+    if segments:
+        rr.log(
+            "robot/franka/links",
+            rr.LineStrips3D(
+                segments,
+                colors=[link_color] * len(segments),
+                radii=[0.018] * len(segments),
+            ),
+        )
+    gripper_segments = [
+        [positions[7], positions[8]],
+        [positions[8], positions[9]],
+        [positions[8], positions[10]],
+    ]
+    gripper_color = [59, 130, 246]
+    rr.log(
+        "robot/franka/gripper",
+        rr.LineStrips3D(
+            gripper_segments,
+            colors=[gripper_color] * len(gripper_segments),
+            radii=[0.012] * len(gripper_segments),
+        ),
+    )
+    rr.log(
+        "robot/franka",
+        rr.TextDocument("Franka Panda — stock tabletop demo (bootstrap)"),
+    )
 
 target = Path("/opt/npa-agent/sim2real.rrd")
 target.parent.mkdir(parents=True, exist_ok=True)
@@ -1331,10 +1531,7 @@ rr.log(
         colors=[[59, 130, 246, 255]],
     ),
 )
-rr.log(
-    "robot/franka",
-    rr.TextDocument("Franka Panda — stock tabletop demo (bootstrap)"),
-)
+_log_franka_robot_geometry()
 rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
 rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
 rr.save(str(target))
@@ -2090,13 +2287,46 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let rerunBootInProgress = false;
       let lastRrdBlobUrl = "";
       let lastRerunBlobStatus = "pending";
+      let lastRerunMountStatus = "pending";
       const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
+      const RERUN_BUNDLE_ASSETS = ["/rerun/re_viewer.js", "/rerun/re_viewer_bg.wasm"];
+      let rerunBundleWarmPromise = null;
       const RERUN_BLOB_SUCCESS = "SUCCESS";
+      const RERUN_MOUNT_SUCCESS = "SUCCESS";
       function setRerunBlobStatus(status, detail) {{
         const text = String(status || "").trim() || "pending";
         lastRerunBlobStatus = text;
         const extra = detail ? " (" + String(detail) + ")" : "";
         setStatus("Rerun blob: " + text + extra);
+      }}
+      function setRerunMountStatus(status, detail) {{
+        const text = String(status || "").trim() || "pending";
+        lastRerunMountStatus = text;
+        const extra = detail ? " (" + String(detail) + ")" : "";
+        setStatus("Rerun mount: " + text + extra);
+      }}
+      async function warmRerunBundle() {{
+        if (rerunBundleWarmPromise) {{
+          return rerunBundleWarmPromise;
+        }}
+        rerunBundleWarmPromise = Promise.all(
+          RERUN_BUNDLE_ASSETS.map((path) =>
+            fetchWithTimeout(
+              path,
+              {{ credentials: "include", cache: "force-cache" }},
+              120000
+            ).then((resp) => {{
+              if (!resp.ok) {{
+                throw new Error("Rerun bundle asset failed: " + path);
+              }}
+              return resp.blob();
+            }})
+          )
+        ).catch((err) => {{
+          rerunBundleWarmPromise = null;
+          throw err;
+        }});
+        return rerunBundleWarmPromise;
       }}
       async function resolveRerunRecordingUrl() {{
         const cacheBust = "?t=" + String(Date.now());
@@ -2155,7 +2385,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
-          "&hide_welcome_screen=1&camera=" +
+          "&renderer=webgl&hide_welcome_screen=1&camera=" +
           encodeURIComponent(cam)
         );
       }}
@@ -2192,14 +2422,48 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         throw new Error("Rerun viewer is not ready yet (service or .rrd missing)");
       }}
-      function mountRerunIframe(camera) {{
-        const iframe = document.getElementById("rerunFrame");
-        if (!iframe) return Promise.resolve();
-        return rerunIframeSrc(camera).then((src) => {{
-          iframe.src = src;
-          hideRerunPlaceholder();
-          rerunIframeLoaded = true;
+      async function waitForIframeLoad(iframe, timeoutMs) {{
+        const timeout = Math.max(500, Number(timeoutMs || 8000));
+        return await new Promise((resolve, reject) => {{
+          let done = false;
+          const timer = window.setTimeout(() => {{
+            if (done) return;
+            done = true;
+            reject(new Error("Rerun iframe load timed out"));
+          }}, timeout);
+          function finish(ok, err) {{
+            if (done) return;
+            done = true;
+            window.clearTimeout(timer);
+            iframe.removeEventListener("load", onLoad);
+            iframe.removeEventListener("error", onError);
+            if (ok) {{
+              resolve(true);
+            }} else {{
+              reject(err || new Error("Rerun iframe failed to load"));
+            }}
+          }}
+          function onLoad() {{
+            finish(true);
+          }}
+          function onError() {{
+            finish(false, new Error("Rerun iframe error event"));
+          }}
+          iframe.addEventListener("load", onLoad, {{ once: true }});
+          iframe.addEventListener("error", onError, {{ once: true }});
         }});
+      }}
+      async function mountRerunIframe(camera) {{
+        const iframe = document.getElementById("rerunFrame");
+        if (!iframe) return true;
+        const src = await rerunIframeSrc(camera);
+        setRerunMountStatus("retrying", "navigating");
+        iframe.src = src;
+        hideRerunPlaceholder();
+        await waitForIframeLoad(iframe, 12000);
+        rerunIframeLoaded = true;
+        setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
+        return true;
       }}
       async function mountRerunIframeUntilSuccess(camera, maxAttempts) {{
         const attempts = Math.max(1, Number(maxAttempts || 8));
@@ -2207,14 +2471,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         for (let i = 0; i < attempts; i += 1) {{
           try {{
             setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
+            setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             await mountRerunIframe(camera);
-            if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS) {{
-              throw new Error("Rerun iframe mount missing SUCCESS blob state");
+            if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
+              throw new Error("Rerun iframe mount missing SUCCESS blob/mount state");
             }}
             return true;
           }} catch (err) {{
             lastErr = err;
             setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
+            setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             if (i + 1 >= attempts) {{
               break;
             }}
@@ -2588,6 +2854,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         rerunBootInProgress = true;
         showRerunPlaceholder("Loading stock Franka preview...");
         setStatus("Preloading Rerun…");
+        try {{
+          await warmRerunBundle();
+        }} catch (warmErr) {{
+          console.warn("rerun bundle warm failed", warmErr);
+        }}
         try {{
           await restoreSession();
         }} catch (_err) {{

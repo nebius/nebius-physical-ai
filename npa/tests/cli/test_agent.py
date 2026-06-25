@@ -179,6 +179,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert "_wire_franka_demo" in source
     assert "_generate_franka_demo_rrd" in source
+    assert "_log_franka_robot_geometry" in source
+    assert "robot/franka/links" in source
     assert "Load Franka in Rerun" in source
     assert "Open in Rerun" in source
     assert "robotPreset" in source
@@ -192,7 +194,9 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
     assert "lastRerunBlobStatus" in source
-    assert "Rerun iframe mount missing SUCCESS blob state" in source
+    assert "lastRerunMountStatus" in source
+    assert "RERUN_MOUNT_SUCCESS" in source
+    assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
