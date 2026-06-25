@@ -362,6 +362,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
 
     def _fake_http_post(url, *_args, **_kwargs):
         url_s = str(url)
+        if url_s.endswith("/api/chat"):
+            return _Resp(
+                {
+                    "ok": True,
+                    "grounded": True,
+                    "reply": "**Sim2Real status**\n- **run_id**: `agent-run-123`\n- **stage**: `demo`",
+                    "apis_used": ["sim-viz/status"],
+                }
+            )
         if url_s.endswith("/api/sim-assets/selection"):
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
