@@ -32,7 +32,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:track|tail)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
             r"|\b(?:open|show|view)\b.*\b(?:rerun|timeline|sim\s+viz|iframe)\b"
             r"|\b(?:live|latest)\b.*\b(?:sim|simulation|rerun|timeline)\b"
-            r"|\b(?:stage|run)\b.*\b(?:badge|overlay)\b",
+            r"|\b(?:stage|run)\b.*\b(?:badge|overlay)\b"
+            r"|\b(?:keep|continue)\b.*\b(?:watching|monitoring|tracking)\b.*\b(?:sim|rerun|timeline|run)\b"
+            r"|\b(?:keep me posted|live updates?)\b.*\b(?:sim|simulation|rerun|timeline|run)\b"
+            r"|\b(?:poll|refresh)\b.*\b(?:sim-viz/status|rrd|iframe|rerun)\b"
+            r"|\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
+            r"|\bblob\s*(?:\+|and)\s*iframe\b.*\b(?:success|ready)\b"
+            r"|\bboth\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
+            r"|\buntil\b.*\b(?:success|ready)\b.*\b(?:blob|iframe|rerun)\b"
+            r"|\b(?:wait|retry|rerun)\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
+            r"|\b(?:when|once)\b.*\brrd\b.*\b(?:arrives|lands|updates?)\b",
             re.IGNORECASE,
         ),
     ),
@@ -42,14 +51,18 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b(sim\s*assets?|selection|resolved_uris?|robot_preset|scene_spec)\b"
             r"|\bfranka\b.*\b(preset|selection|assets?)\b"
-            r"|\bwhat(?:'s| is)\b.*\bselected\b",
+            r"|\bwhat(?:'s| is)\b.*\bselected\b"
+            r"|\b(?:select|specify|set)\b.*\b(?:scene|robot|props?|cameras?)\b"
+            r"|\b(?:scene|robot|props?|cameras?)\b.*\b(?:selection|selector|mode)\b",
             re.IGNORECASE,
         ),
     ),
     (
         "cameras",
         re.compile(
-            r"\b(cameras?|workspace camera|wrist camera|camera selection|frustum)\b",
+            r"\b(cameras?|workspace camera|wrist camera|camera selection|frustum)\b"
+            r"|\bcamera\s+angle\s+inspector\b"
+            r"|\b(?:preview|thumbnail|top[- ]down)\b.*\b(?:camera|frustum)\b",
             re.IGNORECASE,
         ),
     ),
@@ -77,7 +90,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
-    "watch_sim": ["sim-viz/status", "workflows/sim2real/status"],
+    "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
@@ -302,7 +315,8 @@ def build_grounded_reply(
         return (
             status
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
-            + "\n- Workflow watchers should continue until iframe blob mount reports **SUCCESS**."
+            + "\n- Workflow watchers should continue until both `blob` and `iframe mount` report **SUCCESS**."
+            + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)

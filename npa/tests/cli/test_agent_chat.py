@@ -13,6 +13,14 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
     assert match_chat_intent("watch the sim") == "watch_sim"
     assert match_chat_intent("track the rerun timeline") == "watch_sim"
+    assert match_chat_intent("keep me posted with live updates on the sim run") == "watch_sim"
+    assert match_chat_intent("rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("retry blob iframe until ready") == "watch_sim"
+    assert match_chat_intent("watch sim and refresh when rrd lands") == "watch_sim"
+    assert match_chat_intent("watch rerun blob+iframe until success") == "watch_sim"
+    assert match_chat_intent("wait until both blob and iframe are SUCCESS") == "watch_sim"
+    assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
+    assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
 
 
 def test_format_sim2real_status_includes_run_id_and_stage() -> None:
@@ -49,6 +57,19 @@ def test_build_grounded_reply_watch_sim_mentions_success() -> None:
     state = {"sim_viz": {"run_id": "x", "stage": "running"}, "selection": {}, "latest_submit": {}}
     reply = build_grounded_reply("watch_sim", state, ["workbench.lerobot"], rerun_ready=True)
     assert "SUCCESS" in reply
+    assert "blob" in reply
+    assert "iframe mount" in reply
+    assert "RERUN_BLOB_SUCCESS=SUCCESS" in reply
+    assert "RERUN_MOUNT_SUCCESS=SUCCESS" in reply
+
+
+def test_watch_sim_apis_include_rrd_paths() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("watch_sim")
+    assert "sim-viz/status" in apis
+    assert "sim-viz/rrd" in apis
+    assert "sim-viz/rrd-blob" in apis
 
 
 def test_embedded_agent_chat_source_strips_future_import() -> None:

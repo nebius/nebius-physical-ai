@@ -461,12 +461,15 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("tail the simulation timeline") == "watch_sim"
     assert match_chat_intent("open the rerun iframe and show latest timeline") == "watch_sim"
     assert match_chat_intent("show stage badge overlay for this run") == "watch_sim"
+    assert match_chat_intent("poll sim-viz/status and refresh rerun iframe") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
     assert match_chat_intent("list cameras") == "cameras"
     assert match_chat_intent("what tools can workbench do") == "tools_catalog"
     assert match_chat_intent("configure S3 bucket") == "configure_s3"
     assert match_chat_intent("setup cosmos3") == "cosmos3"
+    assert match_chat_intent("camera angle inspector with frustum preview") == "cameras"
+    assert match_chat_intent("specify scene robot cameras props selection") == "sim_assets"
     assert match_chat_intent("hello there") is None
 
 
@@ -507,3 +510,5 @@ def test_apis_for_intent_includes_status_paths() -> None:
     apis = apis_for_intent("sim2real_status")
     assert "sim-viz/status" in apis
     assert "workflows/sim2real/status" in apis
+    watch_apis = apis_for_intent("watch_sim")
+    assert "sim-viz/rrd-blob" in watch_apis
