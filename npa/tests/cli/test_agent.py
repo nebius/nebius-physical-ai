@@ -178,9 +178,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "waitForRerunReady" in source
     assert "mountRerunIframe" in source
     assert "resolveRerunRrdUrl" in source
+    assert "/api/sim-viz/rrd-blob" in source
     assert "URL.createObjectURL" in source
-    assert "_agent_chat_with_tools" in source
-    assert "_maybe_toolground_chat_reply" in source
+    assert "apis_used" in source
+    assert "format_live_context_block" in source
+    assert "match_chat_intent" in source
     assert "renderAssetsSummary" in source
     assert "selectionPayloadFromUi" in source
 
@@ -337,7 +339,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"chat_history": [], "selection": {}})
         if url_s.endswith("/api/sim-viz/status"):
             return _Resp({"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd", "stage": "demo"})
-        if url_s.endswith("/api/sim-viz/rrd"):
+        if url_s.endswith("/api/sim-viz/rrd") or url_s.endswith("/api/sim-viz/rrd-blob"):
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
             return _Resp({"ok": True})
@@ -388,3 +390,69 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]
+
+
+def _sample_agent_state(*, rerun_ready: bool = True, stage: str = "demo") -> dict:
+    return {
+        "sim_viz": {
+            "run_id": "agent-run-123",
+            "stage": stage,
+            "camera": "workspace",
+            "rerun_ready": rerun_ready,
+            "rrd_updated_at": "2025-06-25T12:00:00+00:00",
+        },
+        "selection": {
+            "robot_preset": "franka",
+            "sim_backend": "isaac",
+            "scene_spec_uri": "stock://scene/default",
+            "robot_spec_uri": "stock://robot/franka",
+            "cameras_uri": "stock://cameras/default",
+            "assets_uri": "",
+            "props": ["cube"],
+        },
+        "latest_submit": {"run_id": "agent-run-123", "submitted_at": "2025-06-25T11:00:00+00:00"},
+        "camera_selection": ["workspace"],
+    }
+
+
+def test_match_chat_intent_status_queries() -> None:
+    from npa.cli.agent_chat import match_chat_intent
+
+    assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
+    assert match_chat_intent("workflow status please") == "sim2real_status"
+    assert match_chat_intent("load franka in rerun") == "load_franka"
+    assert match_chat_intent("show me the sim assets selection") == "sim_assets"
+    assert match_chat_intent("list cameras") == "cameras"
+    assert match_chat_intent("what tools can workbench do") == "tools_catalog"
+    assert match_chat_intent("configure S3 bucket") == "configure_s3"
+    assert match_chat_intent("setup cosmos3") == "cosmos3"
+    assert match_chat_intent("hello there") is None
+
+
+def test_build_grounded_status_reply_unpacks_fields() -> None:
+    from npa.cli.agent_chat import build_grounded_reply
+
+    state = _sample_agent_state()
+    reply = build_grounded_reply("sim2real_status", state, ["tool.a"], rerun_ready=True)
+    assert "**run_id**" in reply
+    assert "`agent-run-123`" in reply
+    assert "**stage**" in reply
+    assert "`demo`" in reply
+    assert "GET /api" not in reply
+
+
+def test_format_live_context_block_redacts_secrets() -> None:
+    from npa.cli.agent_chat import format_live_context_block
+
+    block = format_live_context_block(_sample_agent_state())
+    assert "agent-run-123" in block
+    assert "password" not in block.lower()
+    assert "credentials" not in block.lower()
+
+
+def test_apis_for_intent_includes_status_paths() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("sim2real_status")
+    assert "sim-viz/status" in apis
+    assert "workflows/sim2real/status" in apis

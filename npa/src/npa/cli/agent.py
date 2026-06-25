@@ -44,8 +44,15 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062507"
+AGENT_UI_VERSION = "2025062508"
 DEFAULT_HTTPS_PORT = 443
+
+
+def _embedded_agent_chat_source() -> str:
+    """Return agent_chat.py source embedded into the remote agent backend."""
+    path = Path(__file__).with_name("agent_chat.py")
+    # setup_script is an f-string; escape braces so agent_chat.py embeds verbatim.
+    return path.read_text(encoding="utf-8").replace("{", "{{").replace("}", "}}")
 
 
 @dataclass(frozen=True)
@@ -407,6 +414,7 @@ def _bootstrap_agent_stack(
         ).ssh
     )
     catalog_json = json.dumps(_tool_catalog_payload())
+    agent_chat_source = _embedded_agent_chat_source()
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -850,64 +858,59 @@ def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
         raise HTTPException(status_code=502, detail="Token Factory returned non-object response")
     return data
 
-_STATUS_QUERY_RE = re.compile(
-    r"(?:\\b(?:what(?:'s| is)|show|tell me|check|get)\\b.*\\b(?:current\\s+)?"
-    r"(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|workflow|rerun|sim\\s+viz))"
-    r"|\\b(?:sim\\s*[- ]?2\\s*[- ]?real|workflow|rerun)\\b.*\\bstatus\\b"
-    r"|\\bstatus\\b.*\\b(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|workflow|rerun|stage|run)\\b",
-    re.IGNORECASE,
-)
+{agent_chat_source}
 
-def _format_agent_status_snapshot(state: dict) -> str:
-    sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict):
-        sim_viz = dict(DEFAULT_SIM_VIZ)
-    latest = state.get("latest_submit", {{}})
-    if not isinstance(latest, dict):
-        latest = {{}}
-    selection = state.get("selection", {{}})
-    if not isinstance(selection, dict):
-        selection = dict(DEFAULT_SELECTION)
-    run_id = str(sim_viz.get("run_id") or latest.get("run_id") or "").strip() or "none"
-    stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
-    camera = str(sim_viz.get("camera") or "workspace")
-    rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    rrd_updated = str(sim_viz.get("rrd_updated_at") or "").strip() or "n/a"
-    submitted_at = str(latest.get("submitted_at") or "").strip() or "n/a"
-    robot = str(selection.get("robot_preset") or "franka")
-    backend = str(selection.get("sim_backend") or "isaac")
-    lines = [
-        "Current Sim2Real status (from agent session state):",
-        f"- **run_id**: `{{run_id}}`",
-        f"- **stage**: `{{stage}}`",
-        f"- **camera**: `{{camera}}`",
-        f"- **rerun_ready**: {{str(rerun_ready).lower()}}",
-        f"- **rrd_updated_at**: `{{rrd_updated}}`",
-        f"- **latest_submit_at**: `{{submitted_at}}`",
-        f"- **robot_preset**: `{{robot}}`",
-        f"- **sim_backend**: `{{backend}}`",
-    ]
-    if rerun_ready:
-        lines.append("- Open the **Rerun** panel or click **Load Franka in Rerun** to view the scene.")
-    else:
-        lines.append("- No `.rrd` yet — click **Load Franka in Rerun** or submit a Sim2Real workflow.")
-    return "\\n".join(lines)
-
-def _maybe_toolground_chat_reply(user_text: str) -> str | None:
-    text = str(user_text or "").strip()
-    if not text or not _STATUS_QUERY_RE.search(text):
-        return None
-    return _format_agent_status_snapshot(_load_state())
-
-def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
-    last_user = ""
+def _last_user_message(raw_messages: list) -> str:
     for item in reversed(raw_messages):
         if not isinstance(item, dict):
             continue
         if str(item.get("role", "")).strip() == "user":
-            last_user = str(item.get("content", "")).strip()
-            break
-    tool_reply = _maybe_toolground_chat_reply(last_user)
+            return str(item.get("content", "")).strip()
+    return ""
+
+def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]:
+    intent = match_chat_intent(user_text)
+    if not intent:
+        return None, []
+    state = _load_state()
+    loaded_now = False
+    rerun_ready = None
+    default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent == "load_franka":
+        sim_viz = state.get("sim_viz", {{}})
+        if not isinstance(sim_viz, dict):
+            sim_viz = {{}}
+        rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+        if not rerun_ready:
+            selected = state.get("camera_selection", ["workspace"])
+            cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
+            _wire_franka_demo(state, camera=cam)
+            state = _load_state()
+            loaded_now = True
+            sim_viz = state.get("sim_viz", {{}})
+            if not isinstance(sim_viz, dict):
+                sim_viz = {{}}
+            rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "sim2real_status":
+        sim_viz = state.get("sim_viz", {{}})
+        if not isinstance(sim_viz, dict):
+            sim_viz = {{}}
+        rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    reply = build_grounded_reply(
+        intent,
+        state,
+        TOOL_REFS,
+        rerun_ready=rerun_ready,
+        loaded_franka_now=loaded_now,
+        default_cameras=default_cameras,
+    )
+    return reply, apis_for_intent(intent)
+
+def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
+    last_user = _last_user_message(raw_messages)
+    if not last_user:
+        return None
+    tool_reply, apis_used = _maybe_toolground_chat_reply(last_user)
     if not tool_reply:
         return None
     return {{
@@ -916,6 +919,7 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
         "reply": tool_reply,
         "reasoning": None,
         "grounded": True,
+        "apis_used": apis_used,
     }}
 
 @app.post("/chat")
@@ -941,7 +945,10 @@ def chat(payload: dict):
         state["chat_history"] = history[-50:]
         _save_state(state)
         return tool_result
-    messages: list[dict] = [{{"role": "system", "content": _agent_system_prompt()}}]
+    live_ctx = format_live_context_block(_load_state())
+    messages: list[dict] = [
+        {{"role": "system", "content": _agent_system_prompt() + "\\n\\n" + live_ctx}}
+    ]
     for item in raw_messages:
         if not isinstance(item, dict):
             continue
@@ -1075,8 +1082,7 @@ def sim_viz_camera_preview(payload: dict | None = None):
         "hint": "Open the Rerun panel and expand world/cameras/<name>.",
     }}
 
-@app.get("/sim-viz/rrd")
-def sim_viz_rrd():
+def _sim_viz_rrd_file_response():
     state = _load_state()
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict) or not sim_viz.get("rrd_uri"):
@@ -1086,7 +1092,18 @@ def sim_viz_rrd():
         file_path = Path(uri[len("file://"):])
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
-    return JSONResponse({{"ok": True, "rrd_uri": uri}}, status_code=200)
+    if RRD_PATH.is_file():
+        return FileResponse(str(RRD_PATH), media_type="application/octet-stream")
+    raise HTTPException(status_code=404, detail="No sim2real.rrd file on disk yet")
+
+@app.get("/sim-viz/rrd")
+def sim_viz_rrd():
+    return _sim_viz_rrd_file_response()
+
+@app.get("/sim-viz/rrd-blob")
+def sim_viz_rrd_blob():
+    # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
+    return _sim_viz_rrd_file_response()
 
 @app.get("/sim-assets")
 def sim_assets():
@@ -2010,7 +2027,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let rerunIframeLoaded = false;
       let lastRrdBlobUrl = "";
       async function resolveRerunRrdUrl() {{
-        const resp = await fetchWithTimeout("/api/sim-viz/rrd", {{ credentials: "include" }}, 12000);
+        const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob", {{ credentials: "include" }}, 12000);
         if (!resp.ok) {{
           if (resp.status === 401) {{
             window.location.href = "/login-help.html";
@@ -2091,14 +2108,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadFrankaDemo() {{
         const camera = String(document.getElementById("cameraSelect").value || "workspace");
-        await apiJson("/api/sim-viz/load-franka-demo", {{
+        const result = await apiJson("/api/sim-viz/load-franka-demo", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
         await mountRerunIframe(camera);
-        appendChat("assistant", "Loaded **stock Franka** tabletop demo in Rerun (`" + camera + "` camera).");
+        const simViz = await loadJson("/api/sim-viz/status");
+        if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
+          const stage = String(simViz.stage || "demo");
+          appendChat(
+            "assistant",
+            "Loaded **stock Franka** demo — **stage**: `" + stage + "`, **camera**: `" + camera + "`, **rerun_ready**: `" +
+              String(Boolean(simViz.rerun_ready)) + "`."
+          );
+        }} else if (result && result.ok === false) {{
+          appendChat("error", "Franka demo load did not complete — check Rerun service status.");
+        }}
         await refresh();
         return true;
       }}
@@ -3224,7 +3251,7 @@ def verify_live_cmd(
             chat_smoke = httpx.post(
                 f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
                 auth=(auth_user, auth_password),
-                json={"messages": [{"role": "user", "content": "status"}]},
+                json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
                 timeout=30.0,
                 verify=tls_verify,
             )
@@ -3234,6 +3261,13 @@ def verify_live_cmd(
             _fail(f"chat endpoint smoke failed: {exc}")
         if not isinstance(chat_payload, dict) or not chat_payload.get("ok"):
             _fail("chat endpoint did not return ok=true")
+        reply = str(chat_payload.get("reply") or "")
+        if "run_id" not in reply and "stage" not in reply:
+            _fail("chat status reply missing run_id/stage fields")
+        if reply.strip().startswith("GET /api") or reply.strip() == "GET /api/sim-viz/status":
+            _fail("chat status reply returned raw GET path instead of unpacked status")
+        if not chat_payload.get("grounded"):
+            _fail("chat status reply expected grounded=true from intent router")
 
     test_env = {
         **dict(os.environ),
