@@ -17,15 +17,6 @@ STATUS_QUERY_RE = re.compile(
 
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
-        "load_franka",
-        re.compile(
-            r"\b(load|show|open)\b.*\b(franka|demo)\b"
-            r"|\b(franka|demo)\b.*\b(load|rerun|show|view)\b"
-            r"|\bload franka\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
         "watch_sim",
         re.compile(
             r"\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
@@ -38,6 +29,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:poll|refresh)\b.*\b(?:sim-viz/status|rrd|iframe|rerun)\b"
             r"|\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
             r"|\bblob\s*(?:\+|and)\s*iframe\b.*\b(?:success|ready)\b"
+            r"|\bblob\s*/\s*iframe\b.*\b(?:success|ready)\b"
+            r"|\brerun\s+blob\s*/\s*iframe\b.*\b(?:success|ready)\b"
             r"|\bboth\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
             r"|\buntil\b.*\b(?:success|ready)\b.*\b(?:blob|iframe|rerun)\b"
             r"|\b(?:wait|retry|rerun)\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
@@ -52,6 +45,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bblob\s*\+\s*iframe\s*until\s*success\b"
             r"|\bblob\b.*\biframe\b.*\buntil\b.*\b(?:success|ready)\b"
             r"|\biframe\b.*\bblob\b.*\buntil\b.*\b(?:success|ready)\b"
+            r"|\brerun\b.*\bblob\b.*\biframe\b.*\buntil\b.*\bsuccess\b"
+            r"|\brerun\b.*\bblob\s*/\s*iframe\b.*\buntil\b.*\bsuccess\b"
             r"|\brrd-blob\b.*\b(?:success|ready)\b"
             r"|\b(?:watch|monitor)\b.*\brrd\b.*\b(?:success|ready)\b"
             r"|\bRERUN_BLOB_SUCCESS\b|\bRERUN_MOUNT_SUCCESS\b"
@@ -59,6 +54,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\biframe[_ -]?mount\b.*\bsuccess\b"
             r"|\bboth\b.*\bsuccess\b.*\b(?:blob|iframe|mount)\b"
             r"|\b(?:when|once)\b.*\brrd\b.*\b(?:arrives|lands|updates?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "load_franka",
+        re.compile(
+            r"\b(load|show|open)\b.*\b(franka|demo)\b"
+            r"|\b(franka|demo)\b.*\b(load|rerun|show|view)\b"
+            r"|\bload franka\b",
             re.IGNORECASE,
         ),
     ),
@@ -343,8 +347,9 @@ def build_grounded_reply(
             + f"\n- **rrd_uri**: `{rrd_uri}`."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` appears."
-            + "\n- Then keep retrying blob fetch + iframe mount until both report **SUCCESS**."
+            + "\n- Then keep retrying **blob fetch + iframe mount** until both report **SUCCESS**."
             + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
+            + "\n- If prompted as `Rerun blob iframe until SUCCESS`, follow the same two-signal gate above."
             + "\n- If either status is not `SUCCESS`, retry mounting `/rerun/` and fetching `/api/sim-viz/rrd-blob`."
             + "\n- Use `/api/sim-viz/rrd` as fallback source if blob fetch has transient failures."
         )
