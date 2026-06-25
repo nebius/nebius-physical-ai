@@ -273,6 +273,36 @@ def _is_routable_public_ip(value: str) -> bool:
     return True
 
 
+def _agent_public_login_form_html(auth_user: str) -> str:
+    """Shared Sign in form for public welcome/login-help pages (basic-auth URL redirect)."""
+    return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
+      <h2 id="sign-in-heading">Sign in</h2>
+      <p class="muted">Use the form if your browser does not show an HTTP Basic Auth dialog.</p>
+      <form id="npa-sign-in" class="sign-in" autocomplete="on">
+        <label for="npa-user">Username</label>
+        <input id="npa-user" name="username" type="text" value="{auth_user}" autocomplete="username" required>
+        <label for="npa-pass">Password</label>
+        <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+      </form>
+      <p class="muted note">Password may appear briefly in the address bar during redirect (operator demo).</p>
+    </section>
+    <script>
+    (function () {{
+      var form = document.getElementById("npa-sign-in");
+      if (!form) return;
+      form.addEventListener("submit", function (ev) {{
+        ev.preventDefault();
+        var user = document.getElementById("npa-user").value;
+        var pass = document.getElementById("npa-pass").value;
+        var u = encodeURIComponent(user);
+        var p = encodeURIComponent(pass);
+        location.href = `${{location.protocol}}//${{u}}:${{p}}@${{location.host}}${{location.pathname === '/login-help.html' ? '/' : location.pathname}}`;
+      }});
+    }})();
+    </script>"""
+
+
 def _nginx_agent_site_body(
     *,
     backend_port: int,
@@ -281,7 +311,6 @@ def _nginx_agent_site_body(
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
-  error_page 401 = /login-help.html;
   location = /healthz {{
     auth_basic off;
     default_type application/json;
@@ -294,10 +323,10 @@ def _nginx_agent_site_body(
     add_header Cache-Control "no-store" always;
   }}
   location = /login-help.html {{
-    internal;
     auth_basic off;
     alias /opt/npa-agent/login-help.html;
     default_type text/html;
+    add_header Cache-Control "no-store" always;
   }}
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
@@ -358,6 +387,7 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
+    login_form_html = _agent_public_login_form_html(auth_user)
     https_ssl_setup = ""
     https_server_block = ""
     if public_https:
@@ -1141,20 +1171,28 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
     <style>
       body {{ font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; line-height: 1.5; color: #1f2430; }}
       h1 {{ font-size: 1.4rem; }}
+      h2 {{ font-size: 1.1rem; margin-bottom: 0.5rem; }}
       code, pre {{ background: #f0f2f5; padding: 2px 6px; border-radius: 4px; }}
       .ok {{ color: #18794e; }}
+      .muted {{ color: #5f6573; font-size: 0.95rem; }}
+      .sign-in-panel {{ margin: 24px 0; padding: 16px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafbfc; }}
+      .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
+      .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
+      .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
   <body>
     <h1>NPA Agent is running</h1>
-    <p class="ok">This page is public (no login). The workbench UI requires HTTP Basic Auth.</p>
+    <p class="ok">This page is public (no login). The workbench UI at <code>/</code> is protected by HTTP Basic Auth.</p>
+{login_form_html}
     <ol>
-      <li>Open <a href="/">the workbench UI</a> — your browser will prompt for username and password.</li>
+      <li>Enter your password above and click <strong>Sign in</strong>, or open <a href="/">the workbench UI</a> if your browser shows the auth dialog.</li>
       <li>Username: <code>{auth_user}</code></li>
       <li>Password: from your operator&apos;s deploy output (<code>auth_password</code>) or <code>auth.env</code> on the machine that ran <code>npa agent deploy</code>.</li>
       <li>Customer URL: use <code>https://</code> on port <strong>443</strong> (no VPN or SSH tunnel). Your browser may warn about a self-signed certificate — choose to proceed.</li>
-      <li>Or use an embedded-credentials URL: <code>https://USER:PASSWORD@HOST/</code> (replace HOST with this VM&apos;s public IP).</li>
+      <li>More help: <a href="/login-help.html">login help</a></li>
     </ol>
     <p>Health check (no auth): <a href="/healthz">/healthz</a></p>
     <p>UI version after login: check <code>&lt;meta name="npa-ui-version"&gt;</code> — expect <code>{AGENT_UI_VERSION}</code>.</p>
@@ -1171,15 +1209,22 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
     <style>
       body {{ font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; line-height: 1.5; color: #1f2430; }}
       h1 {{ font-size: 1.4rem; }}
+      h2 {{ font-size: 1.1rem; margin-bottom: 0.5rem; }}
       code {{ background: #f0f2f5; padding: 2px 6px; border-radius: 4px; }}
+      .muted {{ color: #5f6573; font-size: 0.95rem; }}
+      .sign-in-panel {{ margin: 24px 0; padding: 16px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafbfc; }}
+      .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
+      .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
+      .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
   <body>
     <h1>HTTP Basic Auth required</h1>
-    <p>The NPA Agent workbench did not receive valid credentials.</p>
+    <p>The NPA Agent workbench did not receive valid credentials. Sign in below or use your browser&apos;s Basic-auth dialog for <code>/</code> and <code>/api/*</code>.</p>
+{login_form_html}
     <ul>
-      <li>Click <strong>Sign in</strong> when your browser shows the auth dialog, or reload and enter credentials.</li>
       <li>Username: <code>{auth_user}</code></li>
       <li>Password: from your operator&apos;s <code>auth.env</code> file (<code>AGENT_PASSWORD</code>).</li>
       <li>Try the public <a href="/welcome">welcome page</a> for step-by-step instructions.</li>
@@ -1848,19 +1893,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
-      function sameOriginApiUrl(path) {{
-        const base = String(window.location.origin || "").replace(/\/$/, "");
-        const suffix = String(path || "").startsWith("/") ? String(path) : "/" + String(path || "");
-        return base + suffix;
-      }}
       function rerunIframeSrc(camera) {{
         const cam = String(camera || "workspace");
-        // Use explicit same-origin API URL so the Rerun viewer gets a concrete proxy target.
-        const source = sameOriginApiUrl("/api/sim-viz/rrd");
+        // Keep this relative so nginx basic-auth + proxy stay same-origin and cache-friendly.
+        const base = "/rerun/?url=/api/sim-viz/rrd&camera=";
         return (
-          "/rerun/?url=" +
-          encodeURIComponent(source) +
-          "&camera=" +
+          base +
           encodeURIComponent(cam) +
           "&t=" +
           Date.now()
@@ -1964,6 +2002,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           data = null;
         }}
         if (!resp.ok) {{
+          if (resp.status === 401) {{
+            window.location.href = "/login-help.html";
+            throw new Error("Authentication required. Open / and sign in with HTTP Basic Auth.");
+          }}
           const detail =
             (data && (data.detail || data.error || data.message)) ||
             resp.statusText ||

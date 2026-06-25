@@ -73,6 +73,11 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "welcome.html" in source
     assert "login-help.html" in source
     assert "/welcome" in source
+    assert "_agent_public_login_form_html" in source
+    assert 'id="npa-sign-in"' in source
+    assert "Sign in</button>" in source
+    assert "encodeURIComponent(user)" in source
+    assert "location.pathname === '/login-help.html'" in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "startApp()" in source
@@ -85,6 +90,18 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "initNpaAgentUi" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
+
+
+def test_bootstrap_public_login_form() -> None:
+    from npa.cli import agent as agent_module
+
+    html = agent_module._agent_public_login_form_html("npa")
+    assert 'id="npa-sign-in"' in html
+    assert 'type="submit">Sign in</button>' in html
+    assert 'value="npa"' in html
+    assert "encodeURIComponent(user)" in html
+    assert "encodeURIComponent(pass)" in html
+    assert "location.pathname === '/login-help.html'" in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
