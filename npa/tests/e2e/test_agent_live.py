@@ -124,7 +124,12 @@ def test_agent_workbench_actions(ctx: AgentLiveContext) -> None:
 
 
 def test_agent_rerun_iframe_endpoint(ctx: AgentLiveContext) -> None:
-    rerun = httpx.get(ctx.sim_viz_url, auth=ctx.auth(), timeout=15.0)
+    rerun = httpx.get(
+        ctx.sim_viz_url,
+        auth=ctx.auth(),
+        timeout=15.0,
+        verify=ctx.tls_verify,
+    )
     assert rerun.status_code == 200
     assert rerun.text.strip()
 
@@ -133,7 +138,12 @@ def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
     base = ctx.agent_url.rstrip("/")
     ok_paths: list[str] = []
     for path in RERUN_STATIC_CANDIDATES:
-        resp = httpx.get(f"{base}{path}", auth=ctx.auth(), timeout=15.0)
+        resp = httpx.get(
+            f"{base}{path}",
+            auth=ctx.auth(),
+            timeout=15.0,
+            verify=ctx.tls_verify,
+        )
         if resp.status_code == 200 and resp.content:
             ok_paths.append(path)
     assert ok_paths, f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"

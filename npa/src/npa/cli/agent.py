@@ -2918,6 +2918,7 @@ def verify_live_cmd(
                 f"{agent_base}{static_path}",
                 auth=(auth_user, auth_password),
                 timeout=15.0,
+                verify=tls_verify,
             )
             if static_resp.status_code == 200 and static_resp.content:
                 rerun_static_ok = True
@@ -3022,6 +3023,7 @@ def verify_live_cmd(
                 auth=(auth_user, auth_password),
                 json={"messages": [{"role": "user", "content": "status"}]},
                 timeout=30.0,
+                verify=tls_verify,
             )
             chat_smoke.raise_for_status()
             chat_payload = chat_smoke.json()

@@ -11,6 +11,7 @@ from npa.cli.agent import (
     DEFAULT_PROJECT_ALIAS,
     _agent_record,
     _load_auth_secret,
+    _record_tls_verify,
 )
 
 
@@ -24,6 +25,7 @@ class AgentLiveContext:
     rerun_url: str
     sim_viz_url: str
     sim_assets_url: str
+    tls_verify: bool
 
     @property
     def api_base(self) -> str:
@@ -34,14 +36,17 @@ class AgentLiveContext:
 
     def get(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
+        kwargs.setdefault("verify", self.tls_verify)
         return httpx.get(url, auth=self.auth(), timeout=10.0, **kwargs)
 
     def post(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
+        kwargs.setdefault("verify", self.tls_verify)
         return httpx.post(url, auth=self.auth(), timeout=30.0, **kwargs)
 
     def put(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
+        kwargs.setdefault("verify", self.tls_verify)
         return httpx.put(url, auth=self.auth(), timeout=10.0, **kwargs)
 
 
@@ -65,6 +70,7 @@ def load_agent_live_context() -> AgentLiveContext:
         rerun_url=rerun_url,
         sim_viz_url=sim_viz_url,
         sim_assets_url=sim_assets_url,
+        tls_verify=_record_tls_verify(record),
     )
 
 
