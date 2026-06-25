@@ -895,7 +895,7 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]
             if not isinstance(sim_viz, dict):
                 sim_viz = {{}}
             rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    elif intent == "sim2real_status":
+    elif intent in {"sim2real_status", "watch_sim"}:
         sim_viz = state.get("sim_viz", {{}})
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
@@ -2177,7 +2177,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
-        await mountRerunIframe(camera);
+        await mountRerunIframeUntilSuccess(camera, 10);
         const simViz = await loadJson("/api/sim-viz/status");
         if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
           const stage = String(simViz.stage || "demo");
@@ -2422,7 +2422,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
-        mountRerunIframe(camera);
+        await mountRerunIframeUntilSuccess(camera, 10);
         const entity = String(data.entity_path || ("world/cameras/" + camera));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();

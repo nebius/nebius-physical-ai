@@ -299,7 +299,7 @@ def build_grounded_reply(
         status = format_sim2real_status(state, rerun_ready=rerun_ready)
         return (
             status
-            + "\n- Keep the **Rerun** panel open; status polling will refresh when a newer `.rrd` lands."
+            + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Workflow watchers should continue until iframe blob mount reports **SUCCESS**."
         )
     if intent == "sim2real_status":

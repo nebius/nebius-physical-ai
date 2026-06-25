@@ -461,6 +461,16 @@ def test_build_grounded_status_reply_unpacks_fields() -> None:
     assert "GET /api" not in reply
 
 
+def test_build_grounded_watch_sim_reply_mentions_status_polling_and_success() -> None:
+    from npa.cli.agent_chat import build_grounded_reply
+
+    state = _sample_agent_state()
+    reply = build_grounded_reply("watch_sim", state, ["tool.a"], rerun_ready=True)
+    assert "/api/sim-viz/status" in reply
+    assert "rrd_uri" in reply
+    assert "SUCCESS" in reply
+
+
 def test_format_live_context_block_redacts_secrets() -> None:
     from npa.cli.agent_chat import format_live_context_block
 
