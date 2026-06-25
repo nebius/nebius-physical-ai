@@ -56,8 +56,7 @@ def _embedded_agent_chat_source() -> str:
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    # setup_script is an f-string; escape braces so agent_chat.py embeds verbatim.
-    return raw.replace("{", "{{").replace("}", "}}")
+    return raw
 
 
 @dataclass(frozen=True)
@@ -2541,13 +2540,18 @@ NGINX
 sudo ln -sf /etc/nginx/sites-available/npa-agent /etc/nginx/sites-enabled/npa-agent
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo systemctl daemon-reload
+sudo systemctl reset-failed npa-agent-backend npa-rerun nginx || true
 sudo systemctl enable --now npa-agent-backend npa-rerun nginx
-sudo systemctl restart npa-agent-backend nginx
+sudo systemctl restart npa-rerun nginx
+sudo systemctl restart npa-agent-backend
 """
     ssh.run_or_raise(setup_script)
     _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
     if tf_api_key.strip():
-        ssh.run_or_raise("sudo systemctl restart npa-agent-backend")
+        ssh.run_or_raise(
+            "sudo systemctl reset-failed npa-agent-backend || true; "
+            "sudo systemctl restart npa-agent-backend"
+        )
 
 
 def _health(

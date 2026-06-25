@@ -40,8 +40,8 @@ def test_build_grounded_reply_sim2real_status() -> None:
     assert "GET /api" not in reply
 
 
-def test_embedded_agent_chat_source_escapes_braces() -> None:
+def test_embedded_agent_chat_source_strips_future_import() -> None:
     source = agent_module._embedded_agent_chat_source()
-    assert "{{" in source or "dict[str, Any]" in source
+    assert "from __future__ import annotations" not in source
     assert "match_chat_intent" in source
-    assert "{catalog_json}" not in source
+    assert "INTENT_APIS" in source
