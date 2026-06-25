@@ -50,9 +50,14 @@ DEFAULT_HTTPS_PORT = 443
 
 def _embedded_agent_chat_source() -> str:
     """Return agent_chat.py source embedded into the remote agent backend."""
+    import re
+
     path = Path(__file__).with_name("agent_chat.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
     # setup_script is an f-string; escape braces so agent_chat.py embeds verbatim.
-    return path.read_text(encoding="utf-8").replace("{", "{{").replace("}", "}}")
+    return raw.replace("{", "{{").replace("}", "}}")
 
 
 @dataclass(frozen=True)
