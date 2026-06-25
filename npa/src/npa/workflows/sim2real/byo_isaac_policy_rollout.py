@@ -483,7 +483,11 @@ def run_isaac_rollout_job(
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     endpoint = _env("AWS_ENDPOINT_URL")
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
-    object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
+    # Rollouts spawn the SAME manipuland as train/eval (default: the proven
+    # rigid-ready USD, not the stock primitive cube).
+    from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
+
+    object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
 
     checkpoint_uri = latest_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
     # Unique per (run, outer, inner) — the engine sets a distinct OUTPUT_DIR name.

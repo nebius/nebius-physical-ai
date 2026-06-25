@@ -41,6 +41,37 @@ DEFAULT_ITERATIONS = 150
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 
+# Root of the public Omniverse Isaac asset CDN (no tenant/private IDs). Override
+# with NPA_ISAAC_NUCLEUS_DIR to point at an internal Nucleus mirror.
+DEFAULT_ISAAC_NUCLEUS_DIR = (
+    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac"
+)
+# Rigid-ready (RigidBodyAPI: collision + mass) instanceable manipuland. Defaulting
+# to it means the Franka loop trains/evals on a real physically simulated USD sim
+# asset instead of the stock primitive cube. A raw visual mesh would fail to spawn.
+DEFAULT_OBJECT_USD_REL = "Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
+# Sentinels that opt back out of the USD default to the built-in primitive cube.
+_STOCK_OBJECT_USD_SENTINELS = frozenset({"stock", "none", "primitive", "builtin"})
+
+
+def default_isaac_object_usd() -> str:
+    """Resolved default manipuland USD (Nucleus root + rigid-ready instanceable)."""
+    nuc = (os.environ.get("NPA_ISAAC_NUCLEUS_DIR", "") or DEFAULT_ISAAC_NUCLEUS_DIR).strip()
+    return f"{nuc.rstrip('/')}/{DEFAULT_OBJECT_USD_REL}"
+
+
+def resolve_object_usd(raw: str) -> str:
+    """Resolve the manipuland USD for an Isaac job.
+
+    An explicit ``NPA_BYO_ISAAC_OBJECT_USD`` wins; a ``stock``/``none`` sentinel
+    forces the built-in primitive cube (empty string); unset defaults to the
+    proven rigid-ready MultiColorCube so Franka uses a real sim asset by default.
+    """
+    val = (raw or "").strip()
+    if val.lower() in _STOCK_OBJECT_USD_SENTINELS:
+        return ""
+    return val or default_isaac_object_usd()
+
 
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
@@ -444,10 +475,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     stats = read_signal_stats(signal_json)
     reward_overrides = vlm_reward_overrides(stats)
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
-    object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
+    object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     object_scale = _env("NPA_BYO_ISAAC_OBJECT_SCALE")
     if object_usd:
-        print(f"byo_isaac_trainer: CUSTOM object USD -> {object_usd} scale={object_scale}", flush=True)
+        default_tag = " (default)" if not _env("NPA_BYO_ISAAC_OBJECT_USD") else ""
+        print(f"byo_isaac_trainer: object USD -> {object_usd}{default_tag} scale={object_scale}", flush=True)
+    else:
+        print("byo_isaac_trainer: stock primitive cube (object USD opted out)", flush=True)
 
     # GENERATED train-env spec: seed drives Isaac randomization so the policy
     # trains on the envgen-produced distribution (matches the held-out eval).

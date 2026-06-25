@@ -547,7 +547,11 @@ def run_isaac_eval_job(
     env_ids = [e["env_id"] for e in gen] or None
     seeds = [e["seed"] for e in gen] or None
     seed = int(gen[0]["seed"]) if gen else 0  # drive randomization from a generated-env seed
-    object_usd = _env("NPA_BYO_ISAAC_OBJECT_USD")
+    # Eval must spawn the SAME manipuland the policy trained on (default: the
+    # proven rigid-ready USD, not the stock primitive cube).
+    from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
+
+    object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     renders_prefix = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/renders"
 
     manifest = build_isaac_eval_job_manifest(
