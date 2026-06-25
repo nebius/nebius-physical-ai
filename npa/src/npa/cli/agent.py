@@ -2097,7 +2097,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           setChatInput("How do I set up Cosmos3 in the NPA workbench?");
         }}, "Insert Cosmos3 prompt");
         bindClick("chatActionWatch", () => {{
-          setChatInput("Watch the sim in Rerun - use Load Franka in Rerun or check /api/sim-viz/status.");
+          setChatInput("Watch the sim in Rerun and keep retrying blob+iframe mount until SUCCESS using /api/sim-viz/status.");
         }}, "Insert watch-sim prompt");
         bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Load Rerun viewer");

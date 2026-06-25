@@ -44,6 +44,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\brerun\b.*\b(?:blob|iframe)\b.*\buntil\b.*\bsuccess\b"
             r"|\b(?:rerun_blob_success|rerun_mount_success)\b"
             r"|\brerun[_ -]?blob[_ -]?success\b|\brerun[_ -]?mount[_ -]?success\b"
+            r"|\bblob[_ -]?mount\b.*\bsuccess\b"
+            r"|\biframe[_ -]?mount\b.*\bsuccess\b"
+            r"|\bboth\b.*\bsuccess\b.*\b(?:blob|iframe|mount)\b"
             r"|\b(?:when|once)\b.*\brrd\b.*\b(?:arrives|lands|updates?)\b",
             re.IGNORECASE,
         ),
@@ -322,6 +325,7 @@ def build_grounded_reply(
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` timestamp appears."
             + "\n- Workflow watchers should continue until both `blob` and `iframe mount` report **SUCCESS**."
             + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
+            + "\n- If either status is not `SUCCESS`, retry mounting `/rerun/` and fetching `/api/sim-viz/rrd-blob`."
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)
