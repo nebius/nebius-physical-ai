@@ -497,6 +497,7 @@ def test_build_grounded_watch_sim_reply_mentions_status_polling_and_success() ->
     assert "rrd_uri" in reply
     assert "SUCCESS" in reply
     assert "**watch_stage**" in reply
+    assert "**watch_mode**" in reply
 
 
 def test_format_live_context_block_redacts_secrets() -> None:

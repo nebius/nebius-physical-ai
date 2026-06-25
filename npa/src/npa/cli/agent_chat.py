@@ -332,11 +332,15 @@ def build_grounded_reply(
         iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
         stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
         run_id = str(sim_viz.get("run_id") or "").strip() or "none"
+        mode = str(sim_viz.get("mode") or "static").strip() or "static"
+        rrd_uri = str(sim_viz.get("rrd_uri") or "").strip() or "pending"
         status = format_sim2real_status(state, rerun_ready=rerun_ready)
         return (
             status
             + f"\n- **watch_url**: `{iframe_url}` (embedded iframe) with run/stage badge overlay."
             + f"\n- **watch_stage**: `{stage}` for **run_id** `{run_id}`."
+            + f"\n- **watch_mode**: `{mode}`."
+            + f"\n- **rrd_uri**: `{rrd_uri}`."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` appears."
             + "\n- Then keep retrying blob fetch + iframe mount until both report **SUCCESS**."

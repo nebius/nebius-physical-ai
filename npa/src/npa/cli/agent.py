@@ -3603,6 +3603,22 @@ def verify_live_cmd(
             _fail("sim-viz rrd JSON response was not an object")
     elif len(rrd_resp.content) < 64:
         _fail("sim-viz rrd endpoint returned unexpectedly small payload")
+    try:
+        rrd_blob_resp = httpx.get(
+            f"{agent_base}/api/sim-viz/rrd-blob",
+            auth=(auth_user, auth_password),
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        rrd_blob_resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"sim-viz rrd-blob endpoint failed after load-franka-demo: {exc}")
+    rrd_blob_ct = str(rrd_blob_resp.headers.get("content-type", ""))
+    if "application/json" in rrd_blob_ct:
+        if not isinstance(rrd_blob_resp.json(), dict):
+            _fail("sim-viz rrd-blob JSON response was not an object")
+    elif len(rrd_blob_resp.content) < 64:
+        _fail("sim-viz rrd-blob endpoint returned unexpectedly small payload")
 
     rerun_static_ok = False
     for static_path in (
