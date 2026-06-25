@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062505"
+AGENT_UI_VERSION = "2025062506"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -2281,8 +2281,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           // Session restore is best-effort on first load.
         }}
       }}
+      async function ensureFrankaRerunLoaded() {{
+        const simViz = await loadJson("/api/sim-viz/status");
+        const camera = String(simViz.camera || "workspace");
+        if (!simViz.rerun_ready && !simViz.rrd_uri) {{
+          setStatus("Loading Franka demo...");
+          showToast("Loading stock Franka in Rerun", "info");
+          await loadFrankaDemo();
+          return;
+        }}
+        if (!rerunIframeLoaded) {{
+          setStatus("Opening Rerun viewer...");
+          await loadRerunViewer(camera);
+        }}
+      }}
       async function bootPage() {{
-        showRerunPlaceholder("UI ready. Click Load Franka in Rerun when you want the embedded viewer.");
+        showRerunPlaceholder("Loading stock Franka preview...");
         setStatus("Ready");
         try {{
           await restoreSession();
@@ -2290,10 +2304,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           // Session restore is best-effort on first paint.
         }}
         window.setTimeout(() => {{
-          refresh().catch((err) => {{
-            console.warn("deferred refresh failed", err);
-            setStatus("Ready");
-          }});
+          (async () => {{
+            try {{
+              await refresh();
+              await ensureFrankaRerunLoaded();
+              setStatus("Ready");
+              showToast("Franka demo ready in Rerun", "success");
+            }} catch (err) {{
+              console.warn("franka auto-load failed", err);
+              showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+              showToast(String(err && err.message ? err.message : err), "error");
+              setStatus("Ready");
+            }}
+          }})();
         }}, 100);
       }}
       let refreshTimer = null;

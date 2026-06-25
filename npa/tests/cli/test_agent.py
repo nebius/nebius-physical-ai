@@ -67,6 +67,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "\\r?\\n" in bootstrap_split
     assert "restoreSession" in source
     assert "bootPage()" in source
+    assert "ensureFrankaRerunLoaded" in source
     assert "setTimeout(() =>" in source
     assert "startPeriodicRefresh" in source
     assert "fetchWithTimeout" in source
