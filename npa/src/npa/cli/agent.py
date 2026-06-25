@@ -9,6 +9,7 @@ import secrets
 import shlex
 import subprocess
 import ipaddress
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -467,7 +468,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 
 app = FastAPI(title="npa-agent")
@@ -1215,13 +1216,20 @@ def sim_viz_camera_preview(payload: dict | None = None):
 def _sim_viz_rrd_file_response():
     state = _load_state()
     sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict) or not sim_viz.get("rrd_uri"):
-        raise HTTPException(status_code=404, detail="No sim2real.rrd available yet")
-    uri = str(sim_viz.get("rrd_uri"))
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    uri = str(sim_viz.get("rrd_uri") or "").strip()
     if uri.startswith("file://"):
         file_path = Path(uri[len("file://"):])
         if file_path.is_file():
             return FileResponse(str(file_path), media_type="application/octet-stream")
+    if uri.startswith("http://") or uri.startswith("https://"):
+        try:
+            proxied = httpx.get(uri, timeout=20.0)
+            proxied.raise_for_status()
+            return Response(content=proxied.content, media_type="application/octet-stream")
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to fetch remote sim2real.rrd: {{exc}}") from exc
     if RRD_PATH.is_file():
         return FileResponse(str(RRD_PATH), media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="No sim2real.rrd file on disk yet")
@@ -2352,7 +2360,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!resp.ok) {{
           throw new Error("Rerun recording not published yet");
         }}
-        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
+        setRerunBlobStatus("fallback", "recording=public");
         return recordingUrl;
       }}
       async function resolveRerunRrdUrl(maxAttempts) {{
@@ -2394,11 +2402,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const cam = String(camera || "workspace");
         let rrdUrl = "";
         try {{
-          rrdUrl = await resolveRerunRecordingUrl();
-        }} catch (_recordingErr) {{
           rrdUrl = await resolveRerunRrdUrl();
+        }} catch (_blobErr) {{
+          rrdUrl = await resolveRerunRecordingUrl();
         }}
-        // Public /rerun/recordings/ avoids basic-auth wasm fetch failures; blob is fallback.
+        // Prefer authenticated blob fetch; public recording path is fallback.
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
@@ -2987,7 +2995,18 @@ sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
 """
-    ssh.run_or_raise(setup_script)
+    local_setup_script = ""
+    remote_setup_script = "/tmp/npa-agent-bootstrap.sh"
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write(setup_script)
+            local_setup_script = handle.name
+        ssh.upload_file(local_setup_script, remote_setup_script)
+        ssh.run_or_raise(f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}")
+    finally:
+        if local_setup_script:
+            Path(local_setup_script).unlink(missing_ok=True)
+        ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
     _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
     if tf_api_key.strip():
         ssh.run_or_raise(
