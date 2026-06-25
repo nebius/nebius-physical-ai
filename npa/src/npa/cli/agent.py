@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062508"
+AGENT_UI_VERSION = "2025062510"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -363,6 +363,12 @@ def _nginx_agent_site_body(
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
   }}
+  location /rerun/recordings/ {{
+    auth_basic off;
+    alias /opt/npa-agent/recordings/;
+    default_type application/octet-stream;
+    add_header Cache-Control "no-cache" always;
+  }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     rewrite ^/rerun/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{rerun_port};
@@ -454,6 +460,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -468,6 +475,7 @@ TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
+RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
 DEFAULT_SCENE_SPEC = {{
@@ -694,7 +702,17 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
         )
     rr.log("demo/active_camera", rr.TextLog(active))
     rr.save(str(target))
+    _publish_rrd_recording(target)
     return target
+
+def _publish_rrd_recording(source: Path) -> Path:
+    if not source.is_file():
+        return RECORDING_PATH
+    RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = RECORDING_PATH.with_suffix(".rrd.tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(RECORDING_PATH)
+    return RECORDING_PATH
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
@@ -770,7 +788,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
         "rerun_ready": target.is_file() and _rerun_web_viewer_healthy(),
-        "rerun_iframe_url": f"/rerun/?url=/api/sim-viz/rrd&camera={{cam}}",
+        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
     state["sim_viz"] = viz
     _save_state(state)
@@ -1039,7 +1057,7 @@ def sim_viz_status():
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
-    payload["rerun_iframe_url"] = f"/rerun/?url=/api/sim-viz/rrd&camera={{camera}}"
+    payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
@@ -1108,6 +1126,36 @@ def sim_viz_rrd():
 def sim_viz_rrd_blob():
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
     return _sim_viz_rrd_file_response()
+
+@app.on_event("startup")
+def _boot_preload_sim_viz() -> None:
+    if not RRD_PATH.is_file():
+        return
+    _publish_rrd_recording(RRD_PATH)
+    state = _load_state()
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    if str(sim_viz.get("rrd_uri") or "").strip():
+        return
+    selected = state.get("camera_selection", ["workspace"])
+    cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
+    run_id = str(sim_viz.get("run_id") or "").strip() or "franka-demo"
+    now = _now_iso()
+    state["sim_viz"] = {{
+        "run_id": run_id,
+        "stage": "demo",
+        "rrd_uri": f"file://{{RRD_PATH}}",
+        "rrd_updated_at": now,
+        "live_grpc_url": "",
+        "mode": "camera_preview",
+        "camera": cam,
+        "preview_camera": cam,
+        "preview_entity": f"world/cameras/{{cam}}",
+        "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
+        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+    }}
+    _save_state(state)
 
 @app.get("/sim-assets")
 def sim_assets():
@@ -1290,7 +1338,14 @@ rr.log(
 rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
 rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
 rr.save(str(target))
+from pathlib import Path as _Path
+import shutil as _shutil
+_rec = _Path("/opt/npa-agent/recordings/sim2real.rrd")
+_rec.parent.mkdir(parents=True, exist_ok=True)
+_shutil.copy2(target, _rec)
 PY
+sudo mkdir -p /opt/npa-agent/recordings
+sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
 cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
 <!doctype html>
 <html lang="en">
@@ -1373,6 +1428,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
     <title>NPA Agent</title>
+    <link rel="preload" href="/rerun/re_viewer.js" as="script" crossorigin>
+    <link rel="preload" href="/rerun/re_viewer_bg.wasm" as="fetch" type="application/wasm" crossorigin>
+    <link rel="prefetch" href="/rerun/recordings/sim2real.rrd" as="fetch">
     <style>
       :root {{
         --bg: #f5f6f8;
@@ -1747,14 +1805,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
-              <p id="simvizCta" class="cta">Click <strong>Load Franka in Rerun</strong> to open the embedded viewer (loads ~40MB WASM on demand).</p>
+              <p id="simvizCta" class="cta">Stock Franka demo preloads on boot — Rerun viewer mounts automatically when ready.</p>
             </div>
             <div id="rerunPlaceholder" class="rerun-placeholder">
-              <p>Rerun viewer not loaded yet.</p>
-              <p class="hint">The UI shell loads immediately; the Rerun iframe (~40MB WASM) loads only when you request it.</p>
+              <p>Loading Rerun viewer…</p>
+              <p class="hint">Preloading WASM and stock Franka recording from bootstrap cache.</p>
               <button id="loadRerunViewer" class="btn btn-primary" type="button">Load Rerun viewer</button>
             </div>
-            <iframe id="rerunFrame" title="rerun" loading="lazy" hidden></iframe>
+            <iframe id="rerunFrame" title="rerun" hidden></iframe>
           </section>
         </div>
       </main>
@@ -2029,12 +2087,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
+      let rerunBootInProgress = false;
       let lastRrdBlobUrl = "";
+      let lastRerunBlobStatus = "pending";
+      const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
       const RERUN_BLOB_SUCCESS = "SUCCESS";
       function setRerunBlobStatus(status, detail) {{
         const text = String(status || "").trim() || "pending";
+        lastRerunBlobStatus = text;
         const extra = detail ? " (" + String(detail) + ")" : "";
         setStatus("Rerun blob: " + text + extra);
+      }}
+      async function resolveRerunRecordingUrl() {{
+        const cacheBust = "?t=" + String(Date.now());
+        const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
+        const resp = await fetchWithTimeout(RERUN_RECORDING_PATH, {{ credentials: "include", method: "HEAD" }}, 8000);
+        if (!resp.ok) {{
+          throw new Error("Rerun recording not published yet");
+        }}
+        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
+        return recordingUrl;
       }}
       async function resolveRerunRrdUrl(maxAttempts) {{
         const attempts = Math.max(1, Number(maxAttempts || 18));
@@ -2073,15 +2145,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera) {{
         const cam = String(camera || "workspace");
-        const rrdUrl = await resolveRerunRrdUrl();
-        // Blob URL keeps basic-auth on parent fetch; Rerun wasm fetch cannot auth /api/sim-viz/rrd.
+        let rrdUrl = "";
+        try {{
+          rrdUrl = await resolveRerunRecordingUrl();
+        }} catch (_recordingErr) {{
+          rrdUrl = await resolveRerunRrdUrl();
+        }}
+        // Public /rerun/recordings/ avoids basic-auth wasm fetch failures; blob is fallback.
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
-          "&camera=" +
-          encodeURIComponent(cam) +
-          "&t=" +
-          Date.now()
+          "&hide_welcome_screen=1&camera=" +
+          encodeURIComponent(cam)
         );
       }}
       function showRerunPlaceholder(message) {{
@@ -2131,8 +2206,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         let lastErr = null;
         for (let i = 0; i < attempts; i += 1) {{
           try {{
+            setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             await mountRerunIframe(camera);
-            setRerunBlobStatus(RERUN_BLOB_SUCCESS);
+            if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS) {{
+              throw new Error("Rerun iframe mount missing SUCCESS blob state");
+            }}
             return true;
           }} catch (err) {{
             lastErr = err;
@@ -2258,7 +2336,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           if (!ready) {{
             showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
-          }} else if (!rerunIframeLoaded) {{
+          }} else if (!rerunIframeLoaded && !rerunBootInProgress) {{
             showRerunPlaceholder("Rerun is ready. Click Load Rerun viewer or Load Franka in Rerun.");
           }}
           const robotPreset = document.getElementById("robotPreset");
@@ -2507,28 +2585,27 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
       }}
       async function bootPage() {{
+        rerunBootInProgress = true;
         showRerunPlaceholder("Loading stock Franka preview...");
-        setStatus("Ready");
+        setStatus("Preloading Rerun…");
         try {{
           await restoreSession();
         }} catch (_err) {{
           // Session restore is best-effort on first paint.
         }}
-        window.setTimeout(() => {{
-          (async () => {{
-            try {{
-              await refresh();
-              await ensureFrankaRerunLoaded();
-              setStatus("Ready");
-              showToast("Franka demo ready in Rerun", "success");
-            }} catch (err) {{
-              console.warn("franka auto-load failed", err);
-              showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
-              showToast(String(err && err.message ? err.message : err), "error");
-              setStatus("Ready");
-            }}
-          }})();
-        }}, 100);
+        try {{
+          await refresh();
+          await ensureFrankaRerunLoaded();
+          setStatus("Ready");
+          showToast("Franka demo ready in Rerun", "success");
+        }} catch (err) {{
+          console.warn("franka auto-load failed", err);
+          showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+          showToast(String(err && err.message ? err.message : err), "error");
+          setStatus("Ready");
+        }} finally {{
+          rerunBootInProgress = false;
+        }}
       }}
       let refreshTimer = null;
       function startPeriodicRefresh() {{

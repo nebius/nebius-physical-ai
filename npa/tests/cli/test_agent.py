@@ -34,6 +34,15 @@ def test_bootstrap_enables_public_https_nginx() -> None:
     assert "--no-public-https" in source
 
 
+def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "location /rerun/recordings/" in source
+    assert "auth_basic off" in source
+    assert "alias /opt/npa-agent/recordings/" in source
+
+
 def test_agent_help_smoke() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
@@ -174,10 +183,16 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Open in Rerun" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
-    assert 'id="rerunFrame" title="rerun" loading="lazy" hidden' in source
+    assert 'id="rerunFrame" title="rerun" hidden' in source
+    assert "RERUN_RECORDING_PATH" in source
+    assert "location.origin + RERUN_RECORDING_PATH" in source
+    assert "/rerun/recordings/sim2real.rrd" in source
+    assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
+    assert "lastRerunBlobStatus" in source
+    assert "Rerun iframe mount missing SUCCESS blob state" in source
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
@@ -440,6 +455,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("workflow status please") == "sim2real_status"
     assert match_chat_intent("watch the sim in rerun") == "watch_sim"
     assert match_chat_intent("tail the simulation timeline") == "watch_sim"
+    assert match_chat_intent("open the rerun iframe and show latest timeline") == "watch_sim"
+    assert match_chat_intent("show stage badge overlay for this run") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
     assert match_chat_intent("list cameras") == "cameras"

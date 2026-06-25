@@ -26,8 +26,19 @@ curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" \
   -H 'content-type: application/json' \
   -d '{"camera":"workspace"}' | grep -q '"ok"[[:space:]]*:[[:space:]]*true'
 
-curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/status" \
-  | grep -qE '"rerun_ready"[[:space:]]*:[[:space:]]*true|"rrd_uri"[[:space:]]*:[[:space:]]*"[^"]+"'
+READY=0
+for _attempt in $(seq 1 20); do
+  if curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/status" \
+    | "${ROOT}/npa/.venv/bin/python" -c 'import json,sys; p=json.load(sys.stdin); sys.exit(0 if p.get("rerun_ready") and str(p.get("rrd_uri","")).strip() else 1)'; then
+    READY=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${READY}" -ne 1 ]]; then
+  echo "sim-viz status did not reach rerun_ready=true with non-empty rrd_uri" >&2
+  exit 1
+fi
 
 BYTES="$(curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/rrd-blob" | wc -c | tr -d ' ')"
 if [[ "${BYTES}" -lt 64 ]]; then
@@ -35,4 +46,10 @@ if [[ "${BYTES}" -lt 64 ]]; then
   exit 1
 fi
 
-echo "verify_agent_franka: ok (${BYTES} byte rrd at ${BASE})"
+REC_BYTES="$(curl -skf "${BASE}/rerun/recordings/sim2real.rrd" | wc -c | tr -d ' ')"
+if [[ "${REC_BYTES}" -lt 64 ]]; then
+  echo "public recording too small: ${REC_BYTES} bytes" >&2
+  exit 1
+fi
+
+echo "verify_agent_franka: ok (${BYTES} byte rrd, ${REC_BYTES} byte public recording at ${BASE})"

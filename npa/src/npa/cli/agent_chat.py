@@ -19,7 +19,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "load_franka",
         re.compile(
-            r"\b(load|show|open)\b.*\b(franka|demo|rerun)\b"
+            r"\b(load|show|open)\b.*\b(franka|demo)\b"
             r"|\b(franka|demo)\b.*\b(load|rerun|show|view)\b"
             r"|\bload franka\b",
             re.IGNORECASE,
@@ -30,7 +30,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
             r"|\b(?:track|tail)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
-            r"|\b(?:open|show)\b.*\b(?:rerun|timeline|sim\s+viz)\b",
+            r"|\b(?:open|show|view)\b.*\b(?:rerun|timeline|sim\s+viz|iframe)\b"
+            r"|\b(?:live|latest)\b.*\b(?:sim|simulation|rerun|timeline)\b"
+            r"|\b(?:stage|run)\b.*\b(?:badge|overlay)\b",
             re.IGNORECASE,
         ),
     ),
