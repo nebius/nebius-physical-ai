@@ -43,6 +43,12 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "\\r?\\n" in bootstrap_split
     assert "restoreSession" in source
     assert "bootPage()" in source
+    assert "setTimeout(() =>" in source
+    assert "startPeriodicRefresh" in source
+    assert "fetchWithTimeout" in source
+    assert "welcome.html" in source
+    assert "login-help.html" in source
+    assert "/welcome" in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "startApp()" in source
@@ -277,7 +283,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"console.log('rerun');", status_code=200)
         if url_s.rstrip("/").endswith(":8088"):
             html = (
-                '<html><head><meta name="npa-ui-version" content="2025062502"></head>'
+                '<html><head><meta name="npa-ui-version" content="2025062503"></head>'
                 '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi</script></body></html>'
             )
             return _Resp(html, status_code=200)

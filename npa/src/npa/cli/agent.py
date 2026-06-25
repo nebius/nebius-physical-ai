@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062502"
+AGENT_UI_VERSION = "2025062503"
 
 
 @dataclass(frozen=True)
@@ -989,6 +989,62 @@ rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
 rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
 rr.save(str(target))
 PY
+cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NPA Agent — welcome</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; line-height: 1.5; color: #1f2430; }}
+      h1 {{ font-size: 1.4rem; }}
+      code, pre {{ background: #f0f2f5; padding: 2px 6px; border-radius: 4px; }}
+      .ok {{ color: #18794e; }}
+      a {{ color: #5e43f3; }}
+    </style>
+  </head>
+  <body>
+    <h1>NPA Agent is running</h1>
+    <p class="ok">This page is public (no login). The workbench UI requires HTTP Basic Auth.</p>
+    <ol>
+      <li>Open <a href="/">the workbench UI</a> — your browser will prompt for username and password.</li>
+      <li>Username: <code>{auth_user}</code></li>
+      <li>Password: ask your operator (stored in <code>auth_secret_path</code> on the machine that ran <code>npa agent deploy</code>).</li>
+      <li>Or use an embedded-credentials URL: <code>http://USER:PASSWORD@HOST:PORT/</code> (replace HOST with this VM&apos;s public IP).</li>
+    </ol>
+    <p>Health check (no auth): <a href="/healthz">/healthz</a></p>
+    <p>UI version after login: check <code>&lt;meta name="npa-ui-version"&gt;</code> — expect <code>{AGENT_UI_VERSION}</code>.</p>
+  </body>
+</html>
+WELCOME
+cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login required — NPA Agent</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; line-height: 1.5; color: #1f2430; }}
+      h1 {{ font-size: 1.4rem; }}
+      code {{ background: #f0f2f5; padding: 2px 6px; border-radius: 4px; }}
+      a {{ color: #5e43f3; }}
+    </style>
+  </head>
+  <body>
+    <h1>HTTP Basic Auth required</h1>
+    <p>The NPA Agent workbench did not receive valid credentials.</p>
+    <ul>
+      <li>Click <strong>Sign in</strong> when your browser shows the auth dialog, or reload and enter credentials.</li>
+      <li>Username: <code>{auth_user}</code></li>
+      <li>Password: from your operator&apos;s <code>auth.env</code> file (<code>AGENT_PASSWORD</code>).</li>
+      <li>Try the public <a href="/welcome">welcome page</a> for step-by-step instructions.</li>
+      <li>Health (no auth): <a href="/healthz">/healthz</a></li>
+    </ul>
+  </body>
+</html>
+LOGINHELP
 cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <!doctype html>
 <html>
@@ -1383,10 +1439,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </div>
       </main>
     </div>
+    <noscript><p style="padding:16px;background:#fff3cd;">JavaScript is required for the NPA Agent workbench. Enable JS and reload.</p></noscript>
     <div id="statusBar" class="status-bar" aria-live="polite">Ready</div>
     <div id="toastHost" class="toast-host" aria-live="polite"></div>
     <script>
       (function initNpaAgentUi() {{
+      try {{
       "use strict";
       const chatHistory = [];
       let thinkingNode = null;
@@ -1728,6 +1786,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await refresh();
         return true;
       }}
+      async function fetchWithTimeout(path, init, timeoutMs) {{
+        const ms = Number(timeoutMs || 12000);
+        const ctrl = new AbortController();
+        const timer = window.setTimeout(() => ctrl.abort(), ms);
+        try {{
+          return await fetch(path, {{ ...(init || {{}}), signal: ctrl.signal }});
+        }} finally {{
+          window.clearTimeout(timer);
+        }}
+      }}
       async function apiJson(path, init) {{
         const req = init || {{}};
         const opts = {{
@@ -1737,7 +1805,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             ...(req.headers || {{}}),
           }},
         }};
-        const resp = await fetch(path, opts);
+        let resp;
+        try {{
+          resp = await fetchWithTimeout(path, opts, 12000);
+        }} catch (err) {{
+          if (err && err.name === "AbortError") {{
+            throw new Error("Request timed out: " + String(path));
+          }}
+          throw err;
+        }}
         let data = null;
         try {{
           data = await resp.json();
@@ -1994,8 +2070,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function bootPage() {{
         showRerunPlaceholder("UI ready. Click Load Franka in Rerun when you want the embedded viewer.");
-        await restoreSession();
-        await refresh();
+        setStatus("Ready");
+        try {{
+          await restoreSession();
+        }} catch (_err) {{
+          // Session restore is best-effort on first paint.
+        }}
+        window.setTimeout(() => {{
+          refresh().catch((err) => {{
+            console.warn("deferred refresh failed", err);
+            setStatus("Ready");
+          }});
+        }}, 100);
+      }}
+      let refreshTimer = null;
+      function startPeriodicRefresh() {{
+        if (refreshTimer !== null) return;
+        refreshTimer = window.setInterval(() => {{
+          refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
+        }}, 10000);
       }}
       function startApp() {{
         try {{
@@ -2009,14 +2102,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           showToast("Boot failed: " + String(err), "error");
           console.error(err);
         }});
-        setInterval(() => {{
-          refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
-        }}, 10000);
+        const armPeriodic = () => startPeriodicRefresh();
+        document.addEventListener("click", armPeriodic, {{ once: true }});
+        document.addEventListener("keydown", armPeriodic, {{ once: true }});
       }}
       if (document.readyState === "loading") {{
         document.addEventListener("DOMContentLoaded", startApp);
       }} else {{
         startApp();
+      }}
+      }} catch (bootErr) {{
+        console.error("NPA Agent UI failed to boot", bootErr);
+        const bar = document.getElementById("statusBar");
+        if (bar) bar.textContent = "UI boot error — reload or check console";
       }}
       }})();
     </script>
@@ -2061,9 +2159,23 @@ server {{
   server_name _;
   auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
+  error_page 401 = /login-help.html;
   location = /healthz {{
     auth_basic off;
-    return 200 "ok";
+    default_type application/json;
+    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
+  }}
+  location = /welcome {{
+    auth_basic off;
+    alias /opt/npa-agent/welcome.html;
+    default_type text/html;
+    add_header Cache-Control "no-store" always;
+  }}
+  location = /login-help.html {{
+    internal;
+    auth_basic off;
+    alias /opt/npa-agent/login-help.html;
+    default_type text/html;
   }}
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
