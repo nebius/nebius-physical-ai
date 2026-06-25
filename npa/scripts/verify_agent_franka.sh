@@ -29,7 +29,7 @@ curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" \
 curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/status" \
   | grep -qE '"rerun_ready"[[:space:]]*:[[:space:]]*true|"rrd_uri"[[:space:]]*:[[:space:]]*"[^"]+"'
 
-BYTES="$(curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/rrd" | wc -c | tr -d ' ')"
+BYTES="$(curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/api/sim-viz/rrd-blob" | wc -c | tr -d ' ')"
 if [[ "${BYTES}" -lt 64 ]]; then
   echo "rrd too small: ${BYTES} bytes" >&2
   exit 1
