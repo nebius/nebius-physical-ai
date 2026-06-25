@@ -2030,20 +2030,46 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
       let lastRrdBlobUrl = "";
-      async function resolveRerunRrdUrl() {{
-        const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob", {{ credentials: "include" }}, 12000);
-        if (!resp.ok) {{
-          if (resp.status === 401) {{
-            window.location.href = "/login-help.html";
+      const RERUN_BLOB_SUCCESS = "SUCCESS";
+      function setRerunBlobStatus(status, detail) {{
+        const text = String(status || "").trim() || "pending";
+        const extra = detail ? " (" + String(detail) + ")" : "";
+        setStatus("Rerun blob: " + text + extra);
+      }}
+      async function resolveRerunRrdUrl(maxAttempts) {{
+        const attempts = Math.max(1, Number(maxAttempts || 18));
+        let lastErr = null;
+        for (let i = 0; i < attempts; i += 1) {{
+          try {{
+            const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob", {{ credentials: "include" }}, 12000);
+            if (!resp.ok) {{
+              if (resp.status === 401) {{
+                window.location.href = "/login-help.html";
+              }}
+              throw new Error("Failed to fetch .rrd for Rerun viewer");
+            }}
+            const blob = await resp.blob();
+            if (blob.size < 64) {{
+              throw new Error("Rerun .rrd payload is too small");
+            }}
+            if (lastRrdBlobUrl) {{
+              URL.revokeObjectURL(lastRrdBlobUrl);
+            }}
+            lastRrdBlobUrl = URL.createObjectURL(blob);
+            setRerunBlobStatus(RERUN_BLOB_SUCCESS, "bytes=" + String(blob.size));
+            return lastRrdBlobUrl;
+          }} catch (err) {{
+            lastErr = err;
+            setRerunBlobStatus("retrying", "attempt " + String(i + 1) + "/" + String(attempts));
+            if (i + 1 >= attempts) {{
+              break;
+            }}
+            const backoffMs = Math.min(2500, 700 + i * 175);
+            await new Promise((resolve) => window.setTimeout(resolve, backoffMs));
           }}
-          throw new Error("Failed to fetch .rrd for Rerun viewer");
         }}
-        const blob = await resp.blob();
-        if (lastRrdBlobUrl) {{
-          URL.revokeObjectURL(lastRrdBlobUrl);
-        }}
-        lastRrdBlobUrl = URL.createObjectURL(blob);
-        return lastRrdBlobUrl;
+        setRerunBlobStatus("failed");
+        throw lastErr || new Error("Failed to fetch .rrd for Rerun viewer");
       }}
       async function rerunIframeSrc(camera) {{
         const cam = String(camera || "workspace");
@@ -2100,15 +2126,48 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           rerunIframeLoaded = true;
         }});
       }}
+      async function mountRerunIframeUntilSuccess(camera, maxAttempts) {{
+        const attempts = Math.max(1, Number(maxAttempts || 8));
+        let lastErr = null;
+        for (let i = 0; i < attempts; i += 1) {{
+          try {{
+            await mountRerunIframe(camera);
+            setRerunBlobStatus(RERUN_BLOB_SUCCESS);
+            return true;
+          }} catch (err) {{
+            lastErr = err;
+            setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
+            if (i + 1 >= attempts) {{
+              break;
+            }}
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          }}
+        }}
+        throw lastErr || new Error("Rerun iframe mount did not reach SUCCESS");
+      }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
-        return mountRerunIframe(camera);
+        return mountRerunIframeUntilSuccess(camera, 6);
       }}
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         const simViz = await waitForRerunReady();
-        await mountRerunIframe(String(simViz.camera || cam));
+        await mountRerunIframeUntilSuccess(String(simViz.camera || cam), 10);
         return true;
+      }}
+      async function pollSimVizUntilRrd(maxAttempts, delayMs) {{
+        const attempts = Math.max(1, Number(maxAttempts || 36));
+        const sleepMs = Math.max(250, Number(delayMs || 1500));
+        let last = null;
+        for (let i = 0; i < attempts; i += 1) {{
+          const simViz = await loadJson("/api/sim-viz/status");
+          last = simViz;
+          if (simViz && simViz.rrd_uri) {{
+            return simViz;
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
+        }}
+        return last || {{}};
       }}
       async function loadFrankaDemo() {{
         const camera = String(document.getElementById("cameraSelect").value || "workspace");
@@ -2386,6 +2445,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{}}),
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
+        appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
+        const simViz = await pollSimVizUntilRrd(60, 1500);
+        if (simViz && simViz.rrd_uri) {{
+          await mountRerunIframeUntilSuccess(simViz.camera || "workspace", 10);
+          appendChat(
+            "assistant",
+            "Rerun update: **run_id** `" +
+              String(simViz.run_id || data.run_id || "unknown") +
+              "`, **stage** `" +
+              String(simViz.stage || "running") +
+              "`, **iframe** `/rerun/`, **blob_mount** `" + RERUN_BLOB_SUCCESS + "`"
+          );
+        }}
         await refresh();
       }}
       async function showWorkflowStatus() {{

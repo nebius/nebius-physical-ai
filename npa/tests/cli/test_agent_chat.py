@@ -11,7 +11,8 @@ from npa.cli.agent_chat import (
 def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
-    assert match_chat_intent("watch the sim") == "sim2real_status"
+    assert match_chat_intent("watch the sim") == "watch_sim"
+    assert match_chat_intent("track the rerun timeline") == "watch_sim"
 
 
 def test_format_sim2real_status_includes_run_id_and_stage() -> None:
@@ -42,6 +43,12 @@ def test_build_grounded_reply_sim2real_status() -> None:
     reply = build_grounded_reply("sim2real_status", state, ["workbench.lerobot"], rerun_ready=False)
     assert "**stage**" in reply
     assert "GET /api" not in reply
+
+
+def test_build_grounded_reply_watch_sim_mentions_success() -> None:
+    state = {"sim_viz": {"run_id": "x", "stage": "running"}, "selection": {}, "latest_submit": {}}
+    reply = build_grounded_reply("watch_sim", state, ["workbench.lerobot"], rerun_ready=True)
+    assert "SUCCESS" in reply
 
 
 def test_embedded_agent_chat_source_strips_future_import() -> None:

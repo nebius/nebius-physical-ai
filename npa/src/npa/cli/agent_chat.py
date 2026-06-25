@@ -25,6 +25,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
+    (
+        "watch_sim",
+        re.compile(
+            r"\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
+            r"|\b(?:track|tail)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"
+            r"|\b(?:open|show)\b.*\b(?:rerun|timeline|sim\s+viz)\b",
+            re.IGNORECASE,
+        ),
+    ),
     ("sim2real_status", STATUS_QUERY_RE),
     (
         "sim_assets",
@@ -66,6 +75,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "watch_sim": ["sim-viz/status", "workflows/sim2real/status"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
@@ -285,6 +295,13 @@ def build_grounded_reply(
     loaded_franka_now: bool = False,
     default_cameras: list[dict[str, Any]] | None = None,
 ) -> str:
+    if intent == "watch_sim":
+        status = format_sim2real_status(state, rerun_ready=rerun_ready)
+        return (
+            status
+            + "\n- Keep the **Rerun** panel open; status polling will refresh when a newer `.rrd` lands."
+            + "\n- Workflow watchers should continue until iframe blob mount reports **SUCCESS**."
+        )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)
     if intent == "sim_assets":

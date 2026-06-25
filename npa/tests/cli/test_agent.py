@@ -177,7 +177,9 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'id="rerunFrame" title="rerun" loading="lazy" hidden' in source
     assert "waitForRerunReady" in source
     assert "mountRerunIframe" in source
+    assert "mountRerunIframeUntilSuccess" in source
     assert "resolveRerunRrdUrl" in source
+    assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
     assert "URL.createObjectURL" in source
     assert "apis_used" in source
@@ -436,7 +438,8 @@ def test_match_chat_intent_status_queries() -> None:
 
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("workflow status please") == "sim2real_status"
-    assert match_chat_intent("watch the sim in rerun") == "sim2real_status"
+    assert match_chat_intent("watch the sim in rerun") == "watch_sim"
+    assert match_chat_intent("tail the simulation timeline") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
     assert match_chat_intent("list cameras") == "cameras"
