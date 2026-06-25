@@ -376,7 +376,7 @@ def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> N
             s3_access_key_id="key",
             s3_secret_access_key="secret",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
-            s3_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+            s3_bucket="s3://lerobot-test0123/checkpoints/",
         ),
     )
 
@@ -389,7 +389,7 @@ def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> N
     )
 
     assert result is not None
-    assert result["s3_bucket"] == "lerobot-ccc9d3c7"
+    assert result["s3_bucket"] == "lerobot-test0123"
 
 
 def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(mocker) -> None:
