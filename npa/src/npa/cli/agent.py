@@ -882,7 +882,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
         "live_grpc_url": "",
-        "mode": "camera_preview",
+        "mode": "static",
         "camera": cam,
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
@@ -1156,9 +1156,18 @@ def sim_viz_status():
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
+    latest_submit = state.get("latest_submit", {{}})
+    if not isinstance(latest_submit, dict):
+        latest_submit = {{}}
+    if not str(payload.get("run_id") or "").strip():
+        payload["run_id"] = str(latest_submit.get("run_id") or "").strip()
+    if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
+        payload["stage"] = "submitted"
     payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
+    mode = str(payload.get("mode") or "static").strip().lower()
+    payload["mode"] = "live" if mode == "live" else "static"
     payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
     return payload
 
@@ -1247,7 +1256,7 @@ def _boot_preload_sim_viz() -> None:
         "rrd_uri": f"file://{{RRD_PATH}}",
         "rrd_updated_at": now,
         "live_grpc_url": "",
-        "mode": "camera_preview",
+        "mode": "static",
         "camera": cam,
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
@@ -1289,7 +1298,15 @@ def sim_assets_catalog():
 def sim_assets_cameras():
     state = _load_state()
     selected = state.get("camera_selection", ["workspace"])
-    cameras = list(DEFAULT_SCENE_SPEC["cameras"].values())
+    cameras = []
+    for entry in list(DEFAULT_SCENE_SPEC["cameras"].values()):
+        if not isinstance(entry, dict):
+            continue
+        camera_name = str(entry.get("name") or "").strip()
+        camera_payload = dict(entry)
+        if camera_name:
+            camera_payload["preview_url"] = f"/api/sim-viz/camera-preview?camera={{camera_name}}"
+        cameras.append(camera_payload)
     return {{"cameras": cameras, "selected": selected}}
 
 @app.put("/sim-assets/cameras/selection")
@@ -2793,6 +2810,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const simViz = await pollSimVizUntilRrd(60, 1500);
         if (simViz && simViz.rrd_uri) {{
           await mountRerunIframeUntilSuccess(simViz.camera || "workspace", 10);
+          if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
+            throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");
+          }}
           appendChat(
             "assistant",
             "Rerun update: **run_id** `" +
@@ -2801,6 +2821,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               String(simViz.stage || "running") +
               "`, **iframe** `/rerun/`, **blob_mount** `" + RERUN_BLOB_SUCCESS + "`"
           );
+        }} else {{
+          throw new Error("Sim2Real run submitted, but no .rrd is available yet after polling");
         }}
         await refresh();
       }}

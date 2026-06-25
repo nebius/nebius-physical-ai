@@ -462,6 +462,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("open the rerun iframe and show latest timeline") == "watch_sim"
     assert match_chat_intent("show stage badge overlay for this run") == "watch_sim"
     assert match_chat_intent("poll sim-viz/status and refresh rerun iframe") == "watch_sim"
+    assert match_chat_intent("rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("wait for RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
     assert match_chat_intent("list cameras") == "cameras"

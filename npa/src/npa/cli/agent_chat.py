@@ -41,6 +41,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bboth\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
             r"|\buntil\b.*\b(?:success|ready)\b.*\b(?:blob|iframe|rerun)\b"
             r"|\b(?:wait|retry|rerun)\b.*\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
+            r"|\brerun\b.*\b(?:blob|iframe)\b.*\buntil\b.*\bsuccess\b"
+            r"|\b(?:rerun_blob_success|rerun_mount_success)\b"
+            r"|\brerun[_ -]?blob[_ -]?success\b|\brerun[_ -]?mount[_ -]?success\b"
             r"|\b(?:when|once)\b.*\brrd\b.*\b(?:arrives|lands|updates?)\b",
             re.IGNORECASE,
         ),
@@ -314,7 +317,9 @@ def build_grounded_reply(
         status = format_sim2real_status(state, rerun_ready=rerun_ready)
         return (
             status
+            + "\n- **watch_url**: `/rerun/` (embedded iframe) with run/stage badge overlay."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
+            + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` timestamp appears."
             + "\n- Workflow watchers should continue until both `blob` and `iframe mount` report **SUCCESS**."
             + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
         )
