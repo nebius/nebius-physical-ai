@@ -5,9 +5,33 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from npa.cli.agent import app
+from npa.cli.agent import AGENT_UI_VERSION, app, build_agent_urls
 
 runner = CliRunner()
+
+
+def test_build_agent_urls_https_default() -> None:
+    urls = build_agent_urls("203.0.113.50")
+    assert urls["public_url"] == "https://203.0.113.50/"
+    assert urls["agent_url"] == urls["public_url"]
+    assert urls["rerun_url"] == "https://203.0.113.50/rerun/"
+    assert urls["direct_url"] == "http://203.0.113.50:8088/"
+
+
+def test_build_agent_urls_http_legacy() -> None:
+    urls = build_agent_urls("203.0.113.50", public_https=False)
+    assert urls["public_url"] == "http://203.0.113.50:8088/"
+    assert urls["agent_url"] == urls["public_url"]
+
+
+def test_bootstrap_enables_public_https_nginx() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "ssl_certificate /etc/nginx/ssl/npa-agent.crt" in source
+    assert "DEFAULT_HTTPS_PORT" in source
+    assert "Customer URL: use" in source
+    assert "--no-public-https" in source
 
 
 def test_agent_help_smoke() -> None:
@@ -180,11 +204,14 @@ def test_agent_status_json(monkeypatch) -> None:
         "npa.cli.agent._agent_record",
         lambda project, name: {
             "public_ip": "8.8.8.8",
-            "agent_url": "http://203.0.113.50:8088/",
-            "rerun_url": "http://203.0.113.50:8088/rerun/",
-            "sim_viz_url": "http://203.0.113.50:8088/rerun/",
-            "sim_assets_url": "http://203.0.113.50:8088/",
-            "cameras_api_url": "http://203.0.113.50:8088/api/sim-assets/cameras",
+            "agent_url": "https://203.0.113.50/",
+            "public_url": "https://203.0.113.50/",
+            "public_https": True,
+            "direct_url": "http://203.0.113.50:8088/",
+            "rerun_url": "https://203.0.113.50/rerun/",
+            "sim_viz_url": "https://203.0.113.50/rerun/",
+            "sim_assets_url": "https://203.0.113.50/",
+            "cameras_api_url": "https://203.0.113.50/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
             "llm": {"provider": "token_factory", "model": "nvidia/Cosmos3-Super-Reasoner"},
         },
@@ -202,7 +229,7 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["ui_status_code"] == 200
     assert payload["rerun_status_code"] == 200
     assert payload["sim_viz_url"].endswith("/rerun/")
-    assert payload["sim_assets_url"].endswith(":8088/")
+    assert payload["sim_assets_url"].endswith("203.0.113.50/")
     assert payload["cameras_api_url"].endswith("/api/sim-assets/cameras")
 
 
@@ -241,11 +268,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         lambda project, name: {
             "public_ip": "8.8.8.8",
             "region": "us-central1",
-            "agent_url": "http://203.0.113.50:8088/",
-            "rerun_url": "http://203.0.113.50:8088/rerun/",
-            "sim_viz_url": "http://203.0.113.50:8088/rerun/",
-            "sim_assets_url": "http://203.0.113.50:8088/",
-            "cameras_api_url": "http://203.0.113.50:8088/api/sim-assets/cameras",
+            "agent_url": "https://203.0.113.50/",
+            "public_url": "https://203.0.113.50/",
+            "public_https": True,
+            "direct_url": "http://203.0.113.50:8088/",
+            "rerun_url": "https://203.0.113.50/rerun/",
+            "sim_viz_url": "https://203.0.113.50/rerun/",
+            "sim_assets_url": "https://203.0.113.50/",
+            "cameras_api_url": "https://203.0.113.50/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
         },
     )
@@ -279,11 +309,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
+        if url_s.endswith("/welcome"):
+            return _Resp("<html>NPA Agent is running</html>", status_code=200)
+        if url_s.endswith("/healthz"):
+            return _Resp('{"ok":true}', status_code=200)
         if "/rerun/" in url_s:
             return _Resp(b"console.log('rerun');", status_code=200)
-        if url_s.rstrip("/").endswith(":8088"):
+        if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
             html = (
-                '<html><head><meta name="npa-ui-version" content="2025062503"></head>'
+                f'<html><head><meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi</script></body></html>'
             )
             return _Resp(html, status_code=200)

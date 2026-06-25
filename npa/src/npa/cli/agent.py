@@ -44,7 +44,8 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062503"
+AGENT_UI_VERSION = "2025062504"
+DEFAULT_HTTPS_PORT = 443
 
 
 @dataclass(frozen=True)
@@ -65,9 +66,12 @@ class AgentConfig:
     auth_secret_path: str
     llm_provider: str
     llm_model: str
+    public_url: str = ""
+    public_https: bool = True
+    direct_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "project_id": self.project_id,
             "tenant_id": self.tenant_id,
             "region": self.region,
@@ -82,6 +86,59 @@ class AgentConfig:
             "auth_secret_path": self.auth_secret_path,
             "llm": {"provider": self.llm_provider, "model": self.llm_model},
         }
+        if self.public_url:
+            payload["public_url"] = self.public_url
+        if self.public_https:
+            payload["public_https"] = True
+        if self.direct_url:
+            payload["direct_url"] = self.direct_url
+        return payload
+
+
+def build_agent_urls(
+    public_ip: str,
+    *,
+    agent_port: int = DEFAULT_AGENT_PORT,
+    public_https: bool = True,
+) -> dict[str, str]:
+    """Return customer-facing and operator-direct URLs for an agent VM."""
+    direct = f"http://{public_ip}:{agent_port}/"
+    if public_https:
+        base = f"https://{public_ip}/"
+    else:
+        base = direct
+    root = base.rstrip("/")
+    return {
+        "public_url": base,
+        "agent_url": base,
+        "rerun_url": f"{root}/rerun/",
+        "sim_viz_url": f"{root}/rerun/",
+        "sim_assets_url": base,
+        "cameras_api_url": f"{root}/api/sim-assets/cameras",
+        "direct_url": direct,
+    }
+
+
+def _record_public_https(record: dict[str, Any]) -> bool:
+    if "public_https" in record:
+        return bool(record.get("public_https"))
+    public_url = str(record.get("public_url", "")).strip()
+    if public_url.startswith("https://"):
+        return True
+    agent_url = str(record.get("agent_url", "")).strip()
+    return agent_url.startswith("https://")
+
+
+def _record_tls_verify(record: dict[str, Any]) -> bool:
+    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
+    return not _record_public_https(record)
+
+
+def _record_customer_url(record: dict[str, Any]) -> str:
+    public_url = str(record.get("public_url", "")).strip()
+    if public_url:
+        return public_url
+    return str(record.get("agent_url", "")).strip()
 
 
 def _fail(message: str) -> None:
@@ -216,6 +273,66 @@ def _is_routable_public_ip(value: str) -> bool:
     return True
 
 
+def _nginx_agent_site_body(
+    *,
+    backend_port: int,
+    rerun_port: int,
+) -> str:
+    """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
+    return f"""  auth_basic "NPA Agent";
+  auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
+  error_page 401 = /login-help.html;
+  location = /healthz {{
+    auth_basic off;
+    default_type application/json;
+    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
+  }}
+  location = /welcome {{
+    auth_basic off;
+    alias /opt/npa-agent/welcome.html;
+    default_type text/html;
+    add_header Cache-Control "no-store" always;
+  }}
+  location = /login-help.html {{
+    internal;
+    auth_basic off;
+    alias /opt/npa-agent/login-help.html;
+    default_type text/html;
+  }}
+  location /api/ {{
+    proxy_pass http://127.0.0.1:{backend_port}/;
+  }}
+  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
+    rewrite ^/rerun/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{rerun_port};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    gzip on;
+    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
+    gzip_min_length 256;
+    add_header Cache-Control "public, max-age=604800, immutable" always;
+  }}
+  location /rerun/ {{
+    proxy_pass http://127.0.0.1:{rerun_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    add_header Cache-Control "no-cache" always;
+  }}
+  location / {{
+    root /opt/npa-agent;
+    index ui.html;
+    try_files /ui.html =404;
+    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    add_header Pragma "no-cache" always;
+  }}"""
+
+
 def _bootstrap_agent_stack(
     *,
     host: str,
@@ -228,6 +345,7 @@ def _bootstrap_agent_stack(
     rerun_port: int,
     llm_model: str = DEFAULT_LLM_MODEL,
     tf_api_key: str = "",
+    public_https: bool = True,
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -239,6 +357,30 @@ def _bootstrap_agent_stack(
         ).ssh
     )
     catalog_json = json.dumps(_tool_catalog_payload())
+    nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
+    https_ssl_setup = ""
+    https_server_block = ""
+    if public_https:
+        https_ssl_setup = f"""
+sudo mkdir -p /etc/nginx/ssl
+if [ ! -s /etc/nginx/ssl/npa-agent.crt ] || [ ! -s /etc/nginx/ssl/npa-agent.key ]; then
+  sudo openssl req -x509 -nodes -newkey rsa:2048 -days 825 \\
+    -keyout /etc/nginx/ssl/npa-agent.key \\
+    -out /etc/nginx/ssl/npa-agent.crt \\
+    -subj "/CN=npa-agent/O=Nebius Physical AI" \\
+    -addext "subjectAltName=IP:{host}"
+  sudo chmod 600 /etc/nginx/ssl/npa-agent.key
+fi
+"""
+        https_server_block = f"""
+server {{
+  listen {DEFAULT_HTTPS_PORT} ssl;
+  server_name _;
+  ssl_certificate /etc/nginx/ssl/npa-agent.crt;
+  ssl_certificate_key /etc/nginx/ssl/npa-agent.key;
+{nginx_site_body}
+}}
+"""
     setup_script = f"""set -euo pipefail
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip
@@ -1010,8 +1152,9 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
     <ol>
       <li>Open <a href="/">the workbench UI</a> — your browser will prompt for username and password.</li>
       <li>Username: <code>{auth_user}</code></li>
-      <li>Password: ask your operator (stored in <code>auth_secret_path</code> on the machine that ran <code>npa agent deploy</code>).</li>
-      <li>Or use an embedded-credentials URL: <code>http://USER:PASSWORD@HOST:PORT/</code> (replace HOST with this VM&apos;s public IP).</li>
+      <li>Password: from your operator&apos;s deploy output (<code>auth_password</code>) or <code>auth.env</code> on the machine that ran <code>npa agent deploy</code>.</li>
+      <li>Customer URL: use <code>https://</code> on port <strong>443</strong> (no VPN or SSH tunnel). Your browser may warn about a self-signed certificate — choose to proceed.</li>
+      <li>Or use an embedded-credentials URL: <code>https://USER:PASSWORD@HOST/</code> (replace HOST with this VM&apos;s public IP).</li>
     </ol>
     <p>Health check (no auth): <a href="/healthz">/healthz</a></p>
     <p>UI version after login: check <code>&lt;meta name="npa-ui-version"&gt;</code> — expect <code>{AGENT_UI_VERSION}</code>.</p>
@@ -2153,63 +2296,14 @@ StartLimitIntervalSec=0
 WantedBy=multi-user.target
 UNIT
 sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
+{https_ssl_setup}
 cat <<'NGINX' | sudo tee /etc/nginx/sites-available/npa-agent >/dev/null
 server {{
   listen {agent_port};
   server_name _;
-  auth_basic "NPA Agent";
-  auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
-  error_page 401 = /login-help.html;
-  location = /healthz {{
-    auth_basic off;
-    default_type application/json;
-    return 200 '{{"ok":true,"service":"npa-agent","welcome":"/welcome","ui":"/","ui_version":"{AGENT_UI_VERSION}"}}';
-  }}
-  location = /welcome {{
-    auth_basic off;
-    alias /opt/npa-agent/welcome.html;
-    default_type text/html;
-    add_header Cache-Control "no-store" always;
-  }}
-  location = /login-help.html {{
-    internal;
-    auth_basic off;
-    alias /opt/npa-agent/login-help.html;
-    default_type text/html;
-  }}
-  location /api/ {{
-    proxy_pass http://127.0.0.1:{backend_port}/;
-  }}
-  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
-    rewrite ^/rerun/(.*)$ /$1 break;
-    proxy_pass http://127.0.0.1:{rerun_port};
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    gzip on;
-    gzip_types application/wasm application/javascript text/javascript image/svg+xml;
-    gzip_min_length 256;
-    add_header Cache-Control "public, max-age=604800, immutable" always;
-  }}
-  location /rerun/ {{
-    proxy_pass http://127.0.0.1:{rerun_port}/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
-    add_header Cache-Control "no-cache" always;
-  }}
-  location / {{
-    root /opt/npa-agent;
-    index ui.html;
-    try_files /ui.html =404;
-    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    add_header Pragma "no-cache" always;
-  }}
+{nginx_site_body}
 }}
+{https_server_block}
 NGINX
 sudo ln -sf /etc/nginx/sites-available/npa-agent /etc/nginx/sites-enabled/npa-agent
 sudo rm -f /etc/nginx/sites-enabled/default
@@ -2223,9 +2317,16 @@ sudo systemctl restart npa-agent-backend nginx
         ssh.run_or_raise("sudo systemctl restart npa-agent-backend")
 
 
-def _health(url: str, *, user: str, password: str, timeout: float = 5.0) -> tuple[bool, int]:
+def _health(
+    url: str,
+    *,
+    user: str,
+    password: str,
+    timeout: float = 5.0,
+    verify: bool = True,
+) -> tuple[bool, int]:
     try:
-        response = httpx.get(url, auth=(user, password), timeout=timeout)
+        response = httpx.get(url, auth=(user, password), timeout=timeout, verify=verify)
     except httpx.HTTPError:
         return False, 0
     return response.status_code == 200, response.status_code
@@ -2244,6 +2345,11 @@ def deploy_cmd(
     agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
     backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
     rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    no_public_https: bool = typer.Option(
+        False,
+        "--no-public-https",
+        help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
+    ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
     saved_env = resolve_environment(
@@ -2334,6 +2440,7 @@ def deploy_cmd(
             "agent chat will return 503 until `npa agent bootstrap` with a configured key.",
             err=True,
         )
+    public_https = not no_public_https
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -2346,20 +2453,20 @@ def deploy_cmd(
             rerun_port=rerun_port,
             llm_model=llm_model,
             tf_api_key=tf_api_key,
+            public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
 
+    ingress_ports: list[int] = [agent_port, rerun_port]
+    if public_https:
+        ingress_ports.append(DEFAULT_HTTPS_PORT)
     try:
-        ensure_ingress(vm_id=instance_id, ports=(agent_port, rerun_port), tool="agent")
+        ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
         _fail(f"npa network ensure-ingress failed: {exc}")
 
-    agent_url = f"http://{public_ip}:{agent_port}/"
-    rerun_url = f"http://{public_ip}:{agent_port}/rerun/"
-    sim_viz_url = f"http://{public_ip}:{agent_port}/rerun/"
-    sim_assets_url = f"http://{public_ip}:{agent_port}/"
-    cameras_api_url = f"http://{public_ip}:{agent_port}/api/sim-assets/cameras"
+    urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
     record = AgentConfig(
         project_alias=project,
         name=name,
@@ -2368,15 +2475,18 @@ def deploy_cmd(
         region=env_region,
         public_ip=public_ip,
         instance_id=instance_id,
-        agent_url=agent_url,
-        rerun_url=rerun_url,
-        sim_viz_url=sim_viz_url,
-        sim_assets_url=sim_assets_url,
-        cameras_api_url=cameras_api_url,
+        agent_url=urls["agent_url"],
+        rerun_url=urls["rerun_url"],
+        sim_viz_url=urls["sim_viz_url"],
+        sim_assets_url=urls["sim_assets_url"],
+        cameras_api_url=urls["cameras_api_url"],
         auth_user=DEFAULT_AGENT_USER,
         auth_secret_path=str(auth_path),
         llm_provider=DEFAULT_LLM_PROVIDER,
         llm_model=DEFAULT_LLM_MODEL,
+        public_url=urls["public_url"],
+        public_https=public_https,
+        direct_url=urls["direct_url"],
     )
     _store_agent_record(project, name, record.to_dict())
     write_config(
@@ -2397,11 +2507,18 @@ def deploy_cmd(
         }
     )
 
-    typer.echo(f"public_url: {agent_url}")
-    typer.echo(f"rerun_url: {rerun_url}")
-    typer.echo(f"sim_viz_url: {sim_viz_url}")
-    typer.echo(f"sim_assets_url: {sim_assets_url}")
-    typer.echo(f"cameras_api_url: {cameras_api_url}")
+    typer.echo(f"Customer URL: {urls['public_url']}")
+    typer.echo(f"public_url: {urls['public_url']}")
+    if public_https:
+        typer.echo(
+            "Note: HTTPS uses a self-signed certificate — browsers will warn once; "
+            "choose to proceed or use curl with -k."
+        )
+        typer.echo(f"direct_url: {urls['direct_url']}")
+    typer.echo(f"rerun_url: {urls['rerun_url']}")
+    typer.echo(f"sim_viz_url: {urls['sim_viz_url']}")
+    typer.echo(f"sim_assets_url: {urls['sim_assets_url']}")
+    typer.echo(f"cameras_api_url: {urls['cameras_api_url']}")
     typer.echo(f"llm: {DEFAULT_LLM_PROVIDER}:{DEFAULT_LLM_MODEL}")
     typer.echo(f"auth_user: {DEFAULT_AGENT_USER}")
     typer.echo(f"auth_secret_path: {auth_path}")
@@ -2416,6 +2533,11 @@ def bootstrap_cmd(
     agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
     backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
     rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    no_public_https: bool = typer.Option(
+        False,
+        "--no-public-https",
+        help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
+    ),
 ) -> None:
     """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
     record = _agent_record(project, name)
@@ -2424,6 +2546,7 @@ def bootstrap_cmd(
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
+    public_https = not no_public_https
     ssh_key_path = resolve_ssh_config(
         ssh_host=public_ip,
         ssh_user=ssh_user,
@@ -2456,10 +2579,32 @@ def bootstrap_cmd(
             rerun_port=rerun_port,
             llm_model=llm_model,
             tf_api_key=tf_api_key,
+            public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
-    typer.echo(f"bootstrapped: {project}/{name} at http://{public_ip}:{agent_port}/")
+    instance_id = str(record.get("instance_id", "")).strip()
+    if instance_id:
+        ingress_ports: list[int] = [agent_port, rerun_port]
+        if public_https:
+            ingress_ports.append(DEFAULT_HTTPS_PORT)
+        try:
+            ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
+        except NetworkIngressError as exc:
+            typer.echo(
+                f"Warning: npa network ensure-ingress failed ({exc}). "
+                "Customer HTTPS on port 443 may be unreachable until ingress is opened.",
+                err=True,
+            )
+    urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
+    updated = dict(record)
+    updated.update(urls)
+    updated["public_https"] = public_https
+    _store_agent_record(project, name, updated)
+    typer.echo(f"Customer URL: {urls['public_url']}")
+    typer.echo(f"bootstrapped: {project}/{name} at {urls['public_url']}")
+    if public_https:
+        typer.echo(f"direct_url: {urls['direct_url']}")
 
 
 @app.command("status")
@@ -2483,12 +2628,17 @@ def status_cmd(
     cameras_api_url = str(
         record.get("cameras_api_url", f"{agent_url.rstrip('/')}/api/sim-assets/cameras")
     )
-    ui_ok, ui_code = _health(agent_url, user=auth_user, password=auth_password)
-    rerun_ok, rerun_code = _health(sim_viz_url, user=auth_user, password=auth_password)
+    public_url = _record_customer_url(record)
+    tls_verify = _record_tls_verify(record)
+    ui_ok, ui_code = _health(agent_url, user=auth_user, password=auth_password, verify=tls_verify)
+    rerun_ok, rerun_code = _health(sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify)
     payload = {
         "project": project,
         "name": name,
         "public_ip": record.get("public_ip", ""),
+        "public_url": public_url,
+        "public_https": _record_public_https(record),
+        "direct_url": record.get("direct_url", ""),
         "ui_url": agent_url,
         "rerun_url": rerun_url,
         "sim_viz_url": sim_viz_url,
@@ -2572,7 +2722,33 @@ def verify_live_cmd(
     except ValueError as exc:
         _fail(str(exc))
 
-    ui_ok, ui_code = _health(str(record.get("agent_url", "")), user=auth_user, password=auth_password)
+    customer_url = _record_customer_url(record)
+    tls_verify = _record_tls_verify(record)
+    if customer_url:
+        try:
+            welcome_resp = httpx.get(
+                f"{customer_url.rstrip('/')}/welcome",
+                timeout=5.0,
+                verify=tls_verify,
+            )
+            if welcome_resp.status_code != 200:
+                _fail(f"public welcome page unhealthy (status={welcome_resp.status_code})")
+            healthz_resp = httpx.get(
+                f"{customer_url.rstrip('/')}/healthz",
+                timeout=5.0,
+                verify=tls_verify,
+            )
+            if healthz_resp.status_code != 200:
+                _fail(f"public healthz unhealthy (status={healthz_resp.status_code})")
+        except httpx.HTTPError as exc:
+            _fail(f"public customer URL unreachable: {exc}")
+
+    ui_ok, ui_code = _health(
+        str(record.get("agent_url", "")),
+        user=auth_user,
+        password=auth_password,
+        verify=tls_verify,
+    )
     if not ui_ok:
         _fail(f"UI health failed behind basic auth (status={ui_code})")
     sim_viz_url = str(record.get("sim_viz_url", record.get("rerun_url", "")))
@@ -2580,6 +2756,7 @@ def verify_live_cmd(
         sim_viz_url,
         user=auth_user,
         password=auth_password,
+        verify=tls_verify,
     )
     if not rerun_ok:
         _fail(f"embedded rerun iframe endpoint unhealthy (status={rerun_code})")
@@ -2588,6 +2765,7 @@ def verify_live_cmd(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         sim_viz_status_resp.raise_for_status()
         sim_viz_status = sim_viz_status_resp.json()
@@ -2604,6 +2782,7 @@ def verify_live_cmd(
             f"{sim_assets_base}/api/sim-assets",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         sim_assets_resp.raise_for_status()
         sim_assets_payload = sim_assets_resp.json()
@@ -2617,6 +2796,7 @@ def verify_live_cmd(
             f"{sim_assets_base}/api/sim-assets/cameras",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         cameras_resp.raise_for_status()
         cameras_payload = cameras_resp.json()
@@ -2640,12 +2820,14 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json=selection_body,
             timeout=5.0,
+            verify=tls_verify,
         )
         selection_set.raise_for_status()
         selection_get = httpx.get(
             f"{sim_assets_base}/api/sim-assets/selection",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         selection_get.raise_for_status()
         selected_payload = selection_get.json()
@@ -2662,6 +2844,7 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={},
             timeout=5.0,
+            verify=tls_verify,
         )
         submit_resp.raise_for_status()
         submit_payload = submit_resp.json()
@@ -2676,6 +2859,7 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={"camera": "workspace"},
             timeout=30.0,
+            verify=tls_verify,
         )
         load_demo_resp.raise_for_status()
         load_demo_payload = load_demo_resp.json()
@@ -2695,6 +2879,7 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={"camera": "workspace"},
             timeout=15.0,
+            verify=tls_verify,
         )
         preview_resp.raise_for_status()
         preview_payload = preview_resp.json()
@@ -2709,6 +2894,7 @@ def verify_live_cmd(
             f"{agent_base}/api/sim-viz/rrd",
             auth=(auth_user, auth_password),
             timeout=15.0,
+            verify=tls_verify,
         )
         rrd_resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001
@@ -2746,6 +2932,7 @@ def verify_live_cmd(
             f"{agent_base}/api/health",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         health_resp.raise_for_status()
         health_payload = health_resp.json()
@@ -2759,6 +2946,7 @@ def verify_live_cmd(
             f"{agent_base}/api/workflows/sim2real/status",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         workflow_status_resp.raise_for_status()
         workflow_status_payload = workflow_status_resp.json()
@@ -2771,6 +2959,7 @@ def verify_live_cmd(
         str(record.get("agent_url", "")),
         auth=(auth_user, auth_password),
         timeout=10.0,
+        verify=tls_verify,
     )
     if ui_resp.status_code != 200:
         _fail(f"UI html fetch failed (status={ui_resp.status_code})")
@@ -2789,6 +2978,7 @@ def verify_live_cmd(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/session",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         session_resp.raise_for_status()
         session_payload = session_resp.json()
@@ -2802,6 +2992,7 @@ def verify_live_cmd(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         tools_resp.raise_for_status()
         tool_refs = tools_resp.json().get("tool_refs", [])
@@ -2814,6 +3005,7 @@ def verify_live_cmd(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools/{tool_refs[0]}",
             auth=(auth_user, auth_password),
             timeout=5.0,
+            verify=tls_verify,
         )
         resolve_resp.raise_for_status()
         resolved = resolve_resp.json()
