@@ -10,7 +10,8 @@ STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
     r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim\s+viz))"
     r"|\b(?:sim\s*[- ]?2\s*[- ]?real|workflow|rerun)\b.*\bstatus\b"
-    r"|\bstatus\b.*\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|stage|run)\b",
+    r"|\bstatus\b.*\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|stage|run)\b"
+    r"|\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b",
     re.IGNORECASE,
 )
 
@@ -139,6 +140,7 @@ def format_sim2real_status(state: dict[str, Any], *, rerun_ready: bool | None = 
     stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
     camera = str(sim_viz.get("camera") or "workspace")
     rrd_updated = str(sim_viz.get("rrd_updated_at") or "").strip() or "n/a"
+    rerun_iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
     submitted_at = str(latest.get("submitted_at") or "").strip() or "n/a"
     robot = str(selection.get("robot_preset") or "franka")
     backend = str(selection.get("sim_backend") or "isaac")
@@ -149,6 +151,7 @@ def format_sim2real_status(state: dict[str, Any], *, rerun_ready: bool | None = 
         f"- **camera**: `{camera}`",
         f"- **rerun_ready**: `{str(ready).lower()}`",
         f"- **rrd_updated_at**: `{rrd_updated}`",
+        f"- **rerun_iframe_url**: `{rerun_iframe_url}`",
         f"- **latest_submit_at**: `{submitted_at}`",
         f"- **robot_preset**: `{robot}`",
         f"- **sim_backend**: `{backend}`",

@@ -11,6 +11,7 @@ from npa.cli.agent_chat import (
 def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
+    assert match_chat_intent("watch the sim") == "sim2real_status"
 
 
 def test_format_sim2real_status_includes_run_id_and_stage() -> None:
@@ -21,6 +22,7 @@ def test_format_sim2real_status_includes_run_id_and_stage() -> None:
             "camera": "workspace",
             "rerun_ready": True,
             "rrd_updated_at": "2026-06-25T00:00:00+00:00",
+            "rerun_iframe_url": "/rerun/?url=/api/sim-viz/rrd&camera=workspace",
         },
         "latest_submit": {"run_id": "agent-run-deadbeef", "submitted_at": "2026-06-25T00:00:00+00:00"},
         "selection": {"robot_preset": "franka", "sim_backend": "isaac"},
@@ -30,6 +32,8 @@ def test_format_sim2real_status_includes_run_id_and_stage() -> None:
     assert "agent-run-deadbeef" in reply
     assert "stage" in reply
     assert "demo" in reply
+    assert "rerun_iframe_url" in reply
+    assert "/rerun/" in reply
     assert "GET /api" not in reply
 
 

@@ -123,15 +123,25 @@ def test_agent_workbench_actions(ctx: AgentLiveContext) -> None:
     assert isinstance(payload, dict)
 
 
-def test_agent_rerun_iframe_endpoint(ctx: AgentLiveContext) -> None:
+def test_agent_rerun_iframe_reachable(ctx: AgentLiveContext) -> None:
+    base = ctx.agent_url.rstrip("/")
     rerun = httpx.get(
-        ctx.sim_viz_url,
+        f"{base}/rerun/",
         auth=ctx.auth(),
         timeout=15.0,
         verify=ctx.tls_verify,
     )
     assert rerun.status_code == 200
     assert rerun.text.strip()
+
+    legacy = httpx.get(
+        ctx.sim_viz_url,
+        auth=ctx.auth(),
+        timeout=15.0,
+        verify=ctx.tls_verify,
+    )
+    assert legacy.status_code == 200
+    assert legacy.text.strip()
 
 
 def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
@@ -178,6 +188,54 @@ def test_agent_camera_preview(ctx: AgentLiveContext) -> None:
     payload = preview.json()
     assert payload.get("ok") is True
     assert payload.get("entity_path")
+
+
+def _assert_grounded_status_reply(payload: dict[str, object]) -> str:
+    assert payload.get("ok") is True
+    reply = str(payload.get("reply") or "")
+    assert reply
+    assert "run_id" in reply or "stage" in reply, "reply missing run_id/stage fields"
+    assert not reply.strip().startswith("GET /api"), "raw GET path instead of unpacked status"
+    assert reply.strip() != "GET /api/sim-viz/status"
+    return reply
+
+
+def test_agent_chat_grounded_sim2real_status(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    _assert_grounded_status_reply(chat.json())
+
+
+def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    _assert_grounded_status_reply(payload)
+    assert payload.get("grounded") is True
+    apis_used = payload.get("apis_used")
+    assert isinstance(apis_used, list) and apis_used
+
+
+def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "what sim assets are selected"}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    reply = str(payload.get("reply") or "").lower()
+    assert any(token in reply for token in ("franka", "isaac", "selection", "robot_preset"))
 
 
 @pytest.mark.skipif(

@@ -3255,28 +3255,30 @@ def verify_live_cmd(
         _fail("agent failed to resolve toolRef catalog entry")
     if not isinstance(resolved.get("argv_template"), list):
         _fail("resolved toolRef entry missing argv_template list")
-    if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
-        try:
-            chat_smoke = httpx.post(
-                f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
-                auth=(auth_user, auth_password),
-                json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
-                timeout=30.0,
-                verify=tls_verify,
-            )
-            chat_smoke.raise_for_status()
-            chat_payload = chat_smoke.json()
-        except Exception as exc:  # noqa: BLE001
-            _fail(f"chat endpoint smoke failed: {exc}")
-        if not isinstance(chat_payload, dict) or not chat_payload.get("ok"):
-            _fail("chat endpoint did not return ok=true")
-        reply = str(chat_payload.get("reply") or "")
-        if "run_id" not in reply and "stage" not in reply:
-            _fail("chat status reply missing run_id/stage fields")
-        if reply.strip().startswith("GET /api") or reply.strip() == "GET /api/sim-viz/status":
-            _fail("chat status reply returned raw GET path instead of unpacked status")
-        if not chat_payload.get("grounded"):
-            _fail("chat status reply expected grounded=true from intent router")
+    try:
+        chat_smoke = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
+            auth=(auth_user, auth_password),
+            json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+            timeout=30.0,
+            verify=tls_verify,
+        )
+        chat_smoke.raise_for_status()
+        chat_payload = chat_smoke.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"chat endpoint smoke failed: {exc}")
+    if not isinstance(chat_payload, dict) or not chat_payload.get("ok"):
+        _fail("chat endpoint did not return ok=true")
+    reply = str(chat_payload.get("reply") or "")
+    if "run_id" not in reply and "stage" not in reply:
+        _fail("chat status reply missing run_id/stage fields")
+    if reply.strip().startswith("GET /api") or reply.strip() == "GET /api/sim-viz/status":
+        _fail("chat status reply returned raw GET path instead of unpacked status")
+    if not chat_payload.get("grounded"):
+        _fail("chat status reply expected grounded=true from intent router")
+    apis_used = chat_payload.get("apis_used")
+    if not isinstance(apis_used, list) or not apis_used:
+        _fail("chat status reply expected non-empty apis_used list")
 
     test_env = {
         **dict(os.environ),
@@ -3288,12 +3290,19 @@ def verify_live_cmd(
     if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
         test_env["NPA_AGENT_CHAT_LIVE"] = "1"
     smoke = subprocess.run(
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/smoke/test_agent_smoke.py", "-q"],
+        [
+            "npa/.venv/bin/python",
+            "-m",
+            "pytest",
+            "npa/tests/smoke/test_agent_smoke.py",
+            "npa/tests/smoke/test_agent_chat_smoke.py",
+            "-q",
+        ],
         check=False,
         env=test_env,
     )
     if smoke.returncode != 0:
-        _fail("pytest npa/tests/smoke/test_agent_smoke.py failed")
+        _fail("pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed")
     unit = subprocess.run(
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
         check=False,

@@ -395,7 +395,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
     assert calls == [
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/smoke/test_agent_smoke.py", "-q"],
+        [
+            "npa/.venv/bin/python",
+            "-m",
+            "pytest",
+            "npa/tests/smoke/test_agent_smoke.py",
+            "npa/tests/smoke/test_agent_chat_smoke.py",
+            "-q",
+        ],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]
@@ -429,6 +436,7 @@ def test_match_chat_intent_status_queries() -> None:
 
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("workflow status please") == "sim2real_status"
+    assert match_chat_intent("watch the sim in rerun") == "sim2real_status"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
     assert match_chat_intent("list cameras") == "cameras"
