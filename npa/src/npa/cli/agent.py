@@ -249,6 +249,7 @@ import os
 import re
 import secrets
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -488,7 +489,27 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
     rr.save(str(target))
     return target
 
-def _restart_rerun_serve() -> bool:
+_RERUN_RESTART_MIN_INTERVAL_S = 8.0
+_last_rerun_restart_monotonic = 0.0
+
+def _rerun_service_active() -> bool:
+    try:
+        subprocess.run(
+            ["systemctl", "is-active", "--quiet", RERUN_UNIT],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+        return True
+    except Exception:
+        return False
+
+def _restart_rerun_serve(*, force: bool = False) -> bool:
+    global _last_rerun_restart_monotonic
+    now = time.monotonic()
+    if not force and _rerun_service_active():
+        if now - _last_rerun_restart_monotonic < _RERUN_RESTART_MIN_INTERVAL_S:
+            return True
     try:
         subprocess.run(
             ["sudo", "systemctl", "restart", RERUN_UNIT],
@@ -496,8 +517,11 @@ def _restart_rerun_serve() -> bool:
             capture_output=True,
             timeout=30,
         )
+        _last_rerun_restart_monotonic = time.monotonic()
         return True
     except Exception:
+        if _rerun_service_active():
+            return True
         return False
 
 def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
@@ -1946,6 +1970,7 @@ Type=simple
 ExecStart=/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd --serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
 WorkingDirectory=/opt/npa-agent
 Restart=always
+StartLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT

@@ -1,4 +1,4 @@
-from npa.workflows.sim2real_rerun_serve import build_rerun_nginx_config, RERUN_HTPASSWD_PATH
+from npa.workflows.rerun_serve import build_rerun_nginx_config, RERUN_HTPASSWD_PATH
 
 
 def test_nginx_config_no_auth_by_default():
@@ -17,7 +17,7 @@ def _items(manifest):
 
 
 def test_manifest_no_auth_when_no_password():
-    from npa.workflows.sim2real_rerun_serve import RerunServeConfig, build_rerun_serve_manifest
+    from npa.workflows.rerun_serve import RerunServeConfig, build_rerun_serve_manifest
     cfg = RerunServeConfig(run_id="sim2real-staged-20260620t010101z", s3_bucket="b", name="npa-rerun")
     m = build_rerun_serve_manifest(cfg)
     kinds = [(i["kind"], i["metadata"]["name"]) for i in _items(m)]
@@ -27,7 +27,7 @@ def test_manifest_no_auth_when_no_password():
 
 
 def test_manifest_basic_auth_secret_volume_mount_when_enabled():
-    from npa.workflows.sim2real_rerun_serve import RerunServeConfig, build_rerun_serve_manifest
+    from npa.workflows.rerun_serve import RerunServeConfig, build_rerun_serve_manifest
     cfg = RerunServeConfig(run_id="sim2real-staged-20260620t010101z", s3_bucket="b",
                            name="npa-rerun", auth_user="demo", auth_password="s3cret-pw")
     assert cfg.auth_enabled
@@ -47,7 +47,7 @@ def test_manifest_basic_auth_secret_volume_mount_when_enabled():
 
 
 def test_nginx_healthz_unauthed_and_probe_uses_it():
-    from npa.workflows.sim2real_rerun_serve import RerunServeConfig, build_rerun_serve_manifest, build_rerun_nginx_config
+    from npa.workflows.rerun_serve import RerunServeConfig, build_rerun_serve_manifest, build_rerun_nginx_config
     cfg = build_rerun_nginx_config(auth_required=True)
     assert "location = /healthz" in cfg and "auth_basic off;" in cfg
     c = RerunServeConfig(run_id="sim2real-staged-20260620t010101z", s3_bucket="b", name="npa-rerun",

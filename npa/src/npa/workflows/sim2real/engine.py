@@ -566,7 +566,7 @@ def run_finalize(
             "reason": "upload_artifacts is false or no s3_bucket configured",
         }
 
-    from npa.workflows.sim2real_rerun_serve import maybe_auto_rerun_serve
+    from npa.workflows.rerun_serve import maybe_auto_rerun_serve
 
     rerun_serve = maybe_auto_rerun_serve(
         run_id=config.run_id,

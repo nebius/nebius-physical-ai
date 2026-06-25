@@ -5,7 +5,7 @@ import json
 import pytest
 
 from npa.clients.config import StorageConfig
-from npa.workflows.sim2real_rerun_serve import (
+from npa.workflows.rerun_serve import (
     DEFAULT_GRPC_PORT,
     DEFAULT_NGINX_IMAGE,
     DEFAULT_PORT,
@@ -56,7 +56,7 @@ def test_deployment_name_for_cluster_slugifies_context() -> None:
 
 def test_same_cluster_deployment_name_for_different_runs(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     first = build_rerun_serve_config(
@@ -94,7 +94,7 @@ def test_default_rerun_image_prefers_generic_env_alias(monkeypatch: pytest.Monke
 
 def test_manifest_sets_progress_deadline(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -109,7 +109,7 @@ def test_manifest_sets_progress_deadline(mocker) -> None:
 
 def test_build_config_resolves_bucket_and_s3_uri(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -127,7 +127,7 @@ def test_build_config_resolves_bucket_and_s3_uri(mocker) -> None:
 
 def test_build_config_accepts_report_uri(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -148,7 +148,7 @@ def test_rrd_s3_uri_from_report_uri() -> None:
 
 def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -209,7 +209,7 @@ def test_local_viewer_url_uses_loopback_grpc_origin() -> None:
 
 def test_manifest_uses_direct_rerun_for_prebuilt_image(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -237,7 +237,7 @@ def test_build_rerun_nginx_config_sets_static_cache_headers() -> None:
 
 def test_build_rerun_serve_manifest_includes_rrd_sync_annotation(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -267,7 +267,7 @@ def test_fetch_rrd_sync_token_uses_head_object_etag() -> None:
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -283,12 +283,12 @@ def test_redact_manifest_hides_secret_values(mocker) -> None:
 
 def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
-    mocker.patch("npa.workflows.sim2real_rerun_serve.verify_rrd_exists_on_s3")
+    mocker.patch("npa.workflows.rerun_serve.verify_rrd_exists_on_s3")
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.fetch_rrd_sync_token",
+        "npa.workflows.rerun_serve.fetch_rrd_sync_token",
         return_value="etag-test",
     )
     config = build_rerun_serve_config(
@@ -332,7 +332,7 @@ def test_apply_rerun_serve_uses_kubectl_runner(mocker) -> None:
 
 def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -367,7 +367,7 @@ def test_destroy_rerun_serve_deletes_resources(mocker) -> None:
 
 def test_destroy_rerun_serve_wait_uses_kubectl_wait_true(mocker) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_project_storage",
+        "npa.workflows.rerun_serve.resolve_project_storage",
         return_value=_storage(),
     )
     config = build_rerun_serve_config(
@@ -467,11 +467,11 @@ def test_maybe_auto_rerun_serve_uses_in_cluster_kubectl_without_kubeconfig_file(
 ) -> None:
     monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_rerun_serve_credentials",
+        "npa.workflows.rerun_serve.resolve_rerun_serve_credentials",
         return_value=("ak", "sk"),
     )
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.build_rerun_serve_config",
+        "npa.workflows.rerun_serve.build_rerun_serve_config",
         return_value=build_rerun_serve_config(
             run_id="sim2real-staged-20260615t180818z",
             s3_bucket="demo-bucket",
@@ -480,11 +480,11 @@ def test_maybe_auto_rerun_serve_uses_in_cluster_kubectl_without_kubeconfig_file(
         ),
     )
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_kubeconfig_path",
+        "npa.workflows.rerun_serve.resolve_kubeconfig_path",
         return_value="",
     )
     apply = mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.apply_rerun_serve",
+        "npa.workflows.rerun_serve.apply_rerun_serve",
         return_value=type(
             "Result",
             (),
@@ -528,11 +528,11 @@ def test_in_cluster_kubernetes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) -> None:
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_rerun_serve_credentials",
+        "npa.workflows.rerun_serve.resolve_rerun_serve_credentials",
         return_value=("ak", "sk"),
     )
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.build_rerun_serve_config",
+        "npa.workflows.rerun_serve.build_rerun_serve_config",
         return_value=build_rerun_serve_config(
             run_id="sim2real-staged-20260615t180818z",
             s3_bucket="demo-bucket",
@@ -541,11 +541,11 @@ def test_maybe_auto_rerun_serve_deploys_and_prints_public_url(mocker, capsys) ->
         ),
     )
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.resolve_kubeconfig_path",
+        "npa.workflows.rerun_serve.resolve_kubeconfig_path",
         return_value="/tmp/kubeconfig",
     )
     mocker.patch(
-        "npa.workflows.sim2real_rerun_serve.apply_rerun_serve",
+        "npa.workflows.rerun_serve.apply_rerun_serve",
         return_value=type(
             "Result",
             (),
