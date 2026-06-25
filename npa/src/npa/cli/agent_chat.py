@@ -44,6 +44,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\brerun\b.*\b(?:blob|iframe)\b.*\buntil\b.*\bsuccess\b"
             r"|\b(?:rerun_blob_success|rerun_mount_success)\b"
             r"|\brerun[_ -]?blob[_ -]?success\b|\brerun[_ -]?mount[_ -]?success\b"
+            r"|\brerun[_ -]?iframe[_ -]?until[_ -]?success\b"
+            r"|\brerun[_ -]?blob[_ -]?iframe[_ -]?until[_ -]?success\b"
+            r"|\bblob\s*\+\s*iframe\s*until\s*success\b"
             r"|\bblob[_ -]?mount\b.*\bsuccess\b"
             r"|\biframe[_ -]?mount\b.*\bsuccess\b"
             r"|\bboth\b.*\bsuccess\b.*\b(?:blob|iframe|mount)\b"
@@ -317,10 +320,15 @@ def build_grounded_reply(
     default_cameras: list[dict[str, Any]] | None = None,
 ) -> str:
     if intent == "watch_sim":
+        sim_viz = _sim_viz(state)
+        iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
+        stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
+        run_id = str(sim_viz.get("run_id") or "").strip() or "none"
         status = format_sim2real_status(state, rerun_ready=rerun_ready)
         return (
             status
-            + "\n- **watch_url**: `/rerun/` (embedded iframe) with run/stage badge overlay."
+            + f"\n- **watch_url**: `{iframe_url}` (embedded iframe) with run/stage badge overlay."
+            + f"\n- **watch_stage**: `{stage}` for **run_id** `{run_id}`."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` timestamp appears."
             + "\n- Workflow watchers should continue until both `blob` and `iframe mount` report **SUCCESS**."

@@ -463,6 +463,7 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("show stage badge overlay for this run") == "watch_sim"
     assert match_chat_intent("poll sim-viz/status and refresh rerun iframe") == "watch_sim"
     assert match_chat_intent("rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("blob+iframe until success") == "watch_sim"
     assert match_chat_intent("wait for RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
@@ -495,6 +496,7 @@ def test_build_grounded_watch_sim_reply_mentions_status_polling_and_success() ->
     assert "/api/sim-viz/status" in reply
     assert "rrd_uri" in reply
     assert "SUCCESS" in reply
+    assert "**watch_stage**" in reply
 
 
 def test_format_live_context_block_redacts_secrets() -> None:
