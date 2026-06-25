@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062501"
+AGENT_UI_VERSION = "2025062502"
 
 
 @dataclass(frozen=True)
@@ -263,6 +263,7 @@ TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RERUN_UNIT = "npa-rerun"
+RERUN_WEB_PORT = {rerun_port}
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
     "goal_pos": [0.5, 0.3, 0.04],
@@ -504,6 +505,24 @@ def _rerun_service_active() -> bool:
     except Exception:
         return False
 
+def _rerun_web_viewer_healthy() -> bool:
+    if not _rerun_service_active():
+        return False
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{{RERUN_WEB_PORT}}/",
+            timeout=2,
+        ) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
+    has_rrd = bool(str(rrd_uri or "").strip()) or RRD_PATH.is_file()
+    return has_rrd and _rerun_web_viewer_healthy()
+
 def _restart_rerun_serve(*, force: bool = False) -> bool:
     global _last_rerun_restart_monotonic
     now = time.monotonic()
@@ -544,7 +563,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "camera": cam,
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
-        "rerun_ready": restarted or target.is_file(),
+        "rerun_ready": target.is_file() and _rerun_web_viewer_healthy(),
         "rerun_iframe_url": f"/rerun/?url=/api/sim-viz/rrd&camera={{cam}}",
     }}
     state["sim_viz"] = viz
@@ -695,7 +714,7 @@ def session_bootstrap():
     sim_viz["camera"] = camera
     if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
-    sim_viz["rerun_ready"] = bool(sim_viz.get("rrd_uri")) or RRD_PATH.is_file()
+    sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     history = state.get("chat_history", [])
     if not isinstance(history, list):
         history = []
@@ -731,7 +750,7 @@ def sim_viz_status():
     payload["rerun_iframe_url"] = f"/rerun/?url=/api/sim-viz/rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
-    payload["rerun_ready"] = bool(payload.get("rrd_uri")) or RRD_PATH.is_file()
+    payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
     return payload
 
 @app.post("/sim-viz/load-franka-demo")
@@ -1159,6 +1178,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
       iframe {{ width: 100%; height: 380px; border: 1px solid var(--border); border-radius: 10px; }}
+      .rerun-placeholder {{
+        width: 100%;
+        min-height: 220px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        padding: 24px 20px;
+        text-align: center;
+        color: var(--muted);
+        background: #fafbff;
+      }}
+      .rerun-placeholder strong {{ color: var(--text); }}
       .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
       .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
       .btn {{
@@ -1341,9 +1371,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
-              <p id="simvizCta" class="cta" hidden>No .rrd yet - click <strong>Load Franka in Rerun</strong> or submit Sim2Real.</p>
+              <p id="simvizCta" class="cta">Click <strong>Load Franka in Rerun</strong> to open the embedded viewer (loads ~40MB WASM on demand).</p>
             </div>
-            <iframe id="rerunFrame" title="rerun" src="/rerun/?url=%2Fapi%2Fsim-viz%2Frrd"></iframe>
+            <div id="rerunPlaceholder" class="rerun-placeholder">
+              <p>Rerun viewer not loaded yet.</p>
+              <p class="hint">The UI shell loads immediately; the Rerun iframe (~40MB WASM) loads only when you request it.</p>
+              <button id="loadRerunViewer" class="btn btn-primary" type="button">Load Rerun viewer</button>
+            </div>
+            <iframe id="rerunFrame" title="rerun" loading="lazy" hidden></iframe>
           </section>
         </div>
       </main>
@@ -1411,6 +1446,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           setChatInput("Watch the sim in Rerun - use Load Franka in Rerun or check /api/sim-viz/status.");
         }}, "Insert watch-sim prompt");
         bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
+        bindClick("loadRerunViewer", () => loadRerunViewer(), "Load Rerun viewer");
         bindClick("openRerun", openRerunTab, "Open Rerun");
         bindClick("applySelection", applySelection, "Apply stock selection");
         bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
@@ -1610,6 +1646,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         input.focus();
       }}
       let lastRrdUpdatedAt = "";
+      let rerunIframeLoaded = false;
       function sameOriginApiUrl(path) {{
         const base = String(window.location.origin || "").replace(/\/$/, "");
         const suffix = String(path || "").startsWith("/") ? String(path) : "/" + String(path || "");
@@ -1628,9 +1665,55 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           Date.now()
         );
       }}
-      function reloadRerunIframe(camera) {{
+      function showRerunPlaceholder(message) {{
+        const placeholder = document.getElementById("rerunPlaceholder");
         const iframe = document.getElementById("rerunFrame");
+        if (placeholder) {{
+          placeholder.hidden = false;
+          if (message) {{
+            const hint = placeholder.querySelector(".hint");
+            if (hint) hint.textContent = String(message);
+          }}
+        }}
+        if (iframe) {{
+          iframe.hidden = true;
+          iframe.removeAttribute("src");
+        }}
+        rerunIframeLoaded = false;
+      }}
+      function hideRerunPlaceholder() {{
+        const placeholder = document.getElementById("rerunPlaceholder");
+        const iframe = document.getElementById("rerunFrame");
+        if (placeholder) placeholder.hidden = true;
+        if (iframe) iframe.hidden = false;
+      }}
+      async function waitForRerunReady(maxAttempts) {{
+        const attempts = Number(maxAttempts || 12);
+        for (let i = 0; i < attempts; i += 1) {{
+          const simViz = await loadJson("/api/sim-viz/status");
+          if (simViz && simViz.rerun_ready) {{
+            return simViz;
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }}
+        throw new Error("Rerun viewer is not ready yet (service or .rrd missing)");
+      }}
+      function mountRerunIframe(camera) {{
+        const iframe = document.getElementById("rerunFrame");
+        if (!iframe) return;
         iframe.src = rerunIframeSrc(camera);
+        hideRerunPlaceholder();
+        rerunIframeLoaded = true;
+      }}
+      function reloadRerunIframe(camera) {{
+        if (!rerunIframeLoaded) return;
+        mountRerunIframe(camera);
+      }}
+      async function loadRerunViewer(camera) {{
+        const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
+        const simViz = await waitForRerunReady();
+        mountRerunIframe(String(simViz.camera || cam));
+        return true;
       }}
       async function loadFrankaDemo() {{
         const camera = String(document.getElementById("cameraSelect").value || "workspace");
@@ -1639,7 +1722,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
-        reloadRerunIframe(camera);
+        await waitForRerunReady();
+        mountRerunIframe(camera);
         appendChat("assistant", "Loaded **stock Franka** tabletop demo in Rerun (`" + camera + "` camera).");
         await refresh();
         return true;
@@ -1683,7 +1767,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
           const cta = document.getElementById("simvizCta");
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
-          cta.hidden = ready;
+          if (cta) {{
+            cta.hidden = ready && rerunIframeLoaded;
+          }}
+          if (!ready) {{
+            showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
+          }} else if (!rerunIframeLoaded) {{
+            showRerunPlaceholder("Rerun is ready. Click Load Rerun viewer or Load Franka in Rerun.");
+          }}
           const robotPreset = document.getElementById("robotPreset");
           if (assets.selection && assets.selection.robot_preset) {{
             robotPreset.value = String(assets.selection.robot_preset);
@@ -1708,14 +1799,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           renderCameraCards(list, activeName, simViz);
           const updatedAt = String(simViz.rrd_updated_at || "");
-          if (updatedAt && updatedAt !== lastRrdUpdatedAt) {{
+          if (rerunIframeLoaded && updatedAt && updatedAt !== lastRrdUpdatedAt) {{
             lastRrdUpdatedAt = updatedAt;
             reloadRerunIframe(simViz.camera || activeName);
-          }} else {{
-            const iframe = document.getElementById("rerunFrame");
-            if (!String(iframe.src || "").includes("/api/sim-viz/rrd")) {{
-              reloadRerunIframe(simViz.camera || activeName);
-            }}
+          }} else if (updatedAt) {{
+            lastRrdUpdatedAt = updatedAt;
           }}
         }} catch (err) {{
           document.getElementById("simvizCta").hidden = false;
@@ -1847,7 +1935,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
-        reloadRerunIframe(camera);
+        await waitForRerunReady();
+        mountRerunIframe(camera);
         const entity = String(data.entity_path || ("world/cameras/" + camera));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
@@ -1858,7 +1947,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify(selectionPayloadFromUi()),
         }});
-        if (data.sim_viz) {{
+        if (data.sim_viz && rerunIframeLoaded) {{
           reloadRerunIframe(data.sim_viz.camera || "workspace");
         }}
         await refresh();
@@ -1904,18 +1993,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
       }}
       async function bootPage() {{
+        showRerunPlaceholder("UI ready. Click Load Franka in Rerun when you want the embedded viewer.");
         await restoreSession();
         await refresh();
-        try {{
-          const simViz = await loadJson("/api/sim-viz/status");
-          if (!simViz.rerun_ready && !simViz.rrd_uri) {{
-            await loadFrankaDemo();
-          }} else if (simViz.rerun_ready) {{
-            reloadRerunIframe(simViz.camera || "workspace");
-          }}
-        }} catch (_err) {{
-          // refresh() already surfaces sim viz errors in the panel.
-        }}
       }}
       function startApp() {{
         try {{
@@ -1993,6 +2073,9 @@ server {{
     proxy_pass http://127.0.0.1:{rerun_port};
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
     gzip on;
     gzip_types application/wasm application/javascript text/javascript image/svg+xml;
     gzip_min_length 256;
@@ -2002,6 +2085,9 @@ server {{
     proxy_pass http://127.0.0.1:{rerun_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
     add_header Cache-Control "no-cache" always;
   }}
   location / {{

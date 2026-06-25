@@ -43,6 +43,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "\\r?\\n" in bootstrap_split
     assert "restoreSession" in source
     assert "bootPage()" in source
+    assert "showRerunPlaceholder" in source
+    assert "rerunIframeLoaded" in source
     assert "startApp()" in source
     assert "function bindClick(" in source
     assert "function wireUi()" in source
@@ -122,7 +124,10 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Load Franka in Rerun" in source
     assert "Open in Rerun" in source
     assert "robotPreset" in source
-    assert "/rerun/?url=%2Fapi%2Fsim-viz%2Frrd" in source
+    assert "rerunPlaceholder" in source
+    assert 'id="rerunFrame" title="rerun" loading="lazy" hidden' in source
+    assert "waitForRerunReady" in source
+    assert "mountRerunIframe" in source
     assert '"/rerun/?url=/api/sim-viz/rrd&camera=' in source
     assert "renderAssetsSummary" in source
     assert "selectionPayloadFromUi" in source
@@ -272,7 +277,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"console.log('rerun');", status_code=200)
         if url_s.rstrip("/").endswith(":8088"):
             html = (
-                '<html><head><meta name="npa-ui-version" content="2025062501"></head>'
+                '<html><head><meta name="npa-ui-version" content="2025062502"></head>'
                 '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi</script></body></html>'
             )
             return _Resp(html, status_code=200)
