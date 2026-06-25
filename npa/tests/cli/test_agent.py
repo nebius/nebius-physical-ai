@@ -177,7 +177,10 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'id="rerunFrame" title="rerun" loading="lazy" hidden' in source
     assert "waitForRerunReady" in source
     assert "mountRerunIframe" in source
-    assert '"/rerun/?url=/api/sim-viz/rrd&camera=' in source
+    assert "resolveRerunRrdUrl" in source
+    assert "URL.createObjectURL" in source
+    assert "_agent_chat_with_tools" in source
+    assert "_maybe_toolground_chat_reply" in source
     assert "renderAssetsSummary" in source
     assert "selectionPayloadFromUi" in source
 

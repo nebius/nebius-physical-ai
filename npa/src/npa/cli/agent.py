@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062506"
+AGENT_UI_VERSION = "2025062507"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -790,6 +790,8 @@ def _agent_system_prompt() -> str:
         "The **Cameras** panel is the center column below chat: stock workspace and wrist cameras",
         "with 2D frustum schematics, selection, and **Preview in Rerun**.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
+        "When asked about Sim2Real, workflow, or Rerun status, summarize run_id, stage, camera,",
+        "rerun_ready, and latest_submit from session state — never reply with only a raw GET path.",
         "",
         "Workbench toolRefs (invoke via npa workbench / npa.workflow on operator machine):",
     ]
@@ -848,12 +850,97 @@ def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
         raise HTTPException(status_code=502, detail="Token Factory returned non-object response")
     return data
 
+_STATUS_QUERY_RE = re.compile(
+    r"(?:\\b(?:what(?:'s| is)|show|tell me|check|get)\\b.*\\b(?:current\\s+)?"
+    r"(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|workflow|rerun|sim\\s+viz))"
+    r"|\\b(?:sim\\s*[- ]?2\\s*[- ]?real|workflow|rerun)\\b.*\\bstatus\\b"
+    r"|\\bstatus\\b.*\\b(?:sim\\s*[- ]?2\\s*[- ]?real|sim2real|workflow|rerun|stage|run)\\b",
+    re.IGNORECASE,
+)
+
+def _format_agent_status_snapshot(state: dict) -> str:
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict):
+        sim_viz = dict(DEFAULT_SIM_VIZ)
+    latest = state.get("latest_submit", {{}})
+    if not isinstance(latest, dict):
+        latest = {{}}
+    selection = state.get("selection", {{}})
+    if not isinstance(selection, dict):
+        selection = dict(DEFAULT_SELECTION)
+    run_id = str(sim_viz.get("run_id") or latest.get("run_id") or "").strip() or "none"
+    stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
+    camera = str(sim_viz.get("camera") or "workspace")
+    rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    rrd_updated = str(sim_viz.get("rrd_updated_at") or "").strip() or "n/a"
+    submitted_at = str(latest.get("submitted_at") or "").strip() or "n/a"
+    robot = str(selection.get("robot_preset") or "franka")
+    backend = str(selection.get("sim_backend") or "isaac")
+    lines = [
+        "Current Sim2Real status (from agent session state):",
+        f"- **run_id**: `{{run_id}}`",
+        f"- **stage**: `{{stage}}`",
+        f"- **camera**: `{{camera}}`",
+        f"- **rerun_ready**: {{str(rerun_ready).lower()}}",
+        f"- **rrd_updated_at**: `{{rrd_updated}}`",
+        f"- **latest_submit_at**: `{{submitted_at}}`",
+        f"- **robot_preset**: `{{robot}}`",
+        f"- **sim_backend**: `{{backend}}`",
+    ]
+    if rerun_ready:
+        lines.append("- Open the **Rerun** panel or click **Load Franka in Rerun** to view the scene.")
+    else:
+        lines.append("- No `.rrd` yet — click **Load Franka in Rerun** or submit a Sim2Real workflow.")
+    return "\\n".join(lines)
+
+def _maybe_toolground_chat_reply(user_text: str) -> str | None:
+    text = str(user_text or "").strip()
+    if not text or not _STATUS_QUERY_RE.search(text):
+        return None
+    return _format_agent_status_snapshot(_load_state())
+
+def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
+    last_user = ""
+    for item in reversed(raw_messages):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("role", "")).strip() == "user":
+            last_user = str(item.get("content", "")).strip()
+            break
+    tool_reply = _maybe_toolground_chat_reply(last_user)
+    if not tool_reply:
+        return None
+    return {{
+        "ok": True,
+        "model": model,
+        "reply": tool_reply,
+        "reasoning": None,
+        "grounded": True,
+    }}
+
 @app.post("/chat")
 def chat(payload: dict):
     raw_messages = payload.get("messages", [])
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    tool_result = _agent_chat_with_tools(raw_messages=raw_messages, model=model)
+    if tool_result is not None:
+        reply = str(tool_result.get("reply") or "").strip()
+        state = _load_state()
+        history: list[dict] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "user")).strip() or "user"
+            content = str(item.get("content", "")).strip()
+            if role in {{"user", "assistant"}} and content:
+                history.append({{"role": role, "content": content}})
+        if reply:
+            history.append({{"role": "assistant", "content": reply}})
+        state["chat_history"] = history[-50:]
+        _save_state(state)
+        return tool_result
     messages: list[dict] = [{{"role": "system", "content": _agent_system_prompt()}}]
     for item in raw_messages:
         if not isinstance(item, dict):
@@ -1921,12 +2008,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
-      function rerunIframeSrc(camera) {{
+      let lastRrdBlobUrl = "";
+      async function resolveRerunRrdUrl() {{
+        const resp = await fetchWithTimeout("/api/sim-viz/rrd", {{ credentials: "include" }}, 12000);
+        if (!resp.ok) {{
+          if (resp.status === 401) {{
+            window.location.href = "/login-help.html";
+          }}
+          throw new Error("Failed to fetch .rrd for Rerun viewer");
+        }}
+        const blob = await resp.blob();
+        if (lastRrdBlobUrl) {{
+          URL.revokeObjectURL(lastRrdBlobUrl);
+        }}
+        lastRrdBlobUrl = URL.createObjectURL(blob);
+        return lastRrdBlobUrl;
+      }}
+      async function rerunIframeSrc(camera) {{
         const cam = String(camera || "workspace");
-        // Keep this relative so nginx basic-auth + proxy stay same-origin and cache-friendly.
-        const base = "/rerun/?url=/api/sim-viz/rrd&camera=";
+        const rrdUrl = await resolveRerunRrdUrl();
+        // Blob URL keeps basic-auth on parent fetch; Rerun wasm fetch cannot auth /api/sim-viz/rrd.
         return (
-          base +
+          "/rerun/?url=" +
+          encodeURIComponent(rrdUrl) +
+          "&camera=" +
           encodeURIComponent(cam) +
           "&t=" +
           Date.now()
@@ -1967,19 +2072,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function mountRerunIframe(camera) {{
         const iframe = document.getElementById("rerunFrame");
-        if (!iframe) return;
-        iframe.src = rerunIframeSrc(camera);
-        hideRerunPlaceholder();
-        rerunIframeLoaded = true;
+        if (!iframe) return Promise.resolve();
+        return rerunIframeSrc(camera).then((src) => {{
+          iframe.src = src;
+          hideRerunPlaceholder();
+          rerunIframeLoaded = true;
+        }});
       }}
       function reloadRerunIframe(camera) {{
-        if (!rerunIframeLoaded) return;
-        mountRerunIframe(camera);
+        if (!rerunIframeLoaded) return Promise.resolve();
+        return mountRerunIframe(camera);
       }}
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         const simViz = await waitForRerunReady();
-        mountRerunIframe(String(simViz.camera || cam));
+        await mountRerunIframe(String(simViz.camera || cam));
         return true;
       }}
       async function loadFrankaDemo() {{
@@ -1990,7 +2097,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
-        mountRerunIframe(camera);
+        await mountRerunIframe(camera);
         appendChat("assistant", "Loaded **stock Franka** tabletop demo in Rerun (`" + camera + "` camera).");
         await refresh();
         return true;
@@ -2264,7 +2371,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function openRerunTab() {{
         const simViz = await loadJson("/api/sim-viz/status");
         const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
-        window.open(rerunIframeSrc(camera), "_blank", "noopener");
+        const src = await rerunIframeSrc(camera);
+        window.open(src, "_blank", "noopener");
       }}
       async function restoreSession() {{
         try {{
