@@ -44,7 +44,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062504"
+AGENT_UI_VERSION = "2025062505"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -273,6 +273,20 @@ def _is_routable_public_ip(value: str) -> bool:
     return True
 
 
+def _agent_strip_url_credentials_js() -> str:
+    """JS to strip user:pass@ from the URL bar while keeping HTTP Basic auth session."""
+    return """    <script>
+    (function stripUrlCredentials() {
+      try {
+        if (location.username || location.password) {
+          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
+          history.replaceState(null, "", clean);
+        }
+      } catch (_err) { /* best-effort */ }
+    })();
+    </script>"""
+
+
 def _agent_public_login_form_html(auth_user: str) -> str:
     """Shared Sign in form for public welcome/login-help pages (basic-auth URL redirect)."""
     return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
@@ -285,10 +299,16 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
         <button type="submit">Sign in</button>
       </form>
-      <p class="muted note">Password may appear briefly in the address bar during redirect (operator demo).</p>
+      <p class="muted note">Credentials are removed from the address bar immediately after sign-in.</p>
     </section>
     <script>
     (function () {{
+      try {{
+        if (location.username || location.password) {{
+          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
+          history.replaceState(null, "", clean);
+        }}
+      }} catch (_err) {{ /* best-effort */ }}
       var form = document.getElementById("npa-sign-in");
       if (!form) return;
       form.addEventListener("submit", function (ev) {{
@@ -297,7 +317,8 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         var pass = document.getElementById("npa-pass").value;
         var u = encodeURIComponent(user);
         var p = encodeURIComponent(pass);
-        location.href = `${{location.protocol}}//${{u}}:${{p}}@${{location.host}}${{location.pathname === '/login-help.html' ? '/' : location.pathname}}`;
+        var dest = location.pathname === "/login-help.html" ? "/" : location.pathname;
+        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
       }});
     }})();
     </script>"""
@@ -388,6 +409,7 @@ def _bootstrap_agent_stack(
     catalog_json = json.dumps(_tool_catalog_payload())
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
+    strip_url_credentials_js = _agent_strip_url_credentials_js()
     https_ssl_setup = ""
     https_server_block = ""
     if public_https:
@@ -1186,6 +1208,7 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
   <body>
     <h1>NPA Agent is running</h1>
     <p class="ok">This page is public (no login). The workbench UI at <code>/</code> is protected by HTTP Basic Auth.</p>
+{strip_url_credentials_js}
 {login_form_html}
     <ol>
       <li>Enter your password above and click <strong>Sign in</strong>, or open <a href="/">the workbench UI</a> if your browser shows the auth dialog.</li>
@@ -1223,6 +1246,7 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
   <body>
     <h1>HTTP Basic Auth required</h1>
     <p>The NPA Agent workbench did not receive valid credentials. Sign in below or use your browser&apos;s Basic-auth dialog for <code>/</code> and <code>/api/*</code>.</p>
+{strip_url_credentials_js}
 {login_form_html}
     <ul>
       <li>Username: <code>{auth_user}</code></li>
@@ -1634,6 +1658,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       (function initNpaAgentUi() {{
       try {{
       "use strict";
+      if (location.username || location.password) {{
+        const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
+        history.replaceState(null, "", clean);
+      }}
       const chatHistory = [];
       let thinkingNode = null;
       function setStatus(text) {{
@@ -3011,6 +3039,8 @@ def verify_live_cmd(
         'bindClick("chatSend"',
         "function wireUi(",
         "initNpaAgentUi",
+        "history.replaceState",
+        "location.username",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
     ):
         if marker not in ui_html:

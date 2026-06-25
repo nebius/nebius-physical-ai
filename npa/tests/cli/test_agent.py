@@ -77,7 +77,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'id="npa-sign-in"' in source
     assert "Sign in</button>" in source
     assert "encodeURIComponent(user)" in source
-    assert "location.pathname === '/login-help.html'" in source
+    assert "location.pathname === '/login-help.html'" in source or 'location.pathname === "/login-help.html"' in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "startApp()" in source
@@ -101,7 +101,8 @@ def test_bootstrap_public_login_form() -> None:
     assert 'value="npa"' in html
     assert "encodeURIComponent(user)" in html
     assert "encodeURIComponent(pass)" in html
-    assert "location.pathname === '/login-help.html'" in html
+    assert "history.replaceState" in html
+    assert 'location.pathname === "/login-help.html"' in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
@@ -178,6 +179,18 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '"/rerun/?url=/api/sim-viz/rrd&camera=' in source
     assert "renderAssetsSummary" in source
     assert "selectionPayloadFromUi" in source
+
+
+def test_bootstrap_ui_strips_url_credentials() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "location.username" in source
+    assert "location.password" in source
+    assert "history.replaceState" in source
+    assert 'location.protocol + "//" + location.host + location.pathname' in source
+    assert "_agent_strip_url_credentials_js" in source
+    assert "stripUrlCredentials" in source
 
 
 def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
@@ -335,7 +348,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
             html = (
                 f'<html><head><meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi</script></body></html>'
+                '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi; '
+                'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
             )
             return _Resp(html, status_code=200)
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
