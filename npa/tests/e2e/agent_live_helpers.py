@@ -37,17 +37,20 @@ class AgentLiveContext:
     def get(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
         kwargs.setdefault("verify", self.tls_verify)
-        return httpx.get(url, auth=self.auth(), timeout=10.0, **kwargs)
+        kwargs.setdefault("timeout", 10.0)
+        return httpx.get(url, auth=self.auth(), **kwargs)
 
     def post(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
         kwargs.setdefault("verify", self.tls_verify)
-        return httpx.post(url, auth=self.auth(), timeout=30.0, **kwargs)
+        kwargs.setdefault("timeout", 30.0)
+        return httpx.post(url, auth=self.auth(), **kwargs)
 
     def put(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
         kwargs.setdefault("verify", self.tls_verify)
-        return httpx.put(url, auth=self.auth(), timeout=10.0, **kwargs)
+        kwargs.setdefault("timeout", 10.0)
+        return httpx.put(url, auth=self.auth(), **kwargs)
 
 
 def load_agent_live_context() -> AgentLiveContext:

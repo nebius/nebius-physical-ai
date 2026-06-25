@@ -3285,6 +3285,8 @@ def verify_live_cmd(
         "NPA_AGENT_PROJECT": project,
         "NPA_AGENT_NAME": name,
     }
+    if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
+        test_env["NPA_AGENT_CHAT_LIVE"] = "1"
     smoke = subprocess.run(
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/smoke/test_agent_smoke.py", "-q"],
         check=False,
