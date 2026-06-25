@@ -1110,23 +1110,33 @@ task = {task!r}
 checkpoint_path = Path({checkpoint!r})
 num_episodes = {num_episodes}
 output_dir = Path({output_dir!r})
-max_steps_per_episode = 50
+max_steps_per_episode = 200
+success_dist_m = 0.05
 output_dir.mkdir(parents=True, exist_ok=True)
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 started = time.time()
 env = None
 
+
+def _resolve_ckpt(p):
+    # Accept a real rsl_rl model_*.pt OR an npa manifest json pointing at one.
+    try:
+        info = json.loads(Path(p).read_text())
+        for k in ("stable_checkpoint_path", "checkpoint_path"):
+            if info.get(k):
+                return info[k], info.get("format", "manifest")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+    return str(p), "rsl_rl_checkpoint"
+
+
 try:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"checkpoint not found: {{checkpoint_path}}")
-
-    try:
-        checkpoint_info = json.loads(checkpoint_path.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        checkpoint_info = {{"format": "unknown"}}
+    ckpt_file, checkpoint_format = _resolve_ckpt(checkpoint_path)
 
     print(
-        f"ISAAC_LAB_EVAL_START task={{task}} checkpoint={{checkpoint_path}} "
+        f"ISAAC_LAB_EVAL_START task={{task}} checkpoint={{ckpt_file}} "
         f"episodes={{num_episodes}} device={{device}}",
         flush=True,
     )
@@ -1135,45 +1145,103 @@ try:
     env = gym.make(task, cfg=env_cfg)
     print("ISAAC_LAB_ENV_CREATE_COMPLETE", flush=True)
 
+    # Load the TRAINED rsl_rl policy (not random actions) so eval reflects the
+    # real checkpoint. Falls back to a random policy only if loading fails, and
+    # records policy_loaded=false so the result is never silently faked.
+    policy = None
+    policy_loaded = False
+    try:
+        try:
+            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+        except Exception:
+            from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+        from rsl_rl.runners import OnPolicyRunner
+        wrapped = RslRlVecEnvWrapper(env)
+        agent_cfg = None
+        for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
+            try:
+                mod = __import__(loader, fromlist=["load_cfg_from_registry"])
+                agent_cfg = mod.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+                break
+            except Exception:
+                pass
+        acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=device)
+        runner.load(ckpt_file)
+        policy = runner.get_inference_policy(device=device)
+        env = wrapped
+        policy_loaded = True
+        print("ISAAC_LAB_EVAL_POLICY_LOADED", flush=True)
+    except Exception as exc:
+        print(f"ISAAC_LAB_EVAL_POLICY_LOAD_FAILED {{exc!r}} -- random fallback", flush=True)
+
+    def _act(obs):
+        if policy_loaded and policy is not None and obs is not None:
+            with torch.inference_mode():
+                return policy(obs)
+        return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+
+    def _goal_dist():
+        try:
+            u = env.unwrapped
+            cmd = u.command_manager.get_command("object_pose")
+            obj = u.scene["object"].data.root_pos_w[:, :3]
+            goal = cmd[:, :3] + u.scene.env_origins[:, :3]
+            return float(torch.linalg.norm(obj - goal, dim=1).min().item())
+        except Exception:
+            return None
+
     episode_results = []
     for episode in range(num_episodes):
-        env.reset()
+        reset_out = env.reset()
+        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         episode_reward = 0.0
         steps_ran = 0
+        min_dist = None
         for step in range(max_steps_per_episode):
-            actions = torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
-            _, rewards, terminated, truncated, _ = env.step(actions)
+            actions = _act(obs)
+            obs, rewards, terminated, truncated, _ = env.step(actions)
             episode_reward += float(torch.as_tensor(rewards).mean().item())
             steps_ran = step + 1
-
-            terminated_tensor = torch.as_tensor(terminated)
-            truncated_tensor = torch.as_tensor(truncated)
-            done = bool(terminated_tensor.any().item()) or bool(truncated_tensor.any().item())
+            d = _goal_dist()
+            if d is not None:
+                min_dist = d if min_dist is None else min(min_dist, d)
+            done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
             if done:
                 break
 
+        success = bool(min_dist is not None and min_dist < success_dist_m)
         result = {{
             "episode": episode + 1,
             "steps": steps_ran,
             "reward": episode_reward,
+            "min_object_goal_distance_m": min_dist,
+            "success": success,
         }}
         episode_results.append(result)
         print(
             f"ISAAC_LAB_EVAL_EPISODE episode={{episode + 1}}/{{num_episodes}} "
-            f"steps={{steps_ran}} reward={{episode_reward:.6f}}",
+            f"steps={{steps_ran}} reward={{episode_reward:.6f}} "
+            f"min_dist={{min_dist}} success={{success}}",
             flush=True,
         )
 
     mean_reward = sum(item["reward"] for item in episode_results) / num_episodes
+    dists = [r["min_object_goal_distance_m"] for r in episode_results if r["min_object_goal_distance_m"] is not None]
+    success_rate = sum(1 for r in episode_results if r["success"]) / num_episodes
     summary = {{
         "status": "success",
         "task": task,
         "checkpoint": str(checkpoint_path),
-        "checkpoint_format": checkpoint_info.get("format", "unknown"),
+        "checkpoint_format": checkpoint_format,
+        "policy_loaded": policy_loaded,
         "num_episodes": num_episodes,
         "max_steps_per_episode": max_steps_per_episode,
         "device": device,
         "mean_reward": mean_reward,
+        "success_rate": success_rate,
+        "mean_min_object_goal_distance_m": (sum(dists) / len(dists)) if dists else None,
+        "success_dist_m": success_dist_m,
         "episodes": episode_results,
         "duration_seconds": round(time.time() - started, 3),
     }}
