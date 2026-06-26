@@ -931,6 +931,8 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
     if not isinstance(state, dict):
         state = {}
 
+    credentials = load_credentials()
+
     def pick(*keys: str, default: str = "") -> str:
         for key in keys:
             value = storage.get(key)
@@ -938,29 +940,64 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
                 return str(value)
         return default
 
+    env_bucket = (
+        os.environ.get("NPA_CHECKPOINT_BUCKET", "")
+        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    )
+    env_endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL", "")
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+    )
+    env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+
+    # Shared credentials are host-scoped. Keep scoped project settings primary
+    # and only use these when no project storage key is configured.
+    credentials_bucket = credentials.s3_bucket
+    credentials_endpoint = credentials.s3_endpoint
+    credentials_access_key = credentials.s3_access_key_id
+    credentials_secret_key = credentials.s3_secret_access_key
+
     bucket = pick(
         "checkpoint_bucket",
         "bucket",
         "s3_bucket",
-        default=str(state.get("bucket", "") or ""),
+        default=(
+            str(state.get("bucket", "") or "")
+            or env_bucket
+            or credentials_bucket
+        ),
     )
     endpoint = pick(
         "endpoint_url",
         "endpoint",
         "s3_endpoint",
-        default=str(state.get("endpoint", "") or ""),
+        default=(
+            str(state.get("endpoint", "") or "")
+            or env_endpoint
+            or credentials_endpoint
+        ),
     )
     access_key = pick(
         "aws_access_key_id",
         "access_key",
         "nebius_api_key",
-        default=str(state.get("access_key", "") or ""),
+        default=(
+            str(state.get("access_key", "") or "")
+            or env_access_key
+            or credentials_access_key
+        ),
     )
     secret_key = pick(
         "aws_secret_access_key",
         "secret_key",
         "nebius_secret_key",
-        default=str(state.get("secret_key", "") or ""),
+        default=(
+            str(state.get("secret_key", "") or "")
+            or env_secret_key
+            or credentials_secret_key
+        ),
     )
     return StorageConfig(
         checkpoint_bucket=bucket,
