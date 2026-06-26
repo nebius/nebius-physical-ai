@@ -24,6 +24,7 @@ BLUEPRINT = (
 )
 DEFAULT_IMAGE = "docker:python:3.11-slim"
 DEFAULT_GPU = "L40S:1"
+DEFAULT_GPU_CANDIDATES = (DEFAULT_GPU, "RTX_PRO_6000_BLACKWELL:1", "H100:1")
 DEFAULT_CLOUD = "nebius"
 DEFAULT_TIMEOUT_SECONDS = 5400
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -67,22 +68,43 @@ def test_sonic_export_eval_e2e_runs_live_reference_rollouts_on_nebius(
     tmp_path: Path,
     live_sky_run: LiveSkyRun,
 ) -> None:
-    workflow = _write_live_workflow(tmp_path, live_sky_run.cluster_name)
+    timeout = int(os.environ.get("NPA_SONIC_E2E_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+    candidates = _gpu_candidates()
+    attempts: list[dict[str, Any]] = []
+    selected_gpu = candidates[0]
     started = time.monotonic()
-    result = _run(
-        [
-            live_sky_run.sky_bin,
-            "launch",
-            "-c",
-            live_sky_run.cluster_name,
-            "--yes",
-            str(workflow),
-        ],
-        timeout=int(os.environ.get("NPA_SONIC_E2E_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)),
-    )
+    result: subprocess.CompletedProcess[str] | None = None
+    for gpu in candidates:
+        selected_gpu = gpu
+        workflow = _write_live_workflow(tmp_path, live_sky_run.cluster_name, gpu=gpu)
+        current = _run(
+            [
+                live_sky_run.sky_bin,
+                "launch",
+                "-c",
+                live_sky_run.cluster_name,
+                "--yes",
+                str(workflow),
+            ],
+            timeout=timeout,
+        )
+        attempts.append({"gpu": gpu, "returncode": current.returncode})
+        _write_capture(live_sky_run.evidence_dir / f"sky-launch-{_gpu_slug(gpu)}.json", current)
+        if current.returncode == 0:
+            result = current
+            break
+        if not _is_capacity_error(current):
+            result = current
+            break
     latency_seconds = round(time.monotonic() - started, 3)
-    _write_capture(live_sky_run.evidence_dir / "sky-launch.json", result)
-
+    if result is None:
+        pytest.skip(
+            "SkyPilot could not provision any configured GPU candidate due to capacity constraints"
+        )
+    if result.returncode != 0 and _is_capacity_error(result):
+        pytest.skip(
+            f"SkyPilot capacity unavailable for all GPU candidates: {', '.join(item['gpu'] for item in attempts)}"
+        )
     assert result.returncode == 0, _format_result(result)
     output = _strip_ansi(f"{result.stdout}\n{result.stderr}")
     export_result = _extract_json(
@@ -115,9 +137,10 @@ def test_sonic_export_eval_e2e_runs_live_reference_rollouts_on_nebius(
 
     summary = {
         "cluster_name": live_sky_run.cluster_name,
-        "gpu": os.environ.get("NPA_SONIC_E2E_GPU", DEFAULT_GPU),
+        "gpu": selected_gpu,
         "cloud": os.environ.get("NPA_SONIC_E2E_CLOUD", DEFAULT_CLOUD),
         "latency_seconds": latency_seconds,
+        "attempts": attempts,
         "export": export_result,
         "metrics": metrics,
     }
@@ -127,7 +150,7 @@ def test_sonic_export_eval_e2e_runs_live_reference_rollouts_on_nebius(
     )
 
 
-def _write_live_workflow(tmp_path: Path, cluster_name: str) -> Path:
+def _write_live_workflow(tmp_path: Path, cluster_name: str, *, gpu: str) -> Path:
     docs = [
         doc
         for doc in yaml.safe_load_all(BLUEPRINT.read_text(encoding="utf-8"))
@@ -136,7 +159,7 @@ def _write_live_workflow(tmp_path: Path, cluster_name: str) -> Path:
     task = copy.deepcopy(docs[1])
     task["name"] = cluster_name
     task["resources"]["cloud"] = os.environ.get("NPA_SONIC_E2E_CLOUD", DEFAULT_CLOUD)
-    task["resources"]["accelerators"] = os.environ.get("NPA_SONIC_E2E_GPU", DEFAULT_GPU)
+    task["resources"]["accelerators"] = gpu
     task["resources"]["image_id"] = os.environ.get("NPA_SONIC_E2E_IMAGE", DEFAULT_IMAGE)
     if task["resources"]["cloud"] == "nebius":
         task["resources"]["cpus"] = "8+"
@@ -165,11 +188,46 @@ def _write_live_workflow(tmp_path: Path, cluster_name: str) -> Path:
     return path
 
 
+def _gpu_candidates() -> list[str]:
+    raw = os.environ.get("NPA_SONIC_E2E_GPU_CANDIDATES", "").strip()
+    if raw:
+        parsed = [item.strip() for item in raw.split(",") if item.strip()]
+        if parsed:
+            return parsed
+    single = os.environ.get("NPA_SONIC_E2E_GPU", "").strip()
+    if single:
+        return [single]
+    return list(DEFAULT_GPU_CANDIDATES)
+
+
+def _is_capacity_error(result: subprocess.CompletedProcess[str]) -> bool:
+    text = _strip_ansi(f"{result.stdout}\n{result.stderr}").lower()
+    return any(
+        marker in text
+        for marker in (
+            "insufficient",
+            "out of capacity",
+            "resource unavailable",
+            "resourcesunavailableerror",
+            "no resource satisfying",
+            "catalog does not contain",
+            "cannot be scheduled",
+            "failed to provision",
+            "no feasible",
+            "could not provision",
+        )
+    )
+
+
+def _gpu_slug(gpu: str) -> str:
+    return gpu.lower().replace(":", "-").replace("_", "-")
+
+
 def _stage_minimal_repo(tmp_path: Path) -> Path:
     staged = tmp_path / "repo" / "npa"
     staged.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "npa" / "pyproject.toml", staged / "pyproject.toml")
-    shutil.copytree(ROOT / "npa" / "src", staged / "src")
+    shutil.copytree(ROOT / "npa" / "src", staged / "src", dirs_exist_ok=True)
     return staged.parent
 
 
