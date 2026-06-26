@@ -21,6 +21,7 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
     r"|\brrd[_ -]?uri\b.{0,240}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
+    r"|\b(?:timeline|sim(?:\s*[-_ ]?viz)|watch(?:\s+the)?\s+sim)\b.{0,240}\b(?:until|till|when|once|retry|wait)\b.{0,240}\b(?:success|successful|ready|succeeded|passed|green|healthy)\b"
     r"|\brun[_ -]?id\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b"
     r"|\b(?:run[_ -]?id|stage|stage[_ -]?id)\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b",
     re.IGNORECASE,
@@ -46,6 +47,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:keep|continue)\b.*\b(?:watching|monitoring|tracking)\b.*\b(?:sim|rerun|timeline|run)\b"
             r"|\b(?:keep me posted|live updates?)\b.*\b(?:sim|simulation|rerun|timeline|run)\b"
             r"|\b(?:poll|refresh)\b.*\b(?:sim-viz/status|rrd|iframe|rerun)\b"
+            r"|\bwatch(?:\s+the)?\s+sim\b"
             r"|\b(?:blob|iframe)\b.*\b(?:success|ready)\b"
             r"|\bblob\s*(?:\+|and)\s*iframe\b.*\b(?:success|ready)\b"
             r"|\bblob\s*/\s*iframe\b.*\b(?:success|ready)\b"

@@ -506,6 +506,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("wait for RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("watch sim-viz/status until rrd_uri is non-empty") == "watch_sim"
     assert match_chat_intent("watch the sim until SUCCESS") == "watch_sim"
+    assert match_chat_intent("watch the sim timeline until SUCCESS") == "watch_sim"
+    assert match_chat_intent("watch sim-viz timeline until SUCCESS and keep retrying") == "watch_sim"
     assert match_chat_intent("watch sim-viz/status until rrd_uri is not empty") == "watch_sim"
     assert match_chat_intent("watch sim-viz/status until rrd_uri is populated") == "watch_sim"
     assert match_chat_intent("watch rrduri for active runid until SUCCESS") == "watch_sim"
