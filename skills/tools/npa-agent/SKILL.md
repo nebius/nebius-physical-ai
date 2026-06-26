@@ -52,6 +52,33 @@ Rules:
 - Always unpack **run_id**, **stage**, **rerun_ready**, **camera** in markdown (`**key**: \`value\``)
 - Grounded replies set `"grounded": true` and `"apis_used": ["sim-viz/status", …]`
 - LLM fallback injects `format_live_context_block(state)` JSON snapshot into the system prompt
+- Workflow drafting should pick a template by **intent + workflow capabilities** (sim2real loop-gate, VLM-RL loop, tokenfactory-cosmos gate, or simple two-step), not by hardcoded endpoint-only replies.
+
+## Workflow Draft / Validate / Plan / Submit Loop
+
+Use the VM as a grounded drafting surface, then run operator-machine commands for real workflow execution:
+
+```bash
+# Agent VM draft surface
+GET  /api/workflows/draft
+POST /api/workflows/draft
+POST /api/workflows/validate
+POST /api/workflows/plan
+POST /api/workflows/submit
+```
+
+```bash
+# Operator machine (authoritative execution path)
+npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
+npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id <run_id> --json
+npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
+```
+
+Guidance:
+
+- Keep config grouped: runtime knobs first, then `*_uri` keys under prefix paths.
+- For multi-step specs, include explicit state descriptions, resources, inputs/outputs schemas, loop/gate transitions, and terminal leaves.
+- If transitions exist, plan with `--assume-decision promote_checkpoint|loop_back`.
 
 ## Rerun Iframe Fix
 
@@ -135,6 +162,12 @@ Scene/robot specs + current selection and `resolved_uris`.
 
 Submits workflow with current selection; updates `latest_submit` and `sim_viz.run_id`.
 
+### Run History Quick Switching
+
+- `GET /api/sim-viz/runs` lists indexed run snapshots.
+- `GET /api/sim-viz/recordings` lists available `.rrd` recordings.
+- `POST /api/sim-viz/load-run` or `POST /api/sim-viz/select-run` switches active run quickly.
+
 ### `GET /api/tools`
 
 ```json
@@ -147,3 +180,9 @@ Submits workflow with current selection; updates `latest_submit` and `sim_viz.ru
 - Chat router (testable): `npa/src/npa/cli/agent_chat.py`
 - Franka verify script: `npa/scripts/verify_agent_franka.sh`
 - Mature deploy loop: `npa/scripts/agent_mature_verify_loop.sh`
+
+## Security / Guardrails
+
+- Never leak credentials, auth env, or opaque secrets into chat or workflow YAML.
+- Use same-origin HTTPS paths (`/api/...`) for browser actions; avoid localhost guidance.
+- Do not hardcode project IDs, tenant IDs, bucket names, registry IDs, usernames, or public IPs in examples.
