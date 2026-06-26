@@ -172,3 +172,31 @@ states:
     assert plan["ok"] is True
     states = [step["state"] for step in plan["steps"]]
     assert states == ["root", "branch", "deploy", "recover"]
+
+
+def test_lightweight_validation_accepts_transition_list_goto(monkeypatch) -> None:
+    def _import_fail(*_args, **_kwargs) -> dict[str, object]:
+        raise ImportError("test fallback")
+
+    monkeypatch.setattr("npa.cli.agent_workflow._validate_with_npa", _import_fail)
+    yaml_text = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: goto-list-graph
+initial: start
+states:
+  start:
+    transitions:
+      - when: promote_checkpoint
+        goto: publish
+      - when: loop_back
+        goto: retry
+  retry:
+    next: publish
+  publish:
+    terminal: true
+"""
+    result = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset())
+    assert result["ok"] is True
+    assert result["name"] == "goto-list-graph"

@@ -359,7 +359,7 @@ def _state_edges(entry: dict[str, Any]) -> list[str]:
     elif isinstance(transitions, list):
         for item in transitions:
             if isinstance(item, dict):
-                label = str(item.get("next") or item.get("target") or "").strip()
+                label = str(item.get("next") or item.get("target") or item.get("goto") or "").strip()
                 if label:
                     edges.append(label)
 
