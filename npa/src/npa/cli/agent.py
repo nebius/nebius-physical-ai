@@ -45,8 +45,19 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062511"
+AGENT_UI_VERSION = "2025062615"
 DEFAULT_HTTPS_PORT = 443
+
+
+def _embedded_agent_workflow_source() -> str:
+    """Return agent_workflow.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_workflow.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
 
 
 def _embedded_agent_chat_source() -> str:
@@ -430,6 +441,7 @@ def _bootstrap_agent_stack(
     )
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
+    agent_workflow_source = _embedded_agent_workflow_source()
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -548,6 +560,8 @@ def _default_state() -> dict:
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "latest_submit": {{}},
+        "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
+        "workflow_submit": {{}},
         "chat_history": [],
     }}
 
@@ -917,6 +931,10 @@ def _agent_system_prompt() -> str:
         "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
+        "- GET/PUT /api/workflows/npa/draft — workflow YAML draft in session",
+        "- POST /api/workflows/npa/validate — validate npa.workflow/v0.0.1 YAML",
+        "- POST /api/workflows/npa/plan — dry-run plan-spec for workflow YAML",
+        "- POST /api/workflows/npa/submit — validate + plan workflow YAML (validate-only on agent VM)",
         "- GET /api/tools — workbench toolRef catalog",
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
@@ -986,6 +1004,32 @@ def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
 
 {agent_chat_source}
 
+{agent_workflow_source}
+
+def _workflow_draft_from_state(state: dict) -> dict:
+    draft = state.get("workflow_draft", {{}})
+    return draft if isinstance(draft, dict) else {{}}
+
+def _save_workflow_draft(state: dict, yaml_text: str, validation: dict) -> dict:
+    draft = {{
+        "yaml": yaml_text,
+        "validation": validation if isinstance(validation, dict) else {{}},
+        "updated_at": _now_iso(),
+        "name": str((validation or {{}}).get("name") or ""),
+        "status": str((validation or {{}}).get("status") or ""),
+        "states": (validation or {{}}).get("states") or [],
+    }}
+    state["workflow_draft"] = draft
+    _save_state(state)
+    return draft
+
+def _resolve_workflow_yaml(payload: dict) -> str:
+    yaml_text = str(payload.get("yaml") or "").strip()
+    if yaml_text:
+        return yaml_text
+    draft = _workflow_draft_from_state(_load_state())
+    return str(draft.get("yaml") or "").strip()
+
 def _last_user_message(raw_messages: list) -> str:
     for item in reversed(raw_messages):
         if not isinstance(item, dict):
@@ -994,10 +1038,10 @@ def _last_user_message(raw_messages: list) -> str:
             return str(item.get("content", "")).strip()
     return ""
 
-def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]:
+def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str], str | None, dict | None]:
     intent = match_chat_intent(user_text)
     if not intent:
-        return None, []
+        return None, [], None, None
     state = _load_state()
     loaded_now = False
     rerun_ready = None
@@ -1033,6 +1077,12 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "create_workflow":
+        yaml_text = generate_sim2real_two_step_yaml()
+        validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+        _save_workflow_draft(state, yaml_text, validation)
+        reply = format_workflow_chat_reply(yaml_text, validation)
+        return reply, apis_for_intent(intent), yaml_text, validation
     reply = build_grounded_reply(
         intent,
         state,
@@ -1041,16 +1091,16 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]
         loaded_franka_now=loaded_now,
         default_cameras=default_cameras,
     )
-    return reply, apis_for_intent(intent)
+    return reply, apis_for_intent(intent), None, None
 
 def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
         return None
-    tool_reply, apis_used = _maybe_toolground_chat_reply(last_user)
+    tool_reply, apis_used, workflow_yaml, workflow_validation = _maybe_toolground_chat_reply(last_user)
     if not tool_reply:
         return None
-    return {{
+    payload = {{
         "ok": True,
         "model": model,
         "reply": tool_reply,
@@ -1058,6 +1108,11 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
         "grounded": True,
         "apis_used": apis_used,
     }}
+    if workflow_yaml:
+        payload["workflow_yaml"] = workflow_yaml
+    if isinstance(workflow_validation, dict):
+        payload["workflow_validation"] = workflow_validation
+    return payload
 
 @app.post("/chat")
 def chat(payload: dict):
@@ -1147,6 +1202,8 @@ def session_bootstrap():
         "selection": state.get("selection", dict(DEFAULT_SELECTION)),
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
+        "workflow_draft": _workflow_draft_from_state(state),
+        "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
     }}
@@ -1413,6 +1470,97 @@ def workbench_actions():
             }},
         ]
     }}
+
+@app.get("/workflows/draft")
+@app.get("/workflows/npa/draft")
+def get_workflow_draft():
+    state = _load_state()
+    draft = _workflow_draft_from_state(state)
+    return {{"ok": True, "draft": draft}}
+
+@app.post("/workflows/draft")
+@app.put("/workflows/npa/draft")
+def save_workflow_draft(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    yaml_text = str(body.get("yaml") or "").strip()
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="yaml is required")
+    validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+    state = _load_state()
+    draft = _save_workflow_draft(state, yaml_text, validation)
+    return {{"ok": bool(validation.get("ok")), "draft": draft, "validation": validation}}
+
+@app.post("/workflows/validate")
+@app.post("/workflows/npa/validate")
+def validate_workflow(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    yaml_text = _resolve_workflow_yaml(body)
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="yaml is required")
+    validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+    state = _load_state()
+    _save_workflow_draft(state, yaml_text, validation)
+    return {{"ok": bool(validation.get("ok")), "validation": validation}}
+
+@app.post("/workflows/plan")
+@app.post("/workflows/npa/plan")
+def plan_workflow(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    yaml_text = _resolve_workflow_yaml(body)
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="yaml is required")
+    run_id = str(body.get("run_id") or "").strip()
+    assume_decision = str(body.get("assume_decision") or "").strip()
+    plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id=run_id,
+        assume_decision=assume_decision,
+        tool_refs=frozenset(TOOL_REFS),
+    )
+    if not plan.get("ok"):
+        raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
+    return {{"ok": True, "plan": plan, "yaml": yaml_text}}
+
+@app.post("/workflows/submit")
+@app.post("/workflows/npa/submit")
+def submit_npa_workflow(payload: dict):
+    body = payload if isinstance(payload, dict) else {{}}
+    yaml_text = _resolve_workflow_yaml(body)
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="yaml is required")
+    validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+    if not validation.get("ok"):
+        raise HTTPException(status_code=400, detail=str(validation.get("error") or "validation failed"))
+    run_id = str(body.get("run_id") or f"agent-wf-{{secrets.token_hex(6)}}")
+    assume_decision = str(body.get("assume_decision") or "").strip()
+    plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id=run_id,
+        assume_decision=assume_decision,
+        tool_refs=frozenset(TOOL_REFS),
+    )
+    if not plan.get("ok"):
+        raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
+    state = _load_state()
+    _save_workflow_draft(state, yaml_text, validation)
+    submit_record = {{
+        "run_id": run_id,
+        "submitted_at": _now_iso(),
+        "name": str(validation.get("name") or ""),
+        "validation": validation,
+        "plan": plan,
+        "submit_mode": "validate-only",
+        "note": "Agent VM records validate+plan; live SkyPilot submit runs on operator machine.",
+    }}
+    state["workflow_submit"] = submit_record
+    state["latest_submit"] = {{
+        "run_id": run_id,
+        "submitted_at": submit_record["submitted_at"],
+        "workflow_name": str(validation.get("name") or ""),
+        "submit_mode": "validate-only",
+    }}
+    _save_state(state)
+    return {{"ok": True, **submit_record}}
 
 @app.post("/workflows/sim2real/submit")
 def submit_sim2real(payload: dict):
@@ -1941,6 +2089,57 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
       }}
+      .workflow-panel textarea {{
+        width: 100%;
+        min-height: 220px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        resize: vertical;
+        background: #fafbff;
+      }}
+      .workflow-meta {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 8px 0 10px;
+        font-size: 12px;
+      }}
+      .workflow-meta .pill {{
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+      }}
+      .yaml-block {{
+        margin: 8px 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-x: auto;
+        white-space: pre-wrap;
+      }}
+      #workflowYaml {{
+        width: 100%;
+        min-height: 220px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        border: 1px solid #d4d8e2;
+        border-radius: 10px;
+        padding: 10px 12px;
+        resize: vertical;
+        background: #fafbff;
+      }}
     </style>
   </head>
   <body>
@@ -1965,7 +2164,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <button id="chatActionS3" class="btn quick-pill" type="button">Configure S3</button>
             <button id="chatActionCosmos" class="btn quick-pill" type="button">Setup Cosmos3</button>
             <button id="chatActionWatch" class="btn quick-pill" type="button">Watch sim</button>
+            <button id="chatActionWorkflow" class="btn quick-pill" type="button">2-step Sim2Real YAML</button>
           </div>
+        </section>
+        <section class="panel workflow-panel">
+          <h3>Workflow YAML</h3>
+          <p class="hint">npa.workflow/v0.0.1 specs — generate via chat, upload, validate, plan, or submit.</p>
+          <div class="workflow-meta">
+            <span class="pill">name: <strong id="workflowName">—</strong></span>
+            <span class="pill">validation: <strong id="workflowValidation">pending</strong></span>
+            <span class="pill">states: <strong id="workflowStates">—</strong></span>
+          </div>
+          <textarea id="workflowYaml" spellcheck="false" placeholder="Ask chat to create a 2-step Sim2Real workflow, or paste YAML here…"></textarea>
+          <div class="btn-row" style="margin-top:8px;">
+            <button id="workflowUpload" class="btn" type="button">Upload YAML</button>
+            <button id="workflowValidate" class="btn" type="button">Validate</button>
+            <button id="workflowPlan" class="btn" type="button">Plan</button>
+            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit YAML</button>
+          </div>
+          <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
         <div class="layout layout-3">
           <section class="panel">
@@ -2122,6 +2339,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("chatActionWatch", () => {{
           setChatInput("Watch the sim in Rerun and keep retrying blob+iframe mount until SUCCESS using /api/sim-viz/status.");
         }}, "Insert watch-sim prompt");
+        bindClick("chatActionWorkflow", () => {{
+          setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
+        }}, "Insert workflow YAML prompt");
+        bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
+        bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
+        bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
+        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
         bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Load Rerun viewer");
         bindClick("openRerun", openRerunTab, "Open Rerun");
@@ -2282,6 +2506,82 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         btn.disabled = Boolean(isBusy);
         input.disabled = Boolean(isBusy);
       }}
+      function setWorkflowYaml(text, validation) {{
+        const area = document.getElementById("workflowYaml");
+        if (area) area.value = String(text || "");
+        updateWorkflowMeta(validation || {{}});
+      }}
+      function updateWorkflowMeta(validation) {{
+        const nameEl = document.getElementById("workflowName");
+        const valEl = document.getElementById("workflowValidation");
+        const statesEl = document.getElementById("workflowStates");
+        const name = String((validation && validation.name) || "—");
+        const status = String((validation && validation.status) || (validation && validation.ok ? "valid" : "pending"));
+        const states = Array.isArray(validation && validation.states)
+          ? validation.states.join(", ")
+          : String((validation && validation.states) || "—");
+        if (nameEl) nameEl.textContent = name;
+        if (valEl) valEl.textContent = status;
+        if (statesEl) statesEl.textContent = states || "—";
+      }}
+      function currentWorkflowYaml() {{
+        const area = document.getElementById("workflowYaml");
+        return String((area && area.value) || "").trim();
+      }}
+      async function uploadWorkflowYaml() {{
+        const yaml = currentWorkflowYaml();
+        if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        const data = await apiJson("/api/workflows/npa/draft", {{
+          method: "PUT",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ yaml }}),
+        }});
+        updateWorkflowMeta((data.validation) || {{}});
+        appendChat("assistant", "Uploaded workflow YAML to the **Workflow YAML** panel (`" + String((data.validation && data.validation.name) || "draft") + "`).");
+        return true;
+      }}
+      async function validateWorkflowYaml() {{
+        const yaml = currentWorkflowYaml();
+        if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        const data = await apiJson("/api/workflows/validate", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ yaml }}),
+        }});
+        updateWorkflowMeta((data.validation) || {{}});
+        if (!data.ok) throw new Error(String((data.validation && data.validation.error) || "validation failed"));
+        return true;
+      }}
+      async function planWorkflowYaml() {{
+        const yaml = currentWorkflowYaml();
+        if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        const data = await apiJson("/api/workflows/plan", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ yaml, run_id: "agent-plan" }}),
+        }});
+        const out = document.getElementById("workflowPlanOutput");
+        const steps = Array.isArray(data.plan && data.plan.steps) ? data.plan.steps : [];
+        const lines = steps.map((step, idx) =>
+          String(idx + 1).padStart(2, "0") + ". " + String(step.state || "?") +
+          " toolRef=" + String(step.tool_ref || step.toolRef || "")
+        );
+        if (out) out.textContent = lines.length ? lines.join("\\n") : JSON.stringify(data.plan || {{}}, null, 2);
+        updateWorkflowMeta((data.plan && data.plan.workflow) ? {{ name: data.plan.workflow, status: "planned", states: steps.map((s) => s.state) }} : {{}});
+        return true;
+      }}
+      async function submitWorkflowYaml() {{
+        const yaml = currentWorkflowYaml();
+        if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        const data = await apiJson("/api/workflows/submit", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ yaml }}),
+        }});
+        updateWorkflowMeta((data.validation) || {{}});
+        appendChat("assistant", "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") + "` (validate-only on agent VM).");
+        return true;
+      }}
       async function sendChat() {{
         const input = document.getElementById("chatInput");
         const text = String(input.value || "").trim();
@@ -2307,6 +2607,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             chatHistory.push({{ role: "assistant", content: reply }});
           }} else {{
             appendChat("error", "empty reply from model");
+          }}
+          if (data.workflow_yaml) {{
+            setWorkflowYaml(data.workflow_yaml, data.workflow_validation || {{}});
+          }}
+          const draft = data.workflow_draft;
+          if (!data.workflow_yaml && draft && draft.yaml) {{
+            setWorkflowYaml(draft.yaml, draft.validation || draft);
           }}
         }} catch (err) {{
           clearThinkingBubble();
@@ -2676,6 +2983,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function refresh() {{
         try {{
+          const session = await loadJson("/api/session");
+          if (session && session.workflow_draft && session.workflow_draft.yaml) {{
+            setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
+          }}
           const assets = await loadJson("/api/sim-assets");
           const cameras = await loadJson("/api/sim-assets/cameras");
           const simViz = await loadJson("/api/sim-viz/status");
@@ -2936,6 +3247,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             appendChat(role, content);
             chatHistory.push({{ role, content }});
           }}
+          const draft = session.workflow_draft;
+          if (draft && draft.yaml) {{
+            setWorkflowYaml(draft.yaml, draft.validation || draft);
+          }}
         }} catch (_err) {{
           // Session restore is best-effort on first load.
         }}
@@ -3022,7 +3337,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
-sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
@@ -3840,6 +4155,38 @@ def verify_live_cmd(
     if not isinstance(apis_used, list) or not apis_used:
         _fail("chat status reply expected non-empty apis_used list")
 
+    try:
+        wf_chat = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
+            auth=(auth_user, auth_password),
+            json={"messages": [{"role": "user", "content": "create 2-step sim2real workflow"}]},
+            timeout=30.0,
+            verify=tls_verify,
+        )
+        wf_chat.raise_for_status()
+        wf_payload = wf_chat.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"create-workflow chat smoke failed: {exc}")
+    if not isinstance(wf_payload, dict) or not wf_payload.get("workflow_yaml"):
+        _fail("create-workflow chat did not return workflow_yaml")
+    wf_yaml = str(wf_payload.get("workflow_yaml") or "")
+    if "augment" not in wf_yaml or "envgen" not in wf_yaml:
+        _fail("create-workflow chat yaml missing sim2real stages")
+    try:
+        wf_validate = httpx.post(
+            f"{agent_base}/api/workflows/npa/validate",
+            auth=(auth_user, auth_password),
+            json={"yaml": wf_yaml},
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        wf_validate.raise_for_status()
+        wf_val_payload = wf_validate.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"workflow validate endpoint failed: {exc}")
+    if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
+        _fail("workflow validate endpoint did not return ok=true")
+
     test_env = {
         **dict(os.environ),
         "NPA_INTEGRATION_E2E": "1",
@@ -3864,7 +4211,14 @@ def verify_live_cmd(
     if smoke.returncode != 0:
         _fail("pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed")
     unit = subprocess.run(
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
+        [
+            "npa/.venv/bin/python",
+            "-m",
+            "pytest",
+            "npa/tests/cli/test_agent.py",
+            "npa/tests/cli/test_agent_workflow.py",
+            "-q",
+        ],
         check=False,
         env=test_env,
     )

@@ -410,6 +410,23 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     def _fake_http_post(url, *_args, **_kwargs):
         url_s = str(url)
         if url_s.endswith("/api/chat"):
+            payload = (_kwargs.get("json") or {}) if isinstance(_kwargs, dict) else {}
+            messages = payload.get("messages", []) if isinstance(payload, dict) else []
+            last_content = ""
+            if isinstance(messages, list) and messages:
+                tail = messages[-1]
+                if isinstance(tail, dict):
+                    last_content = str(tail.get("content") or "")
+            if "create 2-step sim2real workflow" in last_content.lower():
+                return _Resp(
+                    {
+                        "ok": True,
+                        "grounded": True,
+                        "reply": "**Generated npa.workflow/v0.0.1 spec**",
+                        "workflow_yaml": "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: sim2real-two-step\nstates:\n  augment: {}\n  envgen: {}\n",
+                        "apis_used": ["workflows/npa/draft", "workflows/npa/validate"],
+                    }
+                )
             return _Resp(
                 {
                     "ok": True,
@@ -450,7 +467,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "npa/tests/smoke/test_agent_chat_smoke.py",
             "-q",
         ],
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/cli/test_agent.py", "-q"],
+        [
+            "npa/.venv/bin/python",
+            "-m",
+            "pytest",
+            "npa/tests/cli/test_agent.py",
+            "npa/tests/cli/test_agent_workflow.py",
+            "-q",
+        ],
         ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
     ]
 
@@ -538,6 +562,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("what tools can workbench do") == "tools_catalog"
     assert match_chat_intent("configure S3 bucket") == "configure_s3"
     assert match_chat_intent("setup cosmos3") == "cosmos3"
+    assert match_chat_intent("create 2-step sim2real workflow") == "create_workflow"
+    assert match_chat_intent("generate two-step sim2real workflow yaml") == "create_workflow"
     assert match_chat_intent("camera angle inspector with frustum preview") == "cameras"
     assert match_chat_intent("specify scene robot cameras props selection") == "sim_assets"
     assert match_chat_intent("hello there") is None

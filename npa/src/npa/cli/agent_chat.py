@@ -87,6 +87,22 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
+    (
+        "create_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,80}\b(?:2[\s-]?step|two[\s-]?step)\b"
+            r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+            r".{0,40}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,80}\b(?:npa[\s.-]?workflow|workflow\s+yaml|workflow\s+spec)\b"
+            r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+            r"|\b(?:2[\s-]?step|two[\s-]?step)\b"
+            r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+            r".{0,40}\b(?:workflow|yaml|spec)\b",
+            re.IGNORECASE,
+        ),
+    ),
     ("sim2real_status", STATUS_QUERY_RE),
     (
         "sim_assets",
@@ -133,6 +149,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 INTENT_APIS: dict[str, list[str]] = {
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
+    "create_workflow": ["workflows/npa/draft", "workflows/npa/validate"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
@@ -460,6 +477,12 @@ def format_configure_s3() -> str:
     )
 
 
+def format_generate_workflow(yaml_text: str, validation: dict[str, Any]) -> str:
+    from npa.cli.agent_workflow import format_workflow_chat_reply
+
+    return format_workflow_chat_reply(yaml_text, validation)
+
+
 def format_cosmos3_setup() -> str:
     return "\n".join(
         [
@@ -545,6 +568,26 @@ def build_grounded_reply(
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)
+    if intent == "create_workflow":
+        draft = state.get("workflow_draft", {})
+        if not isinstance(draft, dict):
+            draft = {}
+        yaml_text = str(draft.get("yaml") or "").strip()
+        if yaml_text:
+            validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+            if not validation:
+                validation = {
+                    "ok": True,
+                    "status": "valid",
+                    "name": str(draft.get("name") or "unnamed"),
+                    "states": draft.get("states") or [],
+                }
+            return format_generate_workflow(yaml_text, validation)
+        from npa.cli.agent_workflow import generate_sim2real_two_step_yaml, validate_workflow_yaml_text
+
+        generated = generate_sim2real_two_step_yaml()
+        validation = validate_workflow_yaml_text(generated)
+        return format_generate_workflow(generated, validation)
     return format_sim2real_status(state, rerun_ready=rerun_ready)
 
 
