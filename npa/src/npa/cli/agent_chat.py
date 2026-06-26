@@ -138,6 +138,15 @@ INTENT_APIS: dict[str, list[str]] = {
 }
 
 
+def _normalize_intent_text(text: str) -> str:
+    """Normalize user text so intent routing survives punctuation/newlines."""
+    lowered = str(text or "").lower()
+    lowered = lowered.replace("\n", " ")
+    lowered = re.sub(r"[^\w\s/+.-]+", " ", lowered)
+    lowered = re.sub(r"\s+", " ", lowered).strip()
+    return lowered
+
+
 def _success_gated_watch_request(lowered: str) -> bool:
     """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
     if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(lowered):
@@ -169,7 +178,7 @@ def match_chat_intent(user_text: str) -> str | None:
     text = str(user_text or "").strip()
     if not text:
         return None
-    lowered = text.lower()
+    lowered = _normalize_intent_text(text)
     if _success_gated_watch_request(lowered):
         return "watch_sim"
     # Keep watch intent precedence over load-franka whenever the user asks to
@@ -187,7 +196,7 @@ def match_chat_intent(user_text: str) -> str | None:
     ):
         return "watch_sim"
     for intent, pattern in _INTENT_RULES:
-        if pattern.search(text):
+        if pattern.search(text) or pattern.search(lowered):
             return intent
     return None
 
