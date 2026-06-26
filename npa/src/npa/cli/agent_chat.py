@@ -149,6 +149,10 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("reruniframeuntilsuccess", "rerun iframe until success")
     lowered = lowered.replace("rrduri", "rrd uri")
     lowered = lowered.replace("runid", "run id")
+    lowered = lowered.replace("rrdurinonempty", "rrd uri non-empty")
+    lowered = lowered.replace("rrduriset", "rrd uri set")
+    lowered = lowered.replace("runidscoped", "run id scoped")
+    lowered = lowered.replace("runidscope", "run id scope")
     # Normalize common alias/camelcase variants before regex matching.
     lowered = re.sub(r"\bsim[_\s-]?viz\b", "sim viz", lowered)
     lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
@@ -174,6 +178,10 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "reruniframeuntilsuccess",
             "rerunmountsuccess",
             "rerunblobsuccess",
+            "runidscopedrerunblobiframeuntilsuccess",
+            "watchrrduriuntilsuccess",
+            "rrdurinonemptyuntilsuccess",
+            "rrdurisetuntilsuccess",
         )
     ):
         return True
