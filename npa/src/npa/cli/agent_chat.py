@@ -17,19 +17,19 @@ STATUS_QUERY_RE = re.compile(
 
 _WATCH_SUCCESS_GATE_RE = re.compile(
     r"\b(?:rerun|blob|iframe|rrd(?:-blob)?)\b[\s:;,_\-/+]*(?:blob|iframe|mount|rrd)?"
-    r".{0,80}\b(?:until|till|when|once|retry|wait)\b.{0,80}\b(?:success|successful|ready|succeeded|passed|green)\b"
+    r".{0,240}\b(?:until|till|when|once|retry|wait)\b.{0,240}\b(?:success|successful|ready|succeeded|passed|green)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
-    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
-    r"|\brun[_ -]?id\b.{0,80}\b(?:scoped|scope|match|matching)\b.{0,80}\b(?:success|ready)\b",
+    r"|\brrd[_ -]?uri\b.{0,240}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
+    r"|\brun[_ -]?id\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b",
     re.IGNORECASE,
 )
 
 _RERUN_SUCCESS_PHRASE_RE = re.compile(
-    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,120}\b(?:until|till|when|once|retry|wait|keep trying)\b.{0,120}\b(?:success|successful|ready|succeeded|passed|green)\b"
-    r"|\b(?:until|till|when|once)\b.{0,120}\b(?:success|successful|ready|succeeded|passed|green)\b.{0,120}\b(?:rerun|rrd|blob|iframe|mount)\b"
-    r"|\b(?:blob|iframe|mount)\b.{0,120}\b(?:both|all)\b.{0,40}\b(?:success|successful|ready)\b"
-    r"|\b(?:both|all)\b.{0,120}\b(?:blob|iframe|mount)\b.{0,40}\b(?:success|successful|ready)\b",
+    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,300}\b(?:until|till|when|once|retry|wait|keep trying)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green)\b"
+    r"|\b(?:until|till|when|once)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green)\b.{0,300}\b(?:rerun|rrd|blob|iframe|mount)\b"
+    r"|\b(?:blob|iframe|mount)\b.{0,300}\b(?:both|all)\b.{0,120}\b(?:success|successful|ready)\b"
+    r"|\b(?:both|all)\b.{0,300}\b(?:blob|iframe|mount)\b.{0,120}\b(?:success|successful|ready)\b",
     re.IGNORECASE,
 )
 
