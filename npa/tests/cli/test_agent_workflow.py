@@ -12,10 +12,12 @@ from npa.cli.agent_chat import (
     match_chat_intent,
 )
 from npa.cli.agent_workflow import (
+    choose_workflow_template,
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
     generate_vlm_rl_loop_yaml,
+    generate_workflow_draft,
     generate_workflow_yaml,
     plan_workflow_yaml_text,
     validate_workflow_yaml_text,
@@ -110,8 +112,7 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.get("/workflows/draft")' in source
     assert "workflowYaml" in source
     assert "validateWorkflowYaml" in source
-    assert "generate_sim2real_two_step_yaml" in source
-    assert "generate_sim2real_loop_gate_yaml" in source
+    assert "generate_workflow_draft" in source
     assert '@app.get("/sim-viz/runs")' in source
     assert '@app.post("/sim-viz/select-run")' in source
     assert "sim_viz_runs" in source
@@ -290,6 +291,31 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-loop-gate-agent" in loop_gate
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
+
+
+def test_choose_workflow_template_by_intent_and_text() -> None:
+    selected = choose_workflow_template(
+        user_text="create a multi-step outer loop with inner loop gate",
+        intent="create_workflow",
+    )
+    assert selected["template"] == "vlm-rl-loop"
+    selected_gate = choose_workflow_template(
+        user_text="build tokenfactory quality gate workflow",
+        intent="create_workflow",
+    )
+    assert selected_gate["template"] == "token-factory-gate"
+
+
+def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
+    draft = generate_workflow_draft(
+        user_text="draft a tokenfactory gate workflow",
+        intent="create_gate_workflow",
+        tool_refs=frozenset(),
+    )
+    assert draft["template"] == "token-factory-gate"
+    assert draft["validation"]["ok"] is True
+    assert "metadata:" in draft["yaml"]
+    assert "\n\n  scene_uri:" in draft["yaml"]
 
 
 def test_generate_workflow_yaml_aliases() -> None:

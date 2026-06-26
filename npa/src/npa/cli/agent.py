@@ -1155,18 +1155,20 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    elif intent == "create_workflow":
-        lowered = str(user_text or "").lower()
-        wants_complex = any(
-            token in lowered for token in ("complex", "loop", "gate", "transition", "decision")
+    elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
+        draft = generate_workflow_draft(
+            user_text=user_text,
+            intent=intent,
+            tool_refs=frozenset(TOOL_REFS),
+            capabilities={{"tool_refs": list(TOOL_REFS)}},
         )
-        if wants_complex:
-            yaml_text = generate_sim2real_loop_gate_yaml()
-        else:
-            yaml_text = generate_sim2real_two_step_yaml()
-        validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+        yaml_text = str(draft.get("yaml") or "").strip()
+        validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
+        template = str(draft.get("template") or "two-step")
         _save_workflow_draft(state, yaml_text, validation)
-        reply = format_workflow_chat_reply(yaml_text, validation)
+        state["workflow_draft"]["template"] = template
+        _save_state(state)
+        reply = format_workflow_chat_reply(yaml_text, validation, template=template)
         return reply, apis_for_intent(intent), yaml_text, validation
     reply = build_grounded_reply(
         intent,

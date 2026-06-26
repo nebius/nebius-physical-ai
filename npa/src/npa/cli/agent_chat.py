@@ -609,7 +609,7 @@ def build_grounded_reply(
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)
-    if intent == "create_workflow":
+    if intent in {"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}:
         draft = state.get("workflow_draft", {})
         if not isinstance(draft, dict):
             draft = {}
@@ -623,24 +623,17 @@ def build_grounded_reply(
                     "name": str(draft.get("name") or "unnamed"),
                     "states": draft.get("states") or [],
                 }
-            return format_generate_workflow(yaml_text, validation, template="two-step")
-        from npa.cli.agent_workflow import generate_sim2real_two_step_yaml, validate_workflow_yaml_text
+            template = str(draft.get("template") or "")
+            if not template:
+                template = "two-step" if intent == "create_workflow" else (
+                    "vlm-rl-loop" if intent == "create_vlm_rl_workflow" else "token-factory-gate"
+                )
+            return format_generate_workflow(yaml_text, validation, template=template)
+        from npa.cli.agent_workflow import generate_workflow_draft
 
-        generated = generate_sim2real_two_step_yaml()
-        validation = validate_workflow_yaml_text(generated)
-        return format_generate_workflow(generated, validation, template="two-step")
-    if intent == "create_vlm_rl_workflow":
-        from npa.cli.agent_workflow import generate_vlm_rl_loop_yaml, validate_workflow_yaml_text
-
-        generated = generate_vlm_rl_loop_yaml()
-        validation = validate_workflow_yaml_text(generated)
-        return format_generate_workflow(generated, validation, template="vlm-rl-loop")
-    if intent == "create_gate_workflow":
-        from npa.cli.agent_workflow import generate_token_factory_gate_yaml, validate_workflow_yaml_text
-
-        generated = generate_token_factory_gate_yaml()
-        validation = validate_workflow_yaml_text(generated)
-        return format_generate_workflow(generated, validation, template="token-factory-gate")
+        generated = generate_workflow_draft(intent=intent, user_text="", tool_refs=frozenset(tool_refs))
+        validation = generated["validation"] if isinstance(generated.get("validation"), dict) else {"ok": False}
+        return format_generate_workflow(str(generated.get("yaml") or ""), validation, template=str(generated["template"]))
     if intent == "list_recordings":
         return (
             "**Run history**: use `GET /api/sim-viz/recordings` to list `.rrd` files or "
