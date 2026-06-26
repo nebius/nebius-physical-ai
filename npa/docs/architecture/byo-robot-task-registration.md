@@ -121,3 +121,26 @@ In short: this makes BYO-robot training a **real mechanism** rather than cosmeti
 and is validated end-to-end by routing the Franka itself through the BYO path. A
 true custom robot still requires a real robot USD + tuned reward + the transfer
 work above.
+
+## Custom-asset test results (2026-06-26, on-cluster)
+
+The seam was tested on `npa-rtxpro-mk8s` with real GPU jobs. Full evidence:
+[`custom-asset-test-results.md`](custom-asset-test-results.md). Summary:
+
+- **Custom OBJECT USD — WORKS end-to-end.** A non-default rigid-ready YCB asset
+  (`004_sugar_box.usd`) trains (`env.scene.object.spawn.usd_path` override,
+  `TRAIN_RC=0`, checkpoint uploaded) and evals (`EVAL_OBJECT_USD_APPLIED`,
+  `rollout_ok`, real `object_goal_distance`) with no rigid-body error. Set
+  `NPA_BYO_ISAAC_OBJECT_USD`.
+- **Custom non-Franka ROBOT (UR10) — does NOT reach training.** Two real breaks,
+  in order: (1) the trainer has no env path to supply a robot USD (UR/Flexiv
+  presets carry no `usd_path`), so the documented path trains a Franka; (2) forcing
+  a faithful UR10 `robot_spec` in: the USD loads and the scene builds, then Isaac
+  rejects `effort_limit != effort_limit_sim` on the Franka preset's implicit
+  actuators; (3) past that, the Lift task's `ee_frame` FrameTransformer (and the
+  action/reward terms) reference Franka prims (`panda_link0`/`panda_hand`) absent
+  on a UR10 → `No matching prims were found`. `register()` swaps the articulation
+  but not the task's Franka-specific sensors/actions/rewards — confirming gap (a):
+  for training, BYO-robot is a mechanism, not yet a working custom-robot pipeline.
+- **Custom SCENE — not loadable.** `simready://` URIs are placeholders (never
+  resolved); no scene/table USD override exists, only the manipuland object.
