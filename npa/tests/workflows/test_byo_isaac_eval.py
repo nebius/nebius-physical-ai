@@ -150,3 +150,20 @@ def test_normalize_heldout_preserves_render_manifest_and_provenance():
     assert report["policy_checkpoint"].endswith("model_latest.pt")
     assert report["deployable_policy_eval"] is True
     assert report["generated_envs_tested"] == 1
+
+
+def test_build_heldout_report_multi_threshold_success_summary():
+    from npa.workflows.sim2real import byo_isaac_eval as ev
+
+    per_env = ev.per_env_from_distances(
+        [0.03, 0.08, 0.12, 0.40], success_dist_m=0.05,
+        env_ids=["e0", "e1", "e2", "e3"])
+    report = ev.build_heldout_report(
+        per_env, isaac_task="Isaac-Lift-Cube-Franka-v0",
+        checkpoint_uri="s3://b/model_latest.pt", source="byo_isaac_eval")
+    s = report["success_summary"]
+    assert s["success@0.05"] == 0.25   # only 0.03 < 0.05
+    assert s["success@0.10"] == 0.50   # 0.03, 0.08
+    assert s["success@0.15"] == 0.75   # 0.03, 0.08, 0.12
+    assert s["min_object_goal_distance_m"] == 0.03
+    assert report["per_env"][0]["success"] is True
