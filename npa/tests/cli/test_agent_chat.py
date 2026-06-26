@@ -19,6 +19,7 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("watch sim and refresh when rrd lands") == "watch_sim"
     assert match_chat_intent("watch rerun blob+iframe until success") == "watch_sim"
     assert match_chat_intent("wait until both blob and iframe are SUCCESS") == "watch_sim"
+    assert match_chat_intent("watch rerun blob iframe until consecutive success") == "watch_sim"
     assert match_chat_intent("keep rerun blob iframe green before finishing") == "watch_sim"
     assert match_chat_intent("mark rerun blob iframe passed before finishing") == "watch_sim"
     assert match_chat_intent("rerun blob-iframe until SUCCESS") == "watch_sim"
@@ -68,6 +69,7 @@ def test_build_grounded_reply_watch_sim_mentions_success() -> None:
     assert "Rerun blob iframe until SUCCESS" in reply
     assert "RERUN_BLOB_SUCCESS=SUCCESS" in reply
     assert "RERUN_MOUNT_SUCCESS=SUCCESS" in reply
+    assert "consecutive SUCCESS confirmations" in reply
     assert "**rrd_uri**" in reply
 
 

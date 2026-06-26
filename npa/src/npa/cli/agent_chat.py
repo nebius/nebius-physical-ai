@@ -232,6 +232,9 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rrd uri available",
             "rrd uri populated",
             "rrd uri not empty",
+            "consecutive success",
+            "success streak",
+            "stable success",
         )
     )
     return has_rerun_surface and has_success_gate
@@ -489,6 +492,7 @@ def build_grounded_reply(
             + "\n- If either status is not `SUCCESS`, retry mounting `/rerun/` and fetching `/api/sim-viz/rrd-blob`."
             + "\n- Use `/api/sim-viz/rrd` as fallback source if blob fetch has transient failures."
             + "\n- Keep looping until both checks remain `SUCCESS` for the active run/stage badge."
+            + "\n- Require **consecutive SUCCESS confirmations** (success streak) before declaring watch complete."
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)
