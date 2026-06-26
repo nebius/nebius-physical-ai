@@ -24,10 +24,25 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("mark rerun blob iframe passed before finishing") == "watch_sim"
     assert match_chat_intent("rerun blob-iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("rerun: blob/iframe; wait -> SUCCESS") == "watch_sim"
+    assert match_chat_intent("Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent.") == "watch_sim"
     assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
+
+
+def test_match_watch_sim_intent_with_long_requirements_addendum() -> None:
+    prompt = """
+Enhance NPA agent chat intent routing and Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent.
+
+--- REQUIREMENTS ADDENDUM (read and apply) ---
+
+Simulation visualization: keep /rerun/ iframe primary, poll /api/sim-viz/status, and continue until both blob and iframe mount report SUCCESS.
+Camera inspector: list cameras and frustum preview.
+Sim assets panel: selection, catalog, and submit path.
+verify-live gates: include sim_viz_url and cameras API checks.
+"""
+    assert match_chat_intent(prompt) == "watch_sim"
 
 
 def test_format_sim2real_status_includes_run_id_and_stage() -> None:

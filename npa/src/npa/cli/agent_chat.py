@@ -180,6 +180,19 @@ def _success_gated_watch_request(lowered: str) -> bool:
     """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
     if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(lowered):
         return True
+    # Keep explicit "rerun blob iframe until SUCCESS" intent sticky even when
+    # operators append branch/bootstrap notes in the same sentence.
+    if (
+        "rerun" in lowered
+        and "blob" in lowered
+        and "iframe" in lowered
+        and any(token in lowered for token in ("until", "till", "when", "once", "retry", "wait"))
+        and any(
+            token in lowered
+            for token in ("success", "successful", "succeeded", "passed", "green", "ready")
+        )
+    ):
+        return True
     compact = re.sub(r"[^a-z0-9]+", "", lowered)
     if any(
         token in compact
