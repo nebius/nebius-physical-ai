@@ -69,6 +69,24 @@ def build_heldout_report(
 ) -> dict[str, Any]:
     """Build the payload _normalize_heldout_report consumes (per_env list)."""
 
+    # Success at multiple object->goal distance thresholds: a single strict
+    # threshold hides real progress (a policy that lifts + roughly places scores
+    # 0 at 0.05m but high at 0.15m). Report the curve so accuracy improvement is
+    # visible even before the policy is pinpoint-accurate.
+    dists = [
+        r["details"]["object_goal_distance_m"]
+        for r in per_env
+        if "object_goal_distance_m" in r.get("details", {})
+    ]
+    success_summary = {}
+    if dists:
+        for thr in (0.05, 0.10, 0.15, 0.20):
+            success_summary[f"success@{thr:.2f}"] = round(
+                sum(1 for d in dists if d < thr) / len(dists), 4
+            )
+        success_summary["mean_object_goal_distance_m"] = round(sum(dists) / len(dists), 6)
+        success_summary["min_object_goal_distance_m"] = round(min(dists), 6)
+
     return {
         "schema": "npa.sim2real.heldout_eval.v1",
         "source": source,
@@ -76,6 +94,7 @@ def build_heldout_report(
         "isaac_task": isaac_task,
         "policy_checkpoint": checkpoint_uri,
         "deployable_policy_eval": bool(checkpoint_uri),
+        "success_summary": success_summary,
         "per_env": per_env,
     }
 
@@ -202,7 +221,7 @@ try:
     # Add a workspace camera so we can RENDER the (custom) object for Rerun viz.
     env_cfg.scene.heldout_cam = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/heldout_cam",
-        offset=TiledCameraCfg.OffsetCfg(pos=(1.2, 0.0, 0.8), rot=(0.6, 0.0, 0.35, 0.0), convention="world"),
+        offset=TiledCameraCfg.OffsetCfg(pos=(1.5, 0.0, 0.9), rot=(0.259, 0.0, 0.966, 0.0), convention="world"),
         data_types=["rgb"], width=128, height=128, spawn=sim_utils.PinholeCameraCfg())
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
