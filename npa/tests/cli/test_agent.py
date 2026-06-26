@@ -106,6 +106,15 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
 
 
+def test_watch_intent_uses_live_sim_viz_status() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'elif intent in {"sim2real_status", "watch_sim"}:' in source
+    assert "live_status = sim_viz_status()" in source
+    assert 'state["sim_viz"] = dict(live_status)' in source
+
+
 def test_bootstrap_public_login_form() -> None:
     from npa.cli import agent as agent_module
 

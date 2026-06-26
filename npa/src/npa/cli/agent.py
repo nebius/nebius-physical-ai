@@ -1018,7 +1018,18 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str]]
                 sim_viz = {{}}
             rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     elif intent in {"sim2real_status", "watch_sim"}:
+        # Ground watch/status replies on the same payload exposed by
+        # GET /api/sim-viz/status so chat mirrors the live iframe panel.
+        try:
+            live_status = sim_viz_status()
+            if isinstance(live_status, dict):
+                state["sim_viz"] = dict(live_status)
+                _save_state(state)
+        except Exception:
+            live_status = None
         sim_viz = state.get("sim_viz", {{}})
+        if not isinstance(sim_viz, dict) and isinstance(live_status, dict):
+            sim_viz = dict(live_status)
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
