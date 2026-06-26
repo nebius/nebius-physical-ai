@@ -885,6 +885,68 @@ def test_normalize_heldout_report_propagates_provenance() -> None:
     assert report["asset_provenance"]["objects"][0]["asset_source"] == "byo_mesh"
 
 
+def test_normalize_heldout_report_computes_success_summary_from_distances() -> None:
+    # Strict success_rate@threshold is 0 (no env is "success"), but the policy
+    # lands most objects within 0.15m -> the recomputed multi-threshold summary
+    # keeps that accuracy visible in the normalized report.
+    payload = {
+        "per_env": [
+            {"env_id": f"h-{i}", "score": 0.0, "success": False,
+             "details": {"object_goal_distance_m": d}}
+            for i, d in enumerate([0.04, 0.09, 0.12, 0.18])
+        ],
+    }
+    from npa.workflows.sim2real.engine import _normalize_heldout_report
+
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.99)
+    report = _normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["success_rate"] == 0.0
+    summary = report["success_summary"]
+    assert summary["success@0.05"] == 0.25  # only 0.04 < 0.05
+    assert summary["success@0.10"] == 0.5  # 0.04, 0.09
+    assert summary["success@0.15"] == 0.75  # 0.04, 0.09, 0.12
+    assert summary["success@0.20"] == 1.0
+    assert summary["min_object_goal_distance_m"] == 0.04
+    assert summary["mean_object_goal_distance_m"] == round(
+        (0.04 + 0.09 + 0.12 + 0.18) / 4, 6
+    )
+
+
+def test_normalize_heldout_report_carries_through_payload_success_summary() -> None:
+    # When byo_isaac_eval already emitted a success_summary, preserve it verbatim
+    # rather than recomputing.
+    emitted = {
+        "success@0.05": 0.0,
+        "success@0.15": 0.81,
+        "mean_object_goal_distance_m": 0.09,
+        "min_object_goal_distance_m": 0.07,
+    }
+    payload = {
+        "per_env": [
+            {"env_id": "h-0", "score": 0.0, "success": False,
+             "details": {"object_goal_distance_m": 0.5}}
+        ],
+        "success_summary": emitted,
+    }
+    from npa.workflows.sim2real.engine import _normalize_heldout_report
+
+    config = Sim2RealLoopConfig(run_id="r", threshold=0.5)
+    report = _normalize_heldout_report(
+        payload,
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+    assert report["success_summary"] == emitted
+
+
 def test_run_heldout_eval_component_from_s3_writes_provenance(
     monkeypatch, tmp_path: Path
 ) -> None:
