@@ -479,8 +479,30 @@ containers:
       timeout_seconds: 600
       status: gpu-gated
 
+  rerun-viewer:
+    image: npa-rerun-viewer
+    dockerfile: npa/docker/workbench/rerun-viewer/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Generic Rerun log viewer server used by Sim2Real and agent visualization paths.
+    safety:
+      runs_as: nobody
+      base_image: python:3.11-slim-bookworm
+      network: internal (viewer port 9090)
+      external_fetch: [pypi]
+      notes: >-
+        Minimal rerun-sdk image; no persistent storage or outbound calls at
+        runtime beyond the viewer bind.
+    golden_eval:
+      kind: build-import
+      command: 'python -c "import rerun; assert rerun.__version__"'
+      gpu: none
+      timeout_seconds: 60
+      status: ready
+
   sim2real-rerun-viewer:
-    image: npa-sim2real-rerun-viewer
+    image: npa-rerun-viewer
     dockerfile: npa/docker/workbench/sim2real-rerun-viewer/Dockerfile
     physical_ai:
       useful: true

@@ -47,4 +47,6 @@ paths = [
     '''docs/architecture/contributor-context\.md''',
     '''docs/workbench/guides/sim2real-workflow\.md''',
     # Operator runbooks reference validated lerobot-* bucket names (not secrets).
+    '''npa/tests/''',
+    # Synthetic lerobot-* bucket fixtures in unit tests (not real secrets).
 ]

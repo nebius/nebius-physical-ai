@@ -59,8 +59,8 @@ def test_sim2real_rerun_serve_dry_run_prints_manifest(mocker) -> None:
     mocker.patch(
         "npa.cli.workbench.sim2real.build_rerun_serve_config",
         return_value=mocker.Mock(
-            deployment_name="npa-sim2real-rerun-demo",
-            secret_name="npa-sim2real-rerun-demo-s3",
+            deployment_name="npa-rerun-demo",
+            secret_name="npa-rerun-demo-s3",
         ),
     )
     manifest = {
@@ -156,7 +156,7 @@ def test_sim2real_rerun_serve_deploy_emits_local_url_when_public_pending(mocker)
                 "public_url": "",
                 "local_url": "http://127.0.0.1:9090/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9876%2Fproxy",
                 "service_type": "LoadBalancer",
-                "deployment_name": "npa-sim2real-rerun-npa-rtxpro-mk8s",
+                "deployment_name": "npa-rerun-npa-rtxpro-mk8s",
                 "namespace": "default",
                 "cluster_url": "http://svc.default.svc.cluster.local:9090",
                 "port_forward_command": "kubectl port-forward -n default deployment/x 9090:9090 9876:9876",

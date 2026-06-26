@@ -1,0 +1,43 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-two-step
+  description: >
+    Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw env generation.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real/{{run.id}}"
+  env_count: "1000"
+
+  trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+
+initial: augment
+
+states:
+  augment:
+    description: Cosmos Transfer augment of LeRobot trigger data.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.sim2real.augment.v1
+    next: envgen
+
+  envgen:
+    description: Generate raw env shard catalog on object storage.
+    needs: [augment]
+    toolRef: workbench.sim2real_envgen.raw_shard
+    resources: gpu
+    outputs:
+      - uri: "{{config.raw_envs_uri}}manifest.json"
+        schema: npa.sim2real.split_manifest.v1
+    terminal: true

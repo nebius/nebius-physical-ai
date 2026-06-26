@@ -94,6 +94,9 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "CUDA available",
         "FrankaPickPlace rollout step",
     ],
+    "rerun-viewer": [
+        "rerun SDK import + __version__",
+    ],
     "sim2real-rerun-viewer": [
         "rerun SDK import + __version__",
     ],
