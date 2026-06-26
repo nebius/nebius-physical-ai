@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli import agent as agent_module
@@ -13,6 +14,9 @@ from npa.cli.agent_chat import (
 from npa.cli.agent_workflow import (
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
+    generate_token_factory_gate_yaml,
+    generate_vlm_rl_loop_yaml,
+    generate_workflow_yaml,
     plan_workflow_yaml_text,
     validate_workflow_yaml_text,
 )
@@ -20,6 +24,17 @@ from npa.cli.main import app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+
+_GOLDEN_YAMLS = [
+    "sim2real-two-step-agent.yaml",
+    "sim2real-two-step.yaml",
+    "sim2real-vlm-rl.yaml",
+    "tokenfactory-cosmos-gate.yaml",
+    "tokenfactory-rollout-judge.yaml",
+    "vlm-eval-single.yaml",
+    "bdd100k-pipeline.yaml",
+]
+
 runner = CliRunner()
 
 
@@ -200,3 +215,157 @@ states:
     result = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset())
     assert result["ok"] is True
     assert result["name"] == "goto-list-graph"
+
+
+# --- Complex YAML generator tests ---
+
+
+def test_generate_vlm_rl_loop_yaml_validates() -> None:
+    yaml_text = generate_vlm_rl_loop_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"vlm-rl validate failed: {result.get('error')}"
+    assert result["name"] == "sim2real-vlm-rl"
+    states = set(result["states"])
+    assert "augment" in states
+    assert "envgen" in states
+    assert "finalize" in states
+
+
+def test_generate_vlm_rl_loop_yaml_plan_has_multiple_steps() -> None:
+    yaml_text = generate_vlm_rl_loop_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="vlm-rl-test", assume_decision="promote_checkpoint")
+    assert plan["ok"] is True, f"vlm-rl plan failed: {plan.get('error')}"
+    assert len(plan["steps"]) >= 3
+    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
+    assert "workbench.cosmos2.transfer" in tool_refs
+    assert "workbench.sim2real_envgen.raw_shard" in tool_refs
+
+
+def test_generate_vlm_rl_loop_yaml_contains_loop_and_gate() -> None:
+    yaml_text = generate_vlm_rl_loop_yaml()
+    assert "loop:" in yaml_text
+    assert "transitions:" in yaml_text
+    assert "promote_checkpoint" in yaml_text
+    assert "loop_back" in yaml_text
+    assert "writesDecision: true" in yaml_text
+
+
+def test_generate_token_factory_gate_yaml_validates() -> None:
+    yaml_text = generate_token_factory_gate_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"token-factory validate failed: {result.get('error')}"
+    assert result["name"] == "tokenfactory-cosmos-gate"
+    states = set(result["states"])
+    assert "reason-scene" in states
+    assert "augment-scene" in states
+    assert "publish" in states
+
+
+def test_generate_token_factory_gate_yaml_plan() -> None:
+    yaml_text = generate_token_factory_gate_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="gate-test", assume_decision="promote_checkpoint")
+    assert plan["ok"] is True, f"token-factory plan failed: {plan.get('error')}"
+    assert len(plan["steps"]) >= 2
+    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
+    assert "workbench.cosmos2.transfer" in tool_refs
+
+
+def test_generate_token_factory_gate_yaml_contains_vlm_gate() -> None:
+    yaml_text = generate_token_factory_gate_yaml()
+    assert "loop:" in yaml_text
+    assert "transitions:" in yaml_text
+    assert "promote_checkpoint" in yaml_text
+    assert "vlm-critique" in yaml_text
+    assert "quality-gate" in yaml_text
+
+
+def test_generate_workflow_yaml_dispatcher() -> None:
+    two_step = generate_workflow_yaml("two-step")
+    assert "sim2real-two-step" in two_step
+    vlm_rl = generate_workflow_yaml("vlm-rl-loop")
+    assert "sim2real-vlm-rl" in vlm_rl
+    gate = generate_workflow_yaml("token-factory-gate")
+    assert "tokenfactory-cosmos-gate" in gate
+    loop_gate = generate_workflow_yaml("loop-gate")
+    assert "sim2real-loop-gate-agent" in loop_gate
+    default = generate_workflow_yaml("unknown-template")
+    assert "sim2real-two-step" in default
+
+
+def test_generate_workflow_yaml_aliases() -> None:
+    assert "sim2real-vlm-rl" in generate_workflow_yaml("vlm-rl")
+    assert "sim2real-vlm-rl" in generate_workflow_yaml("vlm_rl_loop")
+    assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("gate")
+    assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("tokenfactory")
+    assert "sim2real-loop-gate-agent" in generate_workflow_yaml("loop")
+
+
+@pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
+def test_golden_yaml_validates(yaml_name: str) -> None:
+    """All golden NPA workflow YAMLs in the repo should parse and validate."""
+    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
+    if not yaml_path.is_file():
+        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_text = yaml_path.read_text(encoding="utf-8")
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"{yaml_name} failed: {result.get('error')}"
+
+
+@pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
+def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
+    """Golden YAMLs should plan successfully with the CLI."""
+    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
+    if not yaml_path.is_file():
+        pytest.skip(f"golden YAML not found: {yaml_name}")
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "plan-spec", str(yaml_path), "--run-id", "golden-test",
+         "--assume-decision", "promote_checkpoint", "--json"],
+    )
+    assert result.exit_code == 0, f"{yaml_name} plan-spec CLI failed:\n{result.output}"
+    assert "golden-test" in result.output or "steps" in result.output
+
+
+# --- Complex workflow intent routing tests ---
+
+
+def test_match_vlm_rl_workflow_intent() -> None:
+    assert match_chat_intent("create a VLM-RL loop workflow") == "create_vlm_rl_workflow"
+    assert match_chat_intent("generate a sim2real vlm rl pipeline") == "create_vlm_rl_workflow"
+    assert match_chat_intent("build a workflow with outer loop and inner loop gate") == "create_vlm_rl_workflow"
+
+
+def test_match_gate_workflow_intent() -> None:
+    assert match_chat_intent("create a token factory gate workflow") == "create_gate_workflow"
+    assert match_chat_intent("generate a quality gate cosmos augment loop") == "create_gate_workflow"
+    assert match_chat_intent("build a tokenfactory cosmos-gate spec") == "create_gate_workflow"
+
+
+def test_create_vlm_rl_workflow_grounded_reply() -> None:
+    state: dict = {}
+    reply = build_grounded_reply("create_vlm_rl_workflow", state, [])
+    assert "```yaml" in reply
+    assert "sim2real-vlm-rl" in reply
+    assert "VLM-RL" in reply
+    assert "GET /api" not in reply
+
+
+def test_create_gate_workflow_grounded_reply() -> None:
+    state: dict = {}
+    reply = build_grounded_reply("create_gate_workflow", state, [])
+    assert "```yaml" in reply
+    assert "tokenfactory-cosmos-gate" in reply
+    assert "Token Factory" in reply
+    assert "GET /api" not in reply
+
+
+def test_vlm_rl_workflow_apis_include_plan() -> None:
+    apis = apis_for_intent("create_vlm_rl_workflow")
+    assert any("validate" in p for p in apis)
+    assert any("plan" in p for p in apis)
+
+
+def test_gate_workflow_apis_include_plan() -> None:
+    apis = apis_for_intent("create_gate_workflow")
+    assert any("validate" in p for p in apis)
+    assert any("plan" in p for p in apis)
