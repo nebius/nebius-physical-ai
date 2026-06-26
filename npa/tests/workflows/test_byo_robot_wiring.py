@@ -51,6 +51,49 @@ def test_payload_byo_carries_fields_and_usd():
     assert p["usd_path"] == "/tmp/npa_robot/robot.usd"
 
 
+def test_payload_carries_retarget_and_gripper_fields():
+    # The in-container retarget + compatibility checks need base_link, the arm/
+    # gripper joint partition, finger links, and gripper command targets.
+    spec = SimpleNamespace(
+        robot_source="byo_usd",
+        name="acme_arm",
+        ee_link="tool0",
+        base_link="base_link",
+        joint_names=("j1", "j2"),
+        finger_links=("lf", "rf"),
+        n_arm_joints=6,
+        n_gripper_joints=2,
+        home_qpos=(0.0, -0.5),
+        kp=(100.0, 200.0),
+        kv=(10.0, 20.0),
+        force_upper=(50.0,),
+        force_lower=(-50.0,),
+        gripper_open=0.04,
+        gripper_close=0.0,
+    )
+    p = tr.robot_spec_payload(spec, usd_container_path="/tmp/npa_robot/robot.usd")
+    assert p["base_link"] == "base_link"
+    assert p["finger_links"] == ["lf", "rf"]
+    assert p["n_arm_joints"] == 6
+    assert p["n_gripper_joints"] == 2
+    assert p["gripper_open"] == 0.04
+    assert p["gripper_close"] == 0.0
+
+
+def test_payload_ur_preset_carries_no_gripper():
+    # A bare UR preset must serialize n_gripper_joints=0 / no finger links so the
+    # in-container honesty check can flag the lift incompatibility.
+    from npa.genesis import robot_assets
+
+    spec = robot_assets.robot_spec_from_preset("ur10e")
+    p = tr.robot_spec_payload(spec, usd_container_path="/tmp/npa_robot/robot.usd")
+    assert p["robot_source"] != "stock_franka"
+    assert p["n_gripper_joints"] == 0
+    assert p["finger_links"] == []
+    assert p["base_link"] == "base_link"
+    assert p["ee_link"] == "tool0"
+
+
 def test_payload_franka_preset_resolves_to_stock():
     # The Franka preset (used by the live validation) must be a stock_franka spec
     # so the BYO seam runs end-to-end without swapping the robot.

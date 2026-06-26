@@ -42,6 +42,22 @@ STIFFNESS_MIN, STIFFNESS_MAX = 1.0, 100000.0
 DAMPING_MIN, DAMPING_MAX = 0.1, 10000.0
 EFFORT_MIN, EFFORT_MAX = 1.0, 10000.0
 
+# Stock ``Isaac-Lift-Cube-Franka-v0`` link/joint names hardcoded in the task cfg's
+# ee_frame FrameTransformer, arm/gripper action terms, and the object_pose command
+# body. The retarget mapping resolves to EXACTLY these for a stock-Franka spec (or
+# any field a BYO spec omits), so the Franka path is byte-for-byte unchanged; a
+# non-Franka spec resolves them to its own link/joint names instead.
+FRANKA_BASE_LINK = "panda_link0"  # ee_frame source frame (articulation root)
+FRANKA_EE_LINK = "panda_hand"  # ee_frame target frame + object_pose command body
+EE_FRAME_NAME = "end_effector"  # stock target-frame name; kept stable for rewards
+FRANKA_ARM_JOINT_EXPR = ["panda_joint.*"]  # JointPositionAction joint_names
+FRANKA_GRIPPER_JOINT_EXPR = ["panda_finger.*"]  # BinaryJointPositionAction joints
+FRANKA_GRIPPER_OPEN = {"panda_finger_.*": 0.04}
+FRANKA_GRIPPER_CLOSE = {"panda_finger_.*": 0.0}
+
+# Task kinds whose stock reward/action contract structurally requires a gripper.
+GRIPPER_TASK_KINDS = ("lift", "manipulation", "stack", "pick", "place")
+
 
 def _task_id(name: str) -> str:
     """Build a safe gym id from the robot name: ``NPA-Lift-Cube-<Name>-v0``."""
@@ -143,6 +159,174 @@ def robot_articulation_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
     return overrides
 
 
+def _spec_has_gripper(spec: dict[str, Any]) -> bool:
+    """Whether the spec declares an actuated gripper (finger joints + links).
+
+    Mirrors ``RobotSpec.has_gripper``: a positive gripper-joint count AND at least
+    one finger link. An explicit ``has_gripper`` flag, when present, wins.
+    """
+
+    if "has_gripper" in spec:
+        return bool(spec.get("has_gripper"))
+    n_gripper = 0
+    try:
+        n_gripper = int(spec.get("n_gripper_joints") or 0)
+    except (TypeError, ValueError):
+        n_gripper = 0
+    finger_links = [str(f) for f in (spec.get("finger_links") or []) if str(f)]
+    return n_gripper > 0 and bool(finger_links)
+
+
+def task_retarget_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
+    """Map a robot_spec to the Lift task's link/joint *renames* (the seam's gap).
+
+    Swapping the articulation USD alone is not enough: the stock task cfg hardcodes
+    Franka link/joint names in three places that break on a different arm —
+
+      * ``scene.ee_frame`` FrameTransformer source (``panda_link0``) + target
+        (``panda_hand``) prim paths,
+      * ``actions.arm_action`` joint names (``panda_joint.*``) and
+        ``actions.gripper_action`` joint names / open-close command expressions
+        (``panda_finger.*``),
+      * ``commands.object_pose`` resolution body (``panda_hand``).
+
+    This pure function returns the rename set ``register`` applies post-boot. Every
+    field a BYO spec omits resolves to the Franka stock value, so a stock-Franka (or
+    field-less) spec yields the panda_* names verbatim and the Franka path is
+    unchanged. Returns ``{}`` when there is nothing to swap (no/stock/USD-less spec),
+    matching ``robot_articulation_overrides``.
+
+    ``gripper`` is ``None`` when the spec declares no gripper (e.g. a bare UR/Flexiv
+    arm): the caller then surfaces a task/robot incompatibility (see
+    ``task_robot_compatibility``) rather than wiring a gripper action onto an arm
+    that has none.
+    """
+
+    if not isinstance(spec, dict):
+        return {}
+    if str(spec.get("robot_source") or STOCK_ROBOT_SOURCE) == STOCK_ROBOT_SOURCE:
+        return {}
+    usd_path = str(spec.get("usd_path") or spec.get("local_path") or "").strip()
+    if not usd_path:
+        return {}
+
+    base_link = str(spec.get("base_link") or "").strip() or FRANKA_BASE_LINK
+    ee_link = str(spec.get("ee_link") or "").strip() or FRANKA_EE_LINK
+
+    joint_names = [str(n) for n in (spec.get("joint_names") or []) if str(n)]
+    if joint_names:
+        try:
+            n_arm = int(spec.get("n_arm_joints") or 0)
+        except (TypeError, ValueError):
+            n_arm = 0
+        arm_joint_names = joint_names[:n_arm] if n_arm > 0 else list(joint_names)
+    else:
+        arm_joint_names = list(FRANKA_ARM_JOINT_EXPR)
+
+    overrides: dict[str, Any] = {
+        "ee_frame_source": base_link,
+        "ee_frame_target": ee_link,
+        "ee_frame_name": EE_FRAME_NAME,
+        "arm_joint_names": arm_joint_names,
+        "command_body_name": ee_link,
+    }
+
+    if _spec_has_gripper(spec):
+        # A declared gripper. Without explicit gripper joint names we fall back to
+        # the Franka finger pattern (correct only for a Franka-class hand); a
+        # non-Franka gripper must declare ``gripper_joint_names`` to retarget the
+        # finger joints — recorded as a remaining requirement.
+        gripper_joints = [str(n) for n in (spec.get("gripper_joint_names") or []) if str(n)]
+        try:
+            open_pos = float(spec.get("gripper_open", FRANKA_GRIPPER_OPEN["panda_finger_.*"]))
+        except (TypeError, ValueError):
+            open_pos = FRANKA_GRIPPER_OPEN["panda_finger_.*"]
+        try:
+            close_pos = float(spec.get("gripper_close", FRANKA_GRIPPER_CLOSE["panda_finger_.*"]))
+        except (TypeError, ValueError):
+            close_pos = FRANKA_GRIPPER_CLOSE["panda_finger_.*"]
+        if gripper_joints:
+            expr = "|".join(re.escape(j) for j in gripper_joints)
+            overrides["gripper"] = {
+                "joint_names": list(gripper_joints),
+                "open": {expr: open_pos},
+                "close": {expr: close_pos},
+            }
+        else:
+            overrides["gripper"] = {
+                "joint_names": list(FRANKA_GRIPPER_JOINT_EXPR),
+                "open": {"panda_finger_.*": open_pos},
+                "close": {"panda_finger_.*": close_pos},
+            }
+    else:
+        overrides["gripper"] = None
+
+    return overrides
+
+
+def task_robot_compatibility(
+    spec: dict[str, Any] | None, task_kind: str = "lift"
+) -> dict[str, Any]:
+    """Whether ``spec``'s embodiment can physically perform ``task_kind``.
+
+    Honest gate, not retargeting: a cube-lift (and every manipulation task built on
+    the stock Lift reward) needs an actuated end-effector to grasp the object. A
+    gripperless arm (a bare UR10/UR5e/Flexiv) cannot lift no matter how the links
+    are renamed, so we report ``task_robot_compatible=False`` with the reason and
+    the customer requirement rather than training a policy that can never succeed.
+
+    A stock-Franka / ``None`` spec is the proven, gripper-bearing path → compatible.
+    """
+
+    kind = str(task_kind or "lift").strip().lower()
+    needs_gripper = any(k in kind for k in GRIPPER_TASK_KINDS)
+
+    if not isinstance(spec, dict) or str(
+        spec.get("robot_source") or STOCK_ROBOT_SOURCE
+    ) == STOCK_ROBOT_SOURCE:
+        return {
+            "task_robot_compatible": True,
+            "task_kind": kind,
+            "has_gripper": True,
+            "reason": "stock Franka (proven gripper-bearing embodiment)",
+            "requirements": [],
+        }
+
+    has_gripper = _spec_has_gripper(spec)
+    if needs_gripper and not has_gripper:
+        return {
+            "task_robot_compatible": False,
+            "task_kind": kind,
+            "has_gripper": False,
+            "reason": (
+                f"task '{kind}' requires grasping but robot_spec '"
+                f"{spec.get('name') or 'robot'}' declares no gripper "
+                "(n_gripper_joints=0 / no finger_links). A gripperless arm "
+                "cannot lift a cube regardless of link/joint retargeting."
+            ),
+            "requirements": [
+                "a parallel-jaw (or equivalent) gripper actuated in sim",
+                "gripper finger joint names (gripper_joint_names) to retarget the "
+                "BinaryJointPositionAction term",
+                "gripper_open / gripper_close command targets",
+                "an action space matching arm DoF + gripper (stock Lift = arm + "
+                "1 binary gripper)",
+            ],
+        }
+
+    return {
+        "task_robot_compatible": True,
+        "task_kind": kind,
+        "has_gripper": has_gripper,
+        "reason": (
+            "embodiment has the actuators the task requires"
+            if not needs_gripper or has_gripper
+            else "task does not require a gripper"
+        ),
+        "requirements": [],
+    }
+
+
 def register(spec: dict[str, Any] | None = None) -> str | None:
     """Register the BYO-robot Lift variant in the gym registry; return its id.
 
@@ -156,6 +340,16 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
     if not overrides:
         return None
 
+    retarget = task_retarget_overrides(spec)
+    compat = task_robot_compatibility(spec, task_kind="lift")
+    # Honest, loud signal: a gripperless arm cannot lift no matter the renames. We
+    # still register (so the swap/retarget mechanism is exercised), but the trainer
+    # surfaces this in the report and the operator is not misled into expecting
+    # success. See task_robot_compatibility() for the customer requirements.
+    print("ROBOT_COMPAT", json.dumps(compat), flush=True)
+    if not compat.get("task_robot_compatible", True):
+        print("ROBOT_TASK_INCOMPATIBLE", compat.get("reason"), flush=True)
+
     import gymnasium as gym  # noqa: WPS433 (lazy: GPU-only dep)
     import isaaclab.sim as sim_utils  # noqa: WPS433
     from isaaclab_tasks.manager_based.manipulation.lift.config.franka import (  # noqa: WPS433
@@ -168,6 +362,92 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
     damping = overrides.get("damping")
     effort_limit = overrides.get("effort_limit")
     task_id = _task_id((spec or {}).get("name") or "robot")
+
+    def _swap_prim_tail(prim_path: str, link: str) -> str:
+        """Replace the trailing link segment of a ``.../Robot/<link>`` prim path,
+        preserving the ``{ENV_REGEX_NS}/Robot`` namespace the task assigned."""
+
+        base = str(prim_path or "").rsplit("/", 1)[0] or "{ENV_REGEX_NS}/Robot"
+        return f"{base}/{link}"
+
+    def _apply_retarget(env_cfg: Any) -> None:
+        """Retarget the Franka-hardcoded link/joint names onto the swapped robot.
+
+        Defensive: each term is guarded so a cfg-shape change on a newer Isaac-Lab
+        skips that term (recorded via ROBOT_RETARGET) instead of crashing the run.
+        """
+
+        applied: list[str] = []
+        skipped: list[str] = []
+
+        # (a) ee_frame FrameTransformer: source + target prim paths, target name.
+        try:
+            ee_frame = getattr(env_cfg.scene, "ee_frame", None)
+            if ee_frame is not None and hasattr(ee_frame, "prim_path"):
+                ee_frame.prim_path = _swap_prim_tail(
+                    ee_frame.prim_path, retarget["ee_frame_source"]
+                )
+                targets = getattr(ee_frame, "target_frames", None) or []
+                for tf in targets:
+                    if hasattr(tf, "prim_path"):
+                        tf.prim_path = _swap_prim_tail(
+                            tf.prim_path, retarget["ee_frame_target"]
+                        )
+                    if hasattr(tf, "name"):
+                        tf.name = retarget["ee_frame_name"]
+                applied.append("ee_frame")
+            else:
+                skipped.append("ee_frame")
+        except Exception as exc:  # noqa: BLE001 (record, do not crash the run)
+            print("ROBOT_RETARGET_ERR ee_frame", repr(exc), flush=True)
+            skipped.append("ee_frame")
+
+        # (b) action terms: arm joint names + (optional) gripper joints/commands.
+        try:
+            actions = getattr(env_cfg, "actions", None)
+            arm_action = getattr(actions, "arm_action", None)
+            if arm_action is not None and hasattr(arm_action, "joint_names"):
+                arm_action.joint_names = list(retarget["arm_joint_names"])
+                applied.append("arm_action.joint_names")
+            elif arm_action is not None and hasattr(arm_action, "body_name"):
+                # IK-style action variant: the controlled body is the ee link.
+                arm_action.body_name = retarget["ee_frame_target"]
+                applied.append("arm_action.body_name")
+            else:
+                skipped.append("arm_action")
+
+            gripper_action = getattr(actions, "gripper_action", None)
+            gripper = retarget.get("gripper")
+            if gripper_action is not None and gripper is not None:
+                if hasattr(gripper_action, "joint_names"):
+                    gripper_action.joint_names = list(gripper["joint_names"])
+                if hasattr(gripper_action, "open_command_expr"):
+                    gripper_action.open_command_expr = dict(gripper["open"])
+                if hasattr(gripper_action, "close_command_expr"):
+                    gripper_action.close_command_expr = dict(gripper["close"])
+                applied.append("gripper_action")
+            elif gripper_action is not None and gripper is None:
+                # No gripper on this robot: leave the stock term in place but flag it
+                # (the env build may still fail; compatibility already reported it).
+                skipped.append("gripper_action(no-gripper)")
+        except Exception as exc:  # noqa: BLE001
+            print("ROBOT_RETARGET_ERR actions", repr(exc), flush=True)
+            skipped.append("actions")
+
+        # (c) command term: object_pose resolves against the ee body.
+        try:
+            commands = getattr(env_cfg, "commands", None)
+            object_pose = getattr(commands, "object_pose", None)
+            if object_pose is not None and hasattr(object_pose, "body_name"):
+                object_pose.body_name = retarget["command_body_name"]
+                applied.append("commands.object_pose.body_name")
+            else:
+                skipped.append("commands.object_pose")
+        except Exception as exc:  # noqa: BLE001
+            print("ROBOT_RETARGET_ERR commands", repr(exc), flush=True)
+            skipped.append("commands.object_pose")
+
+        print("ROBOT_RETARGET applied=%s skipped=%s" % (applied, skipped), flush=True)
 
     class _ByoRobotLiftEnvCfg(franka_lift.FrankaCubeLiftEnvCfg):  # type: ignore[name-defined]
         def __post_init__(self) -> None:  # noqa: WPS610
@@ -195,6 +475,15 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
                         actuator.damping = damping
                     if effort_limit is not None and hasattr(actuator, "effort_limit"):
                         actuator.effort_limit = effort_limit
+                        # Isaac 2.x ImplicitActuatorCfg forbids effort_limit !=
+                        # effort_limit_sim; keep them in lockstep so the swap does
+                        # not trip the actuator-cfg validation (first non-Franka
+                        # break observed on-cluster).
+                        if hasattr(actuator, "effort_limit_sim"):
+                            actuator.effort_limit_sim = effort_limit
+            # Retarget the Franka-hardcoded ee_frame / actions / command body onto
+            # the swapped robot's link & joint names (the seam's core gap).
+            _apply_retarget(self)
 
     stock_kwargs = gym.spec(STOCK_TASK_ID).kwargs
     gym.register(
@@ -249,8 +538,14 @@ import isaaclab_tasks  # noqa: F401
 import isaac_byo_robot_task as robotmod
 spec = robotmod.robot_spec_from_env()
 overrides = robotmod.robot_articulation_overrides(spec)
+retarget = robotmod.task_retarget_overrides(spec)
+compat = robotmod.task_robot_compatibility(spec, task_kind="lift")
 print("ROBOT_SPEC", spec, flush=True)
 print("ROBOT_OVERRIDES", overrides, flush=True)
+print("ROBOT_RETARGET_PLAN", retarget, flush=True)
+print("ROBOT_COMPAT", compat, flush=True)
+if not compat.get("task_robot_compatible", True):
+    print("ROBOT_TASK_INCOMPATIBLE", compat.get("reason"), flush=True)
 try:
     task = robotmod.register(spec)
 except Exception:
@@ -310,8 +605,9 @@ try:
     ckpts = sorted(glob.glob(os.path.join(OUT, "**", "model_*.pt"), recursive=True))
     # Final summary (survives any upstream log truncation): task + robot + USD live
     # + checkpoint count.
-    print("ROBOT_SUMMARY task=%s robot=%s usd_live=%s ckpts=%d"
-          % (task, (spec or {}).get("name"), robot_live, len(ckpts)), flush=True)
+    print("ROBOT_SUMMARY task=%s robot=%s usd_live=%s ckpts=%d task_robot_compatible=%s"
+          % (task, (spec or {}).get("name"), robot_live, len(ckpts),
+             compat.get("task_robot_compatible", True)), flush=True)
     print("ROBOT_CKPTS", ckpts, flush=True)
     print("ROBOT_TRAIN_DONE" if (ckpts and robot_live) else "ROBOT_TRAIN_NO_CKPT", flush=True)
 except Exception:

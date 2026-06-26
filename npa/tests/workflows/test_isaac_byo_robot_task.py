@@ -101,11 +101,152 @@ def test_overrides_gains_are_bounded():
     assert ov["effort_limit"] == rt.EFFORT_MAX
 
 
+def _ur_spec(**over):
+    """A gripperless UR10-class arm spec (the custom-asset test's failing case)."""
+
+    spec = {
+        "robot_source": "byo_usd",
+        "name": "ur10",
+        "usd_path": "/tmp/staged/ur10.usd",
+        "ee_link": "tool0",
+        "base_link": "base_link",
+        "joint_names": [
+            "shoulder_pan_joint",
+            "shoulder_lift_joint",
+            "elbow_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint",
+        ],
+        "n_arm_joints": 6,
+        "n_gripper_joints": 0,
+        "finger_links": [],
+    }
+    spec.update(over)
+    return spec
+
+
+# --------------------------------------------------------------------------- #
+# task_retarget_overrides
+# --------------------------------------------------------------------------- #
+def test_retarget_empty_for_stock_none_and_no_usd():
+    assert rt.task_retarget_overrides(None) == {}
+    assert rt.task_retarget_overrides({"robot_source": "stock_franka"}) == {}
+    assert rt.task_retarget_overrides(_byo_spec(usd_path="", local_path="")) == {}
+
+
+def test_retarget_franka_defaults_resolve_to_panda_names():
+    # A BYO spec that omits link/joint fields must resolve to the stock Franka
+    # names, so the Franka path is byte-for-byte (names resolve to panda_*).
+    minimal = {"robot_source": "byo_usd", "name": "franka", "usd_path": "/tmp/f.usd"}
+    ov = rt.task_retarget_overrides(minimal)
+    assert ov["ee_frame_source"] == "panda_link0"
+    assert ov["ee_frame_target"] == "panda_hand"
+    assert ov["ee_frame_name"] == "end_effector"
+    assert ov["arm_joint_names"] == ["panda_joint.*"]
+    assert ov["command_body_name"] == "panda_hand"
+    # No gripper declared -> no gripper retarget (honesty handled separately).
+    assert ov["gripper"] is None
+
+
+def test_retarget_ur_like_spec_uses_robot_names_not_panda():
+    ov = rt.task_retarget_overrides(_ur_spec())
+    assert ov["ee_frame_source"] == "base_link"
+    assert ov["ee_frame_target"] == "tool0"
+    assert ov["command_body_name"] == "tool0"
+    # arm joints are the UR joints (first n_arm_joints), not panda_joint.*
+    assert ov["arm_joint_names"][0] == "shoulder_pan_joint"
+    assert ov["arm_joint_names"][-1] == "wrist_3_joint"
+    assert "panda_joint.*" not in ov["arm_joint_names"]
+    assert ov["gripper"] is None
+
+
+def test_retarget_arm_joints_truncated_to_n_arm_joints():
+    # Extra (e.g. gripper) joints past n_arm_joints are not fed to the arm action.
+    spec = _ur_spec(joint_names=["a", "b", "c", "d"], n_arm_joints=2)
+    ov = rt.task_retarget_overrides(spec)
+    assert ov["arm_joint_names"] == ["a", "b"]
+
+
+def test_retarget_franka_gripper_resolves_to_panda_finger_pattern():
+    spec = {
+        "robot_source": "byo_usd",
+        "name": "franka",
+        "usd_path": "/tmp/f.usd",
+        "ee_link": "panda_hand",
+        "n_gripper_joints": 2,
+        "finger_links": ["panda_leftfinger", "panda_rightfinger"],
+        "gripper_open": 0.04,
+        "gripper_close": 0.0,
+    }
+    ov = rt.task_retarget_overrides(spec)
+    assert ov["gripper"]["joint_names"] == ["panda_finger.*"]
+    assert ov["gripper"]["open"] == {"panda_finger_.*": 0.04}
+    assert ov["gripper"]["close"] == {"panda_finger_.*": 0.0}
+
+
+def test_retarget_custom_gripper_uses_declared_joint_names():
+    spec = {
+        "robot_source": "byo_usd",
+        "name": "arm_with_robotiq",
+        "usd_path": "/tmp/a.usd",
+        "ee_link": "tool0",
+        "n_gripper_joints": 1,
+        "finger_links": ["finger"],
+        "gripper_joint_names": ["robotiq_85_left_knuckle_joint"],
+        "gripper_open": 0.8,
+        "gripper_close": 0.0,
+    }
+    ov = rt.task_retarget_overrides(spec)
+    assert ov["gripper"]["joint_names"] == ["robotiq_85_left_knuckle_joint"]
+    assert ov["gripper"]["open"] == {"robotiq_85_left_knuckle_joint": 0.8}
+    assert ov["gripper"]["close"] == {"robotiq_85_left_knuckle_joint": 0.0}
+
+
+# --------------------------------------------------------------------------- #
+# task_robot_compatibility (honesty: a gripperless arm cannot lift)
+# --------------------------------------------------------------------------- #
+def test_compat_stock_and_none_are_compatible():
+    for spec in (None, {"robot_source": "stock_franka"}):
+        c = rt.task_robot_compatibility(spec, task_kind="lift")
+        assert c["task_robot_compatible"] is True
+        assert c["has_gripper"] is True
+
+
+def test_compat_gripperless_arm_cannot_lift():
+    c = rt.task_robot_compatibility(_ur_spec(), task_kind="lift")
+    assert c["task_robot_compatible"] is False
+    assert c["has_gripper"] is False
+    assert "gripper" in c["reason"].lower()
+    assert c["requirements"]  # non-empty customer requirements
+
+
+def test_compat_gripper_bearing_arm_can_lift():
+    spec = _ur_spec(n_gripper_joints=2, finger_links=["lf", "rf"])
+    c = rt.task_robot_compatibility(spec, task_kind="lift")
+    assert c["task_robot_compatible"] is True
+    assert c["has_gripper"] is True
+
+
+def test_compat_non_grasping_task_does_not_require_gripper():
+    # A reach/navigation task does not structurally need a gripper.
+    c = rt.task_robot_compatibility(_ur_spec(), task_kind="reach")
+    assert c["task_robot_compatible"] is True
+
+
+def test_compat_explicit_has_gripper_flag_wins():
+    c = rt.task_robot_compatibility(_ur_spec(has_gripper=True), task_kind="lift")
+    assert c["task_robot_compatible"] is True
+    assert c["has_gripper"] is True
+
+
 def test_module_source_is_self_contained():
     src = rt.module_source()
     # Shipped into the Isaac container, so it must carry the helpers + register.
     assert "def robot_spec_from_env" in src
     assert "def robot_articulation_overrides" in src
+    assert "def task_retarget_overrides" in src
+    assert "def task_robot_compatibility" in src
     assert "def register(" in src
 
 
@@ -121,3 +262,9 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     assert "ROBOT_TRAIN_DONE" in s
     # refuses a silent stock fallback when a customer USD was requested
     assert "ROBOT_USD_MISMATCH" in s
+    # surfaces the retarget plan + the honest task/robot compatibility verdict
+    assert "task_retarget_overrides" in s
+    assert "task_robot_compatibility" in s
+    assert "ROBOT_COMPAT" in s
+    assert "ROBOT_TASK_INCOMPATIBLE" in s
+    assert "task_robot_compatible=" in s
