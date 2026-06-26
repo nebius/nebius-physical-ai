@@ -88,6 +88,32 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "create_vlm_rl_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:vlm[_\s-]?rl|vlm\s+rl|rl[_\s-]?vlm)\b"
+            r"|\b(?:vlm[_\s-]?rl|rl[_\s-]?vlm)\b.{0,120}\b(?:workflow|yaml|spec|loop)\b"
+            r"|\b(?:outer|inner)\b.{0,80}\b(?:loop|iteration)\b.{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:outer\s+loop|inner\s+loop)\b.{0,80}\b(?:gate|decision|promote)\b"
+            r"|\b(?:create|generate|build|make)\b.{0,80}\b(?:vlm|critic)\b.{0,80}\b(?:gate|loop|workflow)\b"
+            r"|\b(?:policy\s+rollout|heldout\s+eval)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "create_gate_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:token[_\s-]?factory|tokenfactory)\b"
+            r"|\b(?:token[_\s-]?factory|tokenfactory)\b.{0,80}\b(?:workflow|yaml|spec|gate)\b"
+            r"|\b(?:quality[_\s-]?gate|cosmos[_\s-]?gate|augment[_\s-]?gate)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b"
+            r"|\b(?:create|generate|build|make)\b.{0,80}\b(?:quality|augment)\b.{0,80}\b(?:gate|loop|workflow)\b"
+            r"|\breason[_\s-]?scene\b.{0,80}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:scene\s+reasoning|cosmos\s+reason)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "create_workflow",
         re.compile(
             r"\b(?:create|generate|build|make|draft|compose|write)\b"
@@ -100,6 +126,18 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:2[\s-]?step|two[\s-]?step)\b"
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
             r".{0,40}\b(?:workflow|yaml|spec)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "list_recordings",
+        re.compile(
+            r"\b(?:list|show|view|browse|get|fetch)\b.{0,80}\b(?:recordings?|run\s+history|runs?)\b"
+            r"|\b(?:list|show|view|browse|get|fetch)\b.{0,80}\.rrd\b"
+            r"|\b(?:recordings?|run\s+history|past\s+runs?|available\s+runs?)\b"
+            r"|\b(?:switch|load|open)\b.{0,80}\b(?:recording|run)\b.{0,80}\b(?:from\s+history|another|different|other)\b"
+            r"|\b(?:other\s+run|different\s+run|previous\s+run|past\s+run)\b"
+            r"|\bavailable\b.{0,40}\.rrd\b",
             re.IGNORECASE,
         ),
     ),
@@ -150,6 +188,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 INTENT_APIS: dict[str, list[str]] = {
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
     "create_workflow": ["workflows/draft", "workflows/validate"],
+    "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
@@ -477,10 +518,10 @@ def format_configure_s3() -> str:
     )
 
 
-def format_generate_workflow(yaml_text: str, validation: dict[str, Any]) -> str:
+def format_generate_workflow(yaml_text: str, validation: dict[str, Any], *, template: str = "two-step") -> str:
     from npa.cli.agent_workflow import format_workflow_chat_reply
 
-    return format_workflow_chat_reply(yaml_text, validation)
+    return format_workflow_chat_reply(yaml_text, validation, template=template)
 
 
 def format_cosmos3_setup() -> str:
@@ -582,12 +623,32 @@ def build_grounded_reply(
                     "name": str(draft.get("name") or "unnamed"),
                     "states": draft.get("states") or [],
                 }
-            return format_generate_workflow(yaml_text, validation)
+            return format_generate_workflow(yaml_text, validation, template="two-step")
         from npa.cli.agent_workflow import generate_sim2real_two_step_yaml, validate_workflow_yaml_text
 
         generated = generate_sim2real_two_step_yaml()
         validation = validate_workflow_yaml_text(generated)
-        return format_generate_workflow(generated, validation)
+        return format_generate_workflow(generated, validation, template="two-step")
+    if intent == "create_vlm_rl_workflow":
+        from npa.cli.agent_workflow import generate_vlm_rl_loop_yaml, validate_workflow_yaml_text
+
+        generated = generate_vlm_rl_loop_yaml()
+        validation = validate_workflow_yaml_text(generated)
+        return format_generate_workflow(generated, validation, template="vlm-rl-loop")
+    if intent == "create_gate_workflow":
+        from npa.cli.agent_workflow import generate_token_factory_gate_yaml, validate_workflow_yaml_text
+
+        generated = generate_token_factory_gate_yaml()
+        validation = validate_workflow_yaml_text(generated)
+        return format_generate_workflow(generated, validation, template="token-factory-gate")
+    if intent == "list_recordings":
+        return (
+            "**Run history**: use `GET /api/sim-viz/recordings` to list `.rrd` files or "
+            "`GET /api/sim-viz/runs` to list run-scoped history.\n"
+            "- Click **Load run data** or select a run from the **Known runs** dropdown to switch the Rerun viewer.\n"
+            "- Each entry shows run_id, stage, camera, and last-updated timestamp.\n"
+            "- The current active run is highlighted in the Run History panel."
+        )
     return format_sim2real_status(state, rerun_ready=rerun_ready)
 
 
