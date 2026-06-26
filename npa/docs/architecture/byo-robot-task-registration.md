@@ -1,7 +1,11 @@
 # BYO-Robot Task Registration (Isaac-Lab)
 
-_Status: design + opt-in scaffolding. Default behavior is byte-for-byte
-unchanged; the BYO-robot training path is gated behind `NPA_BYO_ROBOT_TASK=1`._
+_Status: design + opt-in scaffolding + task retargeting. Default behavior is
+byte-for-byte unchanged; the BYO-robot training path is gated behind
+`NPA_BYO_ROBOT_TASK=1`. `register()` now swaps the articulation **and** retargets
+the Franka-hardcoded ee_frame / action / command names onto the customer robot;
+the remaining blocker for a real custom robot is task/reward semantics (a gripper
+for the lift task) — see "Task retargeting" and `custom-asset-test-results.md`._
 
 ## Problem
 
@@ -61,6 +65,40 @@ The variant maps these onto the Lift task's `scene.robot` `ArticulationCfg`:
 A `stock_franka` spec produces **no overrides** (the helper returns an empty dict),
 so the variant degenerates to the stock task and the proven path is untouched.
 
+## Task retargeting (the seam's core gap, now closed for links/joints)
+
+Swapping the articulation USD is necessary but not sufficient: the stock Lift task
+cfg **hardcodes Franka link/joint names** in three places that break on a different
+arm (`Failed to create frame transformer ... panda_link0 ... No matching prims`).
+`task_retarget_overrides(spec)` (pure, unit-tested) maps the robot_spec to those
+renames, and `register()` applies them post-boot in `__post_init__`:
+
+| Franka-hardcoded cfg | retarget source | applied to |
+|---|---|---|
+| `scene.ee_frame` source prim `.../Robot/panda_link0` | `base_link` | FrameTransformer `prim_path` |
+| `scene.ee_frame` target prim `.../Robot/panda_hand`, name `end_effector` | `ee_link` | each `target_frames[*].prim_path` (name kept) |
+| `actions.arm_action.joint_names = ["panda_joint.*"]` | `joint_names[:n_arm_joints]` | arm action joint names (or `body_name` for an IK action) |
+| `actions.gripper_action` joints/open/close `panda_finger.*` | `finger`/`gripper_joint_names` + `gripper_open/close` | gripper action (only when the spec declares a gripper) |
+| `commands.object_pose.body_name = "panda_hand"` | `ee_link` | command resolution body |
+
+Every field a spec omits resolves to the **stock Franka** value, so a stock-Franka
+(or field-less) spec yields the panda_* names verbatim — the Franka path is
+byte-for-byte. Each term is applied defensively (guarded `hasattr`/try) and the
+applied/skipped set is logged as `ROBOT_RETARGET applied=[...] skipped=[...]`, so a
+cfg-shape change on a newer Isaac-Lab degrades to a recorded skip, not a crash.
+`register()` also keeps `effort_limit_sim` in lockstep with `effort_limit` (Isaac
+2.x rejects a mismatch on implicit actuators — the first non-Franka break).
+
+### Honest task/robot compatibility
+
+`task_robot_compatibility(spec, task_kind)` is a separate, pure gate: a cube-lift
+(and any manipulation task built on the stock Lift reward) **requires an actuated
+gripper**. A gripperless arm (a bare UR/Flexiv) cannot lift no matter how the links
+are renamed, so the path reports `task_robot_compatible=false` with the reason and
+the customer requirements (`ROBOT_COMPAT` / `ROBOT_TASK_INCOMPATIBLE` markers, and
+a `task_robot_compatible=` field in `ROBOT_SUMMARY`) rather than training a policy
+that can never succeed. This is reported, never hidden.
+
 ### Pure vs. Isaac-touching split
 
 Following `isaac_physics_task.py`, the module is split so the data mapping is unit
@@ -69,9 +107,15 @@ tested off-GPU and only the registration touches Isaac:
 - **Pure (unit-tested, no torch/isaac import at module top):**
   - `robot_spec_from_env(env) -> dict | None` — read `NPA_BYO_ROBOT_SPEC_JSON`
     (and a `robot_preset` hint); return `None` when absent → stock fallback.
-  - `robot_articulation_overrides(spec) -> dict` — the table above as a plain
-    dict (`usd_path`, `init_joint_pos`, `stiffness`, `damping`, `effort_limit`,
-    `ee_link`). Empty dict for a stock-Franka spec.
+  - `robot_articulation_overrides(spec) -> dict` — the articulation table above as
+    a plain dict (`usd_path`, `init_joint_pos`, `stiffness`, `damping`,
+    `effort_limit`, `ee_link`). Empty dict for a stock-Franka spec.
+  - `task_retarget_overrides(spec) -> dict` — the link/joint rename set
+    (`ee_frame_source`, `ee_frame_target`, `ee_frame_name`, `arm_joint_names`,
+    `command_body_name`, `gripper`). Franka-default for omitted fields; empty for a
+    stock/USD-less spec.
+  - `task_robot_compatibility(spec, task_kind) -> dict` — the honest task/robot
+    gate (`task_robot_compatible`, `has_gripper`, `reason`, `requirements`).
   - `module_source()` — this module's own source, for shipping into the container.
 - **Isaac-touching (exercised on-cluster):**
   - `register(spec) -> task_id | None` — lazily imports `gymnasium` + the Franka
@@ -109,10 +153,17 @@ does **not** solve, and must not be claimed to solve:
 - **Per-joint actuator fidelity** — a single `.*` actuator group with one
   stiffness/damping/effort value is a coarse approximation; arm-vs-gripper and
   per-joint gains are a follow-up.
-- **Task/reward retuning for a non-Franka arm** — the Lift reward terms and the
-  action/observation contract are Franka-shaped. A genuinely different arm needs a
-  validated reward and a real, well-formed robot USD (RigidBody + joints + drives);
-  swapping the USD alone does not make the lift reward meaningful.
+- **Link/joint names must be real USD prims.** Retargeting propagates the declared
+  `ee_link`/`base_link`/`joint_names`, but they must exist as prims in the staged
+  USD. (On the UR10 USD, `tool0` is a URDF tf frame, not a rigid-body prim;
+  `wrist_3_link` is the real last link — see `custom-asset-test-results.md`.)
+- **Task/reward semantics for a non-Franka arm** — link/joint *names* are now
+  retargeted, but the Lift reward and the **gripper-based grasp** are still
+  Franka-shaped. A gripperless arm is correctly reported `task_robot_compatible=false`
+  (it physically cannot lift); a genuinely different *manipulator* needs a gripper
+  declared (`gripper_joint_names` + open/close) and, for arbitrary tasks, a
+  customer-declarable task + reward (gap (e)). Swapping the USD + renaming links
+  does not by itself make the lift reward meaningful.
 - **Sim-to-real transfer** — domain randomization of robot dynamics, a held-out
   *dynamics* eval, a robot-deployable policy export, and a real-world success
   metric are all still required (see `CAPABILITY.md`, gaps b–e).
@@ -132,15 +183,18 @@ The seam was tested on `npa-rtxpro-mk8s` with real GPU jobs. Full evidence:
   `TRAIN_RC=0`, checkpoint uploaded) and evals (`EVAL_OBJECT_USD_APPLIED`,
   `rollout_ok`, real `object_goal_distance`) with no rigid-body error. Set
   `NPA_BYO_ISAAC_OBJECT_USD`.
-- **Custom non-Franka ROBOT (UR10) — does NOT reach training.** Two real breaks,
-  in order: (1) the trainer has no env path to supply a robot USD (UR/Flexiv
-  presets carry no `usd_path`), so the documented path trains a Franka; (2) forcing
-  a faithful UR10 `robot_spec` in: the USD loads and the scene builds, then Isaac
-  rejects `effort_limit != effort_limit_sim` on the Franka preset's implicit
-  actuators; (3) past that, the Lift task's `ee_frame` FrameTransformer (and the
-  action/reward terms) reference Franka prims (`panda_link0`/`panda_hand`) absent
-  on a UR10 → `No matching prims were found`. `register()` swaps the articulation
-  but not the task's Franka-specific sensors/actions/rewards — confirming gap (a):
-  for training, BYO-robot is a mechanism, not yet a working custom-robot pipeline.
+- **Custom non-Franka ROBOT (UR10) — articulation + task names now retarget; the
+  remaining blocker is the gripper.** The two task-scaffolding breaks the first
+  test found are fixed: `register()` keeps `effort_limit_sim` in lockstep with
+  `effort_limit`, and `task_retarget_overrides` renames the `ee_frame`
+  FrameTransformer + arm action + command body onto the customer's links/joints
+  (`ROBOT_RETARGET applied=[ee_frame, arm_action.joint_names,
+  commands.object_pose.body_name]`). On-cluster, the `panda_link0` break is gone:
+  with `ee_link=wrist_3_link` the FrameTransformer and arm action **pass**, and the
+  run stops only at the stock gripper action (`panda_finger.*: []` on a gripperless
+  arm) — exactly what `task_robot_compatible=false` reports. A gripperless UR10
+  physically cannot lift; a real custom robot needs a gripper-bearing USD with prim
+  names that match the declared `ee_link`/`base_link`. (The Franka path is
+  unchanged: `frnoreg-*` trains to `TRAIN_RC=0` with `ROBOT_RETARGET_PLAN={}`.)
 - **Custom SCENE — not loadable.** `simready://` URIs are placeholders (never
   resolved); no scene/table USD override exists, only the manipuland object.

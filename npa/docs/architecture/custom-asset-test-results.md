@@ -62,3 +62,48 @@ seam, not a working custom-robot pipeline.
 
 _The effort_limit_sim patch used to reach break (3) was an exploratory probe and
 was reverted; the committed module reflects the shipped PR #147 state._
+
+## Update — retarget landed (breaks (2) and (3) fixed)
+
+Breaks (2) and (3) above are now fixed in `isaac_byo_robot_task.register()`:
+
+- **(2) Actuator conflict — fixed.** `register()` now sets `effort_limit_sim` in
+  lockstep with `effort_limit`, so the implicit-actuator validation no longer
+  trips on a non-Franka force range.
+- **(3) Franka-hardcoded task scaffolding — fixed.** A pure, unit-tested
+  `task_retarget_overrides(spec)` maps the robot_spec to the task cfg renames, and
+  `register()` applies them post-boot: the `ee_frame` FrameTransformer source +
+  target prim paths, the arm action joint names, and the `object_pose` command
+  body. Every field a spec omits resolves to the stock Franka name, so the Franka
+  path is byte-for-byte unchanged.
+
+**On-cluster evidence (npa-rtxpro-mk8s, `npa-isaac-lab:2.3.2.post1`, 256 envs):**
+
+| Run | ee_link declared | Result | Where it stops |
+| --- | --- | --- | --- |
+| `frnoreg-*`, `frnoreg2-*` (Franka, stock_franka) | — | **TRAIN_RC=0**, `ckpts=3`, uploaded | trains to completion; `ROBOT_RETARGET_PLAN={}` (no-op) — no regression |
+| `urretgt-*` (UR10) | `tool0` | failed | `frame transformer ... path '.../Robot/tool0'. No matching prims` — retarget now targets the **customer** `tool0` (panda_link0 break **gone**); UR10 USD has no `tool0` *prim* (URDF tf frame ≠ rigid link) |
+| `urwrist3-*` (UR10) | `wrist_3_link` | failed | FrameTransformer + arm action **pass**; stops at the gripper: `Not all regular expressions matched! panda_finger.*: []` — the stock BinaryJointPositionAction has no fingers on a gripperless arm |
+
+Both UR10 runs emit `ROBOT_RETARGET applied=['ee_frame', 'arm_action.joint_names',
+'commands.object_pose.body_name'] skipped=['gripper_action(no-gripper)']` and
+`task_robot_compatible=false` with the gripper reason — the honesty gate predicted
+the exact final blocker.
+
+**What this proves and what still blocks a real custom robot:**
+
+1. The retarget chain works: the `panda_link0`/`panda_hand` break the test found is
+   gone, and a non-Franka arm now reaches the policy as far as its embodiment
+   allows.
+2. **Declared link/joint names must be real USD prims.** `tool0` is a URDF tf
+   frame, not a rigid-body prim in the UR10 USD; `wrist_3_link` is. Customers must
+   declare `ee_link`/`base_link` that exist as prims in their staged USD.
+3. **A gripperless arm still cannot lift** — by physics, not by plumbing. Closing
+   this needs a parallel-jaw (or equivalent) gripper actuated in sim, the gripper
+   finger joint names (`gripper_joint_names`) to retarget the BinaryJointPositionAction,
+   `gripper_open`/`gripper_close` targets, and an action space matching arm DoF +
+   gripper. This is reported, not hidden (gap (e): customer-declarable task+reward).
+
+_Reproduction: `ca_driver.py train <RID> - scratchpad/ur10_retarget.json` (tool0)
+and `scratchpad/ur10_wrist3.json` (wrist_3_link); Franka no-regression via
+`scratchpad/franka_noregress.json` (a stock_franka payload)._
