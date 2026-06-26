@@ -24,7 +24,14 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("mark rerun blob iframe passed before finishing") == "watch_sim"
     assert match_chat_intent("rerun blob-iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("rerun: blob/iframe; wait -> SUCCESS") == "watch_sim"
+    assert match_chat_intent("keep rerun blob iframe healthy before finishing") == "watch_sim"
     assert match_chat_intent("Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent.") == "watch_sim"
+    assert (
+        match_chat_intent(
+            "Enhance NPA agent chat intent routing and Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent after changes."
+        )
+        == "watch_sim"
+    )
     assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"

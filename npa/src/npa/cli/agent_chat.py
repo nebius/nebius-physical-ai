@@ -17,7 +17,7 @@ STATUS_QUERY_RE = re.compile(
 
 _WATCH_SUCCESS_GATE_RE = re.compile(
     r"\b(?:rerun|blob|iframe|rrd(?:-blob)?)\b[\s:;,_\-/+]*(?:blob|iframe|mount|rrd)?"
-    r".{0,240}\b(?:until|till|when|once|retry|wait)\b.{0,240}\b(?:success|successful|ready|succeeded|passed|green)\b"
+    r".{0,240}\b(?:until|till|when|once|retry|wait)\b.{0,240}\b(?:success|successful|ready|succeeded|passed|green|healthy)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
     r"|\brrd[_ -]?uri\b.{0,240}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
@@ -27,10 +27,10 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
 )
 
 _RERUN_SUCCESS_PHRASE_RE = re.compile(
-    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,300}\b(?:until|till|when|once|retry|wait|keep trying)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green)\b"
-    r"|\b(?:until|till|when|once)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green)\b.{0,300}\b(?:rerun|rrd|blob|iframe|mount)\b"
-    r"|\b(?:blob|iframe|mount)\b.{0,300}\b(?:both|all)\b.{0,120}\b(?:success|successful|ready)\b"
-    r"|\b(?:both|all)\b.{0,300}\b(?:blob|iframe|mount)\b.{0,120}\b(?:success|successful|ready)\b",
+    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,300}\b(?:until|till|when|once|retry|wait|keep trying)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green|healthy)\b"
+    r"|\b(?:until|till|when|once)\b.{0,300}\b(?:success|successful|ready|succeeded|passed|green|healthy)\b.{0,300}\b(?:rerun|rrd|blob|iframe|mount)\b"
+    r"|\b(?:blob|iframe|mount)\b.{0,300}\b(?:both|all)\b.{0,120}\b(?:success|successful|ready|healthy)\b"
+    r"|\b(?:both|all)\b.{0,300}\b(?:blob|iframe|mount)\b.{0,120}\b(?:success|successful|ready|healthy)\b",
     re.IGNORECASE,
 )
 
@@ -195,7 +195,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
         and any(token in lowered for token in ("until", "till", "when", "once", "retry", "wait"))
         and any(
             token in lowered
-            for token in ("success", "successful", "succeeded", "passed", "green", "ready")
+            for token in ("success", "successful", "succeeded", "passed", "green", "ready", "healthy")
         )
     ):
         return True
@@ -250,8 +250,10 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "succeeded",
             "passed",
             "green",
+            "healthy",
             "until success",
             "until ready",
+            "until healthy",
             "until both",
             "both success",
             "both are success",
