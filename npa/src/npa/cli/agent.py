@@ -2514,6 +2514,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         throw lastErr || new Error("Rerun iframe mount did not reach SUCCESS");
       }}
+      async function waitForRerunSuccess(camera, options) {{
+        const opts = options || {{}};
+        const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
+        const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
+        const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
+        const start = Date.now();
+        let lastErr = null;
+        while (Date.now() - start < deadlineMs) {{
+          try {{
+            const status = await loadJson("/api/sim-viz/status");
+            const selectedCamera = String((status && status.camera) || camera || "workspace");
+            if (status && status.rrd_uri) {{
+              await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop);
+              if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
+                return status;
+              }}
+            }}
+          }} catch (err) {{
+            lastErr = err;
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
+        }}
+        if (lastErr) {{
+          throw lastErr;
+        }}
+        throw new Error("Timed out waiting for rerun blob/iframe SUCCESS");
+      }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
         return mountRerunIframeUntilSuccess(camera, 6);
@@ -2521,7 +2548,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         const simViz = await waitForRerunReady();
-        await mountRerunIframeUntilSuccess(String(simViz.camera || cam), 10);
+        await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
         return true;
       }}
       async function pollSimVizUntilRrd(maxAttempts, delayMs) {{
@@ -2546,7 +2573,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
-        await mountRerunIframeUntilSuccess(camera, 10);
+        await waitForRerunSuccess(camera, {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
         const simViz = await loadJson("/api/sim-viz/status");
         if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
           const stage = String(simViz.stage || "demo");
@@ -2791,7 +2818,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ camera }}),
         }});
         await waitForRerunReady();
-        await mountRerunIframeUntilSuccess(camera, 10);
+        await waitForRerunSuccess(camera, {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
         const entity = String(data.entity_path || ("world/cameras/" + camera));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
@@ -2817,7 +2844,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
         const simViz = await pollSimVizUntilRrd(60, 1500);
         if (simViz && simViz.rrd_uri) {{
-          await mountRerunIframeUntilSuccess(simViz.camera || "workspace", 10);
+          await waitForRerunSuccess(simViz.camera || "workspace", {{ deadlineMs: 180000, mountAttemptsPerLoop: 5 }});
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
             throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");
           }}
@@ -3508,6 +3535,7 @@ def verify_live_cmd(
         "robot_preset": "franka",
         "sim_backend": "isaac",
         "scene_spec_uri": "stock://scene/default",
+        "assets_uri": "",
         "robot_spec_uri": "stock://robot/franka",
         "cameras_uri": "stock://cameras/default",
         "props": ["cube"],
@@ -3533,8 +3561,16 @@ def verify_live_cmd(
         _fail(f"sim asset selection round-trip failed: {exc}")
     if not isinstance(selected_payload, dict):
         _fail("sim asset selection GET did not return JSON object")
-    if selected_payload.get("scene_spec_uri") != selection_body["scene_spec_uri"]:
-        _fail("sim asset selection round-trip did not persist scene_spec_uri")
+    for key in (
+        "scene_spec_uri",
+        "assets_uri",
+        "robot_spec_uri",
+        "cameras_uri",
+        "robot_preset",
+        "sim_backend",
+    ):
+        if selected_payload.get(key) != selection_body[key]:
+            _fail(f"sim asset selection round-trip did not persist {key}")
 
     try:
         submit_resp = httpx.post(

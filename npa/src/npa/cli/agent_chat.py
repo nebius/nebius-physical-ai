@@ -15,6 +15,14 @@ STATUS_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_WATCH_SUCCESS_GATE_RE = re.compile(
+    r"\b(?:rerun|blob|iframe|rrd(?:-blob)?)\b[\s:;,_\-/+]*(?:blob|iframe|mount|rrd)?"
+    r".{0,80}\b(?:until|when|once|retry|wait)\b.{0,80}\b(?:success|ready|succeeded|passed|green)\b"
+    r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
+    r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b",
+    re.IGNORECASE,
+)
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "watch_sim",
@@ -122,10 +130,54 @@ INTENT_APIS: dict[str, list[str]] = {
 }
 
 
+def _success_gated_watch_request(lowered: str) -> bool:
+    """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
+    if _WATCH_SUCCESS_GATE_RE.search(lowered):
+        return True
+    has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd"))
+    has_success_gate = any(
+        token in lowered
+        for token in (
+            "success",
+            "ready",
+            "succeeded",
+            "passed",
+            "green",
+            "until success",
+            "until ready",
+            "until both",
+            "both success",
+            "both are success",
+            "rerun_blob_success",
+            "rerun_mount_success",
+            "iframe mount success",
+            "rerun blob iframe until success",
+        )
+    )
+    return has_rerun_surface and has_success_gate
+
+
 def match_chat_intent(user_text: str) -> str | None:
     text = str(user_text or "").strip()
     if not text:
         return None
+    lowered = text.lower()
+    if _success_gated_watch_request(lowered):
+        return "watch_sim"
+    # Keep watch intent precedence over load-franka whenever the user asks to
+    # monitor/retry the rerun view (especially with SUCCESS gating language).
+    if (
+        ("franka" in lowered or "load franka" in lowered)
+        and (
+            "watch" in lowered
+            or "monitor" in lowered
+            or "track" in lowered
+            or "blob" in lowered
+            or "iframe" in lowered
+            or "until success" in lowered
+        )
+    ):
+        return "watch_sim"
     for intent, pattern in _INTENT_RULES:
         if pattern.search(text):
             return intent
@@ -345,13 +397,16 @@ def build_grounded_reply(
             + f"\n- **watch_stage**: `{stage}` for **run_id** `{run_id}`."
             + f"\n- **watch_mode**: `{mode}`."
             + f"\n- **rrd_uri**: `{rrd_uri}`."
+            + "\n- Start from `GET /api/sim-viz/status` and surface `watch_url`, `watch_stage`, and `run_id`."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` appears."
             + "\n- Then keep retrying **blob fetch + iframe mount** until both report **SUCCESS**."
             + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
             + "\n- If prompted as `Rerun blob iframe until SUCCESS`, follow the same two-signal gate above."
+            + "\n- Re-check `/api/sim-viz/status` after each mount loop and keep gating on the active `run_id`."
             + "\n- If either status is not `SUCCESS`, retry mounting `/rerun/` and fetching `/api/sim-viz/rrd-blob`."
             + "\n- Use `/api/sim-viz/rrd` as fallback source if blob fetch has transient failures."
+            + "\n- Keep looping until both checks remain `SUCCESS` for the active run/stage badge."
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)

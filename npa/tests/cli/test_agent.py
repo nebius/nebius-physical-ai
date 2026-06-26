@@ -355,7 +355,16 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 }
             )
         if url_s.endswith("/api/sim-assets/selection"):
-            return _Resp({"scene_spec_uri": "stock://scene/default"})
+            return _Resp(
+                {
+                    "scene_spec_uri": "stock://scene/default",
+                    "assets_uri": "",
+                    "robot_spec_uri": "stock://robot/franka",
+                    "cameras_uri": "stock://cameras/default",
+                    "robot_preset": "franka",
+                    "sim_backend": "isaac",
+                }
+            )
         if url_s.endswith("/api/session"):
             return _Resp({"chat_history": [], "selection": {}})
         if url_s.endswith("/api/sim-viz/status"):
