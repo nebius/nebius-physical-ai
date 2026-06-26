@@ -492,6 +492,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("watch rrduri for active runid until SUCCESS") == "watch_sim"
     assert match_chat_intent("keep monitoring rerun until rrd_uri is set") == "watch_sim"
     assert match_chat_intent("watchrrduriuntilsuccess for runid agent-run-123") == "watch_sim"
+    assert match_chat_intent("rrduriuntilsuccess for runid agent-run-123") == "watch_sim"
+    assert match_chat_intent("runidrrduriuntilsuccess") == "watch_sim"
     assert match_chat_intent("runidscoped rerun blob iframe until success") == "watch_sim"
     assert match_chat_intent("rrdurinonempty until SUCCESS for active runid") == "watch_sim"
     assert match_chat_intent("load franka in rerun and keep blob iframe until SUCCESS") == "watch_sim"

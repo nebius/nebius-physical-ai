@@ -153,6 +153,8 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("rrduripopulated", "rrd uri populated")
     lowered = lowered.replace("rrduri", "rrd uri")
     lowered = lowered.replace("runid", "run id")
+    lowered = lowered.replace("rrduriuntilsuccess", "rrd uri until success")
+    lowered = lowered.replace("runidrrduriuntilsuccess", "run id rrd uri until success")
     lowered = lowered.replace("rrdurinonempty", "rrd uri non-empty")
     lowered = lowered.replace("rrduriset", "rrd uri set")
     lowered = lowered.replace("runidscoped", "run id scoped")
@@ -186,9 +188,11 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rerunblobsuccess",
             "runidscopedrerunblobiframeuntilsuccess",
             "watchrrduriuntilsuccess",
+            "rrduriuntilsuccess",
             "rrdurinonemptyuntilsuccess",
             "rrdurisetuntilsuccess",
             "rrduripopulateduntilsuccess",
+            "runidrrduriuntilsuccess",
         )
     ):
         return True
