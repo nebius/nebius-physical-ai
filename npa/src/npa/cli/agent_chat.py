@@ -8,26 +8,26 @@ from typing import Any
 
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
-    r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim\s+viz))"
+    r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)))"
     r"|\b(?:sim\s*[- ]?2\s*[- ]?real|workflow|rerun)\b.*\bstatus\b"
-    r"|\bstatus\b.*\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|stage|run)\b"
+    r"|\bstatus\b.*\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)|stage|run)\b"
     r"|\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b",
     re.IGNORECASE,
 )
 
 _WATCH_SUCCESS_GATE_RE = re.compile(
     r"\b(?:rerun|blob|iframe|rrd(?:-blob)?)\b[\s:;,_\-/+]*(?:blob|iframe|mount|rrd)?"
-    r".{0,80}\b(?:until|when|once|retry|wait)\b.{0,80}\b(?:success|ready|succeeded|passed|green)\b"
+    r".{0,80}\b(?:until|till|when|once|retry|wait)\b.{0,80}\b(?:success|successful|ready|succeeded|passed|green)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b",
     re.IGNORECASE,
 )
 
 _RERUN_SUCCESS_PHRASE_RE = re.compile(
-    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,120}\b(?:until|when|once|retry|wait|keep trying)\b.{0,120}\b(?:success|ready|succeeded|passed|green)\b"
-    r"|\b(?:until|when|once)\b.{0,120}\b(?:success|ready|succeeded|passed|green)\b.{0,120}\b(?:rerun|rrd|blob|iframe|mount)\b"
-    r"|\b(?:blob|iframe|mount)\b.{0,120}\b(?:both|all)\b.{0,40}\b(?:success|ready)\b"
-    r"|\b(?:both|all)\b.{0,120}\b(?:blob|iframe|mount)\b.{0,40}\b(?:success|ready)\b",
+    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,120}\b(?:until|till|when|once|retry|wait|keep trying)\b.{0,120}\b(?:success|successful|ready|succeeded|passed|green)\b"
+    r"|\b(?:until|till|when|once)\b.{0,120}\b(?:success|successful|ready|succeeded|passed|green)\b.{0,120}\b(?:rerun|rrd|blob|iframe|mount)\b"
+    r"|\b(?:blob|iframe|mount)\b.{0,120}\b(?:both|all)\b.{0,40}\b(?:success|successful|ready)\b"
+    r"|\b(?:both|all)\b.{0,120}\b(?:blob|iframe|mount)\b.{0,40}\b(?:success|successful|ready)\b",
     re.IGNORECASE,
 )
 
@@ -142,6 +142,11 @@ def _normalize_intent_text(text: str) -> str:
     """Normalize user text so intent routing survives punctuation/newlines."""
     lowered = str(text or "").lower()
     lowered = lowered.replace("\n", " ")
+    # Normalize common alias/camelcase variants before regex matching.
+    lowered = re.sub(r"\bsim[_\s-]?viz\b", "sim viz", lowered)
+    lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
+    lowered = re.sub(r"\brerun[_\s-]?blob\b", "rerun blob", lowered)
+    lowered = re.sub(r"\brerun[_\s-]?mount\b", "rerun mount", lowered)
     lowered = re.sub(r"[^\w\s/+.-]+", " ", lowered)
     lowered = re.sub(r"\s+", " ", lowered).strip()
     return lowered
@@ -157,6 +162,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
         for token in (
             "success",
             "ready",
+            "successful",
             "succeeded",
             "passed",
             "green",
