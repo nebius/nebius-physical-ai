@@ -273,26 +273,19 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
         return {"ok": False, "status": "invalid", "error": f"initial state {initial!r} not found"}
 
     catalog = tool_refs or frozenset()
-    visited: set[str] = set()
-    current = initial
-    while current:
-        if current in visited:
-            return {"ok": False, "status": "invalid", "error": f"cycle detected at state {current!r}"}
-        visited.add(current)
-        entry = states_raw.get(current)
+    for state_name, entry in states_raw.items():
         if not isinstance(entry, dict):
-            return {"ok": False, "status": "invalid", "error": f"state {current!r} must be a mapping"}
+            return {"ok": False, "status": "invalid", "error": f"state {state_name!r} must be a mapping"}
         tool_ref = str(entry.get("toolRef") or "").strip()
         if tool_ref and catalog and tool_ref not in catalog:
             return {"ok": False, "status": "invalid", "error": f"unknown toolRef {tool_ref!r}"}
-        if entry.get("terminal"):
-            break
-        nxt = str(entry.get("next") or "").strip()
-        if not nxt:
-            break
-        if nxt not in states_raw:
-            return {"ok": False, "status": "invalid", "error": f"next state {nxt!r} not found"}
-        current = nxt
+        for edge in _state_edges(entry):
+            if edge not in states_raw:
+                return {
+                    "ok": False,
+                    "status": "invalid",
+                    "error": f"state {state_name!r} references missing state {edge!r}",
+                }
 
     return {
         "ok": True,
@@ -321,8 +314,11 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
 
     steps: list[dict[str, Any]] = []
     visited: set[str] = set()
-    current = initial
-    while current and current not in visited:
+    queue: list[str] = [initial]
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
         visited.add(current)
         entry = states_raw[current]
         steps.append(
@@ -333,9 +329,9 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
                 "resources": str(entry.get("resources") or "default"),
             }
         )
-        if entry.get("terminal"):
-            break
-        current = str(entry.get("next") or "").strip()
+        for edge in _state_edges(entry):
+            if edge not in visited:
+                queue.append(edge)
 
     return {
         "ok": True,
@@ -346,6 +342,37 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
         "steps": steps,
         "mode": "lightweight",
     }
+
+
+def _state_edges(entry: dict[str, Any]) -> list[str]:
+    edges: list[str] = []
+    nxt = str(entry.get("next") or "").strip()
+    if nxt:
+        edges.append(nxt)
+
+    transitions = entry.get("transitions")
+    if isinstance(transitions, dict):
+        for target in transitions.values():
+            label = str(target or "").strip()
+            if label:
+                edges.append(label)
+    elif isinstance(transitions, list):
+        for item in transitions:
+            if isinstance(item, dict):
+                label = str(item.get("next") or item.get("target") or "").strip()
+                if label:
+                    edges.append(label)
+
+    sequence = entry.get("sequence")
+    if isinstance(sequence, list):
+        for item in sequence:
+            if isinstance(item, dict):
+                label = str(item.get("state") or item.get("next") or "").strip()
+                if label:
+                    edges.append(label)
+            elif isinstance(item, str) and item.strip():
+                edges.append(item.strip())
+    return edges
 
 
 def _write_temp_yaml(yaml_text: str) -> Path:
