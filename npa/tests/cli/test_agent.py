@@ -424,7 +424,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                         "grounded": True,
                         "reply": "**Generated npa.workflow/v0.0.1 spec**",
                         "workflow_yaml": "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: sim2real-two-step\nstates:\n  augment: {}\n  envgen: {}\n",
-                        "apis_used": ["workflows/npa/draft", "workflows/npa/validate"],
+                        "apis_used": ["workflows/draft", "workflows/validate"],
                     }
                 )
             return _Resp(

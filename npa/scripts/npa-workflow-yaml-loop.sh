@@ -2,6 +2,7 @@
 # Loop until NPA agent workflow YAML feature passes unit + live checks.
 # tmux new -s npa-workflow-yaml-loop ./npa/scripts/npa-workflow-yaml-loop.sh
 set -euo pipefail
+set -o pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"

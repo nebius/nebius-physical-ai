@@ -931,10 +931,10 @@ def _agent_system_prompt() -> str:
         "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
-        "- GET/PUT /api/workflows/npa/draft — workflow YAML draft in session",
-        "- POST /api/workflows/npa/validate — validate npa.workflow/v0.0.1 YAML",
-        "- POST /api/workflows/npa/plan — dry-run plan-spec for workflow YAML",
-        "- POST /api/workflows/npa/submit — validate + plan workflow YAML (validate-only on agent VM)",
+        "- GET/POST /api/workflows/draft — workflow YAML draft in session",
+        "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 YAML",
+        "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
+        "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
         "- GET /api/tools — workbench toolRef catalog",
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
@@ -1112,6 +1112,9 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
         payload["workflow_yaml"] = workflow_yaml
     if isinstance(workflow_validation, dict):
         payload["workflow_validation"] = workflow_validation
+        draft = _workflow_draft_from_state(_load_state())
+        if isinstance(draft, dict) and draft.get("yaml"):
+            payload["workflow_draft"] = draft
     return payload
 
 @app.post("/chat")
@@ -2531,8 +2534,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function uploadWorkflowYaml() {{
         const yaml = currentWorkflowYaml();
         if (!yaml) throw new Error("Paste or generate workflow YAML first");
-        const data = await apiJson("/api/workflows/npa/draft", {{
-          method: "PUT",
+        const data = await apiJson("/api/workflows/draft", {{
+          method: "POST",
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ yaml }}),
         }});
@@ -4174,7 +4177,7 @@ def verify_live_cmd(
         _fail("create-workflow chat yaml missing sim2real stages")
     try:
         wf_validate = httpx.post(
-            f"{agent_base}/api/workflows/npa/validate",
+            f"{agent_base}/api/workflows/validate",
             auth=(auth_user, auth_password),
             json={"yaml": wf_yaml},
             timeout=15.0,

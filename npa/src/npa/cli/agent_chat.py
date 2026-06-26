@@ -149,7 +149,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 INTENT_APIS: dict[str, list[str]] = {
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
-    "create_workflow": ["workflows/npa/draft", "workflows/npa/validate"],
+    "create_workflow": ["workflows/draft", "workflows/validate"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],

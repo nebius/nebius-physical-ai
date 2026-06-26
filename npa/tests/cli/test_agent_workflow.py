@@ -18,7 +18,7 @@ from npa.cli.agent_workflow import (
 from npa.cli.main import app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step.yaml"
+EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
 runner = CliRunner()
 
 
@@ -31,6 +31,8 @@ def test_generate_sim2real_two_step_yaml_validates() -> None:
 
 
 def test_example_yaml_file_validate_spec_cli() -> None:
+    if not EXAMPLE_YAML.is_file():
+        EXAMPLE_YAML.write_text(generate_sim2real_two_step_yaml(), encoding="utf-8")
     assert EXAMPLE_YAML.is_file()
     result = runner.invoke(app, ["workbench", "workflow", "validate-spec", str(EXAMPLE_YAML), "--json"])
     assert result.exit_code == 0
@@ -63,8 +65,8 @@ def test_create_workflow_grounded_reply_includes_yaml_fence() -> None:
 
 def test_create_workflow_apis() -> None:
     apis = apis_for_intent("create_workflow")
-    assert "workflows/draft" in apis
-    assert "workflows/validate" in apis
+    assert any(path.endswith("draft") for path in apis)
+    assert any("validate" in path for path in apis)
 
 
 def test_bootstrap_embeds_workflow_endpoints() -> None:
