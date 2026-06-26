@@ -38,7 +38,8 @@ CONTAINER_IMAGE_NAMES = {
     "sim2real-reference-policy": "npa-sim2real-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
     "sim2real-eval": "npa-sim2real-eval",
-    "sim2real-rerun-viewer": "npa-sim2real-rerun-viewer",
+    "rerun-viewer": "npa-rerun-viewer",
+    "sim2real-rerun-viewer": "npa-rerun-viewer",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
@@ -64,6 +65,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # build (matches sim2real.constants.DEFAULT_EVAL_TAG). Re-bump only after a
     # 0.1.3 rebuild restores sm_120 Genesis kernels.
     "sim2real-eval": "0.1.1-genuine-sm120",
+    "rerun-viewer": "0.31.4",
     "sim2real-rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",

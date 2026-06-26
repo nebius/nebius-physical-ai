@@ -23,6 +23,9 @@ credentials.yaml
 credentials.yml
 .npa/credentials.yaml
 .npa/credentials.yml
+.npa/config.yaml
+.npa/agents/
+**/auth.env
 **/credentials/
 **/credentials.yaml
 **/credentials.yml
@@ -63,6 +66,8 @@ htmlcov/
 
 # Editor and OS files
 .DS_Store
+.cursor/
+.tmp-paste-verify-demo/
 .vscode/
 .idea/
 *.swp

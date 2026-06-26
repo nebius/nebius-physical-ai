@@ -201,6 +201,16 @@ skills:
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+  - name: npa-agent
+    category: tools
+    when_to_use: "Operate NPA agent VM, chat UX, API grounding, bootstrap deployment, and verify-live checks."
+    path: skills/tools/npa-agent/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/cli/agent.py
+      - type: cli_help
+        args: ["agent", "--help"]
+        contains: "bootstrap"
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
