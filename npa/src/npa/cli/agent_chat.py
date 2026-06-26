@@ -23,6 +23,14 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_RERUN_SUCCESS_PHRASE_RE = re.compile(
+    r"\b(?:rerun|rrd|blob|iframe|mount)\b.{0,120}\b(?:until|when|once|retry|wait|keep trying)\b.{0,120}\b(?:success|ready|succeeded|passed|green)\b"
+    r"|\b(?:until|when|once)\b.{0,120}\b(?:success|ready|succeeded|passed|green)\b.{0,120}\b(?:rerun|rrd|blob|iframe|mount)\b"
+    r"|\b(?:blob|iframe|mount)\b.{0,120}\b(?:both|all)\b.{0,40}\b(?:success|ready)\b"
+    r"|\b(?:both|all)\b.{0,120}\b(?:blob|iframe|mount)\b.{0,40}\b(?:success|ready)\b",
+    re.IGNORECASE,
+)
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "watch_sim",
@@ -132,7 +140,7 @@ INTENT_APIS: dict[str, list[str]] = {
 
 def _success_gated_watch_request(lowered: str) -> bool:
     """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
-    if _WATCH_SUCCESS_GATE_RE.search(lowered):
+    if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(lowered):
         return True
     has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd"))
     has_success_gate = any(
