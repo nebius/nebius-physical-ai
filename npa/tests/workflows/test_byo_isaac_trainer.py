@@ -167,6 +167,32 @@ def test_manifest_embeds_custom_object_usd():
     assert "env.scene.object.spawn.scale='(0.8, 0.8, 0.8)'" in args
 
 
+def test_resolve_object_usd_defaults_to_rigid_ready_cube(monkeypatch):
+    # Unset -> proven rigid-ready MultiColorCube on the public Omniverse CDN.
+    monkeypatch.delenv("NPA_ISAAC_NUCLEUS_DIR", raising=False)
+    usd = byo.resolve_object_usd("")
+    assert usd.endswith(byo.DEFAULT_OBJECT_USD_REL)
+    assert usd.startswith("https://omniverse-content-production")
+    assert usd == byo.default_isaac_object_usd()
+
+
+def test_resolve_object_usd_explicit_wins(monkeypatch):
+    monkeypatch.delenv("NPA_ISAAC_NUCLEUS_DIR", raising=False)
+    assert byo.resolve_object_usd("s3://b/custom.usd") == "s3://b/custom.usd"
+
+
+def test_resolve_object_usd_stock_sentinel_opts_out():
+    # Operator escape hatch: fall back to the built-in primitive cube.
+    for sentinel in ("stock", "none", "PRIMITIVE", " Builtin "):
+        assert byo.resolve_object_usd(sentinel) == ""
+
+
+def test_default_isaac_object_usd_honors_nucleus_override(monkeypatch):
+    monkeypatch.setenv("NPA_ISAAC_NUCLEUS_DIR", "https://mirror.internal/Isaac/")
+    usd = byo.default_isaac_object_usd()
+    assert usd == f"https://mirror.internal/Isaac/{byo.DEFAULT_OBJECT_USD_REL}"
+
+
 def test_read_generated_train_env(tmp_path):
     envs = tmp_path / "envs.jsonl"
     envs.write_text(
