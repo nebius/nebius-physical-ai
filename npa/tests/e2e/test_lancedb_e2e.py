@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from npa.clients.config import resolve_project_storage
 from npa.clients.project_credentials import s3_client_for_project, storage_env_for_project
 from npa.workbench.lancedb.bdd100k_import import manifest_checksum
 
@@ -22,9 +23,6 @@ pytestmark = pytest.mark.e2e_serverless
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMAGE = os.environ.get("NPA_E2E_LANCEDB_IMAGE", "npa-lancedb:0.30.2")
-PROJECT_ALIAS = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ALIAS", "eu-north1")
-PROJECT_ID = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ID", "project-test-00000000000")
-BUCKET = os.environ.get("NPA_E2E_LANCEDB_BUCKET", "your-bucket-name")
 POLL_INTERVAL = 5.0
 MAX_WAIT = float(os.environ.get("NPA_E2E_LANCEDB_MAX_WAIT", "300"))
 
@@ -44,13 +42,28 @@ def test_id() -> str:
 
 
 @pytest.fixture
-def lancedb_service(test_id: str) -> Iterator[dict[str, str]]:
+def lancedb_storage(e2e_project: str | None) -> dict[str, str]:
+    project_alias = os.environ.get("NPA_E2E_LANCEDB_PROJECT_ALIAS", "").strip() or (
+        e2e_project or ""
+    )
+    storage = resolve_project_storage(project_alias or None)
+    bucket_uri = os.environ.get("NPA_E2E_LANCEDB_BUCKET", "").strip() or storage.checkpoint_bucket
+    parsed = urlparse(bucket_uri if "://" in bucket_uri else f"s3://{bucket_uri}")
+    bucket = parsed.netloc
+    if not bucket:
+        pytest.fail("LanceDB e2e requires writable checkpoint bucket in project storage")
+    return {"project_alias": project_alias, "bucket": bucket}
+
+
+@pytest.fixture
+def lancedb_service(test_id: str, lancedb_storage: dict[str, str]) -> Iterator[dict[str, str]]:
     port = _free_port()
     container = f"{test_id}-container"
     endpoint = f"http://localhost:{port}"
     storage_prefix = f"{test_id}/db/"
-    storage_path = f"s3://{BUCKET}/{storage_prefix}"
-    env = _lancedb_env()
+    storage_path = f"s3://{lancedb_storage['bucket']}/{storage_prefix}"
+    env = _lancedb_env(lancedb_storage["project_alias"])
+    os.environ["NPA_E2E_LANCEDB_PROJECT_ALIAS_ACTIVE"] = lancedb_storage["project_alias"]
 
     try:
         _ensure_image(env)
@@ -89,6 +102,8 @@ def lancedb_service(test_id: str) -> Iterator[dict[str, str]]:
             "endpoint": endpoint,
             "storage_prefix": storage_prefix,
             "storage_path": storage_path,
+            "bucket": lancedb_storage["bucket"],
+            "project_alias": lancedb_storage["project_alias"],
             "env": env,
         }
     finally:
@@ -212,7 +227,12 @@ def test_lancedb_container_lifecycle_with_nebius_s3(
     assert 1 <= filtered_payload["count"] <= 10
     assert all(row["label"] == "robot" for row in filtered_payload["results"])
 
-    objects = _wait_for_s3_objects(lancedb_service["storage_prefix"], table)
+    objects = _wait_for_s3_objects(
+        lancedb_service["project_alias"],
+        lancedb_service["bucket"],
+        lancedb_service["storage_prefix"],
+        table,
+    )
     assert objects, f"no LanceDB objects found for {test_id}"
 
 
@@ -603,14 +623,16 @@ def _npa_executable() -> str:
     return "npa"
 
 
-def _lancedb_env() -> dict[str, str]:
+def _lancedb_env(project_alias: str) -> dict[str, str]:
     env = os.environ.copy()
-    env.update(storage_env_for_project(PROJECT_ALIAS))
+    env.update(storage_env_for_project(project_alias or None))
     env["AWS_REGION"] = env.get("AWS_REGION") or "auto"
     env["AWS_DEFAULT_REGION"] = env.get("AWS_DEFAULT_REGION") or env["AWS_REGION"]
     if env.get("AWS_ENDPOINT_URL"):
         env["AWS_ENDPOINT_URL_S3"] = env["AWS_ENDPOINT_URL"]
-    env["NPA_E2E_SERVERLESS_PROJECT"] = os.environ.get("NPA_E2E_SERVERLESS_PROJECT", PROJECT_ID)
+    serverless_project = os.environ.get("NPA_E2E_SERVERLESS_PROJECT", "").strip()
+    if serverless_project:
+        env["NPA_E2E_SERVERLESS_PROJECT"] = serverless_project
     return env
 
 
@@ -681,13 +703,18 @@ def _wait_for_table_listed(endpoint: str, table: str, env: dict[str, str]) -> di
     pytest.fail(_format_result(last))
 
 
-def _wait_for_s3_objects(prefix: str, table: str) -> list[str]:
-    client = s3_client_for_project(PROJECT_ALIAS)
+def _wait_for_s3_objects(
+    project_alias: str,
+    bucket: str,
+    prefix: str,
+    table: str,
+) -> list[str]:
+    client = s3_client_for_project(project_alias or None)
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         keys: list[str] = []
         paginator = client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             keys.extend(obj["Key"] for obj in page.get("Contents", []))
         matching = [key for key in keys if table in key and ".lance" in key]
         if matching:
@@ -743,7 +770,12 @@ def _registry_row(storage_path: str, name: str) -> dict[str, object]:
 
 
 def _install_s3_env() -> None:
-    env = storage_env_for_project(PROJECT_ALIAS)
+    project_alias = (
+        os.environ.get("NPA_E2E_LANCEDB_PROJECT_ALIAS_ACTIVE", "").strip()
+        or os.environ.get("NPA_E2E_LANCEDB_PROJECT_ALIAS", "").strip()
+        or None
+    )
+    env = storage_env_for_project(project_alias)
     os.environ.update(env)
     os.environ["AWS_REGION"] = os.environ.get("AWS_REGION") or "auto"
     os.environ["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION") or os.environ["AWS_REGION"]
