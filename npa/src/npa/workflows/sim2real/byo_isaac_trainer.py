@@ -357,7 +357,12 @@ def build_isaac_job_manifest(
             f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
             f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
             "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
-            '"$PY" /tmp/npa_robot/runner.py 2>&1 | tail -120\n'
+            # tee the FULL wrapper output to a file before tailing: the retarget
+            # plan + the honest task/robot compatibility verdict are printed right
+            # after AppLauncher boot, so `| tail -120` alone discards them behind
+            # the training-loop logs (and entirely when an incompatible robot fails
+            # at env build). The markers are re-dumped from this file post-run.
+            '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/npa_robot/run.log | tail -120\n'
         )
     elif physics:
         # Generated-physics path: ship the isaac_physics_task module + its
@@ -404,6 +409,11 @@ def build_isaac_job_manifest(
         f'{train_block}'
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
+        # Re-dump the BYO-robot markers (retarget plan + compatibility verdict +
+        # summary) from the full wrapper log so they survive the `tail -120` above
+        # and are present even when an incompatible robot fails at env build.
+        'if [ -f /tmp/npa_robot/run.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
+        'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/npa_robot/run.log || true; fi\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
