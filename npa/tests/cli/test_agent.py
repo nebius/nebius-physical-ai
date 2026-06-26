@@ -485,6 +485,8 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("until SUCCESS rerun blob iframe for this run") == "watch_sim"
     assert match_chat_intent("keep trying rerun iframe until both blob and mount are success") == "watch_sim"
     assert match_chat_intent("wait for RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
+    assert match_chat_intent("watch sim-viz/status until rrd_uri is non-empty") == "watch_sim"
+    assert match_chat_intent("keep monitoring rerun until rrd_uri is set") == "watch_sim"
     assert match_chat_intent("load franka in rerun and keep blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"

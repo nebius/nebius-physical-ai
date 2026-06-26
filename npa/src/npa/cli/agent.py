@@ -2519,13 +2519,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
         const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
         const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
+        const targetRunId = String(opts.runId || "").trim();
         const start = Date.now();
         let lastErr = null;
         while (Date.now() - start < deadlineMs) {{
           try {{
             const status = await loadJson("/api/sim-viz/status");
             const selectedCamera = String((status && status.camera) || camera || "workspace");
-            if (status && status.rrd_uri) {{
+            const activeRunId = String((status && status.run_id) || "").trim();
+            const runMatches = !targetRunId || (activeRunId && activeRunId === targetRunId);
+            if (status && status.rrd_uri && runMatches) {{
               await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop);
               if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
                 return status;
@@ -2551,14 +2554,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
         return true;
       }}
-      async function pollSimVizUntilRrd(maxAttempts, delayMs) {{
+      async function pollSimVizUntilRrd(maxAttempts, delayMs, targetRunId) {{
         const attempts = Math.max(1, Number(maxAttempts || 36));
         const sleepMs = Math.max(250, Number(delayMs || 1500));
+        const runId = String(targetRunId || "").trim();
         let last = null;
         for (let i = 0; i < attempts; i += 1) {{
           const simViz = await loadJson("/api/sim-viz/status");
           last = simViz;
-          if (simViz && simViz.rrd_uri) {{
+          const activeRunId = String((simViz && simViz.run_id) || "").trim();
+          const runMatches = !runId || (activeRunId && activeRunId === runId);
+          if (simViz && simViz.rrd_uri && runMatches) {{
             return simViz;
           }}
           await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
@@ -2842,9 +2848,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
         appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
-        const simViz = await pollSimVizUntilRrd(60, 1500);
+        const submittedRunId = String(data.run_id || "").trim();
+        const simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
         if (simViz && simViz.rrd_uri) {{
-          await waitForRerunSuccess(simViz.camera || "workspace", {{ deadlineMs: 180000, mountAttemptsPerLoop: 5 }});
+          await waitForRerunSuccess(
+            simViz.camera || "workspace",
+            {{ deadlineMs: 180000, mountAttemptsPerLoop: 5, runId: submittedRunId }}
+          );
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
             throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");
           }}

@@ -19,7 +19,8 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     r"\b(?:rerun|blob|iframe|rrd(?:-blob)?)\b[\s:;,_\-/+]*(?:blob|iframe|mount|rrd)?"
     r".{0,80}\b(?:until|till|when|once|retry|wait)\b.{0,80}\b(?:success|successful|ready|succeeded|passed|green)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
-    r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b",
+    r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
+    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present)\b",
     re.IGNORECASE,
 )
 
@@ -151,6 +152,7 @@ def _normalize_intent_text(text: str) -> str:
     lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
     lowered = re.sub(r"\brerun[_\s-]?blob\b", "rerun blob", lowered)
     lowered = re.sub(r"\brerun[_\s-]?mount\b", "rerun mount", lowered)
+    lowered = re.sub(r"\brrd[_\s-]?uri\b", "rrd uri", lowered)
     lowered = re.sub(r"[^\w\s/+.-]+", " ", lowered)
     lowered = re.sub(r"\s+", " ", lowered).strip()
     return lowered
@@ -173,7 +175,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
         )
     ):
         return True
-    has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd"))
+    has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd", "rrd uri"))
     has_success_gate = any(
         token in lowered
         for token in (
@@ -192,6 +194,9 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rerun_mount_success",
             "iframe mount success",
             "rerun blob iframe until success",
+            "rrd uri non-empty",
+            "rrd uri set",
+            "rrd uri available",
         )
     )
     return has_rerun_surface and has_success_gate
