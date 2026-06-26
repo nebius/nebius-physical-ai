@@ -3030,9 +3030,23 @@ def run_heldout_eval(
             "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
         },
     )
-    if config.byo_eval_command.strip():
+    # Default the genuine-RL Isaac path to the real-policy held-out eval
+    # (byo_isaac_eval loads the trained rsl_rl checkpoint and rolls it in Isaac
+    # Lab), instead of the scalar action-bias adapter rollout. Gate on a genuine
+    # trainer (a real checkpoint must exist) + a ready K8s image; the reference
+    # trainer has no Isaac checkpoint, so it keeps the adapter/reference path.
+    eval_command = config.byo_eval_command.strip()
+    if (
+        not eval_command
+        and config.sim_backend == SIM_BACKEND_ISAAC
+        and config.byo_trainer_command.strip()
+        and config.s3_bucket.strip()
+        and _heldout_k8s_image_ready(config)
+    ):
+        eval_command = "python3 -m npa.workflows.sim2real.byo_isaac_eval"
+    if eval_command:
         invocation = _run_component_command(
-            config.byo_eval_command,
+            eval_command,
             cwd=local_dir,
             env=env,
             component="heldout_eval",
@@ -3150,6 +3164,40 @@ def run_heldout_eval(
     return {**report, "report_uri": str(output_path)}
 
 
+_HELDOUT_DISTANCE_THRESHOLDS = (0.05, 0.10, 0.15, 0.20)
+
+
+def _heldout_success_summary(
+    payload: dict[str, Any],
+    per_env: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Multi-threshold accuracy from per-env object->goal distances.
+
+    Prefers the success_summary the byo_isaac_eval component already emitted
+    (carried through verbatim); otherwise recomputes success@0.05/0.10/0.15/0.20
+    plus mean/min object_goal_distance_m from per_env details so the curve
+    survives normalization even when strict success_rate is 0.
+    """
+    existing = payload.get("success_summary")
+    if isinstance(existing, dict) and existing:
+        return existing
+    dists = [
+        item["details"]["object_goal_distance_m"]
+        for item in per_env
+        if isinstance(item.get("details"), dict)
+        and isinstance(item["details"].get("object_goal_distance_m"), (int, float))
+    ]
+    summary: dict[str, Any] = {}
+    if dists:
+        for thr in _HELDOUT_DISTANCE_THRESHOLDS:
+            summary[f"success@{thr:.2f}"] = round(
+                sum(1 for d in dists if d < thr) / len(dists), 4
+            )
+        summary["mean_object_goal_distance_m"] = round(sum(dists) / len(dists), 6)
+        summary["min_object_goal_distance_m"] = round(min(dists), 6)
+    return summary
+
+
 def _normalize_heldout_report(
     payload: dict[str, Any],
     *,
@@ -3183,6 +3231,12 @@ def _normalize_heldout_report(
             }
         )
     success_rate = passed / float(len(per_env))
+    # Multi-threshold accuracy: a single strict success_rate@threshold hides real
+    # progress (a policy can score 0 at 0.05m yet land 81% within 0.15m). Carry
+    # through the byo_isaac_eval payload's success_summary when present, otherwise
+    # recompute it from the per-env object->goal distances so accuracy stays
+    # visible in eval/heldout/report.json even when success_rate is 0.
+    success_summary = _heldout_success_summary(payload, per_env)
     report = {
         "schema": SCHEMA_HELDOUT_REPORT,
         "stage": 10,
@@ -3190,6 +3244,7 @@ def _normalize_heldout_report(
         "status": "completed",
         "success_rate": round(success_rate, 6),
         "threshold": config.threshold,
+        "success_summary": success_summary,
         "per_env": per_env,
         "eval_image": config.eval_image,
         "sim_backend": str(payload.get("sim_backend") or config.sim_backend),
