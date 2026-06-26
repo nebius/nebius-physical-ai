@@ -32,22 +32,28 @@ print('wrote', p)
 "
 
   echo "--- pytest agent workflow ---"
-  npa/.venv/bin/python -m pytest \
+  if ! npa/.venv/bin/python -m pytest \
     npa/tests/cli/test_agent.py \
     npa/tests/cli/test_agent_workflow.py \
-    -q
+    -q; then
+    return 1
+  fi
 
   echo "--- validate-spec + plan-spec ---"
   npa/.venv/bin/npa workbench workflow validate-spec "$EXAMPLE_YAML"
   npa/.venv/bin/npa workbench workflow plan-spec "$EXAMPLE_YAML" --run-id agent-loop-demo
 
   echo "--- bootstrap ---"
-  NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap \
-    --project "$NPA_AGENT_PROJECT" --name agent
+  if ! NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap \
+    --project "$NPA_AGENT_PROJECT" --name agent; then
+    return 1
+  fi
 
   echo "--- verify-live ---"
-  NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live \
-    --project "$NPA_AGENT_PROJECT" --name agent
+  if ! NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live \
+    --project "$NPA_AGENT_PROJECT" --name agent; then
+    return 1
+  fi
 
   echo "--- workflow yaml live smoke ---"
   # shellcheck disable=SC1090
@@ -59,7 +65,7 @@ print('wrote', p)
 
   YAML_TEXT="$(cat "$EXAMPLE_YAML")"
   AGENT_BASE="$BASE" AGENT_USER="$AGENT_USER" AGENT_PASSWORD="$AGENT_PASSWORD" \
-    EXAMPLE_YAML="$EXAMPLE_YAML" "${ROOT}/npa/.venv/bin/python" - <<'PY'
+    EXAMPLE_YAML="$EXAMPLE_YAML" "${ROOT}/npa/.venv/bin/python" - <<'PY' || return 1
 import json
 import os
 import httpx
