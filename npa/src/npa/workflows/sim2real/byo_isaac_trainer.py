@@ -40,6 +40,71 @@ DEFAULT_NUM_ENVS = 1024
 DEFAULT_ITERATIONS = 150
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+# Where the BYO-robot path stages the customer robot USD inside the Isaac job.
+ROBOT_USD_CONTAINER_PATH = "/tmp/npa_robot/robot.usd"
+
+
+def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, Any] | None:
+    """Serialize a resolved RobotSpec into the ``NPA_BYO_ROBOT_SPEC_JSON`` contract.
+
+    Returns ``None`` when ``spec`` is ``None`` (no BYO-robot routing). For a
+    ``stock_franka`` spec, returns a minimal payload (source/name only) so the
+    in-container overrides are empty and the variant degenerates to the stock task
+    — the BYO seam still runs end-to-end. For a BYO spec, includes the morphology
+    / gain fields read by ``isaac_byo_robot_task.robot_articulation_overrides`` plus
+    the in-container ``usd_path`` the job stages the robot USD to.
+    """
+
+    if spec is None:
+        return None
+    source = str(getattr(spec, "robot_source", "") or "")
+    name = str(getattr(spec, "name", "") or "robot")
+    if source == "stock_franka":
+        return {"robot_source": source, "name": name}
+
+    def _floats(value: Any) -> list[float]:
+        out: list[float] = []
+        for item in value or ():
+            try:
+                out.append(float(item))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    return {
+        "robot_source": source,
+        "name": name,
+        "ee_link": str(getattr(spec, "ee_link", "") or ""),
+        "base_link": str(getattr(spec, "base_link", "") or ""),
+        "joint_names": [str(j) for j in (getattr(spec, "joint_names", ()) or ())],
+        "finger_links": [str(f) for f in (getattr(spec, "finger_links", ()) or ())],
+        "n_arm_joints": int(getattr(spec, "n_arm_joints", 0) or 0),
+        "n_gripper_joints": int(getattr(spec, "n_gripper_joints", 0) or 0),
+        "home_qpos": _floats(getattr(spec, "home_qpos", ())),
+        "kp": _floats(getattr(spec, "kp", ())),
+        "kv": _floats(getattr(spec, "kv", ())),
+        "force_upper": _floats(getattr(spec, "force_upper", ())),
+        "force_lower": _floats(getattr(spec, "force_lower", ())),
+        "gripper_open": float(getattr(spec, "gripper_open", 0.04) or 0.0),
+        "gripper_close": float(getattr(spec, "gripper_close", 0.0) or 0.0),
+        "usd_path": usd_container_path,
+    }
+
+
+def _resolve_byo_robot_spec() -> Any:
+    """Resolve a RobotSpec from the trainer's env (preset/source), or ``None``.
+
+    Best-effort and dependency-light: uses ``robot_spec_from_inputs`` (no
+    download). A ``robot_spec_uri`` JSON or a URDF→USD conversion is a follow-up;
+    the proven validation path is the Franka preset (a stock_franka spec).
+    """
+
+    from npa.genesis import robot_assets
+
+    return robot_assets.robot_spec_from_inputs(
+        robot_preset=_env("NPA_SIM2REAL_ROBOT_PRESET"),
+        robot_source=_env("NPA_SIM2REAL_ROBOT_SOURCE"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -209,6 +274,8 @@ def build_isaac_job_manifest(
     object_scale: str = "",
     seed: int = 0,
     physics: dict[str, float] | None = None,
+    robot_spec: dict[str, Any] | None = None,
+    robot_usd_uri: str = "",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -245,7 +312,59 @@ def build_isaac_job_manifest(
     # under namespace: /seed. Expected: NoneType, Received: int").
     seed_arg = f" --seed {int(seed)}" if seed else ""
 
-    if physics:
+    if robot_spec:
+        # BYO-robot path (takes precedence over physics): ship the
+        # isaac_byo_robot_task module + its post-boot wrapper into the container and
+        # run the wrapper (it registers a Lift variant that swaps in the customer
+        # robot articulation AFTER AppLauncher boots, then trains via the rsl_rl
+        # runner, saving model_*.pt into $OUT). A stock_franka payload yields empty
+        # overrides, so the variant degenerates to the stock task — the seam runs
+        # end-to-end without changing the policy.
+        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
+
+        module_src = _robotmod.module_source()
+        wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
+        spec_json = json.dumps(robot_spec, sort_keys=True)
+        usd_dest = str(robot_spec.get("usd_path") or "").strip()
+        stage_block = ""
+        if robot_usd_uri and usd_dest:
+            # Stage the customer robot USD from S3 to the in-container path the
+            # payload references, before the wrapper registers the variant.
+            stage_block = (
+                f'echo "STAGING_ROBOT_USD: {robot_usd_uri} -> {usd_dest}"\n'
+                "ROBOT_USD_URI=" + shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST=" + shlex.quote(usd_dest) + ' "$PY" - <<\'ROBOTDLEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
+                "dest = os.environ['ROBOT_USD_DEST']\n"
+                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), dest)\n"
+                "print('STAGED_ROBOT_USD', dest)\n"
+                "ROBOTDLEOF\n"
+            )
+        train_block = (
+            "mkdir -p /tmp/npa_robot\n"
+            "cat > /tmp/npa_robot/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
+            + module_src + "\nROBOTEOF\n"
+            "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
+            + wrapper_src + "\nROBOTRUNEOF\n"
+            '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + stage_block
+            + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
+            f'{robot_spec.get("name")} seed={int(seed)}"\n'
+            f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
+            f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
+            "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
+            # tee the FULL wrapper output to a file before tailing: the retarget
+            # plan + the honest task/robot compatibility verdict are printed right
+            # after AppLauncher boot, so `| tail -120` alone discards them behind
+            # the training-loop logs (and entirely when an incompatible robot fails
+            # at env build). The markers are re-dumped from this file post-run.
+            '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/npa_robot/run.log | tail -120\n'
+        )
+    elif physics:
         # Generated-physics path: ship the isaac_physics_task module + its
         # post-boot train wrapper into the container and run the wrapper (it
         # registers the friction/mass variant AFTER AppLauncher boots, then
@@ -290,6 +409,11 @@ def build_isaac_job_manifest(
         f'{train_block}'
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
+        # Re-dump the BYO-robot markers (retarget plan + compatibility verdict +
+        # summary) from the full wrapper log so they survive the `tail -120` above
+        # and are present even when an incompatible robot fails at env build.
+        'if [ -f /tmp/npa_robot/run.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
+        'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/npa_robot/run.log || true; fi\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
@@ -487,6 +611,37 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         print(f"byo_isaac_trainer: PHYSICS injection {'ON' if physics else 'OFF (no params)'} "
               f"-> {physics}", flush=True)
 
+    # Opt-in BYO-robot task path (guarded; default path unchanged): route the
+    # customer robot_spec into a registered Isaac Lift variant that swaps in the
+    # robot articulation. Takes precedence over the physics path when both are set.
+    robot_spec_dict = None
+    robot_usd_uri = ""
+    if _env("NPA_BYO_ROBOT_TASK") == "1":
+        if physics:
+            print("byo_isaac_trainer: NPA_BYO_ROBOT_TASK=1 takes precedence over "
+                  "PHYSICS path; disabling physics injection", flush=True)
+            physics = None
+        spec = _resolve_byo_robot_spec()
+        usd_dest = ""
+        if spec is not None and str(getattr(spec, "robot_source", "")) != "stock_franka":
+            robot_uri = str(getattr(spec, "robot_uri", "") or "")
+            if robot_uri.startswith("s3://"):
+                robot_usd_uri = robot_uri
+                usd_dest = ROBOT_USD_CONTAINER_PATH
+            elif robot_uri:
+                usd_dest = robot_uri  # already a container-local USD path
+            if not usd_dest:
+                # No silent Franka swap for a real BYO robot: warn loudly. The
+                # wrapper still trains (stock cfg) but the operator must know the
+                # robot USD was not staged (URDF→USD conversion is a follow-up).
+                print(f"byo_isaac_trainer: WARNING BYO robot {getattr(spec, 'name', '?')!r} "
+                      f"({getattr(spec, 'robot_source', '?')}) has no stageable USD "
+                      "(s3:// or container path); robot articulation will NOT be swapped",
+                      flush=True)
+        robot_spec_dict = robot_spec_payload(spec, usd_container_path=usd_dest)
+        print(f"byo_isaac_trainer: BYO-ROBOT task path "
+              f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -504,6 +659,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         object_scale=object_scale,
         seed=gen_seed,
         physics=physics,
+        robot_spec=robot_spec_dict,
+        robot_usd_uri=robot_usd_uri,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
