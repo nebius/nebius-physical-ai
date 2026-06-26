@@ -86,3 +86,67 @@ def test_lightweight_validation_without_tool_refs_still_parses() -> None:
     yaml_text = generate_sim2real_two_step_yaml()
     result = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset())
     assert result["ok"] is True
+
+
+def test_lightweight_validation_handles_complex_edges(monkeypatch) -> None:
+    def _import_fail(_yaml_text: str) -> dict[str, object]:
+        raise ImportError("test fallback")
+
+    monkeypatch.setattr("npa.cli.agent_workflow._validate_with_npa", _import_fail)
+    yaml_text = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: complex-agent-graph
+initial: start
+states:
+  start:
+    toolRef: workbench.cosmos2.transfer
+    next: gate
+  gate:
+    transitions:
+      promote_checkpoint: train
+      loop_back: start
+  train:
+    sequence:
+      - state: eval
+      - state: done
+  eval:
+    toolRef: workbench.sim2real_envgen.raw_shard
+    terminal: true
+  done:
+    terminal: true
+"""
+    result = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset())
+    assert result["ok"] is True
+    assert result["name"] == "complex-agent-graph"
+
+
+def test_lightweight_plan_walks_reachable_graph(monkeypatch) -> None:
+    def _import_fail(*_args, **_kwargs) -> dict[str, object]:
+        raise ImportError("test fallback")
+
+    monkeypatch.setattr("npa.cli.agent_workflow._plan_with_npa", _import_fail)
+    monkeypatch.setattr("npa.cli.agent_workflow._validate_with_npa", _import_fail)
+    yaml_text = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: branching-agent-plan
+initial: root
+states:
+  root:
+    next: branch
+  branch:
+    transitions:
+      promote_checkpoint: deploy
+      loop_back: recover
+  deploy:
+    terminal: true
+  recover:
+    terminal: true
+"""
+    plan = plan_workflow_yaml_text(yaml_text, run_id="agent-branch-demo", tool_refs=frozenset())
+    assert plan["ok"] is True
+    states = [step["state"] for step in plan["steps"]]
+    assert states == ["root", "branch", "deploy", "recover"]
