@@ -125,8 +125,8 @@ def build_agent_urls(
         "agent_url": base,
         "rerun_url": f"{root}/rerun/",
         "sim_viz_url": f"{root}/rerun/",
-        "sim_assets_url": base,
-        "cameras_api_url": f"{root}/api/sim-assets/cameras",
+        "sim_assets_url": f"{root}/assets/",
+        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
         "direct_url": direct,
     }
 
@@ -362,6 +362,10 @@ def _nginx_agent_site_body(
     add_header Cache-Control "no-store" always;
   }}
   location /api/ {{
+    proxy_pass http://127.0.0.1:{backend_port}/;
+  }}
+  location /assets/api/ {{
+    rewrite ^/assets/api/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{backend_port}/;
   }}
   location /rerun/recordings/ {{
@@ -2519,10 +2523,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
         const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
         const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
+        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 2));
         const targetRunId = String(opts.runId || "").trim();
         const baselineUpdatedAt = String(opts.baselineRrdUpdatedAt || "").trim();
         const start = Date.now();
         let lastErr = null;
+        let successStreak = 0;
         while (Date.now() - start < deadlineMs) {{
           try {{
             const status = await loadJson("/api/sim-viz/status");
@@ -2536,11 +2542,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (status && status.rrd_uri && runMatches && (stageAdvanced || rrdFresh)) {{
               await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop);
               if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
-                return status;
+                successStreak += 1;
+                if (successStreak >= successStreakTarget) {{
+                  return status;
+                }}
+              }} else {{
+                successStreak = 0;
               }}
+            }} else {{
+              successStreak = 0;
             }}
           }} catch (err) {{
             lastErr = err;
+            successStreak = 0;
           }}
           await new Promise((resolve) => window.setTimeout(resolve, sleepMs));
         }}
@@ -3373,7 +3387,7 @@ def status_cmd(
     sim_viz_url = str(record.get("sim_viz_url", rerun_url))
     sim_assets_url = str(record.get("sim_assets_url", agent_url))
     cameras_api_url = str(
-        record.get("cameras_api_url", f"{agent_url.rstrip('/')}/api/sim-assets/cameras")
+        record.get("cameras_api_url", f"{agent_url.rstrip('/')}/assets/api/sim-assets/cameras")
     )
     public_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)

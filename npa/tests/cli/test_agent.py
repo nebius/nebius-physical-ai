@@ -15,6 +15,8 @@ def test_build_agent_urls_https_default() -> None:
     assert urls["public_url"] == "https://203.0.113.50/"
     assert urls["agent_url"] == urls["public_url"]
     assert urls["rerun_url"] == "https://203.0.113.50/rerun/"
+    assert urls["sim_assets_url"] == "https://203.0.113.50/assets/"
+    assert urls["cameras_api_url"] == "https://203.0.113.50/assets/api/sim-assets/cameras"
     assert urls["direct_url"] == "http://203.0.113.50:8088/"
 
 
@@ -22,6 +24,8 @@ def test_build_agent_urls_http_legacy() -> None:
     urls = build_agent_urls("203.0.113.50", public_https=False)
     assert urls["public_url"] == "http://203.0.113.50:8088/"
     assert urls["agent_url"] == urls["public_url"]
+    assert urls["sim_assets_url"] == "http://203.0.113.50:8088/assets/"
+    assert urls["cameras_api_url"] == "http://203.0.113.50:8088/assets/api/sim-assets/cameras"
 
 
 def test_bootstrap_enables_public_https_nginx() -> None:
@@ -196,6 +200,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "lastRerunBlobStatus" in source
     assert "lastRerunMountStatus" in source
     assert "baselineRrdUpdatedAt" in source
+    assert "successStreakTarget" in source
+    assert "successStreak" in source
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
@@ -269,8 +275,8 @@ def test_agent_status_json(monkeypatch) -> None:
             "direct_url": "http://203.0.113.50:8088/",
             "rerun_url": "https://203.0.113.50/rerun/",
             "sim_viz_url": "https://203.0.113.50/rerun/",
-            "sim_assets_url": "https://203.0.113.50/",
-            "cameras_api_url": "https://203.0.113.50/api/sim-assets/cameras",
+            "sim_assets_url": "https://203.0.113.50/assets/",
+            "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
             "llm": {"provider": "token_factory", "model": "nvidia/Cosmos3-Super-Reasoner"},
         },
@@ -288,8 +294,8 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["ui_status_code"] == 200
     assert payload["rerun_status_code"] == 200
     assert payload["sim_viz_url"].endswith("/rerun/")
-    assert payload["sim_assets_url"].endswith("203.0.113.50/")
-    assert payload["cameras_api_url"].endswith("/api/sim-assets/cameras")
+    assert payload["sim_assets_url"].endswith("203.0.113.50/assets/")
+    assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
@@ -333,8 +339,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "direct_url": "http://203.0.113.50:8088/",
             "rerun_url": "https://203.0.113.50/rerun/",
             "sim_viz_url": "https://203.0.113.50/rerun/",
-            "sim_assets_url": "https://203.0.113.50/",
-            "cameras_api_url": "https://203.0.113.50/api/sim-assets/cameras",
+            "sim_assets_url": "https://203.0.113.50/assets/",
+            "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
         },
     )
