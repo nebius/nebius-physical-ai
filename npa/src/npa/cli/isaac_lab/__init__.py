@@ -2838,3 +2838,173 @@ def export_lerobot_cmd(
     if output_format == OutputFormat.json and stdout.strip():
         result["stdout_tail"] = stdout.strip()[-1000:]
     _output(result, output_format)
+
+
+@app.command("export-onnx")
+def export_onnx_cmd(
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        "-i",
+        help="rsl_rl checkpoint to export: an s3:// URI or a local model_*.pt path.",
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        "-o",
+        help=(
+            "Destination directory for policy.onnx + policy_contract.json: an "
+            "s3:// URI or a local directory path."
+        ),
+    ),
+    task: str = typer.Option(
+        "",
+        "--task",
+        help="Isaac Lab task id (recorded in the contract; selects known action hints).",
+    ),
+    activation: str = typer.Option(
+        "elu",
+        "--activation",
+        help="Actor MLP activation used at training time (rsl_rl default: elu).",
+    ),
+    opset: int = typer.Option(17, "--opset", help="ONNX opset version (must be > 0)."),
+    obs_dim: int = typer.Option(
+        -1,
+        "--obs-dim",
+        help="Expected observation dim; -1 infers from the actor's first layer.",
+    ),
+    act_dim: int = typer.Option(
+        -1,
+        "--act-dim",
+        help="Expected action dim; -1 infers from the actor's last layer.",
+    ),
+    action_type: str = typer.Option(
+        "",
+        "--action-type",
+        help="Override the declared action-space type (else inferred from --task).",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """Export a trained rsl_rl actor checkpoint to ONNX with an obs/action contract.
+
+    This is an in-pod / local export (no SSH): it loads the checkpoint, rebuilds
+    the actor MLP, and emits a single self-contained policy.onnx that runs with
+    onnxruntime alone -- no torch, no Isaac Lab. Requires torch in the export
+    environment (e.g. the Isaac container python).
+
+    Honest scope: ONNX export makes the policy PORTABLE; it does NOT bridge
+    sim-to-real. The emitted policy_contract.json spells out the observation and
+    action contract the real robot must satisfy and the unresolved sim-to-real
+    caveats. See docs/architecture/policy-export-onnx.md.
+    """
+    if opset <= 0:
+        _fail(f"--opset must be positive, got {opset}")
+    if obs_dim < -1 or obs_dim == 0:
+        _fail(f"--obs-dim must be a positive dim or -1 to infer, got {obs_dim}")
+    if act_dim < -1 or act_dim == 0:
+        _fail(f"--act-dim must be a positive dim or -1 to infer, got {act_dim}")
+
+    input_is_s3 = _is_s3_uri(input_path)
+    output_is_s3 = _is_s3_uri(output_path)
+
+    # s3 endpoints go through the handoff contract; local paths are accepted for
+    # the in-pod export flow (torch lives in the pod, not the public CLI host).
+    try:
+        if input_is_s3:
+            input_path = validate_read_path(
+                input_path, tool="Isaac Lab export-onnx", allow_hf=False
+            )
+        elif not Path(input_path).is_file():
+            _fail(f"--input-path local checkpoint not found: {input_path}")
+            return
+        if output_is_s3:
+            output_path = validate_write_path(
+                output_path, tool="Isaac Lab export-onnx"
+            )
+    except PathContractError as exc:
+        _fail(str(exc))
+        return
+
+    cfg = _get_ssh_config() if (input_is_s3 or output_is_s3) else None
+
+    start = time.time()
+    result: dict[str, Any] = {
+        "status": "success",
+        "task": task,
+        "input_path": input_path,
+        "output_path": output_path,
+    }
+
+    with tempfile.TemporaryDirectory(prefix="npa-isaac-lab-onnx-") as tmp:
+        tmp_path = Path(tmp)
+        # Stage the checkpoint locally.
+        if input_is_s3:
+            local_ckpt = tmp_path / "model.pt"
+            try:
+                _storage_client(cfg).download_path(input_path, str(local_ckpt))
+            except Exception as exc:
+                _fail(f"Failed to download --input-path checkpoint: {exc}")
+                return
+        else:
+            local_ckpt = Path(input_path)
+
+        export_dir = tmp_path / "export" if output_is_s3 else Path(output_path)
+        try:
+            from npa.workflows.sim2real.policy_export import (
+                PolicyExportError,
+                export_policy_onnx,
+            )
+
+            export_result = export_policy_onnx(
+                str(local_ckpt),
+                out_dir=str(export_dir),
+                isaac_task=task,
+                obs_dim=obs_dim if obs_dim > 0 else None,
+                act_dim=act_dim if act_dim > 0 else None,
+                activation=activation,
+                opset=opset,
+                action_type=action_type or None,
+                checkpoint_source=input_path,
+            )
+        except PolicyExportError as exc:
+            result["status"] = "failed"
+            result["export_error"] = str(exc)
+            _output(result, output_format)
+            raise typer.Exit(1) from exc
+
+        result.update(
+            {
+                "obs_dim": export_result["obs_dim"],
+                "act_dim": export_result["act_dim"],
+                "hidden_dims": export_result["hidden_dims"],
+                "activation": export_result["activation"],
+                "normalization": export_result["normalization"],
+            }
+        )
+
+        # Publish artifacts.
+        if output_is_s3:
+            base = output_path.rstrip("/")
+            try:
+                storage = _storage_client(cfg)
+                result["onnx_path"] = storage.upload_file(
+                    export_result["onnx_path"], f"{base}/policy.onnx"
+                )
+                result["contract_path"] = storage.upload_file(
+                    export_result["contract_path"], f"{base}/policy_contract.json"
+                )
+            except Exception as exc:
+                result["status"] = "failed"
+                result["upload_status"] = "failed"
+                result["upload_error"] = str(exc)
+                _output(result, output_format)
+                raise typer.Exit(1) from exc
+            result["upload_status"] = "ok"
+        else:
+            result["onnx_path"] = export_result["onnx_path"]
+            result["contract_path"] = export_result["contract_path"]
+
+    result["duration_seconds"] = round(time.time() - start, 1)
+    _output(result, output_format)
