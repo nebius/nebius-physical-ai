@@ -2520,6 +2520,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
         const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
         const targetRunId = String(opts.runId || "").trim();
+        const baselineUpdatedAt = String(opts.baselineRrdUpdatedAt || "").trim();
         const start = Date.now();
         let lastErr = null;
         while (Date.now() - start < deadlineMs) {{
@@ -2527,8 +2528,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const status = await loadJson("/api/sim-viz/status");
             const selectedCamera = String((status && status.camera) || camera || "workspace");
             const activeRunId = String((status && status.run_id) || "").trim();
+            const activeStage = String((status && status.stage) || "idle").trim().toLowerCase();
+            const activeUpdatedAt = String((status && status.rrd_updated_at) || "").trim();
             const runMatches = !targetRunId || (activeRunId && activeRunId === targetRunId);
-            if (status && status.rrd_uri && runMatches) {{
+            const stageAdvanced = !["", "idle", "submitted", "queued"].includes(activeStage);
+            const rrdFresh = Boolean(activeUpdatedAt && (!baselineUpdatedAt || activeUpdatedAt !== baselineUpdatedAt));
+            if (status && status.rrd_uri && runMatches && (stageAdvanced || rrdFresh)) {{
               await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop);
               if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
                 return status;
@@ -2841,6 +2846,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await refresh();
       }}
       async function submitWorkflow() {{
+        const baseline = await loadJson("/api/sim-viz/status");
+        const baselineUpdatedAt = String((baseline && baseline.rrd_updated_at) || "").trim();
         const data = await apiJson("/api/workflows/sim2real/submit", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
@@ -2853,7 +2860,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (simViz && simViz.rrd_uri) {{
           await waitForRerunSuccess(
             simViz.camera || "workspace",
-            {{ deadlineMs: 180000, mountAttemptsPerLoop: 5, runId: submittedRunId }}
+            {{
+              deadlineMs: 180000,
+              mountAttemptsPerLoop: 5,
+              runId: submittedRunId,
+              baselineRrdUpdatedAt: baselineUpdatedAt,
+            }}
           );
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
             throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");

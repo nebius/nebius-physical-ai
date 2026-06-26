@@ -20,7 +20,7 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     r".{0,80}\b(?:until|till|when|once|retry|wait)\b.{0,80}\b(?:success|successful|ready|succeeded|passed|green)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
-    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present|populated)\b"
+    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
     r"|\brun[_ -]?id\b.{0,80}\b(?:scoped|scope|match|matching)\b.{0,80}\b(?:success|ready)\b",
     re.IGNORECASE,
 )
@@ -156,9 +156,13 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("rrduriuntilsuccess", "rrd uri until success")
     lowered = lowered.replace("runidrrduriuntilsuccess", "run id rrd uri until success")
     lowered = lowered.replace("rrdurinonempty", "rrd uri non-empty")
+    lowered = lowered.replace("rrdurinotempty", "rrd uri not empty")
     lowered = lowered.replace("rrduriset", "rrd uri set")
     lowered = lowered.replace("runidscoped", "run id scoped")
     lowered = lowered.replace("runidscope", "run id scope")
+    lowered = lowered.replace("watchthesim", "watch the sim")
+    lowered = lowered.replace("watchsim", "watch sim")
+    lowered = lowered.replace("watchsimuntilsuccess", "watch sim until success")
     # Normalize common alias/camelcase variants before regex matching.
     lowered = re.sub(r"\bsim[_\s-]?viz\b", "sim viz", lowered)
     lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
@@ -190,6 +194,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "watchrrduriuntilsuccess",
             "rrduriuntilsuccess",
             "rrdurinonemptyuntilsuccess",
+            "rrdurinotemptyuntilsuccess",
             "rrdurisetuntilsuccess",
             "rrduripopulateduntilsuccess",
             "runidrrduriuntilsuccess",
@@ -222,6 +227,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rrd uri set",
             "rrd uri available",
             "rrd uri populated",
+            "rrd uri not empty",
         )
     )
     return has_rerun_surface and has_success_gate
@@ -472,6 +478,7 @@ def build_grounded_reply(
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` appears."
             + "\n- Then keep retrying **blob fetch + iframe mount** until both report **SUCCESS**."
             + "\n- Treat watch complete only when `RERUN_BLOB_SUCCESS=SUCCESS` and `RERUN_MOUNT_SUCCESS=SUCCESS`."
+            + "\n- Keep the stage/run overlay aligned to the active run by re-reading `run_id` + `stage` from `/api/sim-viz/status` each loop."
             + "\n- If prompted as `Rerun blob iframe until SUCCESS`, follow the same two-signal gate above."
             + "\n- Re-check `/api/sim-viz/status` after each mount loop and keep gating on the active `run_id`."
             + "\n- If either status is not `SUCCESS`, retry mounting `/rerun/` and fetching `/api/sim-viz/rrd-blob`."

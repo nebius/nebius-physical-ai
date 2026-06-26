@@ -195,6 +195,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "mountRerunIframeUntilSuccess" in source
     assert "lastRerunBlobStatus" in source
     assert "lastRerunMountStatus" in source
+    assert "baselineRrdUpdatedAt" in source
+    assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
     assert "resolveRerunRrdUrl" in source
@@ -488,14 +490,18 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("keep trying rerun iframe until both blob and mount are success") == "watch_sim"
     assert match_chat_intent("wait for RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("watch sim-viz/status until rrd_uri is non-empty") == "watch_sim"
+    assert match_chat_intent("watch the sim until SUCCESS") == "watch_sim"
+    assert match_chat_intent("watch sim-viz/status until rrd_uri is not empty") == "watch_sim"
     assert match_chat_intent("watch sim-viz/status until rrd_uri is populated") == "watch_sim"
     assert match_chat_intent("watch rrduri for active runid until SUCCESS") == "watch_sim"
     assert match_chat_intent("keep monitoring rerun until rrd_uri is set") == "watch_sim"
     assert match_chat_intent("watchrrduriuntilsuccess for runid agent-run-123") == "watch_sim"
     assert match_chat_intent("rrduriuntilsuccess for runid agent-run-123") == "watch_sim"
+    assert match_chat_intent("watchsimuntilsuccess for runid agent-run-123") == "watch_sim"
     assert match_chat_intent("runidrrduriuntilsuccess") == "watch_sim"
     assert match_chat_intent("runidscoped rerun blob iframe until success") == "watch_sim"
     assert match_chat_intent("rrdurinonempty until SUCCESS for active runid") == "watch_sim"
+    assert match_chat_intent("rrdurinotempty until SUCCESS for active runid") == "watch_sim"
     assert match_chat_intent("load franka in rerun and keep blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
@@ -530,6 +536,7 @@ def test_build_grounded_watch_sim_reply_mentions_status_polling_and_success() ->
     assert "SUCCESS" in reply
     assert "**watch_stage**" in reply
     assert "**watch_mode**" in reply
+    assert "run_id` + `stage`" in reply
 
 
 def test_format_live_context_block_redacts_secrets() -> None:
