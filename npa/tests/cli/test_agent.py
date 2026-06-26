@@ -517,6 +517,9 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("runid/rrduri SUCCESS for the active run") == "watch_sim"
     assert match_chat_intent("runidrrdurisuccess") == "watch_sim"
     assert match_chat_intent("runidscoped rerun blob iframe until success") == "watch_sim"
+    assert match_chat_intent("runid + stage scoped rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("runid stage scoped rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("rerun blob iframe until SUCCESS with runid and stage matching") == "watch_sim"
     assert match_chat_intent("rrdurinonempty until SUCCESS for active runid") == "watch_sim"
     assert match_chat_intent("rrdurinotempty until SUCCESS for active runid") == "watch_sim"
     assert (

@@ -21,7 +21,8 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
     r"|\brrd[_ -]?uri\b.{0,240}\b(?:non[- ]?empty|set|available|present|populated|not\s+empty)\b"
-    r"|\brun[_ -]?id\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b",
+    r"|\brun[_ -]?id\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b"
+    r"|\b(?:run[_ -]?id|stage|stage[_ -]?id)\b.{0,240}\b(?:scoped|scope|match|matching)\b.{0,240}\b(?:success|ready)\b",
     re.IGNORECASE,
 )
 
@@ -162,6 +163,11 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("rrduriset", "rrd uri set")
     lowered = lowered.replace("runidscoped", "run id scoped")
     lowered = lowered.replace("runidscope", "run id scope")
+    lowered = lowered.replace("stageid", "stage id")
+    lowered = lowered.replace("stagescoped", "stage scoped")
+    lowered = lowered.replace("runidstagescoped", "run id stage scoped")
+    lowered = lowered.replace("stagematch", "stage match")
+    lowered = lowered.replace("stagematching", "stage matching")
     lowered = lowered.replace("watchthesim", "watch the sim")
     lowered = lowered.replace("watchsim", "watch sim")
     lowered = lowered.replace("watchsimuntilsuccess", "watch sim until success")
@@ -215,12 +221,25 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "runidrrduriuntilsuccess",
             "runidrrdurisuccess",
             "runidrrduri",
+            "runidstagescopedrerunblobiframeuntilsuccess",
+            "runidstageuntilsuccess",
         )
     ):
         return True
     has_rerun_surface = any(
         token in lowered
-        for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd", "rrd uri", "run id", "active run")
+        for token in (
+            "rerun",
+            "blob",
+            "iframe",
+            "rrd-blob",
+            "rrd",
+            "rrd uri",
+            "run id",
+            "active run",
+            "stage",
+            "stage id",
+        )
     )
     has_success_gate = any(
         token in lowered
