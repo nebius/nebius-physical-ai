@@ -147,6 +147,8 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("blobiframeuntilsuccess", "blob iframe until success")
     lowered = lowered.replace("rerunblobuntilsuccess", "rerun blob until success")
     lowered = lowered.replace("reruniframeuntilsuccess", "rerun iframe until success")
+    lowered = lowered.replace("rrduri", "rrd uri")
+    lowered = lowered.replace("runid", "run id")
     # Normalize common alias/camelcase variants before regex matching.
     lowered = re.sub(r"\bsim[_\s-]?viz\b", "sim viz", lowered)
     lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
@@ -175,7 +177,10 @@ def _success_gated_watch_request(lowered: str) -> bool:
         )
     ):
         return True
-    has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd", "rrd uri"))
+    has_rerun_surface = any(
+        token in lowered
+        for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd", "rrd uri", "run id", "active run")
+    )
     has_success_gate = any(
         token in lowered
         for token in (
