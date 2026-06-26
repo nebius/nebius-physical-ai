@@ -636,3 +636,45 @@ def test_apis_for_intent_includes_status_paths() -> None:
     assert "workflows/sim2real/status" in apis
     watch_apis = apis_for_intent("watch_sim")
     assert "sim-viz/rrd-blob" in watch_apis
+
+
+def test_bootstrap_embeds_recordings_endpoint() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert '@app.get("/sim-viz/recordings")' in source
+    assert "sim_viz_recordings" in source
+    assert '"/opt/npa-agent/recordings"' in source
+    assert '"recordings"' in source
+    assert '"count"' in source
+    assert '"size_bytes"' in source
+    assert '"updated_at"' in source
+
+
+def test_bootstrap_recordings_api_in_system_prompt() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "sim-viz/recordings" in source
+    assert "available .rrd recording" in source
+
+
+def test_list_recordings_intent_routing() -> None:
+    from npa.cli.agent_chat import apis_for_intent, match_chat_intent
+
+    assert match_chat_intent("list recordings") == "list_recordings"
+    assert match_chat_intent("show run history") == "list_recordings"
+    assert match_chat_intent("browse available .rrd files") == "list_recordings"
+    assert match_chat_intent("switch to a different run recording") == "list_recordings"
+    apis = apis_for_intent("list_recordings")
+    assert "sim-viz/recordings" in apis
+    assert "sim-viz/runs" in apis
+
+
+def test_list_recordings_grounded_reply() -> None:
+    from npa.cli.agent_chat import build_grounded_reply
+
+    state: dict = {}
+    reply = build_grounded_reply("list_recordings", state, [])
+    assert "recordings" in reply.lower() or "run history" in reply.lower()
+    assert "sim-viz/recordings" in reply or "sim-viz/runs" in reply

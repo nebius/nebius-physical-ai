@@ -965,6 +965,9 @@ def _agent_system_prompt() -> str:
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
         "- GET /api/sim-assets, /api/sim-assets/selection, /api/sim-assets/cameras",
         "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
+        "- GET /api/sim-viz/recordings — list available .rrd recording files for quick viewer switching",
+        "- GET /api/sim-viz/runs — list run-scoped history (run_id, stage, camera, rrd_uri)",
+        "- POST /api/sim-viz/load-run — switch active run context by run_id",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
@@ -1415,6 +1418,26 @@ def sim_viz_load_run(payload: dict | None = None):
         "ok": True,
         "sim_viz": sim_viz_status(run_id=run_id),
     }}
+
+@app.get("/sim-viz/recordings")
+def sim_viz_recordings():
+    # List available .rrd recording files in /opt/npa-agent/recordings/ for quick viewer switching.
+    recordings_dir = Path("/opt/npa-agent/recordings")
+    result = []
+    if recordings_dir.is_dir():
+        for rrd_file in sorted(recordings_dir.glob("*.rrd"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                stat = rrd_file.stat()
+                result.append({{
+                    "name": rrd_file.name,
+                    "path": f"/rerun/recordings/{{rrd_file.name}}",
+                    "size_bytes": stat.st_size,
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    "active": rrd_file.name == "sim2real.rrd",
+                }})
+            except OSError:
+                continue
+    return {{"recordings": result, "count": len(result)}}
 
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
