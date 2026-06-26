@@ -142,6 +142,10 @@ def _normalize_intent_text(text: str) -> str:
     """Normalize user text so intent routing survives punctuation/newlines."""
     lowered = str(text or "").lower()
     lowered = lowered.replace("\n", " ")
+    lowered = lowered.replace("rerunblobiframeuntilsuccess", "rerun blob iframe until success")
+    lowered = lowered.replace("blobiframeuntilsuccess", "blob iframe until success")
+    lowered = lowered.replace("rerunblobuntilsuccess", "rerun blob until success")
+    lowered = lowered.replace("reruniframeuntilsuccess", "rerun iframe until success")
     # Normalize common alias/camelcase variants before regex matching.
     lowered = re.sub(r"\bsim[_\s-]?viz\b", "sim viz", lowered)
     lowered = re.sub(r"\brrd[_\s-]?blob\b", "rrd blob", lowered)
@@ -155,6 +159,19 @@ def _normalize_intent_text(text: str) -> str:
 def _success_gated_watch_request(lowered: str) -> bool:
     """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
     if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(lowered):
+        return True
+    compact = re.sub(r"[^a-z0-9]+", "", lowered)
+    if any(
+        token in compact
+        for token in (
+            "rerunblobiframeuntilsuccess",
+            "blobiframeuntilsuccess",
+            "rerunblobuntilsuccess",
+            "reruniframeuntilsuccess",
+            "rerunmountsuccess",
+            "rerunblobsuccess",
+        )
+    ):
         return True
     has_rerun_surface = any(token in lowered for token in ("rerun", "blob", "iframe", "rrd-blob", "rrd"))
     has_success_gate = any(
