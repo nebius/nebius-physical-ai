@@ -519,6 +519,13 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("runidscoped rerun blob iframe until success") == "watch_sim"
     assert match_chat_intent("rrdurinonempty until SUCCESS for active runid") == "watch_sim"
     assert match_chat_intent("rrdurinotempty until SUCCESS for active runid") == "watch_sim"
+    assert (
+        match_chat_intent(
+            "Enhance NPA agent chat intent routing and Rerun blob iframe until SUCCESS. "
+            "Branch feat/npa-agent. Bootstrap rtxpro/agent after changes."
+        )
+        == "watch_sim"
+    )
     assert match_chat_intent("load franka in rerun and keep blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka in rerun") == "load_franka"
     assert match_chat_intent("show me the sim assets selection") == "sim_assets"
