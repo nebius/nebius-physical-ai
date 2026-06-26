@@ -217,12 +217,27 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
+    assert "?run_id=" in source
+    assert '"/api/sim-viz/status?run_id="' in source
     assert "URL.createObjectURL" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
     assert "renderAssetsSummary" in source
     assert "selectionPayloadFromUi" in source
+
+
+def test_bootstrap_embeds_run_switching_controls() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'id="runIdInput"' in source
+    assert 'id="runIdSelect"' in source
+    assert 'id="loadRunData"' in source
+    assert '@app.post("/sim-viz/load-run")' in source
+    assert "available_run_ids" in source
+    assert "active_run_id" in source
+    assert "_record_sim_viz_run" in source
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:

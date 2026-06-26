@@ -559,6 +559,8 @@ def _default_state() -> dict:
         "selection": dict(DEFAULT_SELECTION),
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
+        "sim_viz_runs": {{}},
+        "active_run_id": "",
         "latest_submit": {{}},
         "sim_viz_runs": [],
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
@@ -583,12 +585,45 @@ def _load_state() -> dict:
         merged["camera_selection"] = ["workspace"]
     if not isinstance(merged.get("sim_viz"), dict):
         merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
+    if not isinstance(merged.get("sim_viz_runs"), dict):
+        merged["sim_viz_runs"] = {{}}
+    if not isinstance(merged.get("active_run_id"), str):
+        merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
         merged["chat_history"] = []
     return merged
 
 def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+
+def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
+    if not isinstance(payload, dict):
+        return
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return
+    runs = state.get("sim_viz_runs")
+    if not isinstance(runs, dict):
+        runs = {{}}
+    snapshot = dict(DEFAULT_SIM_VIZ)
+    snapshot.update(payload)
+    snapshot["run_id"] = run_id
+    runs[run_id] = snapshot
+    state["sim_viz_runs"] = runs
+    state["active_run_id"] = run_id
+
+
+def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
+    payload = dict(DEFAULT_SIM_VIZ)
+    current = state.get("sim_viz")
+    if isinstance(current, dict):
+        payload.update(current)
+    runs = state.get("sim_viz_runs")
+    target = str(run_id or state.get("active_run_id") or "").strip()
+    if isinstance(runs, dict) and target and isinstance(runs.get(target), dict):
+        payload.update(runs[target])
+    return payload
 
 def _stock_franka_selection() -> dict:
     return {{
@@ -910,6 +945,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
     state["sim_viz"] = viz
+    _record_sim_viz_run(state, viz)
     _save_state(state)
     return viz
 
@@ -1251,12 +1287,9 @@ def tool(tool_ref: str):
     return {{"ok": True, "tool_ref": tool_ref, **payload}}
 
 @app.get("/sim-viz/status")
-def sim_viz_status():
+def sim_viz_status(run_id: str = ""):
     state = _load_state()
-    sim_viz = state.get("sim_viz", {{}})
-    payload = dict(DEFAULT_SIM_VIZ)
-    if isinstance(sim_viz, dict):
-        payload.update(sim_viz)
+    payload = _sim_viz_for_run(state, run_id=run_id)
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
@@ -1267,12 +1300,20 @@ def sim_viz_status():
         payload["run_id"] = str(latest_submit.get("run_id") or "").strip()
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
+    _record_sim_viz_run(state, payload)
     payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
     payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
+    runs = state.get("sim_viz_runs")
+    if isinstance(runs, dict):
+        payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
+    else:
+        payload["available_run_ids"] = []
+    payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
+    _save_state(state)
     return payload
 
 @app.get("/sim-viz/runs")
@@ -1319,6 +1360,43 @@ def sim_viz_select_run(payload: dict | None = None):
     _save_state(state)
     return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
 
+@app.post("/sim-viz/load-run")
+def sim_viz_load_run(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    run_id = str(body.get("run_id") or "").strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    state = _load_state()
+    runs = state.get("sim_viz_runs")
+    if not isinstance(runs, dict):
+        runs = {{}}
+    selected = runs.get(run_id)
+    if not isinstance(selected, dict):
+        selected = {{}}
+    rrd_uri = str(body.get("rrd_uri") or "").strip()
+    if rrd_uri:
+        selected["rrd_uri"] = rrd_uri
+    camera = str(body.get("camera") or "").strip()
+    if camera:
+        selected["camera"] = camera
+    stage = str(body.get("stage") or "").strip()
+    if stage:
+        selected["stage"] = stage
+    mode = str(body.get("mode") or "").strip().lower()
+    if mode in {{"static", "live"}}:
+        selected["mode"] = mode
+    if not selected:
+        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+    selected["run_id"] = run_id
+    selected["rrd_updated_at"] = _now_iso()
+    state["sim_viz"] = selected
+    _record_sim_viz_run(state, selected)
+    _save_state(state)
+    return {{
+        "ok": True,
+        "sim_viz": sim_viz_status(run_id=run_id),
+    }}
+
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -1360,11 +1438,9 @@ def sim_viz_camera_preview(payload: dict | None = None):
         "hint": "Open the Rerun panel and expand world/cameras/<name>.",
     }}
 
-def _sim_viz_rrd_file_response():
+def _sim_viz_rrd_file_response(run_id: str = ""):
     state = _load_state()
-    sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict):
-        sim_viz = {{}}
+    sim_viz = _sim_viz_for_run(state, run_id=run_id)
     uri = str(sim_viz.get("rrd_uri") or "").strip()
     if uri.startswith("file://"):
         file_path = Path(uri[len("file://"):])
@@ -1382,13 +1458,13 @@ def _sim_viz_rrd_file_response():
     raise HTTPException(status_code=404, detail="No sim2real.rrd file on disk yet")
 
 @app.get("/sim-viz/rrd")
-def sim_viz_rrd():
-    return _sim_viz_rrd_file_response()
+def sim_viz_rrd(run_id: str = ""):
+    return _sim_viz_rrd_file_response(run_id=run_id)
 
 @app.get("/sim-viz/rrd-blob")
-def sim_viz_rrd_blob():
+def sim_viz_rrd_blob(run_id: str = ""):
     # Authenticated .rrd bytes for parent-page blob URL (Rerun wasm cannot send basic auth).
-    return _sim_viz_rrd_file_response()
+    return _sim_viz_rrd_file_response(run_id=run_id)
 
 @app.on_event("startup")
 def _boot_preload_sim_viz() -> None:
@@ -1418,6 +1494,7 @@ def _boot_preload_sim_viz() -> None:
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
+    _record_sim_viz_run(state, state["sim_viz"])
     _save_state(state)
 
 @app.get("/sim-assets")
@@ -2340,6 +2417,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
               <button id="workflowStatus" class="btn" type="button">Workflow status</button>
             </div>
+            <div class="field-row" style="margin-top:8px;">
+              <div class="field">
+                <label for="runIdInput">Run ID</label>
+                <input id="runIdInput" type="text" placeholder="agent-run-..." />
+              </div>
+              <div class="field">
+                <label for="runIdSelect">Known runs</label>
+                <select id="runIdSelect">
+                  <option value="">(select run)</option>
+                </select>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top:8px;">
+              <button id="loadRunData" class="btn" type="button">Load run data</button>
+            </div>
           </section>
           <section class="panel cameras-panel">
             <h3>Cameras</h3>
@@ -2453,6 +2545,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("applySelection", applySelection, "Apply stock selection");
         bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
         bindClick("workflowStatus", showWorkflowStatus, "Workflow status");
+        bindClick("loadRunData", loadRunData, "Load run data");
         const chatInput = document.getElementById("chatInput");
         if (chatInput) {{
           chatInput.addEventListener("keydown", (e) => {{
@@ -2471,6 +2564,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }} catch (err) {{
               showToast(String(err), "error");
             }}
+          }});
+        }}
+        const runIdSelect = document.getElementById("runIdSelect");
+        if (runIdSelect) {{
+          runIdSelect.addEventListener("change", () => {{
+            const chosen = String(runIdSelect.value || "").trim();
+            const input = document.getElementById("runIdInput");
+            if (input && chosen) input.value = chosen;
           }});
         }}
         const robotPreset = document.getElementById("robotPreset");
@@ -2734,6 +2835,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
       let lastRrdBlobUrl = "";
+      let activeRunId = "";
       let lastRerunBlobStatus = "pending";
       let lastRerunMountStatus = "pending";
       const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
@@ -2786,12 +2888,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         setRerunBlobStatus("fallback", "recording=public");
         return recordingUrl;
       }}
-      async function resolveRerunRrdUrl(maxAttempts) {{
+      async function resolveRerunRrdUrl(maxAttempts, runId) {{
         const attempts = Math.max(1, Number(maxAttempts || 18));
+        const targetRunId = String(runId || activeRunId || "").trim();
+        const query = targetRunId ? ("?run_id=" + encodeURIComponent(targetRunId)) : "";
         let lastErr = null;
         for (let i = 0; i < attempts; i += 1) {{
           try {{
-            const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob", {{ credentials: "include" }}, 12000);
+            const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob" + query, {{ credentials: "include" }}, 12000);
             if (!resp.ok) {{
               if (resp.status === 401) {{
                 window.location.href = "/login-help.html";
@@ -2821,11 +2925,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         setRerunBlobStatus("failed");
         throw lastErr || new Error("Failed to fetch .rrd for Rerun viewer");
       }}
-      async function rerunIframeSrc(camera) {{
+      async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
         let rrdUrl = "";
         try {{
-          rrdUrl = await resolveRerunRrdUrl();
+          rrdUrl = await resolveRerunRrdUrl(18, runId);
         }} catch (_blobErr) {{
           rrdUrl = await resolveRerunRecordingUrl();
         }}
@@ -2901,10 +3005,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.addEventListener("error", onError, {{ once: true }});
         }});
       }}
-      async function mountRerunIframe(camera) {{
+      async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
-        const src = await rerunIframeSrc(camera);
+        const src = await rerunIframeSrc(camera, runId);
         setRerunMountStatus("retrying", "navigating");
         iframe.src = src;
         hideRerunPlaceholder();
@@ -2913,14 +3017,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
         return true;
       }}
-      async function mountRerunIframeUntilSuccess(camera, maxAttempts) {{
+      async function mountRerunIframeUntilSuccess(camera, maxAttempts, runId) {{
         const attempts = Math.max(1, Number(maxAttempts || 8));
         let lastErr = null;
         for (let i = 0; i < attempts; i += 1) {{
           try {{
             setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
-            await mountRerunIframe(camera);
+            await mountRerunIframe(camera, runId);
             if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
               throw new Error("Rerun iframe mount missing SUCCESS blob/mount state");
             }}
@@ -2950,7 +3054,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         let successStreak = 0;
         while (Date.now() - start < deadlineMs) {{
           try {{
-            const status = await loadJson("/api/sim-viz/status");
+            const statusPath = targetRunId
+              ? "/api/sim-viz/status?run_id=" + encodeURIComponent(targetRunId)
+              : "/api/sim-viz/status";
+            const status = await loadJson(statusPath);
             const selectedCamera = String((status && status.camera) || camera || "workspace");
             const activeRunId = String((status && status.run_id) || "").trim();
             const activeStage = String((status && status.stage) || "idle").trim().toLowerCase();
@@ -2959,7 +3066,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const stageAdvanced = !["", "idle", "submitted", "queued"].includes(activeStage);
             const rrdFresh = Boolean(activeUpdatedAt && (!baselineUpdatedAt || activeUpdatedAt !== baselineUpdatedAt));
             if (status && status.rrd_uri && runMatches && (stageAdvanced || rrdFresh)) {{
-              await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop);
+              await mountRerunIframeUntilSuccess(selectedCamera, mountAttemptsPerLoop, targetRunId);
               if (lastRerunBlobStatus === RERUN_BLOB_SUCCESS && lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
                 successStreak += 1;
                 if (successStreak >= successStreakTarget) {{
@@ -2989,7 +3096,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         const simViz = await waitForRerunReady();
-        await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+        const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
+        if (runId) activeRunId = runId;
+        await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4, runId }});
         return true;
       }}
       async function pollSimVizUntilRrd(maxAttempts, delayMs, targetRunId) {{
@@ -2998,7 +3107,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const runId = String(targetRunId || "").trim();
         let last = null;
         for (let i = 0; i < attempts; i += 1) {{
-          const simViz = await loadJson("/api/sim-viz/status");
+          const statusPath = runId
+            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(runId)
+            : "/api/sim-viz/status";
+          const simViz = await loadJson(statusPath);
           last = simViz;
           const activeRunId = String((simViz && simViz.run_id) || "").trim();
           const runMatches = !runId || (activeRunId && activeRunId === runId);
@@ -3090,7 +3202,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           const assets = await loadJson("/api/sim-assets");
           const cameras = await loadJson("/api/sim-assets/cameras");
-          const simViz = await loadJson("/api/sim-viz/status");
+          const statusPath = activeRunId
+            ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
+            : "/api/sim-viz/status";
+          const simViz = await loadJson(statusPath);
+          activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
+          updateRunSelector(simViz);
           renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
@@ -3245,6 +3362,40 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           props: document.getElementById("propCube").checked ? ["cube"] : []
         }};
       }}
+      function updateRunSelector(simViz) {{
+        const select = document.getElementById("runIdSelect");
+        if (!select) return;
+        const current = String((simViz && simViz.run_id) || "").trim();
+        const runs = Array.isArray(simViz && simViz.available_run_ids) ? simViz.available_run_ids.map(String) : [];
+        select.innerHTML = '<option value="">(select run)</option>';
+        for (const runId of runs) {{
+          const opt = document.createElement("option");
+          opt.value = runId;
+          opt.textContent = runId;
+          if (runId === current) opt.selected = true;
+          select.appendChild(opt);
+        }}
+        const input = document.getElementById("runIdInput");
+        if (input && current) input.value = current;
+      }}
+      async function loadRunData() {{
+        const input = document.getElementById("runIdInput");
+        const runId = String((input && input.value) || "").trim();
+        if (!runId) {{
+          throw new Error("Enter or select a run_id first");
+        }}
+        const data = await apiJson("/api/sim-viz/load-run", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ run_id: runId }}),
+        }});
+        activeRunId = runId;
+        appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
+        if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
+          await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{ runId }});
+        }}
+        await refresh();
+      }}
       async function selectCamera(camera) {{
         const selected = String(camera || "");
         await apiJson("/api/sim-assets/cameras/selection", {{
@@ -3293,6 +3444,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
         appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
         const submittedRunId = String(data.run_id || "").trim();
+        if (submittedRunId) activeRunId = submittedRunId;
         const simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
         if (simViz && simViz.rrd_uri) {{
           await waitForRerunSuccess(
@@ -3332,9 +3484,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         );
       }}
       async function openRerunTab() {{
-        const simViz = await loadJson("/api/sim-viz/status");
+        const statusPath = activeRunId
+          ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
+          : "/api/sim-viz/status";
+        const simViz = await loadJson(statusPath);
         const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
-        const src = await rerunIframeSrc(camera);
+        const src = await rerunIframeSrc(camera, String((simViz && simViz.run_id) || activeRunId || "").trim());
         window.open(src, "_blank", "noopener");
       }}
       async function restoreSession() {{
