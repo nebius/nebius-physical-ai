@@ -148,6 +148,7 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     retarget_result = _run_npa(
         [
             "workbench",
+            "sonic",
             "retargeting",
             "run",
             "--input-path",
