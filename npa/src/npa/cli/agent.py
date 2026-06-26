@@ -562,7 +562,6 @@ def _default_state() -> dict:
         "sim_viz_runs": {{}},
         "active_run_id": "",
         "latest_submit": {{}},
-        "sim_viz_runs": [],
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
         "workflow_submit": {{}},
         "chat_history": [],
@@ -1066,18 +1065,38 @@ def _record_sim_viz_run(state: dict, record: dict) -> None:
     run_id = str(record.get("run_id") or "").strip()
     if not run_id:
         return
-    entries = state.get("sim_viz_runs", [])
-    if not isinstance(entries, list):
-        entries = []
-    normalized = [item for item in entries if isinstance(item, dict) and str(item.get("run_id") or "").strip() != run_id]
-    normalized.insert(0, record)
-    state["sim_viz_runs"] = normalized[:20]
+    entries = state.get("sim_viz_runs")
+    if not isinstance(entries, dict):
+        entries = {{}}
+    snapshot = dict(DEFAULT_SIM_VIZ)
+    snapshot.update(record)
+    snapshot["run_id"] = run_id
+    entries[run_id] = snapshot
+    state["sim_viz_runs"] = entries
+    state["active_run_id"] = run_id
 
 def _sim_viz_runs(state: dict) -> list[dict]:
-    runs = state.get("sim_viz_runs", [])
-    if not isinstance(runs, list):
+    runs = state.get("sim_viz_runs")
+    if not isinstance(runs, dict):
         return []
-    return [item for item in runs if isinstance(item, dict)]
+    snapshots: list[dict] = []
+    for run_id, item in runs.items():
+        if not isinstance(item, dict):
+            continue
+        snapshot = dict(DEFAULT_SIM_VIZ)
+        snapshot.update(item)
+        snapshot["run_id"] = str(item.get("run_id") or run_id or "").strip()
+        if not snapshot["run_id"]:
+            continue
+        snapshots.append(snapshot)
+    return sorted(
+        snapshots,
+        key=lambda item: (
+            str(item.get("rrd_updated_at") or ""),
+            str(item.get("run_id") or ""),
+        ),
+        reverse=True,
+    )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
     yaml_text = str(payload.get("yaml") or "").strip()

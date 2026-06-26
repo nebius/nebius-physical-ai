@@ -240,6 +240,16 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_record_sim_viz_run" in source
 
 
+def test_bootstrap_run_history_uses_run_id_index() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert '"sim_viz_runs": []' not in source
+    assert 'if not isinstance(entries, dict):' in source
+    assert 'entries[run_id] = snapshot' in source
+    assert 'state["active_run_id"] = run_id' in source
+
+
 def test_bootstrap_ui_strips_url_credentials() -> None:
     from npa.cli import agent as agent_module
 
