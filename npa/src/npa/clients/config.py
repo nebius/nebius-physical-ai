@@ -904,11 +904,18 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
     )
 
 
-def resolve_project_storage(project: str | None = None) -> StorageConfig:
+def resolve_project_storage(
+    project: str | None = None,
+    *,
+    include_shared_credentials: bool = True,
+) -> StorageConfig:
     """Resolve project-level object storage settings.
 
     Accepts the newer project ``object-storage``/``object_storage``/``storage``
-    blocks and falls back to ``terraform_state`` for older configs.
+    blocks and falls back to ``terraform_state`` for older configs. When
+    ``include_shared_credentials`` is true, host-scoped credentials from
+    ``~/.npa/credentials.yaml`` are used as a final fallback for operator
+    workflows that only need a writable default bucket.
     """
     yml = _load_yaml()
     try:
@@ -954,10 +961,10 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
 
     # Shared credentials are host-scoped. Keep scoped project settings primary
     # and only use these when no project storage key is configured.
-    credentials_bucket = credentials.s3_bucket
-    credentials_endpoint = credentials.s3_endpoint
-    credentials_access_key = credentials.s3_access_key_id
-    credentials_secret_key = credentials.s3_secret_access_key
+    credentials_bucket = credentials.s3_bucket if include_shared_credentials else ""
+    credentials_endpoint = credentials.s3_endpoint if include_shared_credentials else ""
+    credentials_access_key = credentials.s3_access_key_id if include_shared_credentials else ""
+    credentials_secret_key = credentials.s3_secret_access_key if include_shared_credentials else ""
 
     bucket = pick(
         "checkpoint_bucket",
