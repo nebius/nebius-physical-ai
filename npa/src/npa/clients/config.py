@@ -904,11 +904,18 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
     )
 
 
-def resolve_project_storage(project: str | None = None) -> StorageConfig:
+def resolve_project_storage(
+    project: str | None = None,
+    *,
+    include_shared_credentials: bool = True,
+) -> StorageConfig:
     """Resolve project-level object storage settings.
 
     Accepts the newer project ``object-storage``/``object_storage``/``storage``
-    blocks and falls back to ``terraform_state`` for older configs.
+    blocks and falls back to ``terraform_state`` for older configs. When
+    ``include_shared_credentials`` is true, host-scoped credentials from
+    ``~/.npa/credentials.yaml`` are used as a final fallback for operator
+    workflows that only need a writable default bucket.
     """
     yml = _load_yaml()
     try:
@@ -931,6 +938,8 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
     if not isinstance(state, dict):
         state = {}
 
+    credentials = load_credentials()
+
     def pick(*keys: str, default: str = "") -> str:
         for key in keys:
             value = storage.get(key)
@@ -938,29 +947,64 @@ def resolve_project_storage(project: str | None = None) -> StorageConfig:
                 return str(value)
         return default
 
+    env_bucket = (
+        os.environ.get("NPA_CHECKPOINT_BUCKET", "")
+        or os.environ.get("NEBIUS_S3_BUCKET", "")
+    )
+    env_endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL", "")
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+    )
+    env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+
+    # Shared credentials are host-scoped. Keep scoped project settings primary
+    # and only use these when no project storage key is configured.
+    credentials_bucket = credentials.s3_bucket if include_shared_credentials else ""
+    credentials_endpoint = credentials.s3_endpoint if include_shared_credentials else ""
+    credentials_access_key = credentials.s3_access_key_id if include_shared_credentials else ""
+    credentials_secret_key = credentials.s3_secret_access_key if include_shared_credentials else ""
+
     bucket = pick(
         "checkpoint_bucket",
         "bucket",
         "s3_bucket",
-        default=str(state.get("bucket", "") or ""),
+        default=(
+            str(state.get("bucket", "") or "")
+            or env_bucket
+            or credentials_bucket
+        ),
     )
     endpoint = pick(
         "endpoint_url",
         "endpoint",
         "s3_endpoint",
-        default=str(state.get("endpoint", "") or ""),
+        default=(
+            str(state.get("endpoint", "") or "")
+            or env_endpoint
+            or credentials_endpoint
+        ),
     )
     access_key = pick(
         "aws_access_key_id",
         "access_key",
         "nebius_api_key",
-        default=str(state.get("access_key", "") or ""),
+        default=(
+            str(state.get("access_key", "") or "")
+            or env_access_key
+            or credentials_access_key
+        ),
     )
     secret_key = pick(
         "aws_secret_access_key",
         "secret_key",
         "nebius_secret_key",
-        default=str(state.get("secret_key", "") or ""),
+        default=(
+            str(state.get("secret_key", "") or "")
+            or env_secret_key
+            or credentials_secret_key
+        ),
     )
     return StorageConfig(
         checkpoint_bucket=bucket,

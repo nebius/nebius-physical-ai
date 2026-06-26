@@ -231,6 +231,57 @@ def test_resolve_project_storage_falls_back_to_terraform_state(isolated_config: 
     )
 
 
+def test_resolve_project_storage_uses_env_fallback_when_project_storage_missing(
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(yaml.safe_dump({"projects": {"proj": {}}}))
+    monkeypatch.setenv("NPA_CHECKPOINT_BUCKET", "s3://env-bucket/checkpoints/")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://env-storage.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+    resolved = config.resolve_project_storage("proj")
+
+    assert resolved == config.StorageConfig(
+        checkpoint_bucket="s3://env-bucket/checkpoints/",
+        endpoint_url="https://env-storage.example",
+        aws_access_key_id="env-access",
+        aws_secret_access_key="env-secret",
+    )
+
+
+def test_resolve_project_storage_uses_credentials_file_fallback(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(yaml.safe_dump({"projects": {"proj": {}}}))
+    credentials_path = credentials.CREDENTIALS_PATH
+    credentials_path.parent.mkdir(parents=True, exist_ok=True)
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://creds-bucket/checkpoints/",
+                    "endpoint_url": "https://creds-storage.example",
+                    "aws_access_key_id": "creds-access",
+                    "aws_secret_access_key": "creds-secret",
+                }
+            }
+        )
+    )
+
+    resolved = config.resolve_project_storage("proj")
+
+    assert resolved == config.StorageConfig(
+        checkpoint_bucket="s3://creds-bucket/checkpoints/",
+        endpoint_url="https://creds-storage.example",
+        aws_access_key_id="creds-access",
+        aws_secret_access_key="creds-secret",
+    )
+
+
 def test_resolve_container_registry_uses_project_override(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 

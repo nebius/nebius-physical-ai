@@ -69,11 +69,15 @@ def test_curate_augment_train_workflow_template() -> None:
 def _require_workflow_e2e() -> None:
     if os.environ.get("NPA_INTEGRATION_E2E") != "1":
         pytest.skip("set NPA_INTEGRATION_E2E=1 to run WorkflowTemplate e2e tests")
+    if os.environ.get("NPA_ENABLE_DEPRECATED_ARGO_E2E") != "1":
+        pytest.skip(
+            "Argo WorkflowTemplate harness is deprecated; set NPA_ENABLE_DEPRECATED_ARGO_E2E=1 to run it explicitly"
+        )
     if not os.environ.get("KUBECONFIG"):
         pytest.skip("KUBECONFIG must point at the isolated Argo cluster kubeconfig")
     for tool in ("argo", "kubectl"):
         if not shutil.which(tool):
-            pytest.fail(f"{tool} CLI is required")
+            pytest.skip(f"{tool} CLI is required for deprecated Argo e2e harness")
 
 
 def _submit_workflow(namespace: str, fixture_uri: str) -> str:

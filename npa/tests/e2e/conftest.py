@@ -80,10 +80,42 @@ def _increment_bucket_counter() -> int:
 def _storage_is_configured(project: str | None) -> bool:
     storage = resolve_project_storage(project)
     return bool(
-        storage.endpoint_url
+        storage.checkpoint_bucket
+        and storage.endpoint_url
         and storage.aws_access_key_id
         and storage.aws_secret_access_key
     )
+
+
+def _bucket_and_prefix(uri: str) -> tuple[str, str]:
+    parsed = urlparse(uri if "://" in uri else f"s3://{uri}")
+    bucket = parsed.netloc if parsed.scheme == "s3" else uri.split("/")[0]
+    prefix = parsed.path.strip("/") if parsed.scheme == "s3" else ""
+    return bucket, prefix
+
+
+def _storage_is_writable(project: str | None) -> bool:
+    if not _storage_is_configured(project):
+        return False
+    storage = resolve_project_storage(project)
+    bucket, prefix = _bucket_and_prefix(storage.checkpoint_bucket)
+    if not bucket:
+        return False
+    client = s3_client_for_project(project, allow_host_creds=True)
+    key = "/".join(
+        part
+        for part in (
+            prefix,
+            f"npa-e2e-writable-check-{int(time.time() * 1000)}.txt",
+        )
+        if part
+    )
+    try:
+        client.put_object(Bucket=bucket, Key=key, Body=b"npa e2e writable check\n")
+        client.delete_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def _default_e2e_project() -> str | None:
@@ -92,11 +124,11 @@ def _default_e2e_project() -> str | None:
         value = os.environ["NPA_E2E_PROJECT"].strip()
         return value or None
 
-    if _storage_is_configured(None):
+    if _storage_is_writable(None):
         return None
 
     configured_projects = [
-        project for project in list_projects() if _storage_is_configured(project)
+        project for project in list_projects() if _storage_is_writable(project)
     ]
     if "eu-north1" in configured_projects:
         return "eu-north1"
@@ -143,7 +175,7 @@ def s3_write_access_required(e2e_project: str | None) -> str:
     bucket = parsed.netloc if parsed.scheme == "s3" else storage.checkpoint_bucket
     prefix = parsed.path.strip("/") if parsed.scheme == "s3" else ""
     key = "/".join(part for part in [prefix, "npa-e2e-jobs-precondition.txt"] if part)
-    client = s3_client_for_project(e2e_project)
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
     try:
         client.put_object(Bucket=bucket, Key=key, Body=b"npa jobs precondition\n")
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
@@ -159,7 +191,7 @@ def _test_bucket(test_name: str, e2e_project: str | None) -> Iterator[str]:
     if _bucket_count() >= E2E_BUCKET_MAX_CREATIONS:
         pytest.fail("E2E bucket budget exhausted (8 buckets created this run)")
 
-    client = s3_client_for_project(e2e_project)
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
     _prune_concurrent_test_buckets(client)
 
     bucket_name = _bucket_name_for_test(test_name)
@@ -241,7 +273,7 @@ def _empty_bucket(client: Any, bucket_name: str) -> None:
 @pytest.fixture
 def s3_helper(e2e_project: str | None) -> "S3Helper":
     """Provide helpers for verifying real S3 state in e2e tests."""
-    return S3Helper(s3_client_for_project(e2e_project))
+    return S3Helper(s3_client_for_project(e2e_project, allow_host_creds=True))
 
 
 class S3Helper:

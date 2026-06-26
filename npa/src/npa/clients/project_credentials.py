@@ -52,7 +52,7 @@ def resolve_credentials(
             failed_project=normalized,
         )
 
-    storage = resolve_project_storage(normalized)
+    storage = resolve_project_storage(normalized, include_shared_credentials=False)
     endpoint_url = (
         storage.endpoint_url
         or os.environ.get("AWS_ENDPOINT_URL", "")
