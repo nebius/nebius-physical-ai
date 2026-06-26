@@ -221,7 +221,7 @@ try:
     # Add a workspace camera so we can RENDER the (custom) object for Rerun viz.
     env_cfg.scene.heldout_cam = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/heldout_cam",
-        offset=TiledCameraCfg.OffsetCfg(pos=(1.2, 0.0, 0.8), rot=(0.6, 0.0, 0.35, 0.0), convention="world"),
+        offset=TiledCameraCfg.OffsetCfg(pos=(1.5, 0.0, 0.9), rot=(0.259, 0.0, 0.966, 0.0), convention="world"),
         data_types=["rgb"], width=128, height=128, spawn=sim_utils.PinholeCameraCfg())
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
