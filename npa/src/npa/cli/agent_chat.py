@@ -20,7 +20,8 @@ _WATCH_SUCCESS_GATE_RE = re.compile(
     r".{0,80}\b(?:until|till|when|once|retry|wait)\b.{0,80}\b(?:success|successful|ready|succeeded|passed|green)\b"
     r"|\b(?:rerun[_ -]?blob[_ -]?success|rerun[_ -]?mount[_ -]?success)\b"
     r"|\bRERUN_(?:BLOB|MOUNT)_SUCCESS\b"
-    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present)\b",
+    r"|\brrd[_ -]?uri\b.{0,80}\b(?:non[- ]?empty|set|available|present|populated)\b"
+    r"|\brun[_ -]?id\b.{0,80}\b(?:scoped|scope|match|matching)\b.{0,80}\b(?:success|ready)\b",
     re.IGNORECASE,
 )
 
@@ -147,6 +148,9 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("blobiframeuntilsuccess", "blob iframe until success")
     lowered = lowered.replace("rerunblobuntilsuccess", "rerun blob until success")
     lowered = lowered.replace("reruniframeuntilsuccess", "rerun iframe until success")
+    lowered = lowered.replace("rerunblobiframetilsuccess", "rerun blob iframe till success")
+    lowered = lowered.replace("rerunblobiframeuntilsuccessful", "rerun blob iframe until successful")
+    lowered = lowered.replace("rrduripopulated", "rrd uri populated")
     lowered = lowered.replace("rrduri", "rrd uri")
     lowered = lowered.replace("runid", "run id")
     lowered = lowered.replace("rrdurinonempty", "rrd uri non-empty")
@@ -176,12 +180,15 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "blobiframeuntilsuccess",
             "rerunblobuntilsuccess",
             "reruniframeuntilsuccess",
+            "rerunblobiframetilsuccess",
+            "rerunblobiframeuntilsuccessful",
             "rerunmountsuccess",
             "rerunblobsuccess",
             "runidscopedrerunblobiframeuntilsuccess",
             "watchrrduriuntilsuccess",
             "rrdurinonemptyuntilsuccess",
             "rrdurisetuntilsuccess",
+            "rrduripopulateduntilsuccess",
         )
     ):
         return True
@@ -210,6 +217,7 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rrd uri non-empty",
             "rrd uri set",
             "rrd uri available",
+            "rrd uri populated",
         )
     )
     return has_rerun_surface and has_success_gate
