@@ -155,6 +155,8 @@ def _normalize_intent_text(text: str) -> str:
     lowered = lowered.replace("runid", "run id")
     lowered = lowered.replace("rrduriuntilsuccess", "rrd uri until success")
     lowered = lowered.replace("runidrrduriuntilsuccess", "run id rrd uri until success")
+    lowered = lowered.replace("runid/rrduri", "run id rrd uri")
+    lowered = lowered.replace("runidrrdurisuccess", "run id rrd uri success")
     lowered = lowered.replace("rrdurinonempty", "rrd uri non-empty")
     lowered = lowered.replace("rrdurinotempty", "rrd uri not empty")
     lowered = lowered.replace("rrduriset", "rrd uri set")
@@ -198,6 +200,8 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rrdurisetuntilsuccess",
             "rrduripopulateduntilsuccess",
             "runidrrduriuntilsuccess",
+            "runidrrdurisuccess",
+            "runidrrduri",
         )
     ):
         return True
@@ -473,6 +477,7 @@ def build_grounded_reply(
             + f"\n- **watch_stage**: `{stage}` for **run_id** `{run_id}`."
             + f"\n- **watch_mode**: `{mode}`."
             + f"\n- **rrd_uri**: `{rrd_uri}`."
+            + "\n- **operator_gate**: `Rerun blob iframe until SUCCESS`."
             + "\n- Start from `GET /api/sim-viz/status` and surface `watch_url`, `watch_stage`, and `run_id`."
             + "\n- Keep the **Rerun** panel open; poll `/api/sim-viz/status` until `rrd_uri` becomes non-empty."
             + "\n- Keep polling until stage transitions beyond `submitted` and a fresh `rrd_updated_at` appears."

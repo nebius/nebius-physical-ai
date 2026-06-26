@@ -65,6 +65,7 @@ def test_build_grounded_reply_watch_sim_mentions_success() -> None:
     assert "SUCCESS" in reply
     assert "blob" in reply
     assert "iframe mount" in reply
+    assert "Rerun blob iframe until SUCCESS" in reply
     assert "RERUN_BLOB_SUCCESS=SUCCESS" in reply
     assert "RERUN_MOUNT_SUCCESS=SUCCESS" in reply
     assert "**rrd_uri**" in reply
