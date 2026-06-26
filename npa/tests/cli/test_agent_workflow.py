@@ -11,6 +11,7 @@ from npa.cli.agent_chat import (
     match_chat_intent,
 )
 from npa.cli.agent_workflow import (
+    generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     plan_workflow_yaml_text,
     validate_workflow_yaml_text,
@@ -49,6 +50,23 @@ def test_plan_two_step_workflow_has_two_steps() -> None:
     assert "workbench.sim2real_envgen.raw_shard" in tool_refs
 
 
+def test_generate_sim2real_loop_gate_yaml_validates() -> None:
+    yaml_text = generate_sim2real_loop_gate_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True
+    assert result["name"] == "sim2real-loop-gate-agent"
+    assert {"augment", "refine", "vlm-critique", "quality-gate", "publish"}.issubset(set(result["states"]))
+
+
+def test_plan_loop_gate_workflow_respects_assume_decision() -> None:
+    yaml_text = generate_sim2real_loop_gate_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="loop-demo", assume_decision="promote_checkpoint")
+    assert plan["ok"] is True
+    step_states = [str(step.get("state")) for step in plan["steps"]]
+    assert "quality-gate" in step_states
+    assert "publish" in step_states
+
+
 def test_match_create_workflow_intent() -> None:
     assert match_chat_intent("create a 2-step sim2real workflow") == "create_workflow"
     assert match_chat_intent("generate npa.workflow YAML for sim2real") == "create_workflow"
@@ -78,6 +96,10 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "workflowYaml" in source
     assert "validateWorkflowYaml" in source
     assert "generate_sim2real_two_step_yaml" in source
+    assert "generate_sim2real_loop_gate_yaml" in source
+    assert '@app.get("/sim-viz/runs")' in source
+    assert '@app.post("/sim-viz/select-run")' in source
+    assert "sim_viz_runs" in source
     embedded = agent_module._embedded_agent_workflow_source()
     assert "validate_workflow_yaml_text" in embedded
 

@@ -560,6 +560,7 @@ def _default_state() -> dict:
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "latest_submit": {{}},
+        "sim_viz_runs": [],
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
         "workflow_submit": {{}},
         "chat_history": [],
@@ -1023,6 +1024,25 @@ def _save_workflow_draft(state: dict, yaml_text: str, validation: dict) -> dict:
     _save_state(state)
     return draft
 
+def _record_sim_viz_run(state: dict, record: dict) -> None:
+    if not isinstance(record, dict):
+        return
+    run_id = str(record.get("run_id") or "").strip()
+    if not run_id:
+        return
+    entries = state.get("sim_viz_runs", [])
+    if not isinstance(entries, list):
+        entries = []
+    normalized = [item for item in entries if isinstance(item, dict) and str(item.get("run_id") or "").strip() != run_id]
+    normalized.insert(0, record)
+    state["sim_viz_runs"] = normalized[:20]
+
+def _sim_viz_runs(state: dict) -> list[dict]:
+    runs = state.get("sim_viz_runs", [])
+    if not isinstance(runs, list):
+        return []
+    return [item for item in runs if isinstance(item, dict)]
+
 def _resolve_workflow_yaml(payload: dict) -> str:
     yaml_text = str(payload.get("yaml") or "").strip()
     if yaml_text:
@@ -1078,7 +1098,14 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     elif intent == "create_workflow":
-        yaml_text = generate_sim2real_two_step_yaml()
+        lowered = str(user_text or "").lower()
+        wants_complex = any(
+            token in lowered for token in ("complex", "loop", "gate", "transition", "decision")
+        )
+        if wants_complex:
+            yaml_text = generate_sim2real_loop_gate_yaml()
+        else:
+            yaml_text = generate_sim2real_two_step_yaml()
         validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
         _save_workflow_draft(state, yaml_text, validation)
         reply = format_workflow_chat_reply(yaml_text, validation)
@@ -1205,6 +1232,7 @@ def session_bootstrap():
         "selection": state.get("selection", dict(DEFAULT_SELECTION)),
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
+        "sim_viz_runs": _sim_viz_runs(state),
         "workflow_draft": _workflow_draft_from_state(state),
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
@@ -1246,6 +1274,50 @@ def sim_viz_status():
     payload["mode"] = "live" if mode == "live" else "static"
     payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
     return payload
+
+@app.get("/sim-viz/runs")
+def sim_viz_runs():
+    state = _load_state()
+    active = sim_viz_status()
+    runs = _sim_viz_runs(state)
+    active_id = str(active.get("run_id") or "").strip()
+    return {{
+        "ok": True,
+        "active_run_id": active_id,
+        "runs": runs,
+    }}
+
+@app.post("/sim-viz/select-run")
+def sim_viz_select_run(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    requested_run = str(body.get("run_id") or "").strip()
+    if not requested_run:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    state = _load_state()
+    runs = _sim_viz_runs(state)
+    selected = next((item for item in runs if str(item.get("run_id") or "").strip() == requested_run), None)
+    if not isinstance(selected, dict):
+        raise HTTPException(status_code=404, detail=f"run_id not found: {{requested_run}}")
+    sim_viz = dict(DEFAULT_SIM_VIZ)
+    if isinstance(state.get("sim_viz"), dict):
+        sim_viz.update(state["sim_viz"])
+    sim_viz.update(
+        {{
+            "run_id": requested_run,
+            "stage": str(selected.get("stage") or sim_viz.get("stage") or "submitted"),
+            "rrd_uri": str(selected.get("rrd_uri") or sim_viz.get("rrd_uri") or ""),
+            "rrd_updated_at": str(selected.get("rrd_updated_at") or sim_viz.get("rrd_updated_at") or ""),
+            "camera": str(selected.get("camera") or sim_viz.get("camera") or "workspace"),
+        }}
+    )
+    state["sim_viz"] = sim_viz
+    state["latest_submit"] = {{
+        "run_id": requested_run,
+        "submitted_at": str(selected.get("submitted_at") or _now_iso()),
+        "submit_mode": str(selected.get("submit_mode") or "history-select"),
+    }}
+    _save_state(state)
+    return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
 
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
@@ -1562,6 +1634,19 @@ def submit_npa_workflow(payload: dict):
         "workflow_name": str(validation.get("name") or ""),
         "submit_mode": "validate-only",
     }}
+    _record_sim_viz_run(
+        state,
+        {{
+            "run_id": run_id,
+            "submitted_at": submit_record["submitted_at"],
+            "stage": "submitted",
+            "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
+            "rrd_uri": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_uri") or ""),
+            "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
+            "submit_mode": "validate-only",
+            "workflow_name": str(validation.get("name") or ""),
+        }},
+    )
     _save_state(state)
     return {{"ok": True, **submit_record}}
 
@@ -1594,6 +1679,19 @@ def submit_sim2real(payload: dict):
         "live_grpc_url": "",
         "mode": "static",
     }}
+    _record_sim_viz_run(
+        state,
+        {{
+            "run_id": run_id,
+            "submitted_at": state["latest_submit"]["submitted_at"],
+            "stage": "submitted",
+            "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
+            "rrd_uri": "",
+            "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
+            "submit_mode": "sim2real",
+            "workflow_name": "sim2real",
+        }},
+    )
     _save_state(state)
     return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
 PY

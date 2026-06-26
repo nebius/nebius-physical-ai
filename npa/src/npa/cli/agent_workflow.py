@@ -61,6 +61,99 @@ states:
 """
 
 
+def generate_sim2real_loop_gate_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "sim2real-loop-gate-agent",
+) -> str:
+    """Return a loop + decision Sim2Real npa.workflow spec."""
+    return f"""apiVersion: {API_VERSION}
+kind: Workflow
+
+metadata:
+  name: {name}
+  description: >
+    Sim2Real workflow with dynamic decision gating:
+    augment -> refine(loop) -> finalize.
+
+config:
+  bucket: {bucket}
+  prefix: "sim2real-loop/{{{{run.id}}}}"
+  vlm_backend: api
+  refinement_iterations: 3
+  default_decision: loop_back
+
+  trigger_uri: "s3://{{{{config.bucket}}}}/sim2real-triggers/{{{{run.id}}}}/lerobot-pusht/"
+  augment_uri: "s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/augment/"
+  rollouts_uri: "s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/augment/"
+  scores_uri: "s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/scores/"
+  decision_uri: "s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/gate/decision.json"
+  finalize_report_uri: "s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+
+initial: augment
+
+states:
+  augment:
+    description: Cosmos Transfer augment stage.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    outputs:
+      - uri: "{{{{config.augment_uri}}}}manifest.json"
+        schema: npa.sim2real.augment.v1
+    next: refine
+
+  refine:
+    description: Iterate critique + decision gate until promoted.
+    needs: [augment]
+    loop:
+      max: "{{{{config.refinement_iterations}}}}"
+      until: promote_checkpoint
+    sequence:
+      - vlm-critique
+      - quality-gate
+    next: publish
+
+  vlm-critique:
+    description: Score augmented rollouts before gate.
+    toolRef: workbench.vlm_eval.run
+    resources: gpu
+    inputs:
+      - uri: "{{{{config.rollouts_uri}}}}"
+        schema: npa.workbench.rollout_set.v1
+    outputs:
+      - uri: "{{{{config.scores_uri}}}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  quality-gate:
+    description: Persist decision to promote or loop back.
+    writesDecision: true
+    needs: [vlm-critique]
+    toolRef: workbench.sim2real.write_decision
+    outputs:
+      - uri: "{{{{config.decision_uri}}}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint
+        goto: publish
+      - when: loop_back
+        goto: augment
+
+  publish:
+    description: Finalize report once promoted.
+    needs: [refine]
+    toolRef: workbench.sim2real.finalize
+    outputs:
+      - uri: "{{{{config.finalize_report_uri}}}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true
+"""
+
+
 def validate_workflow_yaml_text(
     yaml_text: str,
     *,
