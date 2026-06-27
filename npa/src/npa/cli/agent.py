@@ -994,6 +994,11 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
+            "Always use real registry-qualified images from your Nebius container registry",
+            "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
+            "`<your-registry-id>` placeholders in runnable workflows.",
+            "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
+            "and loop submit attempts in tmux until validation+plan+prechecks pass.",
             "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
         ]
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -170,6 +171,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "live_infra_loop",
+        re.compile(
+            r"\b(?:run|submit|launch|test)\b.{0,120}\b(?:live|real)\b.{0,120}\b(?:infra|infrastructure|dev\s*vm)\b"
+            r"|\b(?:tmux|cursor[- ]?loop|loop)\b.{0,120}\b(?:live|real)\b.{0,120}\b(?:infra|workflow)\b"
+            r"|\b(?:verify|check)\b.{0,120}\b(?:gpu|accelerator)\b.{0,120}\b(?:compat|compatibility)\b"
+            r"|\b(?:retry|loop)\b.{0,120}\b(?:failed[_ -]?prechecks|precheck)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "cosmos_capabilities",
         re.compile(
             r"\bcosmos(?:2|3)?\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|finetun(?:e|ing)|train(?:ing)?|infer(?:ence)?)\b"
@@ -222,6 +233,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "live_infra_loop": ["workflows/validate", "workflows/plan", "tools"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -233,6 +245,13 @@ INTENT_APIS: dict[str, list[str]] = {
     "configure_s3": ["tools"],
     "cosmos3": [],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
+}
+
+_DEFAULT_REGISTRY = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+_DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
+    "cosmos": ("npa-cosmos", "1.0.9"),
+    "lancedb": ("npa-lancedb", "0.30.3"),
+    "isaac-lab": ("npa-isaac-lab", "2.3.2.post1"),
 }
 
 
@@ -540,9 +559,16 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 8) -> str:
     return "\n".join(lines)
 
 
+def _image_for_tool(tool: str) -> str:
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or _DEFAULT_REGISTRY
+    image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
+    return f"{registry.rstrip('/')}/{image_name}:{tag}"
+
+
 def format_cosmos_capabilities(tool_refs: list[str]) -> str:
     cosmos_refs = [ref for ref in tool_refs if "cosmos" in ref or "token_factory" in ref]
     sample = ", ".join(sorted(cosmos_refs)[:4]) if cosmos_refs else "workbench.cosmos2.transfer"
+    cosmos_image = _image_for_tool("cosmos")
     return "\n".join(
         [
             "**Cosmos component capabilities**:",
@@ -550,6 +576,7 @@ def format_cosmos_capabilities(tool_refs: list[str]) -> str:
             "- **Setup + model staging**: `npa workbench cosmos check|fetch`.",
             "- **Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
             "- **Pipeline integration**: Cosmos augment stage via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
+            f"- **Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
             f"- **Catalog examples**: `{sample}`",
             "- Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
         ]
@@ -559,6 +586,7 @@ def format_cosmos_capabilities(tool_refs: list[str]) -> str:
 def format_lancedb_capabilities(tool_refs: list[str]) -> str:
     lancedb_refs = [ref for ref in tool_refs if ref.startswith("workbench.lancedb.")]
     sample = ", ".join(sorted(lancedb_refs)[:5]) if lancedb_refs else "workbench.lancedb.import_bdd100k"
+    lancedb_image = _image_for_tool("lancedb")
     return "\n".join(
         [
             "**LanceDB component capabilities**:",
@@ -566,6 +594,7 @@ def format_lancedb_capabilities(tool_refs: list[str]) -> str:
             "- **Feature backfill**: CPU + GPU UDF backfills (including CLIP embeddings).",
             "- **Dataset shaping**: materialized view creation for failure-mode slices.",
             "- **Serving path**: endpoint-backed execution for workflows and tooling.",
+            f"- **Registry image default**: `{lancedb_image}` (use your real registry, never `<your-registry-id>` placeholders).",
             f"- **Catalog examples**: `{sample}`",
             "- Keep table/URI names in config; avoid embedding project-specific constants in workflow states.",
         ]
@@ -582,6 +611,32 @@ def format_component_capabilities(tool_refs: list[str]) -> str:
             "- **Token Factory + VLM**: reasoning, augment, scoring, and decision-gate loops.",
             "- Ask for a component by name (for example: `Cosmos capabilities`) to get targeted commands + workflow patterns.",
             f"- **Current toolRef count**: `{len(tool_refs)}`",
+        ]
+    )
+
+
+def format_live_infra_loop_guidance() -> str:
+    isaac_image = _image_for_tool("isaac-lab")
+    lancedb_image = _image_for_tool("lancedb")
+    cosmos_image = _image_for_tool("cosmos")
+    return "\n".join(
+        [
+            "**Live infra loop guidance (DEV VM + tmux)**:",
+            "- Resolve registry images from your actual Nebius registry (no placeholders):",
+            f"  - Isaac Lab: `{isaac_image}`",
+            f"  - LanceDB: `{lancedb_image}`",
+            f"  - Cosmos: `{cosmos_image}`",
+            "- GPU compatibility precheck before each launch:",
+            "  1. `sky check`",
+            "  2. `sky gpus list`",
+            "  3. ensure requested accelerator exists in your active K8s context",
+            "- Loop pattern in tmux:",
+            "```bash",
+            "SESSION=live-infra-loop-$(date -u +%Y%m%dT%H%M%SZ)",
+            "tmux new -d -s \"$SESSION\"",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
+            "```",
+            "- If `FAILED_PRECHECKS` appears: adjust image reference or accelerator and retry in the same loop.",
         ]
     )
 
@@ -688,6 +743,8 @@ def build_grounded_reply(
         return format_sim_assets(state)
     if intent == "cameras":
         return format_cameras(state, default_cameras=default_cameras)
+    if intent == "live_infra_loop":
+        return format_live_infra_loop_guidance()
     if intent == "cosmos_capabilities":
         return format_cosmos_capabilities(tool_refs)
     if intent == "lancedb_capabilities":
