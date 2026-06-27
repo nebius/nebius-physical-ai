@@ -68,6 +68,13 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/skypilot/cosmos3-ea-fetch.yaml
+  - name: dev-vm-loop
+    category: atomic
+    when_to_use: "Run jobs on the shared dev VM using isolated branch/worktree and a cursor-loop session."
+    path: skills/atomic/dev-vm-loop/SKILL.md
+    smoke:
+      - type: file_exists
+        path: scripts/dev-loop.sh
   - name: gpu-selection
     category: atomic
     when_to_use: "Choose or review GPU targets for training, rendering, inference, and workflow YAML resources."
