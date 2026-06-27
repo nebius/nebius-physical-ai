@@ -994,6 +994,10 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
+            "For BYOF onboarding (for example Lightwheel LeIsaac), use the",
+            "`npa/scripts/run_isaac_lab_byof_repo.py` flow to containerize an OSS repo,",
+            "push to the configured Nebius registry, then launch a real Isaac-Lab run",
+            "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
         ]
     )

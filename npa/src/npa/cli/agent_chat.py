@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -130,6 +131,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "onboard_oss_repo",
+        re.compile(
+            r"\b(?:open[\s-]?source|github|repo(?:sitory)?)\b.{0,140}\b(?:containerize|docker|image|registry|push)\b"
+            r"|\b(?:byof|bring your own fork|custom fork)\b.{0,140}\b(?:isaac|isaac[-\s]?lab|leisaac)\b"
+            r"|\b(?:leisaac|lightwheel)\b.{0,140}\b(?:image|container|registry|workflow|run)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "list_recordings",
         re.compile(
             r"\b(?:list|show|view|browse|get|fetch)\b.{0,80}\b(?:recordings?|run\s+history|runs?)\b"
@@ -190,6 +200,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "onboard_oss_repo": ["tools", "workflows/validate", "workflows/plan"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -537,6 +548,34 @@ def format_cosmos3_setup() -> str:
     )
 
 
+def format_onboard_oss_repo() -> str:
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
+    return "\n".join(
+        [
+            "**Yes — chat can drive OSS repo onboarding to registry + live run.**",
+            "- Reference repo: `https://github.com/LightwheelAI/leisaac.git`",
+            "- Container + push + live Isaac-Lab smoke run (L40S/RT-core path):",
+            "```bash",
+            "npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py \\",
+            "  --repo-url https://github.com/LightwheelAI/leisaac.git \\",
+            "  --repo-ref main \\",
+            "  --registry " + registry + " \\",
+            "  --iterations 1 \\",
+            "  --task Isaac-Cartpole-v0 \\",
+            "  --cleanup",
+            "```",
+            "- Loop in tmux (retry on capacity/prechecks):",
+            "```bash",
+            "SESSION=leisaac-live-$(date -u +%Y%m%dT%H%M%SZ)",
+            "tmux new -d -s \"$SESSION\"",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; sky check; sky gpus list; ATTEMPT=1; while [ $ATTEMPT -le 3 ]; do npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py --repo-url https://github.com/LightwheelAI/leisaac.git --repo-ref main --iterations 1 --cleanup && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*20)); done' C-m",
+            "```",
+            "- GPU compatibility: Isaac Lab requires RT-core GPUs (`L40S` or `RTX PRO 6000`), not H100/H200.",
+            "- This flow keeps workflow contracts stable while replacing only the Isaac image via `--image` override.",
+        ]
+    )
+
+
 def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loaded_now: bool) -> str:
     sim_viz = _sim_viz(state)
     camera = str(sim_viz.get("camera") or "workspace")
@@ -606,6 +645,8 @@ def build_grounded_reply(
         return format_configure_s3()
     if intent == "cosmos3":
         return format_cosmos3_setup()
+    if intent == "onboard_oss_repo":
+        return format_onboard_oss_repo()
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)

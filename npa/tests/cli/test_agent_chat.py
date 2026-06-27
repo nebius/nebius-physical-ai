@@ -35,6 +35,10 @@ def test_match_sim2real_status_intent() -> None:
     )
     assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
+    assert (
+        match_chat_intent("add an open source repo, containerize, push to registry, and run LeIsaac")
+        == "onboard_oss_repo"
+    )
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
 
@@ -103,6 +107,15 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
     assert "sim-viz/status" in apis
     assert "sim-viz/rrd" in apis
     assert "sim-viz/rrd-blob" in apis
+
+
+def test_onboard_oss_repo_reply_mentions_leisaac_and_registry() -> None:
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    reply = build_grounded_reply("onboard_oss_repo", state, ["workbench.rl.policy_train"])
+    assert "LightwheelAI/leisaac" in reply
+    assert "run_isaac_lab_byof_repo.py" in reply
+    assert "registry" in reply.lower()
+    assert "L40S" in reply
 
 
 def test_embedded_agent_chat_source_strips_future_import() -> None:

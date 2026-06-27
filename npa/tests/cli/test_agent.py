@@ -75,6 +75,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
+    assert "run_isaac_lab_byof_repo.py" in source
+    assert "Lightwheel LeIsaac" in source
     bootstrap_split = f'        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split
     assert "\\r?\\n" in bootstrap_split
