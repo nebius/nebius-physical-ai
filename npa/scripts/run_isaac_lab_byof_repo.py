@@ -217,8 +217,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
+        message = str(exc)
         summary["status"] = "failed"
-        summary["error"] = str(exc)
+        summary["error"] = message
+        if "403 Forbidden" in message and "ISAAC_BASE_IMAGE" in message:
+            summary["hint"] = (
+                "Registry pull for the base Isaac image was denied. "
+                "Grant pull access for the base image or pass --base-image "
+                "with an accessible parent image."
+            )
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 1
     finally:
