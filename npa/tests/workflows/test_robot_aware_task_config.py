@@ -54,6 +54,25 @@ def test_overrides_drops_bad_ranges():
     assert over == {}
 
 
+def test_dense_lift_weight_passthrough():
+    # A positive dense_lift_weight is carried (with a default std) so the variant
+    # adds the continuous lift-progress reward; a non-positive / bad value is not.
+    over = robotmod.task_config_overrides({"dense_lift_weight": 2.5})
+    assert over["dense_lift_weight"] == 2.5
+    assert over["dense_lift_std"] == 0.05
+    over2 = robotmod.task_config_overrides({"dense_lift_weight": 4.0, "dense_lift_std": 0.08})
+    assert over2["dense_lift_std"] == 0.08
+    assert robotmod.task_config_overrides({"dense_lift_weight": 0}) == {}
+    assert robotmod.task_config_overrides({"dense_lift_weight": "nope"}) == {}
+
+
+def test_dense_lift_reward_function_is_shipped():
+    # The dense reward must be at module level so it travels in module_source()
+    # (the Isaac image has no npa package) and be importable off-GPU (lazy torch).
+    assert callable(robotmod.object_lift_progress)
+    assert "def object_lift_progress" in robotmod.module_source()
+
+
 # --------------------------------------------------------------------------- #
 # Franka byte-for-byte: stock spec -> no overrides
 # --------------------------------------------------------------------------- #

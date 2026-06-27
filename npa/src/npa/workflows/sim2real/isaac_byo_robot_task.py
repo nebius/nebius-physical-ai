@@ -406,7 +406,49 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
             except (TypeError, ValueError):
                 continue
 
+    # Dense, robot-agnostic lift-progress shaping (B5 structural fix): the stock
+    # lifting_object reward is a STEP at minimal_height, so partial lifts give zero
+    # gradient — a non-Franka arm reaches the object but the grasp->lift never
+    # bootstraps. dense_lift_weight (>0) adds a continuous reward for raising the
+    # object above its spawn height, breaking the flat region. Stock-Franka derived
+    # config never sets it, so the Franka path is unchanged.
+    dlw = task_cfg.get("dense_lift_weight")
+    if dlw is not None:
+        try:
+            w = float(dlw)
+            if w > 0:
+                out["dense_lift_weight"] = w
+                std = task_cfg.get("dense_lift_std")
+                out["dense_lift_std"] = float(std) if std is not None else 0.05
+        except (TypeError, ValueError):
+            pass
+
     return out
+
+
+def object_lift_progress(env, std: float = 0.05, object_name: str = "object"):
+    """Continuous, robot-agnostic reward for raising the object above its spawn height.
+
+    The stock Isaac-Lift ``lifting_object`` reward is a STEP (height > minimal_height
+    -> 1), and ``object_goal_tracking`` is gated on the same threshold, so before the
+    first clean grasp+lift the whole lift phase has ZERO gradient. A non-Franka arm
+    learns to reach the object (reaching_object climbs) but the 3-finger grasp->lift
+    is never discovered, so lifting_object stays flat. This term rewards ANY upward
+    object motion (``tanh`` of the height gained over spawn), giving PPO a gradient
+    to bootstrap the grasp. Depends only on the object, not the embodiment.
+
+    Defined at module level so it ships in ``module_source`` and runs in-container.
+    Imports torch lazily (GPU-only). Returns a per-env tensor.
+    """
+
+    import torch  # noqa: WPS433 (GPU-only; lazy so the module imports off-GPU)
+
+    obj = env.scene[object_name]
+    z = obj.data.root_pos_w[:, 2]
+    # default_root_state is env-local; add env origin z for a world-frame baseline.
+    z0 = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    gained = torch.clamp(z - z0, min=0.0)
+    return torch.tanh(gained / float(std))
 
 
 def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None) -> str | None:
@@ -643,6 +685,29 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR gripper", repr(exc), flush=True)
                 skipped.append("gripper_action.command_exprs")
+
+        # (f) dense lift-progress reward: add a continuous height-gain term so the
+        # grasp->lift bootstraps past the stock step reward's flat region. Gated on
+        # dense_lift_weight (>0); never set on the Franka path. Defensive — a cfg
+        # shape change skips the term (recorded) instead of crashing the run.
+        if "dense_lift_weight" in task_over:
+            try:
+                from isaaclab.managers import RewardTermCfg  # noqa: WPS433
+
+                rewards = getattr(env_cfg, "rewards", None)
+                term = RewardTermCfg(
+                    func=object_lift_progress,
+                    weight=float(task_over["dense_lift_weight"]),
+                    params={
+                        "std": float(task_over.get("dense_lift_std", 0.05)),
+                        "object_name": "object",
+                    },
+                )
+                setattr(rewards, "dense_lift_progress", term)
+                applied.append("rewards.dense_lift_progress(%s)" % task_over["dense_lift_weight"])
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR dense_lift", repr(exc), flush=True)
+                skipped.append("rewards.dense_lift_progress")
 
         print("ROBOT_TASKCFG applied=%s skipped=%s" % (applied, skipped), flush=True)
 
