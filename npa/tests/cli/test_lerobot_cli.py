@@ -258,6 +258,31 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_cross_bucket() -
     )
 
 
+def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_endpoint() -> None:
+    storage = StorageConfig(
+        checkpoint_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+        endpoint_url="https://storage.eu-north1.nebius.cloud",
+        aws_access_key_id="project-key",
+        aws_secret_access_key="project-secret",
+    )
+    credentials = SimpleNamespace(
+        s3_access_key_id="shared-key",
+        s3_secret_access_key="shared-secret",
+        s3_endpoint="https://storage.us-central1.nebius.cloud",
+        s3_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+    )
+
+    assert lerobot._serverless_storage_env_values(
+        storage,
+        credentials,
+        "s3://lerobot-ccc9d3c7/checkpoints/lerobot/default/run-1/",
+    ) == (
+        "shared-key",
+        "shared-secret",
+        "https://storage.us-central1.nebius.cloud",
+    )
+
+
 def test_lerobot_serverless_env_split_keeps_secrets_extra() -> None:
     safe, extra = lerobot._split_serverless_env({"HF_TOKEN": "hf", "NPA_JOB_NAME": "job"})
 

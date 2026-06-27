@@ -581,13 +581,22 @@ def _s3_bucket_name(uri: str) -> str:
 
 def _serverless_storage_env_values(storage: Any, credentials: Any, output_path: str) -> tuple[str, str, str]:
     storage_bucket = _s3_bucket_name(getattr(storage, "checkpoint_bucket", ""))
+    credentials_bucket = _s3_bucket_name(getattr(credentials, "s3_bucket", ""))
     output_bucket = _s3_bucket_name(output_path)
-    use_credentials_storage = bool(
-        output_bucket
-        and storage_bucket
-        and output_bucket != storage_bucket
-        and getattr(credentials, "s3_access_key_id", "")
+    has_credentials = bool(
+        getattr(credentials, "s3_access_key_id", "")
         and getattr(credentials, "s3_secret_access_key", "")
+    )
+    output_uses_credentials_bucket = bool(
+        output_bucket and credentials_bucket and output_bucket == credentials_bucket and getattr(credentials, "s3_endpoint", "")
+    )
+    use_credentials_storage = bool(
+        has_credentials
+        and output_bucket
+        and (
+            (storage_bucket and output_bucket != storage_bucket)
+            or output_uses_credentials_bucket
+        )
     )
     if use_credentials_storage:
         return (
