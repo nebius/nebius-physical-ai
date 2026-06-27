@@ -423,6 +423,19 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
+    # Grasp-shaping reward weight (>0): reward closing the gripper near the object,
+    # breaking the grasp<->lift chicken-and-egg. Same gating/Franka-safety as above.
+    gsw = task_cfg.get("grasp_shaping_weight")
+    if gsw is not None:
+        try:
+            w = float(gsw)
+            if w > 0:
+                out["grasp_shaping_weight"] = w
+                std = task_cfg.get("grasp_shaping_std")
+                out["grasp_shaping_std"] = float(std) if std is not None else 0.06
+        except (TypeError, ValueError):
+            pass
+
     return out
 
 
@@ -449,6 +462,61 @@ def object_lift_progress(env, std: float = 0.05, object_name: str = "object"):
     z0 = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     gained = torch.clamp(z - z0, min=0.0)
     return torch.tanh(gained / float(std))
+
+
+_GRASP_WARNED = {"done": False}
+
+
+def grasp_shaping(
+    env,
+    std: float = 0.06,
+    object_name: str = "object",
+    ee_frame_name: str = "ee_frame",
+    gripper_joint_names: tuple[str, ...] | list[str] | None = None,
+    gripper_open: float = 0.0,
+    gripper_close: float = 1.0,
+):
+    """Reward closing the gripper while the ee is at the object (grasp precursor).
+
+    The deepest BYO-lift wall: the gripper-close action has NO reward gradient
+    until a clean grasp+lift, but the lift needs the close — a chicken-and-egg that
+    even a dense lift reward can't break, because the object never moves during
+    random exploration (dense_lift_progress stays 0 while reaching_object climbs).
+    This term gives a gradient to CLOSE the gripper when near the object: reward =
+    near(ee,object) * gripper_closedness. Robot-agnostic — the finger joints +
+    open/close targets come from the retarget/spec. Once the policy closes on the
+    object, the dense lift reward takes over.
+
+    Fully defensive: any per-step error returns zeros (logged once) so a cfg/API
+    shape mismatch contributes 0 instead of crashing the run.
+    """
+
+    import torch  # noqa: WPS433 (GPU-only)
+
+    try:
+        obj = env.scene[object_name]
+        ee = env.scene[ee_frame_name]
+        ee_w = ee.data.target_pos_w[..., 0, :]
+        obj_w = obj.data.root_pos_w
+        dist = torch.norm(obj_w - ee_w, dim=1)
+        near = 1.0 - torch.tanh(dist / float(std))
+        robot = env.scene["robot"]
+        if gripper_joint_names:
+            idx, _ = robot.find_joints(list(gripper_joint_names))
+            qpos = robot.data.joint_pos[:, idx].mean(dim=1)
+            denom = float(gripper_close) - float(gripper_open)
+            denom = denom if abs(denom) > 1e-6 else 1.0
+            closed = ((qpos - float(gripper_open)) / denom).clamp(0.0, 1.0)
+        else:
+            closed = torch.ones_like(near)
+        return near * closed
+    except Exception as exc:  # noqa: BLE001 (never crash training on a reward call)
+        if not _GRASP_WARNED["done"]:
+            print("ROBOT_GRASP_SHAPING_ERR", repr(exc), flush=True)
+            _GRASP_WARNED["done"] = True
+        import torch as _t  # noqa: WPS433
+
+        return _t.zeros(env.num_envs, device=env.device)
 
 
 def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None) -> str | None:
@@ -708,6 +776,34 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR dense_lift", repr(exc), flush=True)
                 skipped.append("rewards.dense_lift_progress")
+
+        # (g) grasp-shaping reward: reward closing the gripper near the object, to
+        # break the grasp<->lift chicken-and-egg (the object never moves under random
+        # exploration, so no object-based reward can bootstrap the grasp). Gated on
+        # grasp_shaping_weight (>0); finger joints come from the retarget plan.
+        if "grasp_shaping_weight" in task_over:
+            try:
+                from isaaclab.managers import RewardTermCfg  # noqa: WPS433
+
+                rewards = getattr(env_cfg, "rewards", None)
+                grip = (retarget or {}).get("gripper") or {}
+                term = RewardTermCfg(
+                    func=grasp_shaping,
+                    weight=float(task_over["grasp_shaping_weight"]),
+                    params={
+                        "std": float(task_over.get("grasp_shaping_std", 0.06)),
+                        "object_name": "object",
+                        "ee_frame_name": "ee_frame",
+                        "gripper_joint_names": list(grip.get("joint_names") or []),
+                        "gripper_open": float(task_over.get("gripper_open", 0.0)),
+                        "gripper_close": float(task_over.get("gripper_close", 1.0)),
+                    },
+                )
+                setattr(rewards, "grasp_shaping", term)
+                applied.append("rewards.grasp_shaping(%s)" % task_over["grasp_shaping_weight"])
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR grasp_shaping", repr(exc), flush=True)
+                skipped.append("rewards.grasp_shaping")
 
         print("ROBOT_TASKCFG applied=%s skipped=%s" % (applied, skipped), flush=True)
 

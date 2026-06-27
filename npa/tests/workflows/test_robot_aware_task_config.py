@@ -73,6 +73,17 @@ def test_dense_lift_reward_function_is_shipped():
     assert "def object_lift_progress" in robotmod.module_source()
 
 
+def test_grasp_shaping_weight_passthrough_and_shipped():
+    over = robotmod.task_config_overrides({"grasp_shaping_weight": 3.0})
+    assert over["grasp_shaping_weight"] == 3.0
+    assert over["grasp_shaping_std"] == 0.06
+    assert robotmod.task_config_overrides({"grasp_shaping_weight": 0}) == {}
+    assert robotmod.task_config_overrides({"grasp_shaping_weight": "x"}) == {}
+    # Shipped at module level for the in-container wrapper.
+    assert callable(robotmod.grasp_shaping)
+    assert "def grasp_shaping" in robotmod.module_source()
+
+
 # --------------------------------------------------------------------------- #
 # Franka byte-for-byte: stock spec -> no overrides
 # --------------------------------------------------------------------------- #
