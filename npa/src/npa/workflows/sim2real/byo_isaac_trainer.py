@@ -49,6 +49,16 @@ DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 DEFAULT_ENTROPY_COEF = "0.01"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+# rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
+# Overridable via NPA_BYO_ISAAC_EXPERIMENT_NAME for non-default tasks; the outer-loop
+# RESUME path stages the prior checkpoint under this experiment dir so train.py's
+# get_checkpoint_path() resolves it.
+DEFAULT_EXPERIMENT_NAME = "franka_lift"
+# Fixed run-dir name we stage a resumed checkpoint into. train.py is then told to
+# load exactly this run (agent.load_run) so resume never picks the freshly-created
+# current run dir by accident.
+RESUME_RUN_DIR = "00000000_npa_resume"
+RESUME_CKPT_NAME = "model_0.pt"
 
 # Root of the public Omniverse Isaac asset CDN (no tenant/private IDs). Override
 # with NPA_ISAAC_NUCLEUS_DIR to point at an internal Nucleus mirror.
@@ -251,6 +261,8 @@ def build_isaac_job_manifest(
     physics: dict[str, float] | None = None,
     entropy_coef: str = "",
     init_noise_std: str = "",
+    resume_uri: str = "",
+    experiment_name: str = DEFAULT_EXPERIMENT_NAME,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -286,6 +298,18 @@ def build_isaac_job_manifest(
         overrides["agent.algorithm.entropy_coef"] = entropy_coef
     if init_noise_std:
         overrides["agent.policy.init_noise_std"] = init_noise_std
+    # OUTER-LOOP RESUME (default path only): continue the SAME policy from the prior
+    # outer/inner iteration's checkpoint instead of training from scratch, so stage
+    # 11B's "send back for more RL" compounds across OUTER_ITERATIONS. The prior model
+    # is staged under logs/rsl_rl/<experiment>/<RESUME_RUN_DIR>/<RESUME_CKPT_NAME>
+    # (see the download block in the script) and train.py's get_checkpoint_path()
+    # resolves it from these hydra args. The physics-variant path trains a different
+    # task and is not resumed.
+    resume_uri = resume_uri.strip()
+    if resume_uri and not physics:
+        overrides["agent.resume"] = "true"
+        overrides["agent.load_run"] = RESUME_RUN_DIR
+        overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
@@ -321,11 +345,33 @@ def build_isaac_job_manifest(
             '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
         )
     else:
+        # Stage the prior-iteration checkpoint where train.py's get_checkpoint_path()
+        # looks (logs/rsl_rl/<experiment>/<RESUME_RUN_DIR>/<RESUME_CKPT_NAME>, relative
+        # to the run cwd $OUT). A download failure leaves the dir empty so train.py
+        # raises on resume — loud, never a silent fresh start.
+        resume_block = ""
+        if resume_uri and not physics:
+            resume_dir = f"logs/rsl_rl/{experiment_name}/{RESUME_RUN_DIR}"
+            resume_block = (
+                f'echo "RESUME_FROM: {resume_uri}"\n'
+                f'mkdir -p "$OUT/{resume_dir}"\n'
+                '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+                f'RESUME_URI="{resume_uri}" '
+                f'RESUME_DST="$OUT/{resume_dir}/{RESUME_CKPT_NAME}" "$PY" - <<\'RESEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['RESUME_URI'])\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), os.environ['RESUME_DST'])\n"
+                "print('RESUME_DOWNLOADED', os.environ['RESUME_DST'])\n"
+                "RESEOF\n"
+            )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
             f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
         )
         train_block = (
+            f'{resume_block}'
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
@@ -487,6 +533,12 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _sanitize_tag(tag: str) -> str:
+    """Make a trainer tag safe for an S3 path segment (alnum, dash, underscore)."""
+    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in tag.strip())
+    return cleaned.strip("-")
+
+
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
@@ -502,7 +554,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     service_account = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     job_name = f"s2r-byo-isaac-train-{run_id}"[:63]
-    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{job_name}/"
+    # Per-iteration tag (e.g. "outer-02-iter-01") keeps each outer/inner iteration's
+    # checkpoint at a DISTINCT S3 path so the prior model survives for the next
+    # iteration to resume from (and outer iterations don't overwrite each other).
+    # Unset => byte-identical to the historical single-shot path.
+    tag = _sanitize_tag(_env("NPA_SIM2REAL_TRAINER_TAG"))
+    path_seg = f"{job_name}/{tag}/" if tag else f"{job_name}/"
+    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{path_seg}"
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200") or 7200)
 
     # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
@@ -550,6 +608,19 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         print(f"byo_isaac_trainer: PHYSICS injection {'ON' if physics else 'OFF (no params)'} "
               f"-> {physics}", flush=True)
 
+    # OUTER-LOOP RESUME: the orchestrator passes the prior iteration's checkpoint URI
+    # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
+    # the physics-variant path (different task) — log it so the skip is visible.
+    resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
+    experiment_name = _env("NPA_BYO_ISAAC_EXPERIMENT_NAME", DEFAULT_EXPERIMENT_NAME)
+    if resume_uri:
+        if physics:
+            print(f"byo_isaac_trainer: RESUME requested but physics path active; "
+                  f"ignoring resume_uri={resume_uri}", flush=True)
+        else:
+            print(f"byo_isaac_trainer: RESUME from {resume_uri} "
+                  f"(experiment={experiment_name}) -> continue same policy", flush=True)
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -569,6 +640,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         physics=physics,
         entropy_coef=entropy_coef,
         init_noise_std=init_noise_std,
+        resume_uri=resume_uri,
+        experiment_name=experiment_name,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
