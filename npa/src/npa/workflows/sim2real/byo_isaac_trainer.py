@@ -332,6 +332,7 @@ def build_isaac_job_manifest(
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
+    task_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -403,6 +404,18 @@ def build_isaac_job_manifest(
         module_src = _robotmod.module_source()
         wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
         spec_json = json.dumps(robot_spec, sort_keys=True)
+        # B2-derived robot-aware task config (action scale / placement / reward
+        # thresholds / gripper) shipped alongside the robot spec so the variant is
+        # scaled to the arm instead of the Franka-tuned stock numbers.
+        task_cfg_block = ""
+        if task_config:
+            task_cfg_json = json.dumps(task_config, sort_keys=True)
+            task_cfg_block = "export NPA_BYO_TASK_CONFIG_JSON=" + shlex.quote(task_cfg_json) + "\n"
+        # Keep PPO exploring (same fix as the Franka default path); the wrapper
+        # applies it to the rsl_rl agent cfg. Empty -> wrapper keeps task default.
+        ent_block = ""
+        if entropy_coef:
+            ent_block = "export ROBOT_ENTROPY_COEF=" + shlex.quote(str(entropy_coef)) + "\n"
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
         stage_block = ""
         if robot_usd_uri and usd_dest:
@@ -435,12 +448,15 @@ def build_isaac_job_manifest(
             f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
             f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
             "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
-            # tee the FULL wrapper output to a file before tailing: the retarget
-            # plan + the honest task/robot compatibility verdict are printed right
-            # after AppLauncher boot, so `| tail -120` alone discards them behind
-            # the training-loop logs (and entirely when an incompatible robot fails
-            # at env build). The markers are re-dumped from this file post-run.
-            '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/npa_robot/run.log | tail -120\n'
+            + task_cfg_block
+            + ent_block
+            # tee the FULL wrapper output to /tmp/train_full.log before tailing: the
+            # retarget plan + the honest task/robot compatibility verdict are printed
+            # right after AppLauncher boot, so `| tail -120` alone discards them
+            # behind the training-loop logs (and entirely when an incompatible robot
+            # fails at env build). The markers are re-dumped from this file post-run,
+            # and the file IS the per-iteration reward curve uploaded for plotting.
+            + '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
         )
     elif physics:
         # Generated-physics path: ship the isaac_physics_task module + its
@@ -512,8 +528,8 @@ def build_isaac_job_manifest(
         # Re-dump the BYO-robot markers (retarget plan + compatibility verdict +
         # summary) from the full wrapper log so they survive the `tail -120` above
         # and are present even when an incompatible robot fails at env build.
-        'if [ -f /tmp/npa_robot/run.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
-        'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/npa_robot/run.log || true; fi\n'
+        'if [ -f /tmp/train_full.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
+        'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/train_full.log || true; fi\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
@@ -765,6 +781,21 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         print(f"byo_isaac_trainer: BYO-ROBOT task path "
               f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
 
+    # B2-derived robot-aware task config (action scale / placement / reward
+    # thresholds / gripper). Set by the onboarding CLI as NPA_BYO_TASK_CONFIG_JSON
+    # so the BYO Lift variant is scaled to the arm. Unset -> variant keeps stock.
+    task_config = None
+    raw_task_cfg = _env("NPA_BYO_TASK_CONFIG_JSON")
+    if raw_task_cfg:
+        try:
+            parsed = json.loads(raw_task_cfg)
+            if isinstance(parsed, dict):
+                task_config = parsed
+                print(f"byo_isaac_trainer: BYO task config -> {task_config}", flush=True)
+        except (ValueError, TypeError) as exc:
+            print(f"byo_isaac_trainer: WARNING invalid NPA_BYO_TASK_CONFIG_JSON ({exc!r}); "
+                  "variant keeps stock task numbers", flush=True)
+
     # OUTER-LOOP RESUME: the orchestrator passes the prior iteration's checkpoint URI
     # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
     # the physics-variant path (different task) — log it so the skip is visible.
@@ -801,6 +832,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         experiment_name=experiment_name,
         robot_spec=robot_spec_dict,
         robot_usd_uri=robot_usd_uri,
+        task_config=task_config,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)

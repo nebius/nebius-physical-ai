@@ -35,6 +35,12 @@ STOCK_ROBOT_SOURCE = "stock_franka"
 # trainer/eval wiring; mirrors how NPA_GEN_FRICTION/NPA_GEN_MASS_SCALE carry the
 # generated physics for the physics variant.
 ROBOT_SPEC_ENV = "NPA_BYO_ROBOT_SPEC_JSON"
+# JSON blob carrying the B2-derived robot-aware task config (action scale, object
+# + goal placement, reward thresholds, gripper targets). Set by the onboarding
+# CLI / trainer so the Lift variant is scaled to the robot instead of using the
+# Franka-tuned stock numbers. Unset -> the variant keeps the stock task config
+# (only the articulation + link/joint names are swapped).
+TASK_CONFIG_ENV = "NPA_BYO_TASK_CONFIG_JSON"
 
 # Bounds keep a garbage gain from producing a numerically unstable drive. The
 # defaults sit well inside Franka's own range (kp up to 4500, kv up to 450).
@@ -327,7 +333,83 @@ def task_robot_compatibility(
     }
 
 
-def register(spec: dict[str, Any] | None = None) -> str | None:
+def task_config_from_env(env: dict[str, str] | None = None) -> dict[str, Any] | None:
+    """Parse the B2-derived robot-aware task config from ``NPA_BYO_TASK_CONFIG_JSON``.
+
+    Returns ``None`` when unset/empty/invalid, in which case the variant keeps the
+    stock Lift task numbers (articulation swap only).
+    """
+
+    env = os.environ if env is None else env
+    raw = (env.get(TASK_CONFIG_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        cfg = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def _range_dict(value: Any) -> dict[str, tuple[float, float]]:
+    """Coerce a {axis: [lo, hi]} mapping to {axis: (lo, hi)} floats; drop bad axes."""
+
+    out: dict[str, tuple[float, float]] = {}
+    if not isinstance(value, dict):
+        return out
+    for axis in ("x", "y", "z"):
+        pair = value.get(axis)
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            try:
+                out[axis] = (float(pair[0]), float(pair[1]))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """Map a B2-derived task-config dict to the Lift-env mutations ``register`` applies.
+
+    Pure + unit-tested off-GPU (the GPU-side ``_apply_task_config`` consumes this).
+    Returns ``{}`` for ``None`` / non-dict so the variant keeps the stock numbers.
+    Includes only the fields the derived config actually provides, so a partial
+    config touches only what it specifies.
+    """
+
+    if not isinstance(task_cfg, dict):
+        return {}
+    out: dict[str, Any] = {}
+
+    action_scale = task_cfg.get("action_scale")
+    if action_scale is not None:
+        try:
+            out["action_scale"] = float(action_scale)
+        except (TypeError, ValueError):
+            pass
+
+    obj_range = _range_dict(task_cfg.get("object_init_range"))
+    if obj_range:
+        out["object_init_range"] = obj_range
+    goal_range = _range_dict(task_cfg.get("goal_range"))
+    if goal_range:
+        out["goal_range"] = goal_range
+
+    goal_pos = _num_list(task_cfg.get("goal_pos"))
+    if len(goal_pos) == 3:
+        out["goal_pos"] = tuple(goal_pos)
+
+    for key in ("minimal_height_m", "success_distance_m", "gripper_open", "gripper_close"):
+        val = task_cfg.get(key)
+        if val is not None:
+            try:
+                out[key] = float(val)
+            except (TypeError, ValueError):
+                continue
+
+    return out
+
+
+def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None) -> str | None:
     """Register the BYO-robot Lift variant in the gym registry; return its id.
 
     No-op (returns ``None``) when there are no articulation overrides (no spec, or
@@ -341,7 +423,9 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
         return None
 
     retarget = task_retarget_overrides(spec)
+    task_over = task_config_overrides(task_cfg if task_cfg is not None else task_config_from_env())
     compat = task_robot_compatibility(spec, task_kind="lift")
+    print("ROBOT_TASKCFG_PLAN", json.dumps(task_over, default=list), flush=True)
     # Honest, loud signal: a gripperless arm cannot lift no matter the renames. We
     # still register (so the swap/retarget mechanism is exercised), but the trainer
     # surfaces this in the report and the operator is not misled into expecting
@@ -449,6 +533,119 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
 
         print("ROBOT_RETARGET applied=%s skipped=%s" % (applied, skipped), flush=True)
 
+    def _apply_task_config(env_cfg: Any) -> None:
+        """Apply the B2-derived robot-aware task config onto the Lift env cfg.
+
+        Drives the action scale, object-init + goal placement ranges, and the
+        lift/goal reward thresholds from ``task_over`` (derived from the robot's
+        workspace) instead of the Franka-tuned stock numbers — the change that
+        lets a non-Franka arm actually LEARN. No-op when ``task_over`` is empty
+        (stock numbers kept). Each term is guarded so a cfg-shape change on a
+        newer Isaac-Lab skips that term (recorded) rather than crashing the run.
+        """
+
+        if not task_over:
+            print("ROBOT_TASKCFG applied=[] skipped=[] (no derived config)", flush=True)
+            return
+
+        applied: list[str] = []
+        skipped: list[str] = []
+
+        # (a) action scale: per-step joint-position offset magnitude.
+        if "action_scale" in task_over:
+            try:
+                arm_action = getattr(getattr(env_cfg, "actions", None), "arm_action", None)
+                if arm_action is not None and hasattr(arm_action, "scale"):
+                    arm_action.scale = float(task_over["action_scale"])
+                    applied.append("arm_action.scale")
+                else:
+                    skipped.append("arm_action.scale")
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR action_scale", repr(exc), flush=True)
+                skipped.append("arm_action.scale")
+
+        # (b) object init placement: the reset_object_position event pose_range.
+        if "object_init_range" in task_over:
+            try:
+                events = getattr(env_cfg, "events", None)
+                rop = getattr(events, "reset_object_position", None)
+                params = getattr(rop, "params", None)
+                if isinstance(params, dict) and isinstance(params.get("pose_range"), dict):
+                    params["pose_range"].update(
+                        {k: tuple(v) for k, v in task_over["object_init_range"].items()}
+                    )
+                    applied.append("events.reset_object_position.pose_range")
+                else:
+                    skipped.append("events.reset_object_position.pose_range")
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR object_init_range", repr(exc), flush=True)
+                skipped.append("events.reset_object_position.pose_range")
+
+        # (c) goal placement: object_pose command sampling ranges.
+        if "goal_range" in task_over:
+            try:
+                commands = getattr(env_cfg, "commands", None)
+                object_pose = getattr(commands, "object_pose", None)
+                ranges = getattr(object_pose, "ranges", None)
+                gr = task_over["goal_range"]
+                set_any = False
+                for axis, attr in (("x", "pos_x"), ("y", "pos_y"), ("z", "pos_z")):
+                    if axis in gr and hasattr(ranges, attr):
+                        setattr(ranges, attr, tuple(gr[axis]))
+                        set_any = True
+                applied.append("commands.object_pose.ranges") if set_any else skipped.append(
+                    "commands.object_pose.ranges"
+                )
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR goal_range", repr(exc), flush=True)
+                skipped.append("commands.object_pose.ranges")
+
+        # (d) reward thresholds: lift minimal_height + goal-tracking std relative
+        # to the (scaled) workspace, so the learning signal is robot-aware.
+        if "minimal_height_m" in task_over:
+            try:
+                rewards = getattr(env_cfg, "rewards", None)
+                mh = float(task_over["minimal_height_m"])
+                touched = []
+                for term_name in ("lifting_object", "object_goal_tracking",
+                                  "object_goal_tracking_fine_grained"):
+                    term = getattr(rewards, term_name, None)
+                    params = getattr(term, "params", None)
+                    if isinstance(params, dict) and "minimal_height" in params:
+                        params["minimal_height"] = mh
+                        touched.append(term_name)
+                applied.append("rewards.minimal_height(%s)" % ",".join(touched)) if touched \
+                    else skipped.append("rewards.minimal_height")
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR minimal_height", repr(exc), flush=True)
+                skipped.append("rewards.minimal_height")
+
+        # (e) gripper close/open targets: complement the retarget command exprs
+        # with the derived values (no-op when equal to the spec values).
+        gripper_action = getattr(getattr(env_cfg, "actions", None), "gripper_action", None)
+        if gripper_action is not None and (
+            "gripper_open" in task_over or "gripper_close" in task_over
+        ):
+            try:
+                if "gripper_open" in task_over and hasattr(gripper_action, "open_command_expr"):
+                    expr = getattr(gripper_action, "open_command_expr", None) or {}
+                    if isinstance(expr, dict) and expr:
+                        gripper_action.open_command_expr = {
+                            k: float(task_over["gripper_open"]) for k in expr
+                        }
+                if "gripper_close" in task_over and hasattr(gripper_action, "close_command_expr"):
+                    expr = getattr(gripper_action, "close_command_expr", None) or {}
+                    if isinstance(expr, dict) and expr:
+                        gripper_action.close_command_expr = {
+                            k: float(task_over["gripper_close"]) for k in expr
+                        }
+                applied.append("gripper_action.command_exprs")
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR gripper", repr(exc), flush=True)
+                skipped.append("gripper_action.command_exprs")
+
+        print("ROBOT_TASKCFG applied=%s skipped=%s" % (applied, skipped), flush=True)
+
     class _ByoRobotLiftEnvCfg(franka_lift.FrankaCubeLiftEnvCfg):  # type: ignore[name-defined]
         def __post_init__(self) -> None:  # noqa: WPS610
             super().__post_init__()
@@ -484,6 +681,10 @@ def register(spec: dict[str, Any] | None = None) -> str | None:
             # Retarget the Franka-hardcoded ee_frame / actions / command body onto
             # the swapped robot's link & joint names (the seam's core gap).
             _apply_retarget(self)
+            # Then drive the action scale / placement / reward thresholds from the
+            # B2-derived robot-aware config so the swapped arm actually LEARNS
+            # (not just runs). No-op when no derived config was supplied.
+            _apply_task_config(self)
 
     stock_kwargs = gym.spec(STOCK_TASK_ID).kwargs
     gym.register(
@@ -537,17 +738,20 @@ import gymnasium as gym
 import isaaclab_tasks  # noqa: F401
 import isaac_byo_robot_task as robotmod
 spec = robotmod.robot_spec_from_env()
+task_cfg = robotmod.task_config_from_env()
 overrides = robotmod.robot_articulation_overrides(spec)
 retarget = robotmod.task_retarget_overrides(spec)
+task_over = robotmod.task_config_overrides(task_cfg)
 compat = robotmod.task_robot_compatibility(spec, task_kind="lift")
 print("ROBOT_SPEC", spec, flush=True)
 print("ROBOT_OVERRIDES", overrides, flush=True)
 print("ROBOT_RETARGET_PLAN", retarget, flush=True)
+print("ROBOT_TASKCFG_PLAN", task_over, flush=True)
 print("ROBOT_COMPAT", compat, flush=True)
 if not compat.get("task_robot_compatible", True):
     print("ROBOT_TASK_INCOMPATIBLE", compat.get("reason"), flush=True)
 try:
-    task = robotmod.register(spec)
+    task = robotmod.register(spec, task_cfg)
 except Exception:
     print("ROBOT_REGISTER_FAILED", flush=True); traceback.print_exc(); os._exit(42)
 task = task or robotmod.STOCK_TASK_ID
@@ -574,6 +778,21 @@ try:
     acfg["save_interval"] = max(1, min(int(acfg.get("save_interval", 50) or 50), ITERS))
     if SEED:
         acfg["seed"] = SEED
+    # Keep PPO exploring through the grasp bottleneck (same fix as the Franka
+    # default path): without this the action-noise std collapses early and the
+    # swapped arm locks into a reach-and-hover local optimum (the flat-reward
+    # Kinova failure). ROBOT_ENTROPY_COEF="" / "stock" keeps the task default.
+    ENT = os.environ.get("ROBOT_ENTROPY_COEF", "").strip()
+    if ENT and ENT.lower() not in ("stock", "default", "none"):
+        try:
+            algo = acfg.get("algorithm")
+            if isinstance(algo, dict):
+                algo["entropy_coef"] = float(ENT)
+                print("ROBOT_ENTROPY_COEF_SET", ENT, flush=True)
+            else:
+                print("ROBOT_ENTROPY_COEF_SKIP no algorithm dict", flush=True)
+        except Exception as e:
+            print("ROBOT_ENTROPY_COEF_ERR", repr(e), flush=True)
     print("ROBOT_AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     env = gym.make(task, cfg=env_cfg)
     # Definitive check that the customer robot is LIVE (not a silent stock
