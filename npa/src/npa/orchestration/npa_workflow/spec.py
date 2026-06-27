@@ -1,4 +1,4 @@
-"""Load and validate ``apiVersion: npa.workflow/v0.0.1`` workflow specifications."""
+"""Load and validate NPA workflow API versions."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import PREDICATES
 
 API_VERSION = "npa.workflow/v0.0.1"
+API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
+SUPPORTED_API_VERSIONS = frozenset({API_VERSION, API_VERSION_BETA})
 
 
 @dataclass
@@ -196,9 +198,9 @@ def _parse_state(name: str, entry: dict[str, Any]) -> StateSpec:
 
 
 def validate_spec(spec: NpaWorkflowSpec) -> None:
-    if spec.api_version != API_VERSION:
+    if spec.api_version not in SUPPORTED_API_VERSIONS:
         raise NpaWorkflowError(
-            f"unsupported apiVersion {spec.api_version!r} (expected {API_VERSION})"
+            f"unsupported apiVersion {spec.api_version!r} (expected one of {sorted(SUPPORTED_API_VERSIONS)!r})"
         )
     if spec.kind != "Workflow":
         raise NpaWorkflowError(f"unsupported kind {spec.kind!r} (expected Workflow)")
