@@ -18,10 +18,10 @@ Examples:
   python npa/scripts/run_tokenfactory_train_triage.py --render-only
 
   # Full live run: serverless GPU smoke train + Token Factory triage.
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py
 
   # Skip the GPU stage and only triage an existing run prefix (cheap iteration).
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
       --from-output-path s3://my-bucket/lerobot-serverless-test/<ts>/
 """
 

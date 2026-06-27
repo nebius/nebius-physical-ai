@@ -97,6 +97,8 @@ def live_credential_markers() -> list[str]:
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "HF_TOKEN",
+        "NEBIUS_AI_CLOUD_KEY",
+        "NEBIUS_TOKEN_FACTORY_KEY",
         "NEBIUS_API_KEY",
     ):
         value = os.environ.get(env_key, "")

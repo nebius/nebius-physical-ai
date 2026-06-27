@@ -13,10 +13,14 @@ import yaml
 
 CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
+AI_CLOUD_ENV_KEY = "NEBIUS_AI_CLOUD_KEY"
+AI_CLOUD_LEGACY_ENV_KEY = "NEBIUS_API_KEY"
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
-TOKEN_FACTORY_LEGACY_ENV_KEYS = ("NEBIUS_API_KEY", "NEBIUS_TOKEN_FACTORY_API_KEY")
+TOKEN_FACTORY_LEGACY_ENV_KEYS = ("NEBIUS_TOKEN_FACTORY_API_KEY",)
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
+    AI_CLOUD_ENV_KEY,
+    AI_CLOUD_LEGACY_ENV_KEY,
     TOKEN_FACTORY_ENV_KEY,
     *TOKEN_FACTORY_LEGACY_ENV_KEYS,
     *NGC_ENV_KEYS,
@@ -57,13 +61,18 @@ class CredentialsConfig:
 
     @property
     def nebius_api_key(self) -> str:
-        """Nebius Token Factory API key (``tokens.NEBIUS_TOKEN_FACTORY_KEY``)."""
-        return resolve_token_factory_key(self.tokens)
+        """Backward-compatible alias for the Nebius AI Cloud key."""
+        return self.ai_cloud_api_key
 
     @property
     def token_factory_api_key(self) -> str:
         """Explicit alias for the Nebius Token Factory hosted-inference key."""
-        return self.nebius_api_key
+        return resolve_token_factory_key(self.tokens)
+
+    @property
+    def ai_cloud_api_key(self) -> str:
+        """Nebius AI Cloud API key (``tokens.NEBIUS_AI_CLOUD_KEY``)."""
+        return resolve_ai_cloud_key(self.tokens)
 
     @property
     def ngc_api_key(self) -> str:
@@ -76,6 +85,15 @@ class CredentialsConfig:
     @property
     def ngc_team(self) -> str:
         return self.tokens.get("NGC_TEAM", "")
+
+
+def resolve_ai_cloud_key(tokens: Mapping[str, str]) -> str:
+    """Return the Nebius AI Cloud key from a token map."""
+    for key in (AI_CLOUD_ENV_KEY, AI_CLOUD_LEGACY_ENV_KEY):
+        value = tokens.get(key, "")
+        if value:
+            return value
+    return ""
 
 
 def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
@@ -329,6 +347,27 @@ def _normalize_token_factory_key(data: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_ai_cloud_key(data: dict[str, Any]) -> dict[str, Any]:
+    """Mirror legacy AI Cloud key names into the canonical token name."""
+
+    tokens_raw = data.get("tokens")
+    tokens = dict(tokens_raw) if isinstance(tokens_raw, dict) else {}
+    canonical = str(tokens.get(AI_CLOUD_ENV_KEY, "") or "").strip()
+    if canonical:
+        return data
+
+    legacy_value = str(tokens.get(AI_CLOUD_LEGACY_ENV_KEY, "") or "").strip()
+    if not legacy_value:
+        legacy_value = str(data.get(AI_CLOUD_LEGACY_ENV_KEY, "") or "").strip()
+    if not legacy_value:
+        return data
+
+    normalized = dict(data)
+    tokens[AI_CLOUD_ENV_KEY] = legacy_value
+    normalized["tokens"] = tokens
+    return normalized
+
+
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
     """Persist the Nebius Token Factory key under ``tokens.NEBIUS_TOKEN_FACTORY_KEY``."""
 
@@ -360,6 +399,7 @@ def write_credentials_file(
         if isinstance(loaded, dict):
             existing = loaded
     merged = _deep_merge(existing, _prune_empty(dict(data)))
+    merged = _normalize_ai_cloud_key(merged)
     merged = _normalize_token_factory_key(merged)
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     with credentials_path.open("w") as handle:
@@ -401,6 +441,9 @@ def shared_credential_env(credentials: CredentialsConfig) -> dict[str, str]:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     tokens = getattr(credentials, "tokens", {}) or {}
+    ai_cloud_key = resolve_ai_cloud_key(tokens)
+    if ai_cloud_key:
+        env[AI_CLOUD_ENV_KEY] = ai_cloud_key
     token_factory_key = resolve_token_factory_key(tokens)
     if token_factory_key:
         env[TOKEN_FACTORY_ENV_KEY] = token_factory_key

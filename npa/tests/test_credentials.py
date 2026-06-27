@@ -99,24 +99,24 @@ def test_load_credentials_reads_nebius_token_factory_key(tmp_path: Path) -> None
 
     resolved = load_credentials(path=credentials_path, environ={})
 
-    assert resolved.nebius_api_key == "tf-file"
+    assert resolved.token_factory_api_key == "tf-file"
     assert resolved.tokens["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-file"
     assert shared_credential_env(resolved)["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-file"
 
 
-def test_load_credentials_reads_legacy_nebius_api_key_in_file(tmp_path: Path) -> None:
+def test_load_credentials_reads_legacy_token_factory_api_key_in_file(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-file"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_API_KEY": "tf-legacy-file"}})
     )
 
     resolved = load_credentials(path=credentials_path, environ={})
 
-    assert resolved.nebius_api_key == "tf-legacy-file"
+    assert resolved.token_factory_api_key == "tf-legacy-file"
     assert shared_credential_env(resolved)["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-file"
 
 
-def test_nebius_api_key_env_overrides_file(tmp_path: Path) -> None:
+def test_token_factory_key_env_overrides_file(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
         yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_KEY": "tf-file"}})
@@ -127,7 +127,6 @@ def test_nebius_api_key_env_overrides_file(tmp_path: Path) -> None:
         environ={"NEBIUS_TOKEN_FACTORY_KEY": "tf-env"},
     )
 
-    assert resolved.nebius_api_key == "tf-env"
     assert resolved.token_factory_api_key == "tf-env"
 
 
@@ -159,7 +158,7 @@ def test_write_credentials_file_normalizes_legacy_token_factory_key(
 ) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-file"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_API_KEY": "tf-legacy-file"}})
     )
 
     write_credentials_file(
@@ -168,9 +167,35 @@ def test_write_credentials_file_normalizes_legacy_token_factory_key(
     )
 
     stored = yaml.safe_load(credentials_path.read_text())
-    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-legacy-file"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_API_KEY"] == "tf-legacy-file"
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-file"
     assert stored["storage"]["bucket"] == "s3://bucket/checkpoints/"
+
+
+def test_load_credentials_reads_ai_cloud_key_and_legacy_alias(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "ai-legacy-file"}})
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.ai_cloud_api_key == "ai-legacy-file"
+    assert resolved.nebius_api_key == "ai-legacy-file"
+    assert shared_credential_env(resolved)["NEBIUS_AI_CLOUD_KEY"] == "ai-legacy-file"
+
+
+def test_write_credentials_file_normalizes_legacy_ai_cloud_key(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "ai-legacy-file"}})
+    )
+
+    write_credentials_file({"tokens": {"HF_TOKEN": "hf-token"}}, path=credentials_path)
+
+    stored = yaml.safe_load(credentials_path.read_text())
+    assert stored["tokens"]["NEBIUS_API_KEY"] == "ai-legacy-file"
+    assert stored["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "ai-legacy-file"
 
 
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:

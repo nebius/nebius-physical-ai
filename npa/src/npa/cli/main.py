@@ -75,12 +75,14 @@ when needed, then with an authenticated profile
 auto-creates an S3 bucket (and access key) when you press Enter at the bucket
 prompt, so you supply your Nebius tenant id, project id, and region plus optional
 bucket name, storage class (standard or enhanced), bucket size, Hugging Face,
-Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
+AI Cloud, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
+  # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs).
+  NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
@@ -442,7 +444,12 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
         default=existing_credentials.hf_token,
         secret=True,
     )
-    nebius_api_key = ask(
+    ai_cloud_api_key = ask(
+        "Nebius AI Cloud API key (NEBIUS_AI_CLOUD_KEY, optional)",
+        default=existing_credentials.ai_cloud_api_key,
+        secret=True,
+    )
+    token_factory_api_key = ask(
         "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
         default=existing_credentials.token_factory_api_key,
         secret=True,
@@ -456,7 +463,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     credentials_payload: dict[str, object] = {
         "tokens": {
             "HF_TOKEN": hf_token,
-            "NEBIUS_TOKEN_FACTORY_KEY": nebius_api_key,
+            "NEBIUS_AI_CLOUD_KEY": ai_cloud_api_key,
+            "NEBIUS_TOKEN_FACTORY_KEY": token_factory_api_key,
         },
         "ngc": {"api_key": ngc_api_key},
         "storage": {

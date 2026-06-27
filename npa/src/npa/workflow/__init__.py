@@ -23,7 +23,7 @@ def submit(
 
     Drives ``npa workbench workflow submit`` from Python. ``var`` entries are
     ``KEY=VALUE`` substitutions and ``secret_env`` are environment-variable names
-    (e.g. ``NEBIUS_API_KEY``, ``AWS_ACCESS_KEY_ID``) forwarded to SkyPilot as
+    (e.g. ``NEBIUS_TOKEN_FACTORY_KEY``, ``AWS_ACCESS_KEY_ID``) forwarded to SkyPilot as
     secrets. Use this to launch the ``tokenfactory-*`` combo YAMLs.
     """
     from npa.cli.workbench.workflow import (

@@ -40,9 +40,14 @@ def test_resolve_config_reads_nebius_token_factory_key_from_env() -> None:
     assert config.api_key == "env-key"
 
 
-def test_resolve_config_reads_legacy_nebius_api_key_from_env() -> None:
-    config = resolve_config(environ={"NEBIUS_API_KEY": "legacy-env-key"})
+def test_resolve_config_reads_legacy_token_factory_key_from_env() -> None:
+    config = resolve_config(environ={"NEBIUS_TOKEN_FACTORY_API_KEY": "legacy-env-key"})
     assert config.api_key == "legacy-env-key"
+
+
+def test_resolve_config_does_not_use_nebius_api_key_alias() -> None:
+    with pytest.raises(TokenFactoryError):
+        resolve_config(environ={"NEBIUS_API_KEY": "ai-cloud-key"})
 
 
 def test_resolve_config_reads_token_factory_key_from_credentials_file(
@@ -57,7 +62,7 @@ def test_resolve_config_reads_token_factory_key_from_credentials_file(
         yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_KEY": "tf-file-key"}})
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
-    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_KEY", raising=False)
     monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_API_KEY", raising=False)
 
     config = resolve_config()

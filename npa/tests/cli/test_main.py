@@ -150,7 +150,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # Enter project/tenant + default region/registry; pick a custom
-    # bucket name and a custom size; then HF + NGC.
+    # bucket name and a custom size; then HF + AI Cloud + Token Factory + NGC.
     answers = "\n".join(
         [
             "project-12345",     # project id
@@ -161,6 +161,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
             "",                  # storage class (standard default)
             "100",               # size in GB
             "hf_secret_token",   # HF token
+            "aicloud_secret",    # AI Cloud API key
             "nebius_secret_key", # Nebius Token Factory API key
             "nvapi_secret",      # NGC API key
         ]
@@ -182,6 +183,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
+    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_secret"
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius_secret_key"
     assert creds["ngc"]["api_key"] == "nvapi_secret"
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
@@ -235,8 +237,8 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # proj, tenant, region, registry, bucket name (Enter = default), hf, token factory, ngc
-    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", ""]) + "\n"
+    # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud, token factory, ngc
+    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -281,6 +283,7 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
             "",                  # S3 endpoint (default-by-region)
             "s3://manual-bucket/",  # S3 bucket (fallback)
             "hf_tok",            # HF token
+            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
         ]
@@ -328,6 +331,7 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
             "",                  # S3 endpoint (default-by-region)
             "s3://b/",           # S3 bucket
             "",                  # HF token
+            "",                  # AI Cloud API key
             "",                  # Token Factory API key
             "",                  # NGC API key
         ]
@@ -359,7 +363,7 @@ def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_pat
 
     # Skip every field. With no project/tenant, provisioning is skipped and the
     # manual object-storage prompts run; only the defaulted endpoint remains.
-    answers = "\n".join([""] * 11) + "\n"
+    answers = "\n".join([""] * 12) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -380,7 +384,7 @@ def test_configure_non_tty_prints_guidance() -> None:
     assert "npa configure --interactive" in result.output
 
 
-def test_configure_token_factory_key_stores_under_tokens_nebius_api_key(
+def test_configure_token_factory_key_stores_under_tokens_nebius_token_factory_key(
     monkeypatch, tmp_path
 ) -> None:
     import yaml
@@ -416,14 +420,14 @@ def test_configure_interactive_migrates_legacy_token_factory_key(
     creds_path = tmp_path / "credentials.yaml"
     config_path = tmp_path / "config.yaml"
     creds_path.write_text(
-        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-key"}})
+        yaml.safe_dump({"tokens": {"NEBIUS_TOKEN_FACTORY_API_KEY": "tf-legacy-key"}})
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "\n".join([""] * 11) + "\n"
+    answers = "\n".join([""] * 12) + "\n"
     result = runner.invoke(
         app,
         ["configure", "--interactive", "--no-provision"],
@@ -432,7 +436,7 @@ def test_configure_interactive_migrates_legacy_token_factory_key(
 
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(creds_path.read_text())
-    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-legacy-key"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_API_KEY"] == "tf-legacy-key"
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-key"
 
 
@@ -451,6 +455,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
             {
                 "tokens": {
                     "HF_TOKEN": "hf-existing",
+                    "NEBIUS_AI_CLOUD_KEY": "aicloud-existing",
                     "NEBIUS_TOKEN_FACTORY_KEY": "tf-existing",
                     "NGC_API_KEY": "ngc-existing",
                 },
@@ -480,6 +485,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
             "",  # S3 endpoint
             "",  # S3 bucket
             "hf-updated",  # HF token
+            "",  # AI Cloud API key (unchanged)
             "",  # Token Factory API key (unchanged)
             "",  # NGC API key (unchanged)
         ]
@@ -493,6 +499,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(creds_path.read_text())
     assert stored["tokens"]["HF_TOKEN"] == "hf-updated"
+    assert stored["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud-existing"
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-existing"
     assert stored["tokens"]["NGC_API_KEY"] == "ngc-existing"
 
@@ -517,8 +524,8 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
     _stub_nebius_defaults(monkeypatch)
 
-    # confirm profile, then skip all 10 interactive fields
-    answers = "y\n" + "\n".join([""] * 10) + "\n"
+    # confirm profile, then skip all interactive fields.
+    answers = "y\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -541,7 +548,7 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
     _stub_nebius_defaults(monkeypatch)
 
     result = runner.invoke(
-        app, ["configure", "--interactive"], input="\n".join([""] * 10) + "\n"
+        app, ["configure", "--interactive"], input="\n".join([""] * 11) + "\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -589,6 +596,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             "",                  # registry (accept discovered)
             "",                  # bucket name (Enter = default)
             "hf_from_profile",   # HF token
+            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
         ]
@@ -615,7 +623,7 @@ def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) 
     monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "n\n" + "\n".join([""] * 10) + "\n"
+    answers = "n\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -670,7 +678,7 @@ def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fail_create)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "n\n" + "\n".join([""] * 10) + "\n"
+    answers = "n\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -691,7 +699,7 @@ def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) ->
     monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: True)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "y\n" + "\n".join([""] * 10) + "\n"
+    answers = "y\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -711,7 +719,7 @@ def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(cli_main, "_create_nebius_profile", lambda **_: False)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "y\n" + "\n".join([""] * 10) + "\n"
+    answers = "y\n" + "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -769,6 +777,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
             "",                  # storage class (standard default)
             "",                  # size GB (default 50)
             "hf_secret_token",   # HF token
+            "",                  # AI Cloud API key (skip)
             "",                  # Token Factory API key (skip)
             "",                  # NGC API key (skip)
         ]
@@ -796,7 +805,7 @@ def test_configure_missing_nebius_cli_shows_install_guidance(
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
     _stub_nebius_defaults(monkeypatch)
 
-    answers = "\n".join([""] * 10) + "\n"
+    answers = "\n".join([""] * 11) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
