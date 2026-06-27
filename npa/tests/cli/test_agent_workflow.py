@@ -15,6 +15,7 @@ from npa.cli.agent_chat import (
 from npa.cli.agent_workflow import (
     choose_workflow_template,
     generate_gpu_cross_region_yaml,
+    generate_rl_policy_training_yaml,
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
@@ -30,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
+    "rl-policy-training-sim-success.yaml",
     "sim2real-gpu-cross-region-agent.yaml",
     "sim2real-two-step-agent.yaml",
     "sim2real-two-step.yaml",
@@ -341,6 +343,30 @@ def test_generate_gpu_cross_region_yaml_plan() -> None:
     ]
 
 
+def test_generate_rl_policy_training_yaml_validates() -> None:
+    yaml_text = generate_rl_policy_training_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"rl-policy-success validate failed: {result.get('error')}"
+    assert result["name"] == "rl-policy-training-sim-success"
+    states = set(result["states"])
+    assert "train-policy" in states
+    assert "eval-policy" in states
+    assert "success-gate" in states
+    assert "publish-policy" in states
+    assert "training-not-success" in states
+
+
+def test_generate_rl_policy_training_yaml_plan() -> None:
+    yaml_text = generate_rl_policy_training_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="rl-policy-success-test", assume_decision="promote_checkpoint")
+    assert plan["ok"] is True, f"rl-policy-success plan failed: {plan.get('error')}"
+    states = [step["state"] for step in plan["steps"]]
+    assert "train-policy" in states
+    assert "eval-policy" in states
+    assert "success-gate" in states
+    assert "publish-policy" in states
+
+
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
@@ -352,6 +378,8 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-loop-gate-agent" in loop_gate
     cross_region = generate_workflow_yaml("gpu-cross-region")
     assert "sim2real-gpu-cross-region" in cross_region
+    rl_policy = generate_workflow_yaml("rl-policy-success")
+    assert "rl-policy-training-sim-success" in rl_policy
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
 
@@ -372,6 +400,11 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
         intent="create_workflow",
     )
     assert selected_multi_region["template"] == "gpu-cross-region"
+    selected_rl_policy = choose_workflow_template(
+        user_text="build an rl policy training workflow in simulation",
+        intent="create_workflow",
+    )
+    assert selected_rl_policy["template"] == "rl-policy-success"
 
 
 def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
@@ -405,6 +438,7 @@ def test_generate_workflow_yaml_aliases() -> None:
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("gate")
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("tokenfactory")
     assert "sim2real-loop-gate-agent" in generate_workflow_yaml("loop")
+    assert "rl-policy-training-sim-success" in generate_workflow_yaml("rl-policy")
 
 
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)

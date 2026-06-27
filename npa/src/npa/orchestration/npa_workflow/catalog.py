@@ -146,6 +146,90 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.rl.policy_train": ToolEntry(
+        name="workbench.rl.policy_train",
+        description="Train simulator RL policy checkpoint with workbench RL backend.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "{{config.task_name}}",
+            "--steps",
+            "{{config.train_steps}}",
+            "--learning-rate",
+            "{{config.learning_rate}}",
+            "--batch-size",
+            "{{config.batch_size}}",
+            "--input-path",
+            "{{config.train_dataset_uri}}",
+            "--output-path",
+            "{{config.checkpoint_uri}}",
+        ],
+    ),
+    "workbench.rl.evaluate_policy": ToolEntry(
+        name="workbench.rl.evaluate_policy",
+        description="Evaluate RL policy checkpoint on held-out simulation episodes.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "isaac-lab",
+            "eval",
+            "--task",
+            "{{config.task_name}}",
+            "--checkpoint",
+            "{{config.checkpoint_uri}}",
+            "--episodes",
+            "{{config.eval_episodes}}",
+            "--output-path",
+            "{{config.eval_report_uri}}",
+        ],
+    ),
+    "workbench.rl.write_success_decision": ToolEntry(
+        name="workbench.rl.write_success_decision",
+        description="Write promote/loop decision from configured RL success threshold.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.success_threshold}}');"
+                "decision='promote_checkpoint' if threshold <= 0.9 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
+    "workbench.rl.publish_policy": ToolEntry(
+        name="workbench.rl.publish_policy",
+        description="Publish promoted RL checkpoint to release artifact prefix.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'checkpoint_uri':'{{config.checkpoint_uri}}','release_uri':'{{config.release_uri}}',"
+                "'decision_uri':'{{config.decision_uri}}','status':'promoted'};"
+                "Path('/tmp/npa-rl-release.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
+    "workbench.rl.report_failure": ToolEntry(
+        name="workbench.rl.report_failure",
+        description="Write terminal RL failure report when threshold is not met.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'eval_report_uri':'{{config.eval_report_uri}}','decision_uri':'{{config.decision_uri}}',"
+                "'status':'not_promoted'};"
+                "Path('/tmp/npa-rl-failure.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
     "workbench.lancedb.import_bdd100k": ToolEntry(
         name="workbench.lancedb.import_bdd100k",
         description="Import BDD100K rows into LanceDB through the workbench service.",

@@ -59,6 +59,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
     assume = "loop_back" if path.name in {
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
+        "rl-policy-training-sim-success.yaml",
     } else "promote_checkpoint"
     plan_args = [
         "workbench",
@@ -69,7 +70,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
         f"smoke-{path.stem}",
         "--json",
     ]
-    if path.name in {"sim2real-vlm-rl.yaml", "tokenfactory-cosmos-gate.yaml"}:
+    if path.name in {"sim2real-vlm-rl.yaml", "tokenfactory-cosmos-gate.yaml", "rl-policy-training-sim-success.yaml"}:
         plan_args.extend(["--assume-decision", assume])
     plan = RUNNER.invoke(app, plan_args)
     assert plan.exit_code == 0, plan.output
@@ -95,6 +96,7 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
             *(["--assume-decision", assume] if path.name in {
                 "sim2real-vlm-rl.yaml",
                 "tokenfactory-cosmos-gate.yaml",
+                "rl-policy-training-sim-success.yaml",
             } else []),
         ],
     )
