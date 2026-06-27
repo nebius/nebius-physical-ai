@@ -910,6 +910,7 @@ def _train_serverless(
     wait_timeout: int,
     output: OutputFormat,
     training_config: TrainingConfig,
+    checkpoint_s3_explicit: bool = False,
 ) -> None:
     if num_workers < -1:
         _fail(f"--num-workers must be -1 (omit) or >= 0, got {num_workers}")
@@ -965,12 +966,20 @@ def _train_serverless(
     storage = resolve_project_storage(proj_alias)
     credentials = resolve_credentials()
     s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
+    if checkpoint_s3_explicit:
+        resolved_access_key = training_config.checkpoint_s3.aws_access_key_id or s3_access_key
+        resolved_secret_key = training_config.checkpoint_s3.aws_secret_access_key or s3_secret_key
+        resolved_endpoint = training_config.checkpoint_s3.endpoint_url or s3_endpoint
+    else:
+        resolved_access_key = s3_access_key or training_config.checkpoint_s3.aws_access_key_id
+        resolved_secret_key = s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key
+        resolved_endpoint = s3_endpoint or training_config.checkpoint_s3.endpoint_url
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
-        s3_access_key or training_config.checkpoint_s3.aws_access_key_id,
-        s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key,
+        resolved_access_key,
+        resolved_secret_key,
         out,
-        s3_endpoint=s3_endpoint or training_config.checkpoint_s3.endpoint_url,
+        s3_endpoint=resolved_endpoint,
     )
     env["NPA_JOB_NAME"] = name
     env.update(training_config.env())
@@ -1323,6 +1332,11 @@ def train(
         return
 
     if is_serverless_runtime(runtime):
+        checkpoint_s3_explicit = bool(
+            checkpoint_s3_endpoint_url
+            or checkpoint_s3_access_key_id
+            or checkpoint_s3_secret_access_key
+        )
         _train_serverless(
             proj_alias=_project_alias or default_project_name(),
             wb_name=_workbench_name or default_workbench_name(),
@@ -1348,6 +1362,7 @@ def train(
             wait_timeout=wait_timeout,
             output=output,
             training_config=training_config,
+            checkpoint_s3_explicit=checkpoint_s3_explicit,
         )
         return
 
