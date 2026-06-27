@@ -436,6 +436,67 @@ def test_configure_interactive_migrates_legacy_token_factory_key(
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-key"
 
 
+def test_configure_interactive_updates_selected_token_and_preserves_skipped_tokens(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    creds_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {
+                    "HF_TOKEN": "hf-existing",
+                    "NEBIUS_TOKEN_FACTORY_KEY": "tf-existing",
+                    "NGC_API_KEY": "ngc-existing",
+                },
+                "storage": {
+                    "aws_access_key_id": "AKIAEXISTING",
+                    "aws_secret_access_key": "secret-existing",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                    "bucket": "s3://existing-bucket/checkpoints/",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    _stub_nebius_defaults(monkeypatch)
+
+    # Skip everything except HF token.
+    answers = "\n".join(
+        [
+            "",  # project id
+            "",  # tenant id
+            "",  # region
+            "",  # registry
+            "",  # S3 access key id
+            "",  # S3 secret access key
+            "",  # S3 endpoint
+            "",  # S3 bucket
+            "hf-updated",  # HF token
+            "",  # Token Factory API key (unchanged)
+            "",  # NGC API key (unchanged)
+        ]
+    ) + "\n"
+    result = runner.invoke(
+        app,
+        ["configure", "--interactive", "--no-provision"],
+        input=answers,
+    )
+
+    assert result.exit_code == 0, result.output
+    stored = yaml.safe_load(creds_path.read_text())
+    assert stored["tokens"]["HF_TOKEN"] == "hf-updated"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-existing"
+    assert stored["tokens"]["NGC_API_KEY"] == "ngc-existing"
+
+
 def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
