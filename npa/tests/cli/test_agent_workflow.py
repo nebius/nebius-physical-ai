@@ -13,6 +13,7 @@ from npa.cli.agent_chat import (
 )
 from npa.cli.agent_workflow import (
     choose_workflow_template,
+    generate_gpu_cross_region_yaml,
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
@@ -28,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
+    "sim2real-gpu-cross-region-agent.yaml",
     "sim2real-two-step-agent.yaml",
     "sim2real-two-step.yaml",
     "sim2real-vlm-rl.yaml",
@@ -280,6 +282,46 @@ def test_generate_token_factory_gate_yaml_contains_vlm_gate() -> None:
     assert "quality-gate" in yaml_text
 
 
+def test_generate_gpu_cross_region_yaml_validates() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"gpu-cross-region validate failed: {result.get('error')}"
+    assert result["name"] == "sim2real-gpu-cross-region"
+    states = set(result["states"])
+    assert "primary-rollout" in states
+    assert "transform-rollouts" in states
+    assert "secondary-eval" in states
+    assert "summarize-improvement" in states
+    assert "finalize" in states
+
+
+def test_generate_gpu_cross_region_yaml_includes_multi_region_resources() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    assert "gpu-primary:" in yaml_text
+    assert "gpu-secondary:" in yaml_text
+    assert "container-glue:" in yaml_text
+    assert "project_primary" in yaml_text
+    assert "project_secondary" in yaml_text
+    assert "region_primary" in yaml_text
+    assert "region_secondary" in yaml_text
+    assert "transform-rollouts" in yaml_text
+    assert "summarize-improvement" in yaml_text
+
+
+def test_generate_gpu_cross_region_yaml_plan() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="gpu-cross-region-test")
+    assert plan["ok"] is True, f"gpu-cross-region plan failed: {plan.get('error')}"
+    states = [step["state"] for step in plan["steps"]]
+    assert states == [
+        "primary-rollout",
+        "transform-rollouts",
+        "secondary-eval",
+        "summarize-improvement",
+        "finalize",
+    ]
+
+
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
@@ -289,6 +331,8 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "tokenfactory-cosmos-gate" in gate
     loop_gate = generate_workflow_yaml("loop-gate")
     assert "sim2real-loop-gate-agent" in loop_gate
+    cross_region = generate_workflow_yaml("gpu-cross-region")
+    assert "sim2real-gpu-cross-region" in cross_region
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
 
@@ -304,6 +348,11 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
         intent="create_workflow",
     )
     assert selected_gate["template"] == "token-factory-gate"
+    selected_multi_region = choose_workflow_template(
+        user_text="create gpu workflow across two regions for one tenant",
+        intent="create_workflow",
+    )
+    assert selected_multi_region["template"] == "gpu-cross-region"
 
 
 def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
