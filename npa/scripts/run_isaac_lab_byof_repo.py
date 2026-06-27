@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,12 +64,12 @@ def _registry_server(image_ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
-def _docker_login_nebius(server: str) -> None:
+def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
     token_proc = _run(["nebius", "iam", "get-access-token"], capture=True)
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")
-    _run(["docker", "login", "-u", "iam", "--password-stdin", server], stdin=token)
+    _run(["docker", "login", "-u", "iam", "--password-stdin", server], stdin=token, env=env)
 
 
 def _dockerfile_text() -> str:
@@ -142,10 +143,14 @@ def main(argv: list[str] | None = None) -> int:
         "run_id": args.run_id,
     }
 
+    docker_config_dir: str | None = None
+    docker_env: dict[str, str] = {}
     try:
         if not args.skip_build:
             if not args.skip_push:
-                _docker_login_nebius(_registry_server(image))
+                docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
+                docker_env = {"DOCKER_CONFIG": docker_config_dir}
+                _docker_login_nebius(_registry_server(image), env=docker_env)
             with tempfile.TemporaryDirectory(prefix="npa-byof-isaac-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(_dockerfile_text(), encoding="utf-8")
@@ -164,12 +169,13 @@ def main(argv: list[str] | None = None) -> int:
                         "-t",
                         image,
                         str(context),
-                    ]
+                    ],
+                    env=docker_env or None,
                 )
             if not args.skip_push:
-                _run(["docker", "push", image])
+                _run(["docker", "push", image], env=docker_env or None)
                 try:
-                    _run(["docker", "buildx", "imagetools", "inspect", image])
+                    _run(["docker", "buildx", "imagetools", "inspect", image], env=docker_env or None)
                 except Exception:
                     # Optional inspect path; image was already pushed.
                     pass
@@ -215,6 +221,9 @@ def main(argv: list[str] | None = None) -> int:
         summary["error"] = str(exc)
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 1
+    finally:
+        if docker_config_dir:
+            shutil.rmtree(docker_config_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
