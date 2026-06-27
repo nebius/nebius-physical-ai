@@ -137,7 +137,9 @@ def _hydrate_credentials() -> None:
 
         from npa.clients.credentials import load_credentials, shared_credential_env
 
-        for key, value in shared_credential_env(load_credentials()).items():
+        # Ignore inherited shell vars (for example stale AWS_ENDPOINT_URL) so
+        # this workflow always hydrates from canonical file-backed credentials.
+        for key, value in shared_credential_env(load_credentials(environ={})).items():
             if value:
                 # This workflow chains cloud + hosted stages; prefer canonical
                 # credentials from ~/.npa/credentials.yaml over inherited shell env.
