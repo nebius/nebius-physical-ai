@@ -427,6 +427,7 @@ def build_isaac_eval_job_manifest(
     renders_s3_prefix: str = "",
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
+    task_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -465,12 +466,23 @@ def build_isaac_eval_job_manifest(
                 "print('STAGED_ROBOT_USD', dest)\n"
                 "ROBOTDLEOF\n"
             )
+        # Matched task config (placement / gripper targets) so the held-out eval
+        # rolls the policy on the SAME scaled task distribution it trained on
+        # (object_init_range + goal_range). register() picks it up via
+        # task_config_from_env(). Empty -> stock placement (Franka path unchanged).
+        task_cfg_export = ""
+        if task_config:
+            task_cfg_export = (
+                "export NPA_BYO_TASK_CONFIG_JSON="
+                + _shlex.quote(_json.dumps(task_config, sort_keys=True)) + "\n"
+            )
         robot_block = (
             "cat > /tmp/evalwork/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
             + _robotmod.module_source() + "\nROBOTEOF\n"
             + robot_stage
             + "export NPA_ROBOT_MODULE_DIR=/tmp/evalwork\n"
             + "export NPA_BYO_ROBOT_SPEC_JSON=" + _shlex.quote(spec_json) + "\n"
+            + task_cfg_export
         )
 
     render_upload = ""
