@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli import agent as agent_module
@@ -306,6 +307,22 @@ def test_generate_gpu_cross_region_yaml_includes_multi_region_resources() -> Non
     assert "region_secondary" in yaml_text
     assert "transform-rollouts" in yaml_text
     assert "summarize-improvement" in yaml_text
+    assert "workbench.data_transform.rollout_contract" in yaml_text
+    assert "workbench.data_transform.improvement_summary" in yaml_text
+    assert "rollout_source_schema" in yaml_text
+    assert "rollout_target_schema" in yaml_text
+
+
+def test_generate_gpu_cross_region_yaml_contract_edges_align() -> None:
+    spec = yaml.safe_load(generate_gpu_cross_region_yaml())
+    states = spec["states"]
+    primary_out_schema = states["primary-rollout"]["outputs"][0]["schema"]
+    transform_in_schema = states["transform-rollouts"]["inputs"][0]["schema"]
+    transform_out_schema = states["transform-rollouts"]["outputs"][0]["schema"]
+    secondary_in_schema = states["secondary-eval"]["inputs"][0]["schema"]
+
+    assert primary_out_schema == transform_in_schema
+    assert transform_out_schema == secondary_in_schema
 
 
 def test_generate_gpu_cross_region_yaml_plan() -> None:

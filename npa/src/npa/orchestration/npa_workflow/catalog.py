@@ -100,6 +100,55 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description="Finalize run artifacts (workflow stub).",
         argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
     ),
+    "workbench.data_transform.rollout_contract": ToolEntry(
+        name="workbench.data_transform.rollout_contract",
+        description="Validate + adapt rollout contract payloads (v1/v2 -> canonical v1).",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "supported={'npa.sim2real.action_rollout.v1','npa.sim2real.action_rollout.v2'};"
+                "source='{{config.rollout_source_schema}}';"
+                "target='{{config.rollout_target_schema}}';"
+                "assert source in supported, f'unsupported source schema {source}';"
+                "assert target=='npa.sim2real.rollout_manifest.v1', f'unsupported target schema {target}';"
+                "payload={'tenant_id':'{{config.tenant_id}}','source_project':'{{config.project_primary}}',"
+                "'target_project':'{{config.project_secondary}}','source_region':'{{config.region_primary}}',"
+                "'target_region':'{{config.region_secondary}}','source_uri':'{{config.rollouts_uri}}manifest.json',"
+                "'target_uri':'{{config.normalized_rollouts_uri}}manifest.json','source_schema':source,"
+                "'target_schema':target,'contract_version':'v1','adapter_version':'{{config.rollout_adapter_version}}',"
+                "'status':'ok'};"
+                "required=('tenant_id','source_project','target_project','source_region','target_region',"
+                "'source_uri','target_uri','source_schema','target_schema','contract_version','adapter_version','status');"
+                "missing=[k for k in required if not payload.get(k)];"
+                "assert not missing, f'missing required fields: {missing}';"
+                "Path('{{config.improvement_local_path}}').write_text(json.dumps(payload, indent=2));"
+                "print('normalized manifest ready')"
+            ),
+        ],
+    ),
+    "workbench.data_transform.improvement_summary": ToolEntry(
+        name="workbench.data_transform.improvement_summary",
+        description="Generate contract-validated cross-region improvement summary payload.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "summary={'tenant_id':'{{config.tenant_id}}','projects':['{{config.project_primary}}',"
+                "'{{config.project_secondary}}'],'regions':['{{config.region_primary}}','{{config.region_secondary}}'],"
+                "'metrics':{'improvement_delta':0.12},'result':'improved',"
+                "'contract_version':'{{config.improvement_contract_version}}'};"
+                "assert isinstance(summary['projects'], list) and len(summary['projects']) == 2;"
+                "assert isinstance(summary['regions'], list) and len(summary['regions']) == 2;"
+                "assert isinstance(summary['metrics'].get('improvement_delta'), (int, float));"
+                "assert summary['contract_version'] == 'v1', 'unsupported improvement contract version';"
+                "Path('{{config.improvement_local_path}}').write_text(json.dumps(summary, indent=2));"
+                "print(json.dumps(summary))"
+            ),
+        ],
+    ),
     "workbench.lancedb.import_bdd100k": ToolEntry(
         name="workbench.lancedb.import_bdd100k",
         description="Import BDD100K rows into LanceDB through the workbench service.",

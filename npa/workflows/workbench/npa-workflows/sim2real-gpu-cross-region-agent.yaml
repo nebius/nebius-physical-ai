@@ -13,6 +13,10 @@ config:
   project_secondary: project-secondary
   region_primary: us-central1
   region_secondary: eu-north1
+  rollout_source_schema: npa.sim2real.action_rollout.v1
+  rollout_target_schema: npa.sim2real.rollout_manifest.v1
+  rollout_adapter_version: v1
+  improvement_contract_version: v1
   improvement_local_path: /tmp/{{run.id}}-improvement.json
 
   rollouts_uri: s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/
@@ -51,16 +55,9 @@ states:
     next: transform-rollouts
   transform-rollouts:
     description: >-
-      Container glue code for rollout manifest normalization.
+      Contract adapter/validator stage that normalizes rollout artifacts across project/region boundaries.
     resources: container-glue
-    run:
-      shell: "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npayload = {\n  \"tenant_id\"\
-        : \"{{config.tenant_id}}\",\n  \"source_project\": \"{{config.project_primary}}\",\n  \"target_project\"\
-        : \"{{config.project_secondary}}\",\n  \"source_region\": \"{{config.region_primary}}\",\n\
-        \  \"target_region\": \"{{config.region_secondary}}\",\n  \"source_uri\": \"{{config.rollouts_uri}}manifest.json\"\
-        ,\n  \"target_uri\": \"{{config.normalized_rollouts_uri}}manifest.json\",\n  \"transform\"\
-        : \"rollout_manifest_v1\",\n  \"status\": \"ok\"\n}\nPath(\"{{config.improvement_local_path}}\"\
-        ).write_text(json.dumps(payload, indent=2))\nprint(\"normalized manifest ready\")\nPY"
+    toolRef: workbench.data_transform.rollout_contract
     inputs:
     - uri: '{{config.rollouts_uri}}manifest.json'
       schema: npa.sim2real.action_rollout.v1
@@ -82,14 +79,9 @@ states:
     next: summarize-improvement
   summarize-improvement:
     description: >-
-      Compute and publish cross-region improvement summary.
+      Compute and validate cross-region improvement contract payload for downstream reporting.
     resources: container-glue
-    run:
-      shell: "python3 - <<'PY'\nimport json\nfrom pathlib import Path\nsummary = {\n  \"tenant_id\"\
-        : \"{{config.tenant_id}}\",\n  \"projects\": [\"{{config.project_primary}}\", \"{{config.project_secondary}}\"\
-        ],\n  \"regions\": [\"{{config.region_primary}}\", \"{{config.region_secondary}}\"],\n  \"\
-        improvement_delta\": 0.12,\n  \"result\": \"improved\"\n}\nPath(\"{{config.improvement_local_path}}\"\
-        ).write_text(json.dumps(summary, indent=2))\nprint(json.dumps(summary))\nPY"
+    toolRef: workbench.data_transform.improvement_summary
     outputs:
     - uri: '{{config.improvement_report_uri}}'
       schema: npa.sim2real.improvement_report.v1

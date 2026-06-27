@@ -615,6 +615,10 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "project_secondary": "project-secondary",
                     "region_primary": "us-central1",
                     "region_secondary": "eu-north1",
+                    "rollout_source_schema": "npa.sim2real.action_rollout.v1",
+                    "rollout_target_schema": "npa.sim2real.rollout_manifest.v1",
+                    "rollout_adapter_version": "v1",
+                    "improvement_contract_version": "v1",
                     "improvement_local_path": "/tmp/{{run.id}}-improvement.json",
                 }
             ),
@@ -678,31 +682,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     ),
                     "transform-rollouts": OrderedDict(
                         {
-                            "description": "Container glue code for rollout manifest normalization.",
-                            "resources": "container-glue",
-                            "run": OrderedDict(
-                                {
-                                    "shell": (
-                                        "python3 - <<'PY'\n"
-                                        "import json\n"
-                                        "from pathlib import Path\n"
-                                        "payload = {\n"
-                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
-                                        "  \"source_project\": \"{{config.project_primary}}\",\n"
-                                        "  \"target_project\": \"{{config.project_secondary}}\",\n"
-                                        "  \"source_region\": \"{{config.region_primary}}\",\n"
-                                        "  \"target_region\": \"{{config.region_secondary}}\",\n"
-                                        "  \"source_uri\": \"{{config.rollouts_uri}}manifest.json\",\n"
-                                        "  \"target_uri\": \"{{config.normalized_rollouts_uri}}manifest.json\",\n"
-                                        "  \"transform\": \"rollout_manifest_v1\",\n"
-                                        "  \"status\": \"ok\"\n"
-                                        "}\n"
-                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(payload, indent=2))\n"
-                                        "print(\"normalized manifest ready\")\n"
-                                        "PY"
-                                    )
-                                }
+                            "description": (
+                                "Contract adapter/validator stage that normalizes rollout artifacts "
+                                "across project/region boundaries."
                             ),
+                            "resources": "container-glue",
+                            "toolRef": "workbench.data_transform.rollout_contract",
                             "inputs": [
                                 OrderedDict(
                                     {
@@ -748,27 +733,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     ),
                     "summarize-improvement": OrderedDict(
                         {
-                            "description": "Compute and publish cross-region improvement summary.",
-                            "resources": "container-glue",
-                            "run": OrderedDict(
-                                {
-                                    "shell": (
-                                        "python3 - <<'PY'\n"
-                                        "import json\n"
-                                        "from pathlib import Path\n"
-                                        "summary = {\n"
-                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
-                                        "  \"projects\": [\"{{config.project_primary}}\", \"{{config.project_secondary}}\"],\n"
-                                        "  \"regions\": [\"{{config.region_primary}}\", \"{{config.region_secondary}}\"],\n"
-                                        "  \"improvement_delta\": 0.12,\n"
-                                        "  \"result\": \"improved\"\n"
-                                        "}\n"
-                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(summary, indent=2))\n"
-                                        "print(json.dumps(summary))\n"
-                                        "PY"
-                                    )
-                                }
+                            "description": (
+                                "Compute and validate cross-region improvement contract payload "
+                                "for downstream reporting."
                             ),
+                            "resources": "container-glue",
+                            "toolRef": "workbench.data_transform.improvement_summary",
                             "outputs": [
                                 OrderedDict(
                                     {
