@@ -409,7 +409,7 @@ def test_configure_token_factory_key_stores_under_tokens_nebius_token_factory_ke
     assert stored["tokens"]["HF_TOKEN"] == "hf-existing"
 
 
-def test_configure_interactive_migrates_legacy_token_factory_key(
+def test_configure_interactive_does_not_migrate_legacy_token_factory_key(
     monkeypatch, tmp_path
 ) -> None:
     import yaml
@@ -437,7 +437,7 @@ def test_configure_interactive_migrates_legacy_token_factory_key(
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(creds_path.read_text())
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_API_KEY"] == "tf-legacy-key"
-    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-key"
+    assert "NEBIUS_TOKEN_FACTORY_KEY" not in stored["tokens"]
 
 
 def test_configure_interactive_updates_selected_token_and_preserves_skipped_tokens(

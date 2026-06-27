@@ -14,15 +14,11 @@ import yaml
 CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 AI_CLOUD_ENV_KEY = "NEBIUS_AI_CLOUD_KEY"
-AI_CLOUD_LEGACY_ENV_KEY = "NEBIUS_API_KEY"
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
-TOKEN_FACTORY_LEGACY_ENV_KEYS = ("NEBIUS_TOKEN_FACTORY_API_KEY",)
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
     AI_CLOUD_ENV_KEY,
-    AI_CLOUD_LEGACY_ENV_KEY,
     TOKEN_FACTORY_ENV_KEY,
-    *TOKEN_FACTORY_LEGACY_ENV_KEYS,
     *NGC_ENV_KEYS,
 )
 HF_TOKEN_MISSING_WARNING = (
@@ -89,20 +85,12 @@ class CredentialsConfig:
 
 def resolve_ai_cloud_key(tokens: Mapping[str, str]) -> str:
     """Return the Nebius AI Cloud key from a token map."""
-    for key in (AI_CLOUD_ENV_KEY, AI_CLOUD_LEGACY_ENV_KEY):
-        value = tokens.get(key, "")
-        if value:
-            return value
-    return ""
+    return tokens.get(AI_CLOUD_ENV_KEY, "")
 
 
 def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
-    """Return the Token Factory key from a token map (canonical + legacy names)."""
-    for key in (TOKEN_FACTORY_ENV_KEY, *TOKEN_FACTORY_LEGACY_ENV_KEYS):
-        value = tokens.get(key, "")
-        if value:
-            return value
-    return ""
+    """Return the Token Factory key from a token map."""
+    return tokens.get(TOKEN_FACTORY_ENV_KEY, "")
 
 
 def _is_readable_by_other_users(path: Path) -> bool:
@@ -319,55 +307,6 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
     return pruned
 
 
-def _normalize_token_factory_key(data: dict[str, Any]) -> dict[str, Any]:
-    """Mirror legacy Token Factory keys into the canonical token name."""
-
-    tokens_raw = data.get("tokens")
-    tokens = dict(tokens_raw) if isinstance(tokens_raw, dict) else {}
-    canonical = str(tokens.get(TOKEN_FACTORY_ENV_KEY, "") or "").strip()
-    if canonical:
-        return data
-
-    legacy_value = ""
-    for key in TOKEN_FACTORY_LEGACY_ENV_KEYS:
-        token_candidate = str(tokens.get(key, "") or "").strip()
-        top_level_candidate = str(data.get(key, "") or "").strip()
-        if token_candidate:
-            legacy_value = token_candidate
-            break
-        if top_level_candidate:
-            legacy_value = top_level_candidate
-            break
-    if not legacy_value:
-        return data
-
-    normalized = dict(data)
-    tokens[TOKEN_FACTORY_ENV_KEY] = legacy_value
-    normalized["tokens"] = tokens
-    return normalized
-
-
-def _normalize_ai_cloud_key(data: dict[str, Any]) -> dict[str, Any]:
-    """Mirror legacy AI Cloud key names into the canonical token name."""
-
-    tokens_raw = data.get("tokens")
-    tokens = dict(tokens_raw) if isinstance(tokens_raw, dict) else {}
-    canonical = str(tokens.get(AI_CLOUD_ENV_KEY, "") or "").strip()
-    if canonical:
-        return data
-
-    legacy_value = str(tokens.get(AI_CLOUD_LEGACY_ENV_KEY, "") or "").strip()
-    if not legacy_value:
-        legacy_value = str(data.get(AI_CLOUD_LEGACY_ENV_KEY, "") or "").strip()
-    if not legacy_value:
-        return data
-
-    normalized = dict(data)
-    tokens[AI_CLOUD_ENV_KEY] = legacy_value
-    normalized["tokens"] = tokens
-    return normalized
-
-
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
     """Persist the Nebius Token Factory key under ``tokens.NEBIUS_TOKEN_FACTORY_KEY``."""
 
@@ -399,8 +338,6 @@ def write_credentials_file(
         if isinstance(loaded, dict):
             existing = loaded
     merged = _deep_merge(existing, _prune_empty(dict(data)))
-    merged = _normalize_ai_cloud_key(merged)
-    merged = _normalize_token_factory_key(merged)
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     with credentials_path.open("w") as handle:
         yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)

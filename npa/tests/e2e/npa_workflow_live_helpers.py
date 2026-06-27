@@ -99,7 +99,6 @@ def live_credential_markers() -> list[str]:
         "HF_TOKEN",
         "NEBIUS_AI_CLOUD_KEY",
         "NEBIUS_TOKEN_FACTORY_KEY",
-        "NEBIUS_API_KEY",
     ):
         value = os.environ.get(env_key, "")
         if value and len(value) >= 8:

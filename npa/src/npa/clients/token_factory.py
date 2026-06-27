@@ -8,7 +8,6 @@ duplicating endpoint, auth, or request-shaping logic.
 
 The default base URL is ``https://api.tokenfactory.nebius.com/v1/`` and the
 default credential is the ``NEBIUS_TOKEN_FACTORY_KEY`` environment variable.
-Legacy name ``NEBIUS_TOKEN_FACTORY_API_KEY`` is still accepted when reading.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ BASE_URL_ENV_KEYS = (
 )
 API_KEY_ENV_KEYS = (
     DEFAULT_API_KEY_ENV,
-    "NEBIUS_TOKEN_FACTORY_API_KEY",
 )
 
 

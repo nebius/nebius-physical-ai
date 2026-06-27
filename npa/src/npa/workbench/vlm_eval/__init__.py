@@ -1130,7 +1130,6 @@ def _resolve_api_key(*, backend: str, api_key_env: str) -> str:
         key = (
             key
             or os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "")
-            or os.environ.get("NEBIUS_TOKEN_FACTORY_API_KEY", "")
             or os.environ.get("OPENAI_API_KEY", "")
         )
         if not key:
