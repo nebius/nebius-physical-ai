@@ -589,6 +589,7 @@ def test_match_chat_intent_status_queries() -> None:
     assert match_chat_intent("setup cosmos3") == "cosmos3"
     assert match_chat_intent("create 2-step sim2real workflow") == "create_workflow"
     assert match_chat_intent("generate two-step sim2real workflow yaml") == "create_workflow"
+    assert match_chat_intent("generate an example simple workflow YAML") == "create_workflow"
     assert match_chat_intent("camera angle inspector with frustum preview") == "cameras"
     assert match_chat_intent("specify scene robot cameras props selection") == "sim_assets"
     assert match_chat_intent("hello there") is None
@@ -649,6 +650,15 @@ def test_bootstrap_embeds_recordings_endpoint() -> None:
     assert '"count"' in source
     assert '"size_bytes"' in source
     assert '"updated_at"' in source
+
+
+def test_bootstrap_chat_copy_yaml_support_present() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "msg-copy-btn" in source
+    assert "extractFencedCode" in source
+    assert "copyTextToClipboard" in source
 
 
 def test_bootstrap_recordings_api_in_system_prompt() -> None:

@@ -12,6 +12,8 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
     assert match_chat_intent("create a 2-step sim2real workflow") == "create_workflow"
+    assert match_chat_intent("create a gpu workflow across 2 different regions") == "create_workflow"
+    assert match_chat_intent("generate an example simple workflow YAML") == "create_workflow"
     assert match_chat_intent("watch the sim") == "watch_sim"
     assert match_chat_intent("track the rerun timeline") == "watch_sim"
     assert match_chat_intent("keep me posted with live updates on the sim run") == "watch_sim"
