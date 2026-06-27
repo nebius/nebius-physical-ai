@@ -7,6 +7,7 @@ cd "$ROOT"
 export NPA_AGENT_PROJECT="${NPA_AGENT_PROJECT:-us-central1}"
 export NPA_AGENT_NAME="${NPA_AGENT_NAME:-agent}"
 export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+PIP_EDITABLE_SPEC="${NPA_DEV_VM_LOOP_EDITABLE_SPEC:-npa[dev]}"
 SLEEP_SECONDS="${NPA_LOOP_SLEEP_SECONDS:-60}"
 MAX_ATTEMPTS="${NPA_MAX_ATTEMPTS:-0}"
 
@@ -20,7 +21,7 @@ except Exception:
 }
 
 run_success() {
-  npa/.venv/bin/pip install -e npa -q || return 1
+  npa/.venv/bin/pip install -e "$PIP_EDITABLE_SPEC" -q || return 1
   if ! NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME"; then
     echo "bootstrap failed; attempting deploy for ${NPA_AGENT_PROJECT}/${NPA_AGENT_NAME}..."
     NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent deploy --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
