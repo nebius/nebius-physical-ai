@@ -121,6 +121,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "sim_viz_runs" in source
     embedded = agent_module._embedded_agent_workflow_source()
     assert "validate_workflow_yaml_text" in embedded
+    assert "Could not generate runnable workflow YAML yet" in source
+    assert "chat returns YAML only after both validation and planning succeed" in source
 
 
 def test_lightweight_validation_without_tool_refs_still_parses() -> None:
@@ -309,8 +311,8 @@ def test_generate_gpu_cross_region_yaml_includes_multi_region_resources() -> Non
     assert "summarize-improvement" in yaml_text
     assert "workbench.data_transform.rollout_contract" in yaml_text
     assert "workbench.data_transform.improvement_summary" in yaml_text
-    assert "rollout_source_schema" in yaml_text
-    assert "rollout_target_schema" in yaml_text
+    assert "rollout_source_schema" not in yaml_text
+    assert "rollout_target_schema" not in yaml_text
 
 
 def test_generate_gpu_cross_region_yaml_contract_edges_align() -> None:
@@ -380,8 +382,21 @@ def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     )
     assert draft["template"] == "token-factory-gate"
     assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is True
+    assert draft["runnable"] is True
     assert "metadata:" in draft["yaml"]
     assert "\n\n  scene_uri:" in draft["yaml"]
+
+
+def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent_workflow.plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": False, "error": "forced plan failure"},
+    )
+    draft = generate_workflow_draft(template="two-step", tool_refs=frozenset())
+    assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is False
+    assert draft["runnable"] is False
 
 
 def test_generate_workflow_yaml_aliases() -> None:

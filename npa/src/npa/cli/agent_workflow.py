@@ -615,10 +615,6 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "project_secondary": "project-secondary",
                     "region_primary": "us-central1",
                     "region_secondary": "eu-north1",
-                    "rollout_source_schema": "npa.sim2real.action_rollout.v1",
-                    "rollout_target_schema": "npa.sim2real.rollout_manifest.v1",
-                    "rollout_adapter_version": "v1",
-                    "improvement_contract_version": "v1",
                     "improvement_local_path": "/tmp/{{run.id}}-improvement.json",
                 }
             ),
@@ -892,11 +888,23 @@ def generate_workflow_draft(
     spec = _build_spec(selected_template, bucket=bucket, name=name or None)
     yaml_text = _render_spec_yaml(spec)
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=tool_refs)
+    plan: dict[str, Any]
+    if validation.get("ok"):
+        plan = plan_workflow_yaml_text(
+            yaml_text,
+            run_id=f"draft-{selected_template}",
+            tool_refs=tool_refs,
+        )
+    else:
+        plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
+    runnable = bool(validation.get("ok") and plan.get("ok"))
     return {
         "template": selected_template,
         "selection": selection,
         "yaml": yaml_text,
         "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
     }
 
 
@@ -977,12 +985,23 @@ def plan_workflow_yaml_text(
         return _plan_lightweight(text, run_id=run_id, tool_refs=tool_refs)
 
 
-def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, template: str = "two-step") -> str:
+def format_workflow_chat_reply(
+    yaml_text: str,
+    validation: dict[str, Any],
+    *,
+    template: str = "two-step",
+    plan: dict[str, Any] | None = None,
+    runnable: bool | None = None,
+) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
     status = str(validation.get("status") or ("valid" if validation.get("ok") else "invalid"))
     states = validation.get("states") or []
     state_label = ", ".join(str(s) for s in states) if isinstance(states, list) else str(states)
+    resolved_plan = plan if isinstance(plan, dict) else {}
+    plan_ok = bool(resolved_plan.get("ok"))
+    resolved_runnable = bool(runnable) if runnable is not None else bool(validation.get("ok") and plan_ok)
+    plan_step_count = len(resolved_plan.get("steps") or []) if isinstance(resolved_plan.get("steps"), list) else 0
     _desc_map = {
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
@@ -995,6 +1014,8 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
         f"**Generated npa.workflow/v0.0.1 spec** ({desc}):",
         f"- **name**: `{name}`",
         f"- **validation**: `{status}`",
+        f"- **runnable**: `{'yes' if resolved_runnable else 'no'}`",
+        f"- **plan steps**: `{plan_step_count}`",
         f"- **states**: `{state_label or 'n/a'}`",
         "",
         "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Submit**.",
@@ -1005,7 +1026,10 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
     ]
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
-        lines.insert(4, f"- **error**: `{err}`")
+        lines.insert(6, f"- **error**: `{err}`")
+    elif resolved_plan and not plan_ok:
+        plan_err = str(resolved_plan.get("error") or "plan failed")
+        lines.insert(6, f"- **plan_error**: `{plan_err}`")
     return "\n".join(lines)
 
 

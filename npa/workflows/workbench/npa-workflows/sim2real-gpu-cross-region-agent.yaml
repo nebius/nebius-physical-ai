@@ -13,10 +13,6 @@ config:
   project_secondary: project-secondary
   region_primary: us-central1
   region_secondary: eu-north1
-  rollout_source_schema: npa.sim2real.action_rollout.v1
-  rollout_target_schema: npa.sim2real.rollout_manifest.v1
-  rollout_adapter_version: v1
-  improvement_contract_version: v1
   improvement_local_path: /tmp/{{run.id}}-improvement.json
 
   rollouts_uri: s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/

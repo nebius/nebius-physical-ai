@@ -562,7 +562,7 @@ def _default_state() -> dict:
         "sim_viz_runs": {{}},
         "active_run_id": "",
         "latest_submit": {{}},
-        "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
+        "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
         "chat_history": [],
     }}
@@ -1049,10 +1049,21 @@ def _workflow_draft_from_state(state: dict) -> dict:
     draft = state.get("workflow_draft", {{}})
     return draft if isinstance(draft, dict) else {{}}
 
-def _save_workflow_draft(state: dict, yaml_text: str, validation: dict) -> dict:
+def _save_workflow_draft(
+    state: dict,
+    yaml_text: str,
+    validation: dict,
+    *,
+    plan: dict | None = None,
+    runnable: bool | None = None,
+) -> dict:
+    resolved_plan = plan if isinstance(plan, dict) else {{}}
+    resolved_runnable = bool(runnable) if runnable is not None else bool(validation.get("ok") and resolved_plan.get("ok"))
     draft = {{
         "yaml": yaml_text,
         "validation": validation if isinstance(validation, dict) else {{}},
+        "plan": resolved_plan,
+        "runnable": resolved_runnable,
         "updated_at": _now_iso(),
         "name": str((validation or {{}}).get("name") or ""),
         "status": str((validation or {{}}).get("status") or ""),
@@ -1164,11 +1175,22 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         )
         yaml_text = str(draft.get("yaml") or "").strip()
         validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
+        plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
+        runnable = bool(draft.get("runnable"))
         template = str(draft.get("template") or "two-step")
-        _save_workflow_draft(state, yaml_text, validation)
+        _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
         state["workflow_draft"]["template"] = template
         _save_state(state)
-        reply = format_workflow_chat_reply(yaml_text, validation, template=template)
+        if not runnable:
+            fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
+            reply = (
+                "**Could not generate runnable workflow YAML yet.**\n"
+                f"- **reason**: `{fail_reason}`\n"
+                "- Adjust your request or template details and retry; chat returns YAML only after "
+                "both validation and planning succeed."
+            )
+            return reply, apis_for_intent(intent), None, {{"ok": False, "validation": validation, "plan": plan}}
+        reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         return reply, apis_for_intent(intent), yaml_text, validation
     reply = build_grounded_reply(
         intent,
@@ -1682,9 +1704,15 @@ def save_workflow_draft(payload: dict):
     if not yaml_text:
         raise HTTPException(status_code=400, detail="yaml is required")
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+    plan = (
+        plan_workflow_yaml_text(yaml_text, run_id="draft-save", tool_refs=frozenset(TOOL_REFS))
+        if validation.get("ok")
+        else {{"ok": False, "error": str(validation.get("error") or "validation failed")}}
+    )
+    runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
-    draft = _save_workflow_draft(state, yaml_text, validation)
-    return {{"ok": bool(validation.get("ok")), "draft": draft, "validation": validation}}
+    draft = _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
+    return {{"ok": runnable, "draft": draft, "validation": validation, "plan": plan, "runnable": runnable}}
 
 @app.post("/workflows/validate")
 @app.post("/workflows/npa/validate")
@@ -1694,9 +1722,15 @@ def validate_workflow(payload: dict):
     if not yaml_text:
         raise HTTPException(status_code=400, detail="yaml is required")
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=frozenset(TOOL_REFS))
+    plan = (
+        plan_workflow_yaml_text(yaml_text, run_id="validate-check", tool_refs=frozenset(TOOL_REFS))
+        if validation.get("ok")
+        else {{"ok": False, "error": str(validation.get("error") or "validation failed")}}
+    )
+    runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
-    _save_workflow_draft(state, yaml_text, validation)
-    return {{"ok": bool(validation.get("ok")), "validation": validation}}
+    _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
+    return {{"ok": runnable, "validation": validation, "plan": plan, "runnable": runnable}}
 
 @app.post("/workflows/plan")
 @app.post("/workflows/npa/plan")
@@ -1738,7 +1772,7 @@ def submit_npa_workflow(payload: dict):
     if not plan.get("ok"):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
     state = _load_state()
-    _save_workflow_draft(state, yaml_text, validation)
+    _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=True)
     submit_record = {{
         "run_id": run_id,
         "submitted_at": _now_iso(),

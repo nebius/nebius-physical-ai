@@ -102,22 +102,19 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.data_transform.rollout_contract": ToolEntry(
         name="workbench.data_transform.rollout_contract",
-        description="Validate + adapt rollout contract payloads (v1/v2 -> canonical v1).",
+        description="Validate + adapt rollout contract payloads to canonical v1.",
         argv_template=[
             "python3",
             "-c",
             (
                 "import json;from pathlib import Path;"
-                "supported={'npa.sim2real.action_rollout.v1','npa.sim2real.action_rollout.v2'};"
-                "source='{{config.rollout_source_schema}}';"
-                "target='{{config.rollout_target_schema}}';"
-                "assert source in supported, f'unsupported source schema {source}';"
-                "assert target=='npa.sim2real.rollout_manifest.v1', f'unsupported target schema {target}';"
+                "source='npa.sim2real.action_rollout.v1';"
+                "target='npa.sim2real.rollout_manifest.v1';"
                 "payload={'tenant_id':'{{config.tenant_id}}','source_project':'{{config.project_primary}}',"
                 "'target_project':'{{config.project_secondary}}','source_region':'{{config.region_primary}}',"
                 "'target_region':'{{config.region_secondary}}','source_uri':'{{config.rollouts_uri}}manifest.json',"
                 "'target_uri':'{{config.normalized_rollouts_uri}}manifest.json','source_schema':source,"
-                "'target_schema':target,'contract_version':'v1','adapter_version':'{{config.rollout_adapter_version}}',"
+                "'target_schema':target,'contract_version':'v1','adapter_version':'v1',"
                 "'status':'ok'};"
                 "required=('tenant_id','source_project','target_project','source_region','target_region',"
                 "'source_uri','target_uri','source_schema','target_schema','contract_version','adapter_version','status');"
@@ -139,7 +136,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "summary={'tenant_id':'{{config.tenant_id}}','projects':['{{config.project_primary}}',"
                 "'{{config.project_secondary}}'],'regions':['{{config.region_primary}}','{{config.region_secondary}}'],"
                 "'metrics':{'improvement_delta':0.12},'result':'improved',"
-                "'contract_version':'{{config.improvement_contract_version}}'};"
+                "'contract_version':'v1'};"
                 "assert isinstance(summary['projects'], list) and len(summary['projects']) == 2;"
                 "assert isinstance(summary['regions'], list) and len(summary['regions']) == 2;"
                 "assert isinstance(summary['metrics'].get('improvement_delta'), (int, float));"

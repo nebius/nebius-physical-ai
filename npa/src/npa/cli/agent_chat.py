@@ -525,10 +525,17 @@ def format_configure_s3() -> str:
     )
 
 
-def format_generate_workflow(yaml_text: str, validation: dict[str, Any], *, template: str = "two-step") -> str:
+def format_generate_workflow(
+    yaml_text: str,
+    validation: dict[str, Any],
+    *,
+    template: str = "two-step",
+    plan: dict[str, Any] | None = None,
+    runnable: bool | None = None,
+) -> str:
     from npa.cli.agent_workflow import format_workflow_chat_reply
 
-    return format_workflow_chat_reply(yaml_text, validation, template=template)
+    return format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
 
 
 def format_cosmos3_setup() -> str:
@@ -623,6 +630,8 @@ def build_grounded_reply(
         yaml_text = str(draft.get("yaml") or "").strip()
         if yaml_text:
             validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+            plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
+            runnable = bool(draft.get("runnable"))
             if not validation:
                 validation = {
                     "ok": True,
@@ -635,12 +644,20 @@ def build_grounded_reply(
                 template = "two-step" if intent == "create_workflow" else (
                     "vlm-rl-loop" if intent == "create_vlm_rl_workflow" else "token-factory-gate"
                 )
-            return format_generate_workflow(yaml_text, validation, template=template)
+            return format_generate_workflow(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         from npa.cli.agent_workflow import generate_workflow_draft
 
         generated = generate_workflow_draft(intent=intent, user_text="", tool_refs=frozenset(tool_refs))
         validation = generated["validation"] if isinstance(generated.get("validation"), dict) else {"ok": False}
-        return format_generate_workflow(str(generated.get("yaml") or ""), validation, template=str(generated["template"]))
+        plan = generated.get("plan") if isinstance(generated.get("plan"), dict) else {}
+        runnable = bool(generated.get("runnable"))
+        return format_generate_workflow(
+            str(generated.get("yaml") or ""),
+            validation,
+            template=str(generated["template"]),
+            plan=plan,
+            runnable=runnable,
+        )
     if intent == "list_recordings":
         return (
             "**Run history**: use `GET /api/sim-viz/recordings` to list `.rrd` files or "
