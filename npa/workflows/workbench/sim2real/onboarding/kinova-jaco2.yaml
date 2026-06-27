@@ -1,0 +1,56 @@
+# Kinova Jaco2 (J2N7S300) — a filled, working non-Franka onboarding example.
+#
+# A 7-DoF arm with a 3-finger gripper. This is the embodiment proven to load +
+# retarget on-cluster (run s2r-byo-isaac-train-kinova2-...: ee_frame + 7 arm
+# joints + 3-finger gripper + command body retargeted, skipped=[], TRAIN_RC=0).
+# It is the reference the onboarding building blocks make actually LEARN.
+#
+# Everything is declared explicitly here; replace any value with `auto` to let
+# the derive layer compute it from the asset instead.
+#
+#   npa workbench sim2real onboard-robot \
+#     --spec npa/workflows/workbench/sim2real/onboarding/kinova-jaco2.yaml
+
+schema: npa.sim2real.onboarding.v1
+
+robot:
+  name: kinova_j2n7s300
+  usd_path: https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Robots/Kinova/Jaco2/J2N7S300/j2n7s300_instanceable.usd
+
+  ee_link: j2n7s300_end_effector
+  base_link: j2n7s300_link_base
+
+  n_arm_joints: 7
+  joint_names:
+    - j2n7s300_joint_1
+    - j2n7s300_joint_2
+    - j2n7s300_joint_3
+    - j2n7s300_joint_4
+    - j2n7s300_joint_5
+    - j2n7s300_joint_6
+    - j2n7s300_joint_7
+
+  n_gripper_joints: 3
+  gripper_joint_names:
+    - j2n7s300_joint_finger_1
+    - j2n7s300_joint_finger_2
+    - j2n7s300_joint_finger_3
+  finger_links:
+    - j2n7s300_link_finger_1
+    - j2n7s300_link_finger_2
+    - j2n7s300_link_finger_3
+  # Jaco2 fingers: 0.0 = open, ~1.2 rad = closed (grasping).
+  gripper_open: 0.0
+  gripper_close: 1.2
+
+  # Ready pose: arm folded into the workspace, fingers open.
+  home_qpos: [0.0, 2.9, 0.0, 1.3, 0.0, 2.07, 1.4, 0.0, 0.0, 0.0]
+
+task:
+  skill: lift
+  # Uses the proven rigid-ready MultiColorCube (trainer default) — omit object_usd.
+  goal_pos: auto
+  lift_height_m: 0.04
+  success_distance_m: 0.02
+  success_threshold: 0.4
+  iterations: 1000
