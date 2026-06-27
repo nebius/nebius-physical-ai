@@ -17,15 +17,15 @@ def test_api_backend_honors_explicit_endpoint(monkeypatch) -> None:
     assert url == "http://localhost:9000/v1"
 
 
-def test_api_backend_accepts_nebius_api_key(monkeypatch) -> None:
+def test_api_backend_accepts_token_factory_key(monkeypatch) -> None:
     monkeypatch.delenv("VLM_EVAL_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("NEBIUS_API_KEY", "tf-key")
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "tf-key")
     assert _resolve_api_key(backend="api", api_key_env="VLM_EVAL_API_KEY") == "tf-key"
 
 
 def test_api_backend_requires_a_key(monkeypatch) -> None:
-    for key in ("VLM_EVAL_API_KEY", "NEBIUS_API_KEY", "OPENAI_API_KEY"):
+    for key in ("VLM_EVAL_API_KEY", "NEBIUS_TOKEN_FACTORY_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(VlmEvalError):
         _resolve_api_key(backend="api", api_key_env="VLM_EVAL_API_KEY")
