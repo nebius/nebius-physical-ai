@@ -91,7 +91,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'id="npa-sign-in"' in source
     assert "Sign in</button>" in source
     assert "encodeURIComponent(user)" in source
-    assert "location.pathname === '/login-help.html'" in source or 'location.pathname === "/login-help.html"' in source
+    assert "normalizedPath === \"/login-help.html\"" in source
+    assert "normalizedPath === \"/welcome\"" in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "startApp()" in source
@@ -125,7 +126,8 @@ def test_bootstrap_public_login_form() -> None:
     assert "encodeURIComponent(user)" in html
     assert "encodeURIComponent(pass)" in html
     assert "history.replaceState" in html
-    assert 'location.pathname === "/login-help.html"' in html
+    assert "normalizedPath === \"/login-help.html\"" in html
+    assert "normalizedPath === \"/welcome\"" in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:

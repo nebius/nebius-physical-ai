@@ -340,7 +340,9 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         var pass = document.getElementById("npa-pass").value;
         var u = encodeURIComponent(user);
         var p = encodeURIComponent(pass);
-        var dest = location.pathname === "/login-help.html" ? "/" : location.pathname;
+        var rawPath = String(location.pathname || "/");
+        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+        var dest = (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
         location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
       }});
     }})();
