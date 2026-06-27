@@ -371,7 +371,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
     from npa.clients.config import CONFIG_PATH, write_config
-    from npa.clients.credentials import write_credentials_file
+    from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
@@ -388,6 +388,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
                 show_default=bool(default) and not secret,
             )
         ).strip()
+
+    existing_credentials = load_credentials(environ={})
 
     project_id = ask("Nebius project id")
     tenant_id = ask("Nebius tenant id")
@@ -416,20 +418,40 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     if storage is None:
         storage = {
             "aws_access_key_id": ask(
-                "S3 access key id (AWS_ACCESS_KEY_ID)", secret=True
+                "S3 access key id (AWS_ACCESS_KEY_ID)",
+                default=existing_credentials.s3_access_key_id,
+                secret=True,
             ),
             "aws_secret_access_key": ask(
-                "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
+                "S3 secret access key (AWS_SECRET_ACCESS_KEY)",
+                default=existing_credentials.s3_secret_access_key,
+                secret=True,
             ),
-            "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
-            "bucket": ask("S3 bucket URI (e.g. s3://<your-bucket>/)"),
+            "endpoint_url": ask(
+                "S3 endpoint URL",
+                default=existing_credentials.s3_endpoint or _endpoint_for_region(region),
+            ),
+            "bucket": ask(
+                "S3 bucket URI (e.g. s3://<your-bucket>/)",
+                default=existing_credentials.s3_bucket,
+            ),
         }
 
-    hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
-    nebius_api_key = ask(
-        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)", secret=True
+    hf_token = ask(
+        "Hugging Face token (HF_TOKEN)",
+        default=existing_credentials.hf_token,
+        secret=True,
     )
-    ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
+    nebius_api_key = ask(
+        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+        default=existing_credentials.token_factory_api_key,
+        secret=True,
+    )
+    ngc_api_key = ask(
+        "NVIDIA NGC API key (NGC_API_KEY)",
+        default=existing_credentials.ngc_api_key,
+        secret=True,
+    )
 
     credentials_payload: dict[str, object] = {
         "tokens": {

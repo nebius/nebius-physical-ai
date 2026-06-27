@@ -405,6 +405,37 @@ def test_configure_token_factory_key_stores_under_tokens_nebius_api_key(
     assert stored["tokens"]["HF_TOKEN"] == "hf-existing"
 
 
+def test_configure_interactive_migrates_legacy_token_factory_key(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    creds_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-key"}})
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: None)
+    _stub_nebius_defaults(monkeypatch)
+
+    answers = "\n".join([""] * 11) + "\n"
+    result = runner.invoke(
+        app,
+        ["configure", "--interactive", "--no-provision"],
+        input=answers,
+    )
+
+    assert result.exit_code == 0, result.output
+    stored = yaml.safe_load(creds_path.read_text())
+    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-legacy-key"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-key"
+
+
 def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
