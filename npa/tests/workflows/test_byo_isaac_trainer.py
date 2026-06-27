@@ -155,6 +155,33 @@ def test_manifest_embeds_reward_overrides():
     assert "env.rewards.reaching_object.weight=1.6" in args
 
 
+def test_manifest_embeds_exploration_overrides():
+    # entropy_coef / init_noise_std become hydra overrides on the default train
+    # command — the exploration fix that keeps the Lift policy from collapsing
+    # into a reach-and-hover local optimum on an unlucky seed.
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        entropy_coef="0.01", init_noise_std="1.2")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "agent.algorithm.entropy_coef=0.01" in args
+    assert "agent.policy.init_noise_std=1.2" in args
+
+
+def test_manifest_omits_exploration_overrides_when_unset():
+    # Unset -> default Franka train command stays byte-for-byte unchanged.
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "agent.algorithm.entropy_coef" not in args
+    assert "agent.policy.init_noise_std" not in args
+
+
 def test_manifest_embeds_custom_object_usd():
     m = byo.build_isaac_job_manifest(
         job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",

@@ -39,6 +39,15 @@ DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_NUM_ENVS = 1024
 DEFAULT_ITERATIONS = 150
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+# Default PPO entropy coefficient for the Franka Lift run. The stock Isaac Lift
+# cfg uses ~0.006, which lets the action-noise std collapse by ~iter 400-600;
+# on an unlucky generated seed the policy then locks into a reach-and-hover
+# local optimum and never discovers the grasp (a learning failure observed in
+# sim2real-e2e-20260626t234808z). 0.01 keeps exploration alive through the grasp
+# bottleneck so learning is reliable across seeds. Override via
+# NPA_BYO_ISAAC_ENTROPY_COEF (set to "" or "stock" to keep the task default).
+DEFAULT_ENTROPY_COEF = "0.01"
+_STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 
 # Root of the public Omniverse Isaac asset CDN (no tenant/private IDs). Override
@@ -240,6 +249,8 @@ def build_isaac_job_manifest(
     object_scale: str = "",
     seed: int = 0,
     physics: dict[str, float] | None = None,
+    entropy_coef: str = "",
+    init_noise_std: str = "",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -265,6 +276,16 @@ def build_isaac_job_manifest(
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
             overrides["env.scene.object.spawn.scale"] = object_scale
+    # Exploration overrides (default path only): the stock Lift PPO lets the
+    # action-noise std collapse early, so on an unlucky generated seed the policy
+    # converges to a reach-and-hover local optimum and never discovers the grasp
+    # (lifting_object reward stays flat ~0.15 while reaching_object maxes out). A
+    # higher entropy coefficient keeps the policy exploring through the grasp
+    # bottleneck, making learning robust to the seed. See run_isaac_training_job.
+    if entropy_coef:
+        overrides["agent.algorithm.entropy_coef"] = entropy_coef
+    if init_noise_std:
+        overrides["agent.policy.init_noise_std"] = init_noise_std
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
@@ -490,6 +511,14 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     object_scale = _env("NPA_BYO_ISAAC_OBJECT_SCALE")
+    # Exploration: keep the policy exploring through the grasp bottleneck so the
+    # Lift run learns reliably regardless of the generated seed (see DEFAULT_ENTROPY_COEF).
+    raw_ent = _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_ENTROPY_COEF)
+    entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
+    init_noise_std = _env("NPA_BYO_ISAAC_INIT_NOISE_STD")
+    if entropy_coef:
+        print(f"byo_isaac_trainer: PPO entropy_coef -> {entropy_coef} "
+              f"(exploration floor; stock ~0.006)", flush=True)
     if object_usd:
         default_tag = " (default)" if not _env("NPA_BYO_ISAAC_OBJECT_USD") else ""
         print(f"byo_isaac_trainer: object USD -> {object_usd}{default_tag} scale={object_scale}", flush=True)
@@ -538,6 +567,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         object_scale=object_scale,
         seed=gen_seed,
         physics=physics,
+        entropy_coef=entropy_coef,
+        init_noise_std=init_noise_std,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
