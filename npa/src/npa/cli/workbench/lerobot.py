@@ -967,10 +967,10 @@ def _train_serverless(
     s3_access_key, s3_secret_key, s3_endpoint = _serverless_storage_env_values(storage, credentials, out)
     env = _lerobot_serverless_job_env(
         credentials.hf_token,
-        training_config.checkpoint_s3.aws_access_key_id or s3_access_key,
-        training_config.checkpoint_s3.aws_secret_access_key or s3_secret_key,
+        s3_access_key or training_config.checkpoint_s3.aws_access_key_id,
+        s3_secret_key or training_config.checkpoint_s3.aws_secret_access_key,
         out,
-        s3_endpoint=training_config.checkpoint_s3.endpoint_url or s3_endpoint,
+        s3_endpoint=s3_endpoint or training_config.checkpoint_s3.endpoint_url,
     )
     env["NPA_JOB_NAME"] = name
     env.update(training_config.env())

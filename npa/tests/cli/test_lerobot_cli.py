@@ -430,6 +430,38 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     update.assert_called_once()
 
 
+def test_lerobot_train_serverless_prefers_credentials_endpoint_for_matching_bucket(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            aws_access_key_id="project-key",
+            aws_secret_access_key="project-secret",
+        ),
+    )
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_credentials",
+        return_value=SimpleNamespace(
+            hf_token="PLACEHOLDER_HF_TOKEN",
+            s3_access_key_id="shared-key",
+            s3_secret_access_key="shared-secret",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_bucket="s3://bucket/checkpoints/",
+        ),
+    )
+
+    result = runner.invoke(app, _serverless_train_args("--submit-only"))
+
+    assert result.exit_code == 0, result.output
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["env"]["AWS_ENDPOINT_URL"] == "https://storage.us-central1.nebius.cloud"
+    assert kwargs["env"]["NEBIUS_S3_ENDPOINT"] == "https://storage.us-central1.nebius.cloud"
+    assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "shared-key"
+    assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "shared-secret"
+
+
 def test_lerobot_train_serverless_sync_polls(mocker) -> None:
     client, _update = _mock_serverless_train(mocker, poll_status="succeeded")
 
