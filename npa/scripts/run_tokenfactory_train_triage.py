@@ -135,9 +135,13 @@ def _hydrate_credentials() -> None:
     try:
         import os
 
-        from npa.clients.credentials import apply_shared_credential_env, load_credentials
+        from npa.clients.credentials import load_credentials, shared_credential_env
 
-        apply_shared_credential_env(os.environ, load_credentials())
+        for key, value in shared_credential_env(load_credentials()).items():
+            if value:
+                # This workflow chains cloud + hosted stages; prefer canonical
+                # credentials from ~/.npa/credentials.yaml over inherited shell env.
+                os.environ[key] = value
     except Exception:  # noqa: BLE001 - best-effort; live calls surface real errors.
         pass
 
