@@ -1,0 +1,81 @@
+# Robot onboarding spec — npa.sim2real.onboarding.v1
+#
+# Onboard YOUR robot into the sim2real Lift / reach / place workflow with one
+# file. Validate + see the auto-derived config with:
+#
+#   npa workbench sim2real onboard-robot --spec this-file.yaml
+#
+# Add --smoke to submit a short Isaac trainer+eval job that confirms the robot
+# loads, retargets, and trains. See npa/docs/architecture/robot-onboarding.md.
+#
+# RULE OF THUMB: supply the asset (usd_path) + the joint/ee/gripper names if you
+# know them; otherwise write `auto` and we derive a sane config from the asset's
+# joint limits and workspace. Explicit values always win over `auto`.
+
+schema: npa.sim2real.onboarding.v1
+
+robot:
+  # A human-readable name; also slugged into the registered task id
+  # (NPA-Lift-Cube-<name>-v0) and the S3 run path.
+  name: my_robot
+
+  # The articulated robot description. A USD is preferred for Isaac; a URDF is
+  # accepted (urdf_path). May be an https:// CDN url, an s3:// uri, or a path
+  # already inside the Isaac container. A plain visual mesh (.obj/.glb/.stl) is
+  # NOT a robot — it is rejected.
+  usd_path: https://.../my_robot_instanceable.usd
+  # urdf_path: s3://my-bucket/robots/my_robot.urdf   # alternative to usd_path
+
+  # Optional: seed defaults from a named preset (franka / ur5e / ur10e / flexiv).
+  # Any field below overrides the preset.
+  # preset: ur5e
+
+  # Morphology. Give explicit names if you know them, else `auto` to derive from
+  # the asset. ee_link is the grasp/end-effector link; base_link is the
+  # articulation root.
+  ee_link: auto            # e.g. my_robot_end_effector
+  base_link: auto          # e.g. my_robot_link_base
+
+  # Arm joints, in order from base to tool. `auto` derives them from the asset.
+  joint_names: auto
+  n_arm_joints: auto       # e.g. 7
+
+  # Gripper. Required for lift/place skills. `auto` derives finger joints + the
+  # open/close targets from the asset's finger joint ranges.
+  gripper_joint_names: auto
+  finger_links: auto
+  n_gripper_joints: auto   # e.g. 2 (parallel jaw) or 3 (three-finger)
+  gripper_open: auto        # joint target for an open hand
+  gripper_close: auto       # joint target for a closed (grasping) hand
+
+  # Per-DoF actuator config. `auto` derives stiffness/damping/effort from the
+  # asset; otherwise supply vectors of length n_arm_joints + n_gripper_joints.
+  home_qpos: auto           # ready/init pose
+  kp: auto                  # stiffness per joint
+  kv: auto                  # damping per joint
+  force_lower: auto
+  force_upper: auto
+
+task:
+  # What the robot should learn: lift | reach | place.
+  skill: lift
+
+  # The manipulated object USD. Omit to use the proven rigid-ready MultiColorCube.
+  # object_usd: https://.../my_object_instanceable.usd
+  # object_scale: "(0.8, 0.8, 0.8)"
+
+  # The goal the policy is rewarded toward. `auto` places it within the derived
+  # arm workspace; or give [x, y, z] in the robot base frame.
+  goal_pos: auto
+
+  # Success geometry. lift_height_m: how high the object must rise to count as
+  # lifted. success_distance_m: how close to the goal counts as success (reach/
+  # place). success_threshold: fraction of held-out episodes that must succeed
+  # for the eval to PASS.
+  lift_height_m: 0.04
+  success_distance_m: 0.02
+  success_threshold: 0.5
+
+  # Optional training budget hints (0 / omit -> trainer defaults).
+  # num_envs: 1024
+  # iterations: 1000

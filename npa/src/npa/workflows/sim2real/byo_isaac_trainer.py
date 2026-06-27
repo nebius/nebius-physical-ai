@@ -39,7 +39,26 @@ DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_NUM_ENVS = 1024
 DEFAULT_ITERATIONS = 150
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+# Default PPO entropy coefficient for the Franka Lift run. The stock Isaac Lift
+# cfg uses ~0.006, which lets the action-noise std collapse by ~iter 400-600;
+# on an unlucky generated seed the policy then locks into a reach-and-hover
+# local optimum and never discovers the grasp (a learning failure observed in
+# sim2real-e2e-20260626t234808z). 0.01 keeps exploration alive through the grasp
+# bottleneck so learning is reliable across seeds. Override via
+# NPA_BYO_ISAAC_ENTROPY_COEF (set to "" or "stock" to keep the task default).
+DEFAULT_ENTROPY_COEF = "0.01"
+_STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+# rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
+# Overridable via NPA_BYO_ISAAC_EXPERIMENT_NAME for non-default tasks; the outer-loop
+# RESUME path stages the prior checkpoint under this experiment dir so train.py's
+# get_checkpoint_path() resolves it.
+DEFAULT_EXPERIMENT_NAME = "franka_lift"
+# Fixed run-dir name we stage a resumed checkpoint into. train.py is then told to
+# load exactly this run (agent.load_run) so resume never picks the freshly-created
+# current run dir by accident.
+RESUME_RUN_DIR = "00000000_npa_resume"
+RESUME_CKPT_NAME = "model_0.pt"
 
 # Root of the public Omniverse Isaac asset CDN (no tenant/private IDs). Override
 # with NPA_ISAAC_NUCLEUS_DIR to point at an internal Nucleus mirror.
@@ -71,6 +90,73 @@ def resolve_object_usd(raw: str) -> str:
     if val.lower() in _STOCK_OBJECT_USD_SENTINELS:
         return ""
     return val or default_isaac_object_usd()
+
+
+# Where the BYO-robot path stages the customer robot USD inside the Isaac job.
+ROBOT_USD_CONTAINER_PATH = "/tmp/npa_robot/robot.usd"
+
+
+def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, Any] | None:
+    """Serialize a resolved RobotSpec into the ``NPA_BYO_ROBOT_SPEC_JSON`` contract.
+
+    Returns ``None`` when ``spec`` is ``None`` (no BYO-robot routing). For a
+    ``stock_franka`` spec, returns a minimal payload (source/name only) so the
+    in-container overrides are empty and the variant degenerates to the stock task
+    — the BYO seam still runs end-to-end. For a BYO spec, includes the morphology
+    / gain fields read by ``isaac_byo_robot_task.robot_articulation_overrides`` plus
+    the in-container ``usd_path`` the job stages the robot USD to.
+    """
+
+    if spec is None:
+        return None
+    source = str(getattr(spec, "robot_source", "") or "")
+    name = str(getattr(spec, "name", "") or "robot")
+    if source == "stock_franka":
+        return {"robot_source": source, "name": name}
+
+    def _floats(value: Any) -> list[float]:
+        out: list[float] = []
+        for item in value or ():
+            try:
+                out.append(float(item))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    return {
+        "robot_source": source,
+        "name": name,
+        "ee_link": str(getattr(spec, "ee_link", "") or ""),
+        "base_link": str(getattr(spec, "base_link", "") or ""),
+        "joint_names": [str(j) for j in (getattr(spec, "joint_names", ()) or ())],
+        "finger_links": [str(f) for f in (getattr(spec, "finger_links", ()) or ())],
+        "n_arm_joints": int(getattr(spec, "n_arm_joints", 0) or 0),
+        "n_gripper_joints": int(getattr(spec, "n_gripper_joints", 0) or 0),
+        "home_qpos": _floats(getattr(spec, "home_qpos", ())),
+        "kp": _floats(getattr(spec, "kp", ())),
+        "kv": _floats(getattr(spec, "kv", ())),
+        "force_upper": _floats(getattr(spec, "force_upper", ())),
+        "force_lower": _floats(getattr(spec, "force_lower", ())),
+        "gripper_open": float(getattr(spec, "gripper_open", 0.04) or 0.0),
+        "gripper_close": float(getattr(spec, "gripper_close", 0.0) or 0.0),
+        "usd_path": usd_container_path,
+    }
+
+
+def _resolve_byo_robot_spec() -> Any:
+    """Resolve a RobotSpec from the trainer's env (preset/source), or ``None``.
+
+    Best-effort and dependency-light: uses ``robot_spec_from_inputs`` (no
+    download). A ``robot_spec_uri`` JSON or a URDF→USD conversion is a follow-up;
+    the proven validation path is the Franka preset (a stock_franka spec).
+    """
+
+    from npa.genesis import robot_assets
+
+    return robot_assets.robot_spec_from_inputs(
+        robot_preset=_env("NPA_SIM2REAL_ROBOT_PRESET"),
+        robot_source=_env("NPA_SIM2REAL_ROBOT_SOURCE"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +326,13 @@ def build_isaac_job_manifest(
     object_scale: str = "",
     seed: int = 0,
     physics: dict[str, float] | None = None,
+    entropy_coef: str = "",
+    init_noise_std: str = "",
+    resume_uri: str = "",
+    experiment_name: str = DEFAULT_EXPERIMENT_NAME,
+    robot_spec: dict[str, Any] | None = None,
+    robot_usd_uri: str = "",
+    task_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -265,6 +358,28 @@ def build_isaac_job_manifest(
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
             overrides["env.scene.object.spawn.scale"] = object_scale
+    # Exploration overrides (default path only): the stock Lift PPO lets the
+    # action-noise std collapse early, so on an unlucky generated seed the policy
+    # converges to a reach-and-hover local optimum and never discovers the grasp
+    # (lifting_object reward stays flat ~0.15 while reaching_object maxes out). A
+    # higher entropy coefficient keeps the policy exploring through the grasp
+    # bottleneck, making learning robust to the seed. See run_isaac_training_job.
+    if entropy_coef:
+        overrides["agent.algorithm.entropy_coef"] = entropy_coef
+    if init_noise_std:
+        overrides["agent.policy.init_noise_std"] = init_noise_std
+    # OUTER-LOOP RESUME (default path only): continue the SAME policy from the prior
+    # outer/inner iteration's checkpoint instead of training from scratch, so stage
+    # 11B's "send back for more RL" compounds across OUTER_ITERATIONS. The prior model
+    # is staged under logs/rsl_rl/<experiment>/<RESUME_RUN_DIR>/<RESUME_CKPT_NAME>
+    # (see the download block in the script) and train.py's get_checkpoint_path()
+    # resolves it from these hydra args. The physics-variant path trains a different
+    # task and is not resumed.
+    resume_uri = resume_uri.strip()
+    if resume_uri and not physics:
+        overrides["agent.resume"] = "true"
+        overrides["agent.load_run"] = RESUME_RUN_DIR
+        overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
@@ -276,7 +391,74 @@ def build_isaac_job_manifest(
     # under namespace: /seed. Expected: NoneType, Received: int").
     seed_arg = f" --seed {int(seed)}" if seed else ""
 
-    if physics:
+    if robot_spec:
+        # BYO-robot path (takes precedence over physics): ship the
+        # isaac_byo_robot_task module + its post-boot wrapper into the container and
+        # run the wrapper (it registers a Lift variant that swaps in the customer
+        # robot articulation AFTER AppLauncher boots, then trains via the rsl_rl
+        # runner, saving model_*.pt into $OUT). A stock_franka payload yields empty
+        # overrides, so the variant degenerates to the stock task — the seam runs
+        # end-to-end without changing the policy.
+        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
+
+        module_src = _robotmod.module_source()
+        wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
+        spec_json = json.dumps(robot_spec, sort_keys=True)
+        # B2-derived robot-aware task config (action scale / placement / reward
+        # thresholds / gripper) shipped alongside the robot spec so the variant is
+        # scaled to the arm instead of the Franka-tuned stock numbers.
+        task_cfg_block = ""
+        if task_config:
+            task_cfg_json = json.dumps(task_config, sort_keys=True)
+            task_cfg_block = "export NPA_BYO_TASK_CONFIG_JSON=" + shlex.quote(task_cfg_json) + "\n"
+        # Keep PPO exploring (same fix as the Franka default path); the wrapper
+        # applies it to the rsl_rl agent cfg. Empty -> wrapper keeps task default.
+        ent_block = ""
+        if entropy_coef:
+            ent_block = "export ROBOT_ENTROPY_COEF=" + shlex.quote(str(entropy_coef)) + "\n"
+        usd_dest = str(robot_spec.get("usd_path") or "").strip()
+        stage_block = ""
+        if robot_usd_uri and usd_dest:
+            # Stage the customer robot USD from S3 to the in-container path the
+            # payload references, before the wrapper registers the variant.
+            stage_block = (
+                f'echo "STAGING_ROBOT_USD: {robot_usd_uri} -> {usd_dest}"\n'
+                "ROBOT_USD_URI=" + shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST=" + shlex.quote(usd_dest) + ' "$PY" - <<\'ROBOTDLEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
+                "dest = os.environ['ROBOT_USD_DEST']\n"
+                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), dest)\n"
+                "print('STAGED_ROBOT_USD', dest)\n"
+                "ROBOTDLEOF\n"
+            )
+        train_block = (
+            "mkdir -p /tmp/npa_robot\n"
+            "cat > /tmp/npa_robot/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
+            + module_src + "\nROBOTEOF\n"
+            "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
+            + wrapper_src + "\nROBOTRUNEOF\n"
+            '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + stage_block
+            + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
+            f'{robot_spec.get("name")} seed={int(seed)}"\n'
+            f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
+            f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
+            "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
+            + task_cfg_block
+            + ent_block
+            # tee the FULL wrapper output to /tmp/train_full.log before tailing: the
+            # retarget plan + the honest task/robot compatibility verdict are printed
+            # right after AppLauncher boot, so `| tail -120` alone discards them
+            # behind the training-loop logs (and entirely when an incompatible robot
+            # fails at env build). The markers are re-dumped from this file post-run,
+            # and the file IS the per-iteration reward curve uploaded for plotting.
+            + '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
+        )
+    elif physics:
         # Generated-physics path: ship the isaac_physics_task module + its
         # post-boot train wrapper into the container and run the wrapper (it
         # registers the friction/mass variant AFTER AppLauncher boots, then
@@ -300,11 +482,33 @@ def build_isaac_job_manifest(
             '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
         )
     else:
+        # Stage the prior-iteration checkpoint where train.py's get_checkpoint_path()
+        # looks (logs/rsl_rl/<experiment>/<RESUME_RUN_DIR>/<RESUME_CKPT_NAME>, relative
+        # to the run cwd $OUT). A download failure leaves the dir empty so train.py
+        # raises on resume — loud, never a silent fresh start.
+        resume_block = ""
+        if resume_uri and not physics:
+            resume_dir = f"logs/rsl_rl/{experiment_name}/{RESUME_RUN_DIR}"
+            resume_block = (
+                f'echo "RESUME_FROM: {resume_uri}"\n'
+                f'mkdir -p "$OUT/{resume_dir}"\n'
+                '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+                f'RESUME_URI="{resume_uri}" '
+                f'RESUME_DST="$OUT/{resume_dir}/{RESUME_CKPT_NAME}" "$PY" - <<\'RESEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['RESUME_URI'])\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), os.environ['RESUME_DST'])\n"
+                "print('RESUME_DOWNLOADED', os.environ['RESUME_DST'])\n"
+                "RESEOF\n"
+            )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
             f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
         )
         train_block = (
+            f'{resume_block}'
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
@@ -321,6 +525,11 @@ def build_isaac_job_manifest(
         f'{train_block}'
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
+        # Re-dump the BYO-robot markers (retarget plan + compatibility verdict +
+        # summary) from the full wrapper log so they survive the `tail -120` above
+        # and are present even when an incompatible robot fails at env build.
+        'if [ -f /tmp/train_full.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
+        'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/train_full.log || true; fi\n'
         'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
@@ -466,6 +675,12 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _sanitize_tag(tag: str) -> str:
+    """Make a trainer tag safe for an S3 path segment (alnum, dash, underscore)."""
+    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in tag.strip())
+    return cleaned.strip("-")
+
+
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
@@ -481,7 +696,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     service_account = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     job_name = f"s2r-byo-isaac-train-{run_id}"[:63]
-    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{job_name}/"
+    # Per-iteration tag (e.g. "outer-02-iter-01") keeps each outer/inner iteration's
+    # checkpoint at a DISTINCT S3 path so the prior model survives for the next
+    # iteration to resume from (and outer iterations don't overwrite each other).
+    # Unset => byte-identical to the historical single-shot path.
+    tag = _sanitize_tag(_env("NPA_SIM2REAL_TRAINER_TAG"))
+    path_seg = f"{job_name}/{tag}/" if tag else f"{job_name}/"
+    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{path_seg}"
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200") or 7200)
 
     # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
@@ -490,6 +711,14 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     object_scale = _env("NPA_BYO_ISAAC_OBJECT_SCALE")
+    # Exploration: keep the policy exploring through the grasp bottleneck so the
+    # Lift run learns reliably regardless of the generated seed (see DEFAULT_ENTROPY_COEF).
+    raw_ent = _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_ENTROPY_COEF)
+    entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
+    init_noise_std = _env("NPA_BYO_ISAAC_INIT_NOISE_STD")
+    if entropy_coef:
+        print(f"byo_isaac_trainer: PPO entropy_coef -> {entropy_coef} "
+              f"(exploration floor; stock ~0.006)", flush=True)
     if object_usd:
         default_tag = " (default)" if not _env("NPA_BYO_ISAAC_OBJECT_USD") else ""
         print(f"byo_isaac_trainer: object USD -> {object_usd}{default_tag} scale={object_scale}", flush=True)
@@ -521,6 +750,65 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         print(f"byo_isaac_trainer: PHYSICS injection {'ON' if physics else 'OFF (no params)'} "
               f"-> {physics}", flush=True)
 
+    # Opt-in BYO-robot task path (guarded; default path unchanged): route the
+    # customer robot_spec into a registered Isaac Lift variant that swaps in the
+    # robot articulation. Takes precedence over the physics path when both are set.
+    robot_spec_dict = None
+    robot_usd_uri = ""
+    if _env("NPA_BYO_ROBOT_TASK") == "1":
+        if physics:
+            print("byo_isaac_trainer: NPA_BYO_ROBOT_TASK=1 takes precedence over "
+                  "PHYSICS path; disabling physics injection", flush=True)
+            physics = None
+        spec = _resolve_byo_robot_spec()
+        usd_dest = ""
+        if spec is not None and str(getattr(spec, "robot_source", "")) != "stock_franka":
+            robot_uri = str(getattr(spec, "robot_uri", "") or "")
+            if robot_uri.startswith("s3://"):
+                robot_usd_uri = robot_uri
+                usd_dest = ROBOT_USD_CONTAINER_PATH
+            elif robot_uri:
+                usd_dest = robot_uri  # already a container-local USD path
+            if not usd_dest:
+                # No silent Franka swap for a real BYO robot: warn loudly. The
+                # wrapper still trains (stock cfg) but the operator must know the
+                # robot USD was not staged (URDF→USD conversion is a follow-up).
+                print(f"byo_isaac_trainer: WARNING BYO robot {getattr(spec, 'name', '?')!r} "
+                      f"({getattr(spec, 'robot_source', '?')}) has no stageable USD "
+                      "(s3:// or container path); robot articulation will NOT be swapped",
+                      flush=True)
+        robot_spec_dict = robot_spec_payload(spec, usd_container_path=usd_dest)
+        print(f"byo_isaac_trainer: BYO-ROBOT task path "
+              f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
+
+    # B2-derived robot-aware task config (action scale / placement / reward
+    # thresholds / gripper). Set by the onboarding CLI as NPA_BYO_TASK_CONFIG_JSON
+    # so the BYO Lift variant is scaled to the arm. Unset -> variant keeps stock.
+    task_config = None
+    raw_task_cfg = _env("NPA_BYO_TASK_CONFIG_JSON")
+    if raw_task_cfg:
+        try:
+            parsed = json.loads(raw_task_cfg)
+            if isinstance(parsed, dict):
+                task_config = parsed
+                print(f"byo_isaac_trainer: BYO task config -> {task_config}", flush=True)
+        except (ValueError, TypeError) as exc:
+            print(f"byo_isaac_trainer: WARNING invalid NPA_BYO_TASK_CONFIG_JSON ({exc!r}); "
+                  "variant keeps stock task numbers", flush=True)
+
+    # OUTER-LOOP RESUME: the orchestrator passes the prior iteration's checkpoint URI
+    # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
+    # the physics-variant path (different task) — log it so the skip is visible.
+    resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
+    experiment_name = _env("NPA_BYO_ISAAC_EXPERIMENT_NAME", DEFAULT_EXPERIMENT_NAME)
+    if resume_uri:
+        if physics:
+            print(f"byo_isaac_trainer: RESUME requested but physics path active; "
+                  f"ignoring resume_uri={resume_uri}", flush=True)
+        else:
+            print(f"byo_isaac_trainer: RESUME from {resume_uri} "
+                  f"(experiment={experiment_name}) -> continue same policy", flush=True)
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -538,6 +826,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         object_scale=object_scale,
         seed=gen_seed,
         physics=physics,
+        entropy_coef=entropy_coef,
+        init_noise_std=init_noise_std,
+        resume_uri=resume_uri,
+        experiment_name=experiment_name,
+        robot_spec=robot_spec_dict,
+        robot_usd_uri=robot_usd_uri,
+        task_config=task_config,
     )
     start = time.time()
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)

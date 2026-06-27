@@ -56,12 +56,18 @@ class Sim2RealWorkflow:
             local_dir=self._local_dir,
             outer_iteration=outer_iteration,
             initial_quality=quality,
+            # Resume the same policy from the prior outer iteration's checkpoint so
+            # "send back for more RL" (stage 11B) compounds instead of restarting.
+            resume_checkpoint_uri=state.last_checkpoint_uri,
         )
         state.final_inner = iteration["inner"]
         state.final_eval = iteration["heldout_report"]
         state.final_decision = iteration["decision"]
         state.outer_history.append(iteration["history_entry"])
         state.current_quality = float(iteration["next_quality"])
+        produced_checkpoint = str(iteration.get("checkpoint_uri") or "").strip()
+        if produced_checkpoint:
+            state.last_checkpoint_uri = produced_checkpoint
         state.next_outer_iteration = outer_iteration + 1
         state.status = "outer_iteration_completed"
         state.save()
