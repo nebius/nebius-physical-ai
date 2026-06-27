@@ -14,6 +14,7 @@ from npa.clients.credentials import (
     set_token_factory_api_key,
     shared_credential_env,
     warn_if_hf_token_missing,
+    write_credentials_file,
 )
 from npa.clients.ssh import SSHClient
 
@@ -151,6 +152,25 @@ def test_set_token_factory_api_key_merges_into_existing_credentials(
     assert resolved.hf_token == "hf-existing"
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-new-key"
     assert stored["storage"]["aws_access_key_id"] == "AKIAEXISTING"
+
+
+def test_write_credentials_file_normalizes_legacy_token_factory_key(
+    tmp_path: Path,
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "tf-legacy-file"}})
+    )
+
+    write_credentials_file(
+        {"storage": {"bucket": "s3://bucket/checkpoints/"}},
+        path=credentials_path,
+    )
+
+    stored = yaml.safe_load(credentials_path.read_text())
+    assert stored["tokens"]["NEBIUS_API_KEY"] == "tf-legacy-file"
+    assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-legacy-file"
+    assert stored["storage"]["bucket"] == "s3://bucket/checkpoints/"
 
 
 def test_load_credentials_reads_byovm_ssh_config(tmp_path: Path) -> None:

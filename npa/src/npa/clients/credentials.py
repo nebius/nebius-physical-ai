@@ -301,6 +301,34 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
     return pruned
 
 
+def _normalize_token_factory_key(data: dict[str, Any]) -> dict[str, Any]:
+    """Mirror legacy Token Factory keys into the canonical token name."""
+
+    tokens_raw = data.get("tokens")
+    tokens = dict(tokens_raw) if isinstance(tokens_raw, dict) else {}
+    canonical = str(tokens.get(TOKEN_FACTORY_ENV_KEY, "") or "").strip()
+    if canonical:
+        return data
+
+    legacy_value = ""
+    for key in TOKEN_FACTORY_LEGACY_ENV_KEYS:
+        token_candidate = str(tokens.get(key, "") or "").strip()
+        top_level_candidate = str(data.get(key, "") or "").strip()
+        if token_candidate:
+            legacy_value = token_candidate
+            break
+        if top_level_candidate:
+            legacy_value = top_level_candidate
+            break
+    if not legacy_value:
+        return data
+
+    normalized = dict(data)
+    tokens[TOKEN_FACTORY_ENV_KEY] = legacy_value
+    normalized["tokens"] = tokens
+    return normalized
+
+
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
     """Persist the Nebius Token Factory key under ``tokens.NEBIUS_TOKEN_FACTORY_KEY``."""
 
@@ -332,6 +360,7 @@ def write_credentials_file(
         if isinstance(loaded, dict):
             existing = loaded
     merged = _deep_merge(existing, _prune_empty(dict(data)))
+    merged = _normalize_token_factory_key(merged)
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     with credentials_path.open("w") as handle:
         yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)
