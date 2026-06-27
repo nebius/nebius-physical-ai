@@ -11,7 +11,7 @@
 #   Stage 2 (CPU, zero-GPU): a Token Factory text model reads those artifacts and
 #           writes a triage report. No local GPU/vLLM serving stage.
 # Provide the API key (and S3 creds) as SkyPilot secrets at launch:
-#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#   sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
 #     --secret AWS_SECRET_ACCESS_KEY tokenfactory-train-triage.yaml
 name: tokenfactory-train-triage
 execution: serial
@@ -109,8 +109,8 @@ setup: |
   fi
 run: |
   set -euo pipefail
-  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
-    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+  if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then
+    echo "NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY ..." >&2
     exit 1
   fi
   # Download the textual artifacts and build a triage prompt with the same pure

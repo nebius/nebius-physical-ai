@@ -21,13 +21,13 @@ Examples:
   python npa/scripts/run_tokenfactory_sim_sweep.py --render-only --num-variants 2
 
   # Full live run: design -> N serverless GPU smoke trains -> ranking.
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
       --project-id project-xxxxxxxx \
       --bucket s3://your-bucket/tf-sim-sweep \
       --num-variants 2
 
   # Cheap iteration: skip the GPU stage and only rank existing run prefixes.
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
       --rank-existing s3://your-bucket/runA/,s3://your-bucket/runB/
 """
 
