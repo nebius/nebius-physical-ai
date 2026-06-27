@@ -131,20 +131,11 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
-        "onboard_oss_repo",
+        "onboard_solution",
         re.compile(
-            r"\b(?:open[\s-]?source|github|repo(?:sitory)?)\b.{0,140}\b(?:containerize|docker|image|registry|push)\b"
-            r"|\b(?:byof|bring your own fork|custom fork)\b.{0,140}\b(?:isaac|isaac[-\s]?lab|leisaac)\b"
-            r"|\b(?:leisaac|lightwheel)\b.{0,140}\b(?:image|container|registry|workflow|run)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "submit_pr",
-        re.compile(
-            r"\b(?:submit|open|create)\b.{0,60}\b(?:pull\s+request|pr)\b"
-            r"|\b(?:agent|chat)\b.{0,80}\b(?:submit|open|create)\b.{0,60}\b(?:pull\s+request|pr)\b"
-            r"|\b(?:push)\b.{0,80}\b(?:and)\b.{0,40}\b(?:open|submit)\b.{0,60}\b(?:pr|pull\s+request)\b",
+            r"\b(?:onboard|add|integrate|containerize|dockerize|register)\b.{0,140}\b(?:solution|tool|component|repo|repository|open[\s-]?source)\b"
+            r"|\b(?:byof|bring your own fork|custom fork)\b.{0,140}\b(?:workflow|image|container|registry|infra|run)\b"
+            r"|\b(?:github|repo(?:sitory)?)\b.{0,140}\b(?:workbench|npa|workflow|sky|kubernetes)\b",
             re.IGNORECASE,
         ),
     ),
@@ -209,8 +200,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
-    "onboard_oss_repo": ["tools", "workflows/validate", "workflows/plan"],
-    "submit_pr": ["git/submit-pr"],
+    "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -558,48 +548,33 @@ def format_cosmos3_setup() -> str:
     )
 
 
-def format_onboard_oss_repo() -> str:
+def format_onboard_solution() -> str:
     registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
     return "\n".join(
         [
-            "**Yes — chat can drive OSS repo onboarding to registry + live run.**",
-            "- Reference repo: `https://github.com/LightwheelAI/leisaac.git`",
-            "- Container + push + live Isaac-Lab smoke run (L40S/RT-core path):",
+            "**Yes — chat can onboard a new solution end-to-end.**",
+            "- Goal: produce a runnable path for **add -> containerize -> live infra smoke**.",
+            "- Step 1 (**add/contract**): define toolRef + inputs/outputs and register in the workbench catalog.",
+            "- Step 2 (**containerize**): build/push repo-derived image to your Nebius registry.",
+            "- Step 3 (**live infra**): submit a SkyPilot smoke workflow in tmux with retry gates.",
+            "- Generic onboarding command (replace placeholders):",
             "```bash",
             "npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py \\",
-            "  --repo-url https://github.com/LightwheelAI/leisaac.git \\",
-            "  --repo-ref main \\",
+            "  --repo-url <repo-url> \\",
+            "  --repo-ref <repo-ref> \\",
             "  --registry " + registry + " \\",
+            "  --yaml <resource-profile.yaml> \\",
+            "  --task <task> \\",
             "  --iterations 1 \\",
-            "  --task Isaac-Cartpole-v0 \\",
             "  --cleanup",
             "```",
-            "- Loop in tmux (retry on capacity/prechecks):",
+            "- tmux live loop (retry on capacity/prechecks):",
             "```bash",
-            "SESSION=leisaac-live-$(date -u +%Y%m%dT%H%M%SZ)",
+            "SESSION=solution-live-$(date -u +%Y%m%dT%H%M%SZ)",
             "tmux new -d -s \"$SESSION\"",
-            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; sky check; sky gpus list; ATTEMPT=1; while [ $ATTEMPT -le 3 ]; do npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py --repo-url https://github.com/LightwheelAI/leisaac.git --repo-ref main --iterations 1 --cleanup && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*20)); done' C-m",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; sky check; sky gpus list; ATTEMPT=1; while [ $ATTEMPT -le 3 ]; do npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py --repo-url <repo-url> --repo-ref <repo-ref> --yaml <resource-profile.yaml> --task <task> --iterations 1 --cleanup && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*20)); done' C-m",
             "```",
-            "- GPU compatibility: Isaac Lab requires RT-core GPUs (`L40S` or `RTX PRO 6000`), not H100/H200.",
-            "- This flow keeps workflow contracts stable while replacing only the Isaac image via `--image` override.",
-        ]
-    )
-
-
-def format_submit_pr() -> str:
-    return "\n".join(
-        [
-            "**Agent-driven PR submission is supported.**",
-            "- Chat can trigger `/api/git/submit-pr` to commit, push, and open a PR from a local repo.",
-            "- Defaults: current branch, `main` as base, and `gh pr create --fill --draft`.",
-            "- Optional fields in API payload:",
-            "  - `repo_path`, `branch`, `base_branch`",
-            "  - `commit_message` (auto-commits local changes before push)",
-            "  - `title`, `body`, `draft`",
-            "- Example:",
-            "```json",
-            '{"repo_path": "/home/ubuntu/work/my-worktree", "commit_message": "Finalize LeIsaac onboarding", "base_branch": "main"}',
-            "```",
+            "- Validation example: LeIsaac can be used as one repo to validate this onboarding path.",
         ]
     )
 
@@ -673,10 +648,8 @@ def build_grounded_reply(
         return format_configure_s3()
     if intent == "cosmos3":
         return format_cosmos3_setup()
-    if intent == "onboard_oss_repo":
-        return format_onboard_oss_repo()
-    if intent == "submit_pr":
-        return format_submit_pr()
+    if intent == "onboard_solution":
+        return format_onboard_solution()
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)

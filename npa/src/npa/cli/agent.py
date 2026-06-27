@@ -550,17 +550,6 @@ DEFAULT_SIM_VIZ = {{
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
 }}
-GIT_ALLOWED_ROOTS = [
-    Path(item).expanduser().resolve()
-    for item in str(
-        os.environ.get(
-            "NPA_AGENT_GIT_ALLOWED_ROOTS",
-            "/home/ubuntu/work,/home/ubuntu/nebius-physical-ai",
-        )
-    ).split(",")
-    if str(item).strip()
-]
-DEFAULT_GIT_REPO = str(os.environ.get("NPA_AGENT_GIT_REPO", "")).strip()
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -575,7 +564,6 @@ def _default_state() -> dict:
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": ""}},
         "workflow_submit": {{}},
-        "pr_submit": {{}},
         "chat_history": [],
     }}
 
@@ -600,133 +588,12 @@ def _load_state() -> dict:
         merged["sim_viz_runs"] = {{}}
     if not isinstance(merged.get("active_run_id"), str):
         merged["active_run_id"] = ""
-    if not isinstance(merged.get("pr_submit"), dict):
-        merged["pr_submit"] = {{}}
     if not isinstance(merged.get("chat_history"), list):
         merged["chat_history"] = []
     return merged
 
 def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-
-
-def _safe_repo_path(raw_path: str) -> Path:
-    candidate = Path((raw_path or DEFAULT_GIT_REPO or os.getcwd()).strip()).expanduser().resolve()
-    if not candidate.exists() or not (candidate / ".git").exists():
-        raise HTTPException(status_code=400, detail=f"repo_path is not a git repository: {{candidate}}")
-    if GIT_ALLOWED_ROOTS and not any(candidate == root or root in candidate.parents for root in GIT_ALLOWED_ROOTS):
-        raise HTTPException(
-            status_code=400,
-            detail=f"repo_path {{candidate}} is outside allowed roots: {{', '.join(str(p) for p in GIT_ALLOWED_ROOTS)}}",
-        )
-    return candidate
-
-
-def _run_repo_cmd(repo_path: Path, args: list[str], *, timeout: int = 180) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args,
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-
-
-def _git_current_branch(repo_path: Path) -> str:
-    proc = _run_repo_cmd(repo_path, ["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    if proc.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"git branch check failed: {{(proc.stderr or proc.stdout).strip()}}")
-    branch = str(proc.stdout or "").strip()
-    if not branch or branch == "HEAD":
-        raise HTTPException(status_code=400, detail="detached HEAD; pass branch explicitly")
-    return branch
-
-
-def _git_has_changes(repo_path: Path) -> bool:
-    proc = _run_repo_cmd(repo_path, ["git", "status", "--porcelain"])
-    if proc.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"git status failed: {{(proc.stderr or proc.stdout).strip()}}")
-    return bool(str(proc.stdout or "").strip())
-
-
-def _git_compare_url(repo_path: Path, base_branch: str, head_branch: str) -> str:
-    remote = _run_repo_cmd(repo_path, ["git", "remote", "get-url", "origin"])
-    url = str(remote.stdout or "").strip()
-    if not url:
-        return ""
-    if url.startswith("git@github.com:"):
-        suffix = url[len("git@github.com:") :]
-        if suffix.endswith(".git"):
-            suffix = suffix[:-4]
-        return f"https://github.com/{{suffix}}/compare/{{base_branch}}...{{head_branch}}?expand=1"
-    if url.startswith("https://github.com/"):
-        cleaned = url[:-4] if url.endswith(".git") else url
-        return f"{{cleaned}}/compare/{{base_branch}}...{{head_branch}}?expand=1"
-    return ""
-
-
-def _submit_pr_from_repo(payload: dict) -> dict:
-    body = payload if isinstance(payload, dict) else {{}}
-    repo_path = _safe_repo_path(str(body.get("repo_path") or ""))
-    branch = str(body.get("branch") or "").strip() or _git_current_branch(repo_path)
-    base_branch = str(body.get("base_branch") or "main").strip() or "main"
-    commit_message = str(body.get("commit_message") or "").strip()
-    title = str(body.get("title") or "").strip()
-    pr_body = str(body.get("body") or "").strip()
-    draft = bool(body.get("draft", True))
-    result = {{
-        "ok": False,
-        "repo_path": str(repo_path),
-        "branch": branch,
-        "base_branch": base_branch,
-        "pr_url": "",
-        "compare_url": _git_compare_url(repo_path, base_branch, branch),
-    }}
-    if commit_message and _git_has_changes(repo_path):
-        add_proc = _run_repo_cmd(repo_path, ["git", "add", "-A"])
-        if add_proc.returncode != 0:
-            result["error"] = f"git add failed: {{(add_proc.stderr or add_proc.stdout).strip()}}"
-            return result
-        commit_proc = _run_repo_cmd(repo_path, ["git", "commit", "-m", commit_message])
-        if commit_proc.returncode != 0:
-            result["error"] = f"git commit failed: {{(commit_proc.stderr or commit_proc.stdout).strip()}}"
-            return result
-        result["committed"] = True
-    push_proc = _run_repo_cmd(repo_path, ["git", "push", "-u", "origin", branch], timeout=300)
-    if push_proc.returncode != 0:
-        result["error"] = f"git push failed: {{(push_proc.stderr or push_proc.stdout).strip()}}"
-        return result
-    create_cmd = ["gh", "pr", "create", "--base", base_branch, "--head", branch]
-    if draft:
-        create_cmd.append("--draft")
-    if title:
-        create_cmd.extend(["--title", title, "--body", pr_body])
-    else:
-        create_cmd.append("--fill")
-    create_proc = _run_repo_cmd(repo_path, create_cmd, timeout=300)
-    if create_proc.returncode == 0:
-        lines = [line.strip() for line in str(create_proc.stdout or "").splitlines() if line.strip()]
-        if lines:
-            maybe_url = lines[-1]
-            if maybe_url.startswith("http"):
-                result["pr_url"] = maybe_url
-        result["ok"] = True
-        return result
-    stderr = str(create_proc.stderr or create_proc.stdout or "").strip()
-    if "already exists" in stderr.lower() or "a pull request already exists" in stderr.lower():
-        view_proc = _run_repo_cmd(repo_path, ["gh", "pr", "view", branch, "--json", "url"])
-        if view_proc.returncode == 0:
-            try:
-                data = json.loads(str(view_proc.stdout or "{{}}"))
-                result["pr_url"] = str(data.get("url") or "")
-                result["ok"] = bool(result["pr_url"])
-                if result["ok"]:
-                    return result
-            except Exception:
-                pass
-    result["error"] = stderr or "gh pr create failed"
-    return result
 
 
 def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
@@ -1107,7 +974,6 @@ def _agent_system_prompt() -> str:
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 YAML",
         "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
         "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
-        "- POST /api/git/submit-pr — push branch and open PR from an allowed local repo",
         "- GET /api/tools — workbench toolRef catalog",
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
@@ -1128,12 +994,10 @@ def _agent_system_prompt() -> str:
         [
             "",
             "Before Sim2Real submit, confirm scene/robot/camera selection.",
-            "For BYOF onboarding (for example Lightwheel LeIsaac), use the",
+            "For BYOF solution onboarding, use the",
             "`npa/scripts/run_isaac_lab_byof_repo.py` flow to containerize an OSS repo,",
             "push to the configured Nebius registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
-            "For agent-driven git flows, use `/api/git/submit-pr` to let the agent VM",
-            "push and open PRs from configured repositories.",
             "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
         ]
     )
@@ -1256,38 +1120,6 @@ def _last_user_message(raw_messages: list) -> str:
             return str(item.get("content", "")).strip()
     return ""
 
-def _chat_kv_value(user_text: str, key: str) -> str:
-    pattern = r"\\b" + re.escape(key) + r"\\s*[:=]\\s*(.+?)(?:\\s+\\w+\\s*[:=]|$)"
-    match = re.search(pattern, str(user_text or ""), flags=re.IGNORECASE)
-    if not match:
-        return ""
-    value = match.group(1).strip()
-    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-        return value[1:-1].strip()
-    return value
-
-
-def _submit_pr_payload_from_text(user_text: str) -> dict:
-    payload = {{
-        "repo_path": _chat_kv_value(user_text, "repo"),
-        "branch": _chat_kv_value(user_text, "branch"),
-        "base_branch": _chat_kv_value(user_text, "base"),
-        "title": _chat_kv_value(user_text, "title"),
-        "body": _chat_kv_value(user_text, "body"),
-        "commit_message": _chat_kv_value(user_text, "commit"),
-    }}
-    lowered = str(user_text or "").lower()
-    payload["draft"] = "ready for review" not in lowered and "not draft" not in lowered
-    cleaned = {{}}
-    for key, value in payload.items():
-        if isinstance(value, str):
-            if value.strip():
-                cleaned[key] = value.strip()
-            continue
-        cleaned[key] = value
-    return cleaned
-
-
 def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str], str | None, dict | None]:
     intent = match_chat_intent(user_text)
     if not intent:
@@ -1342,40 +1174,6 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         _save_state(state)
         reply = format_workflow_chat_reply(yaml_text, validation, template=template)
         return reply, apis_for_intent(intent), yaml_text, validation
-    elif intent == "submit_pr":
-        pr_payload = _submit_pr_payload_from_text(user_text)
-        pr_result = _submit_pr_from_repo(pr_payload)
-        state["pr_submit"] = pr_result
-        _save_state(state)
-        if pr_result.get("ok"):
-            lines = [
-                "**Agent submitted PR from local repo.**",
-                "- **repo_path**: `" + str(pr_result.get("repo_path") or "") + "`",
-                "- **branch**: `" + str(pr_result.get("branch") or "") + "`",
-                "- **base_branch**: `" + str(pr_result.get("base_branch") or "") + "`",
-            ]
-            pr_url = str(pr_result.get("pr_url") or "").strip()
-            compare_url = str(pr_result.get("compare_url") or "").strip()
-            if pr_url:
-                lines.append("- **pr_url**: `" + pr_url + "`")
-            elif compare_url:
-                lines.append("- **compare_url**: `" + compare_url + "`")
-            reply = "\\n".join(lines)
-        else:
-            lines = [
-                "**Agent PR submission failed.**",
-                "- **repo_path**: `" + str(pr_result.get("repo_path") or "") + "`",
-                "- **error**: `" + str(pr_result.get("error") or "unknown failure") + "`",
-            ]
-            compare_url = str(pr_result.get("compare_url") or "").strip()
-            if compare_url:
-                lines.append("- **compare_url**: `" + compare_url + "`")
-            lines.append(
-                "- Include explicit fields when retrying: "
-                "`repo:<path> branch:<name> base:main commit:<message> title:<title>`."
-            )
-            reply = "\\n".join(lines)
-        return reply, apis_for_intent(intent), None, None
     reply = build_grounded_reply(
         intent,
         state,
@@ -1870,23 +1668,8 @@ def workbench_actions():
                 "title": "Watch sim",
                 "hint": "GET /api/sim-viz/status and open /rerun/ iframe.",
             }},
-            {{
-                "id": "submit_pr",
-                "title": "Submit PR",
-                "hint": "POST /api/git/submit-pr to push and open a pull request from an allowed repo path.",
-            }},
         ]
     }}
-
-
-@app.post("/git/submit-pr")
-def submit_git_pr(payload: dict):
-    body = payload if isinstance(payload, dict) else {{}}
-    result = _submit_pr_from_repo(body)
-    state = _load_state()
-    state["pr_submit"] = dict(result) if isinstance(result, dict) else {{}}
-    _save_state(state)
-    return result
 
 
 @app.get("/workflows/draft")

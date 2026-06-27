@@ -37,7 +37,11 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert (
         match_chat_intent("add an open source repo, containerize, push to registry, and run LeIsaac")
-        == "onboard_oss_repo"
+        == "onboard_solution"
+    )
+    assert (
+        match_chat_intent("onboard a new workbench solution from a github repo with container and sky smoke")
+        == "onboard_solution"
     )
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
@@ -109,29 +113,13 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
     assert "sim-viz/rrd-blob" in apis
 
 
-def test_onboard_oss_repo_reply_mentions_leisaac_and_registry() -> None:
+def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("onboard_oss_repo", state, ["workbench.rl.policy_train"])
-    assert "LightwheelAI/leisaac" in reply
+    reply = build_grounded_reply("onboard_solution", state, ["workbench.rl.policy_train"])
     assert "run_isaac_lab_byof_repo.py" in reply
+    assert "<repo-url>" in reply
+    assert "<task>" in reply
     assert "registry" in reply.lower()
-    assert "L40S" in reply
-
-
-def test_submit_pr_intent_and_reply() -> None:
-    assert match_chat_intent("agent submit PR for this branch") == "submit_pr"
-    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("submit_pr", state, ["workbench.rl.policy_train"])
-    assert "/api/git/submit-pr" in reply
-    assert "commit_message" in reply
-    assert "draft" in reply
-
-
-def test_submit_pr_apis_include_submit_endpoint() -> None:
-    from npa.cli.agent_chat import apis_for_intent
-
-    apis = apis_for_intent("submit_pr")
-    assert "git/submit-pr" in apis
 
 
 def test_embedded_agent_chat_source_strips_future_import() -> None:

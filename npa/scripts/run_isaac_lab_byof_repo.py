@@ -119,6 +119,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run-id", default=f"leisaac-byof-{_utc_stamp()}")
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
     parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument("--yaml", default="", help="Optional SkyPilot YAML override for run_isaac_lab_rl.py.")
     parser.add_argument("--output-root", default="", help="Override run_isaac_lab_rl.py output root.")
     parser.add_argument("--wait-timeout", type=int, default=21600)
     parser.add_argument("--poll-interval", type=int, default=60)
@@ -202,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
                 "--poll-interval",
                 str(args.poll_interval),
             ]
+            if args.yaml:
+                cmd.extend(["--yaml", args.yaml])
             if args.output_root:
                 cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
