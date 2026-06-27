@@ -188,6 +188,22 @@ try:
     app = AppLauncher(headless=True, enable_cameras=True).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401  registers tasks
+    # Opt-in BYO-robot variant: register a Lift variant that swaps in the customer
+    # robot articulation and eval against it. No-op (TASK unchanged, byte-for-byte
+    # stock behavior) when NPA_BYO_ROBOT_SPEC_JSON is unset or the spec is stock.
+    if os.environ.get("NPA_BYO_ROBOT_SPEC_JSON"):
+        sys.path.insert(0, os.environ.get("NPA_ROBOT_MODULE_DIR", "/tmp/evalwork"))
+        try:
+            import isaac_byo_robot_task as _robotmod
+            _byo_task = _robotmod.register()
+            if _byo_task:
+                TASK = _byo_task
+                print("EVAL_BYO_ROBOT_TASK", TASK, flush=True)
+            else:
+                print("EVAL_BYO_ROBOT_TASK none (stock fallback)", flush=True)
+        except Exception as _e:
+            print("EVAL_BYO_ROBOT_REGISTER_FAILED", repr(_e), flush=True)
+            traceback.print_exc()
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import TiledCameraCfg
@@ -409,6 +425,8 @@ def build_isaac_eval_job_manifest(
     object_usd: str = "",
     env_ids_json: str = "[]",
     renders_s3_prefix: str = "",
+    robot_spec: dict[str, Any] | None = None,
+    robot_usd_uri: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -420,6 +438,40 @@ def build_isaac_eval_job_manifest(
     """
 
     import shlex as _shlex
+    import json as _json
+
+    # Opt-in BYO-robot eval: ship the isaac_byo_robot_task module + stage the
+    # customer robot USD, and pass the spec via NPA_BYO_ROBOT_SPEC_JSON. The
+    # injected block in ISAAC_EVAL_SCRIPT registers the variant and rebinds TASK.
+    # Empty when robot_spec is None -> byte-for-byte the stock eval.
+    robot_block = ""
+    if robot_spec:
+        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
+
+        spec_json = _json.dumps(robot_spec, sort_keys=True)
+        usd_dest = str(robot_spec.get("usd_path") or "").strip()
+        robot_stage = ""
+        if robot_usd_uri and usd_dest:
+            robot_stage = (
+                "ROBOT_USD_URI=" + _shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST=" + _shlex.quote(usd_dest) + ' "$PY" - <<\'ROBOTDLEOF\'\n'
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
+                "dest = os.environ['ROBOT_USD_DEST']\n"
+                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(u.netloc, u.path.lstrip('/'), dest)\n"
+                "print('STAGED_ROBOT_USD', dest)\n"
+                "ROBOTDLEOF\n"
+            )
+        robot_block = (
+            "cat > /tmp/evalwork/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
+            + _robotmod.module_source() + "\nROBOTEOF\n"
+            + robot_stage
+            + "export NPA_ROBOT_MODULE_DIR=/tmp/evalwork\n"
+            + "export NPA_BYO_ROBOT_SPEC_JSON=" + _shlex.quote(spec_json) + "\n"
+        )
 
     render_upload = ""
     if renders_s3_prefix:
@@ -458,7 +510,8 @@ def build_isaac_eval_job_manifest(
         "s3.download_file(u.netloc, u.path.lstrip('/'), '/tmp/evalwork/policy.pt')\n"
         "print('DOWNLOADED_CKPT', os.environ['CKPT_URI'])\n"
         "DLEOF\n"
-        'cat > /tmp/evalwork/eval_rollout.py <<\'PYEOF\'\n'
+        + robot_block
+        + 'cat > /tmp/evalwork/eval_rollout.py <<\'PYEOF\'\n'
         f"{ISAAC_EVAL_SCRIPT}\n"
         "PYEOF\n"
         '"$PY" /tmp/evalwork/eval_rollout.py || echo "EVAL_SCRIPT_RC=$?"\n'
@@ -573,12 +626,34 @@ def run_isaac_eval_job(
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     renders_prefix = f"s3://{bucket}/sim2real-b/{run_id}/byo-eval/{job_name}/renders"
 
+    # Opt-in BYO-robot eval path (guarded; default unchanged): eval the policy on
+    # the same robot-swapped Lift variant it was trained on. Reuses the trainer's
+    # spec resolution + payload so train and eval agree on the variant.
+    robot_spec_dict = None
+    robot_usd_uri = ""
+    if _env("NPA_BYO_ROBOT_TASK") == "1":
+        from npa.workflows.sim2real import byo_isaac_trainer as _trainer
+
+        spec = _trainer._resolve_byo_robot_spec()
+        usd_dest = ""
+        if spec is not None and str(getattr(spec, "robot_source", "")) != "stock_franka":
+            robot_uri = str(getattr(spec, "robot_uri", "") or "")
+            if robot_uri.startswith("s3://"):
+                robot_usd_uri = robot_uri
+                usd_dest = _trainer.ROBOT_USD_CONTAINER_PATH
+            elif robot_uri:
+                usd_dest = robot_uri
+        robot_spec_dict = _trainer.robot_spec_payload(spec, usd_container_path=usd_dest)
+        print(f"byo_isaac_eval: BYO-ROBOT eval path "
+              f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
+
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
         checkpoint_uri=checkpoint_uri, per_env_s3_uri=per_env_uri,
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
+        robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)

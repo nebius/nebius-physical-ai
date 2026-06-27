@@ -99,6 +99,7 @@ class RobotSpec:
     builtin_path: str = ""  # genesis_builtin path relative to <genesis>/assets
     # Morphology / control
     ee_link: str = "hand"  # end-effector link name (IK + ee_pos)
+    base_link: str = "panda_link0"  # articulation root link (ee_frame source frame)
     finger_links: tuple[str, ...] = ("left_finger", "right_finger")
     n_arm_joints: int = 7
     n_gripper_joints: int = 2
@@ -265,6 +266,7 @@ _UR5E_PRESET = RobotSpec(
     robot_source=ROBOT_SOURCE_BYO_URDF,
     name="ur5e",
     ee_link="tool0",
+    base_link="base_link",
     finger_links=(),
     n_arm_joints=6,
     n_gripper_joints=0,
@@ -301,6 +303,7 @@ _FLEXIV_RIZON_PRESET = RobotSpec(
     robot_source=ROBOT_SOURCE_BYO_URDF,
     name="flexiv_rizon",
     ee_link="flange",
+    base_link="base_link",
     finger_links=(),
     n_arm_joints=7,
     n_gripper_joints=0,
