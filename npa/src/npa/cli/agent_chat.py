@@ -140,6 +140,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "submit_pr",
+        re.compile(
+            r"\b(?:submit|open|create)\b.{0,60}\b(?:pull\s+request|pr)\b"
+            r"|\b(?:agent|chat)\b.{0,80}\b(?:submit|open|create)\b.{0,60}\b(?:pull\s+request|pr)\b"
+            r"|\b(?:push)\b.{0,80}\b(?:and)\b.{0,40}\b(?:open|submit)\b.{0,60}\b(?:pr|pull\s+request)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "list_recordings",
         re.compile(
             r"\b(?:list|show|view|browse|get|fetch)\b.{0,80}\b(?:recordings?|run\s+history|runs?)\b"
@@ -201,6 +210,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_oss_repo": ["tools", "workflows/validate", "workflows/plan"],
+    "submit_pr": ["git/submit-pr"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -576,6 +586,24 @@ def format_onboard_oss_repo() -> str:
     )
 
 
+def format_submit_pr() -> str:
+    return "\n".join(
+        [
+            "**Agent-driven PR submission is supported.**",
+            "- Chat can trigger `/api/git/submit-pr` to commit, push, and open a PR from a local repo.",
+            "- Defaults: current branch, `main` as base, and `gh pr create --fill --draft`.",
+            "- Optional fields in API payload:",
+            "  - `repo_path`, `branch`, `base_branch`",
+            "  - `commit_message` (auto-commits local changes before push)",
+            "  - `title`, `body`, `draft`",
+            "- Example:",
+            "```json",
+            '{"repo_path": "/home/ubuntu/work/my-worktree", "commit_message": "Finalize LeIsaac onboarding", "base_branch": "main"}',
+            "```",
+        ]
+    )
+
+
 def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loaded_now: bool) -> str:
     sim_viz = _sim_viz(state)
     camera = str(sim_viz.get("camera") or "workspace")
@@ -647,6 +675,8 @@ def build_grounded_reply(
         return format_cosmos3_setup()
     if intent == "onboard_oss_repo":
         return format_onboard_oss_repo()
+    if intent == "submit_pr":
+        return format_submit_pr()
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)

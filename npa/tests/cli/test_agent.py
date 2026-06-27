@@ -117,6 +117,17 @@ def test_watch_intent_uses_live_sim_viz_status() -> None:
     assert 'state["sim_viz"] = dict(live_status)' in source
 
 
+def test_bootstrap_embeds_agent_pr_submit_surface() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert '@app.post("/git/submit-pr")' in source
+    assert "_submit_pr_from_repo" in source
+    assert '["gh", "pr", "create", "--base", base_branch, "--head", branch]' in source
+    assert '"submit_pr"' in source
+    assert "/api/git/submit-pr" in source
+
+
 def test_bootstrap_public_login_form() -> None:
     from npa.cli import agent as agent_module
 

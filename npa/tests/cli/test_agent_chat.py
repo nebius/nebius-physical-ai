@@ -118,6 +118,22 @@ def test_onboard_oss_repo_reply_mentions_leisaac_and_registry() -> None:
     assert "L40S" in reply
 
 
+def test_submit_pr_intent_and_reply() -> None:
+    assert match_chat_intent("agent submit PR for this branch") == "submit_pr"
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    reply = build_grounded_reply("submit_pr", state, ["workbench.rl.policy_train"])
+    assert "/api/git/submit-pr" in reply
+    assert "commit_message" in reply
+    assert "draft" in reply
+
+
+def test_submit_pr_apis_include_submit_endpoint() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("submit_pr")
+    assert "git/submit-pr" in apis
+
+
 def test_embedded_agent_chat_source_strips_future_import() -> None:
     source = agent_module._embedded_agent_chat_source()
     assert "from __future__ import annotations" not in source

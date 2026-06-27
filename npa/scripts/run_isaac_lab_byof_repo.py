@@ -36,7 +36,9 @@ def _run(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     runtime_env = dict(os.environ)
+    # Avoid stale operator tokens overriding profile-based auth on shared VMs.
     runtime_env.pop("NEBIUS_IAM_TOKEN", None)
+    runtime_env.pop("NEBIUS_IAM_TOKEN_FILE", None)
     if env is not None:
         runtime_env.update(env)
     kwargs: dict[str, Any] = {"text": True, "check": False}
