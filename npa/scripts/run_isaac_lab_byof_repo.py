@@ -27,13 +27,21 @@ def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _run(cmd: list[str], *, stdin: str | None = None, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str],
+    *,
+    stdin: str | None = None,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     kwargs: dict[str, Any] = {"text": True, "check": False}
     if stdin is not None:
         kwargs["input"] = stdin
     if capture:
         kwargs["stdout"] = subprocess.PIPE
         kwargs["stderr"] = subprocess.PIPE
+    if env is not None:
+        kwargs["env"] = env
     print("+", " ".join(cmd))
     proc = subprocess.run(cmd, **kwargs)
     if proc.returncode != 0:
@@ -53,7 +61,11 @@ def _registry_server(image_ref: str) -> str:
 
 
 def _docker_login_nebius(server: str) -> None:
-    token_proc = _run(["nebius", "iam", "get-access-token"], capture=True)
+    token_env = dict(os.environ)
+    # If this variable exists and is stale, nebius CLI prefers it and fails
+    # before trying the configured profile.
+    token_env.pop("NEBIUS_IAM_TOKEN", None)
+    token_proc = _run(["nebius", "iam", "get-access-token"], capture=True, env=token_env)
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")
