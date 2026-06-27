@@ -170,6 +170,31 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "cosmos_capabilities",
+        re.compile(
+            r"\bcosmos(?:2|3)?\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|finetun(?:e|ing)|train(?:ing)?|infer(?:ence)?)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bcosmos(?:2|3)?\b"
+            r"|\b(?:can|could)\b.{0,80}\bcosmos(?:2|3)?\b.{0,120}\b(?:do|run|train|finetun(?:e|ing)|infer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "lancedb_capabilities",
+        re.compile(
+            r"\blancedb\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|import|backfill|view|query)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "component_capabilities",
+        re.compile(
+            r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory)\b.{0,80}\b(?:support|do|expose)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "tools_catalog",
         re.compile(
             r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
@@ -201,6 +226,9 @@ INTENT_APIS: dict[str, list[str]] = {
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
+    "cosmos_capabilities": ["tools"],
+    "lancedb_capabilities": ["tools"],
+    "component_capabilities": ["tools"],
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
     "cosmos3": [],
@@ -512,6 +540,52 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 8) -> str:
     return "\n".join(lines)
 
 
+def format_cosmos_capabilities(tool_refs: list[str]) -> str:
+    cosmos_refs = [ref for ref in tool_refs if "cosmos" in ref or "token_factory" in ref]
+    sample = ", ".join(sorted(cosmos_refs)[:4]) if cosmos_refs else "workbench.cosmos2.transfer"
+    return "\n".join(
+        [
+            "**Cosmos component capabilities**:",
+            "- **Inference**: Cosmos3 text-to-image workflow (`cosmos3-text-to-image-inference.yaml`).",
+            "- **Setup + model staging**: `npa workbench cosmos check|fetch`.",
+            "- **Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
+            "- **Pipeline integration**: Cosmos augment stage via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
+            f"- **Catalog examples**: `{sample}`",
+            "- Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
+        ]
+    )
+
+
+def format_lancedb_capabilities(tool_refs: list[str]) -> str:
+    lancedb_refs = [ref for ref in tool_refs if ref.startswith("workbench.lancedb.")]
+    sample = ", ".join(sorted(lancedb_refs)[:5]) if lancedb_refs else "workbench.lancedb.import_bdd100k"
+    return "\n".join(
+        [
+            "**LanceDB component capabilities**:",
+            "- **Data ingest**: BDD100K import into run-scoped Lance tables.",
+            "- **Feature backfill**: CPU + GPU UDF backfills (including CLIP embeddings).",
+            "- **Dataset shaping**: materialized view creation for failure-mode slices.",
+            "- **Serving path**: endpoint-backed execution for workflows and tooling.",
+            f"- **Catalog examples**: `{sample}`",
+            "- Keep table/URI names in config; avoid embedding project-specific constants in workflow states.",
+        ]
+    )
+
+
+def format_component_capabilities(tool_refs: list[str]) -> str:
+    return "\n".join(
+        [
+            "**Workbench component capabilities** (customer-facing building blocks):",
+            "- **Cosmos**: setup/fetch, inference, and finetuning/post-training lanes.",
+            "- **LanceDB**: ingest, backfill, view/materialization, query workflows.",
+            "- **Isaac Lab / RL**: train/eval policy building blocks for simulation pipelines.",
+            "- **Token Factory + VLM**: reasoning, augment, scoring, and decision-gate loops.",
+            "- Ask for a component by name (for example: `Cosmos capabilities`) to get targeted commands + workflow patterns.",
+            f"- **Current toolRef count**: `{len(tool_refs)}`",
+        ]
+    )
+
+
 def format_configure_s3() -> str:
     return "\n".join(
         [
@@ -614,6 +688,12 @@ def build_grounded_reply(
         return format_sim_assets(state)
     if intent == "cameras":
         return format_cameras(state, default_cameras=default_cameras)
+    if intent == "cosmos_capabilities":
+        return format_cosmos_capabilities(tool_refs)
+    if intent == "lancedb_capabilities":
+        return format_lancedb_capabilities(tool_refs)
+    if intent == "component_capabilities":
+        return format_component_capabilities(tool_refs)
     if intent == "tools_catalog":
         return format_tools_catalog(tool_refs)
     if intent == "configure_s3":
