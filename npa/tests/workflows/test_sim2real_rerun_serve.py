@@ -31,6 +31,7 @@ from npa.workflows.rerun_serve import (
     resolve_storage_bucket,
     rrd_s3_uri_from_report_uri,
     should_auto_rerun_serve,
+    validate_run_id,
     validate_staged_run_id,
     verify_rrd_exists_on_s3,
 )
@@ -75,14 +76,51 @@ def test_same_cluster_deployment_name_for_different_runs(mocker) -> None:
     assert first.rrd_s3_uri != second.rrd_s3_uri
 
 
-def test_validate_staged_run_id_rejects_placeholder() -> None:
+def test_validate_run_id_rejects_placeholder() -> None:
     with pytest.raises(Sim2RealRerunServeError, match="placeholder"):
-        validate_staged_run_id("sim2real-staged-YYYYMMDDTHHMMSSz")
+        validate_run_id("sim2real-staged-YYYYMMDDTHHMMSSz")
 
 
-def test_validate_staged_run_id_accepts_canonical() -> None:
-    assert validate_staged_run_id("sim2real-staged-20260615t180818z") == (
+def test_validate_run_id_accepts_canonical_staged() -> None:
+    assert validate_run_id("sim2real-staged-20260615t180818z") == (
         "sim2real-staged-20260615t180818z"
+    )
+
+
+def test_validate_run_id_accepts_custom_run_ids() -> None:
+    # Non-staged ids (e2e, BYO-robot, custom) are real runs with artifacts on S3
+    # and must be servable without renaming to the staged-loop shape.
+    for rid in (
+        "sim2real-e2e-main-20260627t195851z",
+        "kinova-onboard-b5-20260627t190600z",
+        "my_custom.run-01",
+    ):
+        assert validate_run_id(rid) == rid
+
+
+def test_validate_run_id_rejects_path_traversal_and_separators() -> None:
+    for bad in ("../etc/passwd", "a/b", "run id", "-leading-dash", ""):
+        with pytest.raises(Sim2RealRerunServeError):
+            validate_run_id(bad)
+
+
+def test_validate_staged_run_id_is_backcompat_alias() -> None:
+    assert validate_staged_run_id is validate_run_id
+
+
+def test_build_config_accepts_custom_run_id(mocker) -> None:
+    mocker.patch(
+        "npa.workflows.rerun_serve.resolve_project_storage",
+        return_value=_storage(),
+    )
+    config = build_rerun_serve_config(
+        run_id="sim2real-e2e-main-20260627t195851z",
+        s3_prefix="sim2real-b",
+        aws_access_key_id="ak",
+        aws_secret_access_key="sk",
+    )
+    assert config.rrd_s3_uri == (
+        "s3://demo-bucket/sim2real-b/sim2real-e2e-main-20260627t195851z/reports/sim2real.rrd"
     )
 
 
