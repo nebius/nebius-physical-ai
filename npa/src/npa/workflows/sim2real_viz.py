@@ -85,7 +85,11 @@ def emit_sim2real_rerun(
 
     heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
     has_heldout_cameras = bool(heldout_episodes)
-    blueprint = _build_blueprint(rrb, has_heldout_cameras=has_heldout_cameras)
+    blueprint = _build_blueprint(
+        rrb,
+        has_heldout_cameras=has_heldout_cameras,
+        heldout_env_ids=[env_id for env_id, _frames in heldout_episodes],
+    )
     recording = rr.RecordingStream(APPLICATION_ID)
     rr.save(output_rrd, default_blueprint=blueprint, recording=recording)
     _send_blueprint(rr, blueprint, recording)
@@ -307,17 +311,22 @@ def _log_heldout_cameras(
     *,
     start_seconds: float,
 ) -> tuple[int, float]:
-    seconds = start_seconds
     logged = 0
+    end_seconds = start_seconds
     for env_id, frames in episodes:
         root = f"heldout/camera/{env_id}"
+        # Reset to the same start for every env so all held-out episodes share one
+        # time window and play in sync (frame i of every env at the same t). Without
+        # this, envs are laid end-to-end and only one is ever visible at the cursor.
+        seconds = start_seconds
         for frame in frames:
             _set_time(rr, recording, seconds)
             rr.log(f"{root}/camera", _rerun_image(rr, frame), recording=recording)
             _bump(counts, f"{root}/camera")
             seconds += ROLLOUT_FRAME_SECONDS
             logged += 1
-    return logged, seconds
+        end_seconds = max(end_seconds, seconds)
+    return logged, end_seconds
 
 
 def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bool:
@@ -374,20 +383,41 @@ def _heldout_render_episodes(
     return episodes
 
 
-def _build_blueprint(rrb: Any, *, has_heldout_cameras: bool = False) -> Any:
-    camera_view = (
-        rrb.Spatial2DView(
+def _build_blueprint(
+    rrb: Any,
+    *,
+    has_heldout_cameras: bool = False,
+    heldout_env_ids: list[str] | None = None,
+) -> Any:
+    env_ids = list(heldout_env_ids or [])
+    has_heldout_cameras = has_heldout_cameras or bool(env_ids)
+    if env_ids:
+        # One 2D view per held-out env: a single Spatial2DView cannot lay out
+        # sibling image entities (heldout/camera/env-*/camera), so all envs render
+        # blank. A grid of per-env views shows every held-out episode at once, and
+        # paired with the time-aligned logging they scrub/play in sync.
+        camera_view = rrb.Grid(
+            *[
+                rrb.Spatial2DView(
+                    origin=f"heldout/camera/{env_id}",
+                    name=f"Held-out {env_id}",
+                )
+                for env_id in env_ids
+            ],
+            name="Held-out sim cameras",
+        )
+    elif has_heldout_cameras:
+        camera_view = rrb.Spatial2DView(
             origin="heldout",
             contents="heldout/**/camera",
             name="Held-out sim cameras",
         )
-        if has_heldout_cameras
-        else rrb.Spatial2DView(
+    else:
+        camera_view = rrb.Spatial2DView(
             origin="rollouts",
             contents="rollouts/**",
             name="Rollout cameras",
         )
-    )
     secondary_camera = (
         rrb.Spatial2DView(
             origin="rollouts",

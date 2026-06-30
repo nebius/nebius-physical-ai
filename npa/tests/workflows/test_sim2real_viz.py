@@ -346,3 +346,81 @@ def test_ensure_heldout_renders_builds_manifest_from_local_pngs(
     assert updated is not None
     assert updated["render_manifest"]["episodes"][0]["env_id"] == "env-00003"
     assert updated["render_manifest"]["episodes"][0]["frames"] == ["camera-000.png"]
+
+
+class _RecordingRRB:
+    """Records blueprint view construction so tests can assert structure."""
+
+    class PanelState:
+        Expanded = "expanded"
+
+    def __init__(self) -> None:
+        self.views: list[dict[str, Any]] = []
+
+    def Spatial2DView(self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any) -> dict[str, Any]:
+        view = {"kind": "Spatial2DView", "origin": origin, "name": name}
+        self.views.append(view)
+        return view
+
+    def Grid(self, *args: Any, name: str = "", **_: Any) -> dict[str, Any]:
+        return {"kind": "Grid", "name": name, "children": list(args)}
+
+    def Vertical(self, *args: Any, **_: Any) -> dict[str, Any]:
+        return {"kind": "Vertical", "children": list(args)}
+
+    def Horizontal(self, *args: Any, **_: Any) -> dict[str, Any]:
+        return {"kind": "Horizontal", "children": list(args)}
+
+    def TextDocumentView(self, **kwargs: Any) -> dict[str, Any]:
+        return {"kind": "TextDocumentView", **kwargs}
+
+    def TimeSeriesView(self, **kwargs: Any) -> dict[str, Any]:
+        return {"kind": "TimeSeriesView", **kwargs}
+
+    def TimePanel(self, **_: Any) -> dict[str, Any]:
+        return {"kind": "TimePanel"}
+
+    def Blueprint(self, *args: Any, **_: Any) -> dict[str, Any]:
+        return {"kind": "Blueprint", "children": list(args)}
+
+
+def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
+    rrb = _RecordingRRB()
+    viz_module._build_blueprint(
+        rrb, heldout_env_ids=["env-00006", "env-00009", "env-00018"]
+    )
+    heldout_origins = [
+        v["origin"] for v in rrb.views
+        if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")
+    ]
+    assert heldout_origins == [
+        "heldout/camera/env-00006",
+        "heldout/camera/env-00009",
+        "heldout/camera/env-00018",
+    ]
+
+
+def test_build_blueprint_without_env_ids_keeps_single_camera_view() -> None:
+    rrb = _RecordingRRB()
+    viz_module._build_blueprint(rrb, has_heldout_cameras=False)
+    # No per-env heldout views; falls back to the rollouts camera view.
+    assert not any(
+        v["origin"].startswith("heldout/camera/") for v in rrb.views
+    )
+
+
+def test_log_heldout_cameras_time_aligns_envs() -> None:
+    import numpy as np
+
+    fake = _FakeRerun()
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    episodes = [("env-a", [frame, frame, frame]), ("env-b", [frame, frame, frame])]
+    counts: dict[str, int] = {}
+    logged, end_seconds = viz_module._log_heldout_cameras(
+        fake, None, episodes, counts, start_seconds=10.0
+    )
+    assert logged == 6
+    # Both envs share the same time window -> env-a times == env-b times.
+    assert fake.times[:3] == fake.times[3:6]
+    assert fake.times[0] == 10.0
+    assert end_seconds == 10.0 + 3 * viz_module.ROLLOUT_FRAME_SECONDS
