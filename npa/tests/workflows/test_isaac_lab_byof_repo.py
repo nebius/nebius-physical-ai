@@ -91,7 +91,7 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
 
 def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> None:
     module = _load_module()
-    seen: dict[str, object] = {}
+    seen_registries: list[str] = []
 
     monkeypatch.setattr(
         module,
@@ -100,8 +100,8 @@ def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> No
     )
 
     def fake_container_image_for_tool(tool: str, *, registry: str, **_kwargs):
-        seen["tool"] = tool
-        seen["registry"] = registry
+        assert tool == "isaac-lab"
+        seen_registries.append(registry)
         return f"{registry}/npa-isaac-lab:test"
 
     monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
@@ -123,10 +123,54 @@ def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> No
     )
 
     assert rc == 0
-    assert seen["tool"] == "isaac-lab"
-    assert seen["registry"] == "cr.eu-north1.nebius.cloud/custom/proj"
+    assert "cr.eu-north1.nebius.cloud/custom/proj" in seen_registries
     output = json.loads(capsys.readouterr().out)
-    assert output["base_registry"] == "cr.eu-north1.nebius.cloud/custom/proj"
+    assert "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab:test" in output["base_image_candidates"]
+
+
+def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> None:
+    module = _load_module()
+    build_args: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/default/project",
+    )
+
+    def fake_container_image_for_tool(tool: str, registry: str | None = None, **_kwargs):
+        assert tool == "isaac-lab"
+        if registry == "cr.eu-north1.nebius.cloud/custom/proj":
+            return "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab:fallback"
+        if registry == "cr.eu-north1.nebius.cloud/default/project":
+            return "cr.eu-north1.nebius.cloud/default/project/npa-isaac-lab:default"
+        return "ghcr.io/nebius/npa-isaac-lab:stable"
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd[:2] == ["docker", "build"]:
+            base = next((part for part in cmd if part.startswith("ISAAC_BASE_IMAGE=")), "")
+            build_args.append(base)
+            if base.endswith(":stable") or base.endswith(":default"):
+                raise RuntimeError("403 Forbidden while pulling ISAAC_BASE_IMAGE")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+
+    monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "leisaac-fallback-case",
+            "--image",
+            "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab-leisaac:test",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 0
+    assert build_args[0].endswith(":stable")
+    assert any(item.endswith(":fallback") for item in build_args)
+    output = json.loads(capsys.readouterr().out)
+    assert output["base_image"].endswith(":fallback")
 
 
 def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:

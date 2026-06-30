@@ -117,6 +117,27 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _base_image_candidates(*, image: str, registry: str, explicit_base: str) -> list[str]:
+    if explicit_base.strip():
+        return [explicit_base.strip()]
+    candidates: list[str] = []
+    derived_registry = _registry_path(image) or registry
+    # Try canonical resolver first (may point at a public/default registry).
+    try:
+        canonical = str(container_image_for_tool("isaac-lab")).strip()
+        if canonical:
+            candidates.append(canonical)
+    except TypeError:
+        # Older call paths in tests may require explicit registry.
+        pass
+    # Then try explicit registry choices used by this run.
+    for candidate_registry in (registry, derived_registry):
+        candidate = str(container_image_for_tool("isaac-lab", registry=candidate_registry)).strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL)
@@ -144,8 +165,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-isaac-lab-leisaac:{args.run_id}"
-    base_registry = _registry_path(image) or registry
-    base_image = args.base_image.strip() or container_image_for_tool("isaac-lab", registry=base_registry)
+    base_candidates = _base_image_candidates(image=image, registry=registry, explicit_base=args.base_image)
+    if not base_candidates:
+        raise RuntimeError("unable to resolve an Isaac Lab base image candidate")
+    base_image = base_candidates[0]
+    base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
 
     summary: dict[str, Any] = {
         "repo_url": args.repo_url,
@@ -154,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         "base_registry": base_registry,
         "image": image,
         "base_image": base_image,
+        "base_image_candidates": base_candidates,
         "run_id": args.run_id,
     }
 
@@ -168,24 +193,45 @@ def main(argv: list[str] | None = None) -> int:
             with tempfile.TemporaryDirectory(prefix="npa-byof-isaac-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(_dockerfile_text(), encoding="utf-8")
-                _run(
-                    [
-                        "docker",
-                        "build",
-                        "--platform",
-                        "linux/amd64",
-                        "--build-arg",
-                        f"ISAAC_BASE_IMAGE={base_image}",
-                        "--build-arg",
-                        f"OSS_REPO_URL={args.repo_url}",
-                        "--build-arg",
-                        f"OSS_REPO_REF={args.repo_ref}",
-                        "-t",
-                        image,
-                        str(context),
-                    ],
-                    env=docker_env or None,
-                )
+                last_build_error: Exception | None = None
+                for idx, candidate_base in enumerate(base_candidates):
+                    base_image = candidate_base
+                    summary["base_image"] = base_image
+                    summary["base_registry"] = _registry_path(base_image) or (_registry_path(image) or registry)
+                    try:
+                        _run(
+                            [
+                                "docker",
+                                "build",
+                                "--platform",
+                                "linux/amd64",
+                                "--build-arg",
+                                f"ISAAC_BASE_IMAGE={base_image}",
+                                "--build-arg",
+                                f"OSS_REPO_URL={args.repo_url}",
+                                "--build-arg",
+                                f"OSS_REPO_REF={args.repo_ref}",
+                                "-t",
+                                image,
+                                str(context),
+                            ],
+                            env=docker_env or None,
+                        )
+                        break
+                    except Exception as exc:
+                        last_build_error = exc
+                        message = str(exc)
+                        forbidden_pull = "403 Forbidden" in message and (
+                            "ISAAC_BASE_IMAGE" in message
+                            or "failed to resolve source metadata" in message
+                            or "pull access denied" in message
+                        )
+                        if forbidden_pull and idx + 1 < len(base_candidates):
+                            continue
+                        raise
+                else:
+                    assert last_build_error is not None
+                    raise last_build_error
             if not args.skip_push:
                 _run(["docker", "push", image], env=docker_env or None)
                 try:
