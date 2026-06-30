@@ -1,0 +1,37 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: isaac-lab-byof-leisaac
+  description: >
+    BYOF Isaac Lab workflow that builds/pushes Lightwheel LeIsaac and submits a
+    real SkyPilot RL training run.
+config:
+  bucket: example-bucket
+  repo_url: https://github.com/LightwheelAI/leisaac.git
+  repo_ref: main
+  resource_profile_yaml: npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
+  task: Isaac-Cartpole-v0
+  iterations: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/isaac-lab-byof/leisaac
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_isaac_lab_train_summary.json"
+  checkpoint_uri: "{{config.output_root}}/{{run.id}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-train
+states:
+  byof-train:
+    description: >
+      Build LeIsaac BYOF image and run Isaac Lab RL train on live infra.
+    toolRef: workbench.isaac_lab.byof_repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.isaac_lab.train_summary.v1
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.workbench.isaac_lab.checkpoint.v1
+    terminal: true

@@ -13,6 +13,7 @@ from npa.cli.agent_chat import (
 )
 from npa.cli.agent_workflow import (
     choose_workflow_template,
+    generate_isaac_byof_yaml,
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
@@ -28,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
+    "isaac-lab-byof-leisaac.yaml",
     "sim2real-two-step-agent.yaml",
     "sim2real-two-step.yaml",
     "sim2real-vlm-rl.yaml",
@@ -280,6 +282,22 @@ def test_generate_token_factory_gate_yaml_contains_vlm_gate() -> None:
     assert "quality-gate" in yaml_text
 
 
+def test_generate_isaac_byof_yaml_validates() -> None:
+    yaml_text = generate_isaac_byof_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"isaac-byof validate failed: {result.get('error')}"
+    assert result["name"] == "isaac-lab-byof-leisaac"
+    assert "byof-train" in set(result["states"])
+
+
+def test_generate_isaac_byof_yaml_plan_contains_byof_toolref() -> None:
+    yaml_text = generate_isaac_byof_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="leisaac-byof-test")
+    assert plan["ok"] is True, f"isaac-byof plan failed: {plan.get('error')}"
+    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
+    assert "workbench.isaac_lab.byof_repo" in tool_refs
+
+
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
@@ -289,6 +307,8 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "tokenfactory-cosmos-gate" in gate
     loop_gate = generate_workflow_yaml("loop-gate")
     assert "sim2real-loop-gate-agent" in loop_gate
+    isaac_byof = generate_workflow_yaml("isaac-byof")
+    assert "isaac-lab-byof-leisaac" in isaac_byof
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
 
@@ -304,6 +324,11 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
         intent="create_workflow",
     )
     assert selected_gate["template"] == "token-factory-gate"
+    selected_byof = choose_workflow_template(
+        user_text="create a LeIsaac BYOF Isaac Lab workflow",
+        intent="create_workflow",
+    )
+    assert selected_byof["template"] == "isaac-byof"
 
 
 def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
@@ -324,6 +349,8 @@ def test_generate_workflow_yaml_aliases() -> None:
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("gate")
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("tokenfactory")
     assert "sim2real-loop-gate-agent" in generate_workflow_yaml("loop")
+    assert "isaac-lab-byof-leisaac" in generate_workflow_yaml("leisaac")
+    assert "isaac-lab-byof-leisaac" in generate_workflow_yaml("isaac-lab")
 
 
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)

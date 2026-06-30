@@ -12,7 +12,7 @@ import yaml
 
 API_VERSION = "npa.workflow/v0.0.1"
 
-_TEMPLATES = ("two-step", "loop-gate", "vlm-rl-loop", "token-factory-gate")
+_TEMPLATES = ("two-step", "loop-gate", "vlm-rl-loop", "token-factory-gate", "isaac-byof")
 
 
 class _FoldedStr(str):
@@ -38,6 +38,10 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "tokenfactory": "token-factory-gate",
     "loop_gate": "loop-gate",
     "loop": "loop-gate",
+    "isaac_byof": "isaac-byof",
+    "isaac-lab": "isaac-byof",
+    "leisaac": "isaac-byof",
+    "byof": "isaac-byof",
 }
 
 _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
@@ -47,6 +51,14 @@ _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
 }
 
 _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "isaac-byof": (
+        "leisaac",
+        "lightwheel",
+        "byof",
+        "bring your own fork",
+        "isaac lab",
+        "isaac-lab",
+    ),
     "token-factory-gate": (
         "token",
         "tokenfactory",
@@ -147,6 +159,63 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "terminal": True,
                         }
                     ),
+                }
+            ),
+        },
+        "isaac-byof": {
+            "name": "isaac-lab-byof-leisaac",
+            "description": (
+                "BYOF Isaac Lab workflow that builds/pushes Lightwheel LeIsaac and "
+                "submits a real SkyPilot RL training run."
+            ),
+            "config_runtime": OrderedDict(
+                {
+                    "repo_url": "https://github.com/LightwheelAI/leisaac.git",
+                    "repo_ref": "main",
+                    "resource_profile_yaml": "npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml",
+                    "task": "Isaac-Cartpole-v0",
+                    "iterations": 1,
+                    "wait_timeout": 21600,
+                    "poll_interval": 60,
+                }
+            ),
+            "config_uri": OrderedDict(
+                {
+                    "output_root": "s3://{{config.bucket}}/isaac-lab-byof/leisaac",
+                    "summary_uri": "{{config.output_root}}/{{run.id}}/npa_isaac_lab_train_summary.json",
+                    "checkpoint_uri": "{{config.output_root}}/{{run.id}}/npa_isaac_lab_checkpoint.pt",
+                }
+            ),
+            "resources": OrderedDict(
+                {
+                    "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
+                }
+            ),
+            "initial": "byof-train",
+            "states": OrderedDict(
+                {
+                    "byof-train": OrderedDict(
+                        {
+                            "description": "Build LeIsaac BYOF image and run Isaac Lab RL train on live infra.",
+                            "toolRef": "workbench.isaac_lab.byof_repo",
+                            "resources": "gpu",
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.summary_uri}}",
+                                        "schema": "npa.workbench.isaac_lab.train_summary.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.checkpoint_uri}}",
+                                        "schema": "npa.workbench.isaac_lab.checkpoint.v1",
+                                    }
+                                ),
+                            ],
+                            "terminal": True,
+                        }
+                    )
                 }
             ),
         },
@@ -749,6 +818,15 @@ def generate_token_factory_gate_yaml(
     return _render_spec_yaml(_build_spec("token-factory-gate", bucket=bucket, name=name))
 
 
+def generate_isaac_byof_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "isaac-lab-byof-leisaac",
+) -> str:
+    """Compatibility wrapper for LeIsaac BYOF template generation."""
+    return _render_spec_yaml(_build_spec("isaac-byof", bucket=bucket, name=name))
+
+
 def validate_workflow_yaml_text(
     yaml_text: str,
     *,
@@ -791,6 +869,7 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
+        "isaac-byof": "LeIsaac BYOF Isaac Lab workflow",
     }
     t = str(template or "two-step").strip().lower()
     desc = _desc_map.get(t, "2-step Sim2Real pipeline")
