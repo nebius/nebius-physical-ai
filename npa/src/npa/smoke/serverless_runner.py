@@ -141,4 +141,5 @@ def submit_golden_eval(
     )
     result["status"] = info.status
     result["ok"] = str(info.status).lower() in _TERMINAL_OK
+    result["log_tail"] = info.log_tail
     return result
