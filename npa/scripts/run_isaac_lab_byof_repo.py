@@ -232,7 +232,11 @@ def main(argv: list[str] | None = None) -> int:
                     assert last_build_error is not None
                     raise last_build_error
             if not args.skip_push:
-                _run(["docker", "push", image], env=docker_env or None)
+                push_proc = _run(["docker", "push", image], env=docker_env or None, capture=True)
+                if push_proc.stdout:
+                    sys.stdout.write(push_proc.stdout)
+                if push_proc.stderr:
+                    sys.stderr.write(push_proc.stderr)
                 try:
                     _run(["docker", "buildx", "imagetools", "inspect", image], env=docker_env or None)
                 except Exception:
@@ -286,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
                 "Registry pull for the base Isaac image was denied. "
                 "Pass --base-image from an accessible registry, or grant pull access "
                 "with an accessible parent image."
+            )
+        elif "docker push" in message and "403 Forbidden" in message:
+            summary["hint"] = (
+                "Registry push was denied for the target image. "
+                "Grant write access to the target repository, or use --skip-push "
+                "with an already-published image."
             )
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 1

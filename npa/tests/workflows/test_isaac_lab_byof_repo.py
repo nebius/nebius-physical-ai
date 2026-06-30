@@ -89,6 +89,37 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
     assert "Pass --base-image from an accessible registry" in output["hint"]
 
 
+def test_main_reports_403_push_hint(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
+    )
+    monkeypatch.setattr(
+        module,
+        "container_image_for_tool",
+        lambda *_args, **_kwargs: "nvcr.io/nvidia/isaac-lab:2.3.2",
+    )
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd == ["nebius", "iam", "get-access-token"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+        if cmd[:2] == ["docker", "push"]:
+            raise RuntimeError("command failed (1): docker push ... 403 Forbidden")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(["--run-id", "leisaac-push-403", "--skip-run"])
+
+    assert rc == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "hint" in output
+    assert "Registry push was denied" in output["hint"]
+
+
 def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> None:
     module = _load_module()
     seen_registries: list[str] = []
@@ -147,12 +178,14 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
         return "ghcr.io/nebius/npa-isaac-lab:stable"
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd == ["nebius", "iam", "get-access-token"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             base = next((part for part in cmd if part.startswith("ISAAC_BASE_IMAGE=")), "")
             build_args.append(base)
             if base.endswith(":stable") or base.endswith(":default"):
                 raise RuntimeError("403 Forbidden while pulling ISAAC_BASE_IMAGE")
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
     monkeypatch.setattr(module, "_run", fake_run)
