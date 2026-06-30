@@ -227,3 +227,9 @@ def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
     )
     assert "nvcr.io/nvidia/isaac-lab:2.3.2" in candidates
     assert "nvcr.io/nvidia/isaac-sim:4.5.0" in candidates
+
+
+def test_dockerfile_uses_python3_or_python_fallback() -> None:
+    module = _load_module()
+    text = module._dockerfile_text()
+    assert "command -v python3 || command -v python" in text
