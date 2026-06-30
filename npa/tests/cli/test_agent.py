@@ -684,6 +684,13 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
     assert "npa-agent-bootstrap-{secrets.token_hex" in source
 
 
+def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
+
+
 def test_list_recordings_intent_routing() -> None:
     from npa.cli.agent_chat import apis_for_intent, match_chat_intent
 
