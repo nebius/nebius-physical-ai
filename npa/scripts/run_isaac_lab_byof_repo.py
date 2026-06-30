@@ -204,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
                     summary["base_registry"] = _registry_path(base_image) or (_registry_path(image) or registry)
                     try:
                         _run(
+                            # Capture build output so 403 errors can trigger fallback candidates.
                             [
                                 "docker",
                                 "build",
@@ -220,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
                                 str(context),
                             ],
                             env=docker_env or None,
+                            capture=True,
                         )
                         break
                     except Exception as exc:
