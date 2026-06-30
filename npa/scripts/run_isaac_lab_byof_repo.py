@@ -135,6 +135,10 @@ def _base_image_candidates(*, image: str, registry: str, explicit_base: str) -> 
         candidate = str(container_image_for_tool("isaac-lab", registry=candidate_registry)).strip()
         if candidate and candidate not in candidates:
             candidates.append(candidate)
+    # Public fallbacks keep BYOF unblocked when private base repos are inaccessible.
+    for public_candidate in ("nvcr.io/nvidia/isaac-lab:2.3.2", "nvcr.io/nvidia/isaac-sim:4.5.0"):
+        if public_candidate not in candidates:
+            candidates.append(public_candidate)
     return candidates
 
 

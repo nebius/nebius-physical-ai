@@ -210,3 +210,20 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
     assert isinstance(cmd, list)
     assert "--yaml" in cmd
     assert "/tmp/isaac-lab-rtxpro.yaml" in cmd
+
+
+def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module,
+        "container_image_for_tool",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+    )
+    candidates = module._base_image_candidates(
+        image="cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab-leisaac:test",
+        registry="cr.eu-north1.nebius.cloud/example/project",
+        explicit_base="",
+    )
+    assert "nvcr.io/nvidia/isaac-lab:2.3.2" in candidates
+    assert "nvcr.io/nvidia/isaac-sim:4.5.0" in candidates
