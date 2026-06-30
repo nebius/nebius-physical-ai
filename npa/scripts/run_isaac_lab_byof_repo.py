@@ -298,6 +298,9 @@ def main(argv: list[str] | None = None) -> int:
                 "with an already-published image."
             )
         print(json.dumps(summary, indent=2, sort_keys=True))
+        hint = str(summary.get("hint") or "").strip()
+        if hint:
+            print(f"HINT: {hint}", file=sys.stderr)
         return 1
     finally:
         if docker_config_dir:
