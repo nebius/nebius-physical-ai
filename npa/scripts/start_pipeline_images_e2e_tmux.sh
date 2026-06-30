@@ -81,7 +81,7 @@ export NPA_INTEGRATION_E2E=1
 export PIPELINE_E2E_LOG_ROOT="${LOG_ROOT}"
 export PIPELINE_E2E_SOURCE_REF="${BRANCH}"
 
-TMUX_ENV="cd \"${ROOT}\" && export NPA_INTEGRATION_E2E=1 && export NPA_E2E_SERVERLESS_PROJECT=\"${NPA_E2E_SERVERLESS_PROJECT:-}\" && export REGISTRY=\"${REGISTRY}\" && export PIPELINE_E2E_LOG_ROOT=\"${LOG_ROOT}\""
+TMUX_ENV="cd \"${ROOT}\" && unset NEBIUS_IAM_TOKEN NPA_IAM_TOKEN 2>/dev/null || true && export NPA_INTEGRATION_E2E=1 && export NPA_E2E_SERVERLESS_PROJECT=\"${NPA_E2E_SERVERLESS_PROJECT:-}\" && export REGISTRY=\"${REGISTRY}\" && export PIPELINE_E2E_LOG_ROOT=\"${LOG_ROOT}\""
 
 if ! command -v tmux >/dev/null; then
   echo "tmux required" >&2
