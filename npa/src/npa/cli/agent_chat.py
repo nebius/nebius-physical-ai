@@ -125,7 +125,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
             r"|\b(?:2[\s-]?step|two[\s-]?step)\b"
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
-            r".{0,40}\b(?:workflow|yaml|spec)\b",
+            r".{0,40}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:leisaac|isaac[\s-]?lab|byof)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:leisaac|isaac[\s-]?lab)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b",
             re.IGNORECASE,
         ),
     ),

@@ -36,6 +36,7 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("what artifacts can I view?") == "find_artifacts"
+    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
 
