@@ -677,6 +677,13 @@ def test_bootstrap_recordings_api_in_system_prompt() -> None:
     assert "available .rrd recording" in source
 
 
+def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "npa-agent-bootstrap-{secrets.token_hex" in source
+
+
 def test_list_recordings_intent_routing() -> None:
     from npa.cli.agent_chat import apis_for_intent, match_chat_intent
 

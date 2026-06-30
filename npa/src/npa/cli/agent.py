@@ -4136,7 +4136,8 @@ sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
 """
     local_setup_script = ""
-    remote_setup_script = "/tmp/npa-agent-bootstrap.sh"
+    # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
+    remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write(setup_script)
