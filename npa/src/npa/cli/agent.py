@@ -45,7 +45,7 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2025062615"
+AGENT_UI_VERSION = "2026063001"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -65,6 +65,17 @@ def _embedded_agent_chat_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_chat.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_artifacts_source() -> str:
+    """Return workflows/artifacts.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -281,6 +292,33 @@ def _write_agent_llm_env(
     )
 
 
+def _write_agent_s3_env(
+    ssh: SSHClient,
+    *,
+    bucket: str,
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
+    region: str,
+) -> None:
+    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
+    if not (bucket.strip() and access_key.strip() and secret_key.strip()):
+        return
+    env_lines = [
+        f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
+        f"NPA_AGENT_S3_ENDPOINT={endpoint.strip()}",
+        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
+        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
+        f"AWS_REGION={region.strip() or 'eu-north1'}",
+        "",
+    ]
+    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
+    ssh.run_or_raise(
+        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
+        "&& sudo chmod 600 /opt/npa-agent/s3.env"
+    )
+
+
 def _is_routable_public_ip(value: str) -> bool:
     candidate = (value or "").strip()
     if not candidate:
@@ -430,6 +468,11 @@ def _bootstrap_agent_stack(
     rerun_port: int,
     llm_model: str = DEFAULT_LLM_MODEL,
     tf_api_key: str = "",
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+    s3_access_key: str = "",
+    s3_secret_key: str = "",
+    s3_region: str = "eu-north1",
     public_https: bool = True,
 ) -> None:
     ssh = SSHClient(
@@ -444,6 +487,7 @@ def _bootstrap_agent_stack(
     catalog_json = json.dumps(_tool_catalog_payload())
     agent_chat_source = _embedded_agent_chat_source()
     agent_workflow_source = _embedded_agent_workflow_source()
+    agent_artifacts_source = _embedded_agent_artifacts_source()
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -495,6 +539,7 @@ TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
+RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
 DEFAULT_SCENE_SPEC = {{
@@ -546,6 +591,11 @@ DEFAULT_SIM_VIZ = {{
     "stage": "idle",
     "rrd_uri": "",
     "rrd_updated_at": "",
+    "artifact_uri": "",
+    "artifact_key": "",
+    "artifact_render": "",
+    "artifact_preview_url": "",
+    "artifact_download_url": "",
     "live_grpc_url": "",
     "mode": "static",
     "camera": "workspace",
@@ -869,6 +919,108 @@ def _publish_rrd_recording(source: Path) -> Path:
     tmp.replace(RECORDING_PATH)
     return RECORDING_PATH
 
+
+def _safe_artifact_key(key: str) -> str:
+    value = str(key or "").strip().lstrip("/")
+    if not value:
+        raise HTTPException(status_code=400, detail="artifact key is required")
+    parts = value.split("/")
+    if any(part in {{"", ".", ".."}} for part in parts):
+        raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
+    return value
+
+
+def _agent_s3_settings() -> dict[str, str]:
+    return {{
+        "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
+        "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
+        "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
+        "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
+        "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
+    }}
+
+
+def _agent_s3_client():
+    settings = _agent_s3_settings()
+    if not settings["bucket"] or not settings["access_key"] or not settings["secret_key"]:
+        raise HTTPException(
+            status_code=400,
+            detail="S3 discovery is not configured on this agent (missing bucket or credentials).",
+        )
+    try:
+        client = build_s3_client(
+            endpoint_url=settings["endpoint"],
+            aws_access_key_id=settings["access_key"],
+            aws_secret_access_key=settings["secret_key"],
+            region_name=settings["region"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"failed to initialize S3 client: {{exc}}") from exc
+    return client, settings
+
+
+def _artifact_filename(key: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    leaf = Path(key).name or "artifact.bin"
+    return f"{{digest}}-{{leaf}}"
+
+
+def _artifact_preview_url(filename: str) -> str:
+    return f"/api/artifacts/file/{{filename}}"
+
+
+def _apply_loaded_artifact(
+    *,
+    state: dict,
+    run_id: str,
+    key: str,
+    s3_uri: str,
+    render: str,
+    local_path: Path,
+) -> dict:
+    now = _now_iso()
+    sim_viz = dict(DEFAULT_SIM_VIZ)
+    current = state.get("sim_viz")
+    if isinstance(current, dict):
+        sim_viz.update(current)
+    sim_viz.update(
+        {{
+            "run_id": run_id,
+            "stage": "artifact-loaded",
+            "rrd_updated_at": now,
+            "artifact_uri": s3_uri,
+            "artifact_key": key,
+            "artifact_render": render,
+            "mode": "static",
+            "camera": str(sim_viz.get("camera") or "workspace"),
+        }}
+    )
+    if render == "rerun":
+        _publish_rrd_recording(local_path)
+        _restart_rerun_serve(force=True)
+        sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
+        sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
+        sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
+        sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
+        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()
+    else:
+        filename = _artifact_filename(key)
+        target = RECORDINGS_DIR / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_path, target)
+        preview_url = _artifact_preview_url(filename)
+        sim_viz["artifact_preview_url"] = preview_url
+        sim_viz["artifact_download_url"] = preview_url
+        sim_viz["rrd_uri"] = ""
+        sim_viz["rerun_iframe_url"] = "/rerun/"
+        sim_viz["rerun_ready"] = False
+    state["sim_viz"] = sim_viz
+    _record_sim_viz_run(state, sim_viz)
+    _save_state(state)
+    return sim_viz
+
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
 
@@ -970,6 +1122,9 @@ def _agent_system_prompt() -> str:
         "- GET /api/sim-viz/recordings — list available .rrd recording files for quick viewer switching",
         "- GET /api/sim-viz/runs — list run-scoped history (run_id, stage, camera, rrd_uri)",
         "- POST /api/sim-viz/load-run — switch active run context by run_id",
+        "- GET /api/artifacts/runs?prefix=&limit= — discover run prefixes from object storage (no workflow allowlist)",
+        "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
+        "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
@@ -980,6 +1135,8 @@ def _agent_system_prompt() -> str:
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
         "(or POST /api/sim-viz/load-franka-demo). Open the embedded viewer at /rerun/.",
+        "Artifact-first browsing flow: call `/api/artifacts/runs`, inspect `/api/artifacts/run/{{id}}`,",
+        "then `POST /api/sim-viz/load-artifact` with explicit `s3_uri` or `run_id` + `key`.",
         "The **Cameras** panel is the center column below chat: stock workspace and wrist cameras",
         "with 2D frustum schematics, selection, and **Preview in Rerun**.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
@@ -1046,6 +1203,8 @@ def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
 {agent_chat_source}
 
 {agent_workflow_source}
+
+{agent_artifacts_source}
 
 def _workflow_draft_from_state(state: dict) -> dict:
     draft = state.get("workflow_draft", {{}})
@@ -1327,7 +1486,8 @@ def sim_viz_status(run_id: str = ""):
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
     _record_sim_viz_run(state, payload)
-    payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
+    if str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}:
+        payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
@@ -1442,6 +1602,104 @@ def sim_viz_recordings():
             except OSError:
                 continue
     return {{"recordings": result, "count": len(result)}}
+
+
+@app.get("/artifacts/runs")
+def artifacts_runs(prefix: str = "", limit: int = 50):
+    try:
+        s3, settings = _agent_s3_client()
+        page = list_runs(
+            settings["bucket"],
+            prefix=prefix,
+            limit=limit,
+            s3=s3,
+        )
+        return {{"ok": True, "bucket": settings["bucket"], "prefix": prefix, **page.to_dict()}}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+
+
+@app.get("/artifacts/run/{{run_id:path}}")
+def artifacts_for_run(run_id: str, prefix: str = ""):
+    try:
+        normalized_run = validate_run_id(run_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        s3, settings = _agent_s3_client()
+        artifacts = list_artifacts(
+            settings["bucket"],
+            normalized_run,
+            prefix=prefix,
+            s3=s3,
+        )
+        preferred = select_preferred_artifact(artifacts)
+        return {{
+            "ok": True,
+            "bucket": settings["bucket"],
+            "run_id": normalized_run,
+            "count": len(artifacts),
+            "artifacts": [item.to_dict() for item in artifacts],
+            "preferred": preferred.to_dict() if preferred else None,
+        }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+
+
+@app.get("/artifacts/file/{{filename}}")
+def artifact_file(filename: str):
+    safe_name = Path(str(filename)).name
+    if safe_name != filename:
+        raise HTTPException(status_code=400, detail="invalid artifact filename")
+    target = RECORDINGS_DIR / safe_name
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
+    return FileResponse(str(target), media_type="application/octet-stream")
+
+
+@app.post("/sim-viz/load-artifact")
+def sim_viz_load_artifact(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    requested_uri = str(body.get("s3_uri") or "").strip()
+    requested_run = str(body.get("run_id") or "").strip()
+    requested_key = str(body.get("key") or "").strip()
+    if not requested_uri and not (requested_run and requested_key):
+        raise HTTPException(status_code=400, detail="Provide either s3_uri or run_id + key")
+    try:
+        s3, settings = _agent_s3_client()
+        if requested_uri:
+            bucket, key = parse_s3_uri(requested_uri)
+            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
+            run_id = validate_run_id(run_guess) if run_guess else "artifact"
+            s3_uri = requested_uri
+        else:
+            run_id = validate_run_id(requested_run)
+            key = _safe_artifact_key(requested_key)
+            bucket = settings["bucket"]
+            s3_uri = f"s3://{{bucket}}/{{key}}"
+        local_name = _artifact_filename(key)
+        local_path = RECORDINGS_DIR / local_name
+        download_s3_uri(s3_uri, local_path, s3=s3)
+        render = render_hint_for_object(key=key)
+        state = _load_state()
+        sim_viz = _apply_loaded_artifact(
+            state=state,
+            run_id=run_id,
+            key=key,
+            s3_uri=s3_uri,
+            render=render,
+            local_path=local_path,
+        )
+        return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+
 
 @app.post("/sim-viz/load-franka-demo")
 def load_franka_demo(payload: dict | None = None):
@@ -2459,7 +2717,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>
             <div class="btn-row">
               <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-              <button id="loadFrankaRerun" class="btn" type="button">Load Franka in Rerun</button>
+              <button id="loadFrankaRerun" class="btn" type="button">Load Franka in Rerun (fallback)</button>
               <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
               <button id="workflowStatus" class="btn" type="button">Workflow status</button>
             </div>
@@ -2477,6 +2735,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>
             <div class="btn-row" style="margin-top:8px;">
               <button id="loadRunData" class="btn" type="button">Load run data</button>
+            </div>
+            <div class="subsection" style="margin-top:10px;">
+              <h4>Artifact browser</h4>
+              <div class="field-row">
+                <div class="field">
+                  <label for="artifactPrefix">Prefix</label>
+                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
+                </div>
+                <div class="field">
+                  <label for="artifactRunSelect">Discovered runs</label>
+                  <select id="artifactRunSelect">
+                    <option value="">(select discovered run)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
+                <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
+              </div>
+              <div id="artifactList" class="hint" style="margin-top:8px;"></div>
             </div>
           </section>
           <section class="panel cameras-panel">
@@ -2498,7 +2776,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
-              <p id="simvizCta" class="cta">Stock Franka demo preloads on boot — Rerun viewer mounts automatically when ready.</p>
+              <p id="simvizCta" class="cta">Discover artifacts first; use Franka demo fallback when no S3 artifacts are available.</p>
             </div>
             <div id="rerunPlaceholder" class="rerun-placeholder">
               <p>Loading Rerun viewer…</p>
@@ -2506,6 +2784,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <button id="loadRerunViewer" class="btn btn-primary" type="button">Load Rerun viewer</button>
             </div>
             <iframe id="rerunFrame" title="rerun" hidden></iframe>
+            <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
           </section>
         </div>
       </main>
@@ -2586,6 +2865,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
         bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
+        bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
+        bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Load Rerun viewer");
         bindClick("openRerun", openRerunTab, "Open Rerun");
         bindClick("applySelection", applySelection, "Apply stock selection");
@@ -2618,6 +2899,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const chosen = String(runIdSelect.value || "").trim();
             const input = document.getElementById("runIdInput");
             if (input && chosen) input.value = chosen;
+          }});
+        }}
+        const artifactRunSelect = document.getElementById("artifactRunSelect");
+        if (artifactRunSelect) {{
+          artifactRunSelect.addEventListener("change", async () => {{
+            const selectedRun = String(artifactRunSelect.value || "").trim();
+            if (!selectedRun) return;
+            await loadArtifactsForSelectedRun();
           }});
         }}
         const robotPreset = document.getElementById("robotPreset");
@@ -2882,6 +3171,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let rerunBootInProgress = false;
       let lastRrdBlobUrl = "";
       let activeRunId = "";
+      let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
       let lastRerunMountStatus = "pending";
       const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
@@ -3008,6 +3298,48 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const iframe = document.getElementById("rerunFrame");
         if (placeholder) placeholder.hidden = true;
         if (iframe) iframe.hidden = false;
+      }}
+      function hideArtifactPreview() {{
+        const host = document.getElementById("artifactPreviewHost");
+        if (!host) return;
+        host.hidden = true;
+        host.innerHTML = "";
+      }}
+      async function showArtifactPreview(simViz, render) {{
+        const host = document.getElementById("artifactPreviewHost");
+        if (!host) return;
+        const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
+        const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
+        const safeRender = String(render || "");
+        if (!previewUrl) {{
+          host.hidden = false;
+          host.innerHTML = "<p>No preview URL available. Use download.</p>";
+          return;
+        }}
+        if (safeRender === "image") {{
+          host.hidden = false;
+          host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" />`;
+          return;
+        }}
+        if (safeRender === "video") {{
+          host.hidden = false;
+          host.innerHTML = `<video controls style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" src="${{previewUrl}}"></video>`;
+          return;
+        }}
+        if (safeRender === "json" || safeRender === "text") {{
+          try {{
+            const resp = await fetchWithTimeout(previewUrl, {{ credentials: "include" }}, 12000);
+            if (!resp.ok) throw new Error("preview fetch failed");
+            const text = await resp.text();
+            host.hidden = false;
+            host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:280px;overflow:auto;">${{escapeHtml(text.slice(0, 20000))}}</pre>`;
+            return;
+          }} catch (_err) {{
+            // fall through to download link
+          }}
+        }}
+        host.hidden = false;
+        host.innerHTML = `<p>Artifact render: <strong>${{escapeHtml(safeRender || "download")}}</strong>. <a href="${{downloadUrl}}" target="_blank" rel="noopener">Download artifact</a></p>`;
       }}
       async function waitForRerunReady(maxAttempts) {{
         const attempts = Number(maxAttempts || 12);
@@ -3176,6 +3508,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         await waitForRerunReady();
         await waitForRerunSuccess(camera, {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+        activeArtifactRender = "rerun";
+        hideArtifactPreview();
         const simViz = await loadJson("/api/sim-viz/status");
         if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
           const stage = String(simViz.stage || "demo");
@@ -3240,6 +3574,102 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function loadJson(path) {{
         return await apiJson(path);
       }}
+      function artifactPrefixValue() {{
+        const input = document.getElementById("artifactPrefix");
+        return String((input && input.value) || "").trim();
+      }}
+      async function refreshArtifactRuns() {{
+        const prefix = artifactPrefixValue();
+        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
+        const data = await apiJson("/api/artifacts/runs" + query);
+        const select = document.getElementById("artifactRunSelect");
+        if (select) {{
+          select.innerHTML = '<option value="">(select discovered run)</option>';
+          const runs = Array.isArray(data.runs) ? data.runs : [];
+          for (const run of runs) {{
+            const runId = String(run.run_id || "").trim();
+            if (!runId) continue;
+            const opt = document.createElement("option");
+            opt.value = runId;
+            opt.textContent = runId + (run.has_viewable ? " [viewable]" : " [download]");
+            select.appendChild(opt);
+          }}
+        }}
+        const list = document.getElementById("artifactList");
+        if (list) {{
+          const trunc = data.truncated ? " (truncated)" : "";
+          list.textContent = "Runs discovered: " + String(data.total_runs || 0) + trunc;
+        }}
+        return true;
+      }}
+      async function loadArtifactsForSelectedRun() {{
+        const select = document.getElementById("artifactRunSelect");
+        const runId = String((select && select.value) || "").trim();
+        if (!runId) throw new Error("Select a discovered run first");
+        const prefix = artifactPrefixValue();
+        const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
+        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
+        const list = document.getElementById("artifactList");
+        if (!list) return false;
+        const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+        if (!artifacts.length) {{
+          list.innerHTML = "<p>No artifacts found for this run.</p>";
+          return true;
+        }}
+        list.innerHTML = artifacts.map((item, idx) => {{
+          const key = String(item.key || "");
+          const render = String(item.render || "download");
+          const s3uri = String(item.s3_uri || "");
+          return (
+            '<div style="padding:8px 0;border-top:1px solid #e2e8f0;">' +
+            '<div><code>' + escapeHtml(key) + '</code></div>' +
+            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + '</div>' +
+            '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
+            '</div>'
+          );
+        }}).join("");
+        list.querySelectorAll("button[data-action='load-artifact']").forEach((btn) => {{
+          btn.addEventListener("click", async (event) => {{
+            event.preventDefault();
+            const payload = {{
+              run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+              key: String(btn.getAttribute("data-key") || "").trim(),
+              s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
+            }};
+            await loadArtifact(payload);
+          }});
+        }});
+        return true;
+      }}
+      async function loadArtifact(payload) {{
+        const body = {{
+          run_id: String((payload && payload.run_id) || "").trim(),
+          key: String((payload && payload.key) || "").trim(),
+          s3_uri: String((payload && payload.s3_uri) || "").trim(),
+        }};
+        const data = await apiJson("/api/sim-viz/load-artifact", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify(body),
+        }});
+        const simViz = data.sim_viz || {{}};
+        const render = String(data.render || simViz.artifact_render || "");
+        activeArtifactRender = render;
+        if (render === "rerun") {{
+          hideArtifactPreview();
+          await waitForRerunReady();
+          await waitForRerunSuccess(String(simViz.camera || "workspace"), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+        }} else {{
+          showRerunPlaceholder("Artifact loaded. Use download/preview below.");
+          await showArtifactPreview(simViz, render);
+        }}
+        appendChat(
+          "assistant",
+          "Loaded artifact `" + String(simViz.artifact_key || body.key || "") + "` with render `" + render + "`."
+        );
+        await refresh();
+        return true;
+      }}
       async function refresh() {{
         try {{
           const session = await loadJson("/api/session");
@@ -3258,14 +3688,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
+          activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
           const cta = document.getElementById("simvizCta");
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
           if (cta) {{
             cta.hidden = ready && rerunIframeLoaded;
           }}
-          if (!ready) {{
+          if (activeArtifactRender && activeArtifactRender !== "rerun") {{
+            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.");
+            await showArtifactPreview(simViz, activeArtifactRender);
+          }} else {{
+            hideArtifactPreview();
+          }}
+          if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
             showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
-          }} else if (!rerunIframeLoaded && !rerunBootInProgress) {{
+          }} else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
             showRerunPlaceholder("Rerun is ready. Click Load Rerun viewer or Load Franka in Rerun.");
           }}
           const robotPreset = document.getElementById("robotPreset");
@@ -3559,6 +3996,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function ensureFrankaRerunLoaded() {{
         const simViz = await loadJson("/api/sim-viz/status");
+        const artifactRender = String((simViz && simViz.artifact_render) || "");
+        if (artifactRender && artifactRender !== "rerun") {{
+          activeArtifactRender = artifactRender;
+          await showArtifactPreview(simViz, artifactRender);
+          return;
+        }}
         const camera = String(simViz.camera || "workspace");
         if (!simViz.rerun_ready && !simViz.rrd_uri) {{
           setStatus("Loading Franka demo...");
@@ -3587,6 +4030,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         try {{
           await refresh();
+          try {{
+            await refreshArtifactRuns();
+          }} catch (_artifactErr) {{
+            // artifact discovery is optional when S3 credentials are missing.
+          }}
           await ensureFrankaRerunLoaded();
           setStatus("Ready");
           showToast("Franka demo ready in Rerun", "success");
@@ -3649,6 +4097,7 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
+EnvironmentFile=-/opt/npa-agent/s3.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -3699,7 +4148,15 @@ sudo systemctl restart npa-agent-backend
             Path(local_setup_script).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
     _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
-    if tf_api_key.strip():
+    _write_agent_s3_env(
+        ssh,
+        bucket=s3_bucket,
+        endpoint=s3_endpoint,
+        access_key=s3_access_key,
+        secret_key=s3_secret_key,
+        region=s3_region,
+    )
+    if tf_api_key.strip() or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip()):
         ssh.run_or_raise(
             "sudo systemctl reset-failed npa-agent-backend || true; "
             "sudo systemctl restart npa-agent-backend"
@@ -3842,6 +4299,11 @@ def deploy_cmd(
             rerun_port=rerun_port,
             llm_model=llm_model,
             tf_api_key=tf_api_key,
+            s3_bucket=str(merged_vars.get("s3_bucket", "")),
+            s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
+            s3_access_key=str(merged_vars.get("nebius_api_key", "")),
+            s3_secret_key=str(merged_vars.get("nebius_secret_key", "")),
+            s3_region=env_region,
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
@@ -3956,6 +4418,18 @@ def bootstrap_cmd(
             "Warning: Token Factory API key not found; chat endpoint will return 503.",
             err=True,
         )
+    s3_bucket = ""
+    s3_endpoint = ""
+    s3_access_key = ""
+    s3_secret_key = ""
+    try:
+        tf_state = resolve_terraform_state(project)
+        s3_bucket = str(getattr(tf_state, "bucket", "") or "")
+        s3_endpoint = str(getattr(tf_state, "endpoint", "") or "")
+        s3_access_key = str(getattr(tf_state, "access_key", "") or "")
+        s3_secret_key = str(getattr(tf_state, "secret_key", "") or "")
+    except ConfigError:
+        pass
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -3968,6 +4442,11 @@ def bootstrap_cmd(
             rerun_port=rerun_port,
             llm_model=llm_model,
             tf_api_key=tf_api_key,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+            s3_access_key=s3_access_key,
+            s3_secret_key=s3_secret_key,
+            s3_region=str(record.get("region", "") or "eu-north1"),
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:

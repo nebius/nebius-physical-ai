@@ -242,6 +242,22 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_record_sim_viz_run" in source
 
 
+def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'id="artifactPrefix"' in source
+    assert 'id="artifactRunSelect"' in source
+    assert 'id="artifactList"' in source
+    assert '@app.get("/artifacts/runs")' in source
+    assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
+    assert '@app.post("/sim-viz/load-artifact")' in source
+    assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
+    embedded = agent_module._embedded_agent_artifacts_source()
+    assert "list_runs" in embedded
+    assert "list_artifacts" in embedded
+
+
 def test_bootstrap_run_history_uses_run_id_index() -> None:
     from npa.cli import agent as agent_module
 

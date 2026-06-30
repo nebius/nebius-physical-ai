@@ -49,6 +49,7 @@ STAGED_RUN_ID_RE = re.compile(
     r"^(?:sim2real-staged-[0-9]{8}t[0-9]{6}z|rtxpro-staged-[a-z0-9-]*[0-9]{8}t[0-9]{6}z)$",
     re.IGNORECASE,
 )
+SAFE_RUN_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 PLACEHOLDER_RUN_ID_RE = re.compile(
     r"yyyymmdd|hhmmss|your-run-id|<run-id>|placeholder|example-run|tbd|xxxx",
     re.IGNORECASE,
@@ -57,6 +58,31 @@ PLACEHOLDER_RUN_ID_RE = re.compile(
 
 class RerunServeError(ValueError):
     """Raised when rerun serve manifest generation or deployment fails."""
+
+
+def validate_run_id(run_id: str) -> str:
+    """Validate a generic run id/path while rejecting traversal and placeholders."""
+
+    value = run_id.strip()
+    if not value:
+        raise RerunServeError("run-id is required")
+    if PLACEHOLDER_RUN_ID_RE.search(value):
+        raise RerunServeError(
+            f"run-id looks like a template placeholder: {value!r}. "
+            "Use a concrete identifier from a real run."
+        )
+    if value.startswith("/") or value.endswith("/"):
+        raise RerunServeError(f"run-id must not start or end with '/': {value!r}")
+    segments = value.split("/")
+    for segment in segments:
+        if segment in {"", ".", ".."}:
+            raise RerunServeError(f"run-id must not include traversal segments: {value!r}")
+        if not SAFE_RUN_SEGMENT_RE.fullmatch(segment):
+            raise RerunServeError(
+                "run-id contains unsupported characters; allowed per path segment: "
+                "letters, digits, '.', '_', ':', '-'"
+            )
+    return value
 
 
 @dataclass(frozen=True)

@@ -31,6 +31,7 @@ from npa.workflows.rerun_serve import (
     resolve_storage_bucket,
     rrd_s3_uri_from_report_uri,
     should_auto_rerun_serve,
+    validate_run_id,
     validate_staged_run_id,
     verify_rrd_exists_on_s3,
 )
@@ -84,6 +85,16 @@ def test_validate_staged_run_id_accepts_canonical() -> None:
     assert validate_staged_run_id("sim2real-staged-20260615t180818z") == (
         "sim2real-staged-20260615t180818z"
     )
+
+
+def test_validate_run_id_accepts_safe_nested_paths() -> None:
+    assert validate_run_id("sim2real/run-20260630/report") == "sim2real/run-20260630/report"
+
+
+@pytest.mark.parametrize("run_id", ["", "example-run-id", "../etc/passwd", "sim2real//run"])
+def test_validate_run_id_rejects_placeholder_and_traversal(run_id: str) -> None:
+    with pytest.raises(Sim2RealRerunServeError):
+        validate_run_id(run_id)
 
 
 def test_default_rerun_image_prefers_generic_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
