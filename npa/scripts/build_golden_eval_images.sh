@@ -33,8 +33,8 @@ done
 if [[ "${BUILD_ALL}" == "1" ]]; then
   TOOLS=(
     retargeting lancedb detection-training fiftyone genesis
-    lerobot-policy sim2real-envgen sim2real-reference-policy
-    lerobot-vlm-rl sim2real-eval cosmos2-transfer
+    lerobot-policy envgen reference-policy
+    lerobot-vlm-rl loop-eval cosmos2-transfer
   )
 fi
 
@@ -87,8 +87,8 @@ build_cosmos2_transfer() {
 build_sim2real_stack() {
   local genesis_tag envgen_tag eval_tag vlm_rl_tag
   genesis_tag="$(tool_version genesis)"
-  envgen_tag="$(tool_version sim2real-envgen)"
-  eval_tag="$(tool_version sim2real-eval)"
+  envgen_tag="$(tool_version envgen)"
+  eval_tag="$(tool_version loop-eval)"
   vlm_rl_tag="$(tool_version lerobot-vlm-rl)"
   export GENESIS_IMAGE="${REGISTRY}/npa-genesis:${genesis_tag}"
   export ENVGEN_TAG="${envgen_tag}"
@@ -120,9 +120,9 @@ for tool in "${TOOLS[@]}"; do
     lerobot-policy)
       build_simple lerobot-policy npa-lerobot-policy npa/docker/workbench/lerobot-policy/Dockerfile
       ;;
-    sim2real-envgen | sim2real-reference-policy | lerobot-vlm-rl | sim2real-eval)
+    envgen | reference-policy | lerobot-vlm-rl | loop-eval)
       # Built together; skip duplicates in loop.
-      if [[ "${tool}" == "sim2real-envgen" ]]; then
+      if [[ "${tool}" == "envgen" ]]; then
         build_sim2real_stack
       fi
       ;;

@@ -16,7 +16,7 @@ from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
 
 # rerunio/rerun:* is not published on Docker Hub; serve via PyPI bootstrap or a
-# registry-built npa-rerun-viewer image (legacy alias: npa-sim2real-rerun-viewer).
+# registry-built npa-rerun-viewer image. Legacy npa-sim2real-rerun-viewer refs still resolve.
 DEFAULT_RERUN_BOOTSTRAP_IMAGE = "python:3.11-slim-bookworm"
 DEFAULT_RERUN_IMAGE = DEFAULT_RERUN_BOOTSTRAP_IMAGE
 DEFAULT_RERUN_VIEWER_TOOL = "rerun-viewer"

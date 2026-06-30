@@ -81,17 +81,17 @@ class Sim2RealLoopConfig:
     robot_source: str = ""
     robot_preset: str = ""
     augment_image: str = f"npa-cosmos2-transfer:{DEFAULT_COSMOS2_TRANSFER_TAG}"
-    envgen_image: str = f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+    envgen_image: str = f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
     env_count: int = 0
     train_fraction: float = DEFAULT_TRAIN_FRACTION
     envgen_shard_count: int = DEFAULT_ENVGEN_SHARD_COUNT
     action_env_limit: int = DEFAULT_ACTION_ENV_LIMIT
-    policy_image: str = f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
+    policy_image: str = f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
     trainer_image: str = f"npa-lerobot-vlm-rl:{DEFAULT_TRAINER_TAG}"
     vlm_image: str = f"npa-cosmos3-reason:{DEFAULT_VLM_IMAGE_TAG}"
     vlm_reason2_image: str = ""
     vlm_reason3_image: str = ""
-    eval_image: str = f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
+    eval_image: str = f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
     isaac_image: str = f"npa-isaac-lab:{DEFAULT_ISAAC_TAG}"
     sim_backend: str = DEFAULT_SIM_BACKEND
     isaac_task: str = DEFAULT_ISAAC_TASK
@@ -205,8 +205,8 @@ def default_envgen_image(*, registry: str | None = None) -> str:
     """Return the reference env-generation image used by Stages 3-6."""
 
     if registry or os.environ.get("NPA_REGISTRY"):
-        return container_image_for_tool("sim2real-envgen", registry=registry)
-    return f"npa-sim2real-envgen:{DEFAULT_ENVGEN_TAG}"
+        return container_image_for_tool("envgen", registry=registry)
+    return f"npa-envgen:{DEFAULT_ENVGEN_TAG}"
 
 
 def default_augment_image(*, registry: str | None = None) -> str:
@@ -221,8 +221,8 @@ def default_policy_image(*, registry: str | None = None) -> str:
     """Return the reference action-generation policy image."""
 
     if registry or os.environ.get("NPA_REGISTRY"):
-        return container_image_for_tool("sim2real-reference-policy", registry=registry)
-    return f"npa-sim2real-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
+        return container_image_for_tool("reference-policy", registry=registry)
+    return f"npa-reference-policy:{DEFAULT_REFERENCE_POLICY_TAG}"
 
 
 def default_trainer_image(*, registry: str | None = None) -> str:
@@ -237,8 +237,8 @@ def default_eval_image(*, registry: str | None = None) -> str:
     """Return the reference held-out eval harness image."""
 
     if registry or os.environ.get("NPA_REGISTRY"):
-        return container_image_for_tool("sim2real-eval", registry=registry)
-    return f"npa-sim2real-eval:{DEFAULT_EVAL_TAG}"
+        return container_image_for_tool("loop-eval", registry=registry)
+    return f"npa-loop-eval:{DEFAULT_EVAL_TAG}"
 
 
 def default_isaac_image(*, registry: str | None = None) -> str:

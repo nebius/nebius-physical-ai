@@ -135,7 +135,7 @@ def test_envgen_split_stage_launches_indexed_shards_when_image_ready(
         env_count=10,
         train_fraction=0.8,
         envgen_shard_count=4,
-        envgen_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-sim2real-envgen:0.1.1",
+        envgen_image="cr.eu-north1.nebius.cloud/example-registry-id/npa-envgen:0.1.1",
     )
     result = run_envgen_split_stage(
         config,

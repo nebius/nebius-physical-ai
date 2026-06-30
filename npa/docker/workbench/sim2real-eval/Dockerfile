@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=0.1.1-genuine-sm120
 
-LABEL npa.tool="sim2real-eval" \
+LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}"
 
 ENV PYTHONUNBUFFERED=1 \

@@ -1,10 +1,10 @@
-ARG BASE_IMAGE=npa-sim2real-envgen:0.1.1
+ARG BASE_IMAGE=npa-envgen:0.1.1
 FROM ${BASE_IMAGE}
 
-LABEL org.opencontainers.image.title="npa-sim2real-explore-policy"
+LABEL org.opencontainers.image.title="npa-explore-policy"
 LABEL org.opencontainers.image.description="Alternate BYO-compatible Sim2Real policy image (wider action exploration)"
 
-ENV POLICY_IMAGE_KIND=npa-sim2real-explore-policy
+ENV POLICY_IMAGE_KIND=npa-explore-policy
 ENV NPA_SIM2REAL_POLICY_VARIANT=explore
 
 USER ubuntu

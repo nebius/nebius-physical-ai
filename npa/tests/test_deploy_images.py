@@ -37,6 +37,18 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         container_image_for_tool("cosmos3-reason")
         == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:3.0.1-genuine-sm120"
     )
+    assert (
+        container_image_for_tool("envgen")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-envgen:0.1.2"
+    )
+    assert (
+        container_image_for_tool("reference-policy")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-reference-policy:0.1.2"
+    )
+    assert (
+        container_image_for_tool("loop-eval")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:0.1.1-genuine-sm120"
+    )
 
 
 def test_packaged_supported_tool_versions_match_pyproject() -> None:
