@@ -37,6 +37,8 @@ def test_match_sim2real_status_intent() -> None:
     )
     assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
+    assert match_chat_intent("what artifacts can I view?") == "find_artifacts"
+    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
     assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
@@ -108,6 +110,15 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
     assert "sim-viz/status" in apis
     assert "sim-viz/rrd" in apis
     assert "sim-viz/rrd-blob" in apis
+
+
+def test_find_artifacts_apis_include_discovery_and_load() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("find_artifacts")
+    assert "artifacts/runs" in apis
+    assert "artifacts/run/{run_id}" in apis
+    assert "sim-viz/load-artifact" in apis
 
 
 def test_component_capabilities_reply_is_targeted() -> None:
