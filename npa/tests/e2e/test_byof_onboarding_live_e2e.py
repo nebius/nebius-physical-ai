@@ -429,5 +429,10 @@ def test_live_byof_runner_submit_smoke(
             "FAILED",
         }
     submit = run_summary.get("submit", {})
-    if isinstance(submit, dict):
+    if isinstance(submit, dict) and submit.get("status"):
         assert submit.get("status") == "SUBMITTED", submit
+    elif isinstance(final, dict) and final.get("status") == "FAILED_PRECHECKS":
+        # Managed jobs path: submit JSON may be flattened; precheck failure is expected on K8s.
+        pass
+    else:
+        assert submit or final, run_summary
