@@ -37,6 +37,11 @@ def test_uppercase_timestamp_style_name_is_allowed() -> None:
     assert config.name.endswith("Z")
 
 
+def test_us_central1_region_is_allowed() -> None:
+    config = ClusterConfig(name="cluster-a", region="us-central1")
+    assert config.region == "us-central1"
+
+
 def test_invalid_region_rejected() -> None:
     with pytest.raises(ClusterConfigError, match="unsupported region"):
         ClusterConfig(name="cluster-a", region="us-east1")
