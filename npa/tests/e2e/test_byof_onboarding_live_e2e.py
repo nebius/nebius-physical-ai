@@ -151,6 +151,9 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
 
 @pytest.fixture(scope="module")
 def live_byof_built_image(e2e_project: str | None) -> str:
+    preset_image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip()
+    if preset_image:
+        return preset_image
     if os.environ.get("NPA_BYOF_LIVE_CONTAINER") != "1":
         pytest.skip("Set NPA_BYOF_LIVE_CONTAINER=1 for real BYOF container build/push.")
     _activate_nebius_profile()
