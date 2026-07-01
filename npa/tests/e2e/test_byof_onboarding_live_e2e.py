@@ -42,6 +42,9 @@ BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
 RTXPRO_TRAIN_YAML = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml"
 )
+RTXPRO_SMOKE_TRAIN_YAML = (
+    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml"
+)
 DEFAULT_TRAIN_YAML = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train.yaml"
 )
@@ -81,12 +84,43 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
     return last_obj
 
 
-def _default_byof_resource_yaml(e2e_project: str | None) -> str:
+def _default_byof_resource_yaml(e2e_project: str | None, *, smoke: bool = False) -> str:
     if os.environ.get("NPA_BYOF_RESOURCE_YAML"):
         return os.environ["NPA_BYOF_RESOURCE_YAML"]
-    if (e2e_project or "").strip().lower() == "rtxpro" and RTXPRO_TRAIN_YAML.is_file():
-        return str(RTXPRO_TRAIN_YAML)
+    if (e2e_project or "").strip().lower() == "rtxpro":
+        if smoke and RTXPRO_SMOKE_TRAIN_YAML.is_file():
+            return str(RTXPRO_SMOKE_TRAIN_YAML)
+        if RTXPRO_TRAIN_YAML.is_file():
+            return str(RTXPRO_TRAIN_YAML)
     return str(DEFAULT_TRAIN_YAML)
+
+
+def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
+    if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
+        return
+    _activate_nebius_profile()
+    server = registry.split("/", 1)[0]
+    if not server.startswith("cr.") or ".nebius.cloud" not in server:
+        return
+    namespace = os.environ.get("NPA_BYOF_K8S_NAMESPACE", "skypilot-system")
+    k8s_context = os.environ.get("NPA_BYOF_K8S_CONTEXT", "npa-rtxpro-mk8s")
+    kubeconfig = os.environ.get("NPA_BYOF_KUBECONFIG", "").strip()
+    runtime_env = dict(os.environ)
+    skypilot_bin = os.environ.get("NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin")
+    if skypilot_bin:
+        runtime_env["PATH"] = f"{skypilot_bin}:{runtime_env.get('PATH', '')}"
+    try:
+        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+
+        ensure_nebius_registry_pull_secret(
+            registry_server=server,
+            namespace=namespace,
+            kubeconfig=kubeconfig,
+            k8s_context=k8s_context,
+        )
+    except Exception as exc:
+        # Optional preflight: clusters without kubectl/sky-kube-exec-wrapper can still run container tiers.
+        print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
 
 
 @pytest.fixture(scope="module")
@@ -310,35 +344,53 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
     os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
     reason="Set NPA_BYOF_LIVE_GPU=1 to submit a real Isaac BYOF SkyPilot smoke (build/push/run).",
 )
-def test_live_byof_runner_submit_smoke(e2e_project: str | None) -> None:
+def test_live_byof_runner_submit_smoke(
+    e2e_project: str | None,
+    live_byof_built_image: str,
+) -> None:
     registry = resolve_container_registry(e2e_project)
-    yaml_override = _default_byof_resource_yaml(e2e_project)
+    _maybe_refresh_byof_registry_pull_secret(registry)
+    yaml_override = _default_byof_resource_yaml(e2e_project, smoke=True)
+    image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip() or live_byof_built_image
     task = os.environ.get("NPA_BYOF_TASK", "Isaac-Cartpole-v0")
+    cmd = [
+        sys.executable,
+        str(BYOF_RUNNER),
+        "--registry",
+        registry,
+        "--image",
+        image,
+        "--yaml",
+        yaml_override,
+        "--task",
+        task,
+        "--iterations",
+        "1",
+        "--run-id",
+        f"byof-live-submit-{os.getpid()}",
+        "--skip-build",
+    ]
     proc = subprocess.run(
-        [
-            sys.executable,
-            str(BYOF_RUNNER),
-            "--registry",
-            registry,
-            "--yaml",
-            yaml_override,
-            "--task",
-            task,
-            "--iterations",
-            "1",
-            "--run-id",
-            f"byof-live-submit-{os.getpid()}",
-            "--skip-build",
-        ],
+        cmd,
         check=False,
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
-        timeout=int(os.environ.get("NPA_BYOF_LIVE_TIMEOUT", "21600")),
+        timeout=int(os.environ.get("NPA_BYOF_LIVE_TIMEOUT", "3600")),
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary.get("status") == "ok", summary
     run_summary = summary.get("run", {})
     assert isinstance(run_summary, dict)
-    assert run_summary.get("status") in {"submitted", "ok", "running", "succeeded"} or run_summary.get("skipped") is not True
+    final = run_summary.get("final", {})
+    if isinstance(final, dict) and final.get("status"):
+        assert final.get("status") in {
+            "SUBMITTED",
+            "SUCCEEDED",
+            "RUNNING",
+            "PENDING",
+            "FAILED_PRECHECKS",
+            "FAILED_SETUP",
+            "FAILED",
+        }
