@@ -5,4 +5,3 @@ kubernetes:
     spec:
       imagePullSecrets:
         - name: agent-sa
-        - name: npa-nebius-registry
