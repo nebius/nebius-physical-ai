@@ -1676,6 +1676,7 @@ def health():
 def models(refresh: bool = False):
     return {{
         "ok": True,
+        "default": LLM_MODEL,
         "default_model": LLM_MODEL,
         "models": _available_llm_models(refresh=bool(refresh)),
     }}
@@ -1704,7 +1705,12 @@ def session_bootstrap():
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
-        "llm": {{"model": LLM_MODEL, "models": _available_llm_models()}},
+        "llm": {{
+            "default": LLM_MODEL,
+            "default_model": LLM_MODEL,
+            "model": LLM_MODEL,
+            "models": _available_llm_models(),
+        }},
     }}
 
 @app.get("/tools")
@@ -4150,7 +4156,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         try {{
           const session = await loadJson("/api/session");
           if (session && session.llm) {{
-            setChatModels(session.llm.models, session.llm.model);
+            const currentModel = String(
+              (session.llm.model || session.llm.default_model || session.llm.default || "")
+            );
+            setChatModels(session.llm.models, currentModel);
           }}
           if (session && session.workflow_draft && session.workflow_draft.yaml) {{
             setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
@@ -4458,7 +4467,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         try {{
           const session = await loadJson("/api/session");
           if (session && session.llm) {{
-            setChatModels(session.llm.models, session.llm.model);
+            const currentModel = String(
+              (session.llm.model || session.llm.default_model || session.llm.default || "")
+            );
+            setChatModels(session.llm.models, currentModel);
           }}
           const hist = Array.isArray(session.chat_history) ? session.chat_history : [];
           for (const msg of hist) {{
