@@ -102,16 +102,7 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
     if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
         return
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "agent-sa").strip()
-    if profile == "agent-sa":
-        # Registry secret apply needs mk8s cluster credentials on rtxpro.
-        subprocess.run(
-            ["nebius", "profile", "activate", "npa-mk8s"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        _activate_nebius_profile()
+    _activate_nebius_profile()
     server = registry.split("/", 1)[0]
     if not server.startswith("cr.") or ".nebius.cloud" not in server:
         return
@@ -137,10 +128,19 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
             kubeconfig=kubeconfig,
             k8s_context=k8s_context,
         )
-        if namespace != "default":
+        for target_ns in ("default", namespace):
+            if target_ns == namespace:
+                continue
             ensure_nebius_registry_pull_secret(
                 registry_server=server,
-                namespace="default",
+                secret_name="agent-sa",
+                namespace=target_ns,
+                kubeconfig=kubeconfig,
+                k8s_context=k8s_context,
+            )
+            ensure_nebius_registry_pull_secret(
+                registry_server=server,
+                namespace=target_ns,
                 kubeconfig=kubeconfig,
                 k8s_context=k8s_context,
             )
