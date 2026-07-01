@@ -18,12 +18,15 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 ## Bootstrap And Verify
 
 ```bash
+npa/.venv/bin/npa agent fresh-setup --project rtxpro --name agent --project-id <project-id> --tenant-id <tenant-id> --region us-central1
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
 NPA_AGENT_CHAT_LIVE=1 npa/.venv/bin/npa agent verify-live --project rtxpro --name agent
 bash npa/scripts/verify_agent_franka.sh
 ```
 
 Auth secrets live at `~/.npa/agents/<project>/<name>/auth.env` (`AGENT_USER`, `AGENT_PASSWORD`).
+Agent bootstrap now stages operator config + credentials on the VM at `~/.npa/{config,credentials}.yaml` so the VM can run infra commands without re-entering project metadata.
+Token Factory model selection is configurable via `--llm-model` and `--llm-models` (`NPA_AGENT_LLM_MODEL` and `NPA_AGENT_LLM_MODELS` on the VM), with `/api/models` exposed for UI/model picker refresh.
 
 ## Customer HTTPS Access
 
