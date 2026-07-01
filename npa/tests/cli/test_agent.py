@@ -75,6 +75,9 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
+    assert "Always use real registry-qualified images" in source
+    assert "`<your-registry-id>` placeholders" in source
+    assert "sky gpus list" in source
     bootstrap_split = f'        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split
     assert "\\r?\\n" in bootstrap_split

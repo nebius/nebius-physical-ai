@@ -39,6 +39,9 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
+    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
+    assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
 
 
 def test_match_watch_sim_intent_with_long_requirements_addendum() -> None:
@@ -105,6 +108,34 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
     assert "sim-viz/status" in apis
     assert "sim-viz/rrd" in apis
     assert "sim-viz/rrd-blob" in apis
+
+
+def test_component_capabilities_reply_is_targeted() -> None:
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    cosmos_reply = build_grounded_reply(
+        "cosmos_capabilities",
+        state,
+        ["workbench.cosmos2.transfer", "workbench.token_factory.reason"],
+    )
+    assert "Cosmos component capabilities" in cosmos_reply
+    assert "Fine-tuning / post-training" in cosmos_reply
+
+    lancedb_reply = build_grounded_reply(
+        "lancedb_capabilities",
+        state,
+        ["workbench.lancedb.import_bdd100k", "workbench.lancedb.backfill_clip"],
+    )
+    assert "LanceDB component capabilities" in lancedb_reply
+    assert "Data ingest" in lancedb_reply
+
+
+def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    reply = build_grounded_reply("live_infra_loop", state, ["workbench.cosmos2.transfer"])
+    assert "Live infra loop guidance" in reply
+    assert "never `<your-registry-id>` placeholders" in reply or "no placeholders" in reply
+    assert "sky gpus list" in reply
+    assert "FAILED_PRECHECKS" in reply
 
 
 def test_embedded_agent_chat_source_strips_future_import() -> None:
