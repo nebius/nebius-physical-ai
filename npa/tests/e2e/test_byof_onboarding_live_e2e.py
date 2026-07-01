@@ -61,26 +61,24 @@ def _activate_nebius_profile() -> None:
 
 
 def _parse_last_json_blob(text: str) -> dict[str, object]:
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
+    decoder = json.JSONDecoder()
+    idx = 0
+    last_obj: dict[str, object] | None = None
+    while idx < len(text):
+        next_brace = text.find("{", idx)
+        if next_brace < 0:
+            break
         try:
-            payload = json.loads(line)
+            obj, end = decoder.raw_decode(text, next_brace)
         except json.JSONDecodeError:
+            idx = next_brace + 1
             continue
-        if isinstance(payload, dict):
-            return payload
-    # Fall back to parsing the last JSON object in multi-line output.
-    start = text.rfind("{")
-    if start >= 0:
-        try:
-            payload = json.loads(text[start:])
-            if isinstance(payload, dict):
-                return payload
-        except json.JSONDecodeError:
-            pass
-    raise ValueError(f"no JSON object found in command output:\n{text}")
+        if isinstance(obj, dict):
+            last_obj = obj
+        idx = max(end, next_brace + 1)
+    if last_obj is None:
+        raise ValueError(f"no JSON object found in command output:\n{text}")
+    return last_obj
 
 
 def _default_byof_resource_yaml(e2e_project: str | None) -> str:
@@ -116,7 +114,7 @@ def live_byof_built_image(e2e_project: str | None) -> str:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
-    assert summary["status"] == "ok"
+    assert summary.get("status") == "ok", summary
     build = summary.get("build", {})
     assert build.get("ok") is True
     assert build.get("pushed") is True
@@ -303,7 +301,7 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
-    assert summary["status"] == "ok"
+    assert summary.get("status") == "ok", summary
     assert summary["registry"] == registry
     assert registry in summary["image"]
 
@@ -340,7 +338,7 @@ def test_live_byof_runner_submit_smoke(e2e_project: str | None) -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
-    assert summary["status"] == "ok"
+    assert summary.get("status") == "ok", summary
     run_summary = summary.get("run", {})
     assert isinstance(run_summary, dict)
     assert run_summary.get("status") in {"submitted", "ok", "running", "succeeded"} or run_summary.get("skipped") is not True
