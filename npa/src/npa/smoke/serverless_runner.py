@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 from npa.clients.credentials import load_credentials
-from npa.clients.serverless import ServerlessClient
+from npa.clients.serverless import ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -141,5 +141,10 @@ def submit_golden_eval(
     )
     result["status"] = info.status
     result["ok"] = str(info.status).lower() in _TERMINAL_OK
-    result["log_tail"] = info.log_tail
+    # Job status carries no stdout (info.log_tail only reflects status.message,
+    # which is empty for successful runs); fetch real container logs instead.
+    try:
+        result["log_tail"] = client.get_job_logs(info.id, resolved_project, tail=400)
+    except ServerlessClientError:
+        result["log_tail"] = info.log_tail
     return result
