@@ -89,7 +89,7 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     plan_payload = parse_json_payload(plan, forbidden_markers)
     steps = plan_payload.get("steps", [])
     assert steps
-    tool_refs = {step.get("toolRef") for step in steps if isinstance(step, dict)}
+    tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
     assert "workbench.isaac_lab.byof_repo" in tool_refs
 
 
