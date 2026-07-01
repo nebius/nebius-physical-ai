@@ -38,14 +38,14 @@ def check_franka_pick_place_rollout() -> CheckResult:
     if obs is None:
         return CheckResult("franka pick-place rollout", False, "reset returned None")
     for _ in range(4):
-        action = torch.zeros((env.num_envs, env.num_actions), device=env.device)
+        action = torch.zeros((env.n_envs, env.act_dim), device=env.device)
         obs, _reward, _done, _info = env.step(action)
         if obs is None:
             return CheckResult("franka pick-place rollout", False, "step returned None obs")
     return CheckResult(
         "franka pick-place rollout",
         True,
-        f"num_envs={env.num_envs} device={env.device}",
+        f"num_envs={env.n_envs} device={env.device}",
     )
 
 

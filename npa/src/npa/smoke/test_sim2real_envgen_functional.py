@@ -62,7 +62,7 @@ def check_genesis_cuda_step() -> CheckResult:
     obs = env.reset()
     if obs is None:
         return CheckResult("genesis cuda step", False, "reset returned None")
-    action = torch.zeros((1, env.num_actions), device=env.device)
+    action = torch.zeros((1, env.act_dim), device=env.device)
     env.step(action)
     return CheckResult("genesis cuda step", True, f"device={env.device}")
 
