@@ -133,7 +133,9 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,120}\b(?:multi[\s-]?region|cross[\s-]?region|2(?:\s+different)?\s+regions?|two(?:\s+different)?\s+regions?|multi[\s-]?project|cross[\s-]?project)\b"
             r"|\b(?:multi[\s-]?region|cross[\s-]?region|2(?:\s+different)?\s+regions?|two(?:\s+different)?\s+regions?)\b"
             r".{0,120}\bgpu\b"
-            r".{0,120}\b(?:workflow|yaml|spec)\b",
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:generate|create|draft|write|show)\b.{0,80}\b(?:example|simple|minimal)?\b.{0,120}\bworkflow\b.{0,80}\b(?:yaml|spec)\b"
+            r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b",
             re.IGNORECASE,
         ),
     ),

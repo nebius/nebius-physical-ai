@@ -45,10 +45,11 @@ ROLLOUT_TIMEOUT_SEC = 900
 DEPLOYMENT_PROGRESS_DEADLINE_SEC = 900
 KUBECTL_DELETE_TIMEOUT_SEC = 60
 
-STAGED_RUN_ID_RE = re.compile(
-    r"^(?:sim2real-staged-[0-9]{8}t[0-9]{6}z|rtxpro-staged-[a-z0-9-]*[0-9]{8}t[0-9]{6}z)$",
-    re.IGNORECASE,
-)
+# A run id becomes both an S3 key segment (.../{run_id}/reports/sim2real.rrd) and
+# the seed for k8s label values, so it must be a single safe path segment. It does
+# NOT need to match the staged-loop naming: any real run id (e2e, BYO-robot, custom)
+# has artifacts on S3 and is servable. Guard against junk/traversal, not against shape.
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PLACEHOLDER_RUN_ID_RE = re.compile(
     r"yyyymmdd|hhmmss|your-run-id|<run-id>|placeholder|example-run|tbd|xxxx",
     re.IGNORECASE,
@@ -139,7 +140,15 @@ Sim2RealRerunServeConfig = RerunServeConfig
 Sim2RealRerunServeResult = RerunServeResult
 
 
-def validate_staged_run_id(run_id: str) -> str:
+def validate_run_id(run_id: str) -> str:
+    """Validate a run id for serving: a real, safe S3-key/label segment.
+
+    Accepts any run id (staged-loop, e2e, BYO-robot, custom) — the serve path
+    only needs the id to locate ``{prefix}/{run_id}/reports/sim2real.rrd`` on S3
+    and to seed k8s labels, so it must be one safe path segment. Rejects template
+    placeholders and anything with path separators, traversal, or unsafe chars.
+    """
+
     value = run_id.strip()
     if not value:
         raise RerunServeError("--run-id is required")
@@ -148,12 +157,19 @@ def validate_staged_run_id(run_id: str) -> str:
             f"run-id looks like a template placeholder: {value!r}. "
             "Use a real id from submit output (e.g. sim2real-staged-20260615t180818z)."
         )
-    if not STAGED_RUN_ID_RE.fullmatch(value):
+    if not RUN_ID_RE.fullmatch(value):
         raise RerunServeError(
-            "run-id must match sim2real-staged-YYYYMMDDtHHMMSSz with digit timestamps "
-            f"(got {value!r})."
+            "run-id must be a single safe path segment matching [A-Za-z0-9._-] and "
+            f"start with an alphanumeric (got {value!r}); it is used in the S3 key "
+            "and k8s labels. To serve a recording at an arbitrary path, pass "
+            "--rrd-uri/--report-uri."
         )
     return value
+
+
+# Back-compat alias: serving no longer requires the staged-loop naming shape, but
+# callers/tests still import this name.
+validate_staged_run_id = validate_run_id
 
 
 def verify_rrd_exists_on_s3(
@@ -440,7 +456,7 @@ def build_rerun_serve_config(
     auth_user: str = "",
     auth_password: str = "",
 ) -> RerunServeConfig:
-    normalized_run_id = validate_staged_run_id(run_id)
+    normalized_run_id = validate_run_id(run_id)
     storage = resolve_project_storage(project)
     bucket = resolve_storage_bucket(storage, override=s3_bucket)
     endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
@@ -1176,7 +1192,7 @@ def maybe_auto_rerun_serve(
         }
 
     try:
-        normalized_run_id = validate_staged_run_id(run_id)
+        normalized_run_id = validate_run_id(run_id)
     except RerunServeError as exc:
         return {"status": "skipped", "reason": str(exc)}
 

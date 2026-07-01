@@ -18,10 +18,10 @@ Examples:
   python npa/scripts/run_tokenfactory_train_triage.py --render-only
 
   # Full live run: serverless GPU smoke train + Token Factory triage.
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py
 
   # Skip the GPU stage and only triage an existing run prefix (cheap iteration).
-  NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
+  NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
       --from-output-path s3://my-bucket/lerobot-serverless-test/<ts>/
 """
 
@@ -135,9 +135,15 @@ def _hydrate_credentials() -> None:
     try:
         import os
 
-        from npa.clients.credentials import apply_shared_credential_env, load_credentials
+        from npa.clients.credentials import load_credentials, shared_credential_env
 
-        apply_shared_credential_env(os.environ, load_credentials())
+        # Ignore inherited shell vars (for example stale AWS_ENDPOINT_URL) so
+        # this workflow always hydrates from canonical file-backed credentials.
+        for key, value in shared_credential_env(load_credentials(environ={})).items():
+            if value:
+                # This workflow chains cloud + hosted stages; prefer canonical
+                # credentials from ~/.npa/credentials.yaml over inherited shell env.
+                os.environ[key] = value
     except Exception:  # noqa: BLE001 - best-effort; live calls surface real errors.
         pass
 

@@ -6,7 +6,7 @@ different scenes around campus, capture images, and use the reasoner to extract
 **scene understanding** and a **plan of action** for a task at that scene.
 
 No GPUs, no servers to manage: inference is hosted, so a team needs only a
-`NEBIUS_API_KEY` and the `npa` CLI.
+`NEBIUS_TOKEN_FACTORY_KEY` and the `npa` CLI.
 
 ## Why this works
 
@@ -49,7 +49,7 @@ Push scenes to S3 and launch the CPU-only workflow; the key rides in as a secret
 
 ```bash
 sky jobs launch \
-  --secret NEBIUS_API_KEY \
+  --secret NEBIUS_TOKEN_FACTORY_KEY \
   --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
   npa/workflows/workbench/skypilot/token-factory-cosmos-reason.yaml

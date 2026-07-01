@@ -971,7 +971,7 @@ def _agent_system_prompt() -> str:
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- POST /api/workflows/sim2real/submit — submit Sim2Real with current asset selection",
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
-        "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 YAML",
+        "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
         "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
         "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
         "- GET /api/tools — workbench toolRef catalog",
@@ -983,6 +983,8 @@ def _agent_system_prompt() -> str:
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
         "When asked about Sim2Real, workflow, or Rerun status, summarize run_id, stage, camera,",
         "rerun_ready, and latest_submit from session state — never reply with only a raw GET path.",
+        "When generating workflow YAML, always emit canonical keys: apiVersion, kind, metadata, config,",
+        "initial, and states. Never emit api_version, stages, or previous.outputs placeholders.",
         "",
         "Workbench toolRefs (invoke via npa workbench / npa.workflow on operator machine):",
     ]
@@ -1134,6 +1136,8 @@ def _last_user_message(raw_messages: list) -> str:
 
 def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str], str | None, dict | None]:
     intent = match_chat_intent(user_text)
+    if not intent and re.search(r"\\bworkflow\\b.*\\b(?:yaml|spec)\\b", str(user_text or ""), re.IGNORECASE):
+        intent = "create_workflow"
     if not intent:
         return None, [], None, None
     state = _load_state()
@@ -1191,8 +1195,8 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
             reply = (
                 "**Could not generate runnable workflow YAML yet.**\n"
                 f"- **reason**: `{fail_reason}`\n"
-                "- Adjust your request or template details and retry; chat returns YAML only after "
-                "both validation and planning succeed."
+                "- Adjust your request or template details and retry;"
+                " chat returns YAML only after both validation and planning succeed."
             )
             return reply, apis_for_intent(intent), None, {{"ok": False, "validation": validation, "plan": plan}}
         reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
@@ -2190,8 +2194,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .msg-row.user {{ justify-content: flex-end; }}
       .msg-row.assistant, .msg-row.error, .msg-row.thinking {{ justify-content: flex-start; }}
-      .bubble {{
+      .msg-card {{
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
         max-width: 78%;
+      }}
+      .msg-row.user .msg-card {{ align-items: flex-end; }}
+      .bubble {{
+        max-width: 100%;
         border-radius: 12px;
         border: 1px solid var(--border);
         background: #fff;
@@ -2199,6 +2211,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 10px 12px;
         font-size: 14px;
         line-height: 1.45;
+      }}
+      .bubble pre {{
+        margin: 8px 0;
+        background: #f4f6fc;
+        border: 1px solid #dde2f0;
+        border-radius: 8px;
+        padding: 10px;
+        overflow-x: auto;
+      }}
+      .bubble pre code {{
+        white-space: pre;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        border: none;
+        background: transparent;
+        padding: 0;
       }}
       .bubble p {{ margin: 0 0 6px 0; color: inherit; }}
       .bubble p:last-child {{ margin-bottom: 0; }}
@@ -2220,6 +2249,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         border-color: #e9b8b8;
         background: #fff8f8;
       }}
+      .msg-actions {{
+        display: inline-flex;
+        gap: 6px;
+      }}
+      .msg-copy-btn {{
+        border: 1px solid #d5d9e6;
+        border-radius: 999px;
+        background: #fff;
+        color: #3c4458;
+        font-size: 11px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }}
+      .msg-copy-btn:hover {{ background: #f5f7ff; }}
       .msg-row.thinking .bubble {{
         min-width: 90px;
         background: #f2f3f8;
@@ -2430,7 +2473,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </section>
         <section class="panel workflow-panel">
           <h3>Workflow YAML</h3>
-          <p class="hint">npa.workflow/v0.0.1 specs — generate via chat, upload, validate, plan, or submit.</p>
+          <p class="hint">npa.workflow/v0.0.1-beta specs — generate via chat, upload, validate, plan, or submit.</p>
           <div class="workflow-meta">
             <span class="pill">name: <strong id="workflowName">—</strong></span>
             <span class="pill">validation: <strong id="workflowValidation">pending</strong></span>
@@ -2715,13 +2758,44 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         let html = "";
         let inList = false;
         let listKind = "";
+        let inCode = false;
+        let codeLang = "";
+        let codeLines = [];
+        const closeList = () => {{
+          if (!inList) return;
+          html += listKind === "ol" ? "</ol>" : "</ul>";
+          inList = false;
+          listKind = "";
+        }};
+        const closeCode = () => {{
+          if (!inCode) return;
+          const langAttr = codeLang ? ' data-lang="' + escapeHtml(codeLang) + '"' : "";
+          html += "<pre><code" + langAttr + ">" + escapeHtml(codeLines.join("\\n")) + "</code></pre>";
+          inCode = false;
+          codeLang = "";
+          codeLines = [];
+        }};
         for (const raw of lines) {{
           const line = String(raw || "");
+          const fenceMatch = line.match(/^```([a-zA-Z0-9_-]+)?\s*$/);
+          if (fenceMatch) {{
+            if (inCode) {{
+              closeCode();
+            }} else {{
+              closeList();
+              inCode = true;
+              codeLang = String(fenceMatch[1] || "").toLowerCase();
+              codeLines = [];
+            }}
+            continue;
+          }}
+          if (inCode) {{
+            codeLines.push(line);
+            continue;
+          }}
           if (/^\s*[-*]\s+/.test(line)) {{
             if (!inList || listKind !== "ul") {{
-              if (inList) {{
-                html += listKind === "ol" ? "</ol>" : "</ul>";
-              }}
+              closeList();
               html += "<ul>";
               inList = true;
               listKind = "ul";
@@ -2731,9 +2805,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           if (/^\s*\d+\.\s+/.test(line)) {{
             if (!inList || listKind !== "ol") {{
-              if (inList) {{
-                html += listKind === "ol" ? "</ol>" : "</ul>";
-              }}
+              closeList();
               html += "<ol>";
               inList = true;
               listKind = "ol";
@@ -2741,36 +2813,91 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             html += "<li>" + renderInlineMarkdownLite(line.replace(/^\s*\d+\.\s+/, "")) + "</li>";
             continue;
           }}
-          if (inList) {{
-            html += listKind === "ol" ? "</ol>" : "</ul>";
-            inList = false;
-            listKind = "";
-          }}
+          closeList();
           if (!line.trim()) {{
             continue;
-          }} else {{
-            html += "<p>" + renderInlineMarkdownLite(line) + "</p>";
           }}
+          html += "<p>" + renderInlineMarkdownLite(line) + "</p>";
         }}
-        if (inList) {{
-          html += listKind === "ol" ? "</ol>" : "</ul>";
-        }}
+        closeList();
+        closeCode();
         return html || "<p></p>";
+      }}
+      function extractFencedCode(text, preferredLang) {{
+        const raw = String(text || "");
+        const blocks = [];
+        const re = /```([a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```/g;
+        let match;
+        while ((match = re.exec(raw)) !== null) {{
+          blocks.push({{
+            lang: String(match[1] || "").toLowerCase(),
+            body: String(match[2] || "").replace(/\s+$/, ""),
+          }});
+        }}
+        if (!blocks.length) return "";
+        if (preferredLang) {{
+          const target = blocks.find((item) => item.lang === String(preferredLang).toLowerCase());
+          if (target) return target.body;
+        }}
+        return blocks[0].body;
+      }}
+      async function copyTextToClipboard(text) {{
+        const value = String(text || "");
+        if (!value) return false;
+        if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(value);
+          return true;
+        }}
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.setAttribute("readonly", "readonly");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return Boolean(ok);
       }}
       function appendChat(role, text, opts) {{
         const options = opts || {{}};
+        const rawText = String(text || "");
         const log = document.getElementById("chatLog");
         const row = document.createElement("div");
         row.className = "msg-row " + role;
+        const card = document.createElement("div");
+        card.className = "msg-card";
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         if (options.thinking) {{
           bubble.innerHTML =
             '<span class="sparkle">✦</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
         }} else {{
-          bubble.innerHTML = markdownLiteHtml(String(text || ""));
+          bubble.innerHTML = markdownLiteHtml(rawText);
         }}
-        row.appendChild(bubble);
+        card.appendChild(bubble);
+        if (!options.thinking && role === "assistant") {{
+          const actions = document.createElement("div");
+          actions.className = "msg-actions";
+          const copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.className = "msg-copy-btn";
+          const yamlBlock = extractFencedCode(rawText, "yaml");
+          const payload = yamlBlock || rawText;
+          copyBtn.textContent = yamlBlock ? "Copy YAML" : "Copy";
+          copyBtn.addEventListener("click", async () => {{
+            try {{
+              const ok = await copyTextToClipboard(payload);
+              if (!ok) throw new Error("copy failed");
+              showToast(yamlBlock ? "YAML copied" : "Message copied", "success");
+            }} catch (err) {{
+              showToast(String(err && err.message ? err.message : err), "error");
+            }}
+          }});
+          actions.appendChild(copyBtn);
+          card.appendChild(actions);
+        }}
+        row.appendChild(card);
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
         return row;

@@ -206,7 +206,7 @@ def test_rollout_judge_is_two_stage_gpu_then_hosted_judge() -> None:
     assert "python3 -m vllm" not in judge_stage["run"]
     assert "npa workbench vlm-eval run" in judge_stage["run"]
     assert "--backend api" in judge_stage["run"]
-    assert "--api-key-env NEBIUS_API_KEY" in judge_stage["run"]
+    assert "--api-key-env NEBIUS_TOKEN_FACTORY_KEY" in judge_stage["run"]
     # The judge reads exactly what the GPU stage wrote.
     assert judge_stage["envs"]["ROLLOUTS_URI"] == gpu_stage["envs"]["ROLLOUTS_URI"]
 
@@ -453,7 +453,7 @@ def test_all_combo_yamls_are_well_formed_serial_pipelines() -> None:
             f"{path.name} has no GPU compute stage"
         )
         full_text = path.read_text(encoding="utf-8")
-        assert "NEBIUS_API_KEY" in full_text, f"{path.name} never references the Token Factory key"
+        assert "NEBIUS_TOKEN_FACTORY_KEY" in full_text, f"{path.name} never references the Token Factory key"
 
 
 def test_sdk_exposes_workflow_submit_for_combo_yamls() -> None:
@@ -478,12 +478,12 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker) -> None:
     workflow.submit(
         ROLLOUT_JUDGE_YAML,
         run_id="rj-test",
-        secret_env=["NEBIUS_API_KEY", "AWS_ACCESS_KEY_ID"],
+        secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID"],
     )
 
     submit_mock.assert_called_once()
     assert submit_mock.call_args.args[1] == "rj-test"
-    assert "NEBIUS_API_KEY" in submit_mock.call_args.kwargs["secret_envs"]
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in submit_mock.call_args.kwargs["secret_envs"]
 
 
 def test_sdk_exposes_token_factory_and_vlm_eval_building_blocks() -> None:

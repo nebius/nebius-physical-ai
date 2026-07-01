@@ -20,7 +20,7 @@ first — it explains the contract, both tokens, and the two composition styles.
 
 ## Prerequisites
 
-- A Token Factory API key in `NEBIUS_API_KEY` (see
+- A Token Factory API key in `NEBIUS_TOKEN_FACTORY_KEY` (see
   [token-factory.md](../token-factory.md) to register and mint one).
 - Nebius cloud credentials for compute + storage. The serverless path needs a
   Nebius **project ID** and an S3 **bucket** you can write to; the Kubernetes
@@ -45,13 +45,13 @@ python npa/scripts/run_tokenfactory_train_triage.py --render-only
 # Full live run: serverless GPU smoke train, then Token Factory triage.
 # --project-id and --output-path are required unless your workbench config
 # already provides a project and storage.checkpoint_bucket.
-NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
+NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
   --project-id project-xxxxxxxx \
   --output-path s3://your-bucket/tf-triage/<run-id>/ \
   --gpu-type h200
 
 # Cheap iteration: skip the GPU stage and only triage an existing run prefix.
-NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
+NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_train_triage.py \
   --from-output-path s3://your-bucket/lerobot-serverless-test/<ts>/
 ```
 
@@ -82,7 +82,7 @@ npa workbench workflow submit \
 Pass the key and storage creds as secrets when launching the YAML directly:
 
 ```bash
-sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY \
   npa/workflows/workbench/skypilot/tokenfactory-rollout-judge.yaml
 ```
@@ -105,13 +105,13 @@ then ranks the completed runs from their real artifacts and names a winner.
 python npa/scripts/run_tokenfactory_sim_sweep.py --render-only --num-variants 2
 
 # Full live run: design -> N serverless GPU trains -> ranking.
-NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
+NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
   --project-id project-xxxxxxxx \
   --bucket s3://your-bucket/tf-sim-sweep \
   --num-variants 2
 
 # Cheap iteration: rank existing run prefixes (skips design + GPU stages).
-NEBIUS_API_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
+NEBIUS_TOKEN_FACTORY_KEY=... python npa/scripts/run_tokenfactory_sim_sweep.py \
   --rank-existing s3://your-bucket/runA/,s3://your-bucket/runB/
 ```
 

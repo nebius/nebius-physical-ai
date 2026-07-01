@@ -10,6 +10,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.orchestration.npa_workflow import API_VERSION, API_VERSION_BETA
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,7 +44,7 @@ def test_skypilot_yaml_documents_parse(path: Path) -> None:
 def test_npa_workflow_yaml_validates(path: Path) -> None:
     spec = load_spec(path)
     validate_spec(spec)
-    assert spec.api_version == "npa.workflow/v0.0.1"
+    assert spec.api_version in {API_VERSION, API_VERSION_BETA}
 
 
 @pytest.mark.parametrize("path", _npa_yaml_paths(), ids=lambda p: p.name)

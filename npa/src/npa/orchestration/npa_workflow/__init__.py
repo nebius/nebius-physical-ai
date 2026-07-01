@@ -1,4 +1,4 @@
-"""NPA workflow specification (``apiVersion: npa.workflow/v0.0.1``) loader and interpreter."""
+"""NPA workflow specification loader and interpreter."""
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import (
@@ -9,6 +9,7 @@ from npa.orchestration.npa_workflow.interpreter import (
 )
 from npa.orchestration.npa_workflow.spec import (
     API_VERSION,
+    API_VERSION_BETA,
     NpaWorkflowSpec,
     load_spec,
     validate_spec,
@@ -16,6 +17,7 @@ from npa.orchestration.npa_workflow.spec import (
 
 __all__ = [
     "API_VERSION",
+    "API_VERSION_BETA",
     "ExecutionPlan",
     "NpaWorkflowError",
     "NpaWorkflowSpec",

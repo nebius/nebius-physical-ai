@@ -370,6 +370,7 @@ def test_generate_rl_policy_training_yaml_plan() -> None:
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
+    assert "apiVersion: npa.workflow/v0.0.1-beta" in two_step
     vlm_rl = generate_workflow_yaml("vlm-rl-loop")
     assert "sim2real-vlm-rl" in vlm_rl
     gate = generate_workflow_yaml("token-factory-gate")

@@ -728,7 +728,11 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     caplog.set_level("DEBUG", logger="npa.clients.serverless")
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
 
-    info = _create_job(client, env={"MODE": "smoke"}, extra_env={"HF_TOKEN": "hf_secret_value"})
+    info = _create_job(
+        client,
+        env={"MODE": "smoke", "NPA_OUTPUT_PATH": "s3://bucket/jobs/override/"},
+        extra_env={"HF_TOKEN": "hf_secret_value"},
+    )
 
     assert info.status == "succeeded"
     assert info.output_uris == ("s3://bucket/jobs/cosmos-train/",)
@@ -738,6 +742,9 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     _create_job(client, subnet_id="vpcsubnet-1")
     assert calls[1][0][calls[1][0].index("--subnet-id") + 1] == "vpcsubnet-1"
     assert "MODE=smoke" in calls[0][0]
+    assert calls[0][0].count("--env") >= 1
+    assert calls[0][0].count("NPA_OUTPUT_PATH=s3://bucket/jobs/override/") == 1
+    assert "NPA_OUTPUT_PATH=s3://bucket/jobs/cosmos-train/" not in calls[0][0]
     assert "HF_TOKEN=hf_secret_value" in calls[0][0]
     assert "hf_secret_value" not in caplog.text
     assert "HF_TOKEN=<redacted>" in caplog.text

@@ -5,7 +5,7 @@
 # hosted, so this runs on CPU only. Designed for the "walk the robot to a scene,
 # ask what to do" physical-common-sense loop. Provide the API key as a SkyPilot
 # secret at launch:
-#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#   sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
 #     --secret AWS_SECRET_ACCESS_KEY token-factory-cosmos-reason.yaml
 name: token-factory-cosmos-reason
 execution: serial
@@ -35,8 +35,8 @@ setup: |
   fi
 run: |
   set -euo pipefail
-  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
-    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+  if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then
+    echo "NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY ..." >&2
     exit 1
   fi
   npa workbench token-factory reason \

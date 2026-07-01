@@ -69,7 +69,7 @@ service account.
 
 ### B. Token Factory token (for hosted inference)
 
-This is a separate console and a separate key (`NEBIUS_API_KEY`). Full
+This is a separate console and a separate key (`NEBIUS_TOKEN_FACTORY_KEY`). Full
 walkthrough: [token-factory.md](./token-factory.md). The 2-minute version:
 
 1. Sign in at <https://tokenfactory.nebius.com/> and make sure the project has
@@ -78,8 +78,8 @@ walkthrough: [token-factory.md](./token-factory.md). The 2-minute version:
 3. Give it to NPA (any one):
 
 ```bash
-npa configure                       # answer the NEBIUS_API_KEY prompt, or
-export NEBIUS_API_KEY=nebius_xxx     # env var for CI / one-off shells, or
+npa configure                       # answer the NEBIUS_TOKEN_FACTORY_KEY prompt, or
+export NEBIUS_TOKEN_FACTORY_KEY=nebius_xxx     # env var for CI / one-off shells, or
 # put it under tokens: in ~/.npa/credentials.yaml
 ```
 
@@ -164,7 +164,7 @@ A multi-document YAML with `execution: serial`: one document per stage, each
 with its own image and resources. The GPU stage requests `accelerators`; the
 Token Factory stage omits them (CPU-only) and uses a small image. Pass `s3://`
 URIs through `envs` so each stage reads exactly what the previous one wrote, and
-fail fast if `NEBIUS_API_KEY` is unset.
+fail fast if `NEBIUS_TOKEN_FACTORY_KEY` is unset.
 
 ```yaml
 name: my-combo
@@ -180,14 +180,14 @@ name: tokenfactory-stage
 resources: { cloud: kubernetes, cpus: 4 }   # no accelerators -> zero-GPU
 envs: { OUT_URI: "s3://<your-bucket-name>/<run-id>/artifacts/" }
 run: |
-  [[ -z "${NEBIUS_API_KEY:-}" ]] && { echo "NEBIUS_API_KEY required"; exit 1; }
+  [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]] && { echo "NEBIUS_TOKEN_FACTORY_KEY required"; exit 1; }
   npa workbench vlm-eval run --input-path "${OUT_URI}" --backend api ...
 ```
 
 Launch with both credential sets as secrets:
 
 ```bash
-sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
   --secret AWS_SECRET_ACCESS_KEY npa/workflows/workbench/skypilot/<your>.yaml
 ```
 
@@ -229,7 +229,7 @@ workflow.submit(
         "ROLLOUTS_URI=s3://your-bucket/tokenfactory/run-1/rollouts/",
         "JUDGE_URI=s3://your-bucket/tokenfactory/run-1/vlm-judge/",
     ],
-    secret_env=["NEBIUS_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+    secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
 )
 ```
 
@@ -247,4 +247,4 @@ workflow.submit(
 - [ ] No hardcoded project/registry/bucket IDs — pass via flag, `--var`, or `--secret`.
 - [ ] Pure logic in `token_factory_combos.py` (unit-tested); I/O in the runner/YAML.
 - [ ] Runner has `--render-only` and a cheap no-GPU iteration mode.
-- [ ] `NEBIUS_API_KEY` checked at the start of every hosted stage.
+- [ ] `NEBIUS_TOKEN_FACTORY_KEY` checked at the start of every hosted stage.

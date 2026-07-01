@@ -9,7 +9,7 @@
 #   Stage 2 (CPU, zero-GPU): vlm-eval --backend api scores the rollout with a
 #           hosted Token Factory VLM. No local VLM serving stage is needed.
 # Provide the API key (and S3 creds) as SkyPilot secrets at launch:
-#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#   sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
 #     --secret AWS_SECRET_ACCESS_KEY tokenfactory-rollout-judge.yaml
 name: tokenfactory-rollout-judge
 execution: serial
@@ -111,8 +111,8 @@ setup: |
   fi
 run: |
   set -euo pipefail
-  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
-    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+  if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then
+    echo "NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY ..." >&2
     exit 1
   fi
   npa workbench vlm-eval run \
@@ -121,7 +121,7 @@ run: |
     --task "${VLM_EVAL_TASK}" \
     --backend api \
     --model "${VLM_MODEL}" \
-    --api-key-env NEBIUS_API_KEY \
+    --api-key-env NEBIUS_TOKEN_FACTORY_KEY \
     --frame-selection "${VLM_FRAME_SELECTION}" \
     --max-frames "${VLM_MAX_FRAMES}" \
     --success-threshold "${VLM_SUCCESS_THRESHOLD}" \

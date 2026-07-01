@@ -73,7 +73,7 @@ Account, bucket, and credential details:
 [docs/workbench/getting-started.md](docs/workbench/getting-started.md).
 
 **Zero-GPU inference:** [Nebius Token Factory](https://tokenfactory.nebius.com/)
-needs only a `NEBIUS_API_KEY` — see
+needs only a `NEBIUS_TOKEN_FACTORY_KEY` — see
 [docs/workbench/token-factory.md](docs/workbench/token-factory.md).
 
 **Flagship GPU workload:** NVIDIA Cosmos (`npa workbench cosmos deploy/infer`)

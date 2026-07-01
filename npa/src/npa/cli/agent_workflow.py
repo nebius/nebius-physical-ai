@@ -10,7 +10,10 @@ from typing import Any
 
 import yaml
 
-API_VERSION = "npa.workflow/v0.0.1"
+API_VERSION_STABLE = "npa.workflow/v0.0.1"
+API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
+API_VERSION = API_VERSION_BETA
+_SUPPORTED_API_VERSIONS = frozenset({API_VERSION_STABLE, API_VERSION_BETA})
 
 _TEMPLATES = (
     "two-step",
@@ -26,6 +29,10 @@ class _FoldedStr(str):
     """YAML scalar rendered with folded (>) style."""
 
 
+class _LiteralStr(str):
+    """YAML scalar rendered with literal (|) style."""
+
+
 class _WorkflowDumper(yaml.SafeDumper):
     pass
 
@@ -35,6 +42,13 @@ def _folded_representer(dumper: _WorkflowDumper, data: _FoldedStr) -> yaml.Scala
 
 
 _WorkflowDumper.add_representer(_FoldedStr, _folded_representer)
+
+
+def _literal_representer(dumper: _WorkflowDumper, data: _LiteralStr) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+_WorkflowDumper.add_representer(_LiteralStr, _literal_representer)
 
 _TEMPLATE_ALIASES: dict[str, str] = {
     "vlm_rl_loop": "vlm-rl-loop",
@@ -1052,6 +1066,14 @@ def _build_spec(template: str, *, bucket: str, name: str | None) -> OrderedDict[
         for key, value in state_spec.items():
             if key == "description":
                 state_payload[key] = _FoldedStr(str(value))
+            elif key == "run" and isinstance(value, dict):
+                run_payload: OrderedDict[str, Any] = OrderedDict()
+                for run_key, run_value in value.items():
+                    if run_key == "shell" and isinstance(run_value, str) and "\n" in run_value:
+                        run_payload[run_key] = _LiteralStr(run_value)
+                    else:
+                        run_payload[run_key] = run_value
+                state_payload[key] = run_payload
             else:
                 state_payload[key] = value
         states[state_name] = state_payload
@@ -1253,7 +1275,7 @@ def format_workflow_chat_reply(
     t = str(template or "two-step").strip().lower()
     desc = _desc_map.get(t, "2-step Sim2Real pipeline")
     lines = [
-        f"**Generated npa.workflow/v0.0.1 spec** ({desc}):",
+        f"**Generated {API_VERSION} spec** ({desc}):",
         f"- **name**: `{name}`",
         f"- **validation**: `{status}`",
         f"- **runnable**: `{'yes' if resolved_runnable else 'no'}`",
@@ -1275,10 +1297,19 @@ def format_workflow_chat_reply(
     return "\n".join(lines)
 
 
+def _npa_compatible_yaml(yaml_text: str) -> str:
+    """Translate beta apiVersion to stable for orchestration loaders."""
+    return re.sub(
+        r"(?m)^(\s*apiVersion:\s*)npa\.workflow/v0\.0\.1-beta(\s*)$",
+        r"\1npa.workflow/v0.0.1\2",
+        str(yaml_text or ""),
+    )
+
+
 def _validate_with_npa(yaml_text: str) -> dict[str, Any]:
     from npa.orchestration.npa_workflow import NpaWorkflowError, load_spec
 
-    path = _write_temp_yaml(yaml_text)
+    path = _write_temp_yaml(_npa_compatible_yaml(yaml_text))
     try:
         spec = load_spec(path)
     except NpaWorkflowError as exc:
@@ -1296,7 +1327,7 @@ def _validate_with_npa(yaml_text: str) -> dict[str, Any]:
 def _plan_with_npa(yaml_text: str, *, run_id: str, assume_decision: str) -> dict[str, Any]:
     from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, load_spec
 
-    path = _write_temp_yaml(yaml_text)
+    path = _write_temp_yaml(_npa_compatible_yaml(yaml_text))
     try:
         spec = load_spec(path)
         resolved_run_id = run_id or f"{spec.name}-plan"
@@ -1320,11 +1351,14 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
         return {"ok": False, "status": "invalid", "error": "workflow spec must be a mapping"}
 
     api_version = str(data.get("apiVersion") or "")
-    if api_version != API_VERSION:
+    if api_version not in _SUPPORTED_API_VERSIONS:
         return {
             "ok": False,
             "status": "invalid",
-            "error": f"unsupported apiVersion {api_version!r} (expected {API_VERSION})",
+            "error": (
+                f"unsupported apiVersion {api_version!r} "
+                f"(expected one of {sorted(_SUPPORTED_API_VERSIONS)!r})"
+            ),
         }
 
     metadata = data.get("metadata") or {}
@@ -1371,6 +1405,7 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
     import yaml
 
     data = yaml.safe_load(yaml_text) or {}
+    api_version = str(data.get("apiVersion") or API_VERSION)
     states_raw = data.get("states") or {}
     metadata = data.get("metadata") or {}
     name = str(metadata.get("name") or "unnamed") if isinstance(metadata, dict) else "unnamed"
@@ -1401,7 +1436,7 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
     return {
         "ok": True,
         "workflow": name,
-        "api_version": API_VERSION,
+        "api_version": api_version,
         "initial": initial,
         "run_id": resolved_run_id,
         "steps": steps,

@@ -75,12 +75,14 @@ when needed, then with an authenticated profile
 auto-creates an S3 bucket (and access key) when you press Enter at the bucket
 prompt, so you supply your Nebius tenant id, project id, and region plus optional
 bucket name, storage class (standard or enhanced), bucket size, Hugging Face,
-Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
+AI Cloud, Token Factory, and NGC tokens. Use `npa configure --no-provision` to enter
 existing S3 credentials instead, or create ~/.npa/credentials.yaml by hand for
 user-level tokens, object storage, and BYOVM SSH defaults:
 
 tokens:
   HF_TOKEN: hf_REPLACE_ME
+  # Optional: Nebius AI Cloud API key (for Nebius AI Cloud APIs).
+  NEBIUS_AI_CLOUD_KEY: <paste-your-nebius-ai-cloud-api-key>
   # Optional: Nebius Token Factory API key (OpenAI-compatible hosted inference).
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
@@ -371,7 +373,7 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     """Prompt for credentials/config and write the NPA dotfiles."""
 
     from npa.clients.config import CONFIG_PATH, write_config
-    from npa.clients.credentials import write_credentials_file
+    from npa.clients.credentials import load_credentials, write_credentials_file
     from npa.clients import nebius as nebius_client
     from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
@@ -388,6 +390,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
                 show_default=bool(default) and not secret,
             )
         ).strip()
+
+    existing_credentials = load_credentials(environ={})
 
     project_id = ask("Nebius project id")
     tenant_id = ask("Nebius tenant id")
@@ -416,25 +420,51 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     if storage is None:
         storage = {
             "aws_access_key_id": ask(
-                "S3 access key id (AWS_ACCESS_KEY_ID)", secret=True
+                "S3 access key id (AWS_ACCESS_KEY_ID)",
+                default=existing_credentials.s3_access_key_id,
+                secret=True,
             ),
             "aws_secret_access_key": ask(
-                "S3 secret access key (AWS_SECRET_ACCESS_KEY)", secret=True
+                "S3 secret access key (AWS_SECRET_ACCESS_KEY)",
+                default=existing_credentials.s3_secret_access_key,
+                secret=True,
             ),
-            "endpoint_url": ask("S3 endpoint URL", default=_endpoint_for_region(region)),
-            "bucket": ask("S3 bucket URI (e.g. s3://<your-bucket>/)"),
+            "endpoint_url": ask(
+                "S3 endpoint URL",
+                default=existing_credentials.s3_endpoint or _endpoint_for_region(region),
+            ),
+            "bucket": ask(
+                "S3 bucket URI (e.g. s3://<your-bucket>/)",
+                default=existing_credentials.s3_bucket,
+            ),
         }
 
-    hf_token = ask("Hugging Face token (HF_TOKEN)", secret=True)
-    nebius_api_key = ask(
-        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)", secret=True
+    hf_token = ask(
+        "Hugging Face token (HF_TOKEN)",
+        default=existing_credentials.hf_token,
+        secret=True,
     )
-    ngc_api_key = ask("NVIDIA NGC API key (NGC_API_KEY)", secret=True)
+    ai_cloud_api_key = ask(
+        "Nebius AI Cloud API key (NEBIUS_AI_CLOUD_KEY, optional)",
+        default=existing_credentials.ai_cloud_api_key,
+        secret=True,
+    )
+    token_factory_api_key = ask(
+        "Nebius Token Factory API key (NEBIUS_TOKEN_FACTORY_KEY, optional)",
+        default=existing_credentials.token_factory_api_key,
+        secret=True,
+    )
+    ngc_api_key = ask(
+        "NVIDIA NGC API key (NGC_API_KEY)",
+        default=existing_credentials.ngc_api_key,
+        secret=True,
+    )
 
     credentials_payload: dict[str, object] = {
         "tokens": {
             "HF_TOKEN": hf_token,
-            "NEBIUS_TOKEN_FACTORY_KEY": nebius_api_key,
+            "NEBIUS_AI_CLOUD_KEY": ai_cloud_api_key,
+            "NEBIUS_TOKEN_FACTORY_KEY": token_factory_api_key,
         },
         "ngc": {"api_key": ngc_api_key},
         "storage": {

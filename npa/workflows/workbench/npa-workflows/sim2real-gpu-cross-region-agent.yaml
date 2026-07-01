@@ -1,4 +1,4 @@
-apiVersion: npa.workflow/v0.0.1
+apiVersion: npa.workflow/v0.0.1-beta
 kind: Workflow
 metadata:
   name: sim2real-gpu-cross-region
