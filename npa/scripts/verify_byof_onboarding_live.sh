@@ -13,7 +13,7 @@ echo "=== BYOF onboarding live infra (project=${PROJECT}) ==="
 
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py \
   "${PYTEST_ARGS[@]}" \
-  -k "not live_byof_runner_submit_smoke and not live_byof_runner_registry_smoke" \
+  -k "not live_byof_runner_submit_smoke and not live_byof_runner_registry_smoke and not live_byof_runner_container_build_push and not live_byof_container_has_leisaac" \
   --timeout=120
 
 if [[ "${NPA_AGENT_LIVE:-0}" == "1" ]]; then
@@ -26,8 +26,18 @@ if [[ "${NPA_AGENT_LIVE:-0}" == "1" ]]; then
     --timeout=120
 fi
 
+if [[ "${NPA_BYOF_LIVE_CONTAINER:-0}" == "1" ]]; then
+  echo "--- live BYOF container build/push/inspect ---"
+  nebius profile activate "${NPA_NEBIUS_PROFILE:-agent-sa}" 2>/dev/null || true
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py \
+    "${PYTEST_ARGS[@]}" \
+    -k "live_byof_runner_container_build_push or live_byof_container_has_leisaac" \
+    --timeout="${NPA_BYOF_CONTAINER_TIMEOUT:-3600}"
+fi
+
 if [[ "${NPA_BYOF_LIVE_GPU:-0}" == "1" ]]; then
   echo "--- live BYOF runner registry + submit smoke (GPU path) ---"
+  nebius profile activate "${NPA_NEBIUS_PROFILE:-agent-sa}" 2>/dev/null || true
   npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py \
     "${PYTEST_ARGS[@]}" \
     -k "live_byof_runner_registry_smoke or live_byof_runner_submit_smoke" \
