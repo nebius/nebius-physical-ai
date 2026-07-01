@@ -52,7 +52,35 @@ def _activate_nebius_profile() -> None:
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "agent-sa").strip()
     if not profile:
         return
-    subprocess.run(["nebius", "profile", "activate", profile], check=False)
+    subprocess.run(
+        ["nebius", "profile", "activate", profile],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _parse_last_json_blob(text: str) -> dict[str, object]:
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    # Fall back to parsing the last JSON object in multi-line output.
+    start = text.rfind("{")
+    if start >= 0:
+        try:
+            payload = json.loads(text[start:])
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError:
+            pass
+    raise ValueError(f"no JSON object found in command output:\n{text}")
 
 
 def _default_byof_resource_yaml(e2e_project: str | None) -> str:
@@ -87,7 +115,7 @@ def live_byof_built_image(e2e_project: str | None) -> str:
         timeout=int(os.environ.get("NPA_BYOF_CONTAINER_TIMEOUT", "3600")),
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = json.loads(proc.stdout)
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary["status"] == "ok"
     build = summary.get("build", {})
     assert build.get("ok") is True
@@ -274,7 +302,7 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = json.loads(proc.stdout)
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary["status"] == "ok"
     assert summary["registry"] == registry
     assert registry in summary["image"]
@@ -311,7 +339,7 @@ def test_live_byof_runner_submit_smoke(e2e_project: str | None) -> None:
         timeout=int(os.environ.get("NPA_BYOF_LIVE_TIMEOUT", "21600")),
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = json.loads(proc.stdout)
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
     assert summary["status"] == "ok"
     run_summary = summary.get("run", {})
     assert isinstance(run_summary, dict)
