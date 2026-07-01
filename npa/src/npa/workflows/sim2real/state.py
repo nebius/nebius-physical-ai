@@ -36,6 +36,9 @@ class WorkflowState:
     final_eval: dict[str, Any] | None = None
     final_decision: dict[str, Any] | None = None
     next_outer_iteration: int = 1
+    # Latest real-policy checkpoint URI produced by the outer loop; the next outer
+    # iteration resumes the SAME policy from it (stage 11B "more RL" compounds).
+    last_checkpoint_uri: str = ""
     report_path: str | None = None
     updated_at: str = field(default_factory=_utc_now)
 
@@ -73,6 +76,7 @@ class WorkflowState:
             final_eval=payload.get("final_eval"),
             final_decision=payload.get("final_decision"),
             next_outer_iteration=int(payload.get("next_outer_iteration") or 1),
+            last_checkpoint_uri=str(payload.get("last_checkpoint_uri") or ""),
             report_path=payload.get("report_path"),
             updated_at=str(payload.get("updated_at") or _utc_now()),
         )
@@ -98,6 +102,7 @@ class WorkflowState:
             "final_decision": self.final_decision,
             "current_quality": self.current_quality,
             "next_outer_iteration": self.next_outer_iteration,
+            "last_checkpoint_uri": self.last_checkpoint_uri,
             "report_path": self.report_path,
             "updated_at": self.updated_at,
         }

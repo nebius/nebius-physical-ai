@@ -49,6 +49,11 @@ from npa.workflows.rerun_serve import (
     resolve_cluster_name_from_config,
     require_kubeconfig,
 )
+from npa.workflows.sim2real import onboarding as onboarding_svc
+from npa.workflows.sim2real.onboarding_spec import (
+    OnboardingSpecError,
+    load_onboarding_spec,
+)
 
 
 class OutputFormat(str, Enum):
@@ -374,6 +379,177 @@ def convert_signal_command(
         json.dumps(signal, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     typer.echo(str(output_json))
+
+
+def _onboard_env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+@app.command("onboard-robot")
+def onboard_robot_command(
+    spec: Path = typer.Option(
+        ..., "--spec", help="Onboarding robot+task spec YAML (see robot-onboarding.template.yaml)."
+    ),
+    smoke: bool = typer.Option(
+        False,
+        "--smoke/--no-smoke",
+        help="Submit a short BYO Isaac trainer job to confirm the robot loads, "
+        "retargets, and trains (requires cluster creds + ISAAC_IMAGE in env).",
+    ),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id for the smoke job (default: derived from robot name)."
+    ),
+    smoke_iterations: int = typer.Option(
+        onboarding_svc.DEFAULT_SMOKE_ITERATIONS,
+        "--smoke-iterations",
+        help="Smoke-job training iterations (short; just confirms it trains).",
+    ),
+    smoke_num_envs: int = typer.Option(
+        onboarding_svc.DEFAULT_SMOKE_NUM_ENVS,
+        "--smoke-num-envs",
+        help="Smoke-job parallel envs.",
+    ),
+    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Smoke job namespace."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the derived plan as JSON."),
+) -> None:
+    """Validate an onboarding spec, print the auto-derived robot-aware task config,
+    and (with --smoke) submit a short Isaac trainer job to confirm the robot trains.
+
+    The customer supplies a minimal robot+task YAML; this command shows what was
+    derived (action scale, reach, object/goal placement, init pose, gripper
+    targets) vs. supplied, gates on task/embodiment compatibility, and optionally
+    runs a smoke train so they see the robot load and learn before a full run.
+    """
+
+    if smoke_iterations < 1:
+        _fail_onboard(f"--smoke-iterations must be >= 1, got {smoke_iterations}")
+    if smoke_num_envs < 1:
+        _fail_onboard(f"--smoke-num-envs must be >= 1, got {smoke_num_envs}")
+
+    try:
+        parsed = load_onboarding_spec(spec)
+    except OnboardingSpecError as exc:
+        _fail_onboard(f"spec validation failed: {exc}")
+    except OSError as exc:
+        _fail_onboard(f"could not read spec {spec}: {exc}")
+
+    plan = onboarding_svc.build_plan(parsed)
+    derived = plan.derived.to_dict()
+    report = {
+        "robot": parsed.robot.name,
+        "robot_source": parsed.robot.robot_source,
+        "skill": parsed.task.skill,
+        "derived": derived,
+        "robot_payload": plan.robot_payload,
+        "robot_usd_uri": plan.robot_usd_uri,
+        "compat": plan.compat,
+    }
+
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Onboarding spec: {spec}")
+        typer.echo(f"  robot       : {parsed.robot.name} ({parsed.robot.robot_source})")
+        typer.echo(f"  task skill  : {parsed.task.skill}")
+        typer.echo("Auto-derived robot-aware config (value [source]):")
+        src = derived.get("source", {})
+        for key in (
+            "action_scale",
+            "workspace_reach_m",
+            "minimal_height_m",
+            "success_distance_m",
+            "gripper_open",
+            "gripper_close",
+        ):
+            typer.echo(f"  {key:<20} {derived.get(key)} [{src.get(key, 'default')}]")
+        typer.echo(f"  object_init_range    {derived.get('object_init_range')}")
+        typer.echo(f"  goal_range           {derived.get('goal_range')}")
+        if derived.get("goal_pos"):
+            typer.echo(f"  goal_pos             {derived.get('goal_pos')}")
+        if derived.get("init_joint_pos"):
+            typer.echo(f"  init_joint_pos       {derived.get('init_joint_pos')}")
+
+    compat = plan.compat
+    if not compat.get("task_robot_compatible", True):
+        typer.secho(
+            f"\nINCOMPATIBLE: {compat.get('reason')}", fg=typer.colors.RED, err=True
+        )
+        for req in compat.get("requirements", []):
+            typer.secho(f"  - need: {req}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    if not smoke:
+        if not json_output:
+            typer.secho(
+                "\nSpec valid and embodiment compatible. Re-run with --smoke to "
+                "confirm it trains on the cluster.",
+                fg=typer.colors.GREEN,
+            )
+        return
+
+    # --- smoke submit (real cluster) ---
+    from npa.workflows.sim2real import byo_isaac_trainer as trainer
+
+    image = _onboard_env("ISAAC_IMAGE") or _onboard_env("NPA_SIM2REAL_ISAAC_IMAGE")
+    bucket = _onboard_env("NPA_SIM2REAL_BUCKET") or _onboard_env("S3_BUCKET")
+    endpoint = _onboard_env("AWS_ENDPOINT_URL")
+    service_account = _onboard_env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
+    if not image:
+        _fail_onboard("--smoke needs ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE in the env")
+    if not bucket:
+        _fail_onboard("--smoke needs NPA_SIM2REAL_BUCKET/S3_BUCKET in the env")
+
+    rid = run_id.strip() or f"onboard-{_slug(parsed.robot.name)}"
+
+    def _kubectl_apply(manifest: dict) -> int:
+        trainer._kubectl(
+            ["delete", "job", f"s2r-onboard-smoke-{rid}"[:63], "-n", k8s_namespace,
+             "--ignore-not-found"],
+            timeout=60,
+        )
+        res = trainer._kubectl(
+            ["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120
+        )
+        if res.returncode != 0:
+            typer.secho(f"kubectl apply failed: {res.stderr}", fg=typer.colors.RED, err=True)
+        return res.returncode
+
+    result = onboarding_svc.submit_smoke_job(
+        plan,
+        run_id=rid,
+        image=image,
+        bucket=bucket,
+        endpoint=endpoint,
+        namespace=k8s_namespace,
+        service_account=service_account,
+        iterations=smoke_iterations,
+        num_envs=smoke_num_envs,
+        kubectl_apply=_kubectl_apply,
+    )
+    if result["apply_rc"] != 0:
+        typer.secho(
+            f"smoke job submit FAILED (rc={result['apply_rc']})",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    typer.secho(
+        f"smoke job submitted: {result['job_name']} -> {result['out_uri']}",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo(
+        f"watch: npa workbench sim2real status --run-id {rid} --k8s-namespace {k8s_namespace}"
+    )
+
+
+def _slug(text: str) -> str:
+    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in text.strip().lower())
+    return cleaned.strip("-") or "robot"
+
+
+def _fail_onboard(message: str) -> None:
+    typer.secho(message, fg=typer.colors.RED, err=True)
+    raise typer.Exit(1)
 
 
 rerun_app = typer.Typer(

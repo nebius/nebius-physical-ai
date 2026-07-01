@@ -50,6 +50,7 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "train",
         "eval",
         "export-lerobot",
+        "export-onnx",
         "list",
         "cleanup-partial",
     ],
@@ -1148,3 +1149,211 @@ def test_isaac_lab_list_no_projects_message(mocker) -> None:
 
     assert result.exit_code == 0
     assert "No projects configured" in result.output
+
+
+def _onnx_export_result(out_dir: Path) -> dict:
+    onnx = out_dir / "policy.onnx"
+    contract = out_dir / "policy_contract.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    onnx.write_bytes(b"ONNX")
+    contract.write_text("{}")
+    return {
+        "status": "success",
+        "onnx_path": str(onnx),
+        "contract_path": str(contract),
+        "obs_dim": 36,
+        "act_dim": 8,
+        "hidden_dims": [256, 128, 64],
+        "activation": "elu",
+        "opset": 17,
+        "input_name": "obs",
+        "output_name": "action",
+        "normalization": "none",
+        "isaac_task": "Isaac-Lift-Cube-Franka-v0",
+        "checkpoint": {},
+    }
+
+
+def test_isaac_lab_export_onnx_local_to_local(tmp_path: Path, mocker) -> None:
+    ckpt = tmp_path / "model_975.pt"
+    ckpt.write_bytes(b"x")
+    out_dir = tmp_path / "out"
+
+    def fake_export(checkpoint_path, *, out_dir, **kwargs):
+        assert checkpoint_path == str(ckpt)
+        return _onnx_export_result(Path(out_dir))
+
+    export = mocker.patch(
+        "npa.workflows.sim2real.policy_export.export_policy_onnx",
+        side_effect=fake_export,
+    )
+    # Local-only export must NOT touch SSH/storage config.
+    ssh_cfg = mocker.patch("npa.cli.isaac_lab._get_ssh_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            str(ckpt),
+            "--output-path",
+            str(out_dir),
+            "--task",
+            "Isaac-Lift-Cube-Franka-v0",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["obs_dim"] == 36
+    assert payload["act_dim"] == 8
+    assert payload["onnx_path"].endswith("policy.onnx")
+    export.assert_called_once()
+    assert export.call_args.kwargs["isaac_task"] == "Isaac-Lift-Cube-Franka-v0"
+    ssh_cfg.assert_not_called()
+
+
+def test_isaac_lab_export_onnx_s3_roundtrip_uploads(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab._get_ssh_config", return_value=_ssh_cfg())
+    storage = mocker.MagicMock()
+    storage.upload_file.side_effect = lambda local, uri: uri
+    mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
+
+    def fake_export(checkpoint_path, *, out_dir, **kwargs):
+        # The s3 checkpoint was staged to a local temp file first.
+        assert Path(checkpoint_path).name == "model.pt"
+        return _onnx_export_result(Path(out_dir))
+
+    mocker.patch(
+        "npa.workflows.sim2real.policy_export.export_policy_onnx",
+        side_effect=fake_export,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            "s3://bucket/run/model_975.pt",
+            "--output-path",
+            "s3://bucket/run/onnx/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["upload_status"] == "ok"
+    storage.download_path.assert_called_once()
+    assert storage.upload_file.call_count == 2
+    uploaded = {c.args[1] for c in storage.upload_file.call_args_list}
+    assert uploaded == {
+        "s3://bucket/run/onnx/policy.onnx",
+        "s3://bucket/run/onnx/policy_contract.json",
+    }
+
+
+def test_isaac_lab_export_onnx_upload_failure_exits_nonzero(tmp_path: Path, mocker) -> None:
+    mocker.patch("npa.cli.isaac_lab._get_ssh_config", return_value=_ssh_cfg())
+    storage = mocker.MagicMock()
+    storage.upload_file.side_effect = _access_denied("denied")
+    mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
+    mocker.patch(
+        "npa.workflows.sim2real.policy_export.export_policy_onnx",
+        side_effect=lambda checkpoint_path, *, out_dir, **kw: _onnx_export_result(Path(out_dir)),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            "s3://bucket/run/model_975.pt",
+            "--output-path",
+            "s3://bucket/run/onnx/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["upload_status"] == "failed"
+
+
+def test_isaac_lab_export_onnx_export_error_exits_nonzero(tmp_path: Path, mocker) -> None:
+    ckpt = tmp_path / "model.pt"
+    ckpt.write_bytes(b"x")
+    from npa.workflows.sim2real.policy_export import PolicyExportError
+
+    mocker.patch(
+        "npa.workflows.sim2real.policy_export.export_policy_onnx",
+        side_effect=PolicyExportError("bad checkpoint"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            str(ckpt),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert "bad checkpoint" in payload["export_error"]
+
+
+def test_isaac_lab_export_onnx_rejects_bad_opset() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            "s3://bucket/run/model.pt",
+            "--output-path",
+            "s3://bucket/run/onnx/",
+            "--opset",
+            "0",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--opset must be positive" in result.output
+
+
+def test_isaac_lab_export_onnx_rejects_missing_local_checkpoint(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "export-onnx",
+            "--input-path",
+            str(tmp_path / "nope.pt"),
+            "--output-path",
+            str(tmp_path / "out"),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "local checkpoint not found" in result.output

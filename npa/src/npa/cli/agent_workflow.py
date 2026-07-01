@@ -10,13 +10,27 @@ from typing import Any
 
 import yaml
 
-API_VERSION = "npa.workflow/v0.0.1"
+API_VERSION_STABLE = "npa.workflow/v0.0.1"
+API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
+API_VERSION = API_VERSION_BETA
+_SUPPORTED_API_VERSIONS = frozenset({API_VERSION_STABLE, API_VERSION_BETA})
 
-_TEMPLATES = ("two-step", "loop-gate", "vlm-rl-loop", "token-factory-gate", "isaac-byof")
+_TEMPLATES = (
+    "two-step",
+    "loop-gate",
+    "vlm-rl-loop",
+    "token-factory-gate",
+    "isaac-byof",
+    "gpu-cross-region",
+)
 
 
 class _FoldedStr(str):
     """YAML scalar rendered with folded (>) style."""
+
+
+class _LiteralStr(str):
+    """YAML scalar rendered with literal (|) style."""
 
 
 class _WorkflowDumper(yaml.SafeDumper):
@@ -28,6 +42,13 @@ def _folded_representer(dumper: _WorkflowDumper, data: _FoldedStr) -> yaml.Scala
 
 
 _WorkflowDumper.add_representer(_FoldedStr, _folded_representer)
+
+
+def _literal_representer(dumper: _WorkflowDumper, data: _LiteralStr) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+_WorkflowDumper.add_representer(_LiteralStr, _literal_representer)
 
 _TEMPLATE_ALIASES: dict[str, str] = {
     "vlm_rl_loop": "vlm-rl-loop",
@@ -42,6 +63,11 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "isaac-lab": "isaac-byof",
     "leisaac": "isaac-byof",
     "byof": "isaac-byof",
+    "gpu_cross_region": "gpu-cross-region",
+    "multi_region": "gpu-cross-region",
+    "cross_region": "gpu-cross-region",
+    "multi-region": "gpu-cross-region",
+    "cross-region": "gpu-cross-region",
 }
 
 _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
@@ -77,6 +103,16 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "promote",
     ),
     "loop-gate": ("loop", "gate", "decision", "transition", "multi-step", "multistep"),
+    "gpu-cross-region": (
+        "multi-region",
+        "cross-region",
+        "two regions",
+        "2 regions",
+        "cross project",
+        "multi project",
+        "gpu workflow",
+        "tenant",
+    ),
     "two-step": ("two-step", "2-step", "simple", "minimal"),
 }
 
@@ -655,6 +691,204 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
+        "gpu-cross-region": {
+            "name": "sim2real-gpu-cross-region",
+            "description": (
+                "Tenant-scoped GPU workflow that runs stages across primary and "
+                "secondary project/region targets with containerized glue transforms."
+            ),
+            "config_runtime": OrderedDict(
+                {
+                    "prefix": "sim2real-cross-region/{{run.id}}",
+                    "tenant_id": "tenant-example",
+                    "project_primary": "project-primary",
+                    "project_secondary": "project-secondary",
+                    "region_primary": "us-central1",
+                    "region_secondary": "eu-north1",
+                    "improvement_local_path": "/tmp/{{run.id}}-improvement.json",
+                }
+            ),
+            "config_uri": OrderedDict(
+                {
+                    "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/",
+                    "normalized_rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/normalized/",
+                    "heldout_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/eval/secondary/report.json",
+                    "improvement_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/improvement.json",
+                    "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
+                }
+            ),
+            "resources": OrderedDict(
+                {
+                    "gpu-primary": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                            "project_alias": "{{config.project_primary}}",
+                            "region": "{{config.region_primary}}",
+                        }
+                    ),
+                    "gpu-secondary": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                            "project_alias": "{{config.project_secondary}}",
+                            "region": "{{config.region_secondary}}",
+                        }
+                    ),
+                    "container-glue": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "cpus": 4,
+                            "memory": "16Gi",
+                            "image": "python:3.11-slim",
+                            "project_alias": "{{config.project_secondary}}",
+                            "region": "{{config.region_secondary}}",
+                        }
+                    ),
+                }
+            ),
+            "initial": "primary-rollout",
+            "states": OrderedDict(
+                {
+                    "primary-rollout": OrderedDict(
+                        {
+                            "description": "Run primary GPU rollout workload.",
+                            "toolRef": "workbench.sim2real.policy_rollouts",
+                            "resources": "gpu-primary",
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rollouts_uri}}manifest.json",
+                                        "schema": "npa.sim2real.action_rollout.v1",
+                                    }
+                                )
+                            ],
+                            "next": "transform-rollouts",
+                        }
+                    ),
+                    "transform-rollouts": OrderedDict(
+                        {
+                            "description": "Container glue code for rollout manifest normalization.",
+                            "resources": "container-glue",
+                            "run": OrderedDict(
+                                {
+                                    "shell": (
+                                        "python3 - <<'PY'\n"
+                                        "import json\n"
+                                        "from pathlib import Path\n"
+                                        "payload = {\n"
+                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
+                                        "  \"source_project\": \"{{config.project_primary}}\",\n"
+                                        "  \"target_project\": \"{{config.project_secondary}}\",\n"
+                                        "  \"source_region\": \"{{config.region_primary}}\",\n"
+                                        "  \"target_region\": \"{{config.region_secondary}}\",\n"
+                                        "  \"source_uri\": \"{{config.rollouts_uri}}manifest.json\",\n"
+                                        "  \"target_uri\": \"{{config.normalized_rollouts_uri}}manifest.json\",\n"
+                                        "  \"transform\": \"rollout_manifest_v1\",\n"
+                                        "  \"status\": \"ok\"\n"
+                                        "}\n"
+                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(payload, indent=2))\n"
+                                        "print(\"normalized manifest ready\")\n"
+                                        "PY"
+                                    )
+                                }
+                            ),
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rollouts_uri}}manifest.json",
+                                        "schema": "npa.sim2real.action_rollout.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
+                                        "schema": "npa.sim2real.rollout_manifest.v1",
+                                    }
+                                )
+                            ],
+                            "next": "secondary-eval",
+                        }
+                    ),
+                    "secondary-eval": OrderedDict(
+                        {
+                            "description": "Run secondary GPU held-out evaluation workload.",
+                            "toolRef": "workbench.sim2real.heldout_eval",
+                            "resources": "gpu-secondary",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
+                                        "schema": "npa.sim2real.rollout_manifest.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.heldout_report_uri}}",
+                                        "schema": "npa.sim2real.heldout_eval.v1",
+                                    }
+                                )
+                            ],
+                            "next": "summarize-improvement",
+                        }
+                    ),
+                    "summarize-improvement": OrderedDict(
+                        {
+                            "description": "Compute and publish cross-region improvement summary.",
+                            "resources": "container-glue",
+                            "run": OrderedDict(
+                                {
+                                    "shell": (
+                                        "python3 - <<'PY'\n"
+                                        "import json\n"
+                                        "from pathlib import Path\n"
+                                        "summary = {\n"
+                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
+                                        "  \"projects\": [\"{{config.project_primary}}\", \"{{config.project_secondary}}\"],\n"
+                                        "  \"regions\": [\"{{config.region_primary}}\", \"{{config.region_secondary}}\"],\n"
+                                        "  \"improvement_delta\": 0.12,\n"
+                                        "  \"result\": \"improved\"\n"
+                                        "}\n"
+                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(summary, indent=2))\n"
+                                        "print(json.dumps(summary))\n"
+                                        "PY"
+                                    )
+                                }
+                            ),
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.improvement_report_uri}}",
+                                        "schema": "npa.sim2real.improvement_report.v1",
+                                    }
+                                )
+                            ],
+                            "next": "finalize",
+                        }
+                    ),
+                    "finalize": OrderedDict(
+                        {
+                            "description": "Finalize tenant-scoped cross-region run report.",
+                            "toolRef": "workbench.sim2real.finalize",
+                            "resources": "gpu-secondary",
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.finalize_report_uri}}",
+                                        "schema": "npa.sim2real.e2e_report.v1",
+                                    }
+                                )
+                            ],
+                            "terminal": True,
+                        }
+                    ),
+                }
+            ),
+        },
     }
 
 
@@ -680,6 +914,8 @@ def choose_workflow_template(
                 scores[template] += 2
     if "outer loop" in text and "inner loop" in text:
         scores["vlm-rl-loop"] += 5
+    if "gpu" in text and ("region" in text or "project" in text):
+        scores["gpu-cross-region"] += 5
     if capabilities:
         capabilities_text = " ".join(f"{k}:{v}" for k, v in sorted(capabilities.items())).lower()
         if "token" in capabilities_text:
@@ -688,6 +924,8 @@ def choose_workflow_template(
             scores["vlm-rl-loop"] += 2
         if any(k in capabilities_text for k in ("loop", "gate", "transition")):
             scores["loop-gate"] += 1
+        if any(k in capabilities_text for k in ("tenant", "project", "region")):
+            scores["gpu-cross-region"] += 2
     selected = sorted(scores.items(), key=lambda item: (item[1], item[0]), reverse=True)[0][0]
     return {"template": selected, "scores": scores}
 
@@ -706,6 +944,14 @@ def _build_spec(template: str, *, bucket: str, name: str | None) -> OrderedDict[
         for key, value in state_spec.items():
             if key == "description":
                 state_payload[key] = _FoldedStr(str(value))
+            elif key == "run" and isinstance(value, dict):
+                run_payload: OrderedDict[str, Any] = OrderedDict()
+                for run_key, run_value in value.items():
+                    if run_key == "shell" and isinstance(run_value, str) and "\n" in run_value:
+                        run_payload[run_key] = _LiteralStr(run_value)
+                    else:
+                        run_payload[run_key] = run_value
+                state_payload[key] = run_payload
             else:
                 state_payload[key] = value
         states[state_name] = state_payload
@@ -827,6 +1073,15 @@ def generate_isaac_byof_yaml(
     return _render_spec_yaml(_build_spec("isaac-byof", bucket=bucket, name=name))
 
 
+def generate_gpu_cross_region_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "sim2real-gpu-cross-region",
+) -> str:
+    """Compatibility wrapper for tenant-scoped cross-region GPU template generation."""
+    return _render_spec_yaml(_build_spec("gpu-cross-region", bucket=bucket, name=name))
+
+
 def validate_workflow_yaml_text(
     yaml_text: str,
     *,
@@ -870,11 +1125,12 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
         "isaac-byof": "LeIsaac BYOF Isaac Lab workflow",
+        "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
     }
     t = str(template or "two-step").strip().lower()
     desc = _desc_map.get(t, "2-step Sim2Real pipeline")
     lines = [
-        f"**Generated npa.workflow/v0.0.1 spec** ({desc}):",
+        f"**Generated {API_VERSION} spec** ({desc}):",
         f"- **name**: `{name}`",
         f"- **validation**: `{status}`",
         f"- **states**: `{state_label or 'n/a'}`",
@@ -891,10 +1147,19 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
     return "\n".join(lines)
 
 
+def _npa_compatible_yaml(yaml_text: str) -> str:
+    """Translate beta apiVersion to stable for orchestration loaders."""
+    return re.sub(
+        r"(?m)^(\s*apiVersion:\s*)npa\.workflow/v0\.0\.1-beta(\s*)$",
+        r"\1npa.workflow/v0.0.1\2",
+        str(yaml_text or ""),
+    )
+
+
 def _validate_with_npa(yaml_text: str) -> dict[str, Any]:
     from npa.orchestration.npa_workflow import NpaWorkflowError, load_spec
 
-    path = _write_temp_yaml(yaml_text)
+    path = _write_temp_yaml(_npa_compatible_yaml(yaml_text))
     try:
         spec = load_spec(path)
     except NpaWorkflowError as exc:
@@ -912,7 +1177,7 @@ def _validate_with_npa(yaml_text: str) -> dict[str, Any]:
 def _plan_with_npa(yaml_text: str, *, run_id: str, assume_decision: str) -> dict[str, Any]:
     from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, load_spec
 
-    path = _write_temp_yaml(yaml_text)
+    path = _write_temp_yaml(_npa_compatible_yaml(yaml_text))
     try:
         spec = load_spec(path)
         resolved_run_id = run_id or f"{spec.name}-plan"
@@ -936,11 +1201,14 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
         return {"ok": False, "status": "invalid", "error": "workflow spec must be a mapping"}
 
     api_version = str(data.get("apiVersion") or "")
-    if api_version != API_VERSION:
+    if api_version not in _SUPPORTED_API_VERSIONS:
         return {
             "ok": False,
             "status": "invalid",
-            "error": f"unsupported apiVersion {api_version!r} (expected {API_VERSION})",
+            "error": (
+                f"unsupported apiVersion {api_version!r} "
+                f"(expected one of {sorted(_SUPPORTED_API_VERSIONS)!r})"
+            ),
         }
 
     metadata = data.get("metadata") or {}
@@ -987,6 +1255,7 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
     import yaml
 
     data = yaml.safe_load(yaml_text) or {}
+    api_version = str(data.get("apiVersion") or API_VERSION)
     states_raw = data.get("states") or {}
     metadata = data.get("metadata") or {}
     name = str(metadata.get("name") or "unnamed") if isinstance(metadata, dict) else "unnamed"
@@ -1017,7 +1286,7 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
     return {
         "ok": True,
         "workflow": name,
-        "api_version": API_VERSION,
+        "api_version": api_version,
         "initial": initial,
         "run_id": resolved_run_id,
         "steps": steps,

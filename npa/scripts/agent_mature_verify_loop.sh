@@ -4,19 +4,50 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-export NPA_AGENT_PROJECT="${NPA_AGENT_PROJECT:-rtxpro}"
+export NPA_AGENT_PROJECT="${NPA_AGENT_PROJECT:-us-central1}"
+export NPA_AGENT_NAME="${NPA_AGENT_NAME:-agent}"
 export NPA_SSH_KEY="${NPA_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SLEEP_SECONDS="${NPA_LOOP_SLEEP_SECONDS:-60}"
+MAX_ATTEMPTS="${NPA_MAX_ATTEMPTS:-0}"
+
+agent_public_url() {
+  "${ROOT}/npa/.venv/bin/npa" agent status --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" --json 2>/dev/null \
+    | "${ROOT}/npa/.venv/bin/python" -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("public_url","").rstrip("/"))
+except Exception:
+    print("")'
+}
 
 run_success() {
-  npa/.venv/bin/pip install -e npa -q
-  NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap --project "$NPA_AGENT_PROJECT" --name agent
-  NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live --project "$NPA_AGENT_PROJECT" --name agent
-  bash npa/scripts/verify_agent_franka.sh
+  npa/.venv/bin/pip install -e npa -q || return 1
+  if ! NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME"; then
+    echo "bootstrap failed; attempting deploy for ${NPA_AGENT_PROJECT}/${NPA_AGENT_NAME}..."
+    NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent deploy --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
+  fi
+  NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
+  bash npa/scripts/verify_agent_franka.sh || return 1
+
+  local auth_env="${NPA_AGENT_AUTH_ENV:-$HOME/.npa/agents/${NPA_AGENT_PROJECT}/${NPA_AGENT_NAME}/auth.env}"
+  if [[ ! -f "$auth_env" ]]; then
+    echo "missing auth env: $auth_env"
+    return 1
+  fi
   # shellcheck disable=SC1090
-  source "${NPA_AGENT_AUTH_ENV:-$HOME/.npa/agents/${NPA_AGENT_PROJECT}/agent/auth.env}"
-  BASE="$("${ROOT}/npa/.venv/bin/npa" agent status --project "$NPA_AGENT_PROJECT" --name agent --json 2>/dev/null \
-  | "${ROOT}/npa/.venv/bin/python" -c "import json,sys; print(json.load(sys.stdin).get('public_url','').rstrip('/'))")"
-  curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" -X POST "${BASE}/api/chat" \
+  source "$auth_env" || return 1
+  if [[ -z "${AGENT_USER:-}" || -z "${AGENT_PASSWORD:-}" ]]; then
+    echo "auth env missing AGENT_USER or AGENT_PASSWORD"
+    return 1
+  fi
+
+  local base
+  base="$(agent_public_url)"
+  if [[ -z "$base" ]]; then
+    echo "could not resolve agent public_url"
+    return 1
+  fi
+
+  curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" -X POST "${base}/api/chat" \
     -H 'content-type: application/json' \
     -d '{"messages":[{"role":"user","content":"what is the current sim2real status"}]}' \
     | "${ROOT}/npa/.venv/bin/python" -c "
@@ -38,6 +69,10 @@ while true; do
     echo "SUCCESS at attempt ${attempt} $(date -Is)"
     exit 0
   fi
-  echo "FAILED attempt ${attempt}; sleeping 60s..."
-  sleep 60
+  if [[ "$MAX_ATTEMPTS" -gt 0 && "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
+    echo "reached NPA_MAX_ATTEMPTS=${MAX_ATTEMPTS}; exiting with failure"
+    exit 1
+  fi
+  echo "FAILED attempt ${attempt}; sleeping ${SLEEP_SECONDS}s..."
+  sleep "$SLEEP_SECONDS"
 done

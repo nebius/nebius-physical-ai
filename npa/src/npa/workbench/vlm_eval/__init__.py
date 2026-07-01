@@ -1129,13 +1129,13 @@ def _resolve_api_key(*, backend: str, api_key_env: str) -> str:
     if backend == "api":
         key = (
             key
-            or os.environ.get("NEBIUS_API_KEY", "")
+            or os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "")
             or os.environ.get("OPENAI_API_KEY", "")
         )
         if not key:
             raise VlmEvalError(
                 f"--backend api requires an API key in {api_key_env or DEFAULT_API_KEY_ENV}, "
-                "NEBIUS_API_KEY, or OPENAI_API_KEY"
+                "NEBIUS_TOKEN_FACTORY_KEY, or OPENAI_API_KEY"
             )
     return key
 

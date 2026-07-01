@@ -773,13 +773,17 @@ class ServerlessClient:
             raise ValueError("GPU count must be positive")
         args = ["ai", "job", "create", "--parent-id", project_id, "--name", name]
         args += ["--image", image, "--container-command", command, "--platform", gpu_type]
-        args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb", "--env", f"NPA_OUTPUT_PATH={output_path}"]
+        args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
+        job_env: dict[str, str] = {"NPA_OUTPUT_PATH": output_path}
         for key, value in (env or {}).items():
             if _is_secret_env_key(key):
                 raise ValueError(f"Refusing to pass secret-like env var {key} on the command line")
             if not extra_env or key not in extra_env:
-                args.extend(["--env", f"{key}={value}"])
+                job_env[key] = value
         for key, value in (extra_env or {}).items():
+            if value:
+                job_env[key] = value
+        for key, value in job_env.items():
             if value:
                 args.extend(["--env", f"{key}={value}"])
         for flag, value in (("--timeout", timeout), ("--subnet-id", subnet_id)):

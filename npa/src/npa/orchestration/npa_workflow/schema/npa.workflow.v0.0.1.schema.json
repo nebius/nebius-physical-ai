@@ -5,7 +5,9 @@
   "type": "object",
   "required": ["apiVersion", "kind", "states"],
   "properties": {
-    "apiVersion": { "const": "npa.workflow/v0.0.1" },
+    "apiVersion": {
+      "enum": ["npa.workflow/v0.0.1", "npa.workflow/v0.0.1-beta"]
+    },
     "kind": { "const": "Workflow" },
     "metadata": {
       "type": "object",

@@ -4,10 +4,10 @@
 # Index:  npa/workflows/workbench/skypilot/README.md
 #
 # Uses the vlm-eval `api` backend, which natively defaults to Token Factory
-# (https://api.tokenfactory.nebius.com/v1/) and reads NEBIUS_API_KEY. No GPU and
+# (https://api.tokenfactory.nebius.com/v1/) and reads NEBIUS_TOKEN_FACTORY_KEY. No GPU and
 # no vLLM serving stage are needed because inference is hosted. Provide the API
 # key as a SkyPilot secret at launch:
-#   sky jobs launch --secret NEBIUS_API_KEY --secret AWS_ACCESS_KEY_ID \
+#   sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY --secret AWS_ACCESS_KEY_ID \
 #     --secret AWS_SECRET_ACCESS_KEY vlm-eval-token-factory.yaml
 name: vlm-eval-token-factory
 execution: serial
@@ -40,8 +40,8 @@ setup: |
   fi
 run: |
   set -euo pipefail
-  if [[ -z "${NEBIUS_API_KEY:-}" ]]; then
-    echo "NEBIUS_API_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_API_KEY ..." >&2
+  if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then
+    echo "NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with: sky jobs launch --secret NEBIUS_TOKEN_FACTORY_KEY ..." >&2
     exit 1
   fi
   npa workbench vlm-eval run \
@@ -50,7 +50,7 @@ run: |
     --task "${VLM_EVAL_TASK}" \
     --backend "${VLM_BACKEND}" \
     --model "${VLM_MODEL}" \
-    --api-key-env NEBIUS_API_KEY \
+    --api-key-env NEBIUS_TOKEN_FACTORY_KEY \
     --frame-selection "${VLM_FRAME_SELECTION}" \
     --max-frames "${VLM_MAX_FRAMES}" \
     --success-threshold "${VLM_SUCCESS_THRESHOLD}" \
