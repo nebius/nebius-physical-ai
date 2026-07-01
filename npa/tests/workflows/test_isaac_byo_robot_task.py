@@ -101,6 +101,68 @@ def test_overrides_gains_are_bounded():
     assert ov["effort_limit"] == rt.EFFORT_MAX
 
 
+def _gripper_spec(**over):
+    """A 3-finger manipulator spec (Kinova-class) with a declared gripper."""
+
+    spec = _byo_spec(
+        name="kinova",
+        joint_names=["a1", "a2", "f1", "f2", "f3"],
+        home_qpos=[0.0, 0.5, 1.0, 1.0, 1.0],
+        n_arm_joints=2,
+        n_gripper_joints=3,
+        gripper_joint_names=["f1", "f2", "f3"],
+        finger_links=["fl1", "fl2", "fl3"],
+        gripper_open=0.0,
+        gripper_close=1.2,
+    )
+    spec.update(over)
+    return spec
+
+
+def test_gripper_actuator_group_uses_floors_when_no_gripper_gains():
+    # A declared gripper with no per-gripper gains gets a dedicated actuator group
+    # at the robot-agnostic floors — high enough to clamp and HOLD, not the too-soft
+    # arm-averaged gains. This is the fix for "fingers close but cannot hold".
+    ov = rt.robot_articulation_overrides(_gripper_spec())
+    ga = ov["gripper_actuator"]
+    assert ga["joint_names"] == ["f1", "f2", "f3"]
+    assert ga["stiffness"] == rt.GRIPPER_STIFFNESS_FLOOR
+    assert ga["damping"] == rt.GRIPPER_DAMPING_FLOOR
+    assert ga["effort_limit"] == rt.GRIPPER_EFFORT_FLOOR
+
+
+def test_gripper_actuator_group_respects_spec_gains_above_floor():
+    # A spec that declares stronger gripper gains keeps them (only the floor is a
+    # minimum), and they are still clamped to the global bounds.
+    ov = rt.robot_articulation_overrides(
+        _gripper_spec(gripper_kp=[900.0, 900.0], gripper_kv=[90.0], gripper_force=[500.0])
+    )
+    ga = ov["gripper_actuator"]
+    assert ga["stiffness"] == 900.0
+    assert ga["damping"] == 90.0
+    assert ga["effort_limit"] == 500.0
+    # Below-floor spec gains are raised to the floor (never weaken the hold).
+    ov2 = rt.robot_articulation_overrides(_gripper_spec(gripper_kp=[1.0], gripper_force=[1.0]))
+    assert ov2["gripper_actuator"]["stiffness"] == rt.GRIPPER_STIFFNESS_FLOOR
+    assert ov2["gripper_actuator"]["effort_limit"] == rt.GRIPPER_EFFORT_FLOOR
+
+
+def test_no_gripper_actuator_group_for_gripperless_arm():
+    # A bare (gripperless) arm gets no gripper actuator group.
+    assert "gripper_actuator" not in rt.robot_articulation_overrides(_ur_spec())
+    # ...and neither does the stock/no-USD path (unchanged).
+    assert rt.robot_articulation_overrides({"robot_source": "stock_franka"}) == {}
+
+
+def test_grasp_hold_reward_is_shipped():
+    # The maintained-grasp+lift reward must ship in module_source so the in-container
+    # wrapper can install it, and be robot-agnostic (no hardcoded joint names).
+    assert callable(rt.grasp_lift_hold)
+    src = rt.module_source()
+    assert "def grasp_lift_hold" in src
+    assert "closed * height" in src
+
+
 def _ur_spec(**over):
     """A gripperless UR10-class arm spec (the custom-asset test's failing case)."""
 
