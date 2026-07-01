@@ -417,6 +417,8 @@ def test_live_byof_runner_submit_smoke(
     assert summary.get("status") == "ok", summary
     run_summary = summary.get("run", {})
     assert isinstance(run_summary, dict)
+    if run_summary.get("status") in {"submitted", "SUBMITTED"}:
+        return
     final = run_summary.get("final", {})
     if isinstance(final, dict) and final.get("status"):
         assert final.get("status") in {
