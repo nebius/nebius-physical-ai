@@ -49,20 +49,26 @@ DAMPING_MIN, DAMPING_MAX = 0.1, 10000.0
 EFFORT_MIN, EFFORT_MAX = 1.0, 10000.0
 
 # Robot-agnostic gripper drive floors. The stock swap gives every joint one
-# arm-averaged actuator group; a manipulator's fingers then inherit arm gains that
-# are FAR too soft to clamp and HOLD an object — a position-controlled finger's
-# grip force ≈ stiffness × (close_target − contact_angle), so a soft finger closes
-# but exerts almost no normal force and the object slips before it can be lifted
-# (the observed "reach + partial close, lift stays flat" failure on a 3-finger
-# Kinova). When a spec declares a gripper we give the finger joints their OWN
-# actuator group with a stiffness/effort FLOOR high enough to hold a light
-# tabletop object. Driven off ``gripper_joint_names`` (+ any per-gripper gain the
-# spec supplies) — never off a specific robot's joint names. Franka/preset specs
-# resolve no BYO gripper group (see ``robot_articulation_overrides``), so their
-# path is unchanged.
-GRIPPER_STIFFNESS_FLOOR = 400.0
-GRIPPER_DAMPING_FLOOR = 40.0
-GRIPPER_EFFORT_FLOOR = 200.0
+# arm-averaged actuator group, so a manipulator's fingers inherit arm-shaped gains
+# rather than a drive tuned for a light-object grasp. When a spec declares a
+# gripper we give the finger joints their OWN actuator group with a modest
+# stiffness/effort FLOOR (or the spec's own gripper_kp/kv/force when higher).
+# Driven off ``gripper_joint_names`` (+ any per-gripper gain the spec supplies) —
+# never off a specific robot's joint names.
+#
+# Values are sized for a small REVOLUTE finger holding a light tabletop object: a
+# position-controlled finger's holding torque ≈ stiffness × (close_target −
+# contact_angle); with a ~0.3 rad contact error a stiffness of ~20 N·m/rad yields
+# a few N·m of firm-but-bounded clamp, capped by the effort floor. An earlier
+# on-cluster trial with a much higher floor (400/200) DESTABILIZED the arm policy
+# (the finger group double-actuates joints the catch-all group also drives, and an
+# over-stiff finger drive injects large contact forces) — reaching collapsed and
+# mean reward went negative. These modest floors keep the per-robot gripper drive
+# sane and non-destabilizing. Franka/preset specs resolve no BYO gripper group
+# (see ``robot_articulation_overrides``), so their path is unchanged.
+GRIPPER_STIFFNESS_FLOOR = 20.0
+GRIPPER_DAMPING_FLOOR = 4.0
+GRIPPER_EFFORT_FLOOR = 10.0
 
 # Stock ``Isaac-Lift-Cube-Franka-v0`` link/joint names hardcoded in the task cfg's
 # ee_frame FrameTransformer, arm/gripper action terms, and the object_pose command
@@ -580,23 +586,33 @@ def grasp_lift_hold(
     env,
     std: float = 0.05,
     object_name: str = "object",
+    ee_frame_name: str = "ee_frame",
     gripper_joint_names: tuple[str, ...] | list[str] | None = None,
     gripper_open: float = 0.0,
     gripper_close: float = 1.0,
 ):
-    """Reward a MAINTAINED grasp while the object is lifted (the actual goal).
+    """Reward raising a CLOSED gripper that is at the object — a bootstrap-capable
+    grasp+lift signal.
 
-    ``grasp_shaping`` rewards *closing near* the object (a grasp precursor) and
-    ``object_lift_progress`` rewards raising the object — but neither requires the
-    two to hold *together*. A policy can score both by batting the object upward
-    with an open hand while separately closing on empty air. The lift then never
-    persists (the object is not held) and success stays 0 — exactly the observed
-    3-finger plateau. This term is the conjunction: ``closedness × height_gained``,
-    so reward accrues only while the gripper is closed AND the object is off the
-    table — i.e. genuinely grasped and held aloft. Robot-agnostic: closedness comes
-    from the spec's ``gripper_joint_names`` + open/close targets, height from the
-    object alone. Once a real hold forms, the stock step ``lifting_object`` +
-    ``object_goal_tracking`` take over toward the goal.
+    The deepest BYO-lift wall (5 prior escalation rounds + on-cluster confirmation):
+    a non-Franka arm learns to REACH and to CLOSE near the object (``grasp_shaping``
+    saturates), but the object's height stays EXACTLY 0 across 1000 iters — the arm
+    never even attempts to raise itself while gripping. Any reward gated on *object*
+    height (``object_lift_progress``, or a naive closed×object_height term) is dead
+    flat there: it cannot bootstrap the lift because the object never moves, the
+    same chicken-and-egg that defeated the dense object-height reward.
+
+    This term instead multiplies three quantities the policy can influence from the
+    reached+closed state IMMEDIATELY: ``near(ee, object) × closedness ×
+    tanh(ee_height_above_table / std)``. Raising the (closed) end-effector is
+    directly controllable, so there is a live gradient the instant the arm is
+    closed at the object — that is the missing "attempt the lift" signal. Crucially
+    the ``near`` factor keeps it honest: lifting the hand away from a NOT-grasped
+    object drops ``near`` toward 0, so sustained reward requires the object to
+    travel UP WITH the hand — i.e. a grasp that actually holds. Robot-agnostic:
+    closedness from the spec's ``gripper_joint_names`` + open/close targets, heights
+    from the object/ee frames only. Once a real hold forms and the object rises, the
+    dense lift term + stock ``lifting_object`` / ``object_goal_tracking`` take over.
 
     Fully defensive: any per-step error returns zeros (logged once) so a cfg/API
     shape mismatch contributes 0 instead of crashing the run.
@@ -606,10 +622,16 @@ def grasp_lift_hold(
 
     try:
         obj = env.scene[object_name]
-        z = obj.data.root_pos_w[:, 2]
-        z0 = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
-        gained = torch.clamp(z - z0, min=0.0)
-        height = torch.tanh(gained / float(std))
+        ee = env.scene[ee_frame_name]
+        ee_w = ee.data.target_pos_w[..., 0, :]
+        obj_w = obj.data.root_pos_w
+        dist = torch.norm(obj_w - ee_w, dim=1)
+        near = 1.0 - torch.tanh(dist / float(std))
+        # ee height gained above the object's spawn (table) height — controllable
+        # from the reached pose, so this bootstraps where object-height cannot.
+        table_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+        ee_gain = torch.clamp(ee_w[:, 2] - table_z, min=0.0)
+        height = torch.tanh(ee_gain / float(std))
         robot = env.scene["robot"]
         if gripper_joint_names:
             idx, _ = robot.find_joints(list(gripper_joint_names))
@@ -618,8 +640,8 @@ def grasp_lift_hold(
             denom = denom if abs(denom) > 1e-6 else 1.0
             closed = ((qpos - float(gripper_open)) / denom).clamp(0.0, 1.0)
         else:
-            closed = torch.ones_like(height)
-        return closed * height
+            closed = torch.ones_like(near)
+        return near * closed * height
     except Exception as exc:  # noqa: BLE001 (never crash training on a reward call)
         if not _GRASP_HOLD_WARNED["done"]:
             print("ROBOT_GRASP_HOLD_ERR", repr(exc), flush=True)
@@ -932,6 +954,7 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                     params={
                         "std": float(task_over.get("grasp_hold_std", 0.05)),
                         "object_name": "object",
+                        "ee_frame_name": "ee_frame",
                         "gripper_joint_names": list(grip.get("joint_names") or []),
                         "gripper_open": float(task_over.get("gripper_open", 0.0)),
                         "gripper_close": float(task_over.get("gripper_close", 1.0)),

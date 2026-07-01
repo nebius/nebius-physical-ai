@@ -160,7 +160,8 @@ def test_grasp_hold_reward_is_shipped():
     assert callable(rt.grasp_lift_hold)
     src = rt.module_source()
     assert "def grasp_lift_hold" in src
-    assert "closed * height" in src
+    # Bootstrap-capable form: near x closed x ee-height-gain (not object height).
+    assert "near * closed * height" in src
 
 
 def _ur_spec(**over):
