@@ -57,6 +57,15 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos", "fetch", "--help"]
         contains: "skip-checkpoint"
+  - name: find-artifacts
+    category: atomic
+    when_to_use: "Discover, classify, and load artifacts in npa agent using artifact-first browse/pick/view flow."
+    path: skills/atomic/find-artifacts/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/artifacts.py
+      - type: file_exists
+        path: skills/atomic/find-artifacts/SKILL.md
   - name: cosmos3-setup
     category: atomic
     when_to_use: "Set up Cosmos3 access, source checkout, Hugging Face reachability, and checkpoint staging."

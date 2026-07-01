@@ -94,7 +94,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'id="npa-sign-in"' in source
     assert "Sign in</button>" in source
     assert "encodeURIComponent(user)" in source
-    assert "location.pathname === '/login-help.html'" in source or 'location.pathname === "/login-help.html"' in source
+    assert "normalizedPath === \"/login-help.html\"" in source
+    assert "normalizedPath === \"/welcome\"" in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "startApp()" in source
@@ -128,7 +129,8 @@ def test_bootstrap_public_login_form() -> None:
     assert "encodeURIComponent(user)" in html
     assert "encodeURIComponent(pass)" in html
     assert "history.replaceState" in html
-    assert 'location.pathname === "/login-help.html"' in html
+    assert "normalizedPath === \"/login-help.html\"" in html
+    assert "normalizedPath === \"/welcome\"" in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
@@ -241,6 +243,22 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "available_run_ids" in source
     assert "active_run_id" in source
     assert "_record_sim_viz_run" in source
+
+
+def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'id="artifactPrefix"' in source
+    assert 'id="artifactRunSelect"' in source
+    assert 'id="artifactList"' in source
+    assert '@app.get("/artifacts/runs")' in source
+    assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
+    assert '@app.post("/sim-viz/load-artifact")' in source
+    assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
+    embedded = agent_module._embedded_agent_artifacts_source()
+    assert "list_runs" in embedded
+    assert "list_artifacts" in embedded
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
@@ -670,6 +688,20 @@ def test_bootstrap_recordings_api_in_system_prompt() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert "sim-viz/recordings" in source
     assert "available .rrd recording" in source
+
+
+def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "npa-agent-bootstrap-{secrets.token_hex" in source
+
+
+def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
 
 
 def test_list_recordings_intent_routing() -> None:
