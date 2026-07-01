@@ -128,6 +128,11 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
             r".{0,40}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:leisaac|isaac[\s-]?lab|byof)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:leisaac|isaac[\s-]?lab)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
             r".{0,120}\bgpu\b"
             r".{0,120}\b(?:workflow|yaml|spec)\b"
             r".{0,120}\b(?:multi[\s-]?region|cross[\s-]?region|2(?:\s+different)?\s+regions?|two(?:\s+different)?\s+regions?|multi[\s-]?project|cross[\s-]?project)\b"
@@ -136,6 +141,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:generate|create|draft|write|show)\b.{0,80}\b(?:example|simple|minimal)?\b.{0,120}\bworkflow\b.{0,80}\b(?:yaml|spec)\b"
             r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "find_artifacts",
+        re.compile(
+            r"\b(?:find|discover|list|browse|show|view|open|inspect)\b.{0,120}\b(?:artifacts?|outputs?)\b"
+            r"|\bwhat can i view\b"
+            r"|\bwhat\b.{0,80}\bartifacts?\b.{0,120}\bview\b"
+            r"|\bartifact\b.{0,120}\b(?:browser|viewer|preview|download)\b",
             re.IGNORECASE,
         ),
     ),
@@ -232,6 +247,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 INTENT_APIS: dict[str, list[str]] = {
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
+    "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
@@ -702,6 +718,20 @@ def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loade
     return "\n".join(lines)
 
 
+def format_find_artifacts() -> str:
+    return "\n".join(
+        [
+            "**Artifact finder (generic, no workflow allowlist):**",
+            "1. Discover runs: `GET /api/artifacts/runs?prefix=&limit=100`",
+            "2. Inspect one run: `GET /api/artifacts/run/{run_id}`",
+            "3. Load selected artifact: `POST /api/sim-viz/load-artifact` with `s3_uri` or `run_id` + `key`",
+            "- Render hints are additive (`rerun`, `video`, `image`, `json`, `text`, `download`).",
+            "- Unknown/new file types are still listed and selectable as `download`.",
+            "- Use `GET /api/sim-viz/status` after load to confirm `artifact_render`, `artifact_key`, and `rerun_ready`.",
+        ]
+    )
+
+
 def build_grounded_reply(
     intent: str,
     state: dict[str, Any],
@@ -741,6 +771,8 @@ def build_grounded_reply(
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)
+    if intent == "find_artifacts":
+        return format_find_artifacts()
     if intent == "sim_assets":
         return format_sim_assets(state)
     if intent == "cameras":
