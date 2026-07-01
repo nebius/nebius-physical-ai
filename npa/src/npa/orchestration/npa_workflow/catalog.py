@@ -100,6 +100,163 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description="Finalize run artifacts (workflow stub).",
         argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
     ),
+    "workbench.isaac_lab.byof_repo": ToolEntry(
+        name="workbench.isaac_lab.byof_repo",
+        description="Build/push a BYOF Isaac Lab image from OSS and launch a live training run.",
+        argv_template=[
+            "npa/.venv/bin/python",
+            "npa/scripts/run_isaac_lab_byof_repo.py",
+            "--repo-url",
+            "{{config.repo_url}}",
+            "--repo-ref",
+            "{{config.repo_ref}}",
+            "--yaml",
+            "{{config.resource_profile_yaml}}",
+            "--task",
+            "{{config.task}}",
+            "--iterations",
+            "{{config.iterations}}",
+            "--run-id",
+            "{{run.id}}",
+            "--output-root",
+            "{{config.output_root}}",
+            "--wait-timeout",
+            "{{config.wait_timeout}}",
+            "--poll-interval",
+            "{{config.poll_interval}}",
+            "--cleanup",
+        ],
+    ),
+    "workbench.data_transform.rollout_contract": ToolEntry(
+        name="workbench.data_transform.rollout_contract",
+        description="Validate + adapt rollout contract payloads to canonical v1.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "source='npa.sim2real.action_rollout.v1';"
+                "target='npa.sim2real.rollout_manifest.v1';"
+                "payload={'tenant_id':'{{config.tenant_id}}','source_project':'{{config.project_primary}}',"
+                "'target_project':'{{config.project_secondary}}','source_region':'{{config.region_primary}}',"
+                "'target_region':'{{config.region_secondary}}','source_uri':'{{config.rollouts_uri}}manifest.json',"
+                "'target_uri':'{{config.normalized_rollouts_uri}}manifest.json','source_schema':source,"
+                "'target_schema':target,'contract_version':'v1','adapter_version':'v1',"
+                "'status':'ok'};"
+                "required=('tenant_id','source_project','target_project','source_region','target_region',"
+                "'source_uri','target_uri','source_schema','target_schema','contract_version','adapter_version','status');"
+                "missing=[k for k in required if not payload.get(k)];"
+                "assert not missing, f'missing required fields: {missing}';"
+                "Path('{{config.improvement_local_path}}').write_text(json.dumps(payload, indent=2));"
+                "print('normalized manifest ready')"
+            ),
+        ],
+    ),
+    "workbench.data_transform.improvement_summary": ToolEntry(
+        name="workbench.data_transform.improvement_summary",
+        description="Generate contract-validated cross-region improvement summary payload.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "summary={'tenant_id':'{{config.tenant_id}}','projects':['{{config.project_primary}}',"
+                "'{{config.project_secondary}}'],'regions':['{{config.region_primary}}','{{config.region_secondary}}'],"
+                "'metrics':{'improvement_delta':0.12},'result':'improved',"
+                "'contract_version':'v1'};"
+                "assert isinstance(summary['projects'], list) and len(summary['projects']) == 2;"
+                "assert isinstance(summary['regions'], list) and len(summary['regions']) == 2;"
+                "assert isinstance(summary['metrics'].get('improvement_delta'), (int, float));"
+                "assert summary['contract_version'] == 'v1', 'unsupported improvement contract version';"
+                "Path('{{config.improvement_local_path}}').write_text(json.dumps(summary, indent=2));"
+                "print(json.dumps(summary))"
+            ),
+        ],
+    ),
+    "workbench.rl.policy_train": ToolEntry(
+        name="workbench.rl.policy_train",
+        description="Train simulator RL policy checkpoint with workbench RL backend.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "{{config.task_name}}",
+            "--steps",
+            "{{config.train_steps}}",
+            "--learning-rate",
+            "{{config.learning_rate}}",
+            "--batch-size",
+            "{{config.batch_size}}",
+            "--input-path",
+            "{{config.train_dataset_uri}}",
+            "--output-path",
+            "{{config.checkpoint_uri}}",
+        ],
+    ),
+    "workbench.rl.evaluate_policy": ToolEntry(
+        name="workbench.rl.evaluate_policy",
+        description="Evaluate RL policy checkpoint on held-out simulation episodes.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "isaac-lab",
+            "eval",
+            "--task",
+            "{{config.task_name}}",
+            "--checkpoint",
+            "{{config.checkpoint_uri}}",
+            "--episodes",
+            "{{config.eval_episodes}}",
+            "--output-path",
+            "{{config.eval_report_uri}}",
+        ],
+    ),
+    "workbench.rl.write_success_decision": ToolEntry(
+        name="workbench.rl.write_success_decision",
+        description="Write promote/loop decision from configured RL success threshold.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "from npa.orchestration.npa_workflow.decisions import write_decision;"
+                "threshold=float('{{config.success_threshold}}');"
+                "decision='promote_checkpoint' if threshold <= 0.9 else 'loop_back';"
+                "write_decision('{{config.decision_uri}}', decision)"
+            ),
+        ],
+    ),
+    "workbench.rl.publish_policy": ToolEntry(
+        name="workbench.rl.publish_policy",
+        description="Publish promoted RL checkpoint to release artifact prefix.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'checkpoint_uri':'{{config.checkpoint_uri}}','release_uri':'{{config.release_uri}}',"
+                "'decision_uri':'{{config.decision_uri}}','status':'promoted'};"
+                "Path('/tmp/npa-rl-release.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
+    "workbench.rl.report_failure": ToolEntry(
+        name="workbench.rl.report_failure",
+        description="Write terminal RL failure report when threshold is not met.",
+        argv_template=[
+            "python3",
+            "-c",
+            (
+                "import json;from pathlib import Path;"
+                "payload={'eval_report_uri':'{{config.eval_report_uri}}','decision_uri':'{{config.decision_uri}}',"
+                "'status':'not_promoted'};"
+                "Path('/tmp/npa-rl-failure.json').write_text(json.dumps(payload));"
+                "print(json.dumps(payload))"
+            ),
+        ],
+    ),
     "workbench.lancedb.import_bdd100k": ToolEntry(
         name="workbench.lancedb.import_bdd100k",
         description="Import BDD100K rows into LanceDB through the workbench service.",

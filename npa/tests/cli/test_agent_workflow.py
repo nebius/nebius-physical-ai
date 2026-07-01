@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli import agent as agent_module
@@ -13,6 +14,9 @@ from npa.cli.agent_chat import (
 )
 from npa.cli.agent_workflow import (
     choose_workflow_template,
+    generate_isaac_byof_yaml,
+    generate_gpu_cross_region_yaml,
+    generate_rl_policy_training_yaml,
     generate_sim2real_loop_gate_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
@@ -28,6 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
+    "isaac-lab-byof-leisaac.yaml",
+    "rl-policy-training-sim-success.yaml",
+    "sim2real-gpu-cross-region-agent.yaml",
     "sim2real-two-step-agent.yaml",
     "sim2real-two-step.yaml",
     "sim2real-vlm-rl.yaml",
@@ -118,6 +125,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "sim_viz_runs" in source
     embedded = agent_module._embedded_agent_workflow_source()
     assert "validate_workflow_yaml_text" in embedded
+    assert "Could not generate runnable workflow YAML yet" in source
+    assert "chat returns YAML only after both validation and planning succeed" in source
 
 
 def test_lightweight_validation_without_tool_refs_still_parses() -> None:
@@ -280,15 +289,118 @@ def test_generate_token_factory_gate_yaml_contains_vlm_gate() -> None:
     assert "quality-gate" in yaml_text
 
 
+def test_generate_isaac_byof_yaml_validates() -> None:
+    yaml_text = generate_isaac_byof_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"isaac-byof validate failed: {result.get('error')}"
+    assert result["name"] == "isaac-lab-byof-leisaac"
+    assert "byof-train" in set(result["states"])
+
+
+def test_generate_isaac_byof_yaml_plan_contains_byof_toolref() -> None:
+    yaml_text = generate_isaac_byof_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="leisaac-byof-test")
+    assert plan["ok"] is True, f"isaac-byof plan failed: {plan.get('error')}"
+    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
+    assert "workbench.isaac_lab.byof_repo" in tool_refs
+
+
+def test_generate_gpu_cross_region_yaml_validates() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"gpu-cross-region validate failed: {result.get('error')}"
+    assert result["name"] == "sim2real-gpu-cross-region"
+    states = set(result["states"])
+    assert "primary-rollout" in states
+    assert "transform-rollouts" in states
+    assert "secondary-eval" in states
+    assert "summarize-improvement" in states
+    assert "finalize" in states
+
+
+def test_generate_gpu_cross_region_yaml_includes_multi_region_resources() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    assert "gpu-primary:" in yaml_text
+    assert "gpu-secondary:" in yaml_text
+    assert "container-glue:" in yaml_text
+    assert "project_primary" in yaml_text
+    assert "project_secondary" in yaml_text
+    assert "region_primary" in yaml_text
+    assert "region_secondary" in yaml_text
+    assert "transform-rollouts" in yaml_text
+    assert "summarize-improvement" in yaml_text
+    assert "workbench.data_transform.rollout_contract" in yaml_text
+    assert "workbench.data_transform.improvement_summary" in yaml_text
+    assert "rollout_source_schema" not in yaml_text
+    assert "rollout_target_schema" not in yaml_text
+
+
+def test_generate_gpu_cross_region_yaml_contract_edges_align() -> None:
+    spec = yaml.safe_load(generate_gpu_cross_region_yaml())
+    states = spec["states"]
+    primary_out_schema = states["primary-rollout"]["outputs"][0]["schema"]
+    transform_in_schema = states["transform-rollouts"]["inputs"][0]["schema"]
+    transform_out_schema = states["transform-rollouts"]["outputs"][0]["schema"]
+    secondary_in_schema = states["secondary-eval"]["inputs"][0]["schema"]
+
+    assert primary_out_schema == transform_in_schema
+    assert transform_out_schema == secondary_in_schema
+
+
+def test_generate_gpu_cross_region_yaml_plan() -> None:
+    yaml_text = generate_gpu_cross_region_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="gpu-cross-region-test")
+    assert plan["ok"] is True, f"gpu-cross-region plan failed: {plan.get('error')}"
+    states = [step["state"] for step in plan["steps"]]
+    assert states == [
+        "primary-rollout",
+        "transform-rollouts",
+        "secondary-eval",
+        "summarize-improvement",
+        "finalize",
+    ]
+
+
+def test_generate_rl_policy_training_yaml_validates() -> None:
+    yaml_text = generate_rl_policy_training_yaml()
+    result = validate_workflow_yaml_text(yaml_text)
+    assert result["ok"] is True, f"rl-policy-success validate failed: {result.get('error')}"
+    assert result["name"] == "rl-policy-training-sim-success"
+    states = set(result["states"])
+    assert "train-policy" in states
+    assert "eval-policy" in states
+    assert "success-gate" in states
+    assert "publish-policy" in states
+    assert "training-not-success" in states
+
+
+def test_generate_rl_policy_training_yaml_plan() -> None:
+    yaml_text = generate_rl_policy_training_yaml()
+    plan = plan_workflow_yaml_text(yaml_text, run_id="rl-policy-success-test", assume_decision="promote_checkpoint")
+    assert plan["ok"] is True, f"rl-policy-success plan failed: {plan.get('error')}"
+    states = [step["state"] for step in plan["steps"]]
+    assert "train-policy" in states
+    assert "eval-policy" in states
+    assert "success-gate" in states
+    assert "publish-policy" in states
+
+
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
+    assert "apiVersion: npa.workflow/v0.0.1-beta" in two_step
     vlm_rl = generate_workflow_yaml("vlm-rl-loop")
     assert "sim2real-vlm-rl" in vlm_rl
     gate = generate_workflow_yaml("token-factory-gate")
     assert "tokenfactory-cosmos-gate" in gate
     loop_gate = generate_workflow_yaml("loop-gate")
     assert "sim2real-loop-gate-agent" in loop_gate
+    isaac_byof = generate_workflow_yaml("isaac-byof")
+    assert "isaac-lab-byof-leisaac" in isaac_byof
+    cross_region = generate_workflow_yaml("gpu-cross-region")
+    assert "sim2real-gpu-cross-region" in cross_region
+    rl_policy = generate_workflow_yaml("rl-policy-success")
+    assert "rl-policy-training-sim-success" in rl_policy
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
 
@@ -304,6 +416,21 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
         intent="create_workflow",
     )
     assert selected_gate["template"] == "token-factory-gate"
+    selected_byof = choose_workflow_template(
+        user_text="create a LeIsaac BYOF Isaac Lab workflow",
+        intent="create_workflow",
+    )
+    assert selected_byof["template"] == "isaac-byof"
+    selected_multi_region = choose_workflow_template(
+        user_text="create gpu workflow across two regions for one tenant",
+        intent="create_workflow",
+    )
+    assert selected_multi_region["template"] == "gpu-cross-region"
+    selected_rl_policy = choose_workflow_template(
+        user_text="build an rl policy training workflow in simulation",
+        intent="create_workflow",
+    )
+    assert selected_rl_policy["template"] == "rl-policy-success"
 
 
 def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
@@ -314,8 +441,21 @@ def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     )
     assert draft["template"] == "token-factory-gate"
     assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is True
+    assert draft["runnable"] is True
     assert "metadata:" in draft["yaml"]
     assert "\n\n  scene_uri:" in draft["yaml"]
+
+
+def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent_workflow.plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": False, "error": "forced plan failure"},
+    )
+    draft = generate_workflow_draft(template="two-step", tool_refs=frozenset())
+    assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is False
+    assert draft["runnable"] is False
 
 
 def test_generate_workflow_yaml_aliases() -> None:
@@ -324,6 +464,9 @@ def test_generate_workflow_yaml_aliases() -> None:
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("gate")
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("tokenfactory")
     assert "sim2real-loop-gate-agent" in generate_workflow_yaml("loop")
+    assert "isaac-lab-byof-leisaac" in generate_workflow_yaml("leisaac")
+    assert "isaac-lab-byof-leisaac" in generate_workflow_yaml("isaac-lab")
+    assert "rl-policy-training-sim-success" in generate_workflow_yaml("rl-policy")
 
 
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)

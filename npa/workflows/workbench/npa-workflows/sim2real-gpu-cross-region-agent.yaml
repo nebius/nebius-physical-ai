@@ -1,0 +1,93 @@
+apiVersion: npa.workflow/v0.0.1-beta
+kind: Workflow
+metadata:
+  name: sim2real-gpu-cross-region
+  description: >-
+    Tenant-scoped GPU workflow that runs stages across primary and secondary project/region targets
+    with containerized glue transforms.
+config:
+  bucket: example-bucket
+  prefix: sim2real-cross-region/{{run.id}}
+  tenant_id: tenant-example
+  project_primary: project-primary
+  project_secondary: project-secondary
+  region_primary: us-central1
+  region_secondary: eu-north1
+  improvement_local_path: /tmp/{{run.id}}-improvement.json
+
+  rollouts_uri: s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/
+  normalized_rollouts_uri: s3://{{config.bucket}}/{{config.prefix}}/rollouts/normalized/
+  heldout_report_uri: s3://{{config.bucket}}/{{config.prefix}}/eval/secondary/report.json
+  improvement_report_uri: s3://{{config.bucket}}/{{config.prefix}}/reports/improvement.json
+  finalize_report_uri: s3://{{config.bucket}}/{{config.prefix}}/reports/final.json
+resources:
+  gpu-primary:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    project_alias: '{{config.project_primary}}'
+    region: '{{config.region_primary}}'
+  gpu-secondary:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    project_alias: '{{config.project_secondary}}'
+    region: '{{config.region_secondary}}'
+  container-glue:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: python:3.11-slim
+    project_alias: '{{config.project_secondary}}'
+    region: '{{config.region_secondary}}'
+initial: primary-rollout
+states:
+  primary-rollout:
+    description: >-
+      Run primary GPU rollout workload.
+    toolRef: workbench.sim2real.policy_rollouts
+    resources: gpu-primary
+    outputs:
+    - uri: '{{config.rollouts_uri}}manifest.json'
+      schema: npa.sim2real.action_rollout.v1
+    next: transform-rollouts
+  transform-rollouts:
+    description: >-
+      Contract adapter/validator stage that normalizes rollout artifacts across project/region boundaries.
+    resources: container-glue
+    toolRef: workbench.data_transform.rollout_contract
+    inputs:
+    - uri: '{{config.rollouts_uri}}manifest.json'
+      schema: npa.sim2real.action_rollout.v1
+    outputs:
+    - uri: '{{config.normalized_rollouts_uri}}manifest.json'
+      schema: npa.sim2real.rollout_manifest.v1
+    next: secondary-eval
+  secondary-eval:
+    description: >-
+      Run secondary GPU held-out evaluation workload.
+    toolRef: workbench.sim2real.heldout_eval
+    resources: gpu-secondary
+    inputs:
+    - uri: '{{config.normalized_rollouts_uri}}manifest.json'
+      schema: npa.sim2real.rollout_manifest.v1
+    outputs:
+    - uri: '{{config.heldout_report_uri}}'
+      schema: npa.sim2real.heldout_eval.v1
+    next: summarize-improvement
+  summarize-improvement:
+    description: >-
+      Compute and validate cross-region improvement contract payload for downstream reporting.
+    resources: container-glue
+    toolRef: workbench.data_transform.improvement_summary
+    outputs:
+    - uri: '{{config.improvement_report_uri}}'
+      schema: npa.sim2real.improvement_report.v1
+    next: finalize
+  finalize:
+    description: >-
+      Finalize tenant-scoped cross-region run report.
+    toolRef: workbench.sim2real.finalize
+    resources: gpu-secondary
+    outputs:
+    - uri: '{{config.finalize_report_uri}}'
+      schema: npa.sim2real.e2e_report.v1
+    terminal: true

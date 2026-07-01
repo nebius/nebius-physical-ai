@@ -12,6 +12,8 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
     assert match_chat_intent("create a 2-step sim2real workflow") == "create_workflow"
+    assert match_chat_intent("create a gpu workflow across 2 different regions") == "create_workflow"
+    assert match_chat_intent("generate an example simple workflow YAML") == "create_workflow"
     assert match_chat_intent("watch the sim") == "watch_sim"
     assert match_chat_intent("track the rerun timeline") == "watch_sim"
     assert match_chat_intent("keep me posted with live updates on the sim run") == "watch_sim"
@@ -43,8 +45,13 @@ def test_match_sim2real_status_intent() -> None:
         match_chat_intent("onboard a new workbench solution from a github repo with container and sky smoke")
         == "onboard_solution"
     )
+    assert match_chat_intent("what artifacts can I view?") == "find_artifacts"
+    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
     assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
+    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
+    assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
 
 
 def test_match_watch_sim_intent_with_long_requirements_addendum() -> None:
@@ -122,8 +129,73 @@ def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     assert "registry" in reply.lower()
 
 
+def test_onboard_solution_reply_uses_npa_registry_env(monkeypatch) -> None:
+    from npa.cli.agent_chat import format_onboard_solution
+
+    monkeypatch.setenv("NPA_REGISTRY", "cr.eu-north1.nebius.cloud/example/project")
+    reply = format_onboard_solution()
+    assert "cr.eu-north1.nebius.cloud/example/project" in reply
+    assert "<resolved-from-~/.npa/config.yaml>" not in reply
+
+
+def test_onboard_solution_apis_include_tools_and_workflow_gates() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("onboard_solution")
+    assert "tools" in apis
+    assert "workflows/validate" in apis
+    assert "workflows/plan" in apis
+
+
+def test_onboard_solution_does_not_shadow_create_workflow() -> None:
+    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
+    assert (
+        match_chat_intent("containerize a github repo and onboard it into the workbench with sky smoke")
+        == "onboard_solution"
+    )
+
+
+def test_find_artifacts_apis_include_discovery_and_load() -> None:
+    from npa.cli.agent_chat import apis_for_intent
+
+    apis = apis_for_intent("find_artifacts")
+    assert "artifacts/runs" in apis
+    assert "artifacts/run/{run_id}" in apis
+    assert "sim-viz/load-artifact" in apis
+
+
+def test_component_capabilities_reply_is_targeted() -> None:
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    cosmos_reply = build_grounded_reply(
+        "cosmos_capabilities",
+        state,
+        ["workbench.cosmos2.transfer", "workbench.token_factory.reason"],
+    )
+    assert "Cosmos component capabilities" in cosmos_reply
+    assert "Fine-tuning / post-training" in cosmos_reply
+
+    lancedb_reply = build_grounded_reply(
+        "lancedb_capabilities",
+        state,
+        ["workbench.lancedb.import_bdd100k", "workbench.lancedb.backfill_clip"],
+    )
+    assert "LanceDB component capabilities" in lancedb_reply
+    assert "Data ingest" in lancedb_reply
+
+
+def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:
+    state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
+    reply = build_grounded_reply("live_infra_loop", state, ["workbench.cosmos2.transfer"])
+    assert "Live infra loop guidance" in reply
+    assert "never `<your-registry-id>` placeholders" in reply or "no placeholders" in reply
+    assert "sky gpus list" in reply
+    assert "FAILED_PRECHECKS" in reply
+
+
 def test_embedded_agent_chat_source_strips_future_import() -> None:
     source = agent_module._embedded_agent_chat_source()
     assert "from __future__ import annotations" not in source
     assert "match_chat_intent" in source
     assert "INTENT_APIS" in source
+    assert "onboard_solution" in source
+    assert "format_onboard_solution" in source

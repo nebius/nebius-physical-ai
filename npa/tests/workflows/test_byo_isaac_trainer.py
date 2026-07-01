@@ -155,6 +155,33 @@ def test_manifest_embeds_reward_overrides():
     assert "env.rewards.reaching_object.weight=1.6" in args
 
 
+def test_manifest_embeds_exploration_overrides():
+    # entropy_coef / init_noise_std become hydra overrides on the default train
+    # command — the exploration fix that keeps the Lift policy from collapsing
+    # into a reach-and-hover local optimum on an unlucky seed.
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        entropy_coef="0.01", init_noise_std="1.2")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "agent.algorithm.entropy_coef=0.01" in args
+    assert "agent.policy.init_noise_std=1.2" in args
+
+
+def test_manifest_omits_exploration_overrides_when_unset():
+    # Unset -> default Franka train command stays byte-for-byte unchanged.
+    m = byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition")
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "agent.algorithm.entropy_coef" not in args
+    assert "agent.policy.init_noise_std" not in args
+
+
 def test_manifest_embeds_custom_object_usd():
     m = byo.build_isaac_job_manifest(
         job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
@@ -295,3 +322,95 @@ def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
     assert rec["physics"]["friction"] == 0.71
     assert captured["bucket"] == "bucket"
     assert captured["key"] == "sim2real-b/run1/envs/train/envs.jsonl"
+
+
+# --------------------------------------------------------------------------- #
+# Outer-loop RESUME wiring (stage 11B "send back for more RL" must compound)
+# --------------------------------------------------------------------------- #
+def _resume_manifest(resume_uri="", physics=None, experiment_name=byo.DEFAULT_EXPERIMENT_NAME):
+    return byo.build_isaac_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
+        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=42, resume_uri=resume_uri, physics=physics, experiment_name=experiment_name)
+
+
+def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
+    uri = "s3://b/sim2real-b/run/byo-trainer/job/outer-01-iter-01/model_latest.pt"
+    args = _resume_manifest(resume_uri=uri)["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    # downloads the prior checkpoint into the rsl_rl log dir train.py searches
+    assert f"RESUME_FROM: {uri}" in args
+    assert f"logs/rsl_rl/{byo.DEFAULT_EXPERIMENT_NAME}/{byo.RESUME_RUN_DIR}" in args
+    assert "s3.download_file" in args
+    # tells train.py to resume that exact staged run
+    assert "agent.resume=true" in args
+    assert f"agent.load_run={byo.RESUME_RUN_DIR}" in args
+    assert f"agent.load_checkpoint={byo.RESUME_CKPT_NAME}" in args
+
+
+def test_manifest_no_resume_keeps_default_path_unchanged():
+    args = _resume_manifest(resume_uri="")["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "RESUME_FROM" not in args
+    assert "agent.resume" not in args
+    assert "s3.download_file" not in args  # only the upload tail uses boto3
+
+
+def test_manifest_resume_ignored_on_physics_path():
+    # The physics variant trains a different task; resume must not be injected.
+    uri = "s3://b/o/model_latest.pt"
+    args = _resume_manifest(
+        resume_uri=uri, physics={"friction": 0.7, "mass_scale": 0.95}
+    )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "agent.resume" not in args
+    assert "RESUME_FROM" not in args
+
+
+def test_manifest_resume_honors_custom_experiment_name():
+    args = _resume_manifest(
+        resume_uri="s3://b/o/model_latest.pt", experiment_name="my_robot_lift"
+    )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert f"logs/rsl_rl/my_robot_lift/{byo.RESUME_RUN_DIR}" in args
+
+
+def test_sanitize_tag():
+    assert byo._sanitize_tag("outer-02-iter-01") == "outer-02-iter-01"
+    assert byo._sanitize_tag("a/b c") == "a-b-c"
+    assert byo._sanitize_tag("--x--") == "x"
+    assert byo._sanitize_tag("") == ""
+
+
+def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
+    # NPA_SIM2REAL_TRAINER_TAG must make each iteration's checkpoint a DISTINCT S3
+    # path (so the prior model survives for the next outer iteration to resume from
+    # and outer iterations don't overwrite each other).
+    captured = {}
+
+    def fake_build(*args, **kwargs):
+        captured["s3_output_uri"] = kwargs["s3_output_uri"]
+        captured["resume_uri"] = kwargs.get("resume_uri", "")
+        return {"manifest": True}
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    monkeypatch.setattr(byo, "build_isaac_job_manifest", fake_build)
+    monkeypatch.setattr(byo, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(byo, "read_signal_stats", lambda *a, **k: {"mean_reward": 1.0, "step_count": 1})
+    monkeypatch.setattr(byo, "read_generated_train_env", lambda *a, **k: {})
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
+    monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
+    monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt")
+    monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
+
+    result = byo.run_isaac_training_job("myrun", signal_json="ignored")
+    # distinct, tagged path
+    assert captured["s3_output_uri"].endswith("/outer-02-iter-01/")
+    assert "byo-trainer" in captured["s3_output_uri"]
+    # resume uri threaded through to the manifest builder
+    assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
+    # returned checkpoint points at the tagged path
+    assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")

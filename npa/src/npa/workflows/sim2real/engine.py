@@ -266,14 +266,21 @@ def run_single_outer_iteration(
     local_dir: Path,
     outer_iteration: int,
     initial_quality: float,
+    resume_checkpoint_uri: str = "",
 ) -> dict[str, Any]:
-    """Run one stage 7-11 iteration and return its outcomes."""
+    """Run one stage 7-11 iteration and return its outcomes.
+
+    ``resume_checkpoint_uri`` (the prior outer iteration's checkpoint) is threaded
+    into the inner loop so a BYO trainer continues the same policy across outer
+    iterations rather than retraining from scratch.
+    """
 
     inner = run_inner_loop(
         config,
         local_dir=local_dir,
         initial_quality=initial_quality,
         outer_iteration=outer_iteration,
+        resume_checkpoint_uri=resume_checkpoint_uri,
     )
     quality = float(inner["final_quality"])
     heldout_report = run_heldout_eval(
@@ -291,16 +298,20 @@ def run_single_outer_iteration(
     next_quality = quality
     if decision["decision"] != "promote_checkpoint":
         next_quality = min(0.95, quality + 0.12)
+    checkpoint_uri = str(inner.get("final_checkpoint_uri") or "").strip()
     result = {
         "outer_iteration": outer_iteration,
         "inner": inner,
         "heldout_report": heldout_report,
         "decision": decision,
+        "checkpoint_uri": checkpoint_uri,
         "history_entry": {
             "outer_iteration": outer_iteration,
             "inner_loop": inner["evidence_uri"],
             "heldout_report": heldout_report["report_uri"],
             "decision": decision,
+            "checkpoint_uri": checkpoint_uri,
+            "resumed_from": str(inner.get("resumed_from_checkpoint_uri") or "").strip(),
         },
         "next_quality": next_quality,
     }
@@ -769,8 +780,15 @@ def run_inner_loop(
     local_dir: Path,
     initial_quality: float,
     outer_iteration: int = 1,
+    resume_checkpoint_uri: str = "",
 ) -> dict[str, Any]:
-    """Run action generation, VLM eval, signal conversion, and policy update."""
+    """Run action generation, VLM eval, signal conversion, and policy update.
+
+    ``resume_checkpoint_uri`` (from the prior outer iteration) lets a BYO trainer
+    CONTINUE the same policy rather than restart from scratch, so the outer loop's
+    "send back for more RL" (stage 11B) actually compounds. The checkpoint advances
+    through both the inner iterations and across outer iterations.
+    """
 
     from npa.workflows.sim2real_stages import run_policy_rollouts
 
@@ -781,6 +799,7 @@ def run_inner_loop(
     quality = float(initial_quality)
     reward_head = 0.0
     action_bias = 0.0
+    current_checkpoint_uri = str(resume_checkpoint_uri or "").strip()
     for iteration in range(1, config.inner_iterations + 1):
         actions_dir = (
             local_dir
@@ -897,7 +916,14 @@ def run_inner_loop(
                 initial_reward_head=reward_head,
                 initial_action_bias=action_bias,
                 train_envs_dir=local_dir / "envs" / "train",
+                resume_checkpoint_uri=current_checkpoint_uri,
+                outer_iteration=outer_iteration,
+                iteration=iteration,
             )
+            # Compound: the next iteration (inner or outer) resumes from THIS
+            # iteration's freshly-produced checkpoint.
+            if str(getattr(update, "checkpoint_path", "") or "").strip():
+                current_checkpoint_uri = update.checkpoint_path.strip()
             trainer_source = "byo_command"
         else:
             update = run_vlm_signal_training_step(
@@ -991,6 +1017,10 @@ def run_inner_loop(
         ),
         "iterations": iteration_records,
         "final_quality": round(quality, 6),
+        # Latest real-policy checkpoint produced this outer iteration; the next outer
+        # iteration resumes from it (empty for the reference trainer / no checkpoint).
+        "final_checkpoint_uri": current_checkpoint_uri,
+        "resumed_from_checkpoint_uri": str(resume_checkpoint_uri or "").strip(),
     }
     evidence_path = (
         local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "evidence.json"
@@ -2924,6 +2954,9 @@ def _run_trainer_via_command(
     initial_reward_head: float,
     initial_action_bias: float,
     train_envs_dir: Path | None = None,
+    resume_checkpoint_uri: str = "",
+    outer_iteration: int = 1,
+    iteration: int = 1,
 ) -> VlmSignalUpdateResult:
     """Run the BYO trainer command and parse its update result.
 
@@ -2957,6 +2990,13 @@ def _run_trainer_via_command(
         extra["NPA_SIM2REAL_TRAIN_ENVS_URI"] = (
             f"{_artifact_root_uri(config)}/envs/train/envs.jsonl"
         )
+    # Per-iteration tag keeps each iteration's trainer artifacts (checkpoint) at a
+    # DISTINCT path so the prior model survives for the next iteration to resume from.
+    extra["NPA_SIM2REAL_TRAINER_TAG"] = f"outer-{outer_iteration:02d}-iter-{iteration:02d}"
+    # OUTER-LOOP RESUME: continue the same policy from the prior iteration's checkpoint
+    # so stage 11B "send back for more RL" compounds instead of restarting from scratch.
+    if resume_checkpoint_uri.strip():
+        extra["NPA_SIM2REAL_RESUME_CHECKPOINT_URI"] = resume_checkpoint_uri.strip()
     env = _component_env(
         config,
         component="trainer",

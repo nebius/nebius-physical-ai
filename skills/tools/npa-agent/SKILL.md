@@ -45,6 +45,7 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `configure_s3` | "configure S3", "bucket" | tools (nebius-infra) |
 | `cosmos3` | "cosmos3", "setup cosmos" | skill steps (operator machine) |
 | `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
+| `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
 
 Rules:
 
@@ -143,6 +144,13 @@ Grounded response:
 ### `POST /api/sim-viz/load-franka-demo`
 
 Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, returns `sim_viz`.
+
+### Artifact-first discovery + load
+
+- `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from storage.
+- `GET /api/artifacts/run/{run_id}` lists **all** artifacts for that run with `render` hints.
+- `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
+- Unknown types are still listed and selectable (`render="download"` fallback).
 
 ### `GET /api/sim-viz/rrd-blob`
 

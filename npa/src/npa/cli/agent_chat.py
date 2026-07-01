@@ -126,7 +126,31 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
             r"|\b(?:2[\s-]?step|two[\s-]?step)\b"
             r".{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
-            r".{0,40}\b(?:workflow|yaml|spec)\b",
+            r".{0,40}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:leisaac|isaac[\s-]?lab|byof)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:leisaac|isaac[\s-]?lab)\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\bgpu\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r".{0,120}\b(?:multi[\s-]?region|cross[\s-]?region|2(?:\s+different)?\s+regions?|two(?:\s+different)?\s+regions?|multi[\s-]?project|cross[\s-]?project)\b"
+            r"|\b(?:multi[\s-]?region|cross[\s-]?region|2(?:\s+different)?\s+regions?|two(?:\s+different)?\s+regions?)\b"
+            r".{0,120}\bgpu\b"
+            r".{0,120}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:generate|create|draft|write|show)\b.{0,80}\b(?:example|simple|minimal)?\b.{0,120}\bworkflow\b.{0,80}\b(?:yaml|spec)\b"
+            r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "find_artifacts",
+        re.compile(
+            r"\b(?:find|discover|list|browse|show|view|open|inspect)\b.{0,120}\b(?:artifacts?|outputs?)\b"
+            r"|\bwhat can i view\b"
+            r"|\bwhat\b.{0,80}\bartifacts?\b.{0,120}\bview\b"
+            r"|\bartifact\b.{0,120}\b(?:browser|viewer|preview|download)\b",
             re.IGNORECASE,
         ),
     ),
@@ -173,6 +197,41 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "live_infra_loop",
+        re.compile(
+            r"\b(?:run|submit|launch|test)\b.{0,120}\b(?:live|real)\b.{0,120}\b(?:infra|infrastructure|dev\s*vm)\b"
+            r"|\b(?:tmux|cursor[- ]?loop|loop)\b.{0,120}\b(?:live|real)\b.{0,120}\b(?:infra|workflow)\b"
+            r"|\b(?:verify|check)\b.{0,120}\b(?:gpu|accelerator)\b.{0,120}\b(?:compat|compatibility)\b"
+            r"|\b(?:retry|loop)\b.{0,120}\b(?:failed[_ -]?prechecks|precheck)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cosmos_capabilities",
+        re.compile(
+            r"\bcosmos(?:2|3)?\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|finetun(?:e|ing)|train(?:ing)?|infer(?:ence)?)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bcosmos(?:2|3)?\b"
+            r"|\b(?:can|could)\b.{0,80}\bcosmos(?:2|3)?\b.{0,120}\b(?:do|run|train|finetun(?:e|ing)|infer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "lancedb_capabilities",
+        re.compile(
+            r"\blancedb\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|import|backfill|view|query)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blancedb\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "component_capabilities",
+        re.compile(
+            r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory)\b.{0,80}\b(?:support|do|expose)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "tools_catalog",
         re.compile(
             r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
@@ -197,18 +256,30 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 INTENT_APIS: dict[str, list[str]] = {
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
+    "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
+    "live_infra_loop": ["workflows/validate", "workflows/plan", "tools"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
     "cameras": ["sim-assets/cameras"],
+    "cosmos_capabilities": ["tools"],
+    "lancedb_capabilities": ["tools"],
+    "component_capabilities": ["tools"],
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
     "cosmos3": [],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
+}
+
+_DEFAULT_REGISTRY = "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+_DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
+    "cosmos": ("npa-cosmos", "1.0.9"),
+    "lancedb": ("npa-lancedb", "0.30.3"),
+    "isaac-lab": ("npa-isaac-lab", "2.3.2.post1"),
 }
 
 
@@ -516,6 +587,88 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 8) -> str:
     return "\n".join(lines)
 
 
+def _image_for_tool(tool: str) -> str:
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or _DEFAULT_REGISTRY
+    image_name, tag = _DEFAULT_TOOL_IMAGE_TAGS.get(tool, (f"npa-{tool}", "<tag>"))
+    return f"{registry.rstrip('/')}/{image_name}:{tag}"
+
+
+def format_cosmos_capabilities(tool_refs: list[str]) -> str:
+    cosmos_refs = [ref for ref in tool_refs if "cosmos" in ref or "token_factory" in ref]
+    sample = ", ".join(sorted(cosmos_refs)[:4]) if cosmos_refs else "workbench.cosmos2.transfer"
+    cosmos_image = _image_for_tool("cosmos")
+    return "\n".join(
+        [
+            "**Cosmos component capabilities**:",
+            "- **Inference**: Cosmos3 text-to-image workflow (`cosmos3-text-to-image-inference.yaml`).",
+            "- **Setup + model staging**: `npa workbench cosmos check|fetch`.",
+            "- **Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
+            "- **Pipeline integration**: Cosmos augment stage via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
+            f"- **Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
+            f"- **Catalog examples**: `{sample}`",
+            "- Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
+        ]
+    )
+
+
+def format_lancedb_capabilities(tool_refs: list[str]) -> str:
+    lancedb_refs = [ref for ref in tool_refs if ref.startswith("workbench.lancedb.")]
+    sample = ", ".join(sorted(lancedb_refs)[:5]) if lancedb_refs else "workbench.lancedb.import_bdd100k"
+    lancedb_image = _image_for_tool("lancedb")
+    return "\n".join(
+        [
+            "**LanceDB component capabilities**:",
+            "- **Data ingest**: BDD100K import into run-scoped Lance tables.",
+            "- **Feature backfill**: CPU + GPU UDF backfills (including CLIP embeddings).",
+            "- **Dataset shaping**: materialized view creation for failure-mode slices.",
+            "- **Serving path**: endpoint-backed execution for workflows and tooling.",
+            f"- **Registry image default**: `{lancedb_image}` (use your real registry, never `<your-registry-id>` placeholders).",
+            f"- **Catalog examples**: `{sample}`",
+            "- Keep table/URI names in config; avoid embedding project-specific constants in workflow states.",
+        ]
+    )
+
+
+def format_component_capabilities(tool_refs: list[str]) -> str:
+    return "\n".join(
+        [
+            "**Workbench component capabilities** (customer-facing building blocks):",
+            "- **Cosmos**: setup/fetch, inference, and finetuning/post-training lanes.",
+            "- **LanceDB**: ingest, backfill, view/materialization, query workflows.",
+            "- **Isaac Lab / RL**: train/eval policy building blocks for simulation pipelines.",
+            "- **Token Factory + VLM**: reasoning, augment, scoring, and decision-gate loops.",
+            "- Ask for a component by name (for example: `Cosmos capabilities`) to get targeted commands + workflow patterns.",
+            f"- **Current toolRef count**: `{len(tool_refs)}`",
+        ]
+    )
+
+
+def format_live_infra_loop_guidance() -> str:
+    isaac_image = _image_for_tool("isaac-lab")
+    lancedb_image = _image_for_tool("lancedb")
+    cosmos_image = _image_for_tool("cosmos")
+    return "\n".join(
+        [
+            "**Live infra loop guidance (DEV VM + tmux)**:",
+            "- Resolve registry images from your actual Nebius registry (no placeholders):",
+            f"  - Isaac Lab: `{isaac_image}`",
+            f"  - LanceDB: `{lancedb_image}`",
+            f"  - Cosmos: `{cosmos_image}`",
+            "- GPU compatibility precheck before each launch:",
+            "  1. `sky check`",
+            "  2. `sky gpus list`",
+            "  3. ensure requested accelerator exists in your active K8s context",
+            "- Loop pattern in tmux:",
+            "```bash",
+            "SESSION=live-infra-loop-$(date -u +%Y%m%dT%H%M%SZ)",
+            "tmux new -d -s \"$SESSION\"",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
+            "```",
+            "- If `FAILED_PRECHECKS` appears: adjust image reference or accelerator and retry in the same loop.",
+        ]
+    )
+
+
 def format_configure_s3() -> str:
     return "\n".join(
         [
@@ -529,10 +682,17 @@ def format_configure_s3() -> str:
     )
 
 
-def format_generate_workflow(yaml_text: str, validation: dict[str, Any], *, template: str = "two-step") -> str:
+def format_generate_workflow(
+    yaml_text: str,
+    validation: dict[str, Any],
+    *,
+    template: str = "two-step",
+    plan: dict[str, Any] | None = None,
+    runnable: bool | None = None,
+) -> str:
     from npa.cli.agent_workflow import format_workflow_chat_reply
 
-    return format_workflow_chat_reply(yaml_text, validation, template=template)
+    return format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
 
 
 def format_cosmos3_setup() -> str:
@@ -599,6 +759,20 @@ def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loade
     return "\n".join(lines)
 
 
+def format_find_artifacts() -> str:
+    return "\n".join(
+        [
+            "**Artifact finder (generic, no workflow allowlist):**",
+            "1. Discover runs: `GET /api/artifacts/runs?prefix=&limit=100`",
+            "2. Inspect one run: `GET /api/artifacts/run/{run_id}`",
+            "3. Load selected artifact: `POST /api/sim-viz/load-artifact` with `s3_uri` or `run_id` + `key`",
+            "- Render hints are additive (`rerun`, `video`, `image`, `json`, `text`, `download`).",
+            "- Unknown/new file types are still listed and selectable as `download`.",
+            "- Use `GET /api/sim-viz/status` after load to confirm `artifact_render`, `artifact_key`, and `rerun_ready`.",
+        ]
+    )
+
+
 def build_grounded_reply(
     intent: str,
     state: dict[str, Any],
@@ -638,10 +812,20 @@ def build_grounded_reply(
         )
     if intent == "sim2real_status":
         return format_sim2real_status(state, rerun_ready=rerun_ready)
+    if intent == "find_artifacts":
+        return format_find_artifacts()
     if intent == "sim_assets":
         return format_sim_assets(state)
     if intent == "cameras":
         return format_cameras(state, default_cameras=default_cameras)
+    if intent == "live_infra_loop":
+        return format_live_infra_loop_guidance()
+    if intent == "cosmos_capabilities":
+        return format_cosmos_capabilities(tool_refs)
+    if intent == "lancedb_capabilities":
+        return format_lancedb_capabilities(tool_refs)
+    if intent == "component_capabilities":
+        return format_component_capabilities(tool_refs)
     if intent == "tools_catalog":
         return format_tools_catalog(tool_refs)
     if intent == "configure_s3":
@@ -660,6 +844,8 @@ def build_grounded_reply(
         yaml_text = str(draft.get("yaml") or "").strip()
         if yaml_text:
             validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+            plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
+            runnable = bool(draft.get("runnable"))
             if not validation:
                 validation = {
                     "ok": True,
@@ -672,12 +858,20 @@ def build_grounded_reply(
                 template = "two-step" if intent == "create_workflow" else (
                     "vlm-rl-loop" if intent == "create_vlm_rl_workflow" else "token-factory-gate"
                 )
-            return format_generate_workflow(yaml_text, validation, template=template)
+            return format_generate_workflow(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         from npa.cli.agent_workflow import generate_workflow_draft
 
         generated = generate_workflow_draft(intent=intent, user_text="", tool_refs=frozenset(tool_refs))
         validation = generated["validation"] if isinstance(generated.get("validation"), dict) else {"ok": False}
-        return format_generate_workflow(str(generated.get("yaml") or ""), validation, template=str(generated["template"]))
+        plan = generated.get("plan") if isinstance(generated.get("plan"), dict) else {}
+        runnable = bool(generated.get("runnable"))
+        return format_generate_workflow(
+            str(generated.get("yaml") or ""),
+            validation,
+            template=str(generated["template"]),
+            plan=plan,
+            runnable=runnable,
+        )
     if intent == "list_recordings":
         return (
             "**Run history**: use `GET /api/sim-viz/recordings` to list `.rrd` files or "
