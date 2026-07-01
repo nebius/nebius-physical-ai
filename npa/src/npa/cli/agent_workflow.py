@@ -15,7 +15,14 @@ API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 API_VERSION = API_VERSION_BETA
 _SUPPORTED_API_VERSIONS = frozenset({API_VERSION_STABLE, API_VERSION_BETA})
 
-_TEMPLATES = ("two-step", "loop-gate", "vlm-rl-loop", "token-factory-gate", "gpu-cross-region")
+_TEMPLATES = (
+    "two-step",
+    "loop-gate",
+    "vlm-rl-loop",
+    "token-factory-gate",
+    "gpu-cross-region",
+    "rl-policy-success",
+)
 
 
 class _FoldedStr(str):
@@ -57,6 +64,12 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "cross_region": "gpu-cross-region",
     "multi-region": "gpu-cross-region",
     "cross-region": "gpu-cross-region",
+    "rl-policy": "rl-policy-success",
+    "rl_policy": "rl-policy-success",
+    "policy-training": "rl-policy-success",
+    "policy_training": "rl-policy-success",
+    "rl-training": "rl-policy-success",
+    "rl_training": "rl-policy-success",
 }
 
 _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
@@ -93,6 +106,14 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "multi project",
         "gpu workflow",
         "tenant",
+    ),
+    "rl-policy-success": (
+        "rl policy",
+        "policy training",
+        "reinforcement learning",
+        "isaac lab",
+        "train policy",
+        "simulation policy",
     ),
     "two-step": ("two-step", "2-step", "simple", "minimal"),
 }
@@ -692,31 +713,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     ),
                     "transform-rollouts": OrderedDict(
                         {
-                            "description": "Container glue code for rollout manifest normalization.",
-                            "resources": "container-glue",
-                            "run": OrderedDict(
-                                {
-                                    "shell": (
-                                        "python3 - <<'PY'\n"
-                                        "import json\n"
-                                        "from pathlib import Path\n"
-                                        "payload = {\n"
-                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
-                                        "  \"source_project\": \"{{config.project_primary}}\",\n"
-                                        "  \"target_project\": \"{{config.project_secondary}}\",\n"
-                                        "  \"source_region\": \"{{config.region_primary}}\",\n"
-                                        "  \"target_region\": \"{{config.region_secondary}}\",\n"
-                                        "  \"source_uri\": \"{{config.rollouts_uri}}manifest.json\",\n"
-                                        "  \"target_uri\": \"{{config.normalized_rollouts_uri}}manifest.json\",\n"
-                                        "  \"transform\": \"rollout_manifest_v1\",\n"
-                                        "  \"status\": \"ok\"\n"
-                                        "}\n"
-                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(payload, indent=2))\n"
-                                        "print(\"normalized manifest ready\")\n"
-                                        "PY"
-                                    )
-                                }
+                            "description": (
+                                "Contract adapter/validator stage that normalizes rollout artifacts "
+                                "across project/region boundaries."
                             ),
+                            "resources": "container-glue",
+                            "toolRef": "workbench.data_transform.rollout_contract",
                             "inputs": [
                                 OrderedDict(
                                     {
@@ -762,27 +764,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     ),
                     "summarize-improvement": OrderedDict(
                         {
-                            "description": "Compute and publish cross-region improvement summary.",
-                            "resources": "container-glue",
-                            "run": OrderedDict(
-                                {
-                                    "shell": (
-                                        "python3 - <<'PY'\n"
-                                        "import json\n"
-                                        "from pathlib import Path\n"
-                                        "summary = {\n"
-                                        "  \"tenant_id\": \"{{config.tenant_id}}\",\n"
-                                        "  \"projects\": [\"{{config.project_primary}}\", \"{{config.project_secondary}}\"],\n"
-                                        "  \"regions\": [\"{{config.region_primary}}\", \"{{config.region_secondary}}\"],\n"
-                                        "  \"improvement_delta\": 0.12,\n"
-                                        "  \"result\": \"improved\"\n"
-                                        "}\n"
-                                        "Path(\"{{config.improvement_local_path}}\").write_text(json.dumps(summary, indent=2))\n"
-                                        "print(json.dumps(summary))\n"
-                                        "PY"
-                                    )
-                                }
+                            "description": (
+                                "Compute and validate cross-region improvement contract payload "
+                                "for downstream reporting."
                             ),
+                            "resources": "container-glue",
+                            "toolRef": "workbench.data_transform.improvement_summary",
                             "outputs": [
                                 OrderedDict(
                                     {
@@ -804,6 +791,213 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                     {
                                         "uri": "{{config.finalize_report_uri}}",
                                         "schema": "npa.sim2real.e2e_report.v1",
+                                    }
+                                )
+                            ],
+                            "terminal": True,
+                        }
+                    ),
+                }
+            ),
+        },
+        "rl-policy-success": {
+            "name": "rl-policy-training-sim-success",
+            "description": (
+                "Simulation RL policy workflow with explicit train/eval success gating "
+                "and publish-or-fail terminal outcomes."
+            ),
+            "config_runtime": OrderedDict(
+                {
+                    "prefix": "rl-policy/{{run.id}}",
+                    "task_name": "Isaac-Cartpole-v0",
+                    "train_steps": 500000,
+                    "learning_rate": 0.0003,
+                    "batch_size": 256,
+                    "eval_episodes": 50,
+                    "success_threshold": 0.85,
+                }
+            ),
+            "config_uri": OrderedDict(
+                {
+                    "train_dataset_uri": "s3://{{config.bucket}}/{{config.prefix}}/inputs/train/",
+                    "checkpoint_uri": "s3://{{config.bucket}}/{{config.prefix}}/artifacts/policy/latest.ckpt",
+                    "eval_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/metrics/eval.json",
+                    "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/gate/decision.json",
+                    "release_uri": "s3://{{config.bucket}}/{{config.prefix}}/artifacts/policy/release/",
+                    "release_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/release.json",
+                }
+            ),
+            "resources": OrderedDict(
+                {
+                    "trainer-gpu": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                        }
+                    ),
+                    "eval-gpu": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                        }
+                    ),
+                    "control-cpu": OrderedDict(
+                        {
+                            "cloud": "kubernetes",
+                            "cpus": 4,
+                            "memory": "8Gi",
+                            "image": "python:3.11-slim",
+                        }
+                    ),
+                }
+            ),
+            "initial": "train-policy",
+            "states": OrderedDict(
+                {
+                    "train-policy": OrderedDict(
+                        {
+                            "description": "Train RL policy on simulator task.",
+                            "toolRef": "workbench.rl.policy_train",
+                            "resources": "trainer-gpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.train_dataset_uri}}",
+                                        "schema": "npa.rl.training_dataset.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.checkpoint_uri}}",
+                                        "schema": "npa.rl.policy_checkpoint.v1",
+                                    }
+                                )
+                            ],
+                            "next": "eval-policy",
+                        }
+                    ),
+                    "eval-policy": OrderedDict(
+                        {
+                            "description": "Run held-out simulation evaluation for trained checkpoint.",
+                            "needs": ["train-policy"],
+                            "toolRef": "workbench.rl.evaluate_policy",
+                            "resources": "eval-gpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.checkpoint_uri}}",
+                                        "schema": "npa.rl.policy_checkpoint.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.eval_report_uri}}",
+                                        "schema": "npa.rl.eval_report.v1",
+                                    }
+                                )
+                            ],
+                            "next": "success-gate",
+                        }
+                    ),
+                    "success-gate": OrderedDict(
+                        {
+                            "description": (
+                                "Write promote-or-loop decision from eval metrics and success threshold."
+                            ),
+                            "writesDecision": True,
+                            "needs": ["eval-policy"],
+                            "toolRef": "workbench.rl.write_success_decision",
+                            "resources": "control-cpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.eval_report_uri}}",
+                                        "schema": "npa.rl.eval_report.v1",
+                                    }
+                                )
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.decision_uri}}",
+                                        "schema": "npa.rl.training_decision.v1",
+                                    }
+                                )
+                            ],
+                            "transitions": [
+                                OrderedDict({"when": "promote_checkpoint", "goto": "publish-policy"}),
+                                OrderedDict({"when": "loop_back", "goto": "training-not-success"}),
+                            ],
+                        }
+                    ),
+                    "publish-policy": OrderedDict(
+                        {
+                            "description": "Publish promoted checkpoint with release manifest.",
+                            "needs": ["success-gate"],
+                            "toolRef": "workbench.rl.publish_policy",
+                            "resources": "control-cpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.checkpoint_uri}}",
+                                        "schema": "npa.rl.policy_checkpoint.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.decision_uri}}",
+                                        "schema": "npa.rl.training_decision.v1",
+                                    }
+                                ),
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.release_uri}}manifest.json",
+                                        "schema": "npa.rl.policy_release.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.release_report_uri}}",
+                                        "schema": "npa.rl.training_success_report.v1",
+                                    }
+                                ),
+                            ],
+                            "terminal": True,
+                        }
+                    ),
+                    "training-not-success": OrderedDict(
+                        {
+                            "description": (
+                                "Record explicit non-promotion outcome when success threshold is not met."
+                            ),
+                            "needs": ["success-gate"],
+                            "toolRef": "workbench.rl.report_failure",
+                            "resources": "control-cpu",
+                            "inputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.eval_report_uri}}",
+                                        "schema": "npa.rl.eval_report.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.decision_uri}}",
+                                        "schema": "npa.rl.training_decision.v1",
+                                    }
+                                ),
+                            ],
+                            "outputs": [
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.release_report_uri}}",
+                                        "schema": "npa.rl.training_failure_report.v1",
                                     }
                                 )
                             ],
@@ -840,12 +1034,16 @@ def choose_workflow_template(
         scores["vlm-rl-loop"] += 5
     if "gpu" in text and ("region" in text or "project" in text):
         scores["gpu-cross-region"] += 5
+    if "rl" in text and ("policy" in text or "training" in text or "isaac" in text):
+        scores["rl-policy-success"] += 5
     if capabilities:
         capabilities_text = " ".join(f"{k}:{v}" for k, v in sorted(capabilities.items())).lower()
         if "token" in capabilities_text:
             scores["token-factory-gate"] += 2
         if "vlm" in capabilities_text and "rl" in capabilities_text:
             scores["vlm-rl-loop"] += 2
+        if any(k in capabilities_text for k in ("isaac", "policy", "training", "rl")):
+            scores["rl-policy-success"] += 2
         if any(k in capabilities_text for k in ("loop", "gate", "transition")):
             scores["loop-gate"] += 1
         if any(k in capabilities_text for k in ("tenant", "project", "region")):
@@ -944,11 +1142,23 @@ def generate_workflow_draft(
     spec = _build_spec(selected_template, bucket=bucket, name=name or None)
     yaml_text = _render_spec_yaml(spec)
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=tool_refs)
+    plan: dict[str, Any]
+    if validation.get("ok"):
+        plan = plan_workflow_yaml_text(
+            yaml_text,
+            run_id=f"draft-{selected_template}",
+            tool_refs=tool_refs,
+        )
+    else:
+        plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
+    runnable = bool(validation.get("ok") and plan.get("ok"))
     return {
         "template": selected_template,
         "selection": selection,
         "yaml": yaml_text,
         "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
     }
 
 
@@ -997,6 +1207,15 @@ def generate_gpu_cross_region_yaml(
     return _render_spec_yaml(_build_spec("gpu-cross-region", bucket=bucket, name=name))
 
 
+def generate_rl_policy_training_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "rl-policy-training-sim-success",
+) -> str:
+    """Compatibility wrapper for RL policy training template generation."""
+    return _render_spec_yaml(_build_spec("rl-policy-success", bucket=bucket, name=name))
+
+
 def validate_workflow_yaml_text(
     yaml_text: str,
     *,
@@ -1029,17 +1248,29 @@ def plan_workflow_yaml_text(
         return _plan_lightweight(text, run_id=run_id, tool_refs=tool_refs)
 
 
-def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, template: str = "two-step") -> str:
+def format_workflow_chat_reply(
+    yaml_text: str,
+    validation: dict[str, Any],
+    *,
+    template: str = "two-step",
+    plan: dict[str, Any] | None = None,
+    runnable: bool | None = None,
+) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
     status = str(validation.get("status") or ("valid" if validation.get("ok") else "invalid"))
     states = validation.get("states") or []
     state_label = ", ".join(str(s) for s in states) if isinstance(states, list) else str(states)
+    resolved_plan = plan if isinstance(plan, dict) else {}
+    plan_ok = bool(resolved_plan.get("ok"))
+    resolved_runnable = bool(runnable) if runnable is not None else bool(validation.get("ok") and plan_ok)
+    plan_step_count = len(resolved_plan.get("steps") or []) if isinstance(resolved_plan.get("steps"), list) else 0
     _desc_map = {
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
         "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
+        "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
     }
     t = str(template or "two-step").strip().lower()
     desc = _desc_map.get(t, "2-step Sim2Real pipeline")
@@ -1047,6 +1278,8 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
         f"**Generated {API_VERSION} spec** ({desc}):",
         f"- **name**: `{name}`",
         f"- **validation**: `{status}`",
+        f"- **runnable**: `{'yes' if resolved_runnable else 'no'}`",
+        f"- **plan steps**: `{plan_step_count}`",
         f"- **states**: `{state_label or 'n/a'}`",
         "",
         "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Submit**.",
@@ -1057,7 +1290,10 @@ def format_workflow_chat_reply(yaml_text: str, validation: dict[str, Any], *, te
     ]
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
-        lines.insert(4, f"- **error**: `{err}`")
+        lines.insert(6, f"- **error**: `{err}`")
+    elif resolved_plan and not plan_ok:
+        plan_err = str(resolved_plan.get("error") or "plan failed")
+        lines.insert(6, f"- **plan_error**: `{plan_err}`")
     return "\n".join(lines)
 
 
