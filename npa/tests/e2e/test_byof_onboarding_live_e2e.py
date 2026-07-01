@@ -400,6 +400,9 @@ def test_live_byof_runner_submit_smoke(
         cmd.extend(["--config-path", os.environ["NPA_BYOF_SKYPILOT_CONFIG"]])
     elif RTXPRO_SKYPILOT_CONFIG.is_file() and (e2e_project or "").strip().lower() == "rtxpro":
         cmd.extend(["--config-path", str(RTXPRO_SKYPILOT_CONFIG)])
+    env = dict(os.environ)
+    # SkyPilot managed jobs on K8s may fail prechecks while direct launch works on rtxpro.
+    env.setdefault("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
     proc = subprocess.run(
         cmd,
         check=False,
@@ -407,6 +410,7 @@ def test_live_byof_runner_submit_smoke(
         text=True,
         cwd=str(REPO_ROOT),
         timeout=int(os.environ.get("NPA_BYOF_LIVE_TIMEOUT", "3600")),
+        env=env,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
@@ -424,3 +428,6 @@ def test_live_byof_runner_submit_smoke(
             "FAILED_SETUP",
             "FAILED",
         }
+    submit = run_summary.get("submit", {})
+    if isinstance(submit, dict):
+        assert submit.get("status") == "SUBMITTED", submit

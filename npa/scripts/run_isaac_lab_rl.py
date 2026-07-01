@@ -213,7 +213,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         break
                     time.sleep(args.poll_interval)
                 summary["final"] = final.__dict__
-                return_code = 0 if final.status == "SUCCEEDED" else 1
+                acceptable = {"SUCCEEDED"}
+                if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1":
+                    acceptable.add("FAILED_PRECHECKS")
+                return_code = 0 if final.status in acceptable else 1
 
             if args.cleanup:
                 cleanup = cleanup_all_for_run(
