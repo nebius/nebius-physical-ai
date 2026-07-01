@@ -473,7 +473,7 @@ def test_heldout_eval_launches_sibling_job_and_parses_per_env_output(
         k8s_namespace="default",
         source_ref="dev-branch",
         sim_backend="genesis",
-        eval_image="cr.example/npa-sim2real-eval:0.1.1",
+        eval_image="cr.example/npa-loop-eval:0.1.1",
     )
     inner_evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",

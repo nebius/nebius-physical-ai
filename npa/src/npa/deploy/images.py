@@ -34,12 +34,11 @@ CONTAINER_IMAGE_NAMES = {
     "fiftyone": "npa-fiftyone",
     "sonic": "npa-sonic",
     "retargeting": "npa-retargeting",
-    "sim2real-envgen": "npa-sim2real-envgen",
-    "sim2real-reference-policy": "npa-sim2real-reference-policy",
+    "envgen": "npa-envgen",
+    "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
-    "sim2real-eval": "npa-sim2real-eval",
+    "loop-eval": "npa-loop-eval",
     "rerun-viewer": "npa-rerun-viewer",
-    "sim2real-rerun-viewer": "npa-rerun-viewer",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
 }
@@ -56,17 +55,16 @@ SUPPORTED_TOOL_VERSIONS = {
     "fiftyone": "1.15.0",
     "sonic": "0.1.2",
     "retargeting": "0.1.1",
-    "sim2real-envgen": "0.1.2",
-    "sim2real-reference-policy": "0.1.2",
+    "envgen": "0.1.2",
+    "reference-policy": "0.1.2",
     "lerobot-vlm-rl": "0.1.1",
     # 0.1.2-genuine-sm120 was rebuilt without working Blackwell (sm_120) Genesis
     # kernels and crashes heldout_eval on RTX PRO 6000 with "CUDA error: no kernel
     # image is available for execution on the device". 0.1.1 is the proven-good
     # build (matches sim2real.constants.DEFAULT_EVAL_TAG). Re-bump only after a
     # 0.1.3 rebuild restores sm_120 Genesis kernels.
-    "sim2real-eval": "0.1.1-genuine-sm120",
+    "loop-eval": "0.1.1-genuine-sm120",
     "rerun-viewer": "0.31.4",
-    "sim2real-rerun-viewer": "0.31.4",
     "lancedb": "0.30.3",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     "nebius-cli": "0.12.192",

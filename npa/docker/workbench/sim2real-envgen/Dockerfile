@@ -1,7 +1,7 @@
 ARG BASE_IMAGE=npa-genesis:0.4.6-sm80-sm90-sm120-latest
 FROM ${BASE_IMAGE}
 
-LABEL npa.tool="sim2real-envgen"
+LABEL npa.tool="envgen"
 
 WORKDIR /opt/npa
 USER root
