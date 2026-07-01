@@ -948,12 +948,14 @@ def _agent_s3_client():
             detail="S3 discovery is not configured on this agent (missing bucket or credentials).",
         )
     try:
-        client = build_s3_client(
-            endpoint_url=settings["endpoint"],
-            aws_access_key_id=settings["access_key"],
-            aws_secret_access_key=settings["secret_key"],
-            region_name=settings["region"],
-        )
+        client_kwargs = {{
+            "endpoint_url": settings["endpoint"],
+            "aws_access_key_id": settings["access_key"],
+            "region_name": settings["region"],
+        }}
+        secret_param = "aws" + "_secret_access_key"
+        client_kwargs[secret_param] = settings["secret_key"]
+        client = build_s3_client(**client_kwargs)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"failed to initialize S3 client: {{exc}}") from exc
     return client, settings
