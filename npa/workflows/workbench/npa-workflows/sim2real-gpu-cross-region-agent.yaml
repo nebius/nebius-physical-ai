@@ -51,27 +51,9 @@ states:
     next: transform-rollouts
   transform-rollouts:
     description: >-
-      Container glue code for rollout manifest normalization.
+      Contract adapter/validator stage that normalizes rollout artifacts across project/region boundaries.
     resources: container-glue
-    run:
-      shell: |-
-        python3 - <<'PY'
-        import json
-        from pathlib import Path
-        payload = {
-          "tenant_id": "{{config.tenant_id}}",
-          "source_project": "{{config.project_primary}}",
-          "target_project": "{{config.project_secondary}}",
-          "source_region": "{{config.region_primary}}",
-          "target_region": "{{config.region_secondary}}",
-          "source_uri": "{{config.rollouts_uri}}manifest.json",
-          "target_uri": "{{config.normalized_rollouts_uri}}manifest.json",
-          "transform": "rollout_manifest_v1",
-          "status": "ok"
-        }
-        Path("{{config.improvement_local_path}}").write_text(json.dumps(payload, indent=2))
-        print("normalized manifest ready")
-        PY
+    toolRef: workbench.data_transform.rollout_contract
     inputs:
     - uri: '{{config.rollouts_uri}}manifest.json'
       schema: npa.sim2real.action_rollout.v1
@@ -93,23 +75,9 @@ states:
     next: summarize-improvement
   summarize-improvement:
     description: >-
-      Compute and publish cross-region improvement summary.
+      Compute and validate cross-region improvement contract payload for downstream reporting.
     resources: container-glue
-    run:
-      shell: |-
-        python3 - <<'PY'
-        import json
-        from pathlib import Path
-        summary = {
-          "tenant_id": "{{config.tenant_id}}",
-          "projects": ["{{config.project_primary}}", "{{config.project_secondary}}"],
-          "regions": ["{{config.region_primary}}", "{{config.region_secondary}}"],
-          "improvement_delta": 0.12,
-          "result": "improved"
-        }
-        Path("{{config.improvement_local_path}}").write_text(json.dumps(summary, indent=2))
-        print(json.dumps(summary))
-        PY
+    toolRef: workbench.data_transform.improvement_summary
     outputs:
     - uri: '{{config.improvement_report_uri}}'
       schema: npa.sim2real.improvement_report.v1
