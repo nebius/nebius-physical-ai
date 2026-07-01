@@ -238,6 +238,18 @@ def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:
     assert any(token in reply for token in ("franka", "isaac", "selection", "robot_preset"))
 
 
+def test_agent_models_endpoint(ctx: AgentLiveContext) -> None:
+    models = ctx.get("/api/models")
+    models.raise_for_status()
+    payload = models.json()
+    assert payload.get("ok") is True
+    model_list = payload.get("models")
+    assert isinstance(model_list, list) and model_list
+    default_model = str(payload.get("default_model") or payload.get("default") or "").strip()
+    assert default_model
+    assert default_model in [str(item) for item in model_list]
+
+
 @pytest.mark.skipif(
     os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
     reason="Set NPA_AGENT_CHAT_LIVE=1 to smoke-test Token Factory chat on the live agent.",
@@ -252,3 +264,30 @@ def test_agent_chat_live(ctx: AgentLiveContext) -> None:
     payload = chat.json()
     assert payload.get("ok") is True
     assert payload.get("reply")
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
+    reason="Set NPA_AGENT_CHAT_LIVE=1 to live-test explicit model switching.",
+)
+def test_agent_chat_live_model_switch(ctx: AgentLiveContext) -> None:
+    model_resp = ctx.get("/api/models")
+    model_resp.raise_for_status()
+    model_payload = model_resp.json()
+    default_model = str(model_payload.get("default_model") or model_payload.get("default") or "").strip()
+    models = [str(item) for item in (model_payload.get("models") or []) if str(item).strip()]
+    assert models
+    alternate = next((item for item in models if item != default_model), models[0])
+    chat = ctx.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "Reply with the word ok."}],
+            "model": alternate,
+        },
+        timeout=60.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("reply")
+    assert str(payload.get("model") or "") == alternate

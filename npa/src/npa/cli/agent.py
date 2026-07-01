@@ -45,7 +45,12 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-AGENT_UI_VERSION = "2026063001"
+DEFAULT_LLM_MODELS = (
+    DEFAULT_LLM_MODEL,
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+)
+AGENT_UI_VERSION = "2026070101"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -100,6 +105,8 @@ class AgentConfig:
     auth_secret_path: str
     llm_provider: str
     llm_model: str
+    service_account_id: str = ""
+    llm_models: tuple[str, ...] = ()
     public_url: str = ""
     public_https: bool = True
     direct_url: str = ""
@@ -111,6 +118,7 @@ class AgentConfig:
             "region": self.region,
             "public_ip": self.public_ip,
             "instance_id": self.instance_id,
+            "service_account_id": self.service_account_id,
             "agent_url": self.agent_url,
             "rerun_url": self.rerun_url,
             "sim_viz_url": self.sim_viz_url,
@@ -118,7 +126,11 @@ class AgentConfig:
             "cameras_api_url": self.cameras_api_url,
             "auth_user": self.auth_user,
             "auth_secret_path": self.auth_secret_path,
-            "llm": {"provider": self.llm_provider, "model": self.llm_model},
+            "llm": {
+                "provider": self.llm_provider,
+                "model": self.llm_model,
+                "models": list(self.llm_models or (self.llm_model,)),
+            },
         }
         if self.public_url:
             payload["public_url"] = self.public_url
@@ -275,16 +287,49 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
     return creds.token_factory_api_key, DEFAULT_LLM_MODEL
 
 
+def _resolve_operator_credentials() -> tuple[str, str]:
+    """Return Nebius AI Cloud key and Token Factory API key from operator credentials."""
+    from npa.clients.credentials import load_credentials
+
+    creds = load_credentials()
+    return creds.ai_cloud_api_key, creds.token_factory_api_key
+
+
+def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
+    """Return an ordered, unique model list from repeated or comma-separated values."""
+    if isinstance(models, str):
+        raw_items = [models]
+    else:
+        raw_items = list(models)
+    normalized: list[str] = []
+    for raw in raw_items:
+        for chunk in str(raw).replace("\n", ",").split(","):
+            value = chunk.strip()
+            if value and value not in normalized:
+                normalized.append(value)
+    if not normalized:
+        normalized = list(DEFAULT_LLM_MODELS)
+    if DEFAULT_LLM_MODEL not in normalized:
+        normalized.insert(0, DEFAULT_LLM_MODEL)
+    return normalized
+
+
 def _write_agent_llm_env(
     ssh: SSHClient,
     *,
     tf_api_key: str,
     llm_model: str,
+    llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
 ) -> None:
     """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
     if not tf_api_key.strip():
         return
-    env_content = f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\nNPA_AGENT_LLM_MODEL={llm_model}\n"
+    models_csv = ",".join(_normalize_llm_models(list(llm_models)))
+    env_content = (
+        f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\n"
+        f"NPA_AGENT_LLM_MODEL={llm_model}\n"
+        f"NPA_AGENT_LLM_MODELS={models_csv}\n"
+    )
     env_b64 = base64.b64encode(env_content.encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/llm.env >/dev/null "
@@ -316,6 +361,88 @@ def _write_agent_s3_env(
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/s3.env"
+    )
+
+
+def _write_agent_operator_profile(
+    ssh: SSHClient,
+    *,
+    ssh_user: str,
+    project_alias: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    tf_api_key: str,
+    nebius_ai_key: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+    s3_access_key: str,
+    s3_secret_key: str,
+    service_account_id: str = "",
+) -> None:
+    """Write ~/.npa/config.yaml + credentials.yaml on the agent VM for operator workflows."""
+    if not (project_alias and project_id and tenant_id and region):
+        return
+    config_payload: dict[str, Any] = {
+        "default_project": project_alias,
+        "projects": {
+            project_alias: {
+                "project_id": project_id,
+                "tenant_id": tenant_id,
+                "region": region,
+            }
+        },
+    }
+    credentials_payload: dict[str, Any] = {"tokens": {}}
+    tokens = credentials_payload["tokens"]
+    if isinstance(tokens, dict):
+        if nebius_ai_key.strip():
+            tokens["NEBIUS_AI_CLOUD_KEY"] = nebius_ai_key.strip()
+        if tf_api_key.strip():
+            tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
+    storage_payload = {
+        "access_key_id": s3_access_key.strip(),
+        "secret_access_key": s3_secret_key.strip(),
+        "endpoint": s3_endpoint.strip(),
+        "bucket": s3_bucket.strip(),
+    }
+    if any(storage_payload.values()):
+        credentials_payload["storage"] = storage_payload
+    if service_account_id.strip():
+        credentials_payload["nebius"] = {"service_account_id": service_account_id.strip()}
+    config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
+    creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
+    user_home = f"/home/{ssh_user}"
+    npa_dir = f"{user_home}/.npa"
+    config_path = f"{npa_dir}/config.yaml"
+    creds_path = f"{npa_dir}/credentials.yaml"
+    ssh.run_or_raise(
+        " && ".join(
+            [
+                f"sudo mkdir -p {shlex.quote(npa_dir)}",
+                f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
+                f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
+                f"sudo chown -R {shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {shlex.quote(npa_dir)}",
+                f"sudo chmod 700 {shlex.quote(npa_dir)}",
+                f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
+            ]
+        )
+    )
+
+
+def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
+    """Persist a project-scoped Nebius environment like a fresh configure step."""
+    write_config(
+        {
+            "default_project": project,
+            "projects": {
+                project: {
+                    "project_id": project_id,
+                    "tenant_id": tenant_id,
+                    "region": region,
+                }
+            },
+        }
     )
 
 
@@ -461,13 +588,20 @@ def _bootstrap_agent_stack(
     host: str,
     ssh_user: str,
     ssh_key_path: str,
+    project_alias: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
     auth_user: str,
     auth_password: str,
     agent_port: int,
     backend_port: int,
     rerun_port: int,
     llm_model: str = DEFAULT_LLM_MODEL,
+    llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
     tf_api_key: str = "",
+    nebius_ai_key: str = "",
+    service_account_id: str = "",
     s3_bucket: str = "",
     s3_endpoint: str = "",
     s3_access_key: str = "",
@@ -488,6 +622,8 @@ def _bootstrap_agent_stack(
     agent_chat_source = _embedded_agent_chat_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    llm_models = _normalize_llm_models(list(llm_models))
+    default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -1105,12 +1241,80 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     return viz
 
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
+LLM_MODELS_ENV = os.environ.get("NPA_AGENT_LLM_MODELS", "")
+DEFAULT_LLM_MODELS = {default_llm_models_json}
 TF_BASE_URL = os.environ.get(
     "NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"
 ).rstrip("/")
 _THINK_RE = re.compile(
     r"\\A\\s*<think>(?P<reasoning>.*?)</think>\\s*", re.DOTALL
 )
+_MODELS_CACHE = {{"expires_at": 0.0, "models": []}}
+
+def _normalize_llm_models(raw: str) -> list[str]:
+    models: list[str] = []
+    for part in str(raw or "").replace("\\n", ",").split(","):
+        value = part.strip()
+        if value and value not in models:
+            models.append(value)
+    return models
+
+def _configured_llm_models() -> list[str]:
+    configured = _normalize_llm_models(LLM_MODELS_ENV)
+    if not configured:
+        configured = [str(item) for item in DEFAULT_LLM_MODELS if str(item).strip()]
+    if LLM_MODEL not in configured:
+        configured.insert(0, LLM_MODEL)
+    return configured
+
+def _fetch_token_factory_models() -> list[str]:
+    api_key = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+    if not api_key:
+        return []
+    url = f"{{TF_BASE_URL}}/models"
+    try:
+        response = httpx.get(
+            url,
+            headers={{
+                "Authorization": f"Bearer {{api_key}}",
+                "Content-Type": "application/json",
+            }},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return []
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return []
+    models: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("id") or "").strip()
+        if value and value not in models:
+            models.append(value)
+    return models
+
+def _available_llm_models(*, refresh: bool = False) -> list[str]:
+    configured = _configured_llm_models()
+    now = time.monotonic()
+    cache = _MODELS_CACHE
+    if not refresh and cache.get("expires_at", 0.0) > now:
+        cached = cache.get("models", [])
+        if isinstance(cached, list) and cached:
+            return cached
+    live = _fetch_token_factory_models()
+    if live:
+        allowed = [model for model in configured if model in live]
+        extras = [model for model in live if model not in allowed]
+        resolved = (allowed + extras)[:32]
+    else:
+        resolved = configured
+    cache["models"] = resolved
+    cache["expires_at"] = now + 300.0
+    return resolved
 
 def _agent_system_prompt() -> str:
     lines = [
@@ -1133,6 +1337,7 @@ def _agent_system_prompt() -> str:
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
         "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
         "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
+        "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
         "",
         "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
@@ -1357,7 +1562,7 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
             fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
             reply = (
                 "**Could not generate runnable workflow YAML yet.**\n"
-                f"- **reason**: `{fail_reason}`\n"
+                f"- **reason**: `{{fail_reason}}`\n"
                 "- Adjust your request or template details and retry;"
                 " chat returns YAML only after both validation and planning succeed."
             )
@@ -1467,6 +1672,15 @@ def chat(payload: dict):
 def health():
     return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
 
+@app.get("/models")
+def models(refresh: bool = False):
+    return {{
+        "ok": True,
+        "default": LLM_MODEL,
+        "default_model": LLM_MODEL,
+        "models": _available_llm_models(refresh=bool(refresh)),
+    }}
+
 @app.get("/session")
 def session_bootstrap():
     state = _load_state()
@@ -1491,6 +1705,12 @@ def session_bootstrap():
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
+        "llm": {{
+            "default": LLM_MODEL,
+            "default_model": LLM_MODEL,
+            "model": LLM_MODEL,
+            "models": _available_llm_models(),
+        }},
     }}
 
 @app.get("/tools")
@@ -2445,6 +2665,29 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .camera-frustum {{ display: flex; justify-content: center; }}
       .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
+      .chat-toolbar {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin: 8px 0 10px;
+        flex-wrap: wrap;
+      }}
+      .chat-model {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #4f5668;
+      }}
+      .chat-model select {{
+        border: 1px solid #d4d8e2;
+        border-radius: 999px;
+        padding: 6px 10px;
+        background: #fff;
+        color: #1f2430;
+        font: inherit;
+      }}
       .chat-log {{
         height: 320px; overflow-y: auto; background: #f9fafc; border: 1px solid var(--border);
         border-radius: 10px; padding: 10px; margin-bottom: 10px;
@@ -2559,6 +2802,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         flex: 1; min-height: 58px; resize: vertical; font-family: inherit; padding: 10px 12px;
         border: 1px solid var(--border);
         border-radius: 12px;
+        font-size: 16px;
         outline: none;
       }}
       .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
@@ -2655,6 +2899,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       @media (max-width: 1280px) {{
         .layout-3 {{ grid-template-columns: 1fr; }}
       }}
+      @media (max-width: 900px) {{
+        .topbar {{
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 8px;
+        }}
+        .page {{ padding: 12px; gap: 12px; }}
+        .panel {{ padding: 12px; }}
+        .field-row {{ grid-template-columns: 1fr; }}
+        .msg-card {{ max-width: 92%; }}
+        iframe {{ height: 300px; }}
+      }}
+      @media (max-width: 640px) {{
+        body {{ padding-bottom: calc(52px + env(safe-area-inset-bottom)); }}
+        .chrome {{ min-height: auto; }}
+        .brand {{ font-size: 12px; }}
+        .brand-sub {{ font-size: 11px; line-height: 1.35; }}
+        .chat-input {{
+          flex-direction: column;
+          align-items: stretch;
+        }}
+        .chat-input .btn {{ width: 100%; }}
+        .btn, .quick-pill {{
+          min-height: 40px;
+          font-size: 13px;
+        }}
+        .status-bar {{
+          padding-bottom: calc(8px + env(safe-area-inset-bottom));
+        }}
+      }}
       .workflow-panel textarea {{
         width: 100%;
         min-height: 220px;
@@ -2721,6 +2995,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <section class="panel chat-panel">
           <h3>Workbench Chat</h3>
           <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+          <div class="chat-toolbar">
+            <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
+            <label for="chatModel" class="chat-model">
+              Token Factory model
+              <select id="chatModel">
+                <option value="{DEFAULT_LLM_MODEL}" selected>{DEFAULT_LLM_MODEL}</option>
+              </select>
+            </label>
+          </div>
           <div id="chatLog" class="chat-log"></div>
           <div class="chat-input">
             <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
@@ -3208,8 +3491,34 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function setChatBusy(isBusy) {{
         const btn = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
+        const model = document.getElementById("chatModel");
         btn.disabled = Boolean(isBusy);
         input.disabled = Boolean(isBusy);
+        if (model) model.disabled = Boolean(isBusy);
+      }}
+      function setChatModels(models, selectedModel) {{
+        const select = document.getElementById("chatModel");
+        if (!select) return;
+        const values = Array.isArray(models)
+          ? [...new Set(models.map((item) => String(item || "").trim()).filter(Boolean))]
+          : [];
+        if (!values.length) {{
+          values.push("{DEFAULT_LLM_MODEL}");
+        }}
+        const preferred = String(selectedModel || select.value || values[0] || "").trim();
+        const chosen = values.includes(preferred) ? preferred : values[0];
+        select.innerHTML = "";
+        for (const model of values) {{
+          const opt = document.createElement("option");
+          opt.value = model;
+          opt.textContent = model;
+          if (model === chosen) opt.selected = true;
+          select.appendChild(opt);
+        }}
+      }}
+      function selectedChatModel() {{
+        const select = document.getElementById("chatModel");
+        return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}";
       }}
       function setWorkflowYaml(text, validation) {{
         const area = document.getElementById("workflowYaml");
@@ -3290,6 +3599,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function sendChat() {{
         const input = document.getElementById("chatInput");
         const text = String(input.value || "").trim();
+        const model = selectedChatModel();
         if (!text) {{
           showToast("Enter a message first", "info");
           return false;
@@ -3303,9 +3613,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const data = await apiJson("/api/chat", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ messages: chatHistory }}),
+            body: JSON.stringify({{ messages: chatHistory, model }}),
           }});
           clearThinkingBubble();
+          if (data && data.model) {{
+            const select = document.getElementById("chatModel");
+            if (select) select.value = String(data.model);
+          }}
           const reply = normalizeAssistantReply(data.reply || "");
           if (reply) {{
             appendChat("assistant", reply);
@@ -3841,6 +4155,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function refresh() {{
         try {{
           const session = await loadJson("/api/session");
+          if (session && session.llm) {{
+            const currentModel = String(
+              (session.llm.model || session.llm.default_model || session.llm.default || "")
+            );
+            setChatModels(session.llm.models, currentModel);
+          }}
           if (session && session.workflow_draft && session.workflow_draft.yaml) {{
             setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
           }}
@@ -4146,6 +4466,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function restoreSession() {{
         try {{
           const session = await loadJson("/api/session");
+          if (session && session.llm) {{
+            const currentModel = String(
+              (session.llm.model || session.llm.default_model || session.llm.default || "")
+            );
+            setChatModels(session.llm.models, currentModel);
+          }}
           const hist = Array.isArray(session.chat_history) ? session.chat_history : [];
           for (const msg of hist) {{
             const role = String(msg.role || "");
@@ -4316,7 +4642,7 @@ sudo systemctl restart npa-agent-backend
         if local_setup_script:
             Path(local_setup_script).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
-    _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model)
+    _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model, llm_models=llm_models)
     _write_agent_s3_env(
         ssh,
         bucket=s3_bucket,
@@ -4324,6 +4650,21 @@ sudo systemctl restart npa-agent-backend
         access_key=s3_access_key,
         secret_key=s3_secret_key,
         region=s3_region,
+    )
+    _write_agent_operator_profile(
+        ssh,
+        ssh_user=ssh_user,
+        project_alias=project_alias,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        tf_api_key=tf_api_key,
+        nebius_ai_key=nebius_ai_key,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+        s3_access_key=s3_access_key,
+        s3_secret_key=s3_secret_key,
+        service_account_id=service_account_id,
     )
     if tf_api_key.strip() or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip()):
         ssh.run_or_raise(
@@ -4360,6 +4701,16 @@ def deploy_cmd(
     agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
     backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
     rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    llm_model: str = typer.Option(
+        DEFAULT_LLM_MODEL,
+        "--llm-model",
+        help="Default Token Factory model for agent chat.",
+    ),
+    llm_models: list[str] = typer.Option(
+        [],
+        "--llm-models",
+        help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
+    ),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -4448,7 +4799,10 @@ def deploy_cmd(
         user=DEFAULT_AGENT_USER,
         password=auth_password,
     )
-    tf_api_key, llm_model = _resolve_deploy_llm_credentials()
+    tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
+    configured_llm_model = str(llm_model or "").strip() or default_llm_model
+    configured_llm_models = _normalize_llm_models([configured_llm_model, *llm_models])
+    nebius_ai_key, _ = _resolve_operator_credentials()
     if not tf_api_key:
         typer.echo(
             "Warning: Token Factory API key not found in credentials; "
@@ -4461,13 +4815,20 @@ def deploy_cmd(
             host=public_ip,
             ssh_user=ssh_user,
             ssh_key_path=ssh_key_path,
+            project_alias=project,
+            project_id=env_project_id,
+            tenant_id=env_tenant_id,
+            region=env_region,
             auth_user=DEFAULT_AGENT_USER,
             auth_password=auth_password,
             agent_port=agent_port,
             backend_port=backend_port,
             rerun_port=rerun_port,
-            llm_model=llm_model,
+            llm_model=configured_llm_model,
+            llm_models=configured_llm_models,
             tf_api_key=tf_api_key,
+            nebius_ai_key=nebius_ai_key,
+            service_account_id=str(creds.get("service_account_id", "")),
             s3_bucket=str(merged_vars.get("s3_bucket", "")),
             s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
             s3_access_key=str(merged_vars.get("nebius_api_key", "")),
@@ -4495,6 +4856,7 @@ def deploy_cmd(
         region=env_region,
         public_ip=public_ip,
         instance_id=instance_id,
+        service_account_id=str(creds.get("service_account_id", "")),
         agent_url=urls["agent_url"],
         rerun_url=urls["rerun_url"],
         sim_viz_url=urls["sim_viz_url"],
@@ -4503,7 +4865,8 @@ def deploy_cmd(
         auth_user=DEFAULT_AGENT_USER,
         auth_secret_path=str(auth_path),
         llm_provider=DEFAULT_LLM_PROVIDER,
-        llm_model=DEFAULT_LLM_MODEL,
+        llm_model=configured_llm_model,
+        llm_models=tuple(configured_llm_models),
         public_url=urls["public_url"],
         public_https=public_https,
         direct_url=urls["direct_url"],
@@ -4539,10 +4902,78 @@ def deploy_cmd(
     typer.echo(f"sim_viz_url: {urls['sim_viz_url']}")
     typer.echo(f"sim_assets_url: {urls['sim_assets_url']}")
     typer.echo(f"cameras_api_url: {urls['cameras_api_url']}")
-    typer.echo(f"llm: {DEFAULT_LLM_PROVIDER}:{DEFAULT_LLM_MODEL}")
+    typer.echo(f"llm: {DEFAULT_LLM_PROVIDER}:{configured_llm_model}")
+    typer.echo(f"llm_models: {', '.join(configured_llm_models)}")
     typer.echo(f"auth_user: {DEFAULT_AGENT_USER}")
     typer.echo(f"auth_secret_path: {auth_path}")
     typer.echo(f"auth_password: {redact_value(auth_password)}")
+
+
+@app.command("fresh-setup")
+def fresh_setup_cmd(
+    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias for this fresh environment."),
+    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project_id: str = typer.Option(..., "--project-id", help="Nebius project ID."),
+    tenant_id: str = typer.Option(..., "--tenant-id", help="Nebius tenant ID."),
+    region: str = typer.Option("us-central1", "--region", help="Nebius region."),
+    ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
+    ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
+    tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
+    agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
+    backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
+    rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    llm_model: str = typer.Option(
+        DEFAULT_LLM_MODEL,
+        "--llm-model",
+        help="Default Token Factory model for agent chat.",
+    ),
+    llm_models: list[str] = typer.Option(
+        [],
+        "--llm-models",
+        help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
+    ),
+    no_public_https: bool = typer.Option(
+        False,
+        "--no-public-https",
+        help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Destroy an existing agent with the same project/name before fresh deploy.",
+    ),
+) -> None:
+    """Initialize fresh project config and deploy a new agent from scratch."""
+    existing = _agent_record(project, name)
+    if existing and not replace:
+        _fail(
+            f"Agent {project}/{name} already exists. Use --replace or choose a new --project/--name."
+        )
+    _store_project_environment(
+        project=project,
+        project_id=project_id.strip(),
+        tenant_id=tenant_id.strip(),
+        region=region.strip(),
+    )
+    if existing and replace:
+        typer.echo(f"Replacing existing agent {project}/{name} ...")
+        destroy_cmd(project=project, name=name)
+    deploy_cmd(
+        project=project,
+        name=name,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        ssh_user=ssh_user,
+        ssh_public_key_path=ssh_public_key_path,
+        tf_var=tf_var,
+        agent_port=agent_port,
+        backend_port=backend_port,
+        rerun_port=rerun_port,
+        llm_model=llm_model,
+        llm_models=llm_models,
+        no_public_https=no_public_https,
+    )
 
 
 @app.command("bootstrap")
@@ -4553,6 +4984,12 @@ def bootstrap_cmd(
     agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
     backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
     rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    llm_model: str = typer.Option("", "--llm-model", help="Override the active Token Factory model."),
+    llm_models: list[str] = typer.Option(
+        [],
+        "--llm-models",
+        help="Override additional Token Factory model IDs (repeat flag or comma-separated values).",
+    ),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -4578,10 +5015,20 @@ def bootstrap_cmd(
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:
         _fail(str(exc))
-    tf_api_key, llm_model = _resolve_deploy_llm_credentials()
+    tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
+    requested_llm_model = str(llm_model or "").strip()
+    resolved_llm_model = requested_llm_model or default_llm_model
+    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *llm_models])
+    nebius_ai_key, _ = _resolve_operator_credentials()
     llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
-    if isinstance(llm_block.get("model"), str) and llm_block["model"].strip():
-        llm_model = llm_block["model"].strip()
+    if isinstance(llm_block.get("models"), list):
+        resolved_llm_models = _normalize_llm_models(
+            [*resolved_llm_models, *[str(item) for item in llm_block.get("models", [])]]
+        )
+    if not requested_llm_model and isinstance(llm_block.get("model"), str) and llm_block["model"].strip():
+        resolved_llm_model = llm_block["model"].strip()
+    if resolved_llm_model not in resolved_llm_models:
+        resolved_llm_models.insert(0, resolved_llm_model)
     if not tf_api_key:
         typer.echo(
             "Warning: Token Factory API key not found; chat endpoint will return 503.",
@@ -4604,13 +5051,20 @@ def bootstrap_cmd(
             host=public_ip,
             ssh_user=ssh_user,
             ssh_key_path=ssh_key_path,
+            project_alias=project,
+            project_id=str(record.get("project_id", "") or ""),
+            tenant_id=str(record.get("tenant_id", "") or ""),
+            region=str(record.get("region", "") or "eu-north1"),
             auth_user=auth_user,
             auth_password=auth_password,
             agent_port=agent_port,
             backend_port=backend_port,
             rerun_port=rerun_port,
-            llm_model=llm_model,
+            llm_model=resolved_llm_model,
+            llm_models=resolved_llm_models,
             tf_api_key=tf_api_key,
+            nebius_ai_key=nebius_ai_key,
+            service_account_id=str(record.get("service_account_id", "") or ""),
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
@@ -4637,6 +5091,11 @@ def bootstrap_cmd(
     updated = dict(record)
     updated.update(urls)
     updated["public_https"] = public_https
+    llm_payload = dict(updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {})
+    llm_payload["provider"] = DEFAULT_LLM_PROVIDER
+    llm_payload["model"] = resolved_llm_model
+    llm_payload["models"] = list(resolved_llm_models)
+    updated["llm"] = llm_payload
     _store_agent_record(project, name, updated)
     typer.echo(f"Customer URL: {urls['public_url']}")
     typer.echo(f"bootstrapped: {project}/{name} at {urls['public_url']}")
