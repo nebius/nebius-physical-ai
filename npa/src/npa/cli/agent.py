@@ -1360,8 +1360,8 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not runnable:
             fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
             reply = (
-                "**Could not generate runnable workflow YAML yet.**\n"
-                f"- **reason**: `{{fail_reason}}`\n"
+                "**Could not generate runnable workflow YAML yet.**\\n"
+                f"- **reason**: `{{fail_reason}}`\\n"
                 "- Adjust your request or template details and retry;"
                 " chat returns YAML only after both validation and planning succeed."
             )
