@@ -22,6 +22,8 @@ LOG_ROOT="${STATE_DIR}/${RUN_ID}"
 SESSION="${PIPELINE_E2E_TMUX_SESSION:-pipeline-images-e2e}"
 BRANCH="${PIPELINE_E2E_SOURCE_REF:-$(git -C "${ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+NEBIUS_REGISTRY_PROFILE="${NEBIUS_REGISTRY_PROFILE:-agent-sa}"
+NPA_E2E_PIPELINE_GPU="${NPA_E2E_PIPELINE_GPU:-h200}"
 
 WITH_BUILD=1
 WITH_CURSOR=0
@@ -81,7 +83,7 @@ export NPA_INTEGRATION_E2E=1
 export PIPELINE_E2E_LOG_ROOT="${LOG_ROOT}"
 export PIPELINE_E2E_SOURCE_REF="${BRANCH}"
 
-TMUX_ENV="cd \"${ROOT}\" && unset NEBIUS_IAM_TOKEN NPA_IAM_TOKEN 2>/dev/null || true && export NPA_INTEGRATION_E2E=1 && export NPA_E2E_SERVERLESS_PROJECT=\"${NPA_E2E_SERVERLESS_PROJECT:-}\" && export REGISTRY=\"${REGISTRY}\" && export PIPELINE_E2E_LOG_ROOT=\"${LOG_ROOT}\""
+TMUX_ENV="cd \"${ROOT}\" && unset NEBIUS_IAM_TOKEN NPA_IAM_TOKEN 2>/dev/null || true && export NPA_INTEGRATION_E2E=1 && export NPA_E2E_SERVERLESS_PROJECT=\"${NPA_E2E_SERVERLESS_PROJECT:-}\" && export NPA_E2E_PIPELINE_GPU=\"${NPA_E2E_PIPELINE_GPU}\" && export NEBIUS_REGISTRY_PROFILE=\"${NEBIUS_REGISTRY_PROFILE}\" && export REGISTRY=\"${REGISTRY}\" && export PIPELINE_E2E_LOG_ROOT=\"${LOG_ROOT}\""
 
 if ! command -v tmux >/dev/null; then
   echo "tmux required" >&2

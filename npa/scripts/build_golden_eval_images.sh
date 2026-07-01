@@ -43,6 +43,10 @@ if [[ ${#TOOLS[@]} -eq 0 ]]; then
   exit 2
 fi
 
+if [[ "${PUSH}" == "1" ]]; then
+  bash "${SCRIPT_DIR}/nebius_registry_docker_login.sh"
+fi
+
 tool_version() {
   local tool="$1"
   TOOL="${tool}" "${PYTHON}" - <<'PY'
