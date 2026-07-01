@@ -2,8 +2,8 @@
 # Log Docker into the Nebius container registry using the registry tenant profile.
 #
 # The workbench registry (e00cm0vc6t09m0z5gw) lives in tenant arch-sandbox and is
-# reachable via skypilot-sa (profiles agent-sa / agent-service). The dev VM default
-# npa-mk8s profile is a different tenant and will 403 on push/pull.
+# reachable via skypilot-sa (profiles agent-sa / agent-service). Serverless jobs
+# for workbench-poc use profile npa-mk8s (NEBIUS_SERVERLESS_PROFILE) instead.
 #
 # Usage:
 #   ./npa/scripts/nebius_registry_docker_login.sh

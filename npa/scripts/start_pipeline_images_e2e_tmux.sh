@@ -97,11 +97,13 @@ tmux new-session -d -s "${SESSION}" -n dashboard \
 
 if [[ "${WITH_BUILD}" == "1" && "${SKIP_BUILD}" == "0" ]]; then
   tmux new-window -t "${SESSION}" -n build \
-    "bash -lc '${TMUX_ENV} && git fetch origin ${BRANCH} 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; git checkout ${BRANCH} 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; REGISTRY=\"${REGISTRY}\" bash \"${SCRIPT_DIR}/build_golden_eval_images.sh\" envgen reference-policy loop-eval --push 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; echo build_done | tee -a \"${LOG_ROOT}/build.log\"; exec bash'"
+    "bash -lc '${TMUX_ENV} && git fetch origin ${BRANCH} 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; git checkout ${BRANCH} 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; npa/.venv/bin/pip install -q -e npa[dev] 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; REGISTRY=\"${REGISTRY}\" bash \"${SCRIPT_DIR}/build_golden_eval_images.sh\" envgen reference-policy loop-eval --push 2>&1 | tee -a \"${LOG_ROOT}/build.log\"; echo build_done | tee -a \"${LOG_ROOT}/build.log\"; exec bash'"
 fi
 
+SERVERLESS_PROFILE="${NEBIUS_SERVERLESS_PROFILE:-npa-mk8s}"
+
 tmux new-window -t "${SESSION}" -n e2e \
-  "bash -lc '${TMUX_ENV} && git fetch origin ${BRANCH} && git checkout ${BRANCH} && ${PYTHON} -m pytest npa/tests/e2e/test_pipeline_images_serverless_e2e.py -v -m e2e_serverless --tb=short 2>&1 | tee \"${LOG_ROOT}/e2e.log\"; ec=\${PIPESTATUS[0]}; echo e2e_exit=\$ec | tee -a \"${LOG_ROOT}/e2e.log\"; if [[ \$ec -ne 0 ]]; then echo \"${RUN_ID}\" > \"${STATE_DIR}/patch-request-run-id\"; fi; exec bash'"
+  "bash -lc '${TMUX_ENV} && nebius profile activate \"${SERVERLESS_PROFILE}\" && git fetch origin ${BRANCH} && git checkout ${BRANCH} && npa/.venv/bin/pip install -q -e npa[dev] && ${PYTHON} -m pytest npa/tests/e2e/test_pipeline_images_serverless_e2e.py -v -m e2e_serverless --tb=short 2>&1 | tee \"${LOG_ROOT}/e2e.log\"; ec=\${PIPESTATUS[0]}; echo e2e_exit=\$ec | tee -a \"${LOG_ROOT}/e2e.log\"; if [[ \$ec -ne 0 ]]; then echo \"${RUN_ID}\" > \"${STATE_DIR}/patch-request-run-id\"; fi; exec bash'"
 
 if [[ "${WITH_CURSOR}" == "1" ]]; then
   export GOLDEN_EVAL_STATE_DIR="${STATE_DIR}/cursor"
