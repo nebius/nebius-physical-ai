@@ -6,8 +6,8 @@ name: isaac-lab-rsl-rl-train
 resources:
   cloud: kubernetes
   accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
-  cpus: 2
-  memory: 8
+  cpus: 4+
+  memory: 16+
   # Replace <your-registry-id> with your Nebius container registry ID.
   # Keep this image on an RT-core-capable Isaac Lab build.
   image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1"

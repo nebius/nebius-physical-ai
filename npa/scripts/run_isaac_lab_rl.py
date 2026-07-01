@@ -186,6 +186,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 rendered_yaml,
                 run_id,
                 isolated_config_dir=args.isolated_config_dir,
+                config_path=args.config_path,
                 sky_bin=sky_bin,
                 timeout=args.submit_timeout,
             )
@@ -265,6 +266,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--checkpoint-s3-uri", default="")
     parser.add_argument("--checkpoint-s3-endpoint-url", default="")
     parser.add_argument("--sky-bin", default="")
+    parser.add_argument("--config-path", type=Path, default=None, help="SkyPilot global config YAML (e.g. kubernetes pod_config).")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)
     parser.add_argument("--wait-timeout", type=int, default=21600)

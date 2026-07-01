@@ -151,6 +151,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--wait-timeout", type=int, default=21600)
     parser.add_argument("--poll-interval", type=int, default=60)
     parser.add_argument("--sky-bin", default="")
+    parser.add_argument("--config-path", default="", help="SkyPilot global config YAML for kubernetes pod_config.")
     parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-push", action="store_true")
@@ -269,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
                 cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
                 cmd.extend(["--sky-bin", args.sky_bin])
+            if args.config_path:
+                cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
             run_proc = _run(cmd, capture=True)

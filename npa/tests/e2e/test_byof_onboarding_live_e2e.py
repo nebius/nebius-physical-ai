@@ -45,6 +45,9 @@ RTXPRO_TRAIN_YAML = (
 RTXPRO_SMOKE_TRAIN_YAML = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml"
 )
+RTXPRO_SKYPILOT_CONFIG = (
+    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "skypilot-kubernetes-rtxpro.yaml"
+)
 DEFAULT_TRAIN_YAML = (
     REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train.yaml"
 )
@@ -98,13 +101,29 @@ def _default_byof_resource_yaml(e2e_project: str | None, *, smoke: bool = False)
 def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
     if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
         return
-    _activate_nebius_profile()
+    profile = os.environ.get("NPA_NEBIUS_PROFILE", "agent-sa").strip()
+    if profile == "agent-sa":
+        # Registry secret apply needs mk8s cluster credentials on rtxpro.
+        subprocess.run(
+            ["nebius", "profile", "activate", "npa-mk8s"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        _activate_nebius_profile()
     server = registry.split("/", 1)[0]
     if not server.startswith("cr.") or ".nebius.cloud" not in server:
         return
     namespace = os.environ.get("NPA_BYOF_K8S_NAMESPACE", "skypilot-system")
     k8s_context = os.environ.get("NPA_BYOF_K8S_CONTEXT", "npa-rtxpro-mk8s")
     kubeconfig = os.environ.get("NPA_BYOF_KUBECONFIG", "").strip()
+    if not kubeconfig:
+        fallback = Path(
+            "/home/ubuntu/.npa/.sim2real-walkthrough-backup/clusters/npa-rtxpro-mk8s/kubeconfig.resolved"
+        )
+        if fallback.is_file():
+            kubeconfig = str(fallback)
     runtime_env = dict(os.environ)
     skypilot_bin = os.environ.get("NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin")
     if skypilot_bin:
@@ -118,6 +137,13 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
             kubeconfig=kubeconfig,
             k8s_context=k8s_context,
         )
+        if namespace != "default":
+            ensure_nebius_registry_pull_secret(
+                registry_server=server,
+                namespace="default",
+                kubeconfig=kubeconfig,
+                k8s_context=k8s_context,
+            )
     except Exception as exc:
         # Optional preflight: clusters without kubectl/sky-kube-exec-wrapper can still run container tiers.
         print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
@@ -370,6 +396,10 @@ def test_live_byof_runner_submit_smoke(
         f"byof-live-submit-{os.getpid()}",
         "--skip-build",
     ]
+    if os.environ.get("NPA_BYOF_SKYPILOT_CONFIG"):
+        cmd.extend(["--config-path", os.environ["NPA_BYOF_SKYPILOT_CONFIG"]])
+    elif RTXPRO_SKYPILOT_CONFIG.is_file() and (e2e_project or "").strip().lower() == "rtxpro":
+        cmd.extend(["--config-path", str(RTXPRO_SKYPILOT_CONFIG)])
     proc = subprocess.run(
         cmd,
         check=False,
