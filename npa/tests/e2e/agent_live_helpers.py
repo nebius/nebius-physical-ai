@@ -113,3 +113,23 @@ RERUN_STATIC_CANDIDATES = (
     "/rerun/favicon.ico",
     "/rerun/version",
 )
+
+ONBOARD_SOLUTION_PROMPT = (
+    "add an open source repo, containerize, push to registry, and run LeIsaac on live infra"
+)
+
+
+def assert_grounded_onboard_solution_reply(payload: dict[str, object]) -> str:
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    reply = str(payload.get("reply") or "")
+    assert reply
+    assert "run_isaac_lab_byof_repo.py" in reply
+    assert "<repo-url>" in reply
+    assert "<task>" in reply
+    assert "registry" in reply.lower()
+    assert not reply.strip().startswith("GET /api"), "raw GET path instead of onboarding guidance"
+    apis_used = payload.get("apis_used")
+    assert isinstance(apis_used, list) and apis_used
+    assert "tools" in apis_used
+    return reply

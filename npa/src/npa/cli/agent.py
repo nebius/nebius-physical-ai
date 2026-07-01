@@ -5142,6 +5142,43 @@ def verify_live_cmd(
     if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
         _fail("workflow validate endpoint did not return ok=true")
 
+    try:
+        onboard_chat = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
+            auth=(auth_user, auth_password),
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "add an open source repo, containerize, push to registry, "
+                            "and run LeIsaac on live infra"
+                        ),
+                    }
+                ]
+            },
+            timeout=30.0,
+            verify=tls_verify,
+        )
+        onboard_chat.raise_for_status()
+        onboard_payload = onboard_chat.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"onboard_solution chat smoke failed: {exc}")
+    if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
+        _fail("onboard_solution chat did not return ok=true")
+    onboard_reply = str(onboard_payload.get("reply") or "")
+    if "run_isaac_lab_byof_repo.py" not in onboard_reply:
+        _fail("onboard_solution chat reply missing run_isaac_lab_byof_repo.py command")
+    if "<repo-url>" not in onboard_reply or "<task>" not in onboard_reply:
+        _fail("onboard_solution chat reply missing runnable placeholders")
+    if onboard_reply.strip().startswith("GET /api"):
+        _fail("onboard_solution chat returned raw GET path instead of guidance")
+    if not onboard_payload.get("grounded"):
+        _fail("onboard_solution chat expected grounded=true")
+    onboard_apis = onboard_payload.get("apis_used")
+    if not isinstance(onboard_apis, list) or "tools" not in onboard_apis:
+        _fail("onboard_solution chat expected tools in apis_used")
+
     test_env = {
         **dict(os.environ),
         "NPA_INTEGRATION_E2E": "1",

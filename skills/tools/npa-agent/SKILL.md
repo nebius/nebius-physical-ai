@@ -21,7 +21,12 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
 NPA_AGENT_CHAT_LIVE=1 npa/.venv/bin/npa agent verify-live --project rtxpro --name agent
 bash npa/scripts/verify_agent_franka.sh
+bash npa/scripts/verify_byof_onboarding_live.sh
 ```
+
+For full BYOF GPU smoke (SkyPilot submit), also set `NPA_BYOF_LIVE_GPU=1` and run
+`bash npa/scripts/verify_byof_onboarding_live.sh` on an operator host with Docker,
+`nebius`, `sky`, and registry pull access.
 
 Auth secrets live at `~/.npa/agents/<project>/<name>/auth.env` (`AGENT_USER`, `AGENT_PASSWORD`).
 
@@ -46,6 +51,7 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `cosmos3` | "cosmos3", "setup cosmos" | skill steps (operator machine) |
 | `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
 | `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
+| `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
 
 Rules:
 
