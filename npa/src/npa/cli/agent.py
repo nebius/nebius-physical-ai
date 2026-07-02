@@ -71,6 +71,11 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
+def _escape_fstring_embed(text: str) -> str:
+    """Escape braces so embedded Python sources survive bootstrap f-strings."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def _embedded_agent_artifacts_source() -> str:
     """Return workflows/artifacts.py source embedded into the remote agent backend."""
     import re
@@ -670,9 +675,9 @@ def _bootstrap_agent_stack(
         ).ssh
     )
     catalog_json = json.dumps(_tool_catalog_payload())
-    agent_chat_source = _embedded_agent_chat_source()
-    agent_workflow_source = _embedded_agent_workflow_source()
-    agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_chat_source = _escape_fstring_embed(_embedded_agent_chat_source())
+    agent_workflow_source = _escape_fstring_embed(_embedded_agent_workflow_source())
+    agent_artifacts_source = _escape_fstring_embed(_embedded_agent_artifacts_source())
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
