@@ -7,7 +7,7 @@ import os
 import re
 from typing import Any
 
-from npa.workflows.byof.live import byof_onboard_skill_path
+BYOF_ONBOARD_SKILL_PATH = "skills/workflows/byof-onboard/SKILL.md"
 
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
@@ -712,7 +712,7 @@ def format_cosmos3_setup() -> str:
 
 def format_onboard_solution() -> str:
     registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
-    skill_path = byof_onboard_skill_path()
+    skill_path = BYOF_ONBOARD_SKILL_PATH
     return "\n".join(
         [
             "**Yes — chat can onboard a new OSS solution end-to-end.**",
