@@ -475,6 +475,17 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                         "apis_used": ["workflows/draft", "workflows/validate"],
                     }
                 )
+            if "add an open source repo" in last_content.lower() or "leisaac" in last_content.lower():
+                from npa.cli.agent_chat import format_onboard_solution
+
+                return _Resp(
+                    {
+                        "ok": True,
+                        "grounded": True,
+                        "reply": format_onboard_solution(),
+                        "apis_used": ["tools", "workflows/validate", "workflows/plan"],
+                    }
+                )
             return _Resp(
                 {
                     "ok": True,

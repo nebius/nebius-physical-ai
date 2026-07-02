@@ -1,5 +1,6 @@
 # SkyPilot global config for RTX PRO mk8s clusters pulling from Nebius Container Registry.
 # Use with: sky launch --config npa/workflows/workbench/skypilot/skypilot-kubernetes-rtxpro.yaml ...
+name: skypilot-kubernetes-rtxpro
 kubernetes:
   pod_config:
     spec:
