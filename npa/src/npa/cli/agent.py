@@ -1160,6 +1160,10 @@ def _agent_system_prompt() -> str:
             "Always use real registry-qualified images from your Nebius container registry",
             "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
             "`<your-registry-id>` placeholders in runnable workflows.",
+            "For BYOF solution onboarding, use the",
+            "`npa/scripts/run_byof_repo.py` flow to containerize an OSS repo,",
+            "push to the configured Nebius registry, then launch a real Isaac-Lab run",
+            "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
             "and loop submit attempts in tmux until validation+plan+prechecks pass.",
             "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
@@ -1356,8 +1360,8 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not runnable:
             fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
             reply = (
-                "**Could not generate runnable workflow YAML yet.**\n"
-                f"- **reason**: `{fail_reason}`\n"
+                "**Could not generate runnable workflow YAML yet.**\\n"
+                f"- **reason**: `{{fail_reason}}`\\n"
                 "- Adjust your request or template details and retry;"
                 " chat returns YAML only after both validation and planning succeed."
             )
@@ -1959,6 +1963,7 @@ def workbench_actions():
             }},
         ]
     }}
+
 
 @app.get("/workflows/draft")
 @app.get("/workflows/npa/draft")
@@ -5136,6 +5141,45 @@ def verify_live_cmd(
         _fail(f"workflow validate endpoint failed: {exc}")
     if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
         _fail("workflow validate endpoint did not return ok=true")
+
+    try:
+        onboard_chat = httpx.post(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
+            auth=(auth_user, auth_password),
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "add an open source repo, containerize, push to registry, "
+                            "and run LeIsaac on live infra"
+                        ),
+                    }
+                ]
+            },
+            timeout=30.0,
+            verify=tls_verify,
+        )
+        onboard_chat.raise_for_status()
+        onboard_payload = onboard_chat.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"onboard_solution chat smoke failed: {exc}")
+    if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
+        _fail("onboard_solution chat did not return ok=true")
+    onboard_reply = str(onboard_payload.get("reply") or "")
+    if "run_byof_repo.py" not in onboard_reply:
+        _fail("onboard_solution chat reply missing run_byof_repo.py command")
+    if "--base-profile" not in onboard_reply and "--base-image" not in onboard_reply:
+        _fail("onboard_solution chat reply missing base image guidance")
+    if "<repo-url>" not in onboard_reply or "<task>" not in onboard_reply:
+        _fail("onboard_solution chat reply missing runnable placeholders")
+    if onboard_reply.strip().startswith("GET /api"):
+        _fail("onboard_solution chat returned raw GET path instead of guidance")
+    if not onboard_payload.get("grounded"):
+        _fail("onboard_solution chat expected grounded=true")
+    onboard_apis = onboard_payload.get("apis_used")
+    if not isinstance(onboard_apis, list) or "tools" not in onboard_apis:
+        _fail("onboard_solution chat expected tools in apis_used")
 
     test_env = {
         **dict(os.environ),

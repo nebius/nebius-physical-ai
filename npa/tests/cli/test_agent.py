@@ -75,6 +75,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
+    assert "run_byof_repo.py" in source
+    assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
     assert "`<your-registry-id>` placeholders" in source
     assert "sky gpus list" in source
@@ -471,6 +473,17 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                         "reply": "**Generated npa.workflow/v0.0.1 spec**",
                         "workflow_yaml": "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: sim2real-two-step\nstates:\n  augment: {}\n  envgen: {}\n",
                         "apis_used": ["workflows/draft", "workflows/validate"],
+                    }
+                )
+            if "add an open source repo" in last_content.lower() or "leisaac" in last_content.lower():
+                from npa.cli.agent_chat import format_onboard_solution
+
+                return _Resp(
+                    {
+                        "ok": True,
+                        "grounded": True,
+                        "reply": format_onboard_solution(),
+                        "apis_used": ["tools", "workflows/validate", "workflows/plan"],
                     }
                 )
             return _Resp(

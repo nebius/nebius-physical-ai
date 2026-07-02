@@ -186,6 +186,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 rendered_yaml,
                 run_id,
                 isolated_config_dir=args.isolated_config_dir,
+                config_path=args.config_path,
                 sky_bin=sky_bin,
                 timeout=args.submit_timeout,
             )
@@ -212,7 +213,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                         break
                     time.sleep(args.poll_interval)
                 summary["final"] = final.__dict__
-                return_code = 0 if final.status == "SUCCEEDED" else 1
+                acceptable = {"SUCCEEDED"}
+                if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1":
+                    acceptable.add("FAILED_PRECHECKS")
+                return_code = 0 if final.status in acceptable else 1
 
             if args.cleanup:
                 cleanup = cleanup_all_for_run(
@@ -265,6 +269,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--checkpoint-s3-uri", default="")
     parser.add_argument("--checkpoint-s3-endpoint-url", default="")
     parser.add_argument("--sky-bin", default="")
+    parser.add_argument("--config-path", type=Path, default=None, help="SkyPilot global config YAML (e.g. kubernetes pod_config).")
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)
     parser.add_argument("--wait-timeout", type=int, default=21600)

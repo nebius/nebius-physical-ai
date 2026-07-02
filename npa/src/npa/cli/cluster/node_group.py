@@ -10,7 +10,7 @@ from typing import Any
 import typer
 
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
-from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo
+from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo, cluster_subnet_id
 from npa.cluster.config import (
     DEFAULT_CPU_NODE_GROUP_PRESET,
     DEFAULT_K8S_VERSION,
@@ -88,6 +88,11 @@ def add_cmd(
     ),
     timeout: int = typer.Option(30, "--timeout", help="GPU target readiness timeout in minutes."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or config."),
+    subnet_id: str = typer.Option(
+        "",
+        "--subnet-id",
+        help="VPC subnet ID. Defaults from local cluster state or the cluster control plane.",
+    ),
 ) -> None:
     """Attach a GPU node-group profile to an NPA Workbench cluster target.
 
@@ -111,9 +116,18 @@ def add_cmd(
             wait=wait,
             timeout_minutes=timeout,
             k8s_version=(local_state.k8s_version if local_state else DEFAULT_K8S_VERSION),
-            subnet_id=(local_state.subnet_id if local_state else ""),
+            subnet_id=(
+                subnet_id.strip()
+                or (local_state.subnet_id if local_state else "")
+                or cluster_subnet_id(cluster)
+            ),
             capacity_block_group=capacity_block_group,
         )
+        if not config.subnet_id:
+            raise ClusterConfigError(
+                "subnet ID is required for GPU node groups. Pass --subnet-id or deploy the "
+                "cluster with `npa cluster deploy` so local state captures it."
+            )
         if config.gpu_type == "l40s":
             typer.echo(L40S_WARNING, err=True)
 
