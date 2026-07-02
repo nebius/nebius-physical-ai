@@ -829,14 +829,28 @@ def test_creds_from_terraform_state(monkeypatch) -> None:
         secret_key = "SECRET"
 
     monkeypatch.setattr("npa.cli.agent.resolve_terraform_state", lambda _p: _Tf())
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_agent_service_account_id",
+        lambda _project, _record: "serviceaccount-abc",
+    )
     record = {
         "project_id": "project-1",
         "tenant_id": "tenant-1",
         "region": "us-central1",
-        "service_account_id": "serviceaccount-abc",
     }
     creds = _creds_from_terraform_state("rtxpro", record)
     assert creds is not None
     assert creds["nebius_api_key"] == "AKIA"
     assert creds["s3_bucket"] == "npa-bucket-test"
     assert creds["service_account_id"] == "serviceaccount-abc"
+
+
+def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
+    from npa.cli.agent import _resolve_agent_service_account_id
+
+    mocker.patch(
+        "npa.clients.nebius.resolve_service_account_id",
+        return_value="serviceaccount-u00s24wzj2wk8z9tqq",
+    )
+    record = {"project_id": "project-u00zhx4tpr00xh99b28n52"}
+    assert _resolve_agent_service_account_id("rtxpro", record) == "serviceaccount-u00s24wzj2wk8z9tqq"

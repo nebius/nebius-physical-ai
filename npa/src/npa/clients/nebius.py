@@ -272,7 +272,7 @@ def _saved_storage_credentials(
     if not bucket:
         bucket = bucket_name_for(tenant_id, project_id)
 
-    sa_id = service_account_id.strip() or _saved_service_account_id()
+    sa_id = service_account_id.strip() or resolve_service_account_id(project_id)
     if not sa_id:
         return None
 
@@ -686,6 +686,26 @@ def bootstrap_environment(
     }
 
 
+def resolve_service_account_id(
+    project_id: str,
+    *,
+    names: tuple[str, ...] = (AGENT_SERVICE_ACCOUNT_NAME, DEFAULT_SERVICE_ACCOUNT_NAME),
+) -> str:
+    """Resolve a service-account id from config or best-effort IAM lookups."""
+
+    saved = _saved_service_account_id()
+    if saved:
+        return saved
+    project = str(project_id or "").strip()
+    if not project:
+        return ""
+    for name in names:
+        sa_id = get_service_account_id_by_name(project, name)
+        if sa_id:
+            return sa_id
+    return ""
+
+
 def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
     """Return a service-account id when *name* exists, else ``None``."""
 
@@ -746,7 +766,7 @@ def bootstrap_agent_environment(
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
-            service_account_id=sa_id or "",
+            service_account_id=sa_id or resolve_service_account_id(project_id),
         )
         if fallback is None:
             raise

@@ -295,6 +295,42 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _resolve_agent_service_account_id(
+    project_alias: str,
+    record: dict[str, Any],
+) -> str:
+    """Resolve service-account id for agent bootstrap and credential persistence."""
+    stored = str(record.get("service_account_id", "")).strip()
+    if stored:
+        return stored
+    creds = record.get("credentials", {})
+    if isinstance(creds, dict):
+        from_record = str(creds.get("service_account_id", "")).strip()
+        if from_record:
+            return from_record
+    from npa.clients.nebius import resolve_service_account_id
+
+    project_id = str(record.get("project_id", "")).strip()
+    if project_id:
+        resolved = resolve_service_account_id(project_id)
+        if resolved:
+            return resolved
+    return ""
+
+
+def _persist_agent_service_account_id(service_account_id: str) -> None:
+    """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
+    sa_id = str(service_account_id or "").strip()
+    if not sa_id:
+        return
+    from npa.clients.credentials import write_credentials_file
+    from npa.clients.nebius import _saved_service_account_id
+
+    if _saved_service_account_id() == sa_id:
+        return
+    write_credentials_file({"nebius": {"service_account_id": sa_id}})
+
+
 def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> dict[str, str] | None:
     """Build a bootstrap-shaped credential dict from saved terraform remote-state keys."""
     try:
@@ -308,8 +344,9 @@ def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> d
     if not (access_key and secret_key and bucket):
         return None
     region = str(record.get("region", "") or "eu-north1").strip()
+    service_account_id = _resolve_agent_service_account_id(project_alias, record)
     return {
-        "service_account_id": str(record.get("service_account_id", "")).strip(),
+        "service_account_id": service_account_id,
         "nebius_api_key": access_key,
         "nebius_secret_key": secret_key,
         "s3_bucket": bucket,
@@ -369,17 +406,20 @@ def _resolve_agent_storage_credentials(
             creds.get("service_account_id", record.get("service_account_id", ""))
         ).strip()
         if bucket and access_key and secret_key:
+            if not service_account_id:
+                service_account_id = _resolve_agent_service_account_id(project_alias, record)
             return bucket, endpoint, access_key, secret_key, service_account_id
     try:
         tf_state = resolve_terraform_state(project_alias)
     except ConfigError:
-        return "", "", "", "", str(record.get("service_account_id", "")).strip()
+        return "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
+    service_account_id = _resolve_agent_service_account_id(project_alias, record)
     return (
         str(getattr(tf_state, "bucket", "") or ""),
         str(getattr(tf_state, "endpoint", "") or ""),
         str(getattr(tf_state, "access_key", "") or ""),
         str(getattr(tf_state, "secret_key", "") or ""),
-        str(record.get("service_account_id", "")).strip(),
+        service_account_id,
     )
 
 
@@ -4771,6 +4811,8 @@ def bootstrap_cmd(
     s3_bucket, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
         _resolve_agent_storage_credentials(project, record)
     )
+    if not service_account_id:
+        service_account_id = _resolve_agent_service_account_id(project, record)
     if refresh_credentials:
         if not (project_id and tenant_id and region):
             _fail("agent record is missing project_id, tenant_id, or region for credential refresh")
@@ -4799,6 +4841,9 @@ def bootstrap_cmd(
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
         service_account_id = agent_credentials["service_account_id"]
+        if not service_account_id:
+            service_account_id = _resolve_agent_service_account_id(project, record)
+            agent_credentials["service_account_id"] = service_account_id
         if s3_access_key and s3_secret_key:
             write_config(
                 {
@@ -4858,6 +4903,7 @@ def bootstrap_cmd(
     updated["ssh_key_path"] = ssh_key_path
     if service_account_id:
         updated["service_account_id"] = service_account_id
+        _persist_agent_service_account_id(service_account_id)
     if s3_bucket and s3_access_key and s3_secret_key:
         updated["credentials"] = _credentials_block_from_storage(
             service_account_id=service_account_id,

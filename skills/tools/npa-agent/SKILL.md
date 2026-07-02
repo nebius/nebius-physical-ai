@@ -35,6 +35,18 @@ the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH con
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
 
+### Credential fallback (when `npa-agent` cannot be created)
+
+Bootstrap tries in order:
+
+1. **`npa-agent` SA** — create or reuse if IAM allows
+2. **Saved operator credentials** — `~/.npa/credentials.yaml` S3 keys + optional `nebius.service_account_id`
+3. **Project terraform_state keys** — `projects.<alias>.terraform_state` from the original deploy
+4. **SA id discovery** — parse `lerobot-training` id from IAM errors when `agent-sa` cannot read IAM
+
+Bootstrap persists the resolved SA id into the agent record, `credentials` block, and
+`~/.npa/credentials.yaml` when discovered.
+
 For the full BYOF live pipeline (agent + container + GPU on the configured project):
 
 ```bash
