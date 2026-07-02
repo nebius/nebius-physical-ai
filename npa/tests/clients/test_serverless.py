@@ -651,6 +651,23 @@ def test_get_endpoint_logs_uses_resolved_id() -> None:
     assert calls[-1][1:] == ["ai", "endpoint", "logs", "endpoint-1", "--tail", "20", "--since", "10m"]
 
 
+def test_get_job_logs_uses_resolved_id() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        if args[3] == "get":
+            return _result(args, 0, _job_json())
+        return _result(args, 0, "[PASS] raw env generation\n")
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
+
+    logs = client.get_job_logs("cosmos-train", "project-1", tail=400)
+
+    assert logs == "[PASS] raw env generation\n"
+    assert calls[-1][1:] == ["ai", "job", "logs", "job-1", "--tail", "400"]
+
+
 def test_wait_for_running_polls_until_running() -> None:
     states = iter(["CREATING", "RUNNING"])
 

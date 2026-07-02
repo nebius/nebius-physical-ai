@@ -18,7 +18,7 @@ def test_policy_image_contract_documents_swap_points() -> None:
     contract = build_policy_image_contract(
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
         output_uri="s3://bucket/run/actions/train/",
-        default_policy_image="cr.example/npa-sim2real-reference-policy:0.1.1",
+        default_policy_image="cr.example/npa-reference-policy:0.1.1",
     )
     assert contract["schema"] == "npa.sim2real.policy_image_contract.v1"
     assert "train_envs_uri" in contract["input"]
@@ -69,7 +69,7 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
     ref = write_action_conditioned_envs(
         EnvGenConfig(run_id="r", output_uri="s3://bucket/run/", env_count=1, seed=7),
         tmp_path / "ref",
-        policy_image="cr.example/npa-sim2real-reference-policy:0.1.1",
+        policy_image="cr.example/npa-reference-policy:0.1.1",
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )
@@ -79,7 +79,7 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
     write_action_conditioned_envs(
         EnvGenConfig(run_id="r", output_uri="s3://bucket/run/", env_count=1, seed=7),
         tmp_path / "alt",
-        policy_image="cr.example/npa-sim2real-explore-policy:0.1.1",
+        policy_image="cr.example/npa-explore-policy:0.1.1",
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )

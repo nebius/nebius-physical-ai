@@ -58,8 +58,7 @@
 # Custom images: export registry-qualified refs before submit-k8s-staged-job.sh
 # or workflow submit. Unresolved AUGMENT_IMAGE / POLICY_IMAGE → reference
 # placeholder locally (SEAM tier). Rerun hosted serve defaults to
-# python:3.11-slim bootstrap; set NPA_RERUN_VIEWER_IMAGE for npa-rerun-viewer
-# (legacy alias NPA_SIM2REAL_RERUN_IMAGE for npa-sim2real-rerun-viewer).
+# python:3.11-slim bootstrap; set NPA_RERUN_VIEWER_IMAGE for npa-rerun-viewer.
 #
 # SkyPilot 0.12.2 does NOT interpolate ${VAR} inside the YAML `envs` block or in
 # `image_id` at submission time. So every value below is a materialized literal,
@@ -226,7 +225,7 @@ run: |
     --policy-image "${POLICY_IMAGE:-}"
     --trainer-image "${TRAINER_IMAGE:-npa-lerobot-vlm-rl:0.1.1}"
     --vlm-image "${VLM_IMAGE:-npa-cosmos3-reason:3.0.1-genuine-sm120}"
-    --eval-image "${EVAL_IMAGE:-npa-sim2real-eval:0.1.2-genuine-sm120}"
+    --eval-image "${EVAL_IMAGE:-npa-loop-eval:0.1.2-genuine-sm120}"
     --isaac-image "${ISAAC_IMAGE:-npa-isaac-lab:2.3.2.post1}"
     --sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}"
     --isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-Isaac-Lift-Cube-Franka-v0}"

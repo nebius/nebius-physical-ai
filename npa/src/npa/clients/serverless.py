@@ -851,6 +851,26 @@ class ServerlessClient:
             endpoint_id=job_id_or_name,
         )
 
+    def get_job_logs(
+        self,
+        job_id_or_name: str,
+        project_id: str,
+        *,
+        tail: int | None = None,
+        since: str = "",
+    ) -> str:
+        """Return job container logs as text (job status carries no stdout)."""
+        info = self.get_job(job_id_or_name, project_id)
+        args = ["ai", "job", "logs", info.id]
+        if tail is not None:
+            args.extend(["--tail", str(tail)])
+        if since:
+            args.extend(["--since", since])
+        result = self._run(args, timeout=_JOB_QUERY_TIMEOUT)
+        if result.returncode != 0:
+            self._raise_for_error(result, f"get_job_logs failed for {job_id_or_name}")
+        return result.stdout
+
     def cancel_job(self, job_id_or_name: str, project_id: str) -> JobInfo:
         info = self.get_job(job_id_or_name, project_id)
         if info.status in _JOB_TERMINAL_STATUSES:
