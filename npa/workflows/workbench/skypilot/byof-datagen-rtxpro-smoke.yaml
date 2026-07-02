@@ -1,0 +1,126 @@
+# LeIsaac / BYOF scripted datagen smoke on RTX PRO 6000 (state-machine generate.py).
+name: byof-datagen-rtxpro-smoke
+execution: serial
+---
+name: byof-datagen
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 4+
+  memory: 16+
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-byof:<your-run-id>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_TASK: "LeIsaac-SO101-PickOrange-v0"
+  BYOF_NUM_ENVS: "4"
+  BYOF_NUM_DEMOS: "4"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_DATASET_FILE: "/workspace/byof-runs/${NPA_BYOF_RUN_ID}/dataset.hdf5"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+  fi
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/scripts/datagen/state_machine/generate.py"
+  "${PYTHON_BIN}" -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+  fi
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  cd "${BYOF_REPO_ROOT}"
+
+  cmd=(
+    "${PYTHON_BIN}"
+    scripts/datagen/state_machine/generate.py
+    --task "${BYOF_TASK}"
+    --num_envs "${BYOF_NUM_ENVS}"
+    --device cuda
+    --enable_cameras
+    --record
+    --dataset_file "${BYOF_DATASET_FILE}"
+    --num_demos "${BYOF_NUM_DEMOS}"
+  )
+  printf 'BYOF_DATAGEN_COMMAND'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+
+  set +e
+  "${cmd[@]}" 2>&1 | tee "${OUTPUT_DIR}/byof_datagen.log"
+  datagen_rc=${PIPESTATUS[0]}
+  set -e
+
+  export NPA_BYOF_DATAGEN_RC="${datagen_rc}"
+  export NPA_BYOF_OUTPUT_DIR="${OUTPUT_DIR}"
+  "${PYTHON_BIN}" <<'PY'
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+
+  root = Path(os.environ["NPA_BYOF_OUTPUT_DIR"])
+  datagen_rc = int(os.environ.get("NPA_BYOF_DATAGEN_RC", "1"))
+  dataset = Path(os.environ["BYOF_DATASET_FILE"])
+  summary = {
+      "status": "success" if datagen_rc == 0 and dataset.is_file() else "failed",
+      "exit_code": datagen_rc,
+      "tool": "byof",
+      "workload": "datagen",
+      "task": os.environ["BYOF_TASK"],
+      "num_envs": int(os.environ["BYOF_NUM_ENVS"]),
+      "num_demos": int(os.environ["BYOF_NUM_DEMOS"]),
+      "run_id": os.environ["NPA_BYOF_RUN_ID"],
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "dataset_file": str(dataset),
+      "dataset_bytes": dataset.stat().st_size if dataset.is_file() else 0,
+      "datagen_script": "scripts/datagen/state_machine/generate.py",
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme != "s3" or not parsed.netloc:
+      raise SystemExit(f"invalid S3_OUTPUT_PREFIX: {output}")
+  prefix = parsed.path.lstrip("/")
+  s3 = boto3.client(
+      "s3",
+      endpoint_url=(
+          os.environ.get("AWS_ENDPOINT_URL")
+          or os.environ.get("NEBIUS_S3_ENDPOINT")
+          or None
+      ),
+  )
+  for path in root.rglob("*"):
+      if path.is_file():
+          key = prefix + str(path.relative_to(root))
+          s3.upload_file(str(path), parsed.netloc, key)
+          print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+  if dataset.is_file():
+      dataset_key = prefix + "dataset.hdf5"
+      s3.upload_file(str(dataset), parsed.netloc, dataset_key)
+      print(f"uploaded s3://{parsed.netloc}/{dataset_key}", flush=True)
+  print(
+      json.dumps(
+          {
+              "summary_s3": output + "npa_byof_summary.json",
+              "dataset_s3": output + "dataset.hdf5",
+          },
+          indent=2,
+      ),
+      flush=True,
+  )
+  if summary["status"] != "success":
+      raise SystemExit(datagen_rc or 3)
+  PY

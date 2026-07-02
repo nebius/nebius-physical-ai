@@ -238,6 +238,18 @@ def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:
     assert any(token in reply for token in ("franka", "isaac", "selection", "robot_preset"))
 
 
+def test_agent_chat_onboard_solution_intent(ctx: AgentLiveContext) -> None:
+    from .agent_live_helpers import ONBOARD_SOLUTION_PROMPT, assert_grounded_onboard_solution_reply
+
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": ONBOARD_SOLUTION_PROMPT}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    assert_grounded_onboard_solution_reply(chat.json())
+
+
 @pytest.mark.skipif(
     os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
     reason="Set NPA_AGENT_CHAT_LIVE=1 to smoke-test Token Factory chat on the live agent.",

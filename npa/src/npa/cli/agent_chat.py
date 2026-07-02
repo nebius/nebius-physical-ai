@@ -7,6 +7,8 @@ import os
 import re
 from typing import Any
 
+BYOF_ONBOARD_SKILL_PATH = "skills/workflows/byof-onboard/SKILL.md"
+
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
     r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)))"
@@ -155,6 +157,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "onboard_solution",
+        re.compile(
+            r"\b(?:onboard|add|integrate|containerize|dockerize|register)\b.{0,140}\b(?:solution|tool|component|repo|repository|open[\s-]?source)\b"
+            r"|\b(?:byof|bring your own fork|custom fork)\b.{0,140}\b(?:workflow|image|container|registry|infra|run)\b"
+            r"|\b(?:github|repo(?:sitory)?)\b.{0,140}\b(?:workbench|npa|workflow|sky|kubernetes)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "list_recordings",
         re.compile(
             r"\b(?:list|show|view|browse|get|fetch)\b.{0,80}\b(?:recordings?|run\s+history|runs?)\b"
@@ -251,6 +262,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_workflow": ["workflows/draft", "workflows/validate"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "live_infra_loop": ["workflows/validate", "workflows/plan", "tools"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
@@ -652,7 +664,7 @@ def format_live_infra_loop_guidance() -> str:
             "```bash",
             "SESSION=live-infra-loop-$(date -u +%Y%m%dT%H%M%SZ)",
             "tmux new -d -s \"$SESSION\"",
-            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
             "```",
             "- If `FAILED_PRECHECKS` appears: adjust image reference or accelerator and retry in the same loop.",
         ]
@@ -694,6 +706,31 @@ def format_cosmos3_setup() -> str:
             "3. GPU inference smoke: SkyPilot `cosmos3-text-to-image-inference.yaml`",
             "4. Keep guardrails on unless explicitly disabled via workflow env.",
             "- Credentials: Hugging Face token in `~/.npa/credentials.yaml`; optional NGC for some assets.",
+        ]
+    )
+
+
+def format_onboard_solution() -> str:
+    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
+    skill_path = BYOF_ONBOARD_SKILL_PATH
+    return "\n".join(
+        [
+            "**Yes — chat can onboard a new OSS solution end-to-end.**",
+            f"- **Skill (source of truth):** `{skill_path}`",
+            "- Flow: **contract** → **containerize** (`--base-profile ubuntu`) → **deploy/test** (`--workload container-verify`).",
+            "- Sim stacks (LeIsaac RL/datagen): use `--base-profile isaac-lab` per the skill workload table.",
+            "- Generic Ubuntu onboarding (replace `<repo-url>` / `<repo-ref>`):",
+            "```bash",
+            "npa/.venv/bin/python npa/scripts/run_byof_repo.py \\",
+            "  --repo-url <repo-url> \\",
+            "  --repo-ref <repo-ref> \\",
+            "  --base-profile ubuntu \\",
+            "  --registry " + registry + " \\",
+            "  --workload container-verify \\",
+            "  --cleanup",
+            "```",
+            "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
+            "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
         ]
     )
 
@@ -791,6 +828,8 @@ def build_grounded_reply(
         return format_configure_s3()
     if intent == "cosmos3":
         return format_cosmos3_setup()
+    if intent == "onboard_solution":
+        return format_onboard_solution()
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)

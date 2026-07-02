@@ -19,9 +19,54 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 
 ```bash
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
+# Existing agents missing credentials: refresh long-lived npa-agent SA + restage VM env
+npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent --refresh-credentials
 NPA_AGENT_CHAT_LIVE=1 npa/.venv/bin/npa agent verify-live --project rtxpro --name agent
 bash npa/scripts/verify_agent_franka.sh
+bash npa/scripts/verify_byof_onboarding_live.sh
 ```
+
+`npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
+IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
+Persists `ssh_key_path` + `credentials` on the agent record and stages
+`llm.env`, `s3.env`, and `nebius.env` on the VM. Bootstrap resolves SSH from
+the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+
+All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
+The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
+
+### Credential fallback (when `npa-agent` cannot be created)
+
+Bootstrap tries in order:
+
+1. **`npa-agent` SA** — create or reuse if IAM allows
+2. **Saved operator credentials** — `~/.npa/credentials.yaml` S3 keys + optional `nebius.service_account_id`
+3. **Project terraform_state keys** — `projects.<alias>.terraform_state` from the original deploy
+4. **SA id discovery** — parse `lerobot-training` id from IAM errors when `agent-sa` cannot read IAM
+
+Bootstrap persists the resolved SA id into the agent record, `credentials` block, and
+`~/.npa/credentials.yaml` when discovered.
+
+For the full BYOF live pipeline (agent + container + GPU on the configured project):
+
+```bash
+export NPA_E2E_PROJECT=rtxpro
+export NPA_BYOF_LIVE_PIPELINE=1
+bash npa/scripts/verify_byof_onboarding_live.sh
+```
+
+Project Kubernetes settings resolve from `~/.npa/config.yaml` (`projects.<alias>.kubernetes`)
+and `~/.npa/clusters/<cluster>/kubeconfig` — not from any operator VM hostname.
+
+For real BYOF container build/push/inspect, set `NPA_BYOF_LIVE_CONTAINER=1` and run
+`bash npa/scripts/verify_byof_onboarding_live.sh` on a host with Docker and
+`nebius` (`NPA_NEBIUS_PROFILE=agent-sa` for registry write). Default validation
+repo is LeIsaac; override with `NPA_BYOF_REPO_URL` / `NPA_BYOF_REPO_REF`.
+
+For full BYOF GPU smoke (SkyPilot submit), also set `NPA_BYOF_LIVE_GPU=1` and run
+the same script on a host with Docker, `nebius`, `sky`, and registry pull
+access. GPU train YAML and SkyPilot config resolve from the project `kubernetes`
+block (`gpu_profile: rtxpro`, `byof_train_yaml`, `skypilot_config`).
 
 Auth secrets live at `~/.npa/agents/<project>/<name>/auth.env` (`AGENT_USER`, `AGENT_PASSWORD`).
 
@@ -46,6 +91,9 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `cosmos3` | "cosmos3", "setup cosmos" | skill steps (operator machine) |
 | `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
 | `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
+| `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
+
+**BYOF onboarding:** load `skills/workflows/byof-onboard/SKILL.md` (source of truth for base profiles, workloads, live verify). Chat replies reference this skill path — do not paste the full procedure into `agent_chat.py`.
 
 Rules:
 

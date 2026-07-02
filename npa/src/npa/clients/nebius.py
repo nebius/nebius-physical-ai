@@ -272,7 +272,7 @@ def _saved_storage_credentials(
     if not bucket:
         bucket = bucket_name_for(tenant_id, project_id)
 
-    sa_id = service_account_id.strip() or _saved_service_account_id()
+    sa_id = service_account_id.strip() or resolve_service_account_id(project_id)
     if not sa_id:
         return None
 
@@ -288,9 +288,17 @@ def _saved_storage_credentials(
     }
 
 
+AGENT_SERVICE_ACCOUNT_NAME = "npa-agent"
+AGENT_ACCESS_KEY_NAME = "npa-agent-access-key"
+DEFAULT_SERVICE_ACCOUNT_NAME = "lerobot-training"
+DEFAULT_ACCESS_KEY_NAME = "lerobot-access-key"
+
+
 def ensure_service_account(
     project_id: str,
-    name: str = "lerobot-training",
+    name: str = DEFAULT_SERVICE_ACCOUNT_NAME,
+    *,
+    description: str = "Service account for LeRobot training on Nebius",
 ) -> str:
     """Get or create a service account, return its ID."""
     # Try to find existing.
@@ -319,12 +327,19 @@ def ensure_service_account(
             ) from exc
         # Not found — create below.
 
-    data = _run_json([
-        "iam", "service-account", "create",
-        "--parent-id", project_id,
-        "--name", name,
-        "--description", "Service account for LeRobot training on Nebius",
-    ])
+    try:
+        data = _run_json([
+            "iam", "service-account", "create",
+            "--parent-id", project_id,
+            "--name", name,
+            "--description", description,
+        ])
+    except NebiusError as exc:
+        if _is_permission_denied(str(exc)):
+            saved = _saved_service_account_id()
+            if saved:
+                return saved
+        raise
     sa_id = data.get("metadata", {}).get("id", "")
     if not sa_id:
         raise NebiusError("Service account creation did not return an ID")
@@ -411,7 +426,8 @@ def ensure_access_key(
     project_id: str,
     sa_id: str,
     *,
-    key_name: str = "lerobot-access-key",
+    key_name: str = DEFAULT_ACCESS_KEY_NAME,
+    description: str = "Access key for LeRobot S3 and API access",
 ) -> tuple[str, str]:
     """Ensure an active access key exists, return (aws_access_key_id, aws_secret_access_key).
 
@@ -447,7 +463,7 @@ def ensure_access_key(
         "--parent-id", project_id,
         "--name", create_name,
         "--account-service-account-id", sa_id,
-        "--description", "Access key for LeRobot S3 and API access",
+        "--description", description,
     ])
     new_key_id = create_data.get("metadata", {}).get("id", "")
     if not new_key_id:
@@ -569,6 +585,10 @@ def bootstrap_environment(
     bucket_name: str | None = None,
     bucket_max_size_bytes: int = 0,
     bucket_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
+    service_account_name: str = DEFAULT_SERVICE_ACCOUNT_NAME,
+    access_key_name: str = DEFAULT_ACCESS_KEY_NAME,
+    service_account_description: str = "Service account for LeRobot training on Nebius",
+    access_key_description: str = "Access key for LeRobot S3 and API access",
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
@@ -591,7 +611,11 @@ def bootstrap_environment(
     iam_token = get_iam_token()
 
     _status("Setting up service account...")
-    sa_id = ensure_service_account(project_id)
+    sa_id = ensure_service_account(
+        project_id,
+        name=service_account_name,
+        description=service_account_description,
+    )
 
     _status("Configuring service account permissions...")
     try:
@@ -627,7 +651,12 @@ def bootstrap_environment(
 
     _status("Setting up access key for S3...")
     try:
-        aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)
+        aws_access_key, aws_secret_key = ensure_access_key(
+            project_id,
+            sa_id,
+            key_name=access_key_name,
+            description=access_key_description,
+        )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
             raise
@@ -655,3 +684,92 @@ def bootstrap_environment(
         "nebius_project_id": project_id,
         "nebius_region": region,
     }
+
+
+def resolve_service_account_id(
+    project_id: str,
+    *,
+    names: tuple[str, ...] = (AGENT_SERVICE_ACCOUNT_NAME, DEFAULT_SERVICE_ACCOUNT_NAME),
+) -> str:
+    """Resolve a service-account id from config or best-effort IAM lookups."""
+
+    saved = _saved_service_account_id()
+    if saved:
+        return saved
+    project = str(project_id or "").strip()
+    if not project:
+        return ""
+    for name in names:
+        sa_id = get_service_account_id_by_name(project, name)
+        if sa_id:
+            return sa_id
+    return ""
+
+
+def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
+    """Return a service-account id when *name* exists, else ``None``."""
+
+    try:
+        data = _run_json([
+            "iam", "service-account", "get-by-name",
+            "--parent-id", project_id,
+            "--name", name,
+        ])
+    except NebiusError as exc:
+        message = str(exc)
+        sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
+        if sa_id:
+            return sa_id
+        if "notfound" in message.lower() or "not found" in message.lower():
+            return None
+        if _is_permission_denied(message):
+            return None
+        raise
+    sa_id = data.get("metadata", {}).get("id", "")
+    return str(sa_id).strip() or None
+
+
+def bootstrap_agent_environment(
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    **kwargs: Any,
+) -> dict[str, str]:
+    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs.
+
+    When IAM provisioning is blocked, reuse saved or configured object-storage
+    credentials instead of failing bootstrap.
+    """
+
+    on_status = kwargs.pop("on_status", None)
+    bucket_name = kwargs.get("bucket_name")
+    sa_id = get_service_account_id_by_name(project_id, AGENT_SERVICE_ACCOUNT_NAME)
+    if sa_id and on_status:
+        on_status(f"Reusing existing service account {AGENT_SERVICE_ACCOUNT_NAME!r}.")
+    try:
+        return bootstrap_environment(
+            project_id,
+            tenant_id,
+            region,
+            service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
+            access_key_name=AGENT_ACCESS_KEY_NAME,
+            service_account_description="Long-lived service account for NPA agent VMs",
+            access_key_description="Long-lived access key for NPA agent S3 and API access",
+            on_status=on_status,
+            **kwargs,
+        )
+    except NebiusError as exc:
+        if not _is_permission_denied(str(exc)):
+            raise
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id or resolve_service_account_id(project_id),
+        )
+        if fallback is None:
+            raise
+        if on_status:
+            on_status("Reusing saved object-storage credentials (npa-agent provisioning skipped).")
+        return fallback

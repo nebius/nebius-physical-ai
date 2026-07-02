@@ -39,10 +39,12 @@ def test_agent_chat_module_intent_patterns() -> None:
     assert "sim2real_status" in source
     assert "sim_assets" in source
     assert "cameras" in source
+    assert "onboard_solution" in source
     assert "INTENT_APIS" in source
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("what sim assets are selected") == "sim_assets"
     assert match_chat_intent("list workspace cameras") == "cameras"
+    assert match_chat_intent("onboard a github repo into the workbench with container smoke") == "onboard_solution"
 
 
 def test_agent_chat_response_schema_in_bootstrap() -> None:

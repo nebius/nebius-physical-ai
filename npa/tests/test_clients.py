@@ -526,6 +526,77 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
     )
 
 
+def test_nebius_bootstrap_agent_environment_uses_npa_agent_sa(mocker) -> None:
+    bootstrap = mocker.patch(
+        "npa.clients.nebius.bootstrap_environment",
+        return_value={"service_account_id": "sa-agent"},
+    )
+    mocker.patch("npa.clients.nebius.get_service_account_id_by_name", return_value=None)
+
+    result = nebius.bootstrap_agent_environment("project", "tenant", "eu-north1")
+
+    assert result["service_account_id"] == "sa-agent"
+    kwargs = bootstrap.call_args.kwargs
+    assert kwargs["service_account_name"] == nebius.AGENT_SERVICE_ACCOUNT_NAME
+    assert kwargs["access_key_name"] == nebius.AGENT_ACCESS_KEY_NAME
+
+
+def test_resolve_service_account_id_uses_saved_config(mocker) -> None:
+    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="serviceaccount-saved")
+    assert nebius.resolve_service_account_id("project") == "serviceaccount-saved"
+
+
+def test_resolve_service_account_id_parses_permission_denied_lookup(mocker) -> None:
+    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="")
+    mocker.patch(
+        "npa.clients.nebius.get_service_account_id_by_name",
+        side_effect=lambda _project, name: (
+            "serviceaccount-u00s24wzj2wk8z9tqq" if name == nebius.DEFAULT_SERVICE_ACCOUNT_NAME else None
+        ),
+    )
+
+    assert nebius.resolve_service_account_id("project-u00zhx4tpr00xh99b28n52") == (
+        "serviceaccount-u00s24wzj2wk8z9tqq"
+    )
+
+
+def test_get_service_account_id_by_name_parses_id_from_permission_denied(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=nebius.NebiusError(
+            "Permission denied PermissionDenied: service iam, "
+            "resource ID: serviceaccount-u00s24wzj2wk8z9tqq"
+        ),
+    )
+
+    assert nebius.get_service_account_id_by_name("project", "lerobot-training") == (
+        "serviceaccount-u00s24wzj2wk8z9tqq"
+    )
+
+
+def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(mocker) -> None:
+    mocker.patch(
+        "npa.clients.nebius.bootstrap_environment",
+        side_effect=nebius.NebiusError("Permission denied PermissionDenied"),
+    )
+    mocker.patch("npa.clients.nebius.get_service_account_id_by_name", return_value="sa-existing")
+    mocker.patch(
+        "npa.clients.nebius._saved_storage_credentials",
+        return_value={
+            "service_account_id": "sa-existing",
+            "nebius_api_key": "key",
+            "nebius_secret_key": "secret",
+            "s3_bucket": "bucket",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    result = nebius.bootstrap_agent_environment("project", "tenant", "eu-north1")
+
+    assert result["nebius_api_key"] == "key"
+    assert result["service_account_id"] == "sa-existing"
+
+
 def test_nebius_bucket_exists(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
