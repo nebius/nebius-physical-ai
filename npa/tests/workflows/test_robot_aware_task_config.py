@@ -84,6 +84,21 @@ def test_grasp_shaping_weight_passthrough_and_shipped():
     assert "def grasp_shaping" in robotmod.module_source()
 
 
+def test_grasp_hold_weight_passthrough_and_shipped():
+    over = robotmod.task_config_overrides({"grasp_hold_weight": 5.0})
+    assert over["grasp_hold_weight"] == 5.0
+    assert over["grasp_hold_std"] == 0.05  # default when unspecified
+    over2 = robotmod.task_config_overrides({"grasp_hold_weight": 6.0, "grasp_hold_std": 0.08})
+    assert over2["grasp_hold_std"] == 0.08
+    # Non-positive / unparseable weights are dropped (Franka-safe gating).
+    assert robotmod.task_config_overrides({"grasp_hold_weight": 0}) == {}
+    assert robotmod.task_config_overrides({"grasp_hold_weight": -1}) == {}
+    assert robotmod.task_config_overrides({"grasp_hold_weight": "x"}) == {}
+    # Shipped at module level so the in-container wrapper can install the term.
+    assert callable(robotmod.grasp_lift_hold)
+    assert "def grasp_lift_hold" in robotmod.module_source()
+
+
 # --------------------------------------------------------------------------- #
 # Franka byte-for-byte: stock spec -> no overrides
 # --------------------------------------------------------------------------- #

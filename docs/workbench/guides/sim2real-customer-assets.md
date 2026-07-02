@@ -180,7 +180,7 @@ The policy container receives `NPA_SIM2REAL_TRAIN_ENVS_URI` (the **workflow-gene
 train shard, not the trigger dataset). Override the image at submit:
 
 ```bash
-export POLICY_IMAGE="<registry>/npa-sim2real-reference-policy:0.1.2"
+export POLICY_IMAGE="<registry>/npa-reference-policy:0.1.2"
 # Optional shell swap:
 export BYO_POLICY_COMMAND='your-policy-rollout-hook.sh'
 ```
@@ -238,7 +238,7 @@ npa workbench health sim2real \
   --s3-bucket <bucket> \
   --s3-endpoint <your-s3-compatible-endpoint> \
   --trigger-dataset-uri "s3://<bucket>/sim2real-triggers/<run-id>/lerobot-<task>/" \
-  --policy-image "<registry>/npa-sim2real-reference-policy:0.1.2"
+  --policy-image "<registry>/npa-reference-policy:0.1.2"
 ```
 
 Add `--assets-uri` and `--scene-spec-uri` when testing BYO scene wiring.

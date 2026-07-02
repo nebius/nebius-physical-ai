@@ -69,9 +69,9 @@ jobs:
       # the sim-to-real container commands actually load and parse.
       - name: sim-to-real workflow entrypoints
         run: |
-          python npa/scripts/run_golden_evals.py run sim2real-eval --execute
-          python npa/scripts/run_golden_evals.py run sim2real-envgen --execute
-          python npa/scripts/run_golden_evals.py run sim2real-reference-policy --execute
+          python npa/scripts/run_golden_evals.py run loop-eval --execute
+          python npa/scripts/run_golden_evals.py run envgen --execute
+          python npa/scripts/run_golden_evals.py run reference-policy --execute
           python npa/scripts/run_golden_evals.py run lerobot-vlm-rl --execute
           python npa/scripts/run_golden_evals.py run cosmos3-reason --execute
 
