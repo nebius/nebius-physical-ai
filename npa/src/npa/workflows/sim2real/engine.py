@@ -2946,6 +2946,30 @@ def _normalize_byo_rl_signal(
     return payload
 
 
+def _byo_robot_trainer_env(config: Sim2RealLoopConfig) -> dict[str, str]:
+    """Robot-spec env for the BYO trainer sibling (opt-in, Franka-safe).
+
+    Returns the env that opts the trainer into its BYO-robot path and forwards the
+    SAME robot inputs the held-out eval receives (``_run_heldout_*`` sets these),
+    so a customer's ``robot_spec_uri`` / preset reaches RL training and eval as one
+    embodiment. Returns ``{}`` — i.e. leaves the trainer on the stock-Franka path,
+    byte-for-byte unchanged — when no robot is requested or it is stock Franka.
+    """
+
+    uri = (config.robot_spec_uri or "").strip()
+    source = (config.robot_source or "").strip().lower()
+    preset = (config.robot_preset or "").strip().lower()
+    requested = bool(uri) or bool(preset) or (bool(source) and source != "stock_franka")
+    if not requested:
+        return {}
+    return {
+        "NPA_BYO_ROBOT_TASK": "1",
+        "NPA_SIM2REAL_ROBOT_SPEC_URI": config.robot_spec_uri,
+        "NPA_SIM2REAL_ROBOT_SOURCE": config.robot_source,
+        "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
+    }
+
+
 def _run_trainer_via_command(
     signal_batch_path: Path,
     *,
@@ -2997,6 +3021,13 @@ def _run_trainer_via_command(
     # so stage 11B "send back for more RL" compounds instead of restarting from scratch.
     if resume_checkpoint_uri.strip():
         extra["NPA_SIM2REAL_RESUME_CHECKPOINT_URI"] = resume_checkpoint_uri.strip()
+    # BYO ROBOT: route a customer robot spec into RL TRAINING, not just the held-out
+    # eval. Previously the trainer sibling never received the robot vars, so a custom
+    # robot_spec_uri reached only the eval USD-swap — the policy still trained on the
+    # stock Franka. Forward the same robot inputs the eval gets + opt in the trainer's
+    # BYO-robot path so train and eval share one embodiment. Empty (Franka/no robot)
+    # -> nothing added, trainer path byte-for-byte unchanged.
+    extra.update(_byo_robot_trainer_env(config))
     env = _component_env(
         config,
         component="trainer",
