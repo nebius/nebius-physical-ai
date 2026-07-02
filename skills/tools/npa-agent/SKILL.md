@@ -26,10 +26,14 @@ bash npa/scripts/verify_agent_franka.sh
 bash npa/scripts/verify_byof_onboarding_live.sh
 ```
 
-`npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account,
-persists `ssh_key_path` + `credentials` on the agent record, and stages
+`npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
+IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
+Persists `ssh_key_path` + `credentials` on the agent record and stages
 `llm.env`, `s3.env`, and `nebius.env` on the VM. Bootstrap resolves SSH from
 the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+
+All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
+The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
 
 For the full BYOF live pipeline (agent + container + GPU on the configured project):
 

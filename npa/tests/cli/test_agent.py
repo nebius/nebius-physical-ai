@@ -816,3 +816,27 @@ def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
     assert "--refresh-credentials" in source
     assert "--ssh-key" in source
     assert "_resolve_agent_ssh_key" in source
+    assert "_creds_from_terraform_state" in source
+
+
+def test_creds_from_terraform_state(monkeypatch) -> None:
+    from npa.cli.agent import _creds_from_terraform_state
+
+    class _Tf:
+        bucket = "npa-bucket-test"
+        endpoint = "https://storage.us-central1.nebius.cloud"
+        access_key = "AKIA"
+        secret_key = "SECRET"
+
+    monkeypatch.setattr("npa.cli.agent.resolve_terraform_state", lambda _p: _Tf())
+    record = {
+        "project_id": "project-1",
+        "tenant_id": "tenant-1",
+        "region": "us-central1",
+        "service_account_id": "serviceaccount-abc",
+    }
+    creds = _creds_from_terraform_state("rtxpro", record)
+    assert creds is not None
+    assert creds["nebius_api_key"] == "AKIA"
+    assert creds["s3_bucket"] == "npa-bucket-test"
+    assert creds["service_account_id"] == "serviceaccount-abc"

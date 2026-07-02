@@ -327,12 +327,19 @@ def ensure_service_account(
             ) from exc
         # Not found — create below.
 
-    data = _run_json([
-        "iam", "service-account", "create",
-        "--parent-id", project_id,
-        "--name", name,
-        "--description", description,
-    ])
+    try:
+        data = _run_json([
+            "iam", "service-account", "create",
+            "--parent-id", project_id,
+            "--name", name,
+            "--description", description,
+        ])
+    except NebiusError as exc:
+        if _is_permission_denied(str(exc)):
+            saved = _saved_service_account_id()
+            if saved:
+                return saved
+        raise
     sa_id = data.get("metadata", {}).get("id", "")
     if not sa_id:
         raise NebiusError("Service account creation did not return an ID")
@@ -679,41 +686,70 @@ def bootstrap_environment(
     }
 
 
+def get_service_account_id_by_name(project_id: str, name: str) -> str | None:
+    """Return a service-account id when *name* exists, else ``None``."""
+
+    try:
+        data = _run_json([
+            "iam", "service-account", "get-by-name",
+            "--parent-id", project_id,
+            "--name", name,
+        ])
+    except NebiusError as exc:
+        message = str(exc)
+        sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
+        if sa_id:
+            return sa_id
+        if "notfound" in message.lower() or "not found" in message.lower():
+            return None
+        if _is_permission_denied(message):
+            return None
+        raise
+    sa_id = data.get("metadata", {}).get("id", "")
+    return str(sa_id).strip() or None
+
+
 def bootstrap_agent_environment(
     project_id: str,
     tenant_id: str,
     region: str,
     **kwargs: Any,
 ) -> dict[str, str]:
-    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs."""
+    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs.
 
-    return bootstrap_environment(
-        project_id,
-        tenant_id,
-        region,
-        service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
-        access_key_name=AGENT_ACCESS_KEY_NAME,
-        service_account_description="Long-lived service account for NPA agent VMs",
-        access_key_description="Long-lived access key for NPA agent S3 and API access",
-        **kwargs,
-    )
+    When IAM provisioning is blocked, reuse saved or configured object-storage
+    credentials instead of failing bootstrap.
+    """
 
-
-def bootstrap_agent_environment(
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    **kwargs: Any,
-) -> dict[str, str]:
-    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs."""
-
-    return bootstrap_environment(
-        project_id,
-        tenant_id,
-        region,
-        service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
-        access_key_name=AGENT_ACCESS_KEY_NAME,
-        service_account_description="Long-lived service account for NPA agent VMs",
-        access_key_description="Long-lived access key for NPA agent S3 and API access",
-        **kwargs,
-    )
+    on_status = kwargs.pop("on_status", None)
+    bucket_name = kwargs.get("bucket_name")
+    sa_id = get_service_account_id_by_name(project_id, AGENT_SERVICE_ACCOUNT_NAME)
+    if sa_id and on_status:
+        on_status(f"Reusing existing service account {AGENT_SERVICE_ACCOUNT_NAME!r}.")
+    try:
+        return bootstrap_environment(
+            project_id,
+            tenant_id,
+            region,
+            service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
+            access_key_name=AGENT_ACCESS_KEY_NAME,
+            service_account_description="Long-lived service account for NPA agent VMs",
+            access_key_description="Long-lived access key for NPA agent S3 and API access",
+            on_status=on_status,
+            **kwargs,
+        )
+    except NebiusError as exc:
+        if not _is_permission_denied(str(exc)):
+            raise
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id or "",
+        )
+        if fallback is None:
+            raise
+        if on_status:
+            on_status("Reusing saved object-storage credentials (npa-agent provisioning skipped).")
+        return fallback

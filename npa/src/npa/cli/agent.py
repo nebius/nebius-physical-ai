@@ -295,6 +295,47 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> dict[str, str] | None:
+    """Build a bootstrap-shaped credential dict from saved terraform remote-state keys."""
+    try:
+        tf_state = resolve_terraform_state(project_alias)
+    except ConfigError:
+        return None
+    access_key = str(getattr(tf_state, "access_key", "") or "").strip()
+    secret_key = str(getattr(tf_state, "secret_key", "") or "").strip()
+    bucket = str(getattr(tf_state, "bucket", "") or "").strip()
+    endpoint = str(getattr(tf_state, "endpoint", "") or "").strip()
+    if not (access_key and secret_key and bucket):
+        return None
+    region = str(record.get("region", "") or "eu-north1").strip()
+    return {
+        "service_account_id": str(record.get("service_account_id", "")).strip(),
+        "nebius_api_key": access_key,
+        "nebius_secret_key": secret_key,
+        "s3_bucket": bucket,
+        "s3_endpoint": endpoint,
+        "nebius_project_id": str(record.get("project_id", "")).strip(),
+        "nebius_region": region,
+    }
+
+
+def _credentials_block_from_storage(
+    *,
+    service_account_id: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+    s3_access_key: str,
+    s3_secret_key: str,
+) -> dict[str, str]:
+    return {
+        "service_account_id": service_account_id.strip(),
+        "s3_bucket": s3_bucket.strip(),
+        "s3_endpoint": s3_endpoint.strip(),
+        "access_key": s3_access_key.strip(),
+        "secret_key": s3_secret_key.strip(),
+    }
+
+
 def _resolve_agent_ssh_key(
     record: dict[str, Any],
     *,
@@ -4735,6 +4776,7 @@ def bootstrap_cmd(
             _fail("agent record is missing project_id, tenant_id, or region for credential refresh")
         from npa.clients.nebius import NebiusError, bootstrap_agent_environment
 
+        creds: dict[str, str] | None = None
         try:
             creds = bootstrap_agent_environment(
                 project_id,
@@ -4743,27 +4785,35 @@ def bootstrap_cmd(
                 on_status=lambda msg: typer.echo(f"  {msg}"),
             )
         except NebiusError as exc:
-            _fail(f"Nebius credential refresh failed: {exc}")
+            typer.echo(
+                f"Warning: npa-agent provisioning failed ({exc}); reusing existing credentials.",
+                err=True,
+            )
+        if creds is None:
+            creds = _creds_from_terraform_state(project, record)
+        if creds is None:
+            _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
         agent_credentials = _agent_credentials_payload(creds)
         s3_bucket = agent_credentials["s3_bucket"]
         s3_endpoint = agent_credentials["s3_endpoint"]
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
         service_account_id = agent_credentials["service_account_id"]
-        write_config(
-            {
-                "projects": {
-                    project: {
-                        "terraform_state": {
-                            "bucket": s3_bucket,
-                            "endpoint": s3_endpoint,
-                            "access_key": s3_access_key,
-                            "secret_key": s3_secret_key,
-                        },
+        if s3_access_key and s3_secret_key:
+            write_config(
+                {
+                    "projects": {
+                        project: {
+                            "terraform_state": {
+                                "bucket": s3_bucket,
+                                "endpoint": s3_endpoint,
+                                "access_key": s3_access_key,
+                                "secret_key": s3_secret_key,
+                            },
+                        }
                     }
                 }
-            }
-        )
+            )
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -4808,7 +4858,15 @@ def bootstrap_cmd(
     updated["ssh_key_path"] = ssh_key_path
     if service_account_id:
         updated["service_account_id"] = service_account_id
-    if refresh_credentials:
+    if s3_bucket and s3_access_key and s3_secret_key:
+        updated["credentials"] = _credentials_block_from_storage(
+            service_account_id=service_account_id,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+            s3_access_key=s3_access_key,
+            s3_secret_key=s3_secret_key,
+        )
+    elif refresh_credentials:
         updated["credentials"] = agent_credentials
     _store_agent_record(project, name, updated)
     typer.echo(f"Customer URL: {urls['public_url']}")
