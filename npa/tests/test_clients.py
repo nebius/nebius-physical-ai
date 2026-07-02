@@ -526,6 +526,20 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
     )
 
 
+def test_nebius_bootstrap_agent_environment_uses_npa_agent_sa(mocker) -> None:
+    bootstrap = mocker.patch(
+        "npa.clients.nebius.bootstrap_environment",
+        return_value={"service_account_id": "sa-agent"},
+    )
+
+    result = nebius.bootstrap_agent_environment("project", "tenant", "eu-north1")
+
+    assert result["service_account_id"] == "sa-agent"
+    kwargs = bootstrap.call_args.kwargs
+    assert kwargs["service_account_name"] == nebius.AGENT_SERVICE_ACCOUNT_NAME
+    assert kwargs["access_key_name"] == nebius.AGENT_ACCESS_KEY_NAME
+
+
 def test_nebius_bucket_exists(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",

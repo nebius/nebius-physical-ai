@@ -736,3 +736,83 @@ def test_list_recordings_grounded_reply() -> None:
     reply = build_grounded_reply("list_recordings", state, [])
     assert "recordings" in reply.lower() or "run history" in reply.lower()
     assert "sim-viz/recordings" in reply or "sim-viz/runs" in reply
+
+
+def test_agent_config_persists_ssh_and_credentials() -> None:
+    from npa.cli.agent import AgentConfig
+
+    record = AgentConfig(
+        project_alias="rtxpro",
+        name="agent",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="eu-north1",
+        public_ip="203.0.113.50",
+        instance_id="instance-1",
+        agent_url="https://203.0.113.50/",
+        rerun_url="https://203.0.113.50/rerun/",
+        sim_viz_url="https://203.0.113.50/rerun/",
+        sim_assets_url="https://203.0.113.50/assets/",
+        cameras_api_url="https://203.0.113.50/assets/api/sim-assets/cameras",
+        auth_user="npa",
+        auth_secret_path="/tmp/auth.env",
+        llm_provider="token_factory",
+        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        ssh_key_path="~/.ssh/id_ed25519",
+        service_account_id="serviceaccount-abc",
+        credentials={
+            "service_account_id": "serviceaccount-abc",
+            "s3_bucket": "npa-bucket-test",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "access_key": "key",
+            "secret_key": "secret",
+        },
+    )
+    payload = record.to_dict()
+    assert payload["ssh_key_path"] == "~/.ssh/id_ed25519"
+    assert payload["service_account_id"] == "serviceaccount-abc"
+    assert payload["credentials"]["access_key"] == "key"
+
+
+def test_resolve_agent_ssh_key_prefers_record_and_cli() -> None:
+    from npa.cli.agent import _resolve_agent_ssh_key
+
+    record = {"ssh_key_path": "/record/key"}
+    assert _resolve_agent_ssh_key(record, cli_ssh_key="/cli/key") == "/cli/key"
+    assert _resolve_agent_ssh_key(record) == "/record/key"
+
+
+def test_resolve_agent_storage_credentials_prefers_record() -> None:
+    from npa.cli.agent import _resolve_agent_storage_credentials
+
+    record = {
+        "service_account_id": "serviceaccount-abc",
+        "credentials": {
+            "service_account_id": "serviceaccount-abc",
+            "s3_bucket": "bucket",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "access_key": "key",
+            "secret_key": "secret",
+        },
+    }
+    bucket, endpoint, access_key, secret_key, sa_id = _resolve_agent_storage_credentials(
+        "rtxpro",
+        record,
+    )
+    assert bucket == "bucket"
+    assert endpoint.endswith("nebius.cloud")
+    assert access_key == "key"
+    assert secret_key == "secret"
+    assert sa_id == "serviceaccount-abc"
+
+
+def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "EnvironmentFile=-/opt/npa-agent/nebius.env" in source
+    assert "_write_agent_nebius_env" in source
+    assert "bootstrap_agent_environment" in source
+    assert "--refresh-credentials" in source
+    assert "--ssh-key" in source
+    assert "_resolve_agent_ssh_key" in source

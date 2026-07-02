@@ -288,9 +288,17 @@ def _saved_storage_credentials(
     }
 
 
+AGENT_SERVICE_ACCOUNT_NAME = "npa-agent"
+AGENT_ACCESS_KEY_NAME = "npa-agent-access-key"
+DEFAULT_SERVICE_ACCOUNT_NAME = "lerobot-training"
+DEFAULT_ACCESS_KEY_NAME = "lerobot-access-key"
+
+
 def ensure_service_account(
     project_id: str,
-    name: str = "lerobot-training",
+    name: str = DEFAULT_SERVICE_ACCOUNT_NAME,
+    *,
+    description: str = "Service account for LeRobot training on Nebius",
 ) -> str:
     """Get or create a service account, return its ID."""
     # Try to find existing.
@@ -323,7 +331,7 @@ def ensure_service_account(
         "iam", "service-account", "create",
         "--parent-id", project_id,
         "--name", name,
-        "--description", "Service account for LeRobot training on Nebius",
+        "--description", description,
     ])
     sa_id = data.get("metadata", {}).get("id", "")
     if not sa_id:
@@ -411,7 +419,8 @@ def ensure_access_key(
     project_id: str,
     sa_id: str,
     *,
-    key_name: str = "lerobot-access-key",
+    key_name: str = DEFAULT_ACCESS_KEY_NAME,
+    description: str = "Access key for LeRobot S3 and API access",
 ) -> tuple[str, str]:
     """Ensure an active access key exists, return (aws_access_key_id, aws_secret_access_key).
 
@@ -447,7 +456,7 @@ def ensure_access_key(
         "--parent-id", project_id,
         "--name", create_name,
         "--account-service-account-id", sa_id,
-        "--description", "Access key for LeRobot S3 and API access",
+        "--description", description,
     ])
     new_key_id = create_data.get("metadata", {}).get("id", "")
     if not new_key_id:
@@ -569,6 +578,10 @@ def bootstrap_environment(
     bucket_name: str | None = None,
     bucket_max_size_bytes: int = 0,
     bucket_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
+    service_account_name: str = DEFAULT_SERVICE_ACCOUNT_NAME,
+    access_key_name: str = DEFAULT_ACCESS_KEY_NAME,
+    service_account_description: str = "Service account for LeRobot training on Nebius",
+    access_key_description: str = "Access key for LeRobot S3 and API access",
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
@@ -591,7 +604,11 @@ def bootstrap_environment(
     iam_token = get_iam_token()
 
     _status("Setting up service account...")
-    sa_id = ensure_service_account(project_id)
+    sa_id = ensure_service_account(
+        project_id,
+        name=service_account_name,
+        description=service_account_description,
+    )
 
     _status("Configuring service account permissions...")
     try:
@@ -627,7 +644,12 @@ def bootstrap_environment(
 
     _status("Setting up access key for S3...")
     try:
-        aws_access_key, aws_secret_key = ensure_access_key(project_id, sa_id)
+        aws_access_key, aws_secret_key = ensure_access_key(
+            project_id,
+            sa_id,
+            key_name=access_key_name,
+            description=access_key_description,
+        )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
             raise
@@ -655,3 +677,43 @@ def bootstrap_environment(
         "nebius_project_id": project_id,
         "nebius_region": region,
     }
+
+
+def bootstrap_agent_environment(
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    **kwargs: Any,
+) -> dict[str, str]:
+    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs."""
+
+    return bootstrap_environment(
+        project_id,
+        tenant_id,
+        region,
+        service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
+        access_key_name=AGENT_ACCESS_KEY_NAME,
+        service_account_description="Long-lived service account for NPA agent VMs",
+        access_key_description="Long-lived access key for NPA agent S3 and API access",
+        **kwargs,
+    )
+
+
+def bootstrap_agent_environment(
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    **kwargs: Any,
+) -> dict[str, str]:
+    """Bootstrap a long-lived ``npa-agent`` service account for agent VMs."""
+
+    return bootstrap_environment(
+        project_id,
+        tenant_id,
+        region,
+        service_account_name=AGENT_SERVICE_ACCOUNT_NAME,
+        access_key_name=AGENT_ACCESS_KEY_NAME,
+        service_account_description="Long-lived service account for NPA agent VMs",
+        access_key_description="Long-lived access key for NPA agent S3 and API access",
+        **kwargs,
+    )

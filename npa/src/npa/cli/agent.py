@@ -103,6 +103,9 @@ class AgentConfig:
     public_url: str = ""
     public_https: bool = True
     direct_url: str = ""
+    ssh_key_path: str = ""
+    service_account_id: str = ""
+    credentials: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -126,6 +129,12 @@ class AgentConfig:
             payload["public_https"] = True
         if self.direct_url:
             payload["direct_url"] = self.direct_url
+        if self.ssh_key_path:
+            payload["ssh_key_path"] = self.ssh_key_path
+        if self.service_account_id:
+            payload["service_account_id"] = self.service_account_id
+        if self.credentials:
+            payload["credentials"] = dict(self.credentials)
         return payload
 
 
@@ -275,6 +284,64 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
     return creds.token_factory_api_key, DEFAULT_LLM_MODEL
 
 
+def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
+    """Normalize Nebius bootstrap output for persistence on the agent record."""
+    return {
+        "service_account_id": str(creds.get("service_account_id", "")).strip(),
+        "s3_bucket": str(creds.get("s3_bucket", "")).strip(),
+        "s3_endpoint": str(creds.get("s3_endpoint", "")).strip(),
+        "access_key": str(creds.get("nebius_api_key", "")).strip(),
+        "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
+    }
+
+
+def _resolve_agent_ssh_key(
+    record: dict[str, Any],
+    *,
+    cli_ssh_key: str | None = None,
+    default_key: str = "~/.ssh/id_ed25519",
+) -> str:
+    """Resolve SSH private key for agent bootstrap without requiring workbench SSH config."""
+    if cli_ssh_key and cli_ssh_key.strip():
+        return str(Path(cli_ssh_key).expanduser())
+    stored = str(record.get("ssh_key_path", "")).strip()
+    if stored:
+        return str(Path(stored).expanduser())
+    env_key = os.environ.get("NPA_SSH_KEY", "").strip()
+    if env_key:
+        return str(Path(env_key).expanduser())
+    return str(Path(default_key).expanduser())
+
+
+def _resolve_agent_storage_credentials(
+    project_alias: str,
+    record: dict[str, Any],
+) -> tuple[str, str, str, str, str]:
+    """Return bucket, endpoint, access key, secret key, and service account id."""
+    creds = record.get("credentials", {})
+    if isinstance(creds, dict):
+        access_key = str(creds.get("access_key", "")).strip()
+        secret_key = str(creds.get("secret_key", "")).strip()
+        bucket = str(creds.get("s3_bucket", "")).strip()
+        endpoint = str(creds.get("s3_endpoint", "")).strip()
+        service_account_id = str(
+            creds.get("service_account_id", record.get("service_account_id", ""))
+        ).strip()
+        if bucket and access_key and secret_key:
+            return bucket, endpoint, access_key, secret_key, service_account_id
+    try:
+        tf_state = resolve_terraform_state(project_alias)
+    except ConfigError:
+        return "", "", "", "", str(record.get("service_account_id", "")).strip()
+    return (
+        str(getattr(tf_state, "bucket", "") or ""),
+        str(getattr(tf_state, "endpoint", "") or ""),
+        str(getattr(tf_state, "access_key", "") or ""),
+        str(getattr(tf_state, "secret_key", "") or ""),
+        str(record.get("service_account_id", "")).strip(),
+    )
+
+
 def _write_agent_llm_env(
     ssh: SSHClient,
     *,
@@ -316,6 +383,40 @@ def _write_agent_s3_env(
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/s3.env"
+    )
+
+
+def _write_agent_nebius_env(
+    ssh: SSHClient,
+    *,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    service_account_id: str,
+    bucket: str,
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
+) -> None:
+    """Stage long-lived Nebius project credentials on the agent VM."""
+    if not (project_id.strip() and access_key.strip() and secret_key.strip()):
+        return
+    env_lines = [
+        f"NEBIUS_PROJECT_ID={project_id.strip()}",
+        f"NEBIUS_TENANT_ID={tenant_id.strip()}",
+        f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
+        f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
+        f"NEBIUS_S3_BUCKET={bucket.strip()}",
+        f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
+        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
+        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
+        f"AWS_REGION={region.strip() or 'eu-north1'}",
+        "",
+    ]
+    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
+    ssh.run_or_raise(
+        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
+        "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
 
 
@@ -473,6 +574,9 @@ def _bootstrap_agent_stack(
     s3_access_key: str = "",
     s3_secret_key: str = "",
     s3_region: str = "eu-north1",
+    nebius_project_id: str = "",
+    nebius_tenant_id: str = "",
+    service_account_id: str = "",
     public_https: bool = True,
 ) -> None:
     ssh = SSHClient(
@@ -4271,6 +4375,7 @@ After=network.target
 Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/s3.env
+EnvironmentFile=-/opt/npa-agent/nebius.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -4330,7 +4435,22 @@ sudo systemctl restart npa-agent-backend
         secret_key=s3_secret_key,
         region=s3_region,
     )
-    if tf_api_key.strip() or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip()):
+    _write_agent_nebius_env(
+        ssh,
+        project_id=nebius_project_id,
+        tenant_id=nebius_tenant_id,
+        region=s3_region,
+        service_account_id=service_account_id,
+        bucket=s3_bucket,
+        endpoint=s3_endpoint,
+        access_key=s3_access_key,
+        secret_key=s3_secret_key,
+    )
+    if (
+        tf_api_key.strip()
+        or (s3_bucket.strip() and s3_access_key.strip() and s3_secret_key.strip())
+        or (nebius_project_id.strip() and s3_access_key.strip() and s3_secret_key.strip())
+    ):
         ssh.run_or_raise(
             "sudo systemctl reset-failed npa-agent-backend || true; "
             "sudo systemctl restart npa-agent-backend"
@@ -4384,10 +4504,10 @@ def deploy_cmd(
     if not env_project_id or not env_tenant_id or not env_region:
         _fail("--project-id, --tenant-id, and --region are required")
 
-    from npa.clients.nebius import NebiusError, bootstrap_environment, get_iam_token
+    from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
 
     try:
-        creds = bootstrap_environment(
+        creds = bootstrap_agent_environment(
             env_project_id,
             env_tenant_id,
             env_region,
@@ -4478,6 +4598,9 @@ def deploy_cmd(
             s3_access_key=str(merged_vars.get("nebius_api_key", "")),
             s3_secret_key=str(merged_vars.get("nebius_secret_key", "")),
             s3_region=env_region,
+            nebius_project_id=env_project_id,
+            nebius_tenant_id=env_tenant_id,
+            service_account_id=str(creds.get("service_account_id", "")),
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
@@ -4492,6 +4615,7 @@ def deploy_cmd(
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
+    agent_credentials = _agent_credentials_payload(creds)
     record = AgentConfig(
         project_alias=project,
         name=name,
@@ -4512,6 +4636,9 @@ def deploy_cmd(
         public_url=urls["public_url"],
         public_https=public_https,
         direct_url=urls["direct_url"],
+        ssh_key_path=ssh_key_path,
+        service_account_id=str(creds.get("service_account_id", "")),
+        credentials=agent_credentials,
     )
     _store_agent_record(project, name, record.to_dict())
     write_config(
@@ -4555,9 +4682,15 @@ def bootstrap_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
+    ssh_key: str = typer.Option("", "--ssh-key", help="SSH private key path (defaults to agent record or NPA_SSH_KEY)."),
     agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
     backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
     rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    refresh_credentials: bool = typer.Option(
+        False,
+        "--refresh-credentials",
+        help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
+    ),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -4572,13 +4705,12 @@ def bootstrap_cmd(
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
     public_https = not no_public_https
-    ssh_key_path = resolve_ssh_config(
-        ssh_host=public_ip,
-        ssh_user=ssh_user,
-        ssh_key=None,
-        project=None,
-        name=None,
-    ).ssh.key_path or str(Path.home() / ".ssh" / "id_ed25519")
+    ssh_key_path = _resolve_agent_ssh_key(record, cli_ssh_key=ssh_key or None)
+    if not Path(ssh_key_path).expanduser().exists():
+        _fail(
+            f"SSH private key not found at {ssh_key_path!r}. "
+            "Pass --ssh-key, set NPA_SSH_KEY, or redeploy to persist ssh_key_path on the agent record."
+        )
     try:
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:
@@ -4592,18 +4724,46 @@ def bootstrap_cmd(
             "Warning: Token Factory API key not found; chat endpoint will return 503.",
             err=True,
         )
-    s3_bucket = ""
-    s3_endpoint = ""
-    s3_access_key = ""
-    s3_secret_key = ""
-    try:
-        tf_state = resolve_terraform_state(project)
-        s3_bucket = str(getattr(tf_state, "bucket", "") or "")
-        s3_endpoint = str(getattr(tf_state, "endpoint", "") or "")
-        s3_access_key = str(getattr(tf_state, "access_key", "") or "")
-        s3_secret_key = str(getattr(tf_state, "secret_key", "") or "")
-    except ConfigError:
-        pass
+    project_id = str(record.get("project_id", "")).strip()
+    tenant_id = str(record.get("tenant_id", "")).strip()
+    region = str(record.get("region", "") or "eu-north1")
+    s3_bucket, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
+        _resolve_agent_storage_credentials(project, record)
+    )
+    if refresh_credentials:
+        if not (project_id and tenant_id and region):
+            _fail("agent record is missing project_id, tenant_id, or region for credential refresh")
+        from npa.clients.nebius import NebiusError, bootstrap_agent_environment
+
+        try:
+            creds = bootstrap_agent_environment(
+                project_id,
+                tenant_id,
+                region,
+                on_status=lambda msg: typer.echo(f"  {msg}"),
+            )
+        except NebiusError as exc:
+            _fail(f"Nebius credential refresh failed: {exc}")
+        agent_credentials = _agent_credentials_payload(creds)
+        s3_bucket = agent_credentials["s3_bucket"]
+        s3_endpoint = agent_credentials["s3_endpoint"]
+        s3_access_key = agent_credentials["access_key"]
+        s3_secret_key = agent_credentials["secret_key"]
+        service_account_id = agent_credentials["service_account_id"]
+        write_config(
+            {
+                "projects": {
+                    project: {
+                        "terraform_state": {
+                            "bucket": s3_bucket,
+                            "endpoint": s3_endpoint,
+                            "access_key": s3_access_key,
+                            "secret_key": s3_secret_key,
+                        },
+                    }
+                }
+            }
+        )
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -4620,7 +4780,10 @@ def bootstrap_cmd(
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
             s3_secret_key=s3_secret_key,
-            s3_region=str(record.get("region", "") or "eu-north1"),
+            s3_region=region,
+            nebius_project_id=project_id,
+            nebius_tenant_id=tenant_id,
+            service_account_id=service_account_id,
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
@@ -4642,6 +4805,11 @@ def bootstrap_cmd(
     updated = dict(record)
     updated.update(urls)
     updated["public_https"] = public_https
+    updated["ssh_key_path"] = ssh_key_path
+    if service_account_id:
+        updated["service_account_id"] = service_account_id
+    if refresh_credentials:
+        updated["credentials"] = agent_credentials
     _store_agent_record(project, name, updated)
     typer.echo(f"Customer URL: {urls['public_url']}")
     typer.echo(f"bootstrapped: {project}/{name} at {urls['public_url']}")
