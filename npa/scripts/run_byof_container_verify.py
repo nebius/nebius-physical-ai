@@ -78,8 +78,14 @@ def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     return docs
 
 
+def _task_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(docs) > 1 and isinstance(docs[0], dict) and "execution" in docs[0] and "run" not in docs[0]:
+        return docs[1:]
+    return docs
+
+
 def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
-    path.write_text("".join(yaml.safe_dump(doc, sort_keys=False) for doc in docs), encoding="utf-8")
+    path.write_text(yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8")
 
 
 def _default_run_id() -> str:
