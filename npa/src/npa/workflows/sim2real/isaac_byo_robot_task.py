@@ -48,6 +48,28 @@ STIFFNESS_MIN, STIFFNESS_MAX = 1.0, 100000.0
 DAMPING_MIN, DAMPING_MAX = 0.1, 10000.0
 EFFORT_MIN, EFFORT_MAX = 1.0, 10000.0
 
+# Robot-agnostic gripper drive floors. The stock swap gives every joint one
+# arm-averaged actuator group, so a manipulator's fingers inherit arm-shaped gains
+# rather than a drive tuned for a light-object grasp. When a spec declares a
+# gripper we give the finger joints their OWN actuator group with a modest
+# stiffness/effort FLOOR (or the spec's own gripper_kp/kv/force when higher).
+# Driven off ``gripper_joint_names`` (+ any per-gripper gain the spec supplies) —
+# never off a specific robot's joint names.
+#
+# Values are sized for a small REVOLUTE finger holding a light tabletop object: a
+# position-controlled finger's holding torque ≈ stiffness × (close_target −
+# contact_angle); with a ~0.3 rad contact error a stiffness of ~20 N·m/rad yields
+# a few N·m of firm-but-bounded clamp, capped by the effort floor. An earlier
+# on-cluster trial with a much higher floor (400/200) DESTABILIZED the arm policy
+# (the finger group double-actuates joints the catch-all group also drives, and an
+# over-stiff finger drive injects large contact forces) — reaching collapsed and
+# mean reward went negative. These modest floors keep the per-robot gripper drive
+# sane and non-destabilizing. Franka/preset specs resolve no BYO gripper group
+# (see ``robot_articulation_overrides``), so their path is unchanged.
+GRIPPER_STIFFNESS_FLOOR = 20.0
+GRIPPER_DAMPING_FLOOR = 4.0
+GRIPPER_EFFORT_FLOOR = 10.0
+
 # Stock ``Isaac-Lift-Cube-Franka-v0`` link/joint names hardcoded in the task cfg's
 # ee_frame FrameTransformer, arm/gripper action terms, and the object_pose command
 # body. The retarget mapping resolves to EXACTLY these for a stock-Franka spec (or
@@ -161,6 +183,28 @@ def robot_articulation_overrides(spec: dict[str, Any] | None) -> dict[str, Any]:
     forces = [abs(f) for f in _num_list(spec.get("force_upper")) + _num_list(spec.get("force_lower"))]
     if forces:
         overrides["effort_limit"] = round(_clamp(max(forces), EFFORT_MIN, EFFORT_MAX), 6)
+
+    # Dedicated gripper drive: when the spec declares finger joints, give them their
+    # OWN actuator group with a stiffness/effort FLOOR so the fingers can clamp AND
+    # hold the object rather than inheriting the (too-soft-for-gripping) arm-averaged
+    # group. Robot-agnostic — the joint names come from the spec, the gains from any
+    # ``gripper_kp``/``gripper_kv``/``gripper_force`` the spec supplies, else the
+    # floors. Absent finger joints (bare arm / stock Franka) -> no group, path
+    # unchanged.
+    gripper_joints = [str(n) for n in (spec.get("gripper_joint_names") or []) if str(n)]
+    if gripper_joints and _spec_has_gripper(spec):
+        g_kp = _num_list(spec.get("gripper_kp"))
+        g_kv = _num_list(spec.get("gripper_kv"))
+        g_force = [abs(f) for f in _num_list(spec.get("gripper_force"))]
+        g_stiff = max(sum(g_kp) / len(g_kp), GRIPPER_STIFFNESS_FLOOR) if g_kp else GRIPPER_STIFFNESS_FLOOR
+        g_damp = max(sum(g_kv) / len(g_kv), GRIPPER_DAMPING_FLOOR) if g_kv else GRIPPER_DAMPING_FLOOR
+        g_eff = max(max(g_force), GRIPPER_EFFORT_FLOOR) if g_force else GRIPPER_EFFORT_FLOOR
+        overrides["gripper_actuator"] = {
+            "joint_names": list(gripper_joints),
+            "stiffness": round(_clamp(g_stiff, STIFFNESS_MIN, STIFFNESS_MAX), 6),
+            "damping": round(_clamp(g_damp, DAMPING_MIN, DAMPING_MAX), 6),
+            "effort_limit": round(_clamp(g_eff, EFFORT_MIN, EFFORT_MAX), 6),
+        }
 
     return overrides
 
@@ -436,6 +480,22 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
+    # Grasp-hold reward weight (>0): reward a MAINTAINED grasp while the object is
+    # lifted (closedness x height) so the gripper learns to keep holding rather than
+    # bat the object and reopen. Complements grasp_shaping (close-near precursor) and
+    # dense_lift (height only). Same gating/Franka-safety: stock-derived config never
+    # sets it, so the Franka path is unchanged.
+    ghw = task_cfg.get("grasp_hold_weight")
+    if ghw is not None:
+        try:
+            w = float(ghw)
+            if w > 0:
+                out["grasp_hold_weight"] = w
+                std = task_cfg.get("grasp_hold_std")
+                out["grasp_hold_std"] = float(std) if std is not None else 0.05
+        except (TypeError, ValueError):
+            pass
+
     return out
 
 
@@ -519,6 +579,78 @@ def grasp_shaping(
         return _t.zeros(env.num_envs, device=env.device)
 
 
+_GRASP_HOLD_WARNED = {"done": False}
+
+
+def grasp_lift_hold(
+    env,
+    std: float = 0.05,
+    object_name: str = "object",
+    ee_frame_name: str = "ee_frame",
+    gripper_joint_names: tuple[str, ...] | list[str] | None = None,
+    gripper_open: float = 0.0,
+    gripper_close: float = 1.0,
+):
+    """Reward raising a CLOSED gripper that is at the object — a bootstrap-capable
+    grasp+lift signal.
+
+    The deepest BYO-lift wall (5 prior escalation rounds + on-cluster confirmation):
+    a non-Franka arm learns to REACH and to CLOSE near the object (``grasp_shaping``
+    saturates), but the object's height stays EXACTLY 0 across 1000 iters — the arm
+    never even attempts to raise itself while gripping. Any reward gated on *object*
+    height (``object_lift_progress``, or a naive closed×object_height term) is dead
+    flat there: it cannot bootstrap the lift because the object never moves, the
+    same chicken-and-egg that defeated the dense object-height reward.
+
+    This term instead multiplies three quantities the policy can influence from the
+    reached+closed state IMMEDIATELY: ``near(ee, object) × closedness ×
+    tanh(ee_height_above_table / std)``. Raising the (closed) end-effector is
+    directly controllable, so there is a live gradient the instant the arm is
+    closed at the object — that is the missing "attempt the lift" signal. Crucially
+    the ``near`` factor keeps it honest: lifting the hand away from a NOT-grasped
+    object drops ``near`` toward 0, so sustained reward requires the object to
+    travel UP WITH the hand — i.e. a grasp that actually holds. Robot-agnostic:
+    closedness from the spec's ``gripper_joint_names`` + open/close targets, heights
+    from the object/ee frames only. Once a real hold forms and the object rises, the
+    dense lift term + stock ``lifting_object`` / ``object_goal_tracking`` take over.
+
+    Fully defensive: any per-step error returns zeros (logged once) so a cfg/API
+    shape mismatch contributes 0 instead of crashing the run.
+    """
+
+    import torch  # noqa: WPS433 (GPU-only)
+
+    try:
+        obj = env.scene[object_name]
+        ee = env.scene[ee_frame_name]
+        ee_w = ee.data.target_pos_w[..., 0, :]
+        obj_w = obj.data.root_pos_w
+        dist = torch.norm(obj_w - ee_w, dim=1)
+        near = 1.0 - torch.tanh(dist / float(std))
+        # ee height gained above the object's spawn (table) height — controllable
+        # from the reached pose, so this bootstraps where object-height cannot.
+        table_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+        ee_gain = torch.clamp(ee_w[:, 2] - table_z, min=0.0)
+        height = torch.tanh(ee_gain / float(std))
+        robot = env.scene["robot"]
+        if gripper_joint_names:
+            idx, _ = robot.find_joints(list(gripper_joint_names))
+            qpos = robot.data.joint_pos[:, idx].mean(dim=1)
+            denom = float(gripper_close) - float(gripper_open)
+            denom = denom if abs(denom) > 1e-6 else 1.0
+            closed = ((qpos - float(gripper_open)) / denom).clamp(0.0, 1.0)
+        else:
+            closed = torch.ones_like(near)
+        return near * closed * height
+    except Exception as exc:  # noqa: BLE001 (never crash training on a reward call)
+        if not _GRASP_HOLD_WARNED["done"]:
+            print("ROBOT_GRASP_HOLD_ERR", repr(exc), flush=True)
+            _GRASP_HOLD_WARNED["done"] = True
+        import torch as _t  # noqa: WPS433
+
+        return _t.zeros(env.num_envs, device=env.device)
+
+
 def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None = None) -> str | None:
     """Register the BYO-robot Lift variant in the gym registry; return its id.
 
@@ -555,6 +687,7 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
     stiffness = overrides.get("stiffness")
     damping = overrides.get("damping")
     effort_limit = overrides.get("effort_limit")
+    gripper_actuator = overrides.get("gripper_actuator")
     task_id = _task_id((spec or {}).get("name") or "robot")
 
     def _swap_prim_tail(prim_path: str, link: str) -> str:
@@ -805,6 +938,34 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                 print("ROBOT_TASKCFG_ERR grasp_shaping", repr(exc), flush=True)
                 skipped.append("rewards.grasp_shaping")
 
+        # (h) grasp-hold reward: reward a MAINTAINED grasp while the object is lifted
+        # (closedness x height gained), so a held lift — not a transient bat-up — is
+        # what pays. Gated on grasp_hold_weight (>0); finger joints from the retarget
+        # plan. Never set on the Franka path. Defensive — records + skips on error.
+        if "grasp_hold_weight" in task_over:
+            try:
+                from isaaclab.managers import RewardTermCfg  # noqa: WPS433
+
+                rewards = getattr(env_cfg, "rewards", None)
+                grip = (retarget or {}).get("gripper") or {}
+                term = RewardTermCfg(
+                    func=grasp_lift_hold,
+                    weight=float(task_over["grasp_hold_weight"]),
+                    params={
+                        "std": float(task_over.get("grasp_hold_std", 0.05)),
+                        "object_name": "object",
+                        "ee_frame_name": "ee_frame",
+                        "gripper_joint_names": list(grip.get("joint_names") or []),
+                        "gripper_open": float(task_over.get("gripper_open", 0.0)),
+                        "gripper_close": float(task_over.get("gripper_close", 1.0)),
+                    },
+                )
+                setattr(rewards, "grasp_hold", term)
+                applied.append("rewards.grasp_hold(%s)" % task_over["grasp_hold_weight"])
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR grasp_hold", repr(exc), flush=True)
+                skipped.append("rewards.grasp_hold")
+
         print("ROBOT_TASKCFG applied=%s skipped=%s" % (applied, skipped), flush=True)
 
     class _ByoRobotLiftEnvCfg(franka_lift.FrankaCubeLiftEnvCfg):  # type: ignore[name-defined]
@@ -839,6 +1000,37 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
                         # break observed on-cluster).
                         if hasattr(actuator, "effort_limit_sim"):
                             actuator.effort_limit_sim = effort_limit
+                # Dedicated gripper actuator group (added LAST so its higher gains win
+                # for the finger joints — implicit-drive gains are written per joint,
+                # last group processed wins). This is the fix that lets the fingers
+                # actually CLAMP and HOLD: the arm-averaged group above leaves them
+                # far too soft to exert holding force. Defensive: a cfg/import shape
+                # change records + skips instead of crashing the (expensive) run. The
+                # catch-all group above still covers every joint, so an unmodelled
+                # extra joint (e.g. finger tips) stays actuated regardless.
+                if gripper_actuator and gripper_actuator.get("joint_names"):
+                    try:
+                        from isaaclab.actuators import ImplicitActuatorCfg  # noqa: WPS433
+
+                        g_eff = float(gripper_actuator["effort_limit"])
+                        actuators["byo_gripper"] = ImplicitActuatorCfg(
+                            joint_names_expr=list(gripper_actuator["joint_names"]),
+                            stiffness=float(gripper_actuator["stiffness"]),
+                            damping=float(gripper_actuator["damping"]),
+                            effort_limit=g_eff,
+                            effort_limit_sim=g_eff,
+                        )
+                        print(
+                            "ROBOT_GRIPPER_ACTUATOR joints=%s stiffness=%s effort=%s"
+                            % (
+                                gripper_actuator["joint_names"],
+                                gripper_actuator["stiffness"],
+                                g_eff,
+                            ),
+                            flush=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001 (never crash the run)
+                        print("ROBOT_GRIPPER_ACTUATOR_ERR", repr(exc), flush=True)
             # Retarget the Franka-hardcoded ee_frame / actions / command body onto
             # the swapped robot's link & joint names (the seam's core gap).
             _apply_retarget(self)
