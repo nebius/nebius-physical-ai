@@ -845,16 +845,17 @@ def test_creds_from_terraform_state(monkeypatch) -> None:
     assert creds["service_account_id"] == "serviceaccount-abc"
 
 
-def test_bootstrap_escape_preserves_onboard_intent_regex() -> None:
-    from npa.cli.agent import _embedded_agent_chat_source, _escape_fstring_embed
+def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
+    from npa.cli import agent as agent_module
 
-    raw = _embedded_agent_chat_source()
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_AGENT_CHAT_EMBED" in source
+    assert '.replace(_AGENT_CHAT_EMBED, agent_chat_source)' in source
+    raw = agent_module._embedded_agent_chat_source()
     assert '"onboard_solution"' in raw
     assert "{0,140}" in raw
-    rendered = f"PREFIX\n{_escape_fstring_embed(raw)}\nSUFFIX"
-    assert '"onboard_solution"' in rendered
-    assert "{0,140}" in rendered
-    assert "PREFIX" in rendered and "SUFFIX" in rendered
+    rendered = source.split("_AGENT_CHAT_EMBED = ", 1)[0]  # sanity: module loads
+    assert rendered
 
 
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:

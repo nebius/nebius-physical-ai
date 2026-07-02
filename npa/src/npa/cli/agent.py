@@ -71,9 +71,9 @@ def _embedded_agent_chat_source() -> str:
     return raw
 
 
-def _escape_fstring_embed(text: str) -> str:
-    """Escape braces so embedded Python sources survive bootstrap f-strings."""
-    return text.replace("{", "{{").replace("}", "}}")
+_AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
+_AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
+_AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 
 
 def _embedded_agent_artifacts_source() -> str:
@@ -675,9 +675,9 @@ def _bootstrap_agent_stack(
         ).ssh
     )
     catalog_json = json.dumps(_tool_catalog_payload())
-    agent_chat_source = _escape_fstring_embed(_embedded_agent_chat_source())
-    agent_workflow_source = _escape_fstring_embed(_embedded_agent_workflow_source())
-    agent_artifacts_source = _escape_fstring_embed(_embedded_agent_artifacts_source())
+    agent_chat_source = _embedded_agent_chat_source()
+    agent_workflow_source = _embedded_agent_workflow_source()
+    agent_artifacts_source = _embedded_agent_artifacts_source()
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
     strip_url_credentials_js = _agent_strip_url_credentials_js()
@@ -1403,11 +1403,11 @@ def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
         raise HTTPException(status_code=502, detail="Token Factory returned non-object response")
     return data
 
-{agent_chat_source}
+{_AGENT_CHAT_EMBED}
 
-{agent_workflow_source}
+{_AGENT_WORKFLOW_EMBED}
 
-{agent_artifacts_source}
+{_AGENT_ARTIFACTS_EMBED}
 
 def _workflow_draft_from_state(state: dict) -> dict:
     draft = state.get("workflow_draft", {{}})
@@ -4499,6 +4499,11 @@ sudo systemctl enable --now npa-agent-backend npa-rerun nginx
 sudo systemctl restart npa-rerun nginx
 sudo systemctl restart npa-agent-backend
 """
+    setup_script = (
+        setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
+        .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
+        .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+    )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
