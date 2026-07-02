@@ -106,6 +106,23 @@ def test_resolve_spec_from_uri_downloads_and_parses(monkeypatch, tmp_path):
     assert spec.name == "kinova_j2n7s300"
     # The USD carried through as robot_uri (so run_isaac_training_job can stage/open it).
     assert spec.robot_uri.endswith("j2n7s300_instanceable.usd")
+    # Fidelity: base_link + gripper_joint_names must survive parse (else the ee_frame
+    # source defaults to Franka's panda_link0 and the gripper action retargets to
+    # nonexistent panda_finger.* joints — both crash a non-Franka arm at train time).
+    assert spec.base_link == "j2n7s300_link_base"
+    assert tuple(spec.gripper_joint_names) == (
+        "j2n7s300_joint_finger_1",
+        "j2n7s300_joint_finger_2",
+        "j2n7s300_joint_finger_3",
+    )
+    # ...and they must be serialized into the in-container payload the sibling reads.
+    payload = trainer.robot_spec_payload(spec, usd_container_path=spec.robot_uri)
+    assert payload["base_link"] == "j2n7s300_link_base"
+    assert payload["gripper_joint_names"] == [
+        "j2n7s300_joint_finger_1",
+        "j2n7s300_joint_finger_2",
+        "j2n7s300_joint_finger_3",
+    ]
 
 
 def test_resolve_spec_uri_absent_falls_back_to_preset(monkeypatch):

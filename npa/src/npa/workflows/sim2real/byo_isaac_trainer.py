@@ -130,6 +130,9 @@ def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, 
         "base_link": str(getattr(spec, "base_link", "") or ""),
         "joint_names": [str(j) for j in (getattr(spec, "joint_names", ()) or ())],
         "finger_links": [str(f) for f in (getattr(spec, "finger_links", ()) or ())],
+        "gripper_joint_names": [
+            str(g) for g in (getattr(spec, "gripper_joint_names", ()) or ())
+        ],
         "n_arm_joints": int(getattr(spec, "n_arm_joints", 0) or 0),
         "n_gripper_joints": int(getattr(spec, "n_gripper_joints", 0) or 0),
         "home_qpos": _floats(getattr(spec, "home_qpos", ())),
