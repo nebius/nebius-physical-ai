@@ -1161,7 +1161,7 @@ def _agent_system_prompt() -> str:
             "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
             "`<your-registry-id>` placeholders in runnable workflows.",
             "For BYOF solution onboarding, use the",
-            "`npa/scripts/run_isaac_lab_byof_repo.py` flow to containerize an OSS repo,",
+            "`npa/scripts/run_byof_repo.py` flow to containerize an OSS repo,",
             "push to the configured Nebius registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
@@ -5167,8 +5167,8 @@ def verify_live_cmd(
     if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
         _fail("onboard_solution chat did not return ok=true")
     onboard_reply = str(onboard_payload.get("reply") or "")
-    if "run_isaac_lab_byof_repo.py" not in onboard_reply:
-        _fail("onboard_solution chat reply missing run_isaac_lab_byof_repo.py command")
+    if "run_byof_repo.py" not in onboard_reply:
+        _fail("onboard_solution chat reply missing run_byof_repo.py command")
     if "<repo-url>" not in onboard_reply or "<task>" not in onboard_reply:
         _fail("onboard_solution chat reply missing runnable placeholders")
     if onboard_reply.strip().startswith("GET /api"):

@@ -8,11 +8,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
+SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("run_isaac_lab_byof_repo", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("run_byof_repo", SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -317,3 +317,13 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     text = module._dockerfile_text()
     assert "npa_source_metadata.json" in text
     assert "printf" in text
+    assert "/opt/byof" in text
+
+
+def test_compat_shim_delegates_to_run_byof_repo() -> None:
+    shim_path = ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
+    spec = importlib.util.spec_from_file_location("run_isaac_lab_byof_repo_shim", shim_path)
+    assert spec and spec.loader
+    shim = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shim)
+    assert shim.main.__module__ == "run_byof_repo"

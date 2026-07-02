@@ -59,7 +59,7 @@ if not payload.get('ok'):
     raise SystemExit('onboard_solution smoke: ok!=true')
 if not payload.get('grounded'):
     raise SystemExit('onboard_solution smoke: expected grounded=true')
-if 'run_isaac_lab_byof_repo.py' not in reply:
+if 'run_byof_repo.py' not in reply:
     raise SystemExit('onboard_solution smoke: missing BYOF runner command')
 if '<repo-url>' not in reply or '<task>' not in reply:
     raise SystemExit('onboard_solution smoke: missing runnable placeholders')

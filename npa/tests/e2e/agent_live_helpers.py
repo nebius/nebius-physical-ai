@@ -128,7 +128,7 @@ def assert_grounded_onboard_solution_reply(payload: dict[str, object]) -> str:
     assert payload.get("grounded") is True
     reply = str(payload.get("reply") or "")
     assert reply
-    assert "run_isaac_lab_byof_repo.py" in reply
+    assert "run_byof_repo.py" in reply
     assert "<repo-url>" in reply
     assert "<task>" in reply
     assert "registry" in reply.lower()

@@ -16,7 +16,7 @@ class ToolEntry:
 
 _BYOF_REPO_ARGV = [
     "npa/.venv/bin/python",
-    "npa/scripts/run_isaac_lab_byof_repo.py",
+    "npa/scripts/run_byof_repo.py",
     "--repo-url",
     "{{config.repo_url}}",
     "--repo-ref",

@@ -123,7 +123,7 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
 def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
     reply = build_grounded_reply("onboard_solution", state, ["workbench.rl.policy_train"])
-    assert "run_isaac_lab_byof_repo.py" in reply
+    assert "run_byof_repo.py" in reply
     assert "<repo-url>" in reply
     assert "<task>" in reply
     assert "registry" in reply.lower()
