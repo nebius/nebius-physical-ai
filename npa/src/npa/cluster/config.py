@@ -10,6 +10,7 @@ from npa.clients.config import resolve_environment
 from npa.cluster.exceptions import ClusterConfigError
 
 DEFAULT_REGION = "eu-north1"
+SUPPORTED_REGIONS = {DEFAULT_REGION, "us-central1"}
 DEFAULT_K8S_VERSION = "1.33"
 DEFAULT_NODE_PLATFORM = "cpu-e2"
 DEFAULT_NODE_PRESET = "2vcpu-8gb"
@@ -19,7 +20,6 @@ DEFAULT_BOOT_DISK_TYPE = "network_ssd"
 DEFAULT_BOOT_DISK_SIZE_GIB = 128
 DEFAULT_GPU_DRIVER_PRESET = "cuda13.0"
 
-SUPPORTED_REGIONS = {DEFAULT_REGION}
 SUPPORTED_NODE_PRESETS = {
     "cpu-e2": {
         "2vcpu-8gb",

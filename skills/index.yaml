@@ -318,6 +318,19 @@ skills:
         paths:
           - npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml
           - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
+  - name: byof-onboard
+    category: workflows
+    when_to_use: "Onboard an OSS repo via BYOF — Ubuntu or Isaac Lab base, registry push, container-verify or sim workloads; NPA agent onboard_solution."
+    path: skills/workflows/byof-onboard/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/scripts/run_byof_repo.py
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/byof.yaml
+      - type: workflow_yaml
+        paths:
+          - npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml
   - name: author-npa-workflow
     category: workflows
     when_to_use: "Author, validate, or review NPA workflow specs (apiVersion npa.workflow/v0.0.1) and toolRef catalogs."

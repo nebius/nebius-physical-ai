@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from npa.cluster.config import ClusterConfig, NodeGroupConfig
+from npa.cluster.config import (
+    DEFAULT_NODE_PLATFORM,
+    DEFAULT_NODE_PRESET,
+    ClusterConfig,
+    NodeGroupConfig,
+)
 from npa.cluster.exceptions import (
     ClusterError,
     ClusterNotFoundError,
@@ -94,7 +99,23 @@ class MK8sClient:
                 existing.node_group_id = groups[0].id
                 existing.node_count = sum(group.node_count for group in groups)
                 return existing
-            node_group = self.create_cpu_node_group(config, existing.id)
+            cpu_config = config
+            platform, preset = cluster_region_cpu_defaults(config.region)
+            if platform != config.node_platform or preset != config.node_preset:
+                cpu_config = ClusterConfig(
+                    name=config.name,
+                    project_id=config.project_id,
+                    region=config.region,
+                    node_count=config.node_count,
+                    node_platform=platform,
+                    node_preset=preset,
+                    k8s_version=config.k8s_version,
+                    subnet_id=config.subnet_id or cluster_subnet_id(existing),
+                    wait=config.wait,
+                    timeout_minutes=config.timeout_minutes,
+                    public_node_ip=config.public_node_ip,
+                )
+            node_group = self.create_cpu_node_group(cpu_config, existing.id)
             existing.node_group_id = node_group.id
             existing.node_count = node_group.node_count
             return existing
@@ -129,16 +150,30 @@ class MK8sClient:
             if not cluster.id:
                 cluster = self.get_cluster(config.name, project_id=config.project_id)
             created_cluster_id = cluster.id
-            node_group = self.create_cpu_node_group(config, cluster.id)
+            cpu_platform, cpu_preset = cluster_region_cpu_defaults(config.region)
+            cpu_config = config
+            if cpu_platform != config.node_platform or cpu_preset != config.node_preset:
+                cpu_config = ClusterConfig(
+                    name=config.name,
+                    project_id=config.project_id,
+                    region=config.region,
+                    node_count=config.node_count,
+                    node_platform=cpu_platform,
+                    node_preset=cpu_preset,
+                    k8s_version=config.k8s_version,
+                    subnet_id=config.subnet_id,
+                    wait=config.wait,
+                    timeout_minutes=config.timeout_minutes,
+                    public_node_ip=config.public_node_ip,
+                )
+            node_group = self.create_cpu_node_group(cpu_config, cluster.id)
             cluster.node_group_id = node_group.id
             cluster.node_count = node_group.node_count
             return cluster
         except Exception:
             if created_cluster_id:
-                try:
-                    self.delete_cluster(created_cluster_id, project_id=config.project_id)
-                except ClusterError:
-                    pass
+                # Leave the cluster in place so operators can attach node groups manually.
+                pass
             raise
 
     def create_cpu_node_group(self, config: ClusterConfig, cluster_id: str) -> NodeGroupInfo:
@@ -676,6 +711,29 @@ def _as_items(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
     return []
+
+
+def cluster_subnet_id(cluster: ClusterInfo) -> str:
+    """Return the control-plane subnet ID from a cluster API payload."""
+
+    if not cluster.raw:
+        return ""
+    return str(
+        _deep_get(
+            cluster.raw,
+            ("spec", "control_plane", "subnet_id"),
+            ("spec", "controlPlane", "subnetId"),
+        )
+        or ""
+    )
+
+
+def cluster_region_cpu_defaults(region: str) -> tuple[str, str]:
+    """Return a CPU platform/preset pair that works in the target region."""
+
+    if region.strip().lower() == "us-central1":
+        return "cpu-d3", "4vcpu-16gb"
+    return DEFAULT_NODE_PLATFORM, DEFAULT_NODE_PRESET
 
 
 def _deep_get(data: dict[str, Any], *paths: tuple[str, ...]) -> Any:

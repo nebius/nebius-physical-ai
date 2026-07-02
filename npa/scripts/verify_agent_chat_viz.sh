@@ -47,6 +47,35 @@ if os.environ.get('NPA_AGENT_CHECK_APIS_USED', '1') == '1':
 print('chat_status_ok')
 "
 
+curl -skf -u "${AGENT_USER}:${AGENT_PASSWORD}" \
+  -X POST "${BASE}/api/chat" \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"add an open source repo, containerize, push to registry, and run LeIsaac on live infra"}]}' \
+  | NPA_AGENT_CHECK_APIS_USED="${CHECK_APIS_USED}" "${ROOT}/npa/.venv/bin/python" -c "
+import json, os, sys
+payload = json.load(sys.stdin)
+reply = str(payload.get('reply') or '')
+if not payload.get('ok'):
+    raise SystemExit('onboard_solution smoke: ok!=true')
+if not payload.get('grounded'):
+    raise SystemExit('onboard_solution smoke: expected grounded=true')
+if 'run_byof_repo.py' not in reply:
+    raise SystemExit('onboard_solution smoke: missing BYOF runner command')
+if 'byof-onboard' not in reply and 'skills/workflows/byof-onboard' not in reply:
+    raise SystemExit('onboard_solution smoke: missing byof-onboard skill reference')
+if '--base-profile' not in reply and '--base-image' not in reply:
+    raise SystemExit('onboard_solution smoke: missing base image guidance')
+if '<repo-url>' not in reply or '<task>' not in reply:
+    raise SystemExit('onboard_solution smoke: missing runnable placeholders')
+if reply.strip().startswith('GET /api'):
+    raise SystemExit('onboard_solution smoke: raw GET path in reply')
+if os.environ.get('NPA_AGENT_CHECK_APIS_USED', '1') == '1':
+    apis = payload.get('apis_used')
+    if not isinstance(apis, list) or 'tools' not in apis:
+        raise SystemExit('onboard_solution smoke: expected tools in apis_used')
+print('chat_onboard_solution_ok')
+"
+
 RERUN_CODE="$(curl -sk -o /dev/null -w '%{http_code}' -u "${AGENT_USER}:${AGENT_PASSWORD}" "${BASE}/rerun/")"
 if [[ "${RERUN_CODE}" != "200" ]]; then
   echo "rerun iframe root unhealthy: HTTP ${RERUN_CODE}" >&2
