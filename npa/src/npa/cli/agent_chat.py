@@ -662,7 +662,7 @@ def format_live_infra_loop_guidance() -> str:
             "```bash",
             "SESSION=live-infra-loop-$(date -u +%Y%m%dT%H%M%SZ)",
             "tmux new -d -s \"$SESSION\"",
-            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && /home/ubuntu/nebius-physical-ai/npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
+            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
             "```",
             "- If `FAILED_PRECHECKS` appears: adjust image reference or accelerator and retry in the same loop.",
         ]

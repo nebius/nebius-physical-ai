@@ -143,7 +143,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--registry", default="", help="Override registry host/path.")
     parser.add_argument("--image", default="", help="Fully-qualified image ref to build/push and run.")
     parser.add_argument("--base-image", default="", help="Override base Isaac Lab image.")
-    parser.add_argument("--run-id", default=f"leisaac-byof-{_utc_stamp()}")
+    parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
     parser.add_argument("--iterations", type=int, default=1)
     parser.add_argument("--yaml", default="", help="Optional SkyPilot YAML override for run_isaac_lab_rl.py.")

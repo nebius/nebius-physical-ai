@@ -115,7 +115,11 @@ RERUN_STATIC_CANDIDATES = (
 )
 
 ONBOARD_SOLUTION_PROMPT = (
-    "add an open source repo, containerize, push to registry, and run LeIsaac on live infra"
+    "add an open source repo, containerize, push to registry, and run a GPU smoke on live infra"
+)
+
+CREATE_BYOF_WORKFLOW_PROMPT = (
+    "create a BYOF Isaac Lab workflow for live infra with placeholder repo and task"
 )
 
 

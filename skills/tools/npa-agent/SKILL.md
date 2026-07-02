@@ -24,14 +24,26 @@ bash npa/scripts/verify_agent_franka.sh
 bash npa/scripts/verify_byof_onboarding_live.sh
 ```
 
+For the full BYOF live pipeline (agent + container + GPU on the configured project):
+
+```bash
+export NPA_E2E_PROJECT=rtxpro
+export NPA_BYOF_LIVE_PIPELINE=1
+bash npa/scripts/verify_byof_onboarding_live.sh
+```
+
+Project Kubernetes settings resolve from `~/.npa/config.yaml` (`projects.<alias>.kubernetes`)
+and `~/.npa/clusters/<cluster>/kubeconfig` — not from any operator VM hostname.
+
 For real BYOF container build/push/inspect, set `NPA_BYOF_LIVE_CONTAINER=1` and run
-`bash npa/scripts/verify_byof_onboarding_live.sh` on an operator host with Docker and
-`nebius` (`NPA_NEBIUS_PROFILE=agent-sa` for registry write).
+`bash npa/scripts/verify_byof_onboarding_live.sh` on a host with Docker and
+`nebius` (`NPA_NEBIUS_PROFILE=agent-sa` for registry write). Default validation
+repo is LeIsaac; override with `NPA_BYOF_REPO_URL` / `NPA_BYOF_REPO_REF`.
 
 For full BYOF GPU smoke (SkyPilot submit), also set `NPA_BYOF_LIVE_GPU=1` and run
-the same script on an operator host with Docker, `nebius`, `sky`, and registry pull
-access. On `rtxpro`, the default resource YAML is `isaac-lab-rl-train-rtxpro.yaml`
-(`RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`).
+the same script on a host with Docker, `nebius`, `sky`, and registry pull
+access. GPU train YAML and SkyPilot config resolve from the project `kubernetes`
+block (`gpu_profile: rtxpro`, `byof_train_yaml`, `skypilot_config`).
 
 Auth secrets live at `~/.npa/agents/<project>/<name>/auth.env` (`AGENT_USER`, `AGENT_PASSWORD`).
 

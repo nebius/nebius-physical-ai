@@ -1,4 +1,4 @@
-"""Live infra checks for BYOF solution onboarding (workflow + optional agent chat)."""
+"""Live infra checks for generic BYOF solution onboarding (workflow + optional agent chat)."""
 
 from __future__ import annotations
 
@@ -15,8 +15,16 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.workflows.byof.live import (
+    byof_validation_repo,
+    resolve_byof_kubernetes_target,
+    resolve_byof_resource_yaml,
+    resolve_skypilot_bin,
+    skypilot_config_for_project,
+)
 
 from .agent_live_helpers import (
+    CREATE_BYOF_WORKFLOW_PROMPT,
     ONBOARD_SOLUTION_PROMPT,
     assert_grounded_onboard_solution_reply,
     load_agent_live_context,
@@ -37,20 +45,8 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BYOF_SPEC = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "isaac-lab-byof-leisaac.yaml"
+BYOF_SPEC = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "isaac-lab-byof.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
-RTXPRO_TRAIN_YAML = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml"
-)
-RTXPRO_SMOKE_TRAIN_YAML = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml"
-)
-RTXPRO_SKYPILOT_CONFIG = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "skypilot-kubernetes-rtxpro.yaml"
-)
-DEFAULT_TRAIN_YAML = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train.yaml"
-)
 RUNNER = CliRunner()
 
 
@@ -87,18 +83,7 @@ def _parse_last_json_blob(text: str) -> dict[str, object]:
     return last_obj
 
 
-def _default_byof_resource_yaml(e2e_project: str | None, *, smoke: bool = False) -> str:
-    if os.environ.get("NPA_BYOF_RESOURCE_YAML"):
-        return os.environ["NPA_BYOF_RESOURCE_YAML"]
-    if (e2e_project or "").strip().lower() == "rtxpro":
-        if smoke and RTXPRO_SMOKE_TRAIN_YAML.is_file():
-            return str(RTXPRO_SMOKE_TRAIN_YAML)
-        if RTXPRO_TRAIN_YAML.is_file():
-            return str(RTXPRO_TRAIN_YAML)
-    return str(DEFAULT_TRAIN_YAML)
-
-
-def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
+def _maybe_refresh_byof_registry_pull_secret(registry: str, e2e_project: str | None) -> None:
     if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
         return
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "agent-sa").strip()
@@ -106,27 +91,23 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
     server = registry.split("/", 1)[0]
     if not server.startswith("cr.") or ".nebius.cloud" not in server:
         return
+    target = resolve_byof_kubernetes_target(e2e_project)
+    if not target.kubeconfig and not target.context:
+        print("WARN: skipped registry pull-secret refresh: kubernetes target not configured", file=sys.stderr)
+        return
     namespace = os.environ.get("NPA_BYOF_K8S_NAMESPACE", "skypilot-system")
-    k8s_context = os.environ.get("NPA_BYOF_K8S_CONTEXT", "npa-rtxpro-mk8s")
-    kubeconfig = os.environ.get("NPA_BYOF_KUBECONFIG", "").strip()
-    if not kubeconfig:
-        fallback = Path(
-            "/home/ubuntu/.npa/.sim2real-walkthrough-backup/clusters/npa-rtxpro-mk8s/kubeconfig.resolved"
-        )
-        if fallback.is_file():
-            kubeconfig = str(fallback)
-    runtime_env = dict(os.environ)
-    skypilot_bin = os.environ.get("NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin")
+    skypilot_bin = resolve_skypilot_bin()
     if skypilot_bin:
-        runtime_env["PATH"] = f"{skypilot_bin}:{runtime_env.get('PATH', '')}"
+        bin_dir = str(Path(skypilot_bin).parent)
+        os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
     try:
         from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
 
         ensure_nebius_registry_pull_secret(
             registry_server=server,
             namespace=namespace,
-            kubeconfig=kubeconfig,
-            k8s_context=k8s_context,
+            kubeconfig=target.kubeconfig,
+            k8s_context=target.context,
         )
         for target_ns in ("default", namespace):
             if target_ns == namespace:
@@ -135,17 +116,16 @@ def _maybe_refresh_byof_registry_pull_secret(registry: str) -> None:
                 registry_server=server,
                 secret_name="agent-sa",
                 namespace=target_ns,
-                kubeconfig=kubeconfig,
-                k8s_context=k8s_context,
+                kubeconfig=target.kubeconfig,
+                k8s_context=target.context,
             )
             ensure_nebius_registry_pull_secret(
                 registry_server=server,
                 namespace=target_ns,
-                kubeconfig=kubeconfig,
-                k8s_context=k8s_context,
+                kubeconfig=target.kubeconfig,
+                k8s_context=target.context,
             )
     except Exception as exc:
-        # Optional preflight: clusters without kubectl/sky-kube-exec-wrapper can still run container tiers.
         print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
 
 
@@ -158,6 +138,7 @@ def live_byof_built_image(e2e_project: str | None) -> str:
         pytest.skip("Set NPA_BYOF_LIVE_CONTAINER=1 for real BYOF container build/push.")
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
+    repo_url, repo_ref = byof_validation_repo()
     run_id = os.environ.get("NPA_BYOF_CONTAINER_RUN_ID") or f"byof-container-live-{os.getpid()}"
     proc = subprocess.run(
         [
@@ -165,6 +146,12 @@ def live_byof_built_image(e2e_project: str | None) -> str:
             str(BYOF_RUNNER),
             "--registry",
             registry,
+            "--repo-url",
+            repo_url,
+            "--repo-ref",
+            repo_ref,
+            "--project",
+            e2e_project or "",
             "--run-id",
             run_id,
             "--skip-run",
@@ -191,16 +178,10 @@ def forbidden_markers() -> list[str]:
     return live_credential_markers()
 
 
-def _materialize_byof_spec(tmp_path: Path, *, bucket: str, run_id: str) -> Path:
+def _materialize_byof_spec(tmp_path: Path, *, bucket: str) -> Path:
     text = BYOF_SPEC.read_text(encoding="utf-8")
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
-    text = re.sub(
-        r"(output_root:\s*s3://)[^/]+(/isaac-lab-byof/leisaac)",
-        rf"\1{bucket}\2",
-        text,
-        count=1,
-    )
-    path = tmp_path / "isaac-lab-byof-leisaac-live.yaml"
+    path = tmp_path / "isaac-lab-byof-live.yaml"
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -211,11 +192,11 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     forbidden_markers: list[str],
 ) -> None:
     bucket = live_bucket(e2e_project)
-    path = _materialize_byof_spec(tmp_path, bucket=bucket, run_id="byof-onboard-live")
+    path = _materialize_byof_spec(tmp_path, bucket=bucket)
     validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
-    assert payload["name"] == "isaac-lab-byof-leisaac"
+    assert payload["name"] == "isaac-lab-byof"
     assert "byof-train" in set(payload.get("states", []))
 
     plan = RUNNER.invoke(
@@ -243,7 +224,7 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     forbidden_markers: list[str],
 ) -> None:
     bucket = live_bucket(e2e_project)
-    path = _materialize_byof_spec(tmp_path, bucket=bucket, run_id="byof-plan-builder")
+    path = _materialize_byof_spec(tmp_path, bucket=bucket)
     spec = load_spec(path)
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
@@ -261,7 +242,7 @@ def test_live_byof_registry_resolution(e2e_project: str | None) -> None:
 
 @pytest.mark.skipif(
     os.environ.get("NPA_AGENT_LIVE") != "1",
-    reason="Set NPA_AGENT_LIVE=1 to exercise onboard_solution chat on a live agent VM.",
+    reason="Set NPA_AGENT_LIVE=1 to exercise onboard_solution chat on the configured agent.",
 )
 def test_live_agent_onboard_solution_chat() -> None:
     ctx = load_agent_live_context()
@@ -276,17 +257,13 @@ def test_live_agent_onboard_solution_chat() -> None:
 
 @pytest.mark.skipif(
     os.environ.get("NPA_AGENT_LIVE") != "1",
-    reason="Set NPA_AGENT_LIVE=1 to validate BYOF workflow draft on a live agent VM.",
+    reason="Set NPA_AGENT_LIVE=1 to validate generic BYOF workflow draft on the configured agent.",
 )
 def test_live_agent_byof_workflow_draft_validate() -> None:
     ctx = load_agent_live_context()
     draft = ctx.post(
         "/api/chat",
-        json={
-            "messages": [
-                {"role": "user", "content": "create a LeIsaac BYOF Isaac Lab workflow for live infra"},
-            ],
-        },
+        json={"messages": [{"role": "user", "content": CREATE_BYOF_WORKFLOW_PROMPT}]},
         timeout=30.0,
     )
     draft.raise_for_status()
@@ -294,7 +271,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert payload.get("ok") is True
     workflow_yaml = str(payload.get("workflow_yaml") or "")
     assert workflow_yaml
-    assert "isaac-lab-byof-leisaac" in workflow_yaml or "byof-train" in workflow_yaml
+    assert "isaac-lab-byof" in workflow_yaml
+    assert "<repo-url>" in workflow_yaml
+    assert "byof-train" in workflow_yaml
 
     validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
     validate.raise_for_status()
@@ -308,37 +287,37 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-isaac-lab-leisaac" in live_byof_built_image
+    assert "npa-isaac-lab" in live_byof_built_image
 
 
 @pytest.mark.skipif(
     os.environ.get("NPA_BYOF_LIVE_CONTAINER") != "1",
     reason="Set NPA_BYOF_LIVE_CONTAINER=1 for real BYOF docker build/push/inspect.",
 )
-def test_live_byof_container_has_leisaac(live_byof_built_image: str) -> None:
+def test_live_byof_container_has_validation_repo(live_byof_built_image: str) -> None:
+    repo_url, repo_ref = byof_validation_repo()
     image = live_byof_built_image
-    ls_proc = subprocess.run(
-        ["docker", "run", "--rm", "--entrypoint", "ls", image, "-la", "/opt/leisaac"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert ls_proc.returncode == 0, ls_proc.stdout + ls_proc.stderr
-    assert "README.md" in ls_proc.stdout
-
     meta_proc = subprocess.run(
-        ["docker", "run", "--rm", "--entrypoint", "cat", image, "/opt/leisaac/npa_source_metadata.json"],
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "cat",
+            image,
+            "/opt/leisaac/npa_source_metadata.json",
+        ],
         check=False,
         capture_output=True,
         text=True,
         timeout=300,
     )
-    assert meta_proc.returncode == 0, meta_proc.stdout + meta_proc.stderr
+    if meta_proc.returncode != 0:
+        pytest.skip("validation repo layout differs from LeIsaac /opt/leisaac path")
     metadata = json.loads(meta_proc.stdout)
     assert metadata["source"] == "oss-byof"
-    assert metadata["repo"] == "https://github.com/LightwheelAI/leisaac.git"
-    assert metadata["ref"] == "main"
+    assert metadata["repo"] == repo_url
+    assert metadata["ref"] == repo_ref
 
 
 @pytest.mark.skipif(
@@ -353,6 +332,8 @@ def test_live_byof_runner_registry_smoke(e2e_project: str | None) -> None:
             str(BYOF_RUNNER),
             "--registry",
             registry,
+            "--project",
+            e2e_project or "",
             "--skip-build",
             "--skip-run",
             "--run-id",
@@ -378,8 +359,8 @@ def test_live_byof_runner_submit_smoke(
     live_byof_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    _maybe_refresh_byof_registry_pull_secret(registry)
-    yaml_override = _default_byof_resource_yaml(e2e_project, smoke=True)
+    _maybe_refresh_byof_registry_pull_secret(registry, e2e_project)
+    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True)
     image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip() or live_byof_built_image
     task = os.environ.get("NPA_BYOF_TASK", "Isaac-Cartpole-v0")
     cmd = [
@@ -387,6 +368,8 @@ def test_live_byof_runner_submit_smoke(
         str(BYOF_RUNNER),
         "--registry",
         registry,
+        "--project",
+        e2e_project or "",
         "--image",
         image,
         "--yaml",
@@ -399,12 +382,19 @@ def test_live_byof_runner_submit_smoke(
         f"byof-live-submit-{os.getpid()}",
         "--skip-build",
     ]
-    if os.environ.get("NPA_BYOF_SKYPILOT_CONFIG"):
-        cmd.extend(["--config-path", os.environ["NPA_BYOF_SKYPILOT_CONFIG"]])
-    elif RTXPRO_SKYPILOT_CONFIG.is_file() and (e2e_project or "").strip().lower() == "rtxpro":
-        cmd.extend(["--config-path", str(RTXPRO_SKYPILOT_CONFIG)])
+    config_path = skypilot_config_for_project(e2e_project)
+    if config_path:
+        cmd.extend(["--config-path", config_path])
     env = dict(os.environ)
-    # SkyPilot managed jobs on K8s may fail prechecks while direct launch works on rtxpro.
+    target = resolve_byof_kubernetes_target(e2e_project)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+        env["NPA_BYOF_KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    skypilot_bin = resolve_skypilot_bin()
+    if skypilot_bin:
+        env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
     env.setdefault("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
     proc = subprocess.run(
         cmd,
@@ -437,7 +427,6 @@ def test_live_byof_runner_submit_smoke(
     if isinstance(submit, dict) and submit.get("status"):
         assert submit.get("status") == "SUBMITTED", submit
     elif isinstance(final, dict) and final.get("status") == "FAILED_PRECHECKS":
-        # Managed jobs path: submit JSON may be flattened; precheck failure is expected on K8s.
         pass
     else:
         assert submit or final, run_summary

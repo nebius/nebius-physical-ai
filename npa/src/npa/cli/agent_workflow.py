@@ -214,17 +214,17 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
         },
         "isaac-byof": {
-            "name": "isaac-lab-byof-leisaac",
+            "name": "isaac-lab-byof",
             "description": (
-                "BYOF Isaac Lab workflow that builds/pushes Lightwheel LeIsaac and "
-                "submits a real SkyPilot RL training run."
+                "Generic BYOF Isaac Lab workflow that builds/pushes an OSS repo image "
+                "and submits a SkyPilot RL training smoke on live Kubernetes infra."
             ),
             "config_runtime": OrderedDict(
                 {
-                    "repo_url": "https://github.com/LightwheelAI/leisaac.git",
-                    "repo_ref": "main",
-                    "resource_profile_yaml": "npa/workflows/workbench/skypilot/isaac-lab-rl-train.yaml",
-                    "task": "Isaac-Cartpole-v0",
+                    "repo_url": "<repo-url>",
+                    "repo_ref": "<repo-ref>",
+                    "resource_profile_yaml": "<resource-profile.yaml>",
+                    "task": "<task>",
                     "iterations": 1,
                     "wait_timeout": 21600,
                     "poll_interval": 60,
@@ -232,9 +232,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
             "config_uri": OrderedDict(
                 {
-                    "output_root": "s3://{{config.bucket}}/isaac-lab-byof/leisaac",
-                    "summary_uri": "{{config.output_root}}/{{run.id}}/npa_isaac_lab_train_summary.json",
-                    "checkpoint_uri": "{{config.output_root}}/{{run.id}}/npa_isaac_lab_checkpoint.pt",
+                    "output_root": "s3://{{config.bucket}}/isaac-lab-byof/{{run.id}}",
+                    "summary_uri": "{{config.output_root}}/npa_isaac_lab_train_summary.json",
+                    "checkpoint_uri": "{{config.output_root}}/npa_isaac_lab_checkpoint.pt",
                 }
             ),
             "resources": OrderedDict(
@@ -247,7 +247,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "byof-train": OrderedDict(
                         {
-                            "description": "Build LeIsaac BYOF image and run Isaac Lab RL train on live infra.",
+                            "description": "Build BYOF image from config.repo_url and run Isaac Lab RL train.",
                             "toolRef": "workbench.isaac_lab.byof_repo",
                             "resources": "gpu",
                             "outputs": [
@@ -1271,9 +1271,9 @@ def generate_token_factory_gate_yaml(
 def generate_isaac_byof_yaml(
     *,
     bucket: str = "example-bucket",
-    name: str = "isaac-lab-byof-leisaac",
+    name: str = "isaac-lab-byof",
 ) -> str:
-    """Compatibility wrapper for LeIsaac BYOF template generation."""
+    """Compatibility wrapper for generic Isaac Lab BYOF template generation."""
     return _render_spec_yaml(_build_spec("isaac-byof", bucket=bucket, name=name))
 
 
@@ -1348,7 +1348,7 @@ def format_workflow_chat_reply(
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
-        "isaac-byof": "LeIsaac BYOF Isaac Lab workflow",
+        "isaac-byof": "Generic BYOF Isaac Lab workflow (OSS repo → container → SkyPilot smoke)",
         "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
     }
