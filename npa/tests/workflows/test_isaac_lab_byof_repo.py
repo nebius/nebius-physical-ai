@@ -245,6 +245,56 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
     assert "/tmp/isaac-lab-rtxpro.yaml" in cmd
 
 
+def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
+    )
+    monkeypatch.setattr(
+        module,
+        "container_image_for_tool",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+    )
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd and cmd[0] == sys.executable and str(module.DATAGEN_RUNNER) in cmd:
+            seen["cmd"] = list(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "leisaac-datagen-forward",
+            "--skip-build",
+            "--workload",
+            "datagen",
+            "--task",
+            "LeIsaac-SO101-PickOrange-v0",
+            "--num-envs",
+            "4",
+            "--num-demos",
+            "10",
+            "--yaml",
+            "/tmp/byof-datagen-rtxpro-smoke.yaml",
+        ]
+    )
+
+    assert rc == 0
+    cmd = seen.get("cmd")
+    assert isinstance(cmd, list)
+    assert str(module.DATAGEN_RUNNER) in cmd
+    assert "--task" in cmd and "LeIsaac-SO101-PickOrange-v0" in cmd
+    assert "--num-envs" in cmd and "4" in cmd
+    assert "--num-demos" in cmd and "10" in cmd
+    assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
+
+
 def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
     module = _load_module()
 

@@ -45,7 +45,7 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BYOF_SPEC = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "isaac-lab-byof.yaml"
+BYOF_SPEC = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof.yaml"
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
 RUNNER = CliRunner()
 
@@ -181,7 +181,7 @@ def forbidden_markers() -> list[str]:
 def _materialize_byof_spec(tmp_path: Path, *, bucket: str) -> Path:
     text = BYOF_SPEC.read_text(encoding="utf-8")
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
-    path = tmp_path / "isaac-lab-byof-live.yaml"
+    path = tmp_path / "byof-live.yaml"
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -196,8 +196,8 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
-    assert payload["name"] == "isaac-lab-byof"
-    assert "byof-train" in set(payload.get("states", []))
+    assert payload["name"] == "byof"
+    assert "byof-run" in set(payload.get("states", []))
 
     plan = RUNNER.invoke(
         app,
@@ -215,7 +215,7 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     steps = plan_payload.get("steps", [])
     assert steps
     tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
-    assert "workbench.isaac_lab.byof_repo" in tool_refs
+    assert "workbench.byof.repo" in tool_refs
 
 
 def test_live_isaac_byof_plan_builder_matches_cli(
@@ -229,7 +229,7 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
     assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
-    assert any(step.tool_ref == "workbench.isaac_lab.byof_repo" for step in plan.steps)
+    assert any(step.tool_ref == "workbench.byof.repo" for step in plan.steps)
 
 
 def test_live_byof_registry_resolution(e2e_project: str | None) -> None:
@@ -271,9 +271,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert payload.get("ok") is True
     workflow_yaml = str(payload.get("workflow_yaml") or "")
     assert workflow_yaml
-    assert "isaac-lab-byof" in workflow_yaml
+    assert "name: byof" in workflow_yaml or "byof-run" in workflow_yaml
     assert "<repo-url>" in workflow_yaml
-    assert "byof-train" in workflow_yaml
+    assert "<workload>" in workflow_yaml
 
     validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
     validate.raise_for_status()
@@ -287,7 +287,7 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-isaac-lab" in live_byof_built_image
+    assert "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
 
 
 @pytest.mark.skipif(
@@ -305,7 +305,7 @@ def test_live_byof_container_has_validation_repo(live_byof_built_image: str) -> 
             "--entrypoint",
             "cat",
             image,
-            "/opt/leisaac/npa_source_metadata.json",
+            "/opt/byof/npa_source_metadata.json",
         ],
         check=False,
         capture_output=True,
@@ -313,7 +313,7 @@ def test_live_byof_container_has_validation_repo(live_byof_built_image: str) -> 
         timeout=300,
     )
     if meta_proc.returncode != 0:
-        pytest.skip("validation repo layout differs from LeIsaac /opt/leisaac path")
+        pytest.skip("validation repo layout differs from /opt/byof metadata path")
     metadata = json.loads(meta_proc.stdout)
     assert metadata["source"] == "oss-byof"
     assert metadata["repo"] == repo_url

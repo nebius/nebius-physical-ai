@@ -15,6 +15,7 @@ SKYPILOT_DIR = REPO_ROOT / "workflows" / "workbench" / "skypilot"
 DEFAULT_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train.yaml"
 RTXPRO_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro.yaml"
 RTXPRO_SMOKE_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro-smoke.yaml"
+BYOF_DATAGEN_SMOKE_YAML = SKYPILOT_DIR / "byof-datagen-rtxpro-smoke.yaml"
 RTXPRO_SKYPILOT_CONFIG = SKYPILOT_DIR / "skypilot-kubernetes-rtxpro.yaml"
 
 DEFAULT_VALIDATION_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
@@ -150,14 +151,29 @@ def _uses_rtxpro_profile(project: str | None) -> bool:
     return profile in {"rtxpro", "rtx6000", "rtx-pro"}
 
 
-def resolve_byof_resource_yaml(project: str | None, *, smoke: bool = False) -> str:
-    """Pick a SkyPilot train YAML from project config or env overrides."""
+def resolve_byof_resource_yaml(
+    project: str | None,
+    *,
+    smoke: bool = False,
+    workload: str = "rl-train",
+) -> str:
+    """Pick a SkyPilot train/datagen YAML from project config or env overrides."""
 
     override = os.environ.get("NPA_BYOF_RESOURCE_YAML", "").strip()
     if override:
         return override
 
+    normalized_workload = (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
     k8s = _project_kubernetes_block(project)
+    if normalized_workload == "datagen":
+        key = "byof_datagen_smoke_yaml" if smoke else "byof_datagen_yaml"
+        configured = str(k8s.get(key) or "").strip()
+        if configured:
+            path = Path(configured)
+            return str(path if path.is_absolute() else REPO_ROOT / configured)
+        if _uses_rtxpro_profile(project) and BYOF_DATAGEN_SMOKE_YAML.is_file():
+            return str(BYOF_DATAGEN_SMOKE_YAML)
+
     key = "byof_train_smoke_yaml" if smoke else "byof_train_yaml"
     configured = str(k8s.get(key) or "").strip()
     if configured:

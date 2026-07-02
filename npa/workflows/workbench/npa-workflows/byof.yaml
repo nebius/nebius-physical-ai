@@ -1,0 +1,42 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof
+  description: >
+    Generic BYOF workflow: build/push an OSS Isaac Lab repo image and run a live
+    workload on Kubernetes (RL training or scripted datagen).
+config:
+  bucket: example-bucket
+  repo_url: "<repo-url>"
+  repo_ref: "<repo-ref>"
+  workload: "<workload>"
+  resource_profile_yaml: "<resource-profile.yaml>"
+  task: "<task>"
+  iterations: 1
+  num_envs: 4
+  num_demos: 10
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/byof/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build a BYOF image from config.repo_url and run the selected workload
+      (rl-train or datagen) on live infra.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.dataset_uri}}"
+        schema: npa.workbench.byof.dataset.v1
+    terminal: true

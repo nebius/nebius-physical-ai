@@ -734,7 +734,18 @@ def format_onboard_solution() -> str:
             "tmux new -d -s \"$SESSION\"",
             "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; sky check; sky gpus list; ATTEMPT=1; while [ $ATTEMPT -le 3 ]; do npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py --repo-url <repo-url> --repo-ref <repo-ref> --yaml <resource-profile.yaml> --task <task> --iterations 1 --cleanup && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*20)); done' C-m",
             "```",
-            "- Validation example: LeIsaac can be used as one repo to validate this onboarding path.",
+            "- LeIsaac validation (datagen): scripted state-machine demos at scale:",
+            "```bash",
+            "npa/.venv/bin/python npa/scripts/run_isaac_lab_byof_repo.py \\",
+            "  --repo-url https://github.com/LightwheelAI/leisaac.git \\",
+            "  --repo-ref main \\",
+            "  --registry " + registry + " \\",
+            "  --workload datagen \\",
+            "  --yaml npa/workflows/workbench/skypilot/byof-datagen-rtxpro-smoke.yaml \\",
+            "  --task LeIsaac-SO101-PickOrange-v0 \\",
+            "  --num-envs 4 --num-demos 10 --iterations 1 --cleanup",
+            "```",
+            "- Validation example: LeIsaac datagen uses `scripts/datagen/state_machine/generate.py` (no teleop).",
         ]
     )
 

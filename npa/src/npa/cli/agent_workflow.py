@@ -20,7 +20,7 @@ _TEMPLATES = (
     "loop-gate",
     "vlm-rl-loop",
     "token-factory-gate",
-    "isaac-byof",
+    "byof",
     "gpu-cross-region",
     "rl-policy-success",
 )
@@ -60,10 +60,11 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "tokenfactory": "token-factory-gate",
     "loop_gate": "loop-gate",
     "loop": "loop-gate",
-    "isaac_byof": "isaac-byof",
-    "isaac-lab": "isaac-byof",
-    "leisaac": "isaac-byof",
-    "byof": "isaac-byof",
+    "isaac_byof": "byof",
+    "isaac-byof": "byof",
+    "isaac-lab": "byof",
+    "leisaac": "byof",
+    "byof": "byof",
     "gpu_cross_region": "gpu-cross-region",
     "multi_region": "gpu-cross-region",
     "cross_region": "gpu-cross-region",
@@ -84,13 +85,17 @@ _INTENT_DEFAULT_TEMPLATE: dict[str, str] = {
 }
 
 _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "isaac-byof": (
-        "leisaac",
-        "lightwheel",
+    "byof": (
         "byof",
         "bring your own fork",
+        "leisaac",
+        "lightwheel",
         "isaac lab",
         "isaac-lab",
+        "datagen",
+        "state machine",
+        "synthetic demonstration",
+        "demonstration data",
     ),
     "token-factory-gate": (
         "token",
@@ -213,27 +218,31 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
-        "isaac-byof": {
-            "name": "isaac-lab-byof",
+        "byof": {
+            "name": "byof",
             "description": (
-                "Generic BYOF Isaac Lab workflow that builds/pushes an OSS repo image "
-                "and submits a SkyPilot RL training smoke on live Kubernetes infra."
+                "Generic BYOF workflow: build/push an OSS repo image and run RL training "
+                "or scripted datagen (e.g. LeIsaac state-machine generate.py) on live Kubernetes."
             ),
             "config_runtime": OrderedDict(
                 {
                     "repo_url": "<repo-url>",
                     "repo_ref": "<repo-ref>",
+                    "workload": "<workload>",
                     "resource_profile_yaml": "<resource-profile.yaml>",
                     "task": "<task>",
                     "iterations": 1,
+                    "num_envs": 4,
+                    "num_demos": 10,
                     "wait_timeout": 21600,
                     "poll_interval": 60,
                 }
             ),
             "config_uri": OrderedDict(
                 {
-                    "output_root": "s3://{{config.bucket}}/isaac-lab-byof/{{run.id}}",
-                    "summary_uri": "{{config.output_root}}/npa_isaac_lab_train_summary.json",
+                    "output_root": "s3://{{config.bucket}}/byof/{{run.id}}",
+                    "summary_uri": "{{config.output_root}}/npa_byof_summary.json",
+                    "dataset_uri": "{{config.output_root}}/dataset.hdf5",
                     "checkpoint_uri": "{{config.output_root}}/npa_isaac_lab_checkpoint.pt",
                 }
             ),
@@ -242,19 +251,25 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
                 }
             ),
-            "initial": "byof-train",
+            "initial": "byof-run",
             "states": OrderedDict(
                 {
-                    "byof-train": OrderedDict(
+                    "byof-run": OrderedDict(
                         {
-                            "description": "Build BYOF image from config.repo_url and run Isaac Lab RL train.",
-                            "toolRef": "workbench.isaac_lab.byof_repo",
+                            "description": "Build BYOF image from config.repo_url and run the selected workload.",
+                            "toolRef": "workbench.byof.repo",
                             "resources": "gpu",
                             "outputs": [
                                 OrderedDict(
                                     {
                                         "uri": "{{config.summary_uri}}",
-                                        "schema": "npa.workbench.isaac_lab.train_summary.v1",
+                                        "schema": "npa.workbench.byof.summary.v1",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.dataset_uri}}",
+                                        "schema": "npa.workbench.byof.dataset.v1",
                                     }
                                 ),
                                 OrderedDict(
@@ -1271,10 +1286,19 @@ def generate_token_factory_gate_yaml(
 def generate_isaac_byof_yaml(
     *,
     bucket: str = "example-bucket",
-    name: str = "isaac-lab-byof",
+    name: str = "byof",
 ) -> str:
-    """Compatibility wrapper for generic Isaac Lab BYOF template generation."""
-    return _render_spec_yaml(_build_spec("isaac-byof", bucket=bucket, name=name))
+    """Compatibility wrapper for generic BYOF template generation."""
+    return _render_spec_yaml(_build_spec("byof", bucket=bucket, name=name))
+
+
+def generate_byof_yaml(
+    *,
+    bucket: str = "example-bucket",
+    name: str = "byof",
+) -> str:
+    """Render generic BYOF workflow YAML."""
+    return generate_isaac_byof_yaml(bucket=bucket, name=name)
 
 
 def generate_gpu_cross_region_yaml(
@@ -1348,7 +1372,7 @@ def format_workflow_chat_reply(
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
-        "isaac-byof": "Generic BYOF Isaac Lab workflow (OSS repo → container → SkyPilot smoke)",
+        "byof": "Generic BYOF workflow (OSS repo → container → RL train or datagen on Kubernetes)",
         "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
     }

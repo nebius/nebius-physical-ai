@@ -19,6 +19,8 @@ from npa.deploy.images import container_image_for_tool
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
+DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
+BYOF_REPO_MOUNT = "/opt/byof"
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
@@ -91,9 +93,9 @@ def _dockerfile_text() -> str:
         "ARG OSS_REPO_REF\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
-        "RUN git clone --depth 1 --branch \"${OSS_REPO_REF}\" \"${OSS_REPO_URL}\" /opt/leisaac\n"
-        "RUN printf '{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}\\n' \\\n"
-        "  \"${OSS_REPO_URL}\" \"${OSS_REPO_REF}\" > /opt/leisaac/npa_source_metadata.json\n"
+        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT}\n"
+        f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
+        f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
         "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\"\n"
     )
 
@@ -144,6 +146,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--image", default="", help="Fully-qualified image ref to build/push and run.")
     parser.add_argument("--base-image", default="", help="Override base Isaac Lab image.")
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
+    parser.add_argument(
+        "--workload",
+        choices=("rl-train", "datagen"),
+        default="rl-train",
+        help="Live workload after image build: RL training or scripted datagen (LeIsaac state machine).",
+    )
+    parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
+    parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
     parser.add_argument("--iterations", type=int, default=1)
     parser.add_argument("--yaml", default="", help="Optional SkyPilot YAML override for run_isaac_lab_rl.py.")
@@ -162,7 +172,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
-    image = args.image.strip() or f"{registry.rstrip('/')}/npa-isaac-lab-leisaac:{args.run_id}"
+    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
     base_candidates = _base_image_candidates(image=image, registry=registry, explicit_base=args.base_image)
     if not base_candidates:
         raise RuntimeError("unable to resolve an Isaac Lab base image candidate")
@@ -178,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         "base_image": base_image,
         "base_image_candidates": base_candidates,
         "run_id": args.run_id,
+        "workload": args.workload,
     }
 
     docker_config_dir: str | None = None
@@ -248,22 +259,44 @@ def main(argv: list[str] | None = None) -> int:
             summary["build"] = {"ok": True, "skipped": True}
 
         if not args.skip_run:
-            cmd = [
-                sys.executable,
-                str(ISAAC_RUNNER),
-                "--image",
-                image,
-                "--task",
-                args.task,
-                "--iterations",
-                str(args.iterations),
-                "--run-id",
-                args.run_id,
-                "--wait-timeout",
-                str(args.wait_timeout),
-                "--poll-interval",
-                str(args.poll_interval),
-            ]
+            if args.workload == "datagen":
+                cmd = [
+                    sys.executable,
+                    str(DATAGEN_RUNNER),
+                    "--image",
+                    image,
+                    "--task",
+                    args.task,
+                    "--num-envs",
+                    str(args.num_envs),
+                    "--num-demos",
+                    str(args.num_demos),
+                    "--run-id",
+                    args.run_id,
+                    "--wait-timeout",
+                    str(args.wait_timeout),
+                    "--poll-interval",
+                    str(args.poll_interval),
+                    "--repo-root",
+                    BYOF_REPO_MOUNT,
+                ]
+            else:
+                cmd = [
+                    sys.executable,
+                    str(ISAAC_RUNNER),
+                    "--image",
+                    image,
+                    "--task",
+                    args.task,
+                    "--iterations",
+                    str(args.iterations),
+                    "--run-id",
+                    args.run_id,
+                    "--wait-timeout",
+                    str(args.wait_timeout),
+                    "--poll-interval",
+                    str(args.poll_interval),
+                ]
             if args.yaml:
                 cmd.extend(["--yaml", args.yaml])
             if args.output_root:

@@ -84,6 +84,17 @@ def test_resolve_byof_resource_yaml_rtxpro_profile(monkeypatch: pytest.MonkeyPat
     assert path.endswith("isaac-lab-rl-train-rtxpro-smoke.yaml")
 
 
+def test_resolve_byof_resource_yaml_datagen_rtxpro_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
+
+    def _fake_block(_project: str | None) -> dict[str, object]:
+        return {"gpu_profile": "rtxpro"}
+
+    monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", _fake_block)
+    path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="datagen")
+    assert path.endswith("byof-datagen-rtxpro-smoke.yaml")
+
+
 def test_resolve_byof_project_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NPA_E2E_PROJECT", "rtxpro")
     assert resolve_byof_project() == "rtxpro"

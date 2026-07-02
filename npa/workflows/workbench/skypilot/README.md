@@ -85,6 +85,7 @@ All examples assume SkyPilot 0.12.2.
 | `isaac-lab-rl-train.yaml` | Runs one Isaac Lab RSL-RL training job. | Kubernetes `L40S:1`. | Writes run logs and summaries to `S3_OUTPUT_PREFIX`. | None. | Required for Isaac Sim/Isaac Lab image entitlement when pulling or rebuilding NGC-derived images. |
 | `isaac-lab-rl-train-rtxpro.yaml` | Runs one Isaac Lab RSL-RL training job on RTX PRO 6000 Blackwell Kubernetes. | Kubernetes `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`. | Writes run logs and summaries to `S3_OUTPUT_PREFIX`. | None. | Required for Isaac Sim/Isaac Lab image entitlement when pulling or rebuilding NGC-derived images. |
 | `isaac-lab-rl-train-rtxpro-smoke.yaml` | Minimal Isaac Lab RSL-RL smoke on RTX PRO (`num_envs=4`, `iterations=1`) for live BYOF onboarding validation. | Kubernetes `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`, `cpus: 4+`, `memory: 16+`. | Writes run logs and summaries to `S3_OUTPUT_PREFIX`. | None. | Required for Isaac Sim/Isaac Lab image entitlement when pulling or rebuilding NGC-derived images. |
+| `byof-datagen-rtxpro-smoke.yaml` | LeIsaac/BYOF scripted datagen smoke on RTX PRO: runs `scripts/datagen/state_machine/generate.py` with parallel sim envs (no teleop). | Kubernetes `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1`, `cpus: 4+`, `memory: 16+`. | Writes `dataset.hdf5` and `npa_byof_summary.json` to `S3_OUTPUT_PREFIX`. | None. | Requires a BYOF image with LeIsaac cloned under `/opt/byof`; Isaac Sim/Isaac Lab base image entitlement for rebuilds. |
 | `skypilot-kubernetes-rtxpro.yaml` | SkyPilot **global config** (not a launch task): sets `imagePullSecrets` for Nebius registry on RTX PRO mk8s. Pass with `sky launch --config ...`. | Kubernetes context with `agent-sa` pull secret in `default`. | None. | None. | Registry pull secret must exist in the target namespace. |
 | `isaac-franka-capture-reason.yaml` | Isaac Lab Franka frame capture on L40S, then Token Factory Cosmos3 reasoner over PNGs. | Kubernetes `L40S:1` + CPU reason stage. | Writes scene PNGs to `SCENE_URI`; reasoning JSON to `PLAN_URI`. | None. | Isaac stage: NGC entitlement for `npa-isaac-lab`; reason stage: `NEBIUS_TOKEN_FACTORY_KEY`. |
 | `mjlab-eval.yaml` | Evaluates a SONIC checkpoint through the MJLab evaluation helper. | Kubernetes `H100:1`. | Reads `EVAL_INPUT_URI` and `SONIC_CHECKPOINT_URI`; writes `MJLAB_OUTPUT_URI`. | None. | Image-specific only; required if the selected image depends on NGC content. |
@@ -125,6 +126,7 @@ sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-sweep /tmp/isaac
 sky launch -y --infra kubernetes/<context-name> -c isaac-lab-rl-train /tmp/isaac-lab-rl-train.yaml
 sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro /tmp/isaac-lab-rl-train-rtxpro.yaml
 sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c isaac-lab-rl-train-rtxpro-smoke /tmp/isaac-lab-rl-train-rtxpro-smoke.yaml
+sky launch -y --config /tmp/skypilot-kubernetes-rtxpro.yaml --infra kubernetes/<context-name> -c byof-datagen-rtxpro-smoke /tmp/byof-datagen-rtxpro-smoke.yaml
 sky launch -y --infra kubernetes/<context-name> -c mjlab-eval /tmp/mjlab-eval.yaml
 sky launch -y --infra kubernetes/<context-name> -c retargeting /tmp/retargeting.yaml
 sky launch -y --infra kubernetes/<context-name> -c sim-to-real-loop /tmp/sim-to-real-loop.yaml
@@ -167,7 +169,7 @@ can fetch weights. Gated repos are marked **(gated — accept license)**.
 | `sim-to-real-pipeline.yaml` | `lerobot/pusht` (public dataset) | Default `LEROBOT_DATASET_REPO_ID`; default `VLM_EVAL_BACKEND=stub` pulls no VLM. |
 | `sim-to-real-trigger.yaml` | `lerobot/pusht` (public dataset) | Watches/retriggers `sim-to-real-pipeline.yaml`; same public dataset. |
 | `bdd100k-pipeline.yaml` | None | CLIP embeddings run inside the first-party LanceDB image; BDD100K dataset access is separate from HF. |
-| `isaac-lab-rl-train.yaml`, `isaac-lab-rl-sweep.yaml`, `isaac-lab-rl-train-rtxpro.yaml`, `isaac-lab-rl-train-rtxpro-smoke.yaml` | None | Isaac Lab RSL-RL training pulls no HF weights. |
+| `isaac-lab-rl-train.yaml`, `isaac-lab-rl-sweep.yaml`, `isaac-lab-rl-train-rtxpro.yaml`, `isaac-lab-rl-train-rtxpro-smoke.yaml`, `byof-datagen-rtxpro-smoke.yaml` | None | Isaac Lab RSL-RL training and LeIsaac scripted datagen pull no HF weights. |
 | `sonic-export.yaml`, `sonic-export-eval.yaml`, `sonic-eval.yaml` | None | Operate on already-trained checkpoints staged in S3 (unless an input points at an HF checkpoint). |
 | `mjlab-eval.yaml`, `retargeting.yaml` | None | Consume S3 artifacts; no HF download. |
 | `sim2real-actions.yaml`, `sim2real-envgen-split.yaml` | None | Env generation / action conditioning use BYO container images, not HF repos. |
