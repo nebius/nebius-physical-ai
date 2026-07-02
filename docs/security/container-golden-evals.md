@@ -69,7 +69,7 @@ flowchart TB
     fiftyone["fiftyone: import + CLI + app config"]
     lancedb["lancedb: FastAPI + vector query"]
     det_train["detection-training: health + system-info"]
-    rerun["rerun-viewer (alias sim2real-rerun-viewer): rerun SDK"]
+    rerun["rerun-viewer: rerun SDK"]
   end
   subgraph gpu_gated["GPU-gated smokes"]
     lerobot["lerobot: train + eval PushT"]
@@ -80,7 +80,7 @@ flowchart TB
     cosmos["cosmos: model load + infer"]
     transfer["cosmos2-transfer: CUDA venv probe"]
     sonic["sonic: entrypoint smoke artifact"]
-    s2r["sim2real-*: envgen / policy / eval rollouts"]
+    s2r["envgen / reference-policy / loop-eval rollouts"]
     groot["groot: GR00T inference"]
   end
   subgraph blocked["blocked-on-upstream"]
@@ -106,10 +106,10 @@ flowchart TB
 | `fiftyone` | `1.15.0` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
-| `sim2real-envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
-| `sim2real-reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
-| `sim2real-eval` | `0.1.2-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
-| `rerun-viewer` (`sim2real-rerun-viewer` alias) | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+| `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
+| `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
+| `loop-eval` | `0.1.2-genuine-sm120` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
+| `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
@@ -225,14 +225,14 @@ pipeline. Key safety notes are condensed below.
 | `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | ready |
 | `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
 | `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
-| `sim2real-envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
-| `sim2real-reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
-| `sim2real-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
+| `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
+| `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
+| `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
 
 ## Safety review highlights
 
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
-  `cosmos3-reason`, `fiftyone`, `sim2real-*`) run as the unprivileged `ubuntu`
+  `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`
   base; `lancedb` and `detection-training` run as `root` from the PyTorch base.
   These are candidates for a non-root hardening pass.
@@ -273,9 +273,9 @@ Run these inside the corresponding built image (or via
 - `fiftyone` — `python -m npa.smoke.test_fiftyone_functional` (env: `test_fiftyone_env`)
 - `lancedb` — `python -m npa.smoke.test_lancedb_functional`
 - `detection-training` — `python -m npa.smoke.test_detection_training_functional`
-- `sim2real-envgen` — `python -m npa.workflows.sim2real_envgen --help`
-- `sim2real-reference-policy` — `python -m npa.workflows.sim2real_envgen policy-contract --help`
-- `sim2real-eval` — `python -m npa.workflows.sim2real_loop full-loop --help`
+- `envgen` — `python -m npa.workflows.sim2real_envgen --help`
+- `reference-policy` — `python -m npa.workflows.sim2real_envgen policy-contract --help`
+- `loop-eval` — `python -m npa.workflows.sim2real_loop full-loop --help`
 - `base-cuda13-b300` — `python -c "import torch; assert torch.cuda.is_available(); import flash_attn"`
 
 ## Adding a new container

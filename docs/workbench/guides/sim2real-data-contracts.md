@@ -185,7 +185,7 @@ Env records and held-out eval carry `sim_backend`:
 | Value | Held-out execution | RT-core GPUs |
 | --- | --- | --- |
 | `isaac` (default) | Sibling `npa-isaac-lab` job, `Isaac-Lift-Cube-Franka-v0` (stock) | **Yes** — Isaac Sim headless |
-| `genesis` (legacy) | Sibling `npa-sim2real-eval` / Genesis env | CUDA sim, not Isaac RT-core path |
+| `genesis` (legacy) | Sibling `npa-loop-eval` / Genesis env | CUDA sim, not Isaac RT-core path |
 
 Genesis remains supported; Isaac is the primary backend for held-out eval on RTX PRO
 class nodes.

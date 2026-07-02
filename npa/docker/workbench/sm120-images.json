@@ -22,21 +22,21 @@
       "purpose": "Genesis/Sim2Real base layered on the sm_120 CUDA 13 runtime."
     },
     {
-      "name": "npa-sim2real-envgen",
+      "name": "npa-envgen",
       "tag": "0.1.1",
       "source_tag": "0.1.1-sm120-20260605T2248Z",
       "digest": "sha256:c1593689b1df1d5eaac6c6c130cd28589038c40645a06aaea310c989631c738e",
       "purpose": "Sim2Real environment generation image."
     },
     {
-      "name": "npa-sim2real-reference-policy",
+      "name": "npa-reference-policy",
       "tag": "0.1.1",
       "source_tag": "0.1.1-sm120-20260605T2248Z",
       "digest": "sha256:0f0523d8964f98bc7be77962d96217095c3cff90b0dd19d4c94e6e4b367f3cec",
       "purpose": "Reference BYO-compatible Sim2Real action policy image."
     },
     {
-      "name": "npa-sim2real-eval",
+      "name": "npa-loop-eval",
       "tag": "0.1.0",
       "digest": "sha256:d38e06dd07fa47f0d30be1efce5b80e249feb04423013fcc6b53706ed38a1a03",
       "purpose": "Sim2Real evaluation image."

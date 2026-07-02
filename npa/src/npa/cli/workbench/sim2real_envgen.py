@@ -33,7 +33,7 @@ def raw_shard_cmd(
     seed: int = typer.Option(42, "--seed"),
     byo_mesh_uri: str = typer.Option("", "--byo-mesh-uri"),
     augmented_frames_uri: str = typer.Option("", "--augmented-frames-uri"),
-    output_dir: Path = typer.Option(Path("/tmp/npa-sim2real-envgen"), "--output-dir"),
+    output_dir: Path = typer.Option(Path("/tmp/npa-envgen"), "--output-dir"),
 ) -> None:
     """Generate and upload one raw env shard."""
 
@@ -57,7 +57,7 @@ def split_cmd(
     env_count: int = typer.Option(10_000, "--env-count"),
     train_fraction: float = typer.Option(0.8, "--train-fraction"),
     seed: int = typer.Option(42, "--seed"),
-    output_dir: Path = typer.Option(Path("/tmp/npa-sim2real-envgen"), "--output-dir"),
+    output_dir: Path = typer.Option(Path("/tmp/npa-envgen"), "--output-dir"),
 ) -> None:
     """Generate and upload deterministic disjoint train/heldout split manifests."""
 
@@ -81,7 +81,7 @@ def actions_cmd(
     env_count: int = typer.Option(10_000, "--env-count"),
     limit: int = typer.Option(256, "--limit"),
     seed: int = typer.Option(42, "--seed"),
-    output_dir: Path = typer.Option(Path("/tmp/npa-sim2real-envgen-actions"), "--output-dir"),
+    output_dir: Path = typer.Option(Path("/tmp/npa-envgen-actions"), "--output-dir"),
 ) -> None:
     """Generate and upload action-conditioned train envs for a representative slice."""
 

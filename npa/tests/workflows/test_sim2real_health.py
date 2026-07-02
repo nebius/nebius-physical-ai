@@ -119,11 +119,11 @@ def test_registry_warns_on_unqualified_images() -> None:
 
 def test_registry_inspects_qualified_images() -> None:
     qualified = {
-        "augment_image": "reg.example/npa-sim2real-envgen:0.1.2",
-        "policy_image": "reg.example/npa-sim2real-reference-policy:0.1.2",
+        "augment_image": "reg.example/npa-envgen:0.1.2",
+        "policy_image": "reg.example/npa-reference-policy:0.1.2",
         "trainer_image": "reg.example/npa-lerobot-vlm-rl:0.1.1",
         "vlm_image": "reg.example/npa-cosmos3-reason:3.0.1",
-        "eval_image": "reg.example/npa-sim2real-eval:0.1.2",
+        "eval_image": "reg.example/npa-loop-eval:0.1.2",
     }
     cfg = _config(**qualified)
     ok = check_registry(cfg, probes=DoctorProbes(image_inspector=lambda i: True))
