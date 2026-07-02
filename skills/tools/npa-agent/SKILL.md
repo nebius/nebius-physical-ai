@@ -70,6 +70,8 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
 | `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
 
+**BYOF onboarding:** load `skills/workflows/byof-onboard/SKILL.md` (source of truth for base profiles, workloads, live verify). Chat replies reference this skill path — do not paste the full procedure into `agent_chat.py`.
+
 Rules:
 
 - **Never** return only `GET /api/…` as the chat reply

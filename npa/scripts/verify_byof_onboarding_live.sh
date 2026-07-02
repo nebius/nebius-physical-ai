@@ -26,7 +26,7 @@ echo "=== BYOF onboarding live pipeline (project=${PROJECT}) ==="
 
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py \
   "${PYTEST_ARGS[@]}" \
-  -k "not live_byof_runner_submit_smoke and not live_byof_runner_registry_smoke and not live_byof_runner_container_build_push and not live_byof_container_has_validation_repo and not live_agent_onboard_solution_chat and not live_agent_byof_workflow_draft_validate" \
+  -k "not live_byof_runner_submit_smoke and not live_byof_runner_registry_smoke and not live_byof_runner_container_build_push and not live_byof_container_has_validation_repo and not live_agent_onboard_solution_chat and not live_agent_byof_workflow_draft_validate and not live_agent_oss_repo_onboard and not live_byof_ubuntu_oss" \
   --timeout=120
 
 _run_agent_tier() {
@@ -57,6 +57,18 @@ _run_gpu_tier() {
     --timeout="${NPA_BYOF_LIVE_TIMEOUT:-21600}"
 }
 
+_run_ubuntu_oss_tier() {
+  echo "--- live Ubuntu OSS BYOF: agent + container + container-verify ---"
+  export NPA_BYOF_REPO_URL="${NPA_BYOF_REPO_URL:-https://github.com/githubtraining/hellogitworld.git}"
+  export NPA_BYOF_REPO_REF="${NPA_BYOF_REPO_REF:-master}"
+  export NPA_BYOF_BASE_PROFILE=ubuntu
+  nebius profile activate "${NPA_NEBIUS_PROFILE:-agent-sa}" 2>/dev/null || true
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py \
+    "${PYTEST_ARGS[@]}" \
+    -k "live_agent_oss_repo_onboard or live_byof_ubuntu_oss" \
+    --timeout="${NPA_BYOF_LIVE_TIMEOUT:-7200}"
+}
+
 if [[ "$PIPELINE" == "1" ]]; then
   export NPA_AGENT_LIVE=1
   export NPA_BYOF_LIVE_CONTAINER=1
@@ -73,6 +85,12 @@ else
   fi
   if [[ "${NPA_BYOF_LIVE_GPU:-0}" == "1" ]]; then
     _run_gpu_tier
+  fi
+  if [[ "${NPA_BYOF_LIVE_UBUNTU:-0}" == "1" ]]; then
+    export NPA_AGENT_LIVE=1
+    export NPA_BYOF_LIVE_UBUNTU=1
+    export NPA_BYOF_LIVE_GPU=1
+    _run_ubuntu_oss_tier
   fi
 fi
 

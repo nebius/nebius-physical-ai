@@ -1,0 +1,69 @@
+# BYOF container verify smoke on Kubernetes (CPU): assert /opt/byof clone + metadata.
+name: byof-container-smoke-rtxpro
+execution: serial
+---
+name: byof-container-verify
+resources:
+  cloud: kubernetes
+  cpus: 2+
+  memory: 4+
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-byof:<your-run-id>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  python3 -m pip install --quiet boto3
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
+  python3 <<'PY'
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  meta_path = Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json"
+  metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+  summary = {
+      "status": "success",
+      "tool": "byof",
+      "workload": "container-verify",
+      "run_id": run_id,
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
+  print(json.dumps(summary, indent=2), flush=True)
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      prefix = parsed.path.lstrip("/")
+      s3 = boto3.client(
+          "s3",
+          endpoint_url=(
+              os.environ.get("AWS_ENDPOINT_URL")
+              or os.environ.get("NEBIUS_S3_ENDPOINT")
+              or None
+          ),
+      )
+      for path in root.rglob("*"):
+          if path.is_file():
+              key = prefix + str(path.relative_to(root))
+              s3.upload_file(str(path), parsed.netloc, key)
+              print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+  PY

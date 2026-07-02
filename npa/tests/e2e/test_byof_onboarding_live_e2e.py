@@ -16,6 +16,7 @@ from npa.cli.main import app
 from npa.clients.config import resolve_container_registry
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows.byof.live import (
+    byof_ubuntu_validation_repo,
     byof_validation_repo,
     resolve_byof_kubernetes_target,
     resolve_byof_resource_yaml,
@@ -25,6 +26,7 @@ from npa.workflows.byof.live import (
 
 from .agent_live_helpers import (
     CREATE_BYOF_WORKFLOW_PROMPT,
+    ONBOARD_OSS_REPO_PROMPT,
     ONBOARD_SOLUTION_PROMPT,
     assert_grounded_onboard_solution_reply,
     load_agent_live_context,
@@ -432,3 +434,150 @@ def test_live_byof_runner_submit_smoke(
         pass
     else:
         assert submit or final, run_summary
+
+
+@pytest.fixture(scope="module")
+def live_byof_ubuntu_built_image(e2e_project: str | None) -> str:
+    if os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1":
+        pytest.skip("Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.")
+    _activate_nebius_profile()
+    registry = resolve_container_registry(e2e_project)
+    repo_url, repo_ref = byof_ubuntu_validation_repo()
+    run_id = os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(BYOF_RUNNER),
+            "--registry",
+            registry,
+            "--repo-url",
+            repo_url,
+            "--repo-ref",
+            repo_ref,
+            "--project",
+            e2e_project or "",
+            "--run-id",
+            run_id,
+            "--base-profile",
+            "ubuntu",
+            "--skip-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=int(os.environ.get("NPA_BYOF_CONTAINER_TIMEOUT", "3600")),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    assert summary.get("status") == "ok", summary
+    assert summary.get("base_profile") == "ubuntu"
+    image = str(summary["image"])
+    assert registry in image
+    return image
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_AGENT_LIVE") != "1",
+    reason="Set NPA_AGENT_LIVE=1 to exercise OSS repo onboarding on the configured agent.",
+)
+def test_live_agent_oss_repo_onboard_solution_chat() -> None:
+    ctx = load_agent_live_context()
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": ONBOARD_OSS_REPO_PROMPT}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    assert_grounded_onboard_solution_reply(chat.json())
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
+    reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.",
+)
+def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image: str) -> None:
+    assert live_byof_ubuntu_built_image
+    assert "npa-byof" in live_byof_ubuntu_built_image
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
+    reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container metadata inspect.",
+)
+def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: str) -> None:
+    repo_url, repo_ref = byof_ubuntu_validation_repo()
+    meta_proc = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "cat",
+            live_byof_ubuntu_built_image,
+            "/opt/byof/npa_source_metadata.json",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert meta_proc.returncode == 0, meta_proc.stderr
+    metadata = json.loads(meta_proc.stdout)
+    assert metadata["repo"] == repo_url
+    assert metadata["ref"] == repo_ref
+
+
+@pytest.mark.skipif(
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1" or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
+    reason="Set NPA_BYOF_LIVE_UBUNTU=1 and NPA_BYOF_LIVE_GPU=1 for Ubuntu container-verify SkyPilot smoke.",
+)
+def test_live_byof_ubuntu_oss_container_verify_submit(
+    e2e_project: str | None,
+    live_byof_ubuntu_built_image: str,
+) -> None:
+    registry = resolve_container_registry(e2e_project)
+    _maybe_refresh_byof_registry_pull_secret(registry, e2e_project)
+    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
+    cmd = [
+        sys.executable,
+        str(BYOF_RUNNER),
+        "--registry",
+        registry,
+        "--project",
+        e2e_project or "",
+        "--image",
+        live_byof_ubuntu_built_image,
+        "--yaml",
+        yaml_override,
+        "--workload",
+        "container-verify",
+        "--run-id",
+        f"byof-ubuntu-verify-{os.getpid()}",
+        "--skip-build",
+    ]
+    config_path = skypilot_config_for_project(e2e_project)
+    if config_path:
+        cmd.extend(["--config-path", config_path])
+    env = dict(os.environ)
+    target = resolve_byof_kubernetes_target(e2e_project)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    skypilot_bin = resolve_skypilot_bin()
+    if skypilot_bin:
+        env["PATH"] = f"{Path(skypilot_bin).parent}:{env.get('PATH', '')}"
+    env.setdefault("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE", "1")
+    proc = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=int(os.environ.get("NPA_BYOF_LIVE_TIMEOUT", "3600")),
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = _parse_last_json_blob(proc.stdout + "\n" + proc.stderr)
+    assert summary.get("status") == "ok", summary

@@ -5169,9 +5169,11 @@ def verify_live_cmd(
     onboard_reply = str(onboard_payload.get("reply") or "")
     if "run_byof_repo.py" not in onboard_reply:
         _fail("onboard_solution chat reply missing run_byof_repo.py command")
+    if "byof-onboard" not in onboard_reply and "skills/workflows/byof-onboard" not in onboard_reply:
+        _fail("onboard_solution chat reply missing byof-onboard skill reference")
     if "--base-profile" not in onboard_reply and "--base-image" not in onboard_reply:
         _fail("onboard_solution chat reply missing base image guidance")
-    if "<repo-url>" not in onboard_reply or "<task>" not in onboard_reply:
+    if "<repo-url>" not in onboard_reply:
         _fail("onboard_solution chat reply missing runnable placeholders")
     if onboard_reply.strip().startswith("GET /api"):
         _fail("onboard_solution chat returned raw GET path instead of guidance")

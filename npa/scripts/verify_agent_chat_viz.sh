@@ -61,6 +61,8 @@ if not payload.get('grounded'):
     raise SystemExit('onboard_solution smoke: expected grounded=true')
 if 'run_byof_repo.py' not in reply:
     raise SystemExit('onboard_solution smoke: missing BYOF runner command')
+if 'byof-onboard' not in reply and 'skills/workflows/byof-onboard' not in reply:
+    raise SystemExit('onboard_solution smoke: missing byof-onboard skill reference')
 if '--base-profile' not in reply and '--base-image' not in reply:
     raise SystemExit('onboard_solution smoke: missing base image guidance')
 if '<repo-url>' not in reply or '<task>' not in reply:

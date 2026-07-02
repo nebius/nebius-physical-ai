@@ -125,8 +125,9 @@ def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     reply = build_grounded_reply("onboard_solution", state, ["workbench.rl.policy_train"])
     assert "run_byof_repo.py" in reply
     assert "--base-profile" in reply or "--base-image" in reply
+    assert "byof-onboard" in reply or "skills/workflows/byof-onboard" in reply
     assert "<repo-url>" in reply
-    assert "<task>" in reply
+    assert "container-verify" in reply or "byof-onboard" in reply
     assert "registry" in reply.lower()
 
 

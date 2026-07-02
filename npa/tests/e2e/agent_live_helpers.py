@@ -118,6 +118,10 @@ ONBOARD_SOLUTION_PROMPT = (
     "add an open source repo, containerize, push to registry, and run a GPU smoke on live infra"
 )
 
+ONBOARD_OSS_REPO_PROMPT = (
+    "onboard https://github.com/githubtraining/hellogitworld.git on Ubuntu, "
+    "build the container, push to registry, and run a deploy smoke on live infra"
+)
 CREATE_BYOF_WORKFLOW_PROMPT = (
     "create a BYOF Isaac Lab workflow for live infra with placeholder repo and task"
 )
@@ -129,8 +133,10 @@ def assert_grounded_onboard_solution_reply(payload: dict[str, object]) -> str:
     reply = str(payload.get("reply") or "")
     assert reply
     assert "run_byof_repo.py" in reply
+    assert "--base-profile" in reply or "--base-image" in reply
+    assert "byof-onboard" in reply or "skills/workflows/byof-onboard" in reply
     assert "<repo-url>" in reply
-    assert "<task>" in reply
+    assert "container-verify" in reply or "<task>" in reply
     assert "registry" in reply.lower()
     assert not reply.strip().startswith("GET /api"), "raw GET path instead of onboarding guidance"
     apis_used = payload.get("apis_used")

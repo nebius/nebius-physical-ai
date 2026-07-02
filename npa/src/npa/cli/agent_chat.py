@@ -7,6 +7,8 @@ import os
 import re
 from typing import Any
 
+from npa.workflows.byof.live import byof_onboard_skill_path
+
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
     r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)))"
@@ -710,55 +712,25 @@ def format_cosmos3_setup() -> str:
 
 def format_onboard_solution() -> str:
     registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
+    skill_path = byof_onboard_skill_path()
     return "\n".join(
         [
-            "**Yes — chat can onboard a new solution end-to-end.**",
-            "- Goal: produce a runnable path for **add -> containerize -> live infra smoke**.",
-            "- Step 1 (**add/contract**): define toolRef + inputs/outputs and register in the workbench catalog.",
-            "- Step 2 (**containerize**): build/push repo-derived image on **Ubuntu** or a custom base (`--base-image`).",
-            "- Step 3 (**live infra**): submit a SkyPilot smoke workflow in tmux with retry gates.",
-            "- Generic onboarding (Ubuntu base, replace placeholders):",
+            "**Yes — chat can onboard a new OSS solution end-to-end.**",
+            f"- **Skill (source of truth):** `{skill_path}`",
+            "- Flow: **contract** → **containerize** (`--base-profile ubuntu`) → **deploy/test** (`--workload container-verify`).",
+            "- Sim stacks (LeIsaac RL/datagen): use `--base-profile isaac-lab` per the skill workload table.",
+            "- Generic Ubuntu onboarding (replace `<repo-url>` / `<repo-ref>`):",
             "```bash",
             "npa/.venv/bin/python npa/scripts/run_byof_repo.py \\",
             "  --repo-url <repo-url> \\",
             "  --repo-ref <repo-ref> \\",
             "  --base-profile ubuntu \\",
-            "  --base-image ubuntu:22.04 \\",
             "  --registry " + registry + " \\",
-            "  --skip-run \\",
+            "  --workload container-verify \\",
             "  --cleanup",
             "```",
-            "- Sim workloads (LeIsaac RL/datagen) need `--base-profile isaac-lab`:",
-            "```bash",
-            "npa/.venv/bin/python npa/scripts/run_byof_repo.py \\",
-            "  --repo-url <repo-url> \\",
-            "  --repo-ref <repo-ref> \\",
-            "  --base-profile isaac-lab \\",
-            "  --registry " + registry + " \\",
-            "  --yaml <resource-profile.yaml> \\",
-            "  --task <task> \\",
-            "  --iterations 1 \\",
-            "  --cleanup",
-            "```",
-            "- tmux live loop (retry on capacity/prechecks):",
-            "```bash",
-            "SESSION=solution-live-$(date -u +%Y%m%dT%H%M%SZ)",
-            "tmux new -d -s \"$SESSION\"",
-            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; sky check; sky gpus list; ATTEMPT=1; while [ $ATTEMPT -le 3 ]; do npa/.venv/bin/python npa/scripts/run_byof_repo.py --repo-url <repo-url> --repo-ref <repo-ref> --base-profile isaac-lab --yaml <resource-profile.yaml> --task <task> --iterations 1 --cleanup && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*20)); done' C-m",
-            "```",
-            "- LeIsaac validation (datagen): scripted state-machine demos at scale:",
-            "```bash",
-            "npa/.venv/bin/python npa/scripts/run_byof_repo.py \\",
-            "  --repo-url https://github.com/LightwheelAI/leisaac.git \\",
-            "  --repo-ref main \\",
-            "  --base-profile isaac-lab \\",
-            "  --registry " + registry + " \\",
-            "  --workload datagen \\",
-            "  --yaml npa/workflows/workbench/skypilot/byof-datagen-rtxpro-smoke.yaml \\",
-            "  --task LeIsaac-SO101-PickOrange-v0 \\",
-            "  --num-envs 4 --num-demos 10 --iterations 1 --cleanup",
-            "```",
-            "- Validation example: LeIsaac datagen uses `scripts/datagen/state_machine/generate.py` (no teleop).",
+            "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
+            "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
         ]
     )
 

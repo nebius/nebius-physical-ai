@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.byof.live import (
+    byof_onboard_skill_path,
+    byof_ubuntu_validation_repo,
     byof_validation_repo,
     resolve_byof_kubernetes_target,
     resolve_byof_project,
@@ -93,6 +95,27 @@ def test_resolve_byof_resource_yaml_datagen_rtxpro_profile(monkeypatch: pytest.M
     monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", _fake_block)
     path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="datagen")
     assert path.endswith("byof-datagen-rtxpro-smoke.yaml")
+
+
+def test_resolve_byof_resource_yaml_container_verify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
+    path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="container-verify")
+    assert path.endswith("byof-container-smoke-rtxpro.yaml")
+
+
+def test_byof_ubuntu_validation_repo_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_BYOF_REPO_URL", raising=False)
+    monkeypatch.delenv("NPA_BYOF_UBUNTU_VALIDATION_REPO_URL", raising=False)
+    url, ref = byof_ubuntu_validation_repo()
+    assert "hellogitworld" in url
+    assert ref == "master"
+
+
+def test_byof_onboard_skill_path() -> None:
+    from npa.workflows.byof.live import byof_onboard_skill_path, load_byof_onboard_skill_text
+
+    assert byof_onboard_skill_path() == "skills/workflows/byof-onboard/SKILL.md"
+    assert "run_byof_repo.py" in load_byof_onboard_skill_text()
 
 
 def test_resolve_byof_project_env(monkeypatch: pytest.MonkeyPatch) -> None:

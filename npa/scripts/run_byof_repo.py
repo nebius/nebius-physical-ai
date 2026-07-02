@@ -20,6 +20,7 @@ from npa.deploy.images import container_image_for_tool
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
+CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 BYOF_REPO_MOUNT = "/opt/byof"
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
@@ -193,9 +194,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument(
         "--workload",
-        choices=("rl-train", "datagen"),
+        choices=("rl-train", "datagen", "container-verify"),
         default="rl-train",
-        help="Live workload after image build: RL training or scripted datagen (LeIsaac state machine).",
+        help="Live workload: RL training, scripted datagen, or container-verify smoke.",
     )
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
     parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
@@ -327,6 +328,21 @@ def main(argv: list[str] | None = None) -> int:
                     args.run_id,
                     "--wait-timeout",
                     str(args.wait_timeout),
+                    "--poll-interval",
+                    str(args.poll_interval),
+                    "--repo-root",
+                    BYOF_REPO_MOUNT,
+                ]
+            elif args.workload == "container-verify":
+                cmd = [
+                    sys.executable,
+                    str(CONTAINER_VERIFY_RUNNER),
+                    "--image",
+                    image,
+                    "--run-id",
+                    args.run_id,
+                    "--wait-timeout",
+                    str(min(args.wait_timeout, 3600)),
                     "--poll-interval",
                     str(args.poll_interval),
                     "--repo-root",

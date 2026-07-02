@@ -11,15 +11,20 @@ from npa.clients.config import ConfigError, _load_yaml, _resolve_project_section
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[5]
 SKYPILOT_DIR = REPO_ROOT / "workflows" / "workbench" / "skypilot"
 DEFAULT_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train.yaml"
 RTXPRO_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro.yaml"
 RTXPRO_SMOKE_TRAIN_YAML = SKYPILOT_DIR / "isaac-lab-rl-train-rtxpro-smoke.yaml"
 BYOF_DATAGEN_SMOKE_YAML = SKYPILOT_DIR / "byof-datagen-rtxpro-smoke.yaml"
+BYOF_CONTAINER_SMOKE_YAML = SKYPILOT_DIR / "byof-container-smoke-rtxpro.yaml"
 RTXPRO_SKYPILOT_CONFIG = SKYPILOT_DIR / "skypilot-kubernetes-rtxpro.yaml"
+BYOF_ONBOARD_SKILL = WORKSPACE_ROOT / "skills" / "workflows" / "byof-onboard" / "SKILL.md"
 
 DEFAULT_VALIDATION_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_VALIDATION_REPO_REF = "main"
+DEFAULT_UBUNTU_VALIDATION_REPO_URL = "https://github.com/githubtraining/hellogitworld.git"
+DEFAULT_UBUNTU_VALIDATION_REPO_REF = "master"
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,34 @@ def byof_validation_repo() -> tuple[str, str]:
         "NPA_BYOF_VALIDATION_REPO_REF", DEFAULT_VALIDATION_REPO_REF
     ).strip()
     return url, ref
+
+
+def byof_ubuntu_validation_repo() -> tuple[str, str]:
+    """Return a small public OSS repo for Ubuntu BYOF container smokes."""
+
+    if os.environ.get("NPA_BYOF_UBUNTU_VALIDATION_REPO_URL", "").strip():
+        url = os.environ["NPA_BYOF_UBUNTU_VALIDATION_REPO_URL"].strip()
+        ref = os.environ.get("NPA_BYOF_UBUNTU_VALIDATION_REPO_REF", DEFAULT_UBUNTU_VALIDATION_REPO_REF).strip()
+        return url, ref or DEFAULT_UBUNTU_VALIDATION_REPO_REF
+    url, ref = byof_validation_repo()
+    if "leisaac" in url.lower():
+        return DEFAULT_UBUNTU_VALIDATION_REPO_URL, DEFAULT_UBUNTU_VALIDATION_REPO_REF
+    return url, ref
+
+
+def byof_onboard_skill_path() -> str:
+    return str(BYOF_ONBOARD_SKILL.relative_to(WORKSPACE_ROOT))
+
+
+def load_byof_onboard_skill_text() -> str:
+    if BYOF_ONBOARD_SKILL.is_file():
+        return BYOF_ONBOARD_SKILL.read_text(encoding="utf-8")
+    return ""
+
+
+def resolve_byof_base_profile() -> str:
+    profile = os.environ.get("NPA_BYOF_BASE_PROFILE", "").strip()
+    return profile or "ubuntu"
 
 
 def _project_kubernetes_block(project: str | None) -> dict[str, object]:
@@ -165,6 +198,14 @@ def resolve_byof_resource_yaml(
 
     normalized_workload = (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
     k8s = _project_kubernetes_block(project)
+    if normalized_workload == "container-verify":
+        key = "byof_container_smoke_yaml" if smoke else "byof_container_yaml"
+        configured = str(k8s.get(key) or "").strip()
+        if configured:
+            path = Path(configured)
+            return str(path if path.is_absolute() else REPO_ROOT / configured)
+        if BYOF_CONTAINER_SMOKE_YAML.is_file():
+            return str(BYOF_CONTAINER_SMOKE_YAML)
     if normalized_workload == "datagen":
         key = "byof_datagen_smoke_yaml" if smoke else "byof_datagen_yaml"
         configured = str(k8s.get(key) or "").strip()
