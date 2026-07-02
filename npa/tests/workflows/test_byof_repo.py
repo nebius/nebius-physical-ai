@@ -76,11 +76,11 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
         if cmd == ["nebius", "iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
-            raise RuntimeError("403 Forbidden while pulling ISAAC_BASE_IMAGE")
+            raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
-    rc = module.main(["--run-id", "leisaac-hint-case", "--skip-run"])
+    rc = module.main(["--run-id", "leisaac-hint-case", "--base-profile", "isaac-lab", "--skip-run"])
 
     assert rc == 1
     output = json.loads(capsys.readouterr().out)
@@ -111,7 +111,7 @@ def test_main_reports_403_push_hint(monkeypatch, capsys) -> None:
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
-    rc = module.main(["--run-id", "leisaac-push-403", "--skip-run"])
+    rc = module.main(["--run-id", "leisaac-push-403", "--base-profile", "isaac-lab", "--skip-run"])
 
     assert rc == 1
     output = json.loads(capsys.readouterr().out)
@@ -148,6 +148,8 @@ def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> No
             "leisaac-base-registry",
             "--image",
             "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab-leisaac:test",
+            "--base-profile",
+            "isaac-lab",
             "--skip-build",
             "--skip-run",
         ]
@@ -181,10 +183,10 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
         if cmd == ["nebius", "iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
-            base = next((part for part in cmd if part.startswith("ISAAC_BASE_IMAGE=")), "")
+            base = next((part for part in cmd if part.startswith("BYOF_BASE_IMAGE=")), "")
             build_args.append(base)
             if base.endswith(":stable") or base.endswith(":default"):
-                raise RuntimeError("403 Forbidden while pulling ISAAC_BASE_IMAGE")
+                raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
@@ -195,6 +197,8 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
             "leisaac-fallback-case",
             "--image",
             "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab-leisaac:test",
+            "--base-profile",
+            "isaac-lab",
             "--skip-run",
         ]
     )
@@ -233,6 +237,8 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
             "--run-id",
             "leisaac-yaml-forward",
             "--skip-build",
+            "--base-profile",
+            "isaac-lab",
             "--yaml",
             "/tmp/isaac-lab-rtxpro.yaml",
         ]
@@ -272,6 +278,8 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
             "--run-id",
             "leisaac-datagen-forward",
             "--skip-build",
+            "--base-profile",
+            "isaac-lab",
             "--workload",
             "datagen",
             "--task",
@@ -295,7 +303,29 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
 
 
-def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
+def test_base_image_candidates_ubuntu_profile_default() -> None:
+    module = _load_module()
+    candidates = module._base_image_candidates(
+        profile="ubuntu",
+        image="cr.eu-north1.nebius.cloud/example/project/npa-byof:test",
+        registry="cr.eu-north1.nebius.cloud/example/project",
+        explicit_base="",
+    )
+    assert candidates == ["ubuntu:22.04"]
+
+
+def test_base_image_candidates_explicit_base_overrides_profile() -> None:
+    module = _load_module()
+    candidates = module._base_image_candidates(
+        profile="ubuntu",
+        image="cr.eu-north1.nebius.cloud/example/project/npa-byof:test",
+        registry="cr.eu-north1.nebius.cloud/example/project",
+        explicit_base="ubuntu:24.04",
+    )
+    assert candidates == ["ubuntu:24.04"]
+
+
+def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:
     module = _load_module()
 
     monkeypatch.setattr(
@@ -304,6 +334,7 @@ def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
         lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
     )
     candidates = module._base_image_candidates(
+        profile="isaac-lab",
         image="cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab-leisaac:test",
         registry="cr.eu-north1.nebius.cloud/example/project",
         explicit_base="",
@@ -312,9 +343,49 @@ def test_base_image_candidates_include_public_fallbacks(monkeypatch) -> None:
     assert "nvcr.io/nvidia/isaac-sim:4.5.0" in candidates
 
 
+def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys) -> None:
+    module = _load_module()
+    build_args: list[str] = []
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
+    )
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd == ["nebius", "iam", "get-access-token"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+        if cmd[:2] == ["docker", "build"]:
+            build_args.extend(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "ubuntu-byof-case",
+            "--repo-url",
+            "https://github.com/example/demo.git",
+            "--repo-ref",
+            "main",
+            "--base-profile",
+            "ubuntu",
+            "--skip-run",
+        ]
+    )
+
+    assert rc == 0
+    assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    output = json.loads(capsys.readouterr().out)
+    assert output["base_profile"] == "ubuntu"
+    assert output["base_image"] == "ubuntu:22.04"
+
+
 def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
+    assert "BYOF_BASE_IMAGE" in text
     assert "npa_source_metadata.json" in text
     assert "printf" in text
     assert "/opt/byof" in text

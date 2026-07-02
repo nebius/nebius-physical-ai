@@ -24,10 +24,31 @@ BYOF_REPO_MOUNT = "/opt/byof"
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
+DEFAULT_UBUNTU_BASE_IMAGE = "ubuntu:22.04"
+BASE_PROFILES = frozenset({"ubuntu", "isaac-lab"})
+PLACEHOLDER_VALUES = frozenset(
+    {
+        "",
+        "<base-image>",
+        "<repo-url>",
+        "<repo-ref>",
+        "<workload>",
+        "<resource-profile.yaml>",
+        "<task>",
+        "<base-profile>",
+    }
+)
 
 
 def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _normalize_optional(value: str) -> str:
+    cleaned = str(value or "").strip()
+    if cleaned in PLACEHOLDER_VALUES:
+        return ""
+    return cleaned
 
 
 def _run(
@@ -87,8 +108,8 @@ def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> N
 
 def _dockerfile_text() -> str:
     return (
-        "ARG ISAAC_BASE_IMAGE\n"
-        "FROM ${ISAAC_BASE_IMAGE}\n"
+        "ARG BYOF_BASE_IMAGE\n"
+        "FROM ${BYOF_BASE_IMAGE}\n"
         "ARG OSS_REPO_URL\n"
         "ARG OSS_REPO_REF\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \\\n"
@@ -112,29 +133,43 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _base_image_candidates(*, image: str, registry: str, explicit_base: str) -> list[str]:
-    if explicit_base.strip():
-        return [explicit_base.strip()]
+def _ubuntu_base_image_candidates() -> list[str]:
+    configured = os.environ.get("NPA_BYOF_UBUNTU_BASE_IMAGE", DEFAULT_UBUNTU_BASE_IMAGE).strip()
+    return [configured or DEFAULT_UBUNTU_BASE_IMAGE]
+
+
+def _isaac_lab_base_image_candidates(*, image: str, registry: str) -> list[str]:
     candidates: list[str] = []
     derived_registry = _registry_path(image) or registry
-    # Try canonical resolver first (may point at a public/default registry).
     try:
         canonical = str(container_image_for_tool("isaac-lab")).strip()
         if canonical:
             candidates.append(canonical)
     except TypeError:
-        # Older call paths in tests may require explicit registry.
         pass
-    # Then try explicit registry choices used by this run.
     for candidate_registry in (registry, derived_registry):
         candidate = str(container_image_for_tool("isaac-lab", registry=candidate_registry)).strip()
         if candidate and candidate not in candidates:
             candidates.append(candidate)
-    # Public fallbacks keep BYOF unblocked when private base repos are inaccessible.
     for public_candidate in ("nvcr.io/nvidia/isaac-lab:2.3.2", "nvcr.io/nvidia/isaac-sim:4.5.0"):
         if public_candidate not in candidates:
             candidates.append(public_candidate)
     return candidates
+
+
+def _base_image_candidates(
+    *,
+    profile: str,
+    image: str,
+    registry: str,
+    explicit_base: str,
+) -> list[str]:
+    if explicit_base:
+        return [explicit_base]
+    normalized_profile = profile if profile in BASE_PROFILES else "ubuntu"
+    if normalized_profile == "isaac-lab":
+        return _isaac_lab_base_image_candidates(image=image, registry=registry)
+    return _ubuntu_base_image_candidates()
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -144,7 +179,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--project", default="", help="Project alias used for container-registry resolution.")
     parser.add_argument("--registry", default="", help="Override registry host/path.")
     parser.add_argument("--image", default="", help="Fully-qualified image ref to build/push and run.")
-    parser.add_argument("--base-image", default="", help="Override base sim image (default: Isaac Lab).")
+    parser.add_argument(
+        "--base-profile",
+        choices=sorted(BASE_PROFILES),
+        default=os.environ.get("NPA_BYOF_BASE_PROFILE", "ubuntu"),
+        help="Base image family: ubuntu (generic) or isaac-lab (sim workloads).",
+    )
+    parser.add_argument(
+        "--base-image",
+        default=os.environ.get("NPA_BYOF_BASE_IMAGE", ""),
+        help="Explicit base image (overrides --base-profile), e.g. ubuntu:24.04.",
+    )
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument(
         "--workload",
@@ -171,11 +216,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    explicit_base = _normalize_optional(args.base_image)
+    base_profile = _normalize_optional(args.base_profile) or "ubuntu"
     registry = args.registry.strip() or resolve_container_registry(args.project or None)
     image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
-    base_candidates = _base_image_candidates(image=image, registry=registry, explicit_base=args.base_image)
+    base_candidates = _base_image_candidates(
+        profile=base_profile,
+        image=image,
+        registry=registry,
+        explicit_base=explicit_base,
+    )
     if not base_candidates:
-        raise RuntimeError("unable to resolve an Isaac Lab base image candidate")
+        raise RuntimeError("unable to resolve a BYOF base image candidate")
     base_image = base_candidates[0]
     base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
 
@@ -183,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         "repo_url": args.repo_url,
         "repo_ref": args.repo_ref,
         "registry": registry,
+        "base_profile": base_profile,
         "base_registry": base_registry,
         "image": image,
         "base_image": base_image,
@@ -199,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
                 docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
                 docker_env = {"DOCKER_CONFIG": docker_config_dir}
                 _docker_login_nebius(_registry_server(image), env=docker_env)
-            with tempfile.TemporaryDirectory(prefix="npa-byof-isaac-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
                 (context / "Dockerfile").write_text(_dockerfile_text(), encoding="utf-8")
                 last_build_error: Exception | None = None
@@ -209,14 +262,13 @@ def main(argv: list[str] | None = None) -> int:
                     summary["base_registry"] = _registry_path(base_image) or (_registry_path(image) or registry)
                     try:
                         _run(
-                            # Capture build output so 403 errors can trigger fallback candidates.
                             [
                                 "docker",
                                 "build",
                                 "--platform",
                                 "linux/amd64",
                                 "--build-arg",
-                                f"ISAAC_BASE_IMAGE={base_image}",
+                                f"BYOF_BASE_IMAGE={base_image}",
                                 "--build-arg",
                                 f"OSS_REPO_URL={args.repo_url}",
                                 "--build-arg",
@@ -233,7 +285,8 @@ def main(argv: list[str] | None = None) -> int:
                         last_build_error = exc
                         message = str(exc)
                         forbidden_pull = "403 Forbidden" in message and (
-                            "ISAAC_BASE_IMAGE" in message
+                            "BYOF_BASE_IMAGE" in message
+                            or "ISAAC_BASE_IMAGE" in message
                             or "failed to resolve source metadata" in message
                             or "pull access denied" in message
                         )
@@ -252,7 +305,6 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     _run(["docker", "buildx", "imagetools", "inspect", image], env=docker_env or None)
                 except Exception:
-                    # Optional inspect path; image was already pushed.
                     pass
             summary["build"] = {"ok": True, "pushed": not args.skip_push}
         else:
@@ -321,11 +373,11 @@ def main(argv: list[str] | None = None) -> int:
         message = str(exc)
         summary["status"] = "failed"
         summary["error"] = message
-        if "403 Forbidden" in message and "ISAAC_BASE_IMAGE" in message:
+        if "403 Forbidden" in message and ("BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message):
             summary["hint"] = (
-                "Registry pull for the base Isaac image was denied. "
-                "Pass --base-image from an accessible registry, or grant pull access "
-                "with an accessible parent image."
+                "Registry pull for the base image was denied. "
+                "Pass --base-image from an accessible registry (e.g. ubuntu:22.04), "
+                "or use --base-profile isaac-lab with registry access to the sim image."
             )
         elif "docker push" in message and "403 Forbidden" in message:
             summary["hint"] = (

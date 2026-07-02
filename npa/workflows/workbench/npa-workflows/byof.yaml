@@ -3,12 +3,14 @@ kind: Workflow
 metadata:
   name: byof
   description: >
-    Generic BYOF workflow: build/push an OSS Isaac Lab repo image and run a live
-    workload on Kubernetes (RL training or scripted datagen).
+    Generic BYOF workflow: build/push an OSS repo image on any base (Ubuntu or
+    Isaac Lab) and run a live workload on Kubernetes (RL training or datagen).
 config:
   bucket: example-bucket
   repo_url: "<repo-url>"
   repo_ref: "<repo-ref>"
+  base_profile: ubuntu
+  base_image: ""
   workload: "<workload>"
   resource_profile_yaml: "<resource-profile.yaml>"
   task: "<task>"

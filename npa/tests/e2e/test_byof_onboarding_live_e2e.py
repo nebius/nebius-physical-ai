@@ -154,6 +154,8 @@ def live_byof_built_image(e2e_project: str | None) -> str:
             e2e_project or "",
             "--run-id",
             run_id,
+            "--base-profile",
+            "isaac-lab",
             "--skip-run",
         ],
         check=False,

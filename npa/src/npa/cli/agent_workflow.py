@@ -88,6 +88,8 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "byof": (
         "byof",
         "bring your own fork",
+        "ubuntu",
+        "base image",
         "leisaac",
         "lightwheel",
         "isaac lab",
@@ -221,13 +223,15 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
         "byof": {
             "name": "byof",
             "description": (
-                "Generic BYOF workflow: build/push an OSS repo image and run RL training "
-                "or scripted datagen (e.g. LeIsaac state-machine generate.py) on live Kubernetes."
+                "Generic BYOF workflow: build/push an OSS repo image on Ubuntu or Isaac Lab "
+                "and run RL training or scripted datagen on live Kubernetes."
             ),
             "config_runtime": OrderedDict(
                 {
                     "repo_url": "<repo-url>",
                     "repo_ref": "<repo-ref>",
+                    "base_profile": "ubuntu",
+                    "base_image": "",
                     "workload": "<workload>",
                     "resource_profile_yaml": "<resource-profile.yaml>",
                     "task": "<task>",
@@ -1372,7 +1376,7 @@ def format_workflow_chat_reply(
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
-        "byof": "Generic BYOF workflow (OSS repo → container → RL train or datagen on Kubernetes)",
+        "byof": "Generic BYOF workflow (OSS repo → Ubuntu/Isaac base image → workload on Kubernetes)",
         "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
     }
