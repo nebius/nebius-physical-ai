@@ -101,6 +101,12 @@ class RobotSpec:
     ee_link: str = "hand"  # end-effector link name (IK + ee_pos)
     base_link: str = "panda_link0"  # articulation root link (ee_frame source frame)
     finger_links: tuple[str, ...] = ("left_finger", "right_finger")
+    # Gripper (finger) joint names — the BinaryJointPositionAction targets. Empty
+    # for presets that don't declare them (the BYO task then falls back to the
+    # Franka ``panda_finger.*`` pattern, correct only for a Franka-class hand). A
+    # non-Franka gripper MUST carry these through so the gripper action retargets
+    # to its real finger joints instead of nonexistent panda_finger joints.
+    gripper_joint_names: tuple[str, ...] = ()
     n_arm_joints: int = 7
     n_gripper_joints: int = 2
     joint_names: tuple[str, ...] = ()
@@ -401,8 +407,14 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
         spec.builtin_path = str(doc["builtin_path"]).strip()
     if doc.get("ee_link"):
         spec.ee_link = str(doc["ee_link"]).strip()
+    if doc.get("base_link"):
+        spec.base_link = str(doc["base_link"]).strip()
     if "finger_links" in doc:
         spec.finger_links = _coerce_str_tuple(doc["finger_links"], "finger_links")
+    if "gripper_joint_names" in doc:
+        spec.gripper_joint_names = _coerce_str_tuple(
+            doc["gripper_joint_names"], "gripper_joint_names"
+        )
     if doc.get("joint_names") is not None:
         spec.joint_names = _coerce_str_tuple(doc["joint_names"], "joint_names")
     if doc.get("n_arm_joints") is not None:

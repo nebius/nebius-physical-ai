@@ -130,6 +130,9 @@ def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, 
         "base_link": str(getattr(spec, "base_link", "") or ""),
         "joint_names": [str(j) for j in (getattr(spec, "joint_names", ()) or ())],
         "finger_links": [str(f) for f in (getattr(spec, "finger_links", ()) or ())],
+        "gripper_joint_names": [
+            str(g) for g in (getattr(spec, "gripper_joint_names", ()) or ())
+        ],
         "n_arm_joints": int(getattr(spec, "n_arm_joints", 0) or 0),
         "n_gripper_joints": int(getattr(spec, "n_gripper_joints", 0) or 0),
         "home_qpos": _floats(getattr(spec, "home_qpos", ())),
@@ -144,18 +147,52 @@ def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, 
 
 
 def _resolve_byo_robot_spec() -> Any:
-    """Resolve a RobotSpec from the trainer's env (preset/source), or ``None``.
+    """Resolve a RobotSpec from the trainer's env, or ``None`` (default Franka).
 
-    Best-effort and dependency-light: uses ``robot_spec_from_inputs`` (no
-    download). A ``robot_spec_uri`` JSON or a URDF→USD conversion is a follow-up;
-    the proven validation path is the Franka preset (a stock_franka spec).
+    Resolution mirrors the held-out eval (``engine._resolve_heldout_robot``) so
+    training and eval agree on the variant:
+
+    * ``NPA_SIM2REAL_ROBOT_SPEC_URI`` (s3://): download the customer robot-spec
+      JSON and parse it with the SAME ``resolve_robot_spec_from_consumed_doc`` the
+      eval uses — this is what routes a genuine CUSTOM robot (not just a named
+      preset) into RL training. The doc must carry ``robot_uri`` (the USD; an
+      Omniverse ``https://`` CDN URL is opened directly by Isaac, an ``s3://`` URL
+      is staged by the sibling job).
+    * else ``NPA_SIM2REAL_ROBOT_PRESET`` / ``NPA_SIM2REAL_ROBOT_SOURCE``: a named
+      preset / bare source, via ``robot_spec_from_inputs`` (no download).
+
+    A spec-uri that fails to download/parse raises rather than silently falling
+    back to Franka — the operator must not be misled into thinking their robot
+    trained when it did not.
     """
 
     from npa.genesis import robot_assets
 
+    spec_uri = _env("NPA_SIM2REAL_ROBOT_SPEC_URI")
+    preset = _env("NPA_SIM2REAL_ROBOT_PRESET")
+    source = _env("NPA_SIM2REAL_ROBOT_SOURCE")
+    if spec_uri:
+        import tempfile
+
+        from npa.clients.storage import StorageClient
+        from npa.workflows.sim2real_assets import resolve_robot_spec_from_consumed_doc
+
+        client = StorageClient.from_environment()
+        with tempfile.TemporaryDirectory() as td:
+            local = str(Path(td) / "robot-spec.json")
+            client.download_path(spec_uri, local)
+            doc = json.loads(Path(local).read_text(encoding="utf-8"))
+        spec = resolve_robot_spec_from_consumed_doc(
+            doc, robot_preset=preset, robot_source=source
+        )
+        print(f"byo_isaac_trainer: resolved robot_spec from {spec_uri} -> "
+              f"{getattr(spec, 'name', None)!r} ({getattr(spec, 'robot_source', None)})",
+              flush=True)
+        return spec
+
     return robot_assets.robot_spec_from_inputs(
-        robot_preset=_env("NPA_SIM2REAL_ROBOT_PRESET"),
-        robot_source=_env("NPA_SIM2REAL_ROBOT_SOURCE"),
+        robot_preset=preset,
+        robot_source=source,
     )
 
 
