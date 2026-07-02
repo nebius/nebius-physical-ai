@@ -40,9 +40,9 @@ ALLOWLIST_SUBSTRINGS = (
 # Tags that must not appear on these tools anywhere outside allowlists.
 STALE_TOOL_TAGS: dict[str, set[str]] = {
     "cosmos2-transfer": {"2.5.0"},
-    "sim2real-envgen": {"0.1.1"},
-    "sim2real-reference-policy": {"0.1.1"},
-    "sim2real-eval": {"0.1.1-genuine-sm120"},
+    "envgen": {"0.1.1"},
+    "reference-policy": {"0.1.1"},
+    "loop-eval": {"0.1.1-genuine-sm120"},
     "lerobot-vlm-rl": {"0.1.0"},
     "lerobot-policy": {"0.1.0"},
     "lancedb": {"0.30.2"},

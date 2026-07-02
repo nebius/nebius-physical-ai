@@ -52,7 +52,7 @@ def test_sim2real_envgen_genesis_step_mocked(mock_env, _cuda) -> None:
     from npa.smoke.test_sim2real_envgen_functional import check_genesis_cuda_step
 
     instance = mock_env.return_value
-    instance.num_actions = 4
+    instance.act_dim = 4
     instance.device = "cuda:0"
     result = check_genesis_cuda_step()
     assert result.ok, result.detail

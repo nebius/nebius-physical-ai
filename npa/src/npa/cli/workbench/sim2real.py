@@ -572,7 +572,7 @@ def _emit_rerun_serve_result(payload: dict, *, output: OutputFormat) -> None:
     else:
         service_type = str(payload.get("service_type", "")).strip().lower()
         if service_type in {"loadbalancer", "lb"}:
-            deployment = payload.get("deployment_name", "npa-sim2real-rerun")
+            deployment = payload.get("deployment_name", "npa-rerun")
             namespace = payload.get("namespace", DEFAULT_NAMESPACE)
             typer.echo(
                 "public_url: pending — LoadBalancer external IP not assigned yet. "
@@ -627,7 +627,7 @@ def rerun_serve_command(
         "--rerun-image",
         help=(
             "Rerun viewer container image (default: python:3.11-slim-bookworm with pip-installed "
-            "rerun-sdk; override with npa-rerun-viewer (legacy alias: npa-sim2real-rerun-viewer) "
+            "rerun-sdk; override with npa-rerun-viewer when serving from a "
             "or NPA_RERUN_VIEWER_IMAGE (legacy alias: NPA_SIM2REAL_RERUN_IMAGE)."
         ),
     ),

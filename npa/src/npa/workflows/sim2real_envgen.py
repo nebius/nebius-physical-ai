@@ -382,14 +382,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_common(split)
     actions = sub.add_parser("actions")
     _add_common(actions)
-    actions.add_argument("--policy-image", default=os.environ.get("POLICY_IMAGE", "npa-sim2real-reference-policy:local"))
+    actions.add_argument("--policy-image", default=os.environ.get("POLICY_IMAGE", "npa-reference-policy:local"))
     actions.add_argument("--limit", type=int, default=int(os.environ.get("ACTION_ENV_LIMIT", "256")))
     actions.add_argument("--train-envs-uri", default=os.environ.get("NPA_TRAIN_ENVS_URI", ""))
     actions.add_argument("--actions-uri", default=os.environ.get("NPA_ACTIONS_URI", ""))
     contract = sub.add_parser("policy-contract")
     contract.add_argument("--train-envs-uri", required=True)
     contract.add_argument("--actions-uri", required=True)
-    contract.add_argument("--policy-image", default="npa-sim2real-reference-policy:local")
+    contract.add_argument("--policy-image", default="npa-reference-policy:local")
     args = parser.parse_args(argv)
 
     if args.command == "policy-contract":
@@ -443,7 +443,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--byo-mesh-uri", default=DEFAULT_BYO_MESH_URI)
     parser.add_argument("--augmented-frames-uri", default="")
     parser.add_argument("--scene-spec-uri", default=os.environ.get("NPA_SIM2REAL_SCENE_SPEC_URI", ""))
-    parser.add_argument("--output-dir", default="/tmp/npa-sim2real-envgen")
+    parser.add_argument("--output-dir", default="/tmp/npa-envgen")
 
 
 def _all_envs(config: EnvGenConfig) -> list[dict[str, Any]]:

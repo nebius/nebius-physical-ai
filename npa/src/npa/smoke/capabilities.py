@@ -83,21 +83,18 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "/health",
         "/system-info",
     ],
-    "sim2real-envgen": [
+    "envgen": [
         "raw env generation (JSONL contract)",
         "Genesis CUDA env step (mocked in unit gate)",
     ],
-    "sim2real-reference-policy": [
-        "delegates to sim2real-envgen functional checks",
+    "reference-policy": [
+        "delegates to envgen functional checks",
     ],
-    "sim2real-eval": [
+    "loop-eval": [
         "CUDA available",
         "FrankaPickPlace rollout step",
     ],
     "rerun-viewer": [
-        "rerun SDK import + __version__",
-    ],
-    "sim2real-rerun-viewer": [
         "rerun SDK import + __version__",
     ],
 }
