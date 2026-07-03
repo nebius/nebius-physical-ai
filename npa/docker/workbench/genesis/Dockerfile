@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 \
       libglib2.0-0 \
       libglvnd0 \
+      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libx11-6 \

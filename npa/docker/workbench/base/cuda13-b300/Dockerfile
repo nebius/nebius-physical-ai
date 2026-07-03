@@ -50,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libffi-dev \
       libgl1 \
       libglib2.0-0 \
+      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libxext6 \

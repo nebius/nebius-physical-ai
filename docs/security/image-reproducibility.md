@@ -21,7 +21,11 @@ To update a base image:
 2. Resolve the new tag's digest through the registry HTTP API. Do not use
    `docker pull` just to resolve a digest.
 3. Update the Dockerfile `FROM` line and the CI scan matrix.
-4. Run CI and verify the Trivy scan passes against the new digest.
+4. If the pinned upstream base still carries a fixable OS-package CVE but the
+   fixed package is available from Ubuntu repositories, install the fixed
+   package explicitly in the Dockerfile apt layer and mirror that package update
+   in the CI base-image scan's minimal patched derivative.
+5. Run CI and verify the Trivy scan passes against the resulting scan target.
 
 At the time this document was added, public Docker Hub bases were digest-pinned.
 The `nvcr.io/nvidia/isaac-lab:2.3.2` base is still tag-only because anonymous
@@ -55,11 +59,16 @@ CI runs Trivy in `.github/workflows/image-security-scan.yml`:
 - A weekly scheduled scan to catch newly disclosed CVEs in already-pinned bases
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-images. Dockerfile/config misconfigurations fail on HIGH and CRITICAL findings.
-Base-image CVE jobs are intentionally OS-package only, use `--ignore-unfixed`,
-and fail on fixed CRITICAL vulnerabilities. HIGH base-image CVEs stay visible in
-SARIF and scheduled scan output, but they are advisory while the repo is not
-shipping those upstream bases as final runtime images.
+image lineages. Dockerfile/config misconfigurations fail on HIGH and CRITICAL
+findings. Base-image CVE jobs are intentionally OS-package only, use
+`--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
+CUDA base contains a fixable CRITICAL in an OS package that every consuming
+Dockerfile upgrades during its apt layer, CI builds a minimal patched derivative
+of that pinned base and scans that derivative. This keeps the digest-pinned
+lineage visible while validating the remediation that is present in the shipped
+workbench images. HIGH base-image CVEs stay visible in SARIF and scheduled scan
+output, but they are advisory while the repo is not shipping those upstream
+bases unchanged as final runtime images.
 
 The repository-level `trivy.yaml` mirrors the base-image CVE policy for local
 operator scans: fixed CRITICAL OS-package vulnerabilities are the blocking gate,
