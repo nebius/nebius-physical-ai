@@ -281,6 +281,11 @@ def _is_permission_denied(message: str) -> bool:
     return "permissiondenied" in lowered or "permission denied" in lowered or "no permission" in lowered
 
 
+def _is_not_found(message: str) -> bool:
+    lowered = message.lower()
+    return "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
+
+
 def _normalize_bucket_name(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -394,15 +399,17 @@ def ensure_service_account(
         sa_id = _resource_id_from_nebius_error(message, prefix="serviceaccount-")
         if sa_id:
             return sa_id
-        saved = _saved_service_account_id()
-        if saved:
-            return saved
         if _is_permission_denied(message):
+            saved = _saved_service_account_id()
+            if saved:
+                return saved
             raise NebiusError(
                 f"Cannot read or create service account {name!r}: {exc}. "
                 "Set NPA_SERVICE_ACCOUNT_ID or nebius.service_account_id in "
                 "~/.npa/credentials.yaml when IAM management is restricted."
             ) from exc
+        if not _is_not_found(message):
+            raise
         # Not found — create below.
 
     try:
