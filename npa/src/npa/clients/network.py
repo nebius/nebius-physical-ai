@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Any
+from collections.abc import Callable
 
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
@@ -95,6 +96,50 @@ def rule_name(tool: str, ports: tuple[int, ...]) -> str:
     """Return the conventional npa allow rule name for a tool and port set."""
     normalized_tool = re.sub(r"[^a-z0-9-]+", "-", tool.lower()).strip("-") or "manual"
     return f"allow-npa-{normalized_tool}-{'-'.join(str(port) for port in ports)}"
+
+
+NPA_INGRESS_RULE_PREFIX = "allow-npa-"
+
+
+def remove_npa_ingress_rules(
+    security_group_ids: tuple[str, ...],
+    *,
+    on_status: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Delete ingress rules created by :func:`ensure_ingress` (``allow-npa-*``)."""
+    deleted: list[str] = []
+    for group_id in security_group_ids:
+        if not group_id:
+            continue
+        rules = _list_security_rules(group_id)
+        for rule in rules:
+            metadata = _metadata(rule)
+            name = str(metadata.get("name", ""))
+            rule_id = str(metadata.get("id", ""))
+            if not rule_id or not name.startswith(NPA_INGRESS_RULE_PREFIX):
+                continue
+            try:
+                nebius._run(["vpc", "security-rule", "delete", "--id", rule_id])
+                deleted.append(rule_id)
+                if on_status:
+                    on_status(f"Removed ingress rule {name!r} ({rule_id}).")
+            except NebiusError as exc:
+                if on_status:
+                    on_status(f"Could not remove ingress rule {rule_id}: {exc}")
+    return deleted
+
+
+def remove_ingress_for_instance(
+    instance_id: str,
+    *,
+    on_status: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Remove npa-managed ingress rules from the instance security groups."""
+    instance = _get_instance(instance_id)
+    return remove_npa_ingress_rules(
+        _instance_security_group_ids(instance),
+        on_status=on_status,
+    )
 
 
 def ensure_ingress(

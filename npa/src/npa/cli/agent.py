@@ -25,7 +25,11 @@ from npa.clients.config import (
     write_config,
 )
 from npa.clients.env import redact_value
-from npa.clients.network import NetworkIngressError, ensure_ingress
+from npa.clients.network import (
+    NetworkIngressError,
+    ensure_ingress,
+    remove_ingress_for_instance,
+)
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.provisioner import ProvisionerError
@@ -246,6 +250,113 @@ def _remove_agent_record(project_alias: str, name: str) -> None:
     with CONFIG_PATH.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
     CONFIG_PATH.chmod(0o600)
+
+
+def _agent_extra_ingress_ports(
+    *,
+    agent_port: int,
+    rerun_port: int,
+    public_https: bool,
+) -> list[int]:
+    extra = [rerun_port]
+    if public_https:
+        extra.append(DEFAULT_HTTPS_PORT)
+    return sorted({port for port in extra if port != agent_port})
+
+
+def _agent_terraform_state_exists(project: str, name: str) -> bool:
+    tf_dir = provisioner.working_dir_path(project, name)
+    return (tf_dir / ".terraform").is_dir()
+
+
+def _resolve_destroy_tf_vars(
+    project: str,
+    name: str,
+    record: dict[str, Any] | None,
+) -> dict[str, str]:
+    state = resolve_terraform_state(project)
+    saved_env = resolve_environment(project)
+    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "us-central1")
+    project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
+    service_account_id = str((record or {}).get("service_account_id", "")).strip()
+    if not service_account_id:
+        creds = (record or {}).get("credentials", {})
+        if isinstance(creds, dict):
+            service_account_id = str(creds.get("service_account_id", "")).strip()
+    if not service_account_id:
+        service_account_id = _resolve_agent_service_account_id(project, record or {})
+    from npa.clients.nebius import get_iam_token
+
+    iam_token = get_iam_token()
+    return {
+        "nebius_project_id": project_id,
+        "nebius_region": region,
+        "service_account_id": service_account_id,
+        "iam_token": iam_token,
+        "instance_name": f"agent-{project}-{name}",
+        "server_port": str(DEFAULT_AGENT_PORT),
+        "workbench_type": "lerobot",
+        "gpu_platform": "cpu-d3",
+        "gpu_preset": "8vcpu-32gb",
+        "enable_preemptible": "false",
+        "nebius_api_key": state.access_key,
+        "nebius_secret_key": state.secret_key,
+        "s3_bucket": state.bucket,
+        "s3_endpoint": state.endpoint,
+        "extra_ingress_ports": "[]",
+    }
+
+
+def _cleanup_agent_ingress(instance_id: str) -> None:
+    if not str(instance_id or "").strip():
+        return
+    try:
+        remove_ingress_for_instance(
+            str(instance_id).strip(),
+            on_status=lambda msg: typer.echo(f"  {msg}"),
+        )
+    except NetworkIngressError as exc:
+        typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
+
+
+def _destroy_agent_terraform(
+    project: str,
+    name: str,
+    *,
+    record: dict[str, Any] | None = None,
+) -> None:
+    """Destroy the agent Terraform stack and optional npa-managed ingress rules."""
+    if not _agent_terraform_state_exists(project, name):
+        return
+    state = resolve_terraform_state(project)
+    if not state.bucket or not state.access_key or not state.secret_key:
+        _fail(
+            f"Terraform state backend is not configured for project {project!r}. "
+            "Run `npa configure` or redeploy once to persist terraform_state."
+        )
+    tf_vars = _resolve_destroy_tf_vars(project, name, record)
+    region = tf_vars["nebius_region"]
+    instance_id = str((record or {}).get("instance_id", "")).strip()
+    _cleanup_agent_ingress(instance_id)
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=state.bucket,
+        region=region,
+        endpoint=state.endpoint,
+    )
+    provisioner.init(
+        tf_dir=tf_dir,
+        backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
+    )
+    try:
+        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+    except ProvisionerError as first_exc:
+        _cleanup_agent_ingress(instance_id)
+        try:
+            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+        except ProvisionerError:
+            raise first_exc from None
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
@@ -4978,6 +5089,12 @@ def deploy_cmd(
     except NebiusError as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
 
+    public_https = not no_public_https
+    extra_ingress_ports = _agent_extra_ingress_ports(
+        agent_port=agent_port,
+        rerun_port=rerun_port,
+        public_https=public_https,
+    )
     merged_vars: dict[str, str] = {
         "nebius_project_id": env_project_id,
         "nebius_region": env_region,
@@ -4989,6 +5106,11 @@ def deploy_cmd(
         "s3_endpoint": str(creds.get("s3_endpoint", "")),
         "instance_name": f"agent-{project}-{name}",
         "server_port": str(agent_port),
+        "extra_ingress_ports": (
+            "[" + ",".join(str(port) for port in extra_ingress_ports) + "]"
+            if extra_ingress_ports
+            else "[]"
+        ),
         "workbench_type": "lerobot",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
@@ -5002,6 +5124,7 @@ def deploy_cmd(
         key, value = item.split("=", 1)
         merged_vars[key.strip()] = value.strip()
 
+    tf_outputs: dict[str, Any] = {}
     try:
         tf_dir = provisioner.prepare_working_dir(
             project,
@@ -5019,12 +5142,24 @@ def deploy_cmd(
         )
         tf_outputs = provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
     except ProvisionerError as exc:
+        try:
+            _destroy_agent_terraform(project, name)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"Terraform deploy failed: {exc}")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
     ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
     if not _is_routable_public_ip(public_ip):
+        try:
+            _destroy_agent_terraform(
+                project,
+                name,
+                record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
+            )
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail("Terraform output did not include a routable public IP")
 
     auth_password = secrets.token_urlsafe(18)
@@ -5044,7 +5179,12 @@ def deploy_cmd(
             "agent chat will return 503 until `npa agent bootstrap` with a configured key.",
             err=True,
         )
-    public_https = not no_public_https
+    rollback_record = {
+        "instance_id": instance_id,
+        "project_id": env_project_id,
+        "region": env_region,
+        "service_account_id": str(creds.get("service_account_id", "")),
+    }
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -5074,6 +5214,10 @@ def deploy_cmd(
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
+        try:
+            _destroy_agent_terraform(project, name, record=rollback_record)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
 
     ingress_ports: list[int] = [agent_port, rerun_port]
@@ -5082,6 +5226,10 @@ def deploy_cmd(
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
+        try:
+            _destroy_agent_terraform(project, name, record=rollback_record)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
@@ -5463,40 +5611,14 @@ def destroy_cmd(
 ) -> None:
     """Destroy agent VM/resources and remove saved config entry."""
     record = _agent_record(project, name)
-    if not record:
+    if not record and not _agent_terraform_state_exists(project, name):
         _fail(f"Agent config not found for {project}/{name}")
-    state = resolve_terraform_state(project)
-    region = str(record.get("region", "")) or "us-central1"
-    tf_vars = {
-        "nebius_project_id": str(record.get("project_id", "")),
-        "nebius_region": region,
-        "instance_name": f"agent-{project}-{name}",
-        "server_port": str(DEFAULT_AGENT_PORT),
-        "workbench_type": "lerobot",
-        "gpu_platform": "cpu-d3",
-        "gpu_preset": "8vcpu-32gb",
-        "enable_preemptible": "false",
-        "nebius_api_key": state.access_key,
-        "nebius_secret_key": state.secret_key,
-        "s3_bucket": state.bucket,
-        "s3_endpoint": state.endpoint,
-    }
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=state.bucket,
-        region=region,
-        endpoint=state.endpoint,
-    )
     try:
-        provisioner.init(
-            tf_dir=tf_dir,
-            backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
-        )
-        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+        _destroy_agent_terraform(project, name, record=record or None)
     except ProvisionerError as exc:
         _fail(f"Terraform destroy failed: {exc}")
-    _remove_agent_record(project, name)
+    if record:
+        _remove_agent_record(project, name)
     typer.echo(f"destroyed: {project}/{name}")
 
 

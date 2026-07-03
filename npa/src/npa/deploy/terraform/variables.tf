@@ -83,6 +83,12 @@ variable "server_port" {
   default     = 8080
 }
 
+variable "extra_ingress_ports" {
+  description = "Additional TCP ingress ports exposed alongside server_port"
+  type        = list(number)
+  default     = []
+}
+
 variable "workbench_type" {
   description = "Workbench bootstrap type rendered into cloud-init"
   type        = string

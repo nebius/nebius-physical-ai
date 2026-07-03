@@ -54,7 +54,7 @@ resource "nebius_vpc_v1_security_rule" "allow_server" {
 
   ingress = {
     source_cidrs      = [var.ssh_cidr_block]
-    destination_ports = [var.server_port]
+    destination_ports = distinct(concat([var.server_port], var.extra_ingress_ports))
   }
 }
 
