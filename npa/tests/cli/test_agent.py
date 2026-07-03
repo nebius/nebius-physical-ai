@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from npa.cli.agent import AGENT_UI_VERSION, app, build_agent_urls
+from npa.cli.agent import AGENT_UI_VERSION, _normalize_llm_models, app, build_agent_urls
 
 runner = CliRunner()
 
@@ -51,6 +51,7 @@ def test_agent_help_smoke() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "deploy" in result.output
+    assert "fresh-setup" in result.output
     assert "bootstrap" in result.output
     assert "verify-live" in result.output
 
@@ -61,8 +62,11 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '@app.post("/chat")' in source
     assert '@app.get("/session")' in source
+    assert '@app.get("/models")' in source
     assert "Workbench Chat" in source
     assert "NEBIUS_TOKEN_FACTORY_KEY" in source
+    assert "NPA_AGENT_LLM_MODELS" in source
+    assert 'id="chatModel"' in source
     assert "llm.env" in source
     assert "renderInlineMarkdownLite" in source
     assert "showThinkingBubble" in source
@@ -80,7 +84,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "Always use real registry-qualified images" in source
     assert "`<your-registry-id>` placeholders" in source
     assert "sky gpus list" in source
-    bootstrap_split = f'        const lines = String(text || "").split(/\\r?\\n/);'
+    bootstrap_split = '        const lines = String(text || "").split(/\\r?\\n/);'
     assert "\r" not in bootstrap_split
     assert "\\r?\\n" in bootstrap_split
     assert "restoreSession" in source
@@ -100,6 +104,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "normalizedPath === \"/welcome\"" in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
+    assert "setChatModels" in source
+    assert "selectedChatModel" in source
     assert "startApp()" in source
     assert "function bindClick(" in source
     assert "function wireUi()" in source
@@ -110,6 +116,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "initNpaAgentUi" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
+    assert "@media (max-width: 900px)" in source
+    assert "safe-area-inset-bottom" in source
 
 
 def test_watch_intent_uses_live_sim_viz_status() -> None:
@@ -319,6 +327,19 @@ def test_resolve_deploy_llm_credentials_reads_credentials(monkeypatch) -> None:
     key, model = _resolve_deploy_llm_credentials()
     assert key == "tf-test-key"
     assert model == "nvidia/Cosmos3-Super-Reasoner"
+
+
+def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
+    models = _normalize_llm_models(
+        [
+            "nvidia/Cosmos3-Super-Reasoner,meta-llama/Llama-3.3-70B-Instruct",
+            "Qwen/Qwen2.5-VL-72B-Instruct",
+            "meta-llama/Llama-3.3-70B-Instruct",
+        ]
+    )
+    assert models[0] == "nvidia/Cosmos3-Super-Reasoner"
+    assert "meta-llama/Llama-3.3-70B-Instruct" in models
+    assert "Qwen/Qwen2.5-VL-72B-Instruct" in models
 
 
 def test_agent_status_json(monkeypatch) -> None:
@@ -715,6 +736,19 @@ def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
+
+
+def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "storage.eu-north1.nebius.cloud/cli/install.sh" in source
+    assert "--token-file /mnt/cloud-metadata/token" in source
+    assert 'nebius_profile = "cursor-sa"' in source
+    assert "--profile {nebius_profile}" in source
+    assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
+    assert "nebius CLI binary not found after install" in source
+    assert "--parent-id" in source
 
 
 def test_list_recordings_intent_routing() -> None:

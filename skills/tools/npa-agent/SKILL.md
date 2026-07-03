@@ -18,6 +18,7 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 ## Bootstrap And Verify
 
 ```bash
+npa/.venv/bin/npa agent fresh-setup --project rtxpro --name agent --project-id <project-id> --tenant-id <tenant-id> --region us-central1
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
 # Existing agents missing credentials: refresh long-lived npa-agent SA + restage VM env
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent --refresh-credentials
@@ -69,6 +70,8 @@ access. GPU train YAML and SkyPilot config resolve from the project `kubernetes`
 block (`gpu_profile: rtxpro`, `byof_train_yaml`, `skypilot_config`).
 
 Auth secrets live at `~/.npa/agents/<project>/<name>/auth.env` (`AGENT_USER`, `AGENT_PASSWORD`).
+Agent bootstrap now stages operator config + credentials on the VM at `~/.npa/{config,credentials}.yaml` so the VM can run infra commands without re-entering project metadata. Bootstrap also installs Nebius CLI (if missing) and seeds a `cursor-sa` profile backed by `/mnt/cloud-metadata/token` when the VM has attached SA metadata; if token-backed profile setup is present but unusable, bootstrap fails fast instead of silently skipping it.
+Token Factory model selection is configurable via `--llm-model` and `--llm-models` (`NPA_AGENT_LLM_MODEL` and `NPA_AGENT_LLM_MODELS` on the VM), with `/api/models` exposed for UI/model picker refresh.
 
 ## Customer HTTPS Access
 
