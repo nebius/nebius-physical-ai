@@ -65,6 +65,10 @@ workflow environment variables.
 ## Gotchas
 
 - Use `https://storage.eu-north1.nebius.cloud` for the current primary region.
+- On Nebius VMs with an attached service account, IAM token resolution can use
+  service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
+  when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a
+  substitute for explicit operator-machine profile setup.
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
   Unauthorized`, refresh the registry pull secret in the namespace that owns the
   pod.

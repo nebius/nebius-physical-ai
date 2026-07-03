@@ -329,18 +329,51 @@ def test_nebius_warns_once_on_cli_version_mismatch(mocker) -> None:
 
 
 def test_nebius_run_json_and_token(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run", side_effect=['{"ok": true}', "", "token"])
+    mocker.patch("npa.clients.nebius._run", side_effect=['{"ok": true}', "token"])
 
     assert nebius._run_json(["cmd"]) == {"ok": True}
-    assert nebius._run_json(["empty"]) == {}
     assert nebius.get_iam_token() == "token"
 
 
-def test_nebius_empty_token_errors(mocker) -> None:
+def test_nebius_run_json_empty_payload(mocker) -> None:
     mocker.patch("npa.clients.nebius._run", return_value="")
 
-    with pytest.raises(NebiusError, match="empty token"):
+    assert nebius._run_json(["empty"]) == {}
+
+
+def test_nebius_iam_token_errors_when_all_sources_missing(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", return_value="")
+    mocker.patch("npa.clients.nebius._env_iam_token", return_value="")
+    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=[])
+    mocker.patch("npa.clients.nebius._metadata_iam_token", return_value="")
+
+    with pytest.raises(NebiusError, match="Unable to resolve IAM token"):
         nebius.get_iam_token()
+
+
+def test_nebius_iam_token_from_env(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", return_value="")
+    mocker.patch("npa.clients.nebius._env_iam_token", return_value="env-token")
+
+    assert nebius.get_iam_token() == "env-token"
+
+
+def test_nebius_iam_token_from_file_when_cli_unconfigured(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no profile"))
+    mocker.patch("npa.clients.nebius._env_iam_token", return_value="")
+    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=["/tmp/token"])
+    mocker.patch("npa.clients.nebius._read_iam_token_file", return_value="file-token")
+
+    assert nebius.get_iam_token() == "file-token"
+
+
+def test_nebius_iam_token_from_metadata_fallback(mocker) -> None:
+    mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no profile"))
+    mocker.patch("npa.clients.nebius._env_iam_token", return_value="")
+    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=[])
+    mocker.patch("npa.clients.nebius._metadata_iam_token", return_value="meta-token")
+
+    assert nebius.get_iam_token() == "meta-token"
 
 
 def test_nebius_service_account_reuses_existing(mocker) -> None:

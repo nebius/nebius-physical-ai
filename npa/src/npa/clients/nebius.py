@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import warnings
 from datetime import datetime, timezone
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+from urllib import request as urllib_request
 
 from npa.smoke._versions import supported_tool_version
 
@@ -124,12 +127,87 @@ def _run_json(args: list[str], *, check: bool = True) -> dict[str, Any]:
 # ── IAM token ────────────────────────────────────────────────────────────
 
 
+_IAM_TOKEN_ENV_KEYS = ("NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN")
+_IAM_TOKEN_FILE_ENV_KEYS = ("NPA_NEBIUS_IAM_TOKEN_FILE", "NEBIUS_IAM_TOKEN_FILE")
+_DEFAULT_IAM_TOKEN_FILES = (
+    "/mnt/cloud-metadata/token",
+    "/run/secrets/nebius/iam_token",
+)
+_METADATA_SA_TOKEN_URL = "http://metadata.nebius.internal/v1/iam/sa/token/access_token"
+
+
+def _env_iam_token() -> str:
+    for key in _IAM_TOKEN_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _candidate_iam_token_files() -> list[str]:
+    candidates: list[str] = []
+    for key in _IAM_TOKEN_FILE_ENV_KEYS:
+        path = os.environ.get(key, "").strip()
+        if path and path not in candidates:
+            candidates.append(path)
+    for path in _DEFAULT_IAM_TOKEN_FILES:
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
+
+
+def _read_iam_token_file(path: str) -> str:
+    candidate = path.strip()
+    if not candidate:
+        return ""
+    try:
+        return Path(candidate).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _metadata_iam_token(timeout_s: float = 2.0) -> str:
+    req = urllib_request.Request(
+        _METADATA_SA_TOKEN_URL,
+        method="GET",
+        headers={"Metadata": "true"},
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=timeout_s) as resp:
+            return resp.read().decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
 def get_iam_token() -> str:
-    """Obtain a short-lived IAM access token via ``nebius iam get-access-token``."""
-    token = _run(["iam", "get-access-token"])
-    if not token:
-        raise NebiusError("nebius iam get-access-token returned an empty token")
-    return token
+    """Resolve an IAM token from CLI profile, env/file overrides, or VM metadata."""
+    cli_error: str = ""
+    try:
+        token = _run(["iam", "get-access-token"])
+    except NebiusError as exc:
+        token = ""
+        cli_error = str(exc)
+    if token:
+        return token
+
+    env_token = _env_iam_token()
+    if env_token:
+        return env_token
+
+    for candidate in _candidate_iam_token_files():
+        file_token = _read_iam_token_file(candidate)
+        if file_token:
+            return file_token
+
+    metadata_token = _metadata_iam_token()
+    if metadata_token:
+        return metadata_token
+
+    detail = f" Last CLI error: {cli_error}" if cli_error else ""
+    raise NebiusError(
+        "Unable to resolve IAM token from Nebius CLI profile, environment, token files, "
+        f"or metadata endpoint ({_METADATA_SA_TOKEN_URL}).{detail}"
+    )
 
 
 # ── Profile-derived defaults ─────────────────────────────────────────────
