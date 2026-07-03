@@ -5189,15 +5189,15 @@ def fresh_setup_cmd(
         _fail(
             f"Agent {project}/{name} already exists. Use --replace or choose a new --project/--name."
         )
+    if existing and replace:
+        typer.echo(f"Replacing existing agent {project}/{name} ...")
+        destroy_cmd(project=project, name=name)
     _store_project_environment(
         project=project,
         project_id=project_id.strip(),
         tenant_id=tenant_id.strip(),
         region=region.strip(),
     )
-    if existing and replace:
-        typer.echo(f"Replacing existing agent {project}/{name} ...")
-        destroy_cmd(project=project, name=name)
     deploy_cmd(
         project=project,
         name=name,
