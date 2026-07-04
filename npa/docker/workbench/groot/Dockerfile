@@ -205,6 +205,10 @@ RUN cd "${GROOT_REPO}" \
       "jaraco.context>=6.1.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
+      "pillow>=12.2.0" \
+      "python-multipart>=0.0.30" \
+      "starlette>=1.3.1" \
+      "tornado>=6.5.6" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
@@ -214,7 +218,26 @@ RUN python3.11 -m venv /opt/isaac-lab/venv \
     && /opt/isaac-lab/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/isaac-lab/venv/bin/python -m pip install \
       "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}" \
-      --extra-index-url https://pypi.nvidia.com
+      --extra-index-url https://pypi.nvidia.com \
+    && /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
+      "GitPython>=3.1.50" \
+      "PyJWT>=2.13.0" \
+      "aiohttp>=3.13.3" \
+      "aiomysql>=0.3.0" \
+      "azure-core>=1.38.0" \
+      "cryptography>=48.0.1" \
+      "diffusers>=0.38.0" \
+      "jaraco.context>=6.1.0" \
+      "msgpack>=1.2.1" \
+      "onnx>=1.21.0" \
+      "pillow>=12.2.0" \
+      "python-multipart>=0.0.30" \
+      "starlette>=1.3.1" \
+      "tornado>=6.5.6" \
+      "transformers>=5.3.0" \
+      "urllib3>=2.7.0" \
+      "wheel>=0.46.2" \
+    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true)
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
