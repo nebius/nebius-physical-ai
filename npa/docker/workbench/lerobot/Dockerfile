@@ -82,7 +82,8 @@ RUN python3.12 -m venv /opt/lerobot/venv \
       num2words \
       tensorboard \
       "uvicorn[standard]" \
-    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0"
+    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/lerobot/venv/bin/pip uninstall -y wandb
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
