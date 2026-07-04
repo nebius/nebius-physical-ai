@@ -669,6 +669,22 @@ def destroy_cluster(
                 check=False,
                 timeout=timeout_minutes * 60,
             )
+            # Wait for the cluster to actually disappear before cleaning up VPC
+            # allocations below. The delete call can return while the cluster (and
+            # its cloud-controller-manager) still exists; if we delete the static-IP
+            # allocation while the CCM is alive it will re-create a same-named orphan
+            # that isn't in terraform state, and the next deploy fails with
+            # "Allocation ... already exists" (AlreadyExists). Poll get until gone.
+            deadline = time.monotonic() + timeout_minutes * 60
+            while time.monotonic() < deadline:
+                gone = _run_capture(
+                    [nebius_bin, "mk8s", "cluster", "get", "--id", cluster_id, "--format", "json"],
+                    env=env,
+                    check=False,
+                )
+                if gone.returncode != 0 or not gone.stdout.strip():
+                    break
+                time.sleep(15)
 
     # Best-effort delete filesystems this cluster created (jail / controller-spool
     # / accounting are named ``soperator-<name>-*``) so they don't linger against
