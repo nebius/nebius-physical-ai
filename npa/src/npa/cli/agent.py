@@ -2429,12 +2429,18 @@ def _agent_k8s_backends(project: str = "") -> dict:
                 "state_exists": state_path.is_file(),
             }})
     ready, reason = _agent_npa_ready()
+    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
     return {{
         "ok": True,
         "project": alias,
         "configured": configured,
         "local_clusters": local_clusters,
-        "has_infra": bool(configured or any(item.get("kubeconfig_exists") for item in local_clusters)),
+        "cloud_clusters": cloud_clusters,
+        "has_infra": bool(
+            configured
+            or any(item.get("kubeconfig_exists") for item in local_clusters)
+            or cloud_clusters
+        ),
         "agent_npa_ready": ready,
         "agent_npa_error": reason,
         "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
@@ -2470,6 +2476,53 @@ def _agent_command_env() -> dict:
                 if env.get("TF_VAR_ssh_public_key"):
                     break
     return env
+
+
+def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
+    config = _load_agent_config_yaml()
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        projects = {{}}
+    project_block = projects.get(_agent_project_alias(project))
+    if not isinstance(project_block, dict):
+        project_block = {{}}
+    parent_id = str(os.environ.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
+    if not parent_id:
+        return []
+    nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
+    if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
+        return []
+    try:
+        proc = subprocess.run(
+            [nebius_bin, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return []
+        payload = json.loads(proc.stdout or "{{}}")
+    except Exception:
+        return []
+    items = payload.get("items") if isinstance(payload, dict) else []
+    clusters: list[dict] = []
+    if not isinstance(items, list):
+        return clusters
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
+        status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
+        clusters.append({{
+            "source": "nebius_mk8s",
+            "id": str(metadata.get("id") or ""),
+            "name": str(metadata.get("name") or ""),
+            "status": str(status.get("state") or status.get("status") or ""),
+            "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
+        }})
+    return clusters
 
 
 def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:

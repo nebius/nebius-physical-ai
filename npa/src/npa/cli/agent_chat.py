@@ -688,6 +688,7 @@ def format_infra_backends(state: dict[str, Any]) -> str:
         infra = {}
     configured = infra.get("configured") if isinstance(infra.get("configured"), list) else []
     local_clusters = infra.get("local_clusters") if isinstance(infra.get("local_clusters"), list) else []
+    cloud_clusters = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
     has_infra = bool(infra.get("has_infra"))
     project = str(infra.get("project") or "default")
     lines = [
@@ -713,6 +714,15 @@ def format_infra_backends(state: dict[str, Any]) -> str:
                     "  - "
                     f"`{item.get('cluster_name') or item.get('context') or 'cluster'}` "
                     f"kubeconfig_exists=`{bool(item.get('kubeconfig_exists'))}`"
+                )
+    if cloud_clusters:
+        lines.append("- **Nebius MK8s clusters**:")
+        for item in cloud_clusters[:5]:
+            if isinstance(item, dict):
+                lines.append(
+                    "  - "
+                    f"`{item.get('name') or item.get('id') or 'cluster'}` "
+                    f"id=`{item.get('id', '')}` status=`{item.get('status', '')}`"
                 )
     if not has_infra:
         lines.extend(
