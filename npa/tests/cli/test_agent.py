@@ -476,6 +476,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
             return _Resp({"ok": True})
+        if url_s.endswith("/api/infra/k8s"):
+            return _Resp({"ok": True, "agent_npa_ready": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
@@ -537,6 +539,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
             return _Resp({"ok": True, "run_id": "agent-run-123"})
+        if url_s.endswith("/api/workflows/submit"):
+            return _Resp(
+                {
+                    "ok": True,
+                    "submit_mode": "agent-live-infra-dry-run",
+                    "scheduler_plan": {"ok": True},
+                    "run_id": "verify-live-agent-infra",
+                }
+            )
         if url_s.endswith("/api/sim-viz/load-franka-demo"):
             return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
         if url_s.endswith("/api/sim-viz/camera-preview"):
@@ -743,7 +754,12 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
 
     class _DummySsh:
         def upload_file(self, local_path: str, _remote_path: str) -> None:
-            captured["setup_script"] = Path(local_path).read_text(encoding="utf-8")
+            try:
+                text = Path(local_path).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return
+            if "npa-agent-bootstrap" in _remote_path:
+                captured["setup_script"] = text
 
         def run_or_raise(self, _command: str) -> None:
             return None
