@@ -843,6 +843,7 @@ def _write_agent_nebius_env(
     if iam_token.strip():
         env_lines.extend(
             [
+                "NEBIUS_PROFILE=agent-bootstrap",
                 f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
                 f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
                 f"TF_VAR_iam_token={iam_token.strip()}",
@@ -855,6 +856,29 @@ def _write_agent_nebius_env(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
+    if iam_token.strip():
+        ssh.run_or_raise(
+            "sudo bash -lc "
+            + shlex.quote(
+                "\n".join(
+                    [
+                        "set -euo pipefail",
+                        "set -a",
+                        ". /opt/npa-agent/nebius.env",
+                        "set +a",
+                        "mkdir -p /root/.npa",
+                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
+                        "chmod 600 /root/.npa/nebius-token",
+                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
+                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
+                        "if [ -n \"$NEBIUS_BIN\" ]; then",
+                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
+                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
+                        "fi",
+                    ]
+                )
+            )
+        )
 
 
 def _create_agent_source_archive() -> str:
