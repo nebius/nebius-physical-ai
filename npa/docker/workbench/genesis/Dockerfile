@@ -84,8 +84,8 @@ RUN python3 -m venv /opt/genesis/venv \
       "rich==15.0.0" \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
-      "pillow>=12.2.0" \
       "pyarrow==24.0.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.2.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
     && /opt/genesis/venv/bin/pip uninstall -y wandb
 
