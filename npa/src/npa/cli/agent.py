@@ -2455,7 +2455,7 @@ def _agent_command_env() -> dict:
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
             if Path(candidate).is_file():
-                env["TF_VAR_ssh_public_key"] = json.dumps({"path": candidate})
+                env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
                 break
     return env
 
