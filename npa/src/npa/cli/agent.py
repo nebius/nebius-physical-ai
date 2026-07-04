@@ -774,21 +774,25 @@ def _write_agent_operator_profile(
     config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
     creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
     user_home = f"/home/{ssh_user}"
-    npa_dir = f"{user_home}/.npa"
-    config_path = f"{npa_dir}/config.yaml"
-    creds_path = f"{npa_dir}/credentials.yaml"
-    ssh.run_or_raise(
-        " && ".join(
+    targets = [
+        (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
+        ("/root/.npa", "root:root"),
+    ]
+    commands: list[str] = []
+    for npa_dir, owner in targets:
+        config_path = f"{npa_dir}/config.yaml"
+        creds_path = f"{npa_dir}/credentials.yaml"
+        commands.extend(
             [
                 f"sudo mkdir -p {shlex.quote(npa_dir)}",
                 f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
                 f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {shlex.quote(npa_dir)}",
+                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
                 f"sudo chmod 700 {shlex.quote(npa_dir)}",
                 f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
             ]
         )
-    )
+    ssh.run_or_raise(" && ".join(commands))
 
 
 def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
