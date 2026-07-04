@@ -193,7 +193,22 @@ RUN cd "${GROOT_REPO}" \
       paramiko==4.0.0 \
       pyyaml==6.0.3 \
       rich==15.0.0 \
-      jinja2==3.1.6
+      jinja2==3.1.6 \
+    && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
+      "GitPython>=3.1.50" \
+      "PyJWT>=2.13.0" \
+      "aiohttp>=3.13.3" \
+      "aiomysql>=0.3.0" \
+      "azure-core>=1.38.0" \
+      "cryptography>=48.0.1" \
+      "diffusers>=0.38.0" \
+      "jaraco.context>=6.1.0" \
+      "msgpack>=1.2.1" \
+      "onnx>=1.21.0" \
+      "transformers>=5.3.0" \
+      "urllib3>=2.7.0" \
+      "wheel>=0.46.2" \
+    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
 
 RUN python3.11 -m venv /opt/isaac-lab/venv \
     && /opt/isaac-lab/venv/bin/python -m pip install --upgrade pip setuptools wheel \
@@ -251,6 +266,7 @@ RUN apt-get update \
       software-properties-common \
     && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /opt/nvidia/nsight-compute \
+    && rm -rf /home/ubuntu/.cache /root/.cache \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
