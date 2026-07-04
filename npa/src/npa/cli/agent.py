@@ -2462,7 +2462,14 @@ def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     return path
 
 
-def _provision_agent_infra(project: str, cluster_name: str, *, dry_run: bool = False, validate: bool = True) -> dict:
+def _provision_agent_infra(
+    project: str,
+    cluster_name: str,
+    *,
+    dry_run: bool = False,
+    validate: bool = True,
+    skip_s3: bool = True,
+) -> dict:
     ready, reason = _agent_npa_ready()
     if not ready:
         return {{"ok": False, "status": "blocked", "error": reason}}
@@ -2473,6 +2480,7 @@ def _provision_agent_infra(project: str, cluster_name: str, *, dry_run: bool = F
             project=project or None,
             cluster_name=cluster_name or "npa-cluster",
             terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+            skip_s3=skip_s3,
             validate=validate,
             sky_smoke=False,
             dry_run=dry_run,
@@ -3309,7 +3317,8 @@ def provision_infra(payload: dict | None = None):
     cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
     dry_run = bool(body.get("dry_run", False))
     validate = bool(body.get("validate", True))
-    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate)
+    skip_s3 = bool(body.get("skip_s3", True))
+    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
     status = _agent_k8s_backends(project)
     return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
 
@@ -3399,7 +3408,13 @@ def submit_npa_workflow(payload: dict):
         return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
     provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
     if allow_provision and (dry_run or not infra_before.get("has_infra")):
-        provision = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate_infra)
+        provision = _provision_agent_infra(
+            project,
+            cluster_name,
+            dry_run=dry_run,
+            validate=validate_infra,
+            skip_s3=bool(body.get("skip_s3", True)),
+        )
         if not provision.get("ok"):
             infra_error = dict(infra_before)
             infra_error["provision_error"] = provision.get("error") or provision
