@@ -484,7 +484,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
+                '<body><div id="mobileChatAuth"></div><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
                 'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
             )
             return _Resp(html, status_code=200)
