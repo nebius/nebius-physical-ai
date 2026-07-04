@@ -87,10 +87,10 @@ STOCK_FRANKA_SELECTION = {
 }
 
 UI_BUTTON_IDS = (
-    "chatSend",
     "chatActionS3",
     "chatActionCosmos",
     "chatActionWatch",
+    "newChatSession",
     "loadFrankaRerun",
     "openRerun",
     "applySelection",
