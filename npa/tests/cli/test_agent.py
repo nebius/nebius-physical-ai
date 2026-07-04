@@ -116,6 +116,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "initNpaAgentUi" in source
     assert 'id="chatForm"' in source
     assert "mobile-agent" in source
+    assert 'name="viewport" content="width=device-width' in source
+    assert "mobileChatAuth" in source
     assert "npa_agent_basic_auth" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source

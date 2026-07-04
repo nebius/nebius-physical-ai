@@ -3084,6 +3084,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
     <title>NPA Agent</title>
@@ -3105,12 +3106,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         --shadow: 0 8px 22px rgba(30, 31, 34, 0.08);
       }}
       * {{ box-sizing: border-box; }}
+      html {{
+        overflow-x: hidden;
+        width: 100%;
+        max-width: 100%;
+        -webkit-text-size-adjust: 100%;
+      }}
       body {{
         margin: 0;
         padding-bottom: 36px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: var(--bg);
         color: var(--text);
+        overflow-x: hidden;
+        width: 100%;
+        max-width: 100%;
+      }}
+      img, video, iframe, pre, textarea, select, input, .panel, .page, .chrome {{
+        max-width: 100%;
       }}
       .chrome {{
         max-width: 1640px;
@@ -3203,6 +3216,34 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .mobile-only-toggle {{ display: none; }}
       .chat-composer {{
         background: var(--surface);
+      }}
+      .mobile-chat-auth {{
+        display: none;
+        margin: 0 0 10px;
+        padding: 12px;
+        border: 1px solid #fcd34d;
+        border-radius: 10px;
+        background: #fffbeb;
+      }}
+      .mobile-chat-auth-row {{
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }}
+      .mobile-chat-auth-row input {{
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d4d8e2;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 16px;
+      }}
+      body.mobile-agent.mobile-needs-auth .mobile-chat-auth {{
+        display: block;
+      }}
+      body.mobile-agent.mobile-needs-auth #chatForm {{
+        opacity: 0.55;
+        pointer-events: none;
       }}
       .chat-toolbar {{
         display: flex;
@@ -3472,15 +3513,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       body.mobile-agent {{
         padding-bottom: calc(56px + env(safe-area-inset-bottom));
+        overflow-x: hidden;
       }}
       body.mobile-agent .chrome {{
-        max-width: none;
+        max-width: 100%;
+        width: 100%;
+        overflow-x: hidden;
       }}
       body.mobile-agent .page {{
         display: flex;
         flex-direction: column;
         gap: 10px;
         padding: 10px 10px calc(68px + env(safe-area-inset-bottom));
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+      }}
+      body.mobile-agent .panel {{
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
       }}
       body.mobile-agent .chat-panel {{
         display: flex;
@@ -3541,6 +3593,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         min-height: 36px;
       }}
       body.mobile-agent .topbar .badge {{
+        display: none;
+      }}
+      body.mobile-agent .brand-sub {{
+        display: none;
+      }}
+      body.mobile-agent .brand {{
+        font-size: 11px;
+        line-height: 1.35;
+        word-break: break-word;
+      }}
+      body.mobile-agent .chat-toolbar .hint {{
         display: none;
       }}
       .workflow-panel textarea {{
@@ -3624,6 +3687,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </label>
           </div>
           <div id="chatLog" class="chat-log"></div>
+          <div id="mobileChatAuth" class="mobile-chat-auth" aria-live="polite">
+            <p class="hint">Mobile chat needs your agent password once on this device.</p>
+            <div class="mobile-chat-auth-row">
+              <input id="mobileChatPassword" type="password" placeholder="Agent password" autocomplete="current-password">
+              <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
+            </div>
+          </div>
           <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
             <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
             <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
@@ -3803,6 +3873,55 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return "";
         }}
       }}
+      function persistMobileBasicAuth(user, pass) {{
+        const token = "Basic " + btoa(unescape(encodeURIComponent(String(user || "") + ":" + String(pass || ""))));
+        try {{
+          sessionStorage.setItem("npa_agent_basic_auth", token);
+        }} catch (_err) {{ /* ignore */ }}
+        return token;
+      }}
+      function setMobileAuthNeeded(needed) {{
+        if (!document.body.classList.contains("mobile-agent")) return;
+        document.body.classList.toggle("mobile-needs-auth", Boolean(needed));
+        if (!needed) {{
+          document.body.classList.add("mobile-auth-ready");
+        }}
+      }}
+      async function probeMobileChatAuth() {{
+        if (!document.body.classList.contains("mobile-agent")) return true;
+        if (mobileAuthHeader()) {{
+          setMobileAuthNeeded(false);
+          return true;
+        }}
+        try {{
+          const resp = await fetch("/api/health", {{ credentials: "include", cache: "no-store" }});
+          if (resp.ok) {{
+            setMobileAuthNeeded(false);
+            return true;
+          }}
+        }} catch (_err) {{ /* fall through */ }}
+        setMobileAuthNeeded(true);
+        return false;
+      }}
+      async function unlockMobileChatAuth(password) {{
+        const pass = String(password || "").trim();
+        if (!pass) {{
+          throw new Error("Enter your agent password.");
+        }}
+        persistMobileBasicAuth("{DEFAULT_AGENT_USER}", pass);
+        const resp = await fetch("/api/health", {{
+          credentials: "include",
+          cache: "no-store",
+          headers: {{ Authorization: mobileAuthHeader() }},
+        }});
+        if (!resp.ok) {{
+          try {{ sessionStorage.removeItem("npa_agent_basic_auth"); }} catch (_err) {{ /* ignore */ }}
+          throw new Error("Invalid password — try again or reopen /login-help.html.");
+        }}
+        setMobileAuthNeeded(false);
+        showToast("Chat unlocked", "success");
+        return true;
+      }}
       function withMobileAuth(headers) {{
         const merged = {{ ...(headers || {{}}) }};
         const auth = mobileAuthHeader();
@@ -3812,7 +3931,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return merged;
       }}
       applyMobileLayout();
+      window.addEventListener("resize", applyMobileLayout);
       const chatHistory = [];
+      let chatSendInFlight = false;
       let thinkingNode = null;
       function setStatus(text) {{
         const bar = document.getElementById("statusBar");
@@ -3872,6 +3993,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const open = document.body.classList.toggle("mobile-show-panels");
             mobileToggle.setAttribute("aria-expanded", open ? "true" : "false");
             mobileToggle.textContent = open ? "Hide panels" : "Panels";
+          }});
+        }}
+        const mobileAuthBtn = document.getElementById("mobileChatAuthBtn");
+        const mobileAuthPass = document.getElementById("mobileChatPassword");
+        if (mobileAuthBtn && mobileAuthPass) {{
+          mobileAuthBtn.addEventListener("click", async () => {{
+            try {{
+              mobileAuthBtn.disabled = true;
+              await unlockMobileChatAuth(mobileAuthPass.value);
+              mobileAuthPass.value = "";
+            }} catch (err) {{
+              showToast(String(err && err.message ? err.message : err), "error");
+            }} finally {{
+              mobileAuthBtn.disabled = false;
+            }}
+          }});
+          mobileAuthPass.addEventListener("keydown", async (event) => {{
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            mobileAuthBtn.click();
           }});
         }}
         bindClick("chatActionS3", () => {{
@@ -4258,12 +4399,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function sendChat() {{
         const input = document.getElementById("chatInput");
+        if (!input) {{
+          throw new Error("Chat input missing");
+        }}
+        if (chatSendInFlight) {{
+          return false;
+        }}
+        if (document.body.classList.contains("mobile-agent") && document.body.classList.contains("mobile-needs-auth")) {{
+          showToast("Unlock chat with your agent password first.", "error");
+          return false;
+        }}
         const text = String(input.value || "").trim();
         const model = selectedChatModel();
         if (!text) {{
           showToast("Enter a message first", "info");
           return false;
         }}
+        chatSendInFlight = true;
         input.value = "";
         appendChat("user", text);
         chatHistory.push({{ role: "user", content: text }});
@@ -4299,6 +4451,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           appendChat("error", String(err));
           throw err;
         }} finally {{
+          chatSendInFlight = false;
           setChatBusy(false);
           input.focus();
         }}
@@ -4702,6 +4855,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         if (!resp.ok) {{
           if (resp.status === 401) {{
+            if (document.body.classList.contains("mobile-agent")) {{
+              setMobileAuthNeeded(true);
+              throw new Error("Unlock chat with your agent password.");
+            }}
             window.location.href = "/login-help.html";
             throw new Error("Authentication required. Open / and sign in with HTTP Basic Auth.");
           }}
@@ -5225,10 +5382,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           showToast("UI wiring failed: " + String(err), "error");
           console.error(err);
         }}
-        bootPage().catch((err) => {{
-          showToast("Boot failed: " + String(err), "error");
-          console.error(err);
-        }});
+        probeMobileChatAuth()
+          .catch(() => false)
+          .finally(() => {{
+            bootPage().catch((err) => {{
+              showToast("Boot failed: " + String(err), "error");
+              console.error(err);
+            }});
+          }});
         const armPeriodic = () => startPeriodicRefresh();
         document.addEventListener("click", armPeriodic, {{ once: true }});
         document.addEventListener("keydown", armPeriodic, {{ once: true }});
@@ -6251,7 +6412,9 @@ def verify_live_cmd(
         _fail(f"UI html fetch failed (status={ui_resp.status_code})")
     ui_html = ui_resp.text
     for marker in (
+        'name="viewport" content="width=device-width',
         'id="chatForm"',
+        'id="mobileChatAuth"',
         "function sendChat(",
         "function wireUi(",
         "initNpaAgentUi",
