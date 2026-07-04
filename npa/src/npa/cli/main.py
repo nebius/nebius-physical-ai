@@ -658,3 +658,7 @@ def _detect_error_format() -> str:
         if value in {"--output=json", "--output-format=json", "--format=json"}:
             return "json"
     return "text"
+
+
+if __name__ == "__main__":
+    app_entry()
