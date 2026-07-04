@@ -215,6 +215,29 @@ def _terraform_cluster_id(terraform_bin: str, install_dir: Path, env: dict[str, 
     return ""
 
 
+def _find_cluster_id_by_name(
+    nebius_bin: str, project_id: str, cluster_name: str, env: dict[str, str]
+) -> str:
+    """Return the mk8s cluster id matching *cluster_name* (empty if none)."""
+
+    result = _run_capture(
+        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json"],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return ""
+    try:
+        items = json.loads(result.stdout).get("items", [])
+    except json.JSONDecodeError:
+        return ""
+    for item in items:
+        meta = item.get("metadata", {})
+        if meta.get("name") == cluster_name and meta.get("id"):
+            return str(meta["id"])
+    return ""
+
+
 def _refresh_kube_credentials(
     nebius_bin: str, cluster_id: str, context: str, env: dict[str, str]
 ) -> None:
@@ -588,6 +611,14 @@ def destroy_cluster(
         or env.get("TF_VAR_iam_project_id")
         or ""
     )
+    # An interrupted deploy can leave the cloud cluster running while local
+    # Terraform state is empty, so cluster_id is blank here. Fall back to finding
+    # the mk8s cluster by its recipe name (soperator-<name>) so destroy can still
+    # tear it down instead of silently no-op'ing.
+    if not cluster_id and project_id:
+        cluster_id = _find_cluster_id_by_name(nebius_bin, project_id, f"soperator-{name}", env)
+        if cluster_id:
+            _log(on_status, f"terraform state empty; found cluster {cluster_id} by name")
 
     # Reclaim CSI-provisioned PVC disks (NFS + any dynamic volumes) BEFORE the
     # cluster is torn down. Deleting the mk8s cluster does NOT cascade-delete the
