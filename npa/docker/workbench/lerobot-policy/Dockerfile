@@ -48,7 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 USER ubuntu
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

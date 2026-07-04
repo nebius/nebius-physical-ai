@@ -85,7 +85,8 @@ RUN python3.12 -m venv /opt/lerobot/venv \
       wandb
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py

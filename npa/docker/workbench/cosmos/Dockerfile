@@ -94,7 +94,8 @@ RUN python3 -m venv /opt/cosmos/venv \
     && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl
 
 ENV PATH=/opt/cosmos/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

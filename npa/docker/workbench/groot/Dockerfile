@@ -92,7 +92,8 @@ USER ubuntu
 WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \

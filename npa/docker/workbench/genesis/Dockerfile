@@ -87,7 +87,8 @@ RUN python3 -m venv /opt/genesis/venv \
       "pyarrow==22.0.0"
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
