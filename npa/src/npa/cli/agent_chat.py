@@ -254,6 +254,14 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
+    (
+        "soperator",
+        re.compile(
+            r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster"
+            r"|deploy\s+slurm|slurm\s+deploy)\b",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
@@ -274,6 +282,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
     "cosmos3": [],
+    "soperator": ["tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
 }
 
@@ -697,6 +706,25 @@ def format_generate_workflow(
     return format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
 
 
+def format_soperator_deploy() -> str:
+    return "\n".join(
+        [
+            "**Deploy a soperator (Slurm-on-Kubernetes) cluster** with npa:",
+            "1. Write an `npa.soperator/v0.0.1` spec with one or more worker pools "
+            "(mixed presets ok) and optional per-pool `docker_cache: true` (IO_M3 image cache).",
+            "2. Preflight quotas: `compute.instance.count`, `compute.instance.non-gpu.vcpu`, "
+            "`compute.disk.count`, and `compute.disk.size.network-ssd-io-m3` (GPU on-demand "
+            "quota is often 0 -- use `preemptible: true` for GPU pools).",
+            "3. Deploy: `npa soperator deploy --spec cluster.yaml` "
+            "(requires terraform >= 1.12; set NPA_TERRAFORM_BIN if needed).",
+            "4. Check: `npa soperator status --name <name>` runs `sinfo` on the controller.",
+            "- **workflow toolRef**: `infra.soperator.deploy` (config.soperator_spec = path to the spec).",
+            "- GPU workers must be fabric-capable 8-GPU SXM presets; 1-GPU presets can't cluster.",
+            "- See the `soperator` skill for post-deploy fixes and worker-registration gotchas.",
+        ]
+    )
+
+
 def format_cosmos3_setup() -> str:
     return "\n".join(
         [
@@ -828,6 +856,8 @@ def build_grounded_reply(
         return format_configure_s3()
     if intent == "cosmos3":
         return format_cosmos3_setup()
+    if intent == "soperator":
+        return format_soperator_deploy()
     if intent == "onboard_solution":
         return format_onboard_solution()
     if intent == "load_franka":

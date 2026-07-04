@@ -210,6 +210,14 @@ skills:
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+  - name: soperator
+    category: tools
+    when_to_use: "Deploy or operate a Nebius soperator (Slurm-on-Kubernetes) cluster from npa: npa.soperator/v0.0.1 spec, multi-preset worker pools, per-pool Docker/Enroot image cache, quota preflight, and post-deploy fixes."
+    path: skills/tools/soperator/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["soperator", "deploy", "--help"]
+        contains: "spec"
   - name: npa-agent
     category: tools
     when_to_use: "Operate NPA agent VM, chat UX, API grounding, bootstrap deployment, and verify-live checks."

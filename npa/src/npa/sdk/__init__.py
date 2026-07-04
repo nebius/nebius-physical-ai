@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from . import provisioning, workbench
+from . import provisioning, soperator, workbench
 
-__all__ = ["provisioning", "workbench"]
+__all__ = ["provisioning", "soperator", "workbench"]
