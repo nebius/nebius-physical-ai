@@ -2946,14 +2946,18 @@ def _normalize_byo_rl_signal(
     return payload
 
 
-def _byo_robot_trainer_env(config: Sim2RealLoopConfig) -> dict[str, str]:
-    """Robot-spec env for the BYO trainer sibling (opt-in, Franka-safe).
+def _byo_robot_env(config: Sim2RealLoopConfig) -> dict[str, str]:
+    """Robot-spec env that opts a component into the BYO-robot path (Franka-safe).
 
-    Returns the env that opts the trainer into its BYO-robot path and forwards the
-    SAME robot inputs the held-out eval receives (``_run_heldout_*`` sets these),
-    so a customer's ``robot_spec_uri`` / preset reaches RL training and eval as one
-    embodiment. Returns ``{}`` — i.e. leaves the trainer on the stock-Franka path,
-    byte-for-byte unchanged — when no robot is requested or it is stock Franka.
+    Shared by BOTH the BYO trainer sibling and the held-out eval, so a customer's
+    ``robot_spec_uri`` / preset reaches RL training AND eval as ONE embodiment with
+    matching action/observation dims. The ``NPA_BYO_ROBOT_TASK=1`` flag is the gate
+    both ``byo_isaac_trainer`` and ``byo_isaac_eval`` check before resolving the spec
+    and registering the retargeted Lift variant — without it, the eval builds a stock
+    Franka-dimensioned env and a non-Franka checkpoint fails to load.
+
+    Returns ``{}`` — leaving the component on the stock-Franka path, byte-for-byte
+    unchanged — when no robot is requested or it is stock Franka.
     """
 
     uri = (config.robot_spec_uri or "").strip()
@@ -3027,7 +3031,7 @@ def _run_trainer_via_command(
     # stock Franka. Forward the same robot inputs the eval gets + opt in the trainer's
     # BYO-robot path so train and eval share one embodiment. Empty (Franka/no robot)
     # -> nothing added, trainer path byte-for-byte unchanged.
-    extra.update(_byo_robot_trainer_env(config))
+    extra.update(_byo_robot_env(config))
     env = _component_env(
         config,
         component="trainer",
@@ -3080,26 +3084,33 @@ def run_heldout_eval(
     output_path = output_dir / "report.json"
     inner_path = output_dir / f"inner-evidence-outer-{outer_iteration:02d}.json"
     _write_json_artifact(inner_path, inner_evidence)
+    extra = {
+        "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / "heldout"),
+        "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(config.heldout_env_count),
+        "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
+        "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
+        "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
+        "NPA_SIM2REAL_ISAAC_IMAGE": config.isaac_image,
+        "NPA_SIM2REAL_SIM_BACKEND": config.sim_backend,
+        "NPA_SIM2REAL_ISAAC_TASK": config.isaac_task,
+        "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
+        "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
+        "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
+    }
+    # BYO robot: opt the held-out eval into the SAME robot-swapped Lift variant the
+    # policy trained on. This sets NPA_BYO_ROBOT_TASK=1 (+ the robot uri/source/preset)
+    # so byo_isaac_eval resolves the spec, ships the retarget module, and registers the
+    # customer's task variant — giving the eval env the SAME action/observation dims as
+    # training. Without the flag the eval built a stock Franka-dimensioned env, and a
+    # non-Franka checkpoint failed to load into the eval ActorCritic (size mismatch).
+    # Franka-safe: _byo_robot_env returns {} for no-robot / stock, so the eval env is
+    # byte-for-byte unchanged on the stock path.
+    extra.update(_byo_robot_env(config))
     env = _component_env(
         config,
         component="heldout_eval",
         output_json=output_path,
-        extra={
-            "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / "heldout"),
-            "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(config.heldout_env_count),
-            "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
-            "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
-            "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
-            "NPA_SIM2REAL_ISAAC_IMAGE": config.isaac_image,
-            "NPA_SIM2REAL_SIM_BACKEND": config.sim_backend,
-            "NPA_SIM2REAL_ISAAC_TASK": config.isaac_task,
-            "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
-            "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
-            "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
-            "NPA_SIM2REAL_ROBOT_SPEC_URI": config.robot_spec_uri,
-            "NPA_SIM2REAL_ROBOT_SOURCE": config.robot_source,
-            "NPA_SIM2REAL_ROBOT_PRESET": config.robot_preset,
-        },
+        extra=extra,
     )
     # Default the genuine-RL Isaac path to the real-policy held-out eval
     # (byo_isaac_eval loads the trained rsl_rl checkpoint and rolls it in Isaac
