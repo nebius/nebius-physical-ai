@@ -362,6 +362,12 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
         typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
 
 
+_AGENT_INSTANCE_DESTROY_TARGETS = (
+    "null_resource.wait_for_cloud_init",
+    "nebius_compute_v1_instance.workbench",
+)
+
+
 def _destroy_agent_terraform(
     project: str,
     name: str,
@@ -392,12 +398,23 @@ def _destroy_agent_terraform(
         tf_dir=tf_dir,
         backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
     )
-    try:
+
+    def _run_destroy() -> None:
         provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+
+    def _destroy_compute_first() -> None:
+        managed = set(provisioner.state_list(tf_dir))
+        targets = [t for t in _AGENT_INSTANCE_DESTROY_TARGETS if t in managed]
+        if targets:
+            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars, targets=targets)
+
+    try:
+        _run_destroy()
     except ProvisionerError as first_exc:
         _cleanup_agent_ingress(instance_id)
         try:
-            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+            _destroy_compute_first()
+            _run_destroy()
         except ProvisionerError:
             raise first_exc from None
 

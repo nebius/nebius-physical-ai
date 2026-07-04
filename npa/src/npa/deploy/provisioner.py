@@ -237,14 +237,20 @@ def destroy(
     tf_vars: dict[str, str] | None = None,
     *,
     stream: bool = True,
+    targets: list[str] | None = None,
 ) -> None:
     """Run terraform destroy -auto-approve."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
     args = ["destroy", "-auto-approve", "-input=false"]
+    if targets:
+        for target in targets:
+            args.extend(["-target", target])
     args.extend(_build_var_args(tf_vars or {}))
     result = _run(args, cwd=tf_dir, stream=stream)
     if result.returncode != 0:
-        raise ProvisionerError(f"terraform destroy failed (exit {result.returncode})")
+        stderr = (result.stderr or "").strip()
+        detail = f":\n{stderr}" if stderr else ""
+        raise ProvisionerError(f"terraform destroy failed (exit {result.returncode}){detail}")
 
 
 def state_list(tf_dir: str | Path | None = None) -> list[str]:
