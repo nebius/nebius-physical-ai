@@ -6,9 +6,8 @@ import json
 import shutil
 import subprocess
 import sys
-from io import StringIO
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 
 class ProvisionerError(Exception):
@@ -56,22 +55,6 @@ def _require_terraform() -> str:
     return tf
 
 
-class _TeeStream(TextIO):
-    """Write to a buffer and an underlying stream (for streamed terraform stderr)."""
-
-    def __init__(self, buffer: StringIO, underlying: TextIO) -> None:
-        self._buffer = buffer
-        self._underlying = underlying
-
-    def write(self, data: str) -> int:
-        self._buffer.write(data)
-        return self._underlying.write(data)
-
-    def flush(self) -> None:
-        self._buffer.flush()
-        self._underlying.flush()
-
-
 def _run(
     args: list[str],
     *,
@@ -83,19 +66,18 @@ def _run(
     cmd = [tf] + args
     kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True}
 
-    stderr_buffer: StringIO | None = None
     if capture:
         kwargs["capture_output"] = True
     elif stream:
-        stderr_buffer = StringIO()
         kwargs["stdout"] = sys.stdout
-        kwargs["stderr"] = _TeeStream(stderr_buffer, sys.stderr)
+        kwargs["stderr"] = subprocess.PIPE
     else:
         kwargs["capture_output"] = True
 
     result = subprocess.run(cmd, **kwargs)
-    if stderr_buffer is not None:
-        result.stderr = stderr_buffer.getvalue()
+    if stream and result.stderr:
+        sys.stderr.write(result.stderr)
+        sys.stderr.flush()
     if result.returncode != 0 and capture:
         stderr = result.stderr or ""
         raise ProvisionerError(
