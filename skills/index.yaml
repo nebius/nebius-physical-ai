@@ -296,6 +296,16 @@ skills:
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
+  - name: agent-workflow-operate
+    category: workflows
+    when_to_use: "Verify that a bootstrapped NPA agent VM can create, validate, plan, provision for, or run npa.workflow YAMLs using its staged config."
+    path: skills/workflows/agent-workflow-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/agent-workflow-operate/SKILL.md
+      - type: cli_help
+        args: ["workbench", "workflow", "validate-spec", "--help"]
+        contains: "npa.workflow"
   - name: sim2real-engine
     category: tools
     when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
