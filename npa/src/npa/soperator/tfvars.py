@@ -75,9 +75,11 @@ def render_tfvars(spec: SoperatorSpec) -> str:
     telemetry = _bool(spec.telemetry)
     # ActiveChecks in the "dev" scope run NCCL all-reduce + InfiniBand + GPU perf
     # jobs that Error on a CPU-only cluster, hanging wait_for_soperator_activechecks_hr
-    # (so terraform apply never returns). Only run them when the cluster has GPU
-    # workers; otherwise skip (empty scope).
-    active_checks_scope = "dev" if any(p.is_gpu() for p in spec.workers) else ""
+    # (so terraform apply never returns). The recipe requires a valid scope
+    # (variables.tf validation rejects ""), so on CPU-only clusters use "essential",
+    # which sets runAfterCreation=false for every GPU/NCCL/IB/perf check and only
+    # runs CPU-safe checks (ssh-check, etc.).
+    active_checks_scope = "dev" if any(p.is_gpu() for p in spec.workers) else "essential"
     # filestore_accounting must be non-null only when accounting is enabled, but
     # slurm_nodeset_accounting's variable validation dereferences it even when
     # disabled -- so always provide a valid accounting nodeset object.
