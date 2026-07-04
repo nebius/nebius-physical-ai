@@ -55,7 +55,7 @@ DEFAULT_LLM_MODELS = (
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070101"
+AGENT_UI_VERSION = "2026070402"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -1267,6 +1267,8 @@ def _default_state() -> dict:
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
         "chat_history": [],
+        "active_chat_session_id": "default",
+        "chat_sessions": {{}},
     }}
 
 def _load_state() -> dict:
@@ -1292,6 +1294,10 @@ def _load_state() -> dict:
         merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
         merged["chat_history"] = []
+    if not isinstance(merged.get("chat_sessions"), dict):
+        merged["chat_sessions"] = {{}}
+    if not isinstance(merged.get("active_chat_session_id"), str):
+        merged["active_chat_session_id"] = "default"
     return merged
 
 def _save_state(state: dict) -> None:
@@ -1609,6 +1615,224 @@ def _agent_s3_client():
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"failed to initialize S3 client: {{exc}}") from exc
     return client, settings
+
+
+def _chat_memory_tenant() -> str:
+    raw = (
+        os.environ.get("NEBIUS_TENANT_ID", "")
+        or os.environ.get("NEBIUS_PROJECT_ID", "")
+        or "default-tenant"
+    )
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw).strip()).strip("-")
+    return value or "default-tenant"
+
+
+def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
+    bucket = (settings or {{}}).get("bucket", "")
+    tenant = _chat_memory_tenant()
+    return f"npa-agent/tenants/{{tenant}}/chat-sessions"
+
+
+def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -> str:
+    safe = _sanitize_chat_session_id(session_id)
+    return f"{{_chat_memory_prefix(settings)}}/{{safe}}.json"
+
+
+def _chat_memory_uri(session_id: str, settings: dict[str, str] | None = None) -> str:
+    resolved = settings or _agent_s3_settings()
+    bucket = str(resolved.get("bucket") or "")
+    if not bucket:
+        return ""
+    return f"s3://{{bucket}}/{{_chat_session_key(session_id, resolved)}}"
+
+
+def _agent_s3_client_optional():
+    try:
+        return _agent_s3_client()
+    except HTTPException:
+        return None, _agent_s3_settings()
+    except Exception:
+        return None, _agent_s3_settings()
+
+
+def _sanitize_chat_session_id(value: str) -> str:
+    session_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+    return session_id[:80] or "default"
+
+
+def _chat_session_title(messages: list[dict] | None, fallback: str = "New chat") -> str:
+    if isinstance(messages, list):
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("role") or "") != "user":
+                continue
+            content = str(item.get("content") or "").strip()
+            if content:
+                return content[:64]
+    return fallback
+
+
+def _normalize_chat_history(raw: object) -> list[dict]:
+    history: list[dict] = []
+    if not isinstance(raw, list):
+        return history
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role in {{"user", "assistant"}} and content:
+            history.append({{"role": role, "content": content}})
+    return history[-80:]
+
+
+def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
+    now = _now_iso()
+    data = payload if isinstance(payload, dict) else {{}}
+    resolved_id = _sanitize_chat_session_id(str(data.get("id") or session_id or "default"))
+    history = _normalize_chat_history(data.get("chat_history") or data.get("messages") or [])
+    title = str(data.get("title") or "").strip() or _chat_session_title(history, "New chat")
+    created_at = str(data.get("created_at") or now)
+    updated_at = str(data.get("updated_at") or now)
+    return {{
+        "id": resolved_id,
+        "title": title[:96],
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "chat_history": history,
+        "memory_uri": str(data.get("memory_uri") or _chat_memory_uri(resolved_id) or ""),
+    }}
+
+
+def _local_chat_sessions(state: dict) -> dict[str, dict]:
+    sessions = state.get("chat_sessions")
+    if not isinstance(sessions, dict):
+        sessions = {{}}
+    normalized: dict[str, dict] = {{}}
+    for session_id, payload in sessions.items():
+        session = _normalize_chat_session(str(session_id), payload)
+        normalized[session["id"]] = session
+    if not normalized:
+        migrated = _normalize_chat_session(
+            "default",
+            {{
+                "id": "default",
+                "title": "Default chat",
+                "chat_history": state.get("chat_history", []),
+            }},
+        )
+        normalized["default"] = migrated
+    state["chat_sessions"] = normalized
+    if str(state.get("active_chat_session_id") or "") not in normalized:
+        state["active_chat_session_id"] = next(iter(normalized.keys()))
+    state["chat_history"] = normalized[str(state["active_chat_session_id"])]["chat_history"]
+    return normalized
+
+
+def _load_chat_session_from_s3(session_id: str) -> dict | None:
+    s3, settings = _agent_s3_client_optional()
+    if s3 is None or not settings.get("bucket"):
+        return None
+    key = _chat_session_key(session_id, settings)
+    try:
+        obj = s3.get_object(Bucket=settings["bucket"], Key=key)
+        body = obj.get("Body")
+        raw = body.read() if hasattr(body, "read") else body
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(str(raw or "{}"))
+        return _normalize_chat_session(session_id, payload)
+    except Exception:
+        return None
+
+
+def _persist_chat_session_to_s3(session: dict) -> str:
+    s3, settings = _agent_s3_client_optional()
+    if s3 is None or not settings.get("bucket"):
+        return ""
+    session_id = _sanitize_chat_session_id(str(session.get("id") or "default"))
+    key = _chat_session_key(session_id, settings)
+    memory_uri = _chat_memory_uri(session_id, settings)
+    payload = dict(session)
+    payload["id"] = session_id
+    payload["memory_uri"] = memory_uri
+    payload["tenant_id"] = _chat_memory_tenant()
+    try:
+        s3.put_object(
+            Bucket=settings["bucket"],
+            Key=key,
+            Body=(json.dumps(payload, indent=2, sort_keys=True) + "\\n").encode("utf-8"),
+            ContentType="application/json",
+        )
+        return memory_uri
+    except Exception:
+        return ""
+
+
+def _save_chat_session(state: dict, session: dict, *, active: bool = True) -> dict:
+    sessions = _local_chat_sessions(state)
+    normalized = _normalize_chat_session(str(session.get("id") or "default"), session)
+    normalized["updated_at"] = _now_iso()
+    memory_uri = _persist_chat_session_to_s3(normalized)
+    if memory_uri:
+        normalized["memory_uri"] = memory_uri
+    sessions[normalized["id"]] = normalized
+    state["chat_sessions"] = sessions
+    if active:
+        state["active_chat_session_id"] = normalized["id"]
+        state["chat_history"] = normalized["chat_history"]
+    _save_state(state)
+    return normalized
+
+
+def _get_chat_session(state: dict, session_id: str = "") -> dict:
+    sessions = _local_chat_sessions(state)
+    target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
+    remote = _load_chat_session_from_s3(target)
+    if remote is not None:
+        sessions[target] = remote
+        state["chat_sessions"] = sessions
+        return remote
+    if target in sessions:
+        return sessions[target]
+    session = _normalize_chat_session(target, {{"id": target, "title": "New chat", "chat_history": []}})
+    sessions[target] = session
+    state["chat_sessions"] = sessions
+    return session
+
+
+def _list_chat_sessions(state: dict) -> list[dict]:
+    sessions = _local_chat_sessions(state)
+    s3, settings = _agent_s3_client_optional()
+    if s3 is not None and settings.get("bucket"):
+        prefix = _chat_memory_prefix(settings) + "/"
+        try:
+            resp = s3.list_objects_v2(Bucket=settings["bucket"], Prefix=prefix, MaxKeys=50)
+            for item in resp.get("Contents", []) or []:
+                key = str(item.get("Key") or "")
+                if not key.endswith(".json"):
+                    continue
+                session_id = _sanitize_chat_session_id(Path(key).stem)
+                remote = _load_chat_session_from_s3(session_id)
+                if remote is not None:
+                    sessions[session_id] = remote
+        except Exception:
+            pass
+    state["chat_sessions"] = sessions
+    _save_state(state)
+    rows = []
+    for session in sessions.values():
+        history = session.get("chat_history") if isinstance(session, dict) else []
+        rows.append({{
+            "id": str(session.get("id") or ""),
+            "title": str(session.get("title") or "New chat"),
+            "created_at": str(session.get("created_at") or ""),
+            "updated_at": str(session.get("updated_at") or ""),
+            "message_count": len(history) if isinstance(history, list) else 0,
+            "memory_uri": str(session.get("memory_uri") or ""),
+        }})
+    return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
 
 def _artifact_filename(key: str) -> str:
@@ -2127,10 +2351,22 @@ def chat(payload: dict):
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    state = _load_state()
+    session_id = _sanitize_chat_session_id(
+        str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
+    )
+    session = _get_chat_session(state, session_id)
+    history = _normalize_chat_history(raw_messages)
+    if len(history) <= 1 and isinstance(session.get("chat_history"), list):
+        prior = _normalize_chat_history(session.get("chat_history", []))
+        if history:
+            history = [*prior, history[-1]]
+        else:
+            history = prior
+    raw_messages = history
     tool_result = _agent_chat_with_tools(raw_messages=raw_messages, model=model)
     if tool_result is not None:
         reply = str(tool_result.get("reply") or "").strip()
-        state = _load_state()
         history: list[dict] = []
         for item in raw_messages:
             if not isinstance(item, dict):
@@ -2141,7 +2377,21 @@ def chat(payload: dict):
                 history.append({{"role": role, "content": content}})
         if reply:
             history.append({{"role": "assistant", "content": reply}})
-        state["chat_history"] = history[-50:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history[-80:],
+            }}
+        )
+        session = _save_chat_session(state, session, active=True)
+        tool_result["session_id"] = session["id"]
+        tool_result["session"] = {{
+            "id": session["id"],
+            "title": session["title"],
+            "memory_uri": session.get("memory_uri", ""),
+            "message_count": len(session.get("chat_history", [])),
+        }}
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
@@ -2177,13 +2427,26 @@ def chat(payload: dict):
             history.append({{"role": role, "content": content}})
     if reply:
         history.append({{"role": "assistant", "content": reply}})
-    state["chat_history"] = history[-50:]
-    _save_state(state)
+    session.update(
+        {{
+            "id": session_id,
+            "title": str(session.get("title") or _chat_session_title(history)),
+            "chat_history": history[-80:],
+        }}
+    )
+    session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
         "model": model,
         "reply": reply,
         "reasoning": reasoning,
+        "session_id": session["id"],
+        "session": {{
+            "id": session["id"],
+            "title": session["title"],
+            "memory_uri": session.get("memory_uri", ""),
+            "message_count": len(session.get("chat_history", [])),
+        }},
     }}
 
 @app.get("/health")
@@ -2202,6 +2465,7 @@ def models(refresh: bool = False):
 @app.get("/session")
 def session_bootstrap():
     state = _load_state()
+    active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
         sim_viz.update(state["sim_viz"])
@@ -2211,7 +2475,7 @@ def session_bootstrap():
     if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    history = state.get("chat_history", [])
+    history = active_session.get("chat_history", [])
     if not isinstance(history, list):
         history = []
     return {{
@@ -2223,6 +2487,13 @@ def session_bootstrap():
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
+        "active_chat_session_id": active_session["id"],
+        "chat_sessions": _list_chat_sessions(state),
+        "chat_memory": {{
+            "tenant": _chat_memory_tenant(),
+            "s3_configured": bool(_agent_s3_settings().get("bucket") and _agent_s3_settings().get("access_key")),
+            "prefix": _chat_memory_prefix(),
+        }},
         "llm": {{
             "default": LLM_MODEL,
             "default_model": LLM_MODEL,
@@ -2230,6 +2501,51 @@ def session_bootstrap():
             "models": _available_llm_models(),
         }},
     }}
+
+
+@app.get("/chat/sessions")
+def chat_sessions():
+    state = _load_state()
+    active_id = str(state.get("active_chat_session_id") or "default")
+    settings = _agent_s3_settings()
+    return {{
+        "ok": True,
+        "active_session_id": active_id,
+        "sessions": _list_chat_sessions(state),
+        "memory": {{
+            "tenant": _chat_memory_tenant(),
+            "s3_configured": bool(settings.get("bucket") and settings.get("access_key")),
+            "prefix": _chat_memory_prefix(settings),
+        }},
+    }}
+
+
+@app.post("/chat/sessions")
+def create_chat_session(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    state = _load_state()
+    session_id = _sanitize_chat_session_id(str(body.get("id") or f"chat-{{secrets.token_urlsafe(8)}}"))
+    title = str(body.get("title") or "New chat").strip() or "New chat"
+    session = _normalize_chat_session(session_id, {{"id": session_id, "title": title, "chat_history": []}})
+    saved = _save_chat_session(state, session, active=True)
+    return {{"ok": True, "session": saved, "active_session_id": saved["id"], "sessions": _list_chat_sessions(state)}}
+
+
+@app.get("/chat/sessions/{{session_id}}")
+def get_chat_session(session_id: str):
+    state = _load_state()
+    session = _get_chat_session(state, session_id)
+    return {{"ok": True, "session": session}}
+
+
+@app.post("/chat/sessions/{{session_id}}/select")
+def select_chat_session(session_id: str):
+    state = _load_state()
+    session = _get_chat_session(state, session_id)
+    state["active_chat_session_id"] = session["id"]
+    state["chat_history"] = session.get("chat_history", [])
+    _save_state(state)
+    return {{"ok": True, "session": session, "active_session_id": session["id"], "sessions": _list_chat_sessions(state)}}
 
 @app.get("/tools")
 def tools():
@@ -3264,7 +3580,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-size: 12px;
         color: #4f5668;
       }}
+      .chat-session {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #4f5668;
+      }}
+      .chat-session select {{
+        max-width: 220px;
+      }}
       .chat-model select {{
+        border: 1px solid #d4d8e2;
+        border-radius: 999px;
+        padding: 6px 10px;
+        background: #fff;
+        color: #1f2430;
+        font: inherit;
+      }}
+      .chat-session select {{
         border: 1px solid #d4d8e2;
         border-radius: 999px;
         padding: 6px 10px;
@@ -3556,7 +3890,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         width: 100%;
         justify-content: space-between;
       }}
-      body.mobile-agent .chat-model select {{
+      body.mobile-agent .chat-session {{
+        width: 100%;
+      }}
+      body.mobile-agent .chat-model select,
+      body.mobile-agent .chat-session select {{
         flex: 1 1 auto;
         max-width: 100%;
       }}
@@ -3683,6 +4021,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
           <div class="chat-toolbar">
             <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
+            <label for="chatSessionSelect" class="chat-session">
+              Session
+              <select id="chatSessionSelect">
+                <option value="default" selected>Default chat</option>
+              </select>
+            </label>
+            <button id="newChatSession" class="btn" type="button">New chat</button>
             <label for="chatModel" class="chat-model">
               Token Factory model
               <select id="chatModel">
@@ -3961,6 +4306,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       applyMobileLayout();
       window.addEventListener("resize", applyMobileLayout);
       const chatHistory = [];
+      let activeChatSessionId = "default";
       let chatSendInFlight = false;
       let thinkingNode = null;
       function setStatus(text) {{
@@ -4055,6 +4401,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("chatActionWorkflow", () => {{
           setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
         }}, "Insert workflow YAML prompt");
+        bindClick("newChatSession", createNewChatSession, "New chat session");
         bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
@@ -4074,6 +4421,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (e.key === "Enter" && !e.shiftKey) {{
               e.preventDefault();
               sendChat().catch((err) => showToast(String(err), "error"));
+            }}
+          }});
+        }}
+        const chatSessionSelect = document.getElementById("chatSessionSelect");
+        if (chatSessionSelect) {{
+          chatSessionSelect.addEventListener("change", async () => {{
+            const sessionId = String(chatSessionSelect.value || "default");
+            try {{
+              await selectChatSession(sessionId);
+            }} catch (err) {{
+              showToast(String(err && err.message ? err.message : err), "error");
             }}
           }});
         }}
@@ -4349,6 +4707,80 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const select = document.getElementById("chatModel");
         return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}";
       }}
+      function clearChatLog() {{
+        const log = document.getElementById("chatLog");
+        if (log) log.innerHTML = "";
+        chatHistory.splice(0, chatHistory.length);
+      }}
+      function renderChatHistory(history) {{
+        clearChatLog();
+        const hist = Array.isArray(history) ? history : [];
+        for (const msg of hist) {{
+          const role = String(msg.role || "");
+          const content = String(msg.content || "").trim();
+          if (!content || (role !== "user" && role !== "assistant")) continue;
+          appendChat(role, content);
+          chatHistory.push({{ role, content }});
+        }}
+      }}
+      function updateChatSessionSelector(sessions, activeId) {{
+        const select = document.getElementById("chatSessionSelect");
+        if (!select) return;
+        const rows = Array.isArray(sessions) ? sessions : [];
+        const active = String(activeId || activeChatSessionId || "default");
+        select.innerHTML = "";
+        if (!rows.length) {{
+          const opt = document.createElement("option");
+          opt.value = active;
+          opt.textContent = "Default chat";
+          opt.selected = true;
+          select.appendChild(opt);
+          return;
+        }}
+        for (const row of rows) {{
+          const id = String(row.id || "").trim();
+          if (!id) continue;
+          const opt = document.createElement("option");
+          opt.value = id;
+          const count = Number(row.message_count || 0);
+          opt.textContent = String(row.title || id) + (count ? " (" + String(count) + ")" : "");
+          if (id === active) opt.selected = true;
+          select.appendChild(opt);
+        }}
+      }}
+      async function refreshChatSessions(activeId) {{
+        const data = await apiJson("/api/chat/sessions");
+        activeChatSessionId = String(data.active_session_id || activeId || activeChatSessionId || "default");
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        return data;
+      }}
+      async function selectChatSession(sessionId) {{
+        const safeId = String(sessionId || "default").trim() || "default";
+        const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{}}),
+        }});
+        const session = data.session || {{}};
+        activeChatSessionId = String(data.active_session_id || session.id || safeId);
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        renderChatHistory(session.chat_history || []);
+        showToast("Loaded chat session", "success");
+        return session;
+      }}
+      async function createNewChatSession() {{
+        const data = await apiJson("/api/chat/sessions", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ title: "New chat" }}),
+        }});
+        const session = data.session || {{}};
+        activeChatSessionId = String(data.active_session_id || session.id || "default");
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        renderChatHistory([]);
+        showToast("New chat session ready", "success");
+        return true;
+      }}
       function setWorkflowYaml(text, validation) {{
         const area = document.getElementById("workflowYaml");
         if (area) area.value = String(text || "");
@@ -4445,7 +4877,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return false;
         }}
         chatSendInFlight = true;
-        input.value = "";
         appendChat("user", text);
         chatHistory.push({{ role: "user", content: text }});
         setChatBusy(true);
@@ -4454,17 +4885,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const data = await apiJson("/api/chat", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ messages: chatHistory, model }}),
+            body: JSON.stringify({{ messages: chatHistory, model, session_id: activeChatSessionId }}),
           }});
           clearThinkingBubble();
+          input.value = "";
           if (data && data.model) {{
             const select = document.getElementById("chatModel");
             if (select) select.value = String(data.model);
+          }}
+          if (data && data.session_id) {{
+            activeChatSessionId = String(data.session_id);
           }}
           const reply = normalizeAssistantReply(data.reply || "");
           if (reply) {{
             appendChat("assistant", reply);
             chatHistory.push({{ role: "assistant", content: reply }});
+            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort session list refresh */ }});
           }} else {{
             appendChat("error", "empty reply from model");
           }}
@@ -4477,7 +4913,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
         }} catch (err) {{
           clearThinkingBubble();
-          appendChat("error", String(err));
+          const message = String(err && err.message ? err.message : err);
+          input.value = text;
+          const tail = chatHistory[chatHistory.length - 1];
+          if (tail && tail.role === "user" && tail.content === text) {{
+            chatHistory.pop();
+          }}
+          appendChat("error", "Send failed; your draft was restored. " + message);
           throw err;
         }} finally {{
           chatSendInFlight = false;
@@ -5015,6 +5457,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             );
             setChatModels(session.llm.models, currentModel);
           }}
+          if (session && session.chat_sessions) {{
+            activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+            updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
+          }}
           if (session && session.workflow_draft && session.workflow_draft.yaml) {{
             setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
           }}
@@ -5320,20 +5766,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function restoreSession() {{
         try {{
           const session = await loadJson("/api/session");
+          activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {{
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
             );
             setChatModels(session.llm.models, currentModel);
           }}
-          const hist = Array.isArray(session.chat_history) ? session.chat_history : [];
-          for (const msg of hist) {{
-            const role = String(msg.role || "");
-            const content = String(msg.content || "").trim();
-            if (!content || (role !== "user" && role !== "assistant")) continue;
-            appendChat(role, content);
-            chatHistory.push({{ role, content }});
-          }}
+          renderChatHistory(session.chat_history || []);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {{
             setWorkflowYaml(draft.yaml, draft.validation || draft);

@@ -122,6 +122,10 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "mobileAuthTokenCache" in source
     assert "verifyMobileChatAuth" in source
     assert 'credentials: useExplicitAuth ? "omit" : "include"' in source
+    assert "activeChatSessionId" in source
+    assert "/api/chat/sessions" in source
+    assert "npa-agent/tenants/" in source
+    assert "Send failed; your draft was restored." in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
