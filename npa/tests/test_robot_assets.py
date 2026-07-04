@@ -96,6 +96,111 @@ def test_parse_robot_spec_byo_urdf_full() -> None:
     assert spec.dof_count == 6
 
 
+def test_parse_robot_spec_accepts_usd_path_alias_for_robot_uri() -> None:
+    # A customer may hand us ``usd_path`` (the Isaac spawn field name) instead of
+    # ``robot_uri``; it is accepted as an alias and the source is inferred as USD.
+    doc = {
+        "name": "arm_usd",
+        "usd_path": "s3://bucket/robots/arm.usd",
+        "ee_link": "tool0",
+        "n_arm_joints": 6,
+        "n_gripper_joints": 2,
+    }
+    spec = ra.parse_robot_spec(doc)
+    assert spec.robot_uri == "s3://bucket/robots/arm.usd"
+    assert spec.robot_source == ra.ROBOT_SOURCE_BYO_USD
+
+
+def test_parse_robot_spec_robot_uri_wins_over_usd_path_alias() -> None:
+    doc = {
+        "robot_source": "byo_usd",
+        "name": "arm",
+        "robot_uri": "s3://bucket/robots/primary.usd",
+        "usd_path": "s3://bucket/robots/alias.usd",
+        "ee_link": "tool0",
+        "n_arm_joints": 6,
+        "n_gripper_joints": 0,
+    }
+    spec = ra.parse_robot_spec(doc)
+    assert spec.robot_uri.endswith("primary.usd")
+
+
+def test_parse_robot_spec_minimal_usd_auto_derives_gains_and_home() -> None:
+    # A MINIMAL BYO spec (name + usd + joint/link names) — no per-joint gain or
+    # home arrays — must onboard: the omitted arrays are synthesized to dof_count.
+    doc = {
+        "robot_source": "byo_usd",
+        "name": "lite6_parallel",
+        "usd_path": "s3://bucket/robots/lite6_combined.usda",
+        "base_link": "world",
+        "ee_link": "tcp_ee",
+        "n_arm_joints": 6,
+        "n_gripper_joints": 2,
+        "joint_names": [
+            "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+            "finger_joint1", "finger_joint2",
+        ],
+        "gripper_joint_names": ["finger_joint1", "finger_joint2"],
+        "finger_links": ["uflite_finger1", "uflite_finger2"],
+    }
+    spec = ra.parse_robot_spec(doc)  # must not raise
+    assert spec.dof_count == 8
+    for arr in (spec.kp, spec.kv, spec.force_upper, spec.force_lower, spec.home_qpos):
+        assert len(arr) == 8
+    # arm joints get the arm default, gripper joints the (lighter) gripper default.
+    assert spec.kp[:6] == (ra.DEFAULT_ARM_KP,) * 6
+    assert spec.kp[6:] == (ra.DEFAULT_GRIPPER_KP,) * 2
+    assert spec.force_lower == tuple(-abs(f) for f in spec.force_upper)
+    assert spec.home_qpos == (0.0,) * 8
+    assert spec.has_gripper
+
+
+def test_parse_robot_spec_infers_joint_counts_from_joint_names() -> None:
+    # Counts omitted, but joint_names + gripper_joint_names given: infer them.
+    doc = {
+        "robot_source": "byo_usd",
+        "name": "inferred_counts",
+        "usd_path": "s3://bucket/robots/arm.usd",
+        "ee_link": "tcp_ee",
+        "joint_names": ["j1", "j2", "j3", "j4", "j5", "j6", "f1", "f2"],
+        "gripper_joint_names": ["f1", "f2"],
+        "finger_links": ["fl1", "fl2"],
+    }
+    spec = ra.parse_robot_spec(doc)
+    assert spec.n_gripper_joints == 2
+    assert spec.n_arm_joints == 6
+    assert spec.dof_count == 8
+
+
+def test_parse_robot_spec_explicit_gains_not_overridden() -> None:
+    # A customer who DOES supply arrays keeps them verbatim (no auto-derive).
+    doc = {
+        "robot_source": "byo_usd",
+        "name": "explicit",
+        "usd_path": "s3://bucket/robots/arm.usd",
+        "ee_link": "tool0",
+        "n_arm_joints": 6,
+        "n_gripper_joints": 0,
+        "kp": [11, 12, 13, 14, 15, 16],
+        "kv": [1, 1, 1, 1, 1, 1],
+        "force_upper": [9, 9, 9, 9, 9, 9],
+        "force_lower": [-9, -9, -9, -9, -9, -9],
+        "home_qpos": [0.1, 0, 0, 0, 0, 0],
+    }
+    spec = ra.parse_robot_spec(doc)
+    assert spec.kp == (11.0, 12.0, 13.0, 14.0, 15.0, 16.0)
+    assert spec.home_qpos[0] == 0.1
+
+
+def test_parse_robot_spec_franka_default_untouched_by_auto_derive() -> None:
+    # An empty doc is the stock Franka default — its 9-length arrays must be kept
+    # byte-for-byte (auto-derive only fires when a field's length != dof_count).
+    spec = ra.parse_robot_spec({})
+    assert spec.robot_source == ra.ROBOT_SOURCE_STOCK_FRANKA
+    assert spec.kp == ra.RobotSpec().kp
+    assert spec.home_qpos == ra.FRANKA_HOME
+
+
 def test_parse_robot_spec_preset_with_uri_override() -> None:
     # A customer supplies just a preset + their URDF uri on top.
     doc = {"preset": "ur5e", "robot_uri": "s3://bucket/robots/ur5e.urdf"}
