@@ -368,6 +368,39 @@ _AGENT_INSTANCE_DESTROY_TARGETS = (
 )
 
 
+def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None:
+    """Delete cloud VM instances matching the agent name but missing from TF state."""
+    project_id = str(project_id or "").strip()
+    instance_name = str(instance_name or "").strip()
+    if not project_id or not instance_name:
+        return
+    from npa.clients.nebius import NebiusError, _run, _run_json
+
+    try:
+        payload = _run_json(["compute", "instance", "list", "--parent-id", project_id])
+    except NebiusError:
+        return
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("metadata", {})
+        if not isinstance(meta, dict):
+            continue
+        if str(meta.get("name", "")).strip() != instance_name:
+            continue
+        instance_id = str(meta.get("id", "")).strip()
+        if not instance_id:
+            continue
+        try:
+            _run(["compute", "instance", "delete", instance_id], check=False)
+            typer.echo(f"  Deleted orphan agent instance {instance_id}")
+        except NebiusError:
+            continue
+
+
 def _destroy_agent_terraform(
     project: str,
     name: str,
@@ -386,7 +419,10 @@ def _destroy_agent_terraform(
     tf_vars = _resolve_destroy_tf_vars(project, name, record)
     region = tf_vars["nebius_region"]
     instance_id = str((record or {}).get("instance_id", "")).strip()
+    instance_name = tf_vars["instance_name"]
+    project_id = tf_vars["nebius_project_id"]
     _cleanup_agent_ingress(instance_id)
+    _cleanup_orphan_agent_instances(project_id, instance_name)
     tf_dir = provisioner.prepare_working_dir(
         project,
         name,
