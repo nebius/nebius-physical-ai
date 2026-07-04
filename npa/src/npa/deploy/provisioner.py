@@ -6,8 +6,9 @@ import json
 import shutil
 import subprocess
 import sys
+from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 
 class ProvisionerError(Exception):
@@ -55,6 +56,22 @@ def _require_terraform() -> str:
     return tf
 
 
+class _TeeStream(TextIO):
+    """Write to a buffer and an underlying stream (for streamed terraform stderr)."""
+
+    def __init__(self, buffer: StringIO, underlying: TextIO) -> None:
+        self._buffer = buffer
+        self._underlying = underlying
+
+    def write(self, data: str) -> int:
+        self._buffer.write(data)
+        return self._underlying.write(data)
+
+    def flush(self) -> None:
+        self._buffer.flush()
+        self._underlying.flush()
+
+
 def _run(
     args: list[str],
     *,
@@ -66,15 +83,19 @@ def _run(
     cmd = [tf] + args
     kwargs: dict[str, Any] = {"cwd": str(cwd), "text": True}
 
+    stderr_buffer: StringIO | None = None
     if capture:
         kwargs["capture_output"] = True
     elif stream:
+        stderr_buffer = StringIO()
         kwargs["stdout"] = sys.stdout
-        kwargs["stderr"] = sys.stderr
+        kwargs["stderr"] = _TeeStream(stderr_buffer, sys.stderr)
     else:
         kwargs["capture_output"] = True
 
     result = subprocess.run(cmd, **kwargs)
+    if stderr_buffer is not None:
+        result.stderr = stderr_buffer.getvalue()
     if result.returncode != 0 and capture:
         stderr = result.stderr or ""
         raise ProvisionerError(
@@ -223,7 +244,9 @@ def apply(
     args.extend(_build_var_args(tf_vars or {}))
     result = _run(args, cwd=tf_dir, stream=stream)
     if result.returncode != 0:
-        raise ProvisionerError(f"terraform apply failed (exit {result.returncode})")
+        stderr = (result.stderr or "").strip()
+        detail = f":\n{stderr}" if stderr else ""
+        raise ProvisionerError(f"terraform apply failed (exit {result.returncode}){detail}")
     return outputs(tf_dir)
 
 
