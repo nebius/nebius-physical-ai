@@ -868,8 +868,21 @@ def _agent_strip_url_credentials_js() -> str:
     </script>"""
 
 
+def _agent_mobile_login_help_html() -> str:
+    """Mobile certificate + sign-in troubleshooting (public pages)."""
+    return """    <details class="mobile-help" style="margin:20px 0;padding:12px 16px;border:1px solid #e0e0e0;border-radius:8px;background:#fffbeb;">
+      <summary style="font-weight:600;cursor:pointer;">Phone / tablet login help</summary>
+      <ol style="margin:12px 0 0;padding-left:20px;line-height:1.55;">
+        <li><strong>Accept the certificate first.</strong> Open <a href="/healthz">/healthz</a> (no login). If Safari/Chrome warns the connection is not private, tap <em>Show Details</em> → <em>visit this website</em> / <em>Proceed</em>.</li>
+        <li>Return here and use the sign-in form (mobile browsers block password-in-URL redirects).</li>
+        <li>If sign-in still fails, try <strong>Chrome on Android</strong> or use a desktop browser.</li>
+        <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
+      </ol>
+    </details>"""
+
+
 def _agent_public_login_form_html(auth_user: str) -> str:
-    """Shared Sign in form for public welcome/login-help pages (basic-auth URL redirect)."""
+    """Shared Sign in form for public welcome/login-help pages (mobile-safe basic auth)."""
     return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
       <h2 id="sign-in-heading">Sign in</h2>
       <p class="muted">Use the form if your browser does not show an HTTP Basic Auth dialog.</p>
@@ -878,9 +891,10 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         <input id="npa-user" name="username" type="text" value="{auth_user}" autocomplete="username" required>
         <label for="npa-pass">Password</label>
         <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit">Sign in</button>
+        <button type="submit" id="npa-sign-in-btn">Sign in</button>
+        <p id="npa-sign-in-status" class="muted" role="status" aria-live="polite"></p>
       </form>
-      <p class="muted note">Credentials are removed from the address bar immediately after sign-in.</p>
+      <p class="muted note">Credentials are not left in the address bar after sign-in.</p>
     </section>
     <script>
     (function () {{
@@ -891,17 +905,92 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         }}
       }} catch (_err) {{ /* best-effort */ }}
       var form = document.getElementById("npa-sign-in");
+      var statusEl = document.getElementById("npa-sign-in-status");
+      var btn = document.getElementById("npa-sign-in-btn");
       if (!form) return;
+
+      function setStatus(msg, isError) {{
+        if (!statusEl) return;
+        statusEl.textContent = msg || "";
+        statusEl.style.color = isError ? "#991b1b" : "#5f6573";
+      }}
+
+      function isMobileUa() {{
+        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+      }}
+
+      function destPath() {{
+        var rawPath = String(location.pathname || "/");
+        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+        return (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
+      }}
+
+      function basicAuthHeader(user, pass) {{
+        return "Basic " + btoa(unescape(encodeURIComponent(user + ":" + pass)));
+      }}
+
+      function xhrSignIn(user, pass, dest) {{
+        return new Promise(function (resolve, reject) {{
+          var xhr = new XMLHttpRequest();
+          xhr.open("GET", dest, true, user, pass);
+          xhr.onload = function () {{
+            if (xhr.status >= 200 && xhr.status < 400) {{
+              resolve();
+              return;
+            }}
+            if (xhr.status === 401) {{
+              reject(new Error("Invalid username or password."));
+              return;
+            }}
+            reject(new Error("Sign-in failed (HTTP " + xhr.status + ")."));
+          }};
+          xhr.onerror = function () {{
+            reject(new Error("Network error — open /healthz first and accept the certificate warning."));
+          }};
+          xhr.send();
+        }});
+      }}
+
+      function fetchSignIn(user, pass, dest) {{
+        return fetch(dest, {{
+          method: "GET",
+          headers: {{ "Authorization": basicAuthHeader(user, pass) }},
+          credentials: "include",
+          cache: "no-store",
+        }}).then(function (resp) {{
+          if (!resp.ok) {{
+            throw new Error(resp.status === 401 ? "Invalid username or password." : "Sign-in failed (HTTP " + resp.status + ").");
+          }}
+        }});
+      }}
+
+      function urlEmbedSignIn(user, pass, dest) {{
+        var u = encodeURIComponent(user);
+        var p = encodeURIComponent(pass);
+        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
+      }}
+
       form.addEventListener("submit", function (ev) {{
         ev.preventDefault();
         var user = document.getElementById("npa-user").value;
         var pass = document.getElementById("npa-pass").value;
-        var u = encodeURIComponent(user);
-        var p = encodeURIComponent(pass);
-        var rawPath = String(location.pathname || "/");
-        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
-        var dest = (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
-        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
+        var dest = destPath();
+        setStatus("Signing in…", false);
+        if (btn) btn.disabled = true;
+
+        xhrSignIn(user, pass, dest)
+          .catch(function () {{ return fetchSignIn(user, pass, dest); }})
+          .then(function () {{
+            window.location.href = dest;
+          }})
+          .catch(function (err) {{
+            if (!isMobileUa()) {{
+              urlEmbedSignIn(user, pass, dest);
+              return;
+            }}
+            setStatus((err && err.message) ? err.message : "Sign-in failed on this device.", true);
+            if (btn) btn.disabled = false;
+          }});
       }});
     }})();
     </script>"""
@@ -1021,6 +1110,7 @@ def _bootstrap_agent_stack(
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
+    mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
     https_ssl_setup = ""
     https_server_block = ""
@@ -2917,7 +3007,10 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
       .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
       .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
       .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
-      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }}
+      @media (max-width: 640px) {{
+        .sign-in, .sign-in button {{ max-width: none; width: 100%; }}
+      }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
@@ -2926,6 +3019,7 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
     <p class="ok">This page is public (no login). The workbench UI at <code>/</code> is protected by HTTP Basic Auth.</p>
 {strip_url_credentials_js}
 {login_form_html}
+{mobile_login_help_html}
     <ol>
       <li>Enter your password above and click <strong>Sign in</strong>, or open <a href="/">the workbench UI</a> if your browser shows the auth dialog.</li>
       <li>Username: <code>{auth_user}</code></li>
@@ -2955,7 +3049,10 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
       .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
       .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
       .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
-      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }}
+      @media (max-width: 640px) {{
+        .sign-in, .sign-in button {{ max-width: none; width: 100%; }}
+      }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
@@ -2964,6 +3061,7 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
     <p>The NPA Agent workbench did not receive valid credentials. Sign in below or use your browser&apos;s Basic-auth dialog for <code>/</code> and <code>/api/*</code>.</p>
 {strip_url_credentials_js}
 {login_form_html}
+{mobile_login_help_html}
     <ul>
       <li>Username: <code>{auth_user}</code></li>
       <li>Password: from your operator&apos;s <code>auth.env</code> file (<code>AGENT_PASSWORD</code>).</li>
