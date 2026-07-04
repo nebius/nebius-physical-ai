@@ -79,6 +79,7 @@ Token Factory model selection is configurable via `--llm-model` and `--llm-model
 - Public URL: `https://<public_ip>/` (self-signed cert on VM IP)
 - Sign-in form at `/login-help.html` and `/welcome` (mobile-safe XHR/fetch sign-in; URL-embed fallback on desktop only)
 - On phones: open `/healthz` first to accept the self-signed certificate, then sign in at `/login-help.html`
+- Mobile chat uses `sessionStorage` basic-auth fallback — sign out by clearing site data or use `/login-help.html` again
 - All `fetch` calls use `credentials: "include"` for session basic auth
 - Never suggest `localhost`, `127.0.0.1`, or port `8080` — use same-origin `/api/…` paths
 

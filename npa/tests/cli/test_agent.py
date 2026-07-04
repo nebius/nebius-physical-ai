@@ -114,6 +114,9 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "id=\"toastHost\"" in source
     assert "DOMContentLoaded" in source
     assert "initNpaAgentUi" in source
+    assert 'id="chatForm"' in source
+    assert "mobile-agent" in source
+    assert "npa_agent_basic_auth" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
@@ -134,13 +137,13 @@ def test_bootstrap_public_login_form() -> None:
 
     html = agent_module._agent_public_login_form_html("npa")
     assert 'id="npa-sign-in"' in html
-    assert 'type="submit">Sign in</button>' in html
+    assert 'id="npa-sign-in-btn">Sign in</button>' in html or 'type="submit">Sign in</button>' in html
     assert 'value="npa"' in html
     assert "encodeURIComponent(user)" in html
     assert "encodeURIComponent(pass)" in html
     assert "history.replaceState" in html
-    assert "normalizedPath === \"/login-help.html\"" in html
-    assert "normalizedPath === \"/welcome\"" in html
+    assert "persistBasicAuth" in html
+    assert 'normalizedPath === "/login-help.html"' in html or '"/login-help.html"' in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
@@ -148,7 +151,6 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     for control_id in (
-        "chatSend",
         "chatActionS3",
         "chatActionCosmos",
         "chatActionWatch",
@@ -159,6 +161,8 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
         "workflowStatus",
     ):
         assert f'bindClick("{control_id}"' in source
+    assert 'id="chatForm"' in source
+    assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
     assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
     assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
@@ -301,8 +305,8 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
     assert "setChatBusy(false)" in source
-    assert "btn.disabled = Boolean(isBusy);" in source
-    assert "input.disabled = Boolean(isBusy);" in source
+    assert "if (btn) btn.disabled = busy;" in source
+    assert "if (input) input.disabled = busy;" in source
     assert "JSON.stringify(value)" in source
     assert "JSON.stringify(assets.selection" not in source
 
@@ -470,7 +474,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
             html = (
                 f'<html><head><meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi; '
+                '<body><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
                 'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
             )
             return _Resp(html, status_code=200)

@@ -929,6 +929,12 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         return "Basic " + btoa(unescape(encodeURIComponent(user + ":" + pass)));
       }}
 
+      function persistBasicAuth(user, pass) {{
+        try {{
+          sessionStorage.setItem("npa_agent_basic_auth", basicAuthHeader(user, pass));
+        }} catch (_err) {{ /* sessionStorage may be unavailable */ }}
+      }}
+
       function xhrSignIn(user, pass, dest) {{
         return new Promise(function (resolve, reject) {{
           var xhr = new XMLHttpRequest();
@@ -981,10 +987,12 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         xhrSignIn(user, pass, dest)
           .catch(function () {{ return fetchSignIn(user, pass, dest); }})
           .then(function () {{
+            persistBasicAuth(user, pass);
             window.location.href = dest;
           }})
           .catch(function (err) {{
             if (!isMobileUa()) {{
+              persistBasicAuth(user, pass);
               urlEmbedSignIn(user, pass, dest);
               return;
             }}
@@ -3184,6 +3192,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .camera-frustum {{ display: flex; justify-content: center; }}
       .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
+      .chat-panel-head {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 4px;
+      }}
+      .chat-panel-head h3 {{ margin: 0; }}
+      .mobile-only-toggle {{ display: none; }}
+      .chat-composer {{
+        background: var(--surface);
+      }}
       .chat-toolbar {{
         display: flex;
         justify-content: space-between;
@@ -3347,6 +3367,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 8px 12px;
         font-size: 13px;
         cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }}
       .btn:hover {{ background: #f5f6fb; }}
       .btn-primary {{
@@ -3441,12 +3463,85 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         .chat-input .btn {{ width: 100%; }}
         .btn, .quick-pill {{
-          min-height: 40px;
-          font-size: 13px;
+          min-height: 44px;
+          font-size: 14px;
         }}
         .status-bar {{
           padding-bottom: calc(8px + env(safe-area-inset-bottom));
         }}
+      }}
+      body.mobile-agent {{
+        padding-bottom: calc(56px + env(safe-area-inset-bottom));
+      }}
+      body.mobile-agent .chrome {{
+        max-width: none;
+      }}
+      body.mobile-agent .page {{
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 10px 10px calc(68px + env(safe-area-inset-bottom));
+      }}
+      body.mobile-agent .chat-panel {{
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: calc(100dvh - 112px);
+        margin-bottom: 0;
+      }}
+      body.mobile-agent .chat-panel .hint:first-of-type {{
+        display: none;
+      }}
+      body.mobile-agent .chat-toolbar {{
+        flex-direction: column;
+        align-items: stretch;
+      }}
+      body.mobile-agent .chat-model {{
+        width: 100%;
+        justify-content: space-between;
+      }}
+      body.mobile-agent .chat-model select {{
+        flex: 1 1 auto;
+        max-width: 100%;
+      }}
+      body.mobile-agent .chat-log {{
+        flex: 1 1 auto;
+        min-height: 38dvh;
+        max-height: 52dvh;
+        height: auto;
+      }}
+      body.mobile-agent .chat-composer {{
+        position: sticky;
+        bottom: calc(52px + env(safe-area-inset-bottom));
+        z-index: 850;
+        margin-top: auto;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+      }}
+      body.mobile-agent .actions-inline {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }}
+      body.mobile-agent .actions-inline .quick-pill {{
+        width: 100%;
+        justify-content: center;
+      }}
+      body.mobile-agent .workflow-panel,
+      body.mobile-agent .layout-3 {{
+        display: none;
+      }}
+      body.mobile-agent.mobile-show-panels .workflow-panel,
+      body.mobile-agent.mobile-show-panels .layout-3 {{
+        display: grid;
+      }}
+      body.mobile-agent .mobile-only-toggle {{
+        display: inline-flex;
+        flex-shrink: 0;
+        min-height: 36px;
+      }}
+      body.mobile-agent .topbar .badge {{
+        display: none;
       }}
       .workflow-panel textarea {{
         width: 100%;
@@ -3512,8 +3607,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       </header>
       <main class="page">
         <section class="panel chat-panel">
-          <h3>Workbench Chat</h3>
-          <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+          <div class="chat-panel-head">
+            <div>
+              <h3>Workbench Chat</h3>
+              <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+            </div>
+            <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
+          </div>
           <div class="chat-toolbar">
             <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
             <label for="chatModel" class="chat-model">
@@ -3524,10 +3624,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </label>
           </div>
           <div id="chatLog" class="chat-log"></div>
-          <div class="chat-input">
-            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
-            <button id="chatSend" class="btn btn-primary" type="button">Send</button>
-          </div>
+          <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
+            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
+            <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
+          </form>
           <div class="actions-inline">
             <button id="chatActionS3" class="btn quick-pill" type="button">Configure S3</button>
             <button id="chatActionCosmos" class="btn quick-pill" type="button">Setup Cosmos3</button>
@@ -3686,6 +3786,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
         history.replaceState(null, "", clean);
       }}
+      function detectMobileLayout() {{
+        const narrow = window.matchMedia("(max-width: 900px)").matches;
+        const coarse = window.matchMedia("(pointer: coarse)").matches;
+        const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+        return narrow || (coarse && mobileUa);
+      }}
+      function applyMobileLayout() {{
+        if (!detectMobileLayout()) return;
+        document.body.classList.add("mobile-agent");
+      }}
+      function mobileAuthHeader() {{
+        try {{
+          return String(sessionStorage.getItem("npa_agent_basic_auth") || "").trim();
+        }} catch (_err) {{
+          return "";
+        }}
+      }}
+      function withMobileAuth(headers) {{
+        const merged = {{ ...(headers || {{}}) }};
+        const auth = mobileAuthHeader();
+        if (auth && !merged.Authorization) {{
+          merged.Authorization = auth;
+        }}
+        return merged;
+      }}
+      applyMobileLayout();
       const chatHistory = [];
       let thinkingNode = null;
       function setStatus(text) {{
@@ -3733,7 +3859,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       function wireUi() {{
-        bindClick("chatSend", sendChat, "Send chat");
+        const chatForm = document.getElementById("chatForm");
+        if (chatForm) {{
+          chatForm.addEventListener("submit", (event) => {{
+            event.preventDefault();
+            sendChat().catch((err) => showToast(String(err), "error"));
+          }});
+        }}
+        const mobileToggle = document.getElementById("mobilePanelsToggle");
+        if (mobileToggle) {{
+          mobileToggle.addEventListener("click", () => {{
+            const open = document.body.classList.toggle("mobile-show-panels");
+            mobileToggle.setAttribute("aria-expanded", open ? "true" : "false");
+            mobileToggle.textContent = open ? "Hide panels" : "Panels";
+          }});
+        }}
         bindClick("chatActionS3", () => {{
           setChatInput("Help me configure S3 credentials and bucket for NPA workflows.");
         }}, "Insert S3 prompt");
@@ -4011,9 +4151,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const btn = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
         const model = document.getElementById("chatModel");
-        btn.disabled = Boolean(isBusy);
-        input.disabled = Boolean(isBusy);
-        if (model) model.disabled = Boolean(isBusy);
+        const busy = Boolean(isBusy);
+        if (btn) btn.disabled = busy;
+        if (input) input.disabled = busy;
+        if (model) model.disabled = busy;
       }}
       function setChatModels(models, selectedModel) {{
         const select = document.getElementById("chatModel");
@@ -4540,9 +4681,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const opts = {{
           ...req,
           credentials: "include",
-          headers: {{
+          headers: withMobileAuth({{
             ...(req.headers || {{}}),
-          }},
+          }}),
         }};
         let resp;
         try {{
@@ -5048,14 +5189,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }} catch (_artifactErr) {{
             // artifact discovery is optional when S3 credentials are missing.
           }}
-          await ensureFrankaRerunLoaded();
-          setStatus("Ready");
-          showToast("Franka demo ready in Rerun", "success");
+          if (document.body.classList.contains("mobile-agent")) {{
+            setStatus("Ready");
+            showToast("Mobile chat ready", "success");
+          }} else {{
+            await ensureFrankaRerunLoaded();
+            setStatus("Ready");
+            showToast("Franka demo ready in Rerun", "success");
+          }}
         }} catch (err) {{
           console.warn("franka auto-load failed", err);
-          showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
-          showToast(String(err && err.message ? err.message : err), "error");
-          setStatus("Ready");
+          if (document.body.classList.contains("mobile-agent")) {{
+            setStatus("Ready");
+          }} else {{
+            showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+            showToast(String(err && err.message ? err.message : err), "error");
+            setStatus("Ready");
+          }}
         }} finally {{
           rerunBootInProgress = false;
         }}
@@ -6101,9 +6251,11 @@ def verify_live_cmd(
         _fail(f"UI html fetch failed (status={ui_resp.status_code})")
     ui_html = ui_resp.text
     for marker in (
-        'bindClick("chatSend"',
+        'id="chatForm"',
+        "function sendChat(",
         "function wireUi(",
         "initNpaAgentUi",
+        "mobile-agent",
         "history.replaceState",
         "location.username",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
