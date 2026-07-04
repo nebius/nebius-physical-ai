@@ -482,7 +482,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"console.log('rerun');", status_code=200)
         if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
             html = (
-                f'<html><head><meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
+                f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
+                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 '<body><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
                 'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
             )
