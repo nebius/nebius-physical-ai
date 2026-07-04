@@ -110,7 +110,17 @@ RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/
 
 USER root
 
-RUN dpkg --purge --force-depends linux-libc-dev \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade gpgv openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu

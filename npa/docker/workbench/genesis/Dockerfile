@@ -84,7 +84,9 @@ RUN python3 -m venv /opt/genesis/venv \
       "rich==15.0.0" \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
-      "pyarrow==22.0.0"
+      "pyarrow==22.0.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/genesis/venv/bin/pip uninstall -y wandb
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
@@ -110,7 +112,17 @@ PY
 
 USER root
 
-RUN dpkg --purge --force-depends linux-libc-dev \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade gpgv openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
