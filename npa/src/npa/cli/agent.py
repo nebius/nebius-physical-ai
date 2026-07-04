@@ -961,7 +961,7 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         return fetch(dest, {{
           method: "GET",
           headers: {{ "Authorization": basicAuthHeader(user, pass) }},
-          credentials: "include",
+          credentials: "omit",
           cache: "no-store",
         }}).then(function (resp) {{
           if (!resp.ok) {{
@@ -3241,9 +3241,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       body.mobile-agent.mobile-needs-auth .mobile-chat-auth {{
         display: block;
       }}
-      body.mobile-agent.mobile-needs-auth #chatForm {{
+      body.mobile-agent.mobile-needs-auth #chatForm,
+      body.mobile-agent.mobile-needs-auth .actions-inline {{
         opacity: 0.55;
         pointer-events: none;
+      }}
+      body.mobile-agent .mobile-chat-auth {{
+        order: -1;
       }}
       .chat-toolbar {{
         display: flex;
@@ -3686,14 +3690,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </select>
             </label>
           </div>
-          <div id="chatLog" class="chat-log"></div>
           <div id="mobileChatAuth" class="mobile-chat-auth" aria-live="polite">
-            <p class="hint">Mobile chat needs your agent password once on this device.</p>
+            <p class="hint">Mobile chat needs your agent password once on this device (iOS Safari does not send saved login on chat requests).</p>
             <div class="mobile-chat-auth-row">
               <input id="mobileChatPassword" type="password" placeholder="Agent password" autocomplete="current-password">
               <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
             </div>
           </div>
+          <div id="chatLog" class="chat-log"></div>
           <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
             <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
             <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
@@ -3866,19 +3870,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!detectMobileLayout()) return;
         document.body.classList.add("mobile-agent");
       }}
+      let mobileAuthTokenCache = "";
       function mobileAuthHeader() {{
+        if (mobileAuthTokenCache) {{
+          return mobileAuthTokenCache;
+        }}
         try {{
           return String(sessionStorage.getItem("npa_agent_basic_auth") || "").trim();
         }} catch (_err) {{
           return "";
         }}
       }}
+      function hasMobileChatAuth() {{
+        return Boolean(mobileAuthHeader());
+      }}
       function persistMobileBasicAuth(user, pass) {{
         const token = "Basic " + btoa(unescape(encodeURIComponent(String(user || "") + ":" + String(pass || ""))));
+        mobileAuthTokenCache = token;
         try {{
           sessionStorage.setItem("npa_agent_basic_auth", token);
-        }} catch (_err) {{ /* ignore */ }}
+        }} catch (_err) {{ /* sessionStorage may be blocked in private browsing */ }}
         return token;
+      }}
+      function clearMobileBasicAuth() {{
+        mobileAuthTokenCache = "";
+        try {{
+          sessionStorage.removeItem("npa_agent_basic_auth");
+        }} catch (_err) {{ /* ignore */ }}
       }}
       function setMobileAuthNeeded(needed) {{
         if (!document.body.classList.contains("mobile-agent")) return;
@@ -3887,21 +3905,35 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.body.classList.add("mobile-auth-ready");
         }}
       }}
-      async function probeMobileChatAuth() {{
-        if (!document.body.classList.contains("mobile-agent")) return true;
-        if (mobileAuthHeader()) {{
-          setMobileAuthNeeded(false);
-          return true;
+      async function verifyMobileChatAuth() {{
+        const auth = mobileAuthHeader();
+        if (!auth) {{
+          return false;
         }}
         try {{
-          const resp = await fetch("/api/health", {{ credentials: "include", cache: "no-store" }});
-          if (resp.ok) {{
-            setMobileAuthNeeded(false);
-            return true;
+          const resp = await fetch("/api/health", {{
+            credentials: "omit",
+            cache: "no-store",
+            headers: {{ Authorization: auth }},
+          }});
+          if (resp.status === 401) {{
+            clearMobileBasicAuth();
+            return false;
           }}
-        }} catch (_err) {{ /* fall through */ }}
-        setMobileAuthNeeded(true);
-        return false;
+          return resp.ok;
+        }} catch (_err) {{
+          return false;
+        }}
+      }}
+      async function probeMobileChatAuth() {{
+        if (!document.body.classList.contains("mobile-agent")) return true;
+        if (!hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
+          return false;
+        }}
+        const ok = await verifyMobileChatAuth();
+        setMobileAuthNeeded(!ok);
+        return ok;
       }}
       async function unlockMobileChatAuth(password) {{
         const pass = String(password || "").trim();
@@ -3909,13 +3941,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           throw new Error("Enter your agent password.");
         }}
         persistMobileBasicAuth("{DEFAULT_AGENT_USER}", pass);
-        const resp = await fetch("/api/health", {{
-          credentials: "include",
-          cache: "no-store",
-          headers: {{ Authorization: mobileAuthHeader() }},
-        }});
-        if (!resp.ok) {{
-          try {{ sessionStorage.removeItem("npa_agent_basic_auth"); }} catch (_err) {{ /* ignore */ }}
+        const ok = await verifyMobileChatAuth();
+        if (!ok) {{
+          clearMobileBasicAuth();
           throw new Error("Invalid password — try again or reopen /login-help.html.");
         }}
         setMobileAuthNeeded(false);
@@ -4405,7 +4433,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (chatSendInFlight) {{
           return false;
         }}
-        if (document.body.classList.contains("mobile-agent") && document.body.classList.contains("mobile-needs-auth")) {{
+        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
           showToast("Unlock chat with your agent password first.", "error");
           return false;
         }}
@@ -4831,16 +4860,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function apiJson(path, init) {{
         const req = init || {{}};
+        const isMobile = document.body.classList.contains("mobile-agent");
+        const headers = withMobileAuth({{
+          ...(req.headers || {{}}),
+        }});
+        if (isMobile && String(path || "").startsWith("/api/") && !headers.Authorization) {{
+          setMobileAuthNeeded(true);
+          throw new Error("Unlock chat with your agent password.");
+        }}
+        const useExplicitAuth = isMobile && Boolean(headers.Authorization);
         const opts = {{
           ...req,
-          credentials: "include",
-          headers: withMobileAuth({{
-            ...(req.headers || {{}}),
-          }}),
+          credentials: useExplicitAuth ? "omit" : "include",
+          headers,
         }};
+        const timeoutMs = String(path || "") === "/api/chat" ? 90000 : 12000;
         let resp;
         try {{
-          resp = await fetchWithTimeout(path, opts, 12000);
+          resp = await fetchWithTimeout(path, opts, timeoutMs);
         }} catch (err) {{
           if (err && err.name === "AbortError") {{
             throw new Error("Request timed out: " + String(path));
