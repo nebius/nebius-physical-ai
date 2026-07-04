@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
@@ -728,6 +732,65 @@ def test_bootstrap_chat_copy_yaml_support_present() -> None:
     assert "msg-copy-btn" in source
     assert "extractFencedCode" in source
     assert "copyTextToClipboard" in source
+
+
+def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
+    if not shutil.which("node"):
+        return
+    from npa.cli import agent as agent_module
+
+    captured: dict[str, str] = {}
+
+    class _DummySsh:
+        def upload_file(self, local_path: str, _remote_path: str) -> None:
+            captured["setup_script"] = Path(local_path).read_text(encoding="utf-8")
+
+        def run_or_raise(self, _command: str) -> None:
+            return None
+
+        def run(self, _command: str) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda config: _DummySsh())
+    monkeypatch.setattr(agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={}))
+
+    agent_module._bootstrap_agent_stack(
+        host="203.0.113.10",
+        ssh_user="ubuntu",
+        ssh_key_path="/tmp/key",
+        project_alias="smoke",
+        project_id="project-id",
+        tenant_id="tenant-id",
+        region="us-central1",
+        auth_user="npa",
+        auth_password="password",
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_models=["nvidia/Cosmos3-Super-Reasoner", "meta-llama/Llama-3.3-70B-Instruct"],
+        tf_api_key="",
+        nebius_ai_key="",
+        public_https=True,
+    )
+
+    setup_script = captured["setup_script"]
+    html_match = re.search(
+        r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
+        setup_script,
+        flags=re.DOTALL,
+    )
+    assert html_match, "bootstrap setup script must emit ui.html"
+    scripts = re.findall(r"<script>(.*?)</script>", html_match.group("html"), flags=re.DOTALL)
+    assert scripts, "ui.html must include browser JavaScript"
+    proc = subprocess.run(
+        ["node", "--check", "-"],
+        input="\n".join(scripts),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_bootstrap_recordings_api_in_system_prompt() -> None:

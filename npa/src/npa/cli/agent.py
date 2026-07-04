@@ -55,7 +55,7 @@ DEFAULT_LLM_MODELS = (
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070402"
+AGENT_UI_VERSION = "2026070403"
 DEFAULT_HTTPS_PORT = 443
 
 
@@ -4588,7 +4588,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function extractFencedCode(text, preferredLang) {{
         const raw = String(text || "");
         const blocks = [];
-        const re = /```([a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```/g;
+        const re = /```([a-zA-Z0-9_-]+)?\s*\\n([\\s\\S]*?)```/g;
         let match;
         while ((match = re.exec(raw)) !== null) {{
           blocks.push({{
