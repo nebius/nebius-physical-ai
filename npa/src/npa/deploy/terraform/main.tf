@@ -160,7 +160,7 @@ resource "nebius_compute_v1_instance" "workbench" {
 
   recovery_policy = var.enable_preemptible ? "FAIL" : "RECOVER"
 
-  service_account_id = var.service_account_id
+  service_account_id = trimspace(var.service_account_id) != "" ? trimspace(var.service_account_id) : null
 
   labels = {
     environment = "ml-workbench"

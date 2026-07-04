@@ -22,9 +22,10 @@ variable "nebius_region" {
 # ── Service account (created by environment.sh) ───────────────────────────
 
 variable "service_account_id" {
-  description = "Service account ID created by environment.sh"
+  description = "Optional service account ID attached to the VM for metadata/API access"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 # ── Instance ───────────────────────────────────────────────────────────────

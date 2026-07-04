@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import ipaddress
 import tempfile
@@ -207,6 +208,48 @@ def _record_customer_url(record: dict[str, Any]) -> str:
 def _fail(message: str) -> None:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
+
+
+def _looks_like_compute_permission_denied(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return "permissiondenied" in lowered and "service compute" in lowered
+
+
+def _apply_agent_terraform(
+    *,
+    project: str,
+    name: str,
+    merged_vars: dict[str, str],
+    env_region: str,
+) -> dict[str, Any]:
+    """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=merged_vars.get("s3_bucket", ""),
+        region=env_region,
+        endpoint=merged_vars.get("s3_endpoint", ""),
+    )
+    provisioner.init(
+        tf_dir=tf_dir,
+        backend_config={
+            "access_key": merged_vars.get("nebius_api_key", ""),
+            "secret_key": merged_vars.get("nebius_secret_key", ""),
+        },
+    )
+    try:
+        return provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
+    except ProvisionerError as exc:
+        sa_id = str(merged_vars.get("service_account_id", "")).strip()
+        if sa_id and _looks_like_compute_permission_denied(str(exc)):
+            typer.echo(
+                "  Compute create denied with VM service-account attachment; "
+                "retrying without attached service_account_id ..."
+            )
+            retry_vars = dict(merged_vars)
+            retry_vars["service_account_id"] = ""
+            return provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
+        raise
 
 
 def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
@@ -5064,6 +5107,9 @@ def deploy_cmd(
     ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
+    if profile and shutil.which("nebius"):
+        subprocess.run(["nebius", "profile", "activate", profile], check=False)
     saved_env = resolve_environment(
         project,
         project_id=project_id or None,
@@ -5126,21 +5172,12 @@ def deploy_cmd(
 
     tf_outputs: dict[str, Any] = {}
     try:
-        tf_dir = provisioner.prepare_working_dir(
-            project,
-            name,
-            bucket=merged_vars.get("s3_bucket", ""),
-            region=env_region,
-            endpoint=merged_vars.get("s3_endpoint", ""),
+        tf_outputs = _apply_agent_terraform(
+            project=project,
+            name=name,
+            merged_vars=merged_vars,
+            env_region=env_region,
         )
-        provisioner.init(
-            tf_dir=tf_dir,
-            backend_config={
-                "access_key": merged_vars.get("nebius_api_key", ""),
-                "secret_key": merged_vars.get("nebius_secret_key", ""),
-            },
-        )
-        tf_outputs = provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
     except ProvisionerError as exc:
         try:
             _destroy_agent_terraform(project, name)
