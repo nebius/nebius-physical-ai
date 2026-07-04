@@ -2457,6 +2457,18 @@ def _agent_command_env() -> dict:
             if Path(candidate).is_file():
                 env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
                 break
+        if not env.get("TF_VAR_ssh_public_key"):
+            for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
+                path = Path(candidate)
+                if not path.is_file():
+                    continue
+                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    value = line.strip()
+                    if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+                        env["TF_VAR_ssh_public_key"] = json.dumps({{"key": value}})
+                        break
+                if env.get("TF_VAR_ssh_public_key"):
+                    break
     return env
 
 
