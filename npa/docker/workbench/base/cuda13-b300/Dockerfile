@@ -50,7 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libffi-dev \
       libgl1 \
       libglib2.0-0 \
-      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libxext6 \
@@ -146,5 +145,10 @@ print("flash_attn_func", flash_attn_func)
 PY
 
 WORKDIR /workspace
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu

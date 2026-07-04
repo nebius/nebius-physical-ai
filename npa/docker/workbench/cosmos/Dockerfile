@@ -35,7 +35,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 \
       libglib2.0-0 \
       libglvnd0 \
-      linux-libc-dev \
       libsm6 \
       libx11-6 \
       libxext6 \
@@ -107,6 +106,13 @@ RUN python -m pip install --no-deps -e /opt/npa \
     && python /opt/npa/docker/workbench/cosmos/build_server.py
 
 RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 WORKDIR /opt/cosmos
 EXPOSE 8080

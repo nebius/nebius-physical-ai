@@ -31,7 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 \
       libglib2.0-0 \
       libglvnd0 \
-      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libx11-6 \
@@ -107,6 +106,13 @@ if actual != expected:
     raise RuntimeError(f"expected genesis-world {expected}, found {actual}")
 print(f"GENESIS_BUILD_IMPORT_OK {actual}")
 PY
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 WORKDIR /opt/genesis
 ENTRYPOINT ["/bin/bash"]

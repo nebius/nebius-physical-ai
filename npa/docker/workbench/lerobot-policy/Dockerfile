@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libegl1 \
       libgl1 \
       libglib2.0-0 \
-      linux-libc-dev \
       python3.12 \
       python3.12-dev \
       python3.12-venv \
@@ -43,6 +42,7 @@ USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg \
+    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu

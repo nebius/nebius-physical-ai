@@ -36,7 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1-mesa-dev \
       libglib2.0-0 \
       libglvnd0 \
-      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libx11-dev \
@@ -94,6 +93,13 @@ COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 
 RUN python -m npa.smoke.test_lerobot_env
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 EXPOSE 8080
 

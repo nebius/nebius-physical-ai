@@ -52,7 +52,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libglib2.0-0 \
       libglvnd0 \
       libglu1-mesa \
-      linux-libc-dev \
       libsm6 \
       libssl-dev \
       libx11-6 \
@@ -236,6 +235,13 @@ if actual != expected:
     raise RuntimeError(f"expected isaaclab {expected}, found {actual}")
 print(f"ISAAC_LAB_BUILD_IMPORT_OK {actual}")
 PY
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 WORKDIR /opt/groot
 EXPOSE 8080
