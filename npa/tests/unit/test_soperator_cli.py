@@ -405,3 +405,68 @@ def test_install_monitoring_crds_raises_when_crd_absent(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="ServiceMonitor CRD not present"):
         lifecycle._install_monitoring_crds("kubectl", "ctx")
+
+
+def _write_recipe_locals(tmp_path, essential_body: str):
+    """Write a minimal locals_active_checks.tf with an ``essential`` scope."""
+    from pathlib import Path
+
+    locals_tf = tmp_path / "modules" / "slurm" / "locals_active_checks.tf"
+    locals_tf.parent.mkdir(parents=True, exist_ok=True)
+    locals_tf.write_text(
+        "locals {\n"
+        "  active_checks_scopes = {\n"
+        "    essential = {\n"
+        f"{essential_body}"
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+    return locals_tf
+
+
+def test_patch_active_checks_locals_adds_healthy_nodes_override(tmp_path) -> None:
+    """The essential scope must skip ensure-healthy-nodes at creation, else
+    wait-for-active-checks deadlocks on a CPU-only cluster (its GPU deps never
+    run)."""
+    from npa.soperator import lifecycle
+
+    locals_tf = _write_recipe_locals(
+        tmp_path,
+        "      all-reduce-perf-nccl-in-docker = {\n"
+        "        runAfterCreation = false\n"
+        "      }\n",
+    )
+
+    assert lifecycle._patch_active_checks_locals(tmp_path) is True
+    text = locals_tf.read_text()
+    # The override lands inside the essential scope, before the first existing key.
+    assert "ensure-healthy-nodes = {" in text
+    assert "runAfterCreation = false" in text
+    essential_idx = text.index("essential = {")
+    assert text.index("ensure-healthy-nodes") > essential_idx
+
+
+def test_patch_active_checks_locals_is_idempotent(tmp_path) -> None:
+    from npa.soperator import lifecycle
+
+    locals_tf = _write_recipe_locals(
+        tmp_path,
+        "      ssh-check = {\n"
+        "        commentPrefix = null\n"
+        "      }\n",
+    )
+
+    assert lifecycle._patch_active_checks_locals(tmp_path) is True
+    once = locals_tf.read_text()
+    assert lifecycle._patch_active_checks_locals(tmp_path) is False
+    assert locals_tf.read_text() == once
+    # Exactly one override block, not duplicated.
+    assert once.count("ensure-healthy-nodes = {") == 1
+
+
+def test_patch_active_checks_locals_missing_file(tmp_path) -> None:
+    from npa.soperator import lifecycle
+
+    # No modules/slurm/locals_active_checks.tf -> no-op, no crash.
+    assert lifecycle._patch_active_checks_locals(tmp_path) is False

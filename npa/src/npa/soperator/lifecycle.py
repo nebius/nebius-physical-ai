@@ -149,9 +149,53 @@ def _resolve_subnet(nebius_bin: str, project_id: str, env: dict[str, str]) -> st
     return str(items[0].get("metadata", {}).get("id") or "")
 
 
+_ESSENTIAL_HEALTHY_NODES_MARKER = "# npa: CPU-only clusters disable the GPU checks"
+_ESSENTIAL_HEALTHY_NODES_OVERRIDE = (
+    "      " + _ESSENTIAL_HEALTHY_NODES_MARKER + "\n"
+    "      # that ensure-healthy-nodes dependsOn, so its creation run never fires\n"
+    "      # and wait-for-active-checks (which gates the activechecks HelmRelease,\n"
+    "      # and thus terraform apply) deadlocks. Skip it at creation time.\n"
+    "      ensure-healthy-nodes = {\n"
+    "        runAfterCreation = false\n"
+    "      }\n"
+)
+
+
+def _patch_active_checks_locals(recipe_dir: Path) -> bool:
+    """Ensure the ``essential`` active-checks scope skips ``ensure-healthy-nodes``.
+
+    On a CPU-only cluster npa selects the ``essential`` scope, which sets
+    ``runAfterCreation = false`` on every GPU/NCCL/IB/perf check. But
+    ``ensure-healthy-nodes`` (a slurmJob check) ``dependsOn`` those very checks,
+    so with them disabled its creation run never triggers and its status stays
+    empty. ``wait-for-active-checks`` -- the Helm hook that gates the activechecks
+    HelmRelease, and therefore ``terraform apply`` -- waits for every
+    ``runAfterCreation = true`` check to reach a terminal state, so it hangs until
+    the 2h Helm timeout. Add ``ensure-healthy-nodes = { runAfterCreation = false }``
+    to the ``essential`` scope (mirroring the recipe's own gb300 handling) so the
+    hook no longer waits on it. Idempotent; returns True if a patch was applied.
+    """
+
+    locals_tf = recipe_dir / "modules" / "slurm" / "locals_active_checks.tf"
+    if not locals_tf.exists():
+        return False
+    text = locals_tf.read_text()
+    if _ESSENTIAL_HEALTHY_NODES_MARKER in text:
+        return False
+    marker = "    essential = {\n"
+    idx = text.find(marker)
+    if idx == -1:
+        return False
+    insert_at = idx + len(marker)
+    patched = text[:insert_at] + _ESSENTIAL_HEALTHY_NODES_OVERRIDE + text[insert_at:]
+    locals_tf.write_text(patched)
+    return True
+
+
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
     """Create installations/<name> with the recipe files + generated tfvars."""
 
+    _patch_active_checks_locals(recipe_dir)
     example = recipe_dir / "installations" / "example"
     install_dir = recipe_dir / "installations" / spec.name
     install_dir.mkdir(parents=True, exist_ok=True)
