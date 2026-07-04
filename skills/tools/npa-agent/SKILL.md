@@ -11,6 +11,7 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 ## When To Use
 
 - Deploy, bootstrap, or verify an agent VM (`npa agent …`)
+- **Fresh deploy / teardown loops:** load `skills/workflows/agent-fresh-operate/SKILL.md`
 - Debug chat hallucinations (raw `GET /api/…` replies) or false “Loaded Franka” messages
 - Fix Rerun iframe black screen (basic auth + wasm fetch)
 - Operate customer HTTPS access and sign-in UX
@@ -238,6 +239,7 @@ Submits workflow with current selection; updates `latest_submit` and `sim_viz.ru
 - CLI + bootstrap: `npa/src/npa/cli/agent.py`
 - Chat router (testable): `npa/src/npa/cli/agent_chat.py`
 - Franka verify script: `npa/scripts/verify_agent_franka.sh`
+- Fresh deploy loop: `npa/scripts/agent_fresh_setup_loop.sh` (see `skills/workflows/agent-fresh-operate/SKILL.md`)
 - Mature deploy loop: `npa/scripts/agent_mature_verify_loop.sh`
 
 ## Security / Guardrails

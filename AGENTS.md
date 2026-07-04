@@ -16,6 +16,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, and Cosmos3 setup/troubleshooting.
 - `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, and Nebius infra.
 - `skills/workflows/sim2real-operate/SKILL.md`: operate the staged Sim2Real pipeline on a K8s GPU cluster — runbook, direct-K8s submit, preflight health checks, storage secret sync, and job monitoring.
+- `skills/workflows/agent-fresh-operate/SKILL.md`: npa-driven agent teardown, fresh-setup, tiered verify gates, and deploy failure recovery on the operator/dev VM.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate declarative `npa.workflow/v0.0.1` specs (`validate-spec`, `plan-spec`, toolRef catalog).
 - `skills/workflows/byof-onboard/SKILL.md`: BYOF OSS repo onboarding (Ubuntu/Isaac base, container-verify, agent `onboard_solution`).
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative npa.workflow pipelines from the catalog (loops, gates, golden YAML).

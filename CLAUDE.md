@@ -25,6 +25,9 @@ making architecture, review, or domain judgments.
 - `skills/workflows/sim2real-operate/SKILL.md`: run, monitor, and debug the
   staged Sim2Real pipeline on a K8s GPU cluster (runbook, direct-K8s submit,
   health checks, job monitoring).
+- `skills/workflows/agent-fresh-operate/SKILL.md`: npa-driven agent teardown,
+  fresh-setup, tiered verify gates, and deploy failure recovery on the
+  operator/dev VM.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate
   declarative `npa.workflow/v0.0.1` specs (toolRef catalog, validate/plan/run CLI).
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative
