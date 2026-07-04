@@ -60,8 +60,16 @@ def resolve_robot_spec_from_consumed_doc(
             robot_source=source,
             robot_preset=preset,
         )
+    # Fall back to a NAMED PRESET only when the inner spec selects one AND carries
+    # no concrete robot URI of its own (e.g. ``preset: ur5e`` + gain overrides, with
+    # the URDF filled in later). The URI check MUST recognize ``usd_path`` (the
+    # ``robot_uri`` alias): Stage-2 consumption injects a default top-level
+    # ``robot_preset`` (e.g. ``franka``) that leaks into ``preset_in_inner``, so a
+    # minimal BYO spec keyed on ``usd_path`` (no ``robot_uri``) would otherwise
+    # short-circuit to the stock Franka preset and never reach training/eval.
+    inner_uri = str(inner.get("robot_uri") or inner.get("usd_path") or "").strip()
     preset_in_inner = str(inner.get("preset") or preset or "").strip().lower()
-    if preset_in_inner and not str(inner.get("robot_uri") or "").strip():
+    if preset_in_inner and not inner_uri:
         return robot_assets.robot_spec_from_preset(preset_in_inner)
     return robot_assets.parse_robot_spec(inner)
 

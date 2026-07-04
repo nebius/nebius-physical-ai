@@ -83,6 +83,38 @@ STOCK_FRANKA_MJCF = "xml/franka_emika_panda/panda.xml"
 # env_pick_place.py so the default path is byte-for-byte identical.
 FRANKA_HOME = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785, 0.04, 0.04)
 
+# --------------------------------------------------------------------------- #
+# Minimal-spec onboarding defaults
+# --------------------------------------------------------------------------- #
+# Without these, a customer onboarding a BYO robot must hand-write dof_count-long
+# ``kp``/``kv``/``force_*``/``home_qpos`` arrays, and a missing/short array is
+# rejected. When those arrays are OMITTED we synthesize robot-agnostic,
+# position-control defaults from the joint counts, so a MINIMAL spec (name + usd +
+# joint/link names) onboards. Values are per-joint-type — an arm joint gets a
+# moderate position-control drive, a gripper finger a lighter one — and are
+# deliberately conservative: each sits well inside every clamp in
+# ``isaac_byo_robot_task`` and inside the proven-stable range of prior on-cluster
+# BYO runs. Franka / preset specs ship full-length arrays, so this path never
+# touches them (see ``parse_robot_spec``).
+DEFAULT_ARM_KP = 80.0
+DEFAULT_ARM_KV = 8.0
+DEFAULT_ARM_FORCE = 50.0
+DEFAULT_GRIPPER_KP = 20.0
+DEFAULT_GRIPPER_KV = 4.0
+DEFAULT_GRIPPER_FORCE = 20.0
+
+
+def _auto_gain_array(
+    n_arm: int, n_gripper: int, arm_val: float, gripper_val: float
+) -> tuple[float, ...]:
+    """Build a dof_count-length array: ``arm_val`` per arm joint, ``gripper_val``
+    per gripper joint. Used to fill an omitted gain array for a minimal spec."""
+
+    return tuple(
+        [float(arm_val)] * max(int(n_arm), 0)
+        + [float(gripper_val)] * max(int(n_gripper), 0)
+    )
+
 
 class RobotSpecError(RuntimeError):
     """Raised when a RobotSpec is malformed or a robot asset cannot load."""
@@ -397,8 +429,14 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
         spec.robot_source = str(doc["robot_source"]).strip()
     if doc.get("name"):
         spec.name = str(doc["name"]).strip()
-    if doc.get("robot_uri") is not None:
-        spec.robot_uri = str(doc["robot_uri"]).strip()
+    # ``usd_path`` is accepted as an alias for ``robot_uri`` so a customer can hand
+    # us the same field name the Isaac spawn config uses (isaac_byo_robot_task reads
+    # ``usd_path``); ``robot_uri`` wins when both are present.
+    robot_uri_in = doc.get("robot_uri")
+    if robot_uri_in is None:
+        robot_uri_in = doc.get("usd_path")
+    if robot_uri_in is not None:
+        spec.robot_uri = str(robot_uri_in).strip()
     if not explicit_source and spec.robot_uri:
         inferred = _infer_robot_source_from_uri(spec.robot_uri)
         if inferred is not None:
@@ -437,6 +475,40 @@ def parse_robot_spec(doc: dict[str, Any]) -> RobotSpec:
         spec.gripper_close = float(doc["gripper_close"])
     if doc.get("isaac_robot_hint"):
         spec.isaac_robot_hint = str(doc["isaac_robot_hint"]).strip()
+
+    # Minimal-spec joint-count inference: when the counts are omitted but joint
+    # names are supplied, derive them so the customer need not restate the
+    # arithmetic. Gripper count = len(gripper_joint_names); arm count = the
+    # remaining joints. Only fills a count the doc did not set.
+    if doc.get("n_gripper_joints") is None and "gripper_joint_names" in doc:
+        spec.n_gripper_joints = len(spec.gripper_joint_names)
+    if doc.get("n_arm_joints") is None and doc.get("joint_names") is not None:
+        spec.n_arm_joints = max(len(spec.joint_names) - spec.n_gripper_joints, 0)
+
+    # Auto-derive a dof_count-length array for each gain/home field the doc omits,
+    # so a minimal BYO spec (no hand-written per-joint arrays) still validates.
+    # Guard on ``len(...) != dof_count``: a Franka/preset spec ships correct-length
+    # arrays (dof_count == len), so those paths are never touched; only a custom
+    # embodiment whose DoF differs from the seeded default gets synthesized gains.
+    dof = spec.dof_count
+    n_arm, n_grip = spec.n_arm_joints, spec.n_gripper_joints
+    if doc.get("kp") is None and len(spec.kp) != dof:
+        spec.kp = _auto_gain_array(n_arm, n_grip, DEFAULT_ARM_KP, DEFAULT_GRIPPER_KP)
+    if doc.get("kv") is None and len(spec.kv) != dof:
+        spec.kv = _auto_gain_array(n_arm, n_grip, DEFAULT_ARM_KV, DEFAULT_GRIPPER_KV)
+    if doc.get("force_upper") is None and len(spec.force_upper) != dof:
+        spec.force_upper = _auto_gain_array(
+            n_arm, n_grip, DEFAULT_ARM_FORCE, DEFAULT_GRIPPER_FORCE
+        )
+    if doc.get("force_lower") is None and len(spec.force_lower) != dof:
+        spec.force_lower = tuple(
+            -abs(f)
+            for f in _auto_gain_array(
+                n_arm, n_grip, DEFAULT_ARM_FORCE, DEFAULT_GRIPPER_FORCE
+            )
+        )
+    if doc.get("home_qpos") is None and len(spec.home_qpos) != dof:
+        spec.home_qpos = tuple([0.0] * dof)
 
     spec.validate()
     return spec
