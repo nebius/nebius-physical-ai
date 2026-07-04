@@ -120,7 +120,7 @@ RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --only-upgrade gpgv openssl libssl3 \
+    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \

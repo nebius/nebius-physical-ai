@@ -99,7 +99,7 @@ RUN python -m npa.smoke.test_lerobot_env
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --only-upgrade openssl libssl3 \
+    && apt-get install -y --no-install-recommends --only-upgrade openssl libssl3 \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \
