@@ -250,6 +250,7 @@ RUN apt-get update \
       gpg-agent \
       software-properties-common \
     && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
