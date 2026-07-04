@@ -91,6 +91,15 @@ RUN python3 -m venv /opt/cosmos/venv \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
     && /opt/cosmos/venv/bin/pip install --no-deps "cosmos_guardrail==0.1.0" \
+    && /opt/cosmos/venv/bin/pip install --no-cache-dir --no-deps --upgrade \
+      "modelscope>=1.27.0" \
+      "nltk>=3.9.4" \
+      "pillow>=12.2.0" \
+      "protobuf==5.29.6" \
+      "python-multipart>=0.0.30" \
+      "sentencepiece>=0.2.1" \
+      "transformers>=5.3.0" \
+    && /opt/cosmos/venv/bin/pip uninstall -y wandb \
     && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl
 
 ENV PATH=/opt/cosmos/venv/bin:$PATH \
