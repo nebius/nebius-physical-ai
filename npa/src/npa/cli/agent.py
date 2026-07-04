@@ -1741,7 +1741,7 @@ def _load_chat_session_from_s3(session_id: str) -> dict | None:
         raw = body.read() if hasattr(body, "read") else body
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
-        payload = json.loads(str(raw or "{}"))
+        payload = json.loads(str(raw or "{{}}"))
         return _normalize_chat_session(session_id, payload)
     except Exception:
         return None
