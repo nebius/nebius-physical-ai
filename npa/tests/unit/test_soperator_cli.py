@@ -167,6 +167,9 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
+    # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
     captured: dict[str, dict[str, str]] = {}
 
     class _Done:
@@ -228,6 +231,9 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
+    # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
     deleted: list[str] = []
 
     class _Done:
@@ -286,6 +292,9 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
+    # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
     deleted: list[str] = []
 
     class _Done:
