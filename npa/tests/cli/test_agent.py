@@ -892,6 +892,39 @@ def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
     assert rendered
 
 
+def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_resolve_skill_context" in source
+    assert "_skill_index_candidates" in source
+    assert "apis_suggested" in source
+    assert "skills_used" in source
+    assert "_dedupe(apis_used)" in source
+
+
+def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_state_s3_key" in source
+    assert "NPA_AGENT_STATE_S3_PREFIX" in source
+    assert "NPA_AGENT_SESSION_SCOPE" in source
+    assert "_save_state_to_s3" in source
+    assert "_load_state_from_s3" in source
+
+
+def test_bootstrap_embeds_provider_resilience_fallback() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_chat_with_resilience" in source
+    assert "_provider_chat" in source
+    assert "NPA_AGENT_LLM_PROVIDER" in source
+    assert "NPA_AGENT_LLM_PROVIDERS" in source
+    assert "default_provider" in source
+
+
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
     from npa.cli.agent import _resolve_agent_service_account_id
 
