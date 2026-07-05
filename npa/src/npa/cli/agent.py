@@ -7,8 +7,10 @@ import json
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import ipaddress
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +27,11 @@ from npa.clients.config import (
     write_config,
 )
 from npa.clients.env import redact_value
-from npa.clients.network import NetworkIngressError, ensure_ingress
+from npa.clients.network import (
+    NetworkIngressError,
+    ensure_ingress,
+    remove_ingress_for_instance,
+)
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.provisioner import ProvisionerError
@@ -50,8 +56,9 @@ DEFAULT_LLM_MODELS = (
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070101"
+AGENT_UI_VERSION = "2026070403"
 DEFAULT_HTTPS_PORT = 443
+AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 
 
 def _embedded_agent_workflow_source() -> str:
@@ -205,6 +212,48 @@ def _fail(message: str) -> None:
     raise typer.Exit(code=1)
 
 
+def _looks_like_compute_permission_denied(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return "permissiondenied" in lowered and "service compute" in lowered
+
+
+def _apply_agent_terraform(
+    *,
+    project: str,
+    name: str,
+    merged_vars: dict[str, str],
+    env_region: str,
+) -> dict[str, Any]:
+    """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=merged_vars.get("s3_bucket", ""),
+        region=env_region,
+        endpoint=merged_vars.get("s3_endpoint", ""),
+    )
+    provisioner.init(
+        tf_dir=tf_dir,
+        backend_config={
+            "access_key": merged_vars.get("nebius_api_key", ""),
+            "secret_key": merged_vars.get("nebius_secret_key", ""),
+        },
+    )
+    try:
+        return provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
+    except ProvisionerError as exc:
+        sa_id = str(merged_vars.get("service_account_id", "")).strip()
+        if sa_id and _looks_like_compute_permission_denied(str(exc)):
+            typer.echo(
+                "  Compute create denied with VM service-account attachment; "
+                "retrying without attached service_account_id ..."
+            )
+            retry_vars = dict(merged_vars)
+            retry_vars["service_account_id"] = ""
+            return provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
+        raise
+
+
 def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
     cfg = resolve_project_agents(project_alias)
     record = cfg.get(name, {})
@@ -246,6 +295,166 @@ def _remove_agent_record(project_alias: str, name: str) -> None:
     with CONFIG_PATH.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
     CONFIG_PATH.chmod(0o600)
+
+
+def _agent_extra_ingress_ports(
+    *,
+    agent_port: int,
+    rerun_port: int,
+    public_https: bool,
+) -> list[int]:
+    extra = [rerun_port]
+    if public_https:
+        extra.append(DEFAULT_HTTPS_PORT)
+    return sorted({port for port in extra if port != agent_port})
+
+
+def _agent_terraform_state_exists(project: str, name: str) -> bool:
+    tf_dir = provisioner.working_dir_path(project, name)
+    return (tf_dir / ".terraform").is_dir()
+
+
+def _resolve_destroy_tf_vars(
+    project: str,
+    name: str,
+    record: dict[str, Any] | None,
+) -> dict[str, str]:
+    state = resolve_terraform_state(project)
+    saved_env = resolve_environment(project)
+    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "us-central1")
+    project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
+    service_account_id = str((record or {}).get("service_account_id", "")).strip()
+    if not service_account_id:
+        creds = (record or {}).get("credentials", {})
+        if isinstance(creds, dict):
+            service_account_id = str(creds.get("service_account_id", "")).strip()
+    if not service_account_id:
+        service_account_id = _resolve_agent_service_account_id(project, record or {})
+    from npa.clients.nebius import get_iam_token
+
+    iam_token = get_iam_token()
+    return {
+        "nebius_project_id": project_id,
+        "nebius_region": region,
+        "service_account_id": service_account_id,
+        "iam_token": iam_token,
+        "instance_name": f"agent-{project}-{name}",
+        "server_port": str(DEFAULT_AGENT_PORT),
+        "workbench_type": "lerobot",
+        "gpu_platform": "cpu-d3",
+        "gpu_preset": "8vcpu-32gb",
+        "enable_preemptible": "false",
+        "nebius_api_key": state.access_key,
+        "nebius_secret_key": state.secret_key,
+        "s3_bucket": state.bucket,
+        "s3_endpoint": state.endpoint,
+        "extra_ingress_ports": "[]",
+    }
+
+
+def _cleanup_agent_ingress(instance_id: str) -> None:
+    if not str(instance_id or "").strip():
+        return
+    try:
+        remove_ingress_for_instance(
+            str(instance_id).strip(),
+            on_status=lambda msg: typer.echo(f"  {msg}"),
+        )
+    except NetworkIngressError as exc:
+        typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
+
+
+_AGENT_INSTANCE_DESTROY_TARGETS = (
+    "null_resource.wait_for_cloud_init",
+    "nebius_compute_v1_instance.workbench",
+)
+
+
+def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None:
+    """Delete cloud VM instances matching the agent name but missing from TF state."""
+    project_id = str(project_id or "").strip()
+    instance_name = str(instance_name or "").strip()
+    if not project_id or not instance_name:
+        return
+    from npa.clients.nebius import NebiusError, _run, _run_json
+
+    try:
+        payload = _run_json(["compute", "instance", "list", "--parent-id", project_id])
+    except NebiusError:
+        return
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("metadata", {})
+        if not isinstance(meta, dict):
+            continue
+        if str(meta.get("name", "")).strip() != instance_name:
+            continue
+        instance_id = str(meta.get("id", "")).strip()
+        if not instance_id:
+            continue
+        try:
+            _run(["compute", "instance", "delete", instance_id], check=False)
+            typer.echo(f"  Deleted orphan agent instance {instance_id}")
+        except NebiusError:
+            continue
+
+
+def _destroy_agent_terraform(
+    project: str,
+    name: str,
+    *,
+    record: dict[str, Any] | None = None,
+) -> None:
+    """Destroy the agent Terraform stack and optional npa-managed ingress rules."""
+    if not _agent_terraform_state_exists(project, name):
+        return
+    state = resolve_terraform_state(project)
+    if not state.bucket or not state.access_key or not state.secret_key:
+        _fail(
+            f"Terraform state backend is not configured for project {project!r}. "
+            "Run `npa configure` or redeploy once to persist terraform_state."
+        )
+    tf_vars = _resolve_destroy_tf_vars(project, name, record)
+    region = tf_vars["nebius_region"]
+    instance_id = str((record or {}).get("instance_id", "")).strip()
+    instance_name = tf_vars["instance_name"]
+    project_id = tf_vars["nebius_project_id"]
+    _cleanup_agent_ingress(instance_id)
+    _cleanup_orphan_agent_instances(project_id, instance_name)
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=state.bucket,
+        region=region,
+        endpoint=state.endpoint,
+    )
+    provisioner.init(
+        tf_dir=tf_dir,
+        backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
+    )
+
+    def _run_destroy() -> None:
+        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+
+    def _destroy_compute_first() -> None:
+        managed = set(provisioner.state_list(tf_dir))
+        targets = [t for t in _AGENT_INSTANCE_DESTROY_TARGETS if t in managed]
+        if targets:
+            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars, targets=targets)
+
+    try:
+        _run_destroy()
+    except ProvisionerError as first_exc:
+        _cleanup_agent_ingress(instance_id)
+        try:
+            _destroy_compute_first()
+            _run_destroy()
+        except ProvisionerError:
+            raise first_exc from None
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
@@ -565,21 +774,25 @@ def _write_agent_operator_profile(
     config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
     creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
     user_home = f"/home/{ssh_user}"
-    npa_dir = f"{user_home}/.npa"
-    config_path = f"{npa_dir}/config.yaml"
-    creds_path = f"{npa_dir}/credentials.yaml"
-    ssh.run_or_raise(
-        " && ".join(
+    targets = [
+        (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
+        ("/root/.npa", "root:root"),
+    ]
+    commands: list[str] = []
+    for npa_dir, owner in targets:
+        config_path = f"{npa_dir}/config.yaml"
+        creds_path = f"{npa_dir}/credentials.yaml"
+        commands.extend(
             [
                 f"sudo mkdir -p {shlex.quote(npa_dir)}",
                 f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
                 f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {shlex.quote(npa_dir)}",
+                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
                 f"sudo chmod 700 {shlex.quote(npa_dir)}",
                 f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
             ]
         )
-    )
+    ssh.run_or_raise(" && ".join(commands))
 
 
 def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
@@ -601,6 +814,7 @@ def _store_project_environment(*, project: str, project_id: str, tenant_id: str,
 def _write_agent_nebius_env(
     ssh: SSHClient,
     *,
+    project_alias: str,
     project_id: str,
     tenant_id: str,
     region: str,
@@ -609,11 +823,13 @@ def _write_agent_nebius_env(
     endpoint: str,
     access_key: str,
     secret_key: str,
+    iam_token: str = "",
 ) -> None:
     """Stage long-lived Nebius project credentials on the agent VM."""
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
+        f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NEBIUS_PROJECT_ID={project_id.strip()}",
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
@@ -623,13 +839,107 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    if iam_token.strip():
+        env_lines.extend(
+            [
+                "NEBIUS_PROFILE=agent-bootstrap",
+                f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
+                f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
+                f"TF_VAR_iam_token={iam_token.strip()}",
+                "NPA_REUSE_IAM_TOKEN=1",
+            ]
+        )
+    env_lines.append("")
     env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
+    if iam_token.strip():
+        ssh.run_or_raise(
+            "sudo bash -lc "
+            + shlex.quote(
+                "\n".join(
+                    [
+                        "set -euo pipefail",
+                        "set -a",
+                        ". /opt/npa-agent/nebius.env",
+                        "set +a",
+                        "mkdir -p /root/.npa",
+                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
+                        "chmod 600 /root/.npa/nebius-token",
+                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
+                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
+                        "if [ -n \"$NEBIUS_BIN\" ]; then",
+                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
+                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
+                        "fi",
+                    ]
+                )
+            )
+        )
+
+
+def _create_agent_source_archive() -> str:
+    """Package the NPA source tree needed for agent-side workflow execution."""
+    repo_root = Path(__file__).resolve().parents[4]
+    include_roots = [
+        repo_root / "npa",
+        repo_root / "deploy" / "cluster",
+    ]
+    for path in include_roots:
+        if not path.exists():
+            raise ConfigError(f"Required agent source path is missing: {path}")
+
+    exclude_names = {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".terraform",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+    }
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+    tmp.close()
+
+    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        parts = set(Path(info.name).parts)
+        if parts & exclude_names:
+            return None
+        if info.name.endswith((".pyc", ".pyo")):
+            return None
+        return info
+
+    with tarfile.open(tmp.name, "w:gz") as archive:
+        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
+        archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
+    return tmp.name
+
+
+def _stage_agent_npa_source(ssh: SSHClient) -> None:
+    """Upload NPA package source and deploy assets to the agent VM."""
+    archive_path = _create_agent_source_archive()
+    remote_archive = f"/tmp/npa-agent-source-{secrets.token_hex(6)}.tar.gz"
+    try:
+        ssh.upload_file(archive_path, remote_archive)
+        ssh.run_or_raise(
+            " && ".join(
+                [
+                    f"sudo rm -rf {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo mkdir -p {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo chown -R root:root {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"rm -f {shlex.quote(remote_archive)}",
+                ]
+            )
+        )
+    finally:
+        Path(archive_path).unlink(missing_ok=True)
+        ssh.run(f"rm -f {shlex.quote(remote_archive)}")
 
 
 def _is_routable_public_ip(value: str) -> bool:
@@ -661,8 +971,21 @@ def _agent_strip_url_credentials_js() -> str:
     </script>"""
 
 
+def _agent_mobile_login_help_html() -> str:
+    """Mobile certificate + sign-in troubleshooting (public pages)."""
+    return """    <details class="mobile-help" style="margin:20px 0;padding:12px 16px;border:1px solid #e0e0e0;border-radius:8px;background:#fffbeb;">
+      <summary style="font-weight:600;cursor:pointer;">Phone / tablet login help</summary>
+      <ol style="margin:12px 0 0;padding-left:20px;line-height:1.55;">
+        <li><strong>Accept the certificate first.</strong> Open <a href="/healthz">/healthz</a> (no login). If Safari/Chrome warns the connection is not private, tap <em>Show Details</em> → <em>visit this website</em> / <em>Proceed</em>.</li>
+        <li>Return here and use the sign-in form (mobile browsers block password-in-URL redirects).</li>
+        <li>If sign-in still fails, try <strong>Chrome on Android</strong> or use a desktop browser.</li>
+        <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
+      </ol>
+    </details>"""
+
+
 def _agent_public_login_form_html(auth_user: str) -> str:
-    """Shared Sign in form for public welcome/login-help pages (basic-auth URL redirect)."""
+    """Shared Sign in form for public welcome/login-help pages (mobile-safe basic auth)."""
     return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
       <h2 id="sign-in-heading">Sign in</h2>
       <p class="muted">Use the form if your browser does not show an HTTP Basic Auth dialog.</p>
@@ -671,9 +994,10 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         <input id="npa-user" name="username" type="text" value="{auth_user}" autocomplete="username" required>
         <label for="npa-pass">Password</label>
         <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit">Sign in</button>
+        <button type="submit" id="npa-sign-in-btn">Sign in</button>
+        <p id="npa-sign-in-status" class="muted" role="status" aria-live="polite"></p>
       </form>
-      <p class="muted note">Credentials are removed from the address bar immediately after sign-in.</p>
+      <p class="muted note">Credentials are not left in the address bar after sign-in.</p>
     </section>
     <script>
     (function () {{
@@ -684,17 +1008,100 @@ def _agent_public_login_form_html(auth_user: str) -> str:
         }}
       }} catch (_err) {{ /* best-effort */ }}
       var form = document.getElementById("npa-sign-in");
+      var statusEl = document.getElementById("npa-sign-in-status");
+      var btn = document.getElementById("npa-sign-in-btn");
       if (!form) return;
+
+      function setStatus(msg, isError) {{
+        if (!statusEl) return;
+        statusEl.textContent = msg || "";
+        statusEl.style.color = isError ? "#991b1b" : "#5f6573";
+      }}
+
+      function isMobileUa() {{
+        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+      }}
+
+      function destPath() {{
+        var rawPath = String(location.pathname || "/");
+        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+        return (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
+      }}
+
+      function basicAuthHeader(user, pass) {{
+        return "Basic " + btoa(unescape(encodeURIComponent(user + ":" + pass)));
+      }}
+
+      function persistBasicAuth(user, pass) {{
+        try {{
+          sessionStorage.setItem("npa_agent_basic_auth", basicAuthHeader(user, pass));
+        }} catch (_err) {{ /* sessionStorage may be unavailable */ }}
+      }}
+
+      function xhrSignIn(user, pass, dest) {{
+        return new Promise(function (resolve, reject) {{
+          var xhr = new XMLHttpRequest();
+          xhr.open("GET", dest, true, user, pass);
+          xhr.onload = function () {{
+            if (xhr.status >= 200 && xhr.status < 400) {{
+              resolve();
+              return;
+            }}
+            if (xhr.status === 401) {{
+              reject(new Error("Invalid username or password."));
+              return;
+            }}
+            reject(new Error("Sign-in failed (HTTP " + xhr.status + ")."));
+          }};
+          xhr.onerror = function () {{
+            reject(new Error("Network error — open /healthz first and accept the certificate warning."));
+          }};
+          xhr.send();
+        }});
+      }}
+
+      function fetchSignIn(user, pass, dest) {{
+        return fetch(dest, {{
+          method: "GET",
+          headers: {{ "Authorization": basicAuthHeader(user, pass) }},
+          credentials: "omit",
+          cache: "no-store",
+        }}).then(function (resp) {{
+          if (!resp.ok) {{
+            throw new Error(resp.status === 401 ? "Invalid username or password." : "Sign-in failed (HTTP " + resp.status + ").");
+          }}
+        }});
+      }}
+
+      function urlEmbedSignIn(user, pass, dest) {{
+        var u = encodeURIComponent(user);
+        var p = encodeURIComponent(pass);
+        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
+      }}
+
       form.addEventListener("submit", function (ev) {{
         ev.preventDefault();
         var user = document.getElementById("npa-user").value;
         var pass = document.getElementById("npa-pass").value;
-        var u = encodeURIComponent(user);
-        var p = encodeURIComponent(pass);
-        var rawPath = String(location.pathname || "/");
-        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
-        var dest = (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
-        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
+        var dest = destPath();
+        setStatus("Signing in…", false);
+        if (btn) btn.disabled = true;
+
+        xhrSignIn(user, pass, dest)
+          .catch(function () {{ return fetchSignIn(user, pass, dest); }})
+          .then(function () {{
+            persistBasicAuth(user, pass);
+            window.location.href = dest;
+          }})
+          .catch(function (err) {{
+            if (!isMobileUa()) {{
+              persistBasicAuth(user, pass);
+              urlEmbedSignIn(user, pass, dest);
+              return;
+            }}
+            setStatus((err && err.message) ? err.message : "Sign-in failed on this device.", true);
+            if (btn) btn.disabled = false;
+          }});
       }});
     }})();
     </script>"""
@@ -814,6 +1221,7 @@ def _bootstrap_agent_stack(
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
     login_form_html = _agent_public_login_form_html(auth_user)
+    mobile_login_help_html = _agent_mobile_login_help_html()
     strip_url_credentials_js = _agent_strip_url_credentials_js()
     https_ssl_setup = ""
     https_server_block = ""
@@ -842,7 +1250,7 @@ server {{
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     setup_script = f"""set -euo pipefail
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
 if ! command -v nebius >/dev/null 2>&1; then
   curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 fi
@@ -856,6 +1264,19 @@ fi
 if [ -z "$NEBIUS_BIN" ] || [ ! -x "$NEBIUS_BIN" ]; then
   echo "nebius CLI binary not found after install" >&2
   exit 1
+fi
+if ! command -v terraform >/dev/null 2>&1; then
+  tmp_tf="$(mktemp -d)"
+  curl -fsSL -o "$tmp_tf/terraform.zip" https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip
+  (cd "$tmp_tf" && unzip -q terraform.zip)
+  sudo install -m 0755 "$tmp_tf/terraform" /usr/local/bin/terraform
+  rm -rf "$tmp_tf"
+fi
+if ! command -v kubectl >/dev/null 2>&1; then
+  kubectl_version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+  curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$kubectl_version/bin/linux/amd64/kubectl"
+  sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+  rm -f /tmp/kubectl
 fi
 if [ -s /mnt/cloud-metadata/token ]; then
   if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
@@ -962,6 +1383,8 @@ def _default_state() -> dict:
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
         "workflow_submit": {{}},
         "chat_history": [],
+        "active_chat_session_id": "default",
+        "chat_sessions": {{}},
     }}
 
 def _load_state() -> dict:
@@ -987,6 +1410,10 @@ def _load_state() -> dict:
         merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
         merged["chat_history"] = []
+    if not isinstance(merged.get("chat_sessions"), dict):
+        merged["chat_sessions"] = {{}}
+    if not isinstance(merged.get("active_chat_session_id"), str):
+        merged["active_chat_session_id"] = "default"
     return merged
 
 def _save_state(state: dict) -> None:
@@ -1306,6 +1733,224 @@ def _agent_s3_client():
     return client, settings
 
 
+def _chat_memory_tenant() -> str:
+    raw = (
+        os.environ.get("NEBIUS_TENANT_ID", "")
+        or os.environ.get("NEBIUS_PROJECT_ID", "")
+        or "default-tenant"
+    )
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw).strip()).strip("-")
+    return value or "default-tenant"
+
+
+def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
+    bucket = (settings or {{}}).get("bucket", "")
+    tenant = _chat_memory_tenant()
+    return f"npa-agent/tenants/{{tenant}}/chat-sessions"
+
+
+def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -> str:
+    safe = _sanitize_chat_session_id(session_id)
+    return f"{{_chat_memory_prefix(settings)}}/{{safe}}.json"
+
+
+def _chat_memory_uri(session_id: str, settings: dict[str, str] | None = None) -> str:
+    resolved = settings or _agent_s3_settings()
+    bucket = str(resolved.get("bucket") or "")
+    if not bucket:
+        return ""
+    return f"s3://{{bucket}}/{{_chat_session_key(session_id, resolved)}}"
+
+
+def _agent_s3_client_optional():
+    try:
+        return _agent_s3_client()
+    except HTTPException:
+        return None, _agent_s3_settings()
+    except Exception:
+        return None, _agent_s3_settings()
+
+
+def _sanitize_chat_session_id(value: str) -> str:
+    session_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+    return session_id[:80] or "default"
+
+
+def _chat_session_title(messages: list[dict] | None, fallback: str = "New chat") -> str:
+    if isinstance(messages, list):
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("role") or "") != "user":
+                continue
+            content = str(item.get("content") or "").strip()
+            if content:
+                return content[:64]
+    return fallback
+
+
+def _normalize_chat_history(raw: object) -> list[dict]:
+    history: list[dict] = []
+    if not isinstance(raw, list):
+        return history
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role in {{"user", "assistant"}} and content:
+            history.append({{"role": role, "content": content}})
+    return history[-80:]
+
+
+def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
+    now = _now_iso()
+    data = payload if isinstance(payload, dict) else {{}}
+    resolved_id = _sanitize_chat_session_id(str(data.get("id") or session_id or "default"))
+    history = _normalize_chat_history(data.get("chat_history") or data.get("messages") or [])
+    title = str(data.get("title") or "").strip() or _chat_session_title(history, "New chat")
+    created_at = str(data.get("created_at") or now)
+    updated_at = str(data.get("updated_at") or now)
+    return {{
+        "id": resolved_id,
+        "title": title[:96],
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "chat_history": history,
+        "memory_uri": str(data.get("memory_uri") or _chat_memory_uri(resolved_id) or ""),
+    }}
+
+
+def _local_chat_sessions(state: dict) -> dict[str, dict]:
+    sessions = state.get("chat_sessions")
+    if not isinstance(sessions, dict):
+        sessions = {{}}
+    normalized: dict[str, dict] = {{}}
+    for session_id, payload in sessions.items():
+        session = _normalize_chat_session(str(session_id), payload)
+        normalized[session["id"]] = session
+    if not normalized:
+        migrated = _normalize_chat_session(
+            "default",
+            {{
+                "id": "default",
+                "title": "Default chat",
+                "chat_history": state.get("chat_history", []),
+            }},
+        )
+        normalized["default"] = migrated
+    state["chat_sessions"] = normalized
+    if str(state.get("active_chat_session_id") or "") not in normalized:
+        state["active_chat_session_id"] = next(iter(normalized.keys()))
+    state["chat_history"] = normalized[str(state["active_chat_session_id"])]["chat_history"]
+    return normalized
+
+
+def _load_chat_session_from_s3(session_id: str) -> dict | None:
+    s3, settings = _agent_s3_client_optional()
+    if s3 is None or not settings.get("bucket"):
+        return None
+    key = _chat_session_key(session_id, settings)
+    try:
+        obj = s3.get_object(Bucket=settings["bucket"], Key=key)
+        body = obj.get("Body")
+        raw = body.read() if hasattr(body, "read") else body
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(str(raw or "{{}}"))
+        return _normalize_chat_session(session_id, payload)
+    except Exception:
+        return None
+
+
+def _persist_chat_session_to_s3(session: dict) -> str:
+    s3, settings = _agent_s3_client_optional()
+    if s3 is None or not settings.get("bucket"):
+        return ""
+    session_id = _sanitize_chat_session_id(str(session.get("id") or "default"))
+    key = _chat_session_key(session_id, settings)
+    memory_uri = _chat_memory_uri(session_id, settings)
+    payload = dict(session)
+    payload["id"] = session_id
+    payload["memory_uri"] = memory_uri
+    payload["tenant_id"] = _chat_memory_tenant()
+    try:
+        s3.put_object(
+            Bucket=settings["bucket"],
+            Key=key,
+            Body=(json.dumps(payload, indent=2, sort_keys=True) + "\\n").encode("utf-8"),
+            ContentType="application/json",
+        )
+        return memory_uri
+    except Exception:
+        return ""
+
+
+def _save_chat_session(state: dict, session: dict, *, active: bool = True) -> dict:
+    sessions = _local_chat_sessions(state)
+    normalized = _normalize_chat_session(str(session.get("id") or "default"), session)
+    normalized["updated_at"] = _now_iso()
+    memory_uri = _persist_chat_session_to_s3(normalized)
+    if memory_uri:
+        normalized["memory_uri"] = memory_uri
+    sessions[normalized["id"]] = normalized
+    state["chat_sessions"] = sessions
+    if active:
+        state["active_chat_session_id"] = normalized["id"]
+        state["chat_history"] = normalized["chat_history"]
+    _save_state(state)
+    return normalized
+
+
+def _get_chat_session(state: dict, session_id: str = "") -> dict:
+    sessions = _local_chat_sessions(state)
+    target = _sanitize_chat_session_id(session_id or str(state.get("active_chat_session_id") or "default"))
+    remote = _load_chat_session_from_s3(target)
+    if remote is not None:
+        sessions[target] = remote
+        state["chat_sessions"] = sessions
+        return remote
+    if target in sessions:
+        return sessions[target]
+    session = _normalize_chat_session(target, {{"id": target, "title": "New chat", "chat_history": []}})
+    sessions[target] = session
+    state["chat_sessions"] = sessions
+    return session
+
+
+def _list_chat_sessions(state: dict) -> list[dict]:
+    sessions = _local_chat_sessions(state)
+    s3, settings = _agent_s3_client_optional()
+    if s3 is not None and settings.get("bucket"):
+        prefix = _chat_memory_prefix(settings) + "/"
+        try:
+            resp = s3.list_objects_v2(Bucket=settings["bucket"], Prefix=prefix, MaxKeys=50)
+            for item in resp.get("Contents", []) or []:
+                key = str(item.get("Key") or "")
+                if not key.endswith(".json"):
+                    continue
+                session_id = _sanitize_chat_session_id(Path(key).stem)
+                remote = _load_chat_session_from_s3(session_id)
+                if remote is not None:
+                    sessions[session_id] = remote
+        except Exception:
+            pass
+    state["chat_sessions"] = sessions
+    _save_state(state)
+    rows = []
+    for session in sessions.values():
+        history = session.get("chat_history") if isinstance(session, dict) else []
+        rows.append({{
+            "id": str(session.get("id") or ""),
+            "title": str(session.get("title") or "New chat"),
+            "created_at": str(session.get("created_at") or ""),
+            "updated_at": str(session.get("updated_at") or ""),
+            "message_count": len(history) if isinstance(history, list) else 0,
+            "memory_uri": str(session.get("memory_uri") or ""),
+        }})
+    return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+
+
 def _artifact_filename(key: str) -> str:
     import hashlib
 
@@ -1452,6 +2097,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
 LLM_MODELS_ENV = os.environ.get("NPA_AGENT_LLM_MODELS", "")
 DEFAULT_LLM_MODELS = {default_llm_models_json}
+NPA_PROJECT_ALIAS = os.environ.get("NPA_AGENT_PROJECT_ALIAS", "").strip() or "default"
+NPA_SOURCE_ROOT = Path("{AGENT_SOURCE_ROOT}")
+NPA_CLI = Path("/opt/npa-agent/venv/bin/npa")
+NPA_CLUSTER_TERRAFORM_DIR = NPA_SOURCE_ROOT / "deploy" / "cluster"
 TF_BASE_URL = os.environ.get(
     "NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"
 ).rstrip("/")
@@ -1545,7 +2194,7 @@ def _agent_system_prompt() -> str:
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
         "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
-        "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
+        "- POST /api/workflows/submit — validate workflow YAML, ensure agent-side Kubernetes infra when needed, and return scheduler plan",
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
         "",
@@ -1707,6 +2356,257 @@ def _resolve_workflow_yaml(payload: dict) -> str:
     draft = _workflow_draft_from_state(_load_state())
     return str(draft.get("yaml") or "").strip()
 
+
+def _agent_npa_ready() -> tuple[bool, str]:
+    if not NPA_CLI.exists():
+        return False, f"NPA CLI is not installed at {{NPA_CLI}}"
+    if not (NPA_SOURCE_ROOT / "npa" / "pyproject.toml").is_file():
+        return False, f"NPA source is not staged at {{NPA_SOURCE_ROOT}}"
+    if not NPA_CLUSTER_TERRAFORM_DIR.is_dir():
+        return False, f"Kubernetes Terraform assets are not staged at {{NPA_CLUSTER_TERRAFORM_DIR}}"
+    return True, ""
+
+
+def _load_agent_config_yaml() -> dict:
+    path = Path.home() / ".npa" / "config.yaml"
+    if not path.is_file():
+        return {{}}
+    try:
+        import yaml
+
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {{}}
+    return loaded if isinstance(loaded, dict) else {{}}
+
+
+def _agent_project_alias(requested: str = "") -> str:
+    requested = str(requested or "").strip()
+    if requested:
+        return requested
+    config = _load_agent_config_yaml()
+    configured = str(config.get("default_project") or "").strip()
+    if configured:
+        return configured
+    return NPA_PROJECT_ALIAS
+
+
+def _agent_k8s_backends(project: str = "") -> dict:
+    config = _load_agent_config_yaml()
+    alias = _agent_project_alias(project)
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        projects = {{}}
+    project_block = projects.get(alias)
+    if not isinstance(project_block, dict):
+        project_block = {{}}
+    configured: list[dict] = []
+    kube_block = project_block.get("kubernetes")
+    if isinstance(kube_block, dict) and kube_block:
+        configured.append({{
+            "source": "project_config",
+            "project": alias,
+            "cluster_name": str(kube_block.get("cluster_name") or kube_block.get("name") or ""),
+            "context": str(kube_block.get("context") or kube_block.get("context_name") or ""),
+            "kubeconfig": str(kube_block.get("kubeconfig") or kube_block.get("kubeconfig_path") or ""),
+            "gpu_profile": str(kube_block.get("gpu_profile") or ""),
+            "raw": {{k: v for k, v in kube_block.items() if k not in {{"token", "secret", "password"}}}},
+        }})
+    clusters_root = Path.home() / ".npa" / "clusters"
+    local_clusters: list[dict] = []
+    if clusters_root.is_dir():
+        for item in sorted(clusters_root.iterdir()):
+            if not item.is_dir():
+                continue
+            kubeconfig = item / "kubeconfig"
+            state_path = item / "state.json"
+            local_clusters.append({{
+                "source": "local_state",
+                "cluster_name": item.name,
+                "context": item.name,
+                "kubeconfig": str(kubeconfig),
+                "kubeconfig_exists": kubeconfig.is_file(),
+                "state_exists": state_path.is_file(),
+            }})
+    ready, reason = _agent_npa_ready()
+    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
+    return {{
+        "ok": True,
+        "project": alias,
+        "configured": configured,
+        "local_clusters": local_clusters,
+        "cloud_clusters": cloud_clusters,
+        "has_infra": bool(
+            configured
+            or any(item.get("kubeconfig_exists") for item in local_clusters)
+            or cloud_clusters
+        ),
+        "agent_npa_ready": ready,
+        "agent_npa_error": reason,
+        "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
+        "options": [
+            "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
+            "Add projects.<alias>.kubernetes to ~/.npa/config.yaml on the agent to use an existing backend.",
+            "Pass project/cluster_name in the workflow submit payload to target a known backend.",
+        ],
+    }}
+
+
+def _agent_command_env() -> dict:
+    env = dict(os.environ)
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
+    env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
+    env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
+    env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
+    if not env.get("TF_VAR_ssh_public_key"):
+        for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
+            if Path(candidate).is_file():
+                env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
+                break
+        if not env.get("TF_VAR_ssh_public_key"):
+            for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
+                path = Path(candidate)
+                if not path.is_file():
+                    continue
+                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    value = line.strip()
+                    if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+                        env["TF_VAR_ssh_public_key"] = json.dumps({{"key": value}})
+                        break
+                if env.get("TF_VAR_ssh_public_key"):
+                    break
+    return env
+
+
+def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
+    config = _load_agent_config_yaml()
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        projects = {{}}
+    project_block = projects.get(_agent_project_alias(project))
+    if not isinstance(project_block, dict):
+        project_block = {{}}
+    parent_id = str(os.environ.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
+    if not parent_id:
+        return []
+    nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
+    if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
+        return []
+    try:
+        proc = subprocess.run(
+            [nebius_bin, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return []
+        payload = json.loads(proc.stdout or "{{}}")
+    except Exception:
+        return []
+    items = payload.get("items") if isinstance(payload, dict) else []
+    clusters: list[dict] = []
+    if not isinstance(items, list):
+        return clusters
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
+        status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
+        clusters.append({{
+            "source": "nebius_mk8s",
+            "id": str(metadata.get("id") or ""),
+            "name": str(metadata.get("name") or ""),
+            "status": str(status.get("state") or status.get("status") or ""),
+            "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
+        }})
+    return clusters
+
+
+def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
+    ready, reason = _agent_npa_ready()
+    if not ready:
+        raise HTTPException(status_code=409, detail=reason)
+    proc = subprocess.run(
+        [str(NPA_CLI), *args],
+        cwd=str(NPA_SOURCE_ROOT),
+        env=_agent_command_env(),
+        text=True,
+        capture_output=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
+    stdout = (proc.stdout or "").strip()
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"NPA command did not return JSON: {{stdout[-1000:]}}") from exc
+
+
+def _write_workflow_temp_yaml(yaml_text: str) -> Path:
+    tmp_dir = Path("/tmp/npa-agent-workflows")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    path = tmp_dir / f"workflow-{{secrets.token_hex(8)}}.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    return path
+
+
+def _provision_agent_infra(
+    project: str,
+    cluster_name: str,
+    *,
+    dry_run: bool = False,
+    validate: bool = True,
+    skip_s3: bool = True,
+) -> dict:
+    ready, reason = _agent_npa_ready()
+    if not ready:
+        return {{"ok": False, "status": "blocked", "error": reason}}
+    try:
+        from npa.provisioning import provision_if_absent
+
+        result = provision_if_absent(
+            project=project or None,
+            cluster_name=cluster_name or "npa-cluster",
+            terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+            skip_s3=skip_s3,
+            validate=validate,
+            sky_smoke=False,
+            dry_run=dry_run,
+        )
+        payload = result.to_dict()
+        payload["ok"] = True
+        payload["dry_run"] = dry_run
+        return payload
+    except Exception as exc:
+        return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
+
+
+def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, infra: dict) -> dict:
+    return {{
+        "ok": False,
+        "run_id": run_id,
+        "submitted_at": _now_iso(),
+        "name": str(validation.get("name") or ""),
+        "validation": validation,
+        "plan": plan,
+        "infra": infra,
+        "submit_mode": "blocked-no-infra",
+        "reason": "no infra is specified or available",
+        "message": (
+            "No Kubernetes infra is specified or available for this workflow. "
+            "Choose one option: let the agent deploy minimal Kubernetes infra, "
+            "configure an existing backend in ~/.npa/config.yaml, or pass project/cluster_name in the submit payload."
+        ),
+        "options": infra.get("options", []),
+    }}
+
+
 def _last_user_message(raw_messages: list) -> str:
     for item in reversed(raw_messages):
         if not isinstance(item, dict):
@@ -1756,6 +2656,9 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "infra_backends":
+        state["infra"] = _agent_k8s_backends()
+        _save_state(state)
     elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
         draft = generate_workflow_draft(
             user_text=user_text,
@@ -1774,8 +2677,8 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not runnable:
             fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
             reply = (
-                "**Could not generate runnable workflow YAML yet.**\n"
-                f"- **reason**: `{{fail_reason}}`\n"
+                "**Could not generate runnable workflow YAML yet.**\\n"
+                f"- **reason**: `{{fail_reason}}`\\n"
                 "- Adjust your request or template details and retry;"
                 " chat returns YAML only after both validation and planning succeed."
             )
@@ -1822,10 +2725,22 @@ def chat(payload: dict):
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    state = _load_state()
+    session_id = _sanitize_chat_session_id(
+        str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
+    )
+    session = _get_chat_session(state, session_id)
+    history = _normalize_chat_history(raw_messages)
+    if len(history) <= 1 and isinstance(session.get("chat_history"), list):
+        prior = _normalize_chat_history(session.get("chat_history", []))
+        if history:
+            history = [*prior, history[-1]]
+        else:
+            history = prior
+    raw_messages = history
     tool_result = _agent_chat_with_tools(raw_messages=raw_messages, model=model)
     if tool_result is not None:
         reply = str(tool_result.get("reply") or "").strip()
-        state = _load_state()
         history: list[dict] = []
         for item in raw_messages:
             if not isinstance(item, dict):
@@ -1836,7 +2751,21 @@ def chat(payload: dict):
                 history.append({{"role": role, "content": content}})
         if reply:
             history.append({{"role": "assistant", "content": reply}})
-        state["chat_history"] = history[-50:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history[-80:],
+            }}
+        )
+        session = _save_chat_session(state, session, active=True)
+        tool_result["session_id"] = session["id"]
+        tool_result["session"] = {{
+            "id": session["id"],
+            "title": session["title"],
+            "memory_uri": session.get("memory_uri", ""),
+            "message_count": len(session.get("chat_history", [])),
+        }}
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
@@ -1872,13 +2801,26 @@ def chat(payload: dict):
             history.append({{"role": role, "content": content}})
     if reply:
         history.append({{"role": "assistant", "content": reply}})
-    state["chat_history"] = history[-50:]
-    _save_state(state)
+    session.update(
+        {{
+            "id": session_id,
+            "title": str(session.get("title") or _chat_session_title(history)),
+            "chat_history": history[-80:],
+        }}
+    )
+    session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
         "model": model,
         "reply": reply,
         "reasoning": reasoning,
+        "session_id": session["id"],
+        "session": {{
+            "id": session["id"],
+            "title": session["title"],
+            "memory_uri": session.get("memory_uri", ""),
+            "message_count": len(session.get("chat_history", [])),
+        }},
     }}
 
 @app.get("/health")
@@ -1897,6 +2839,7 @@ def models(refresh: bool = False):
 @app.get("/session")
 def session_bootstrap():
     state = _load_state()
+    active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
         sim_viz.update(state["sim_viz"])
@@ -1906,7 +2849,7 @@ def session_bootstrap():
     if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    history = state.get("chat_history", [])
+    history = active_session.get("chat_history", [])
     if not isinstance(history, list):
         history = []
     return {{
@@ -1914,10 +2857,18 @@ def session_bootstrap():
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
         "sim_viz_runs": _sim_viz_runs(state),
+        "infra": _agent_k8s_backends(),
         "workflow_draft": _workflow_draft_from_state(state),
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
         "chat_history": history,
+        "active_chat_session_id": active_session["id"],
+        "chat_sessions": _list_chat_sessions(state),
+        "chat_memory": {{
+            "tenant": _chat_memory_tenant(),
+            "s3_configured": bool(_agent_s3_settings().get("bucket") and _agent_s3_settings().get("access_key")),
+            "prefix": _chat_memory_prefix(),
+        }},
         "llm": {{
             "default": LLM_MODEL,
             "default_model": LLM_MODEL,
@@ -1925,6 +2876,51 @@ def session_bootstrap():
             "models": _available_llm_models(),
         }},
     }}
+
+
+@app.get("/chat/sessions")
+def chat_sessions():
+    state = _load_state()
+    active_id = str(state.get("active_chat_session_id") or "default")
+    settings = _agent_s3_settings()
+    return {{
+        "ok": True,
+        "active_session_id": active_id,
+        "sessions": _list_chat_sessions(state),
+        "memory": {{
+            "tenant": _chat_memory_tenant(),
+            "s3_configured": bool(settings.get("bucket") and settings.get("access_key")),
+            "prefix": _chat_memory_prefix(settings),
+        }},
+    }}
+
+
+@app.post("/chat/sessions")
+def create_chat_session(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    state = _load_state()
+    session_id = _sanitize_chat_session_id(str(body.get("id") or f"chat-{{secrets.token_urlsafe(8)}}"))
+    title = str(body.get("title") or "New chat").strip() or "New chat"
+    session = _normalize_chat_session(session_id, {{"id": session_id, "title": title, "chat_history": []}})
+    saved = _save_chat_session(state, session, active=True)
+    return {{"ok": True, "session": saved, "active_session_id": saved["id"], "sessions": _list_chat_sessions(state)}}
+
+
+@app.get("/chat/sessions/{{session_id}}")
+def get_chat_session(session_id: str):
+    state = _load_state()
+    session = _get_chat_session(state, session_id)
+    return {{"ok": True, "session": session}}
+
+
+@app.post("/chat/sessions/{{session_id}}/select")
+def select_chat_session(session_id: str):
+    state = _load_state()
+    session = _get_chat_session(state, session_id)
+    state["active_chat_session_id"] = session["id"]
+    state["chat_history"] = session.get("chat_history", [])
+    _save_state(state)
+    return {{"ok": True, "session": session, "active_session_id": session["id"], "sessions": _list_chat_sessions(state)}}
 
 @app.get("/tools")
 def tools():
@@ -2401,6 +3397,26 @@ def get_workflow_draft():
     draft = _workflow_draft_from_state(state)
     return {{"ok": True, "draft": draft}}
 
+
+@app.get("/infra/k8s")
+@app.get("/infra/backends")
+def list_k8s_infra(project: str = ""):
+    return _agent_k8s_backends(project)
+
+
+@app.post("/infra/provision")
+def provision_infra(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    project = _agent_project_alias(str(body.get("project") or ""))
+    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
+    dry_run = bool(body.get("dry_run", False))
+    validate = bool(body.get("validate", True))
+    skip_s3 = bool(body.get("skip_s3", True))
+    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
+    status = _agent_k8s_backends(project)
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+
+
 @app.post("/workflows/draft")
 @app.put("/workflows/npa/draft")
 def save_workflow_draft(payload: dict):
@@ -2476,6 +3492,52 @@ def submit_npa_workflow(payload: dict):
     )
     if not plan.get("ok"):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
+    project = _agent_project_alias(str(body.get("project") or ""))
+    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
+    allow_provision = bool(body.get("allow_provision", True))
+    dry_run = bool(body.get("dry_run", False))
+    validate_infra = bool(body.get("validate_infra", True))
+    infra_before = _agent_k8s_backends(project)
+    if not infra_before.get("has_infra") and not allow_provision:
+        return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+    provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
+    if allow_provision and (dry_run or not infra_before.get("has_infra")):
+        provision = _provision_agent_infra(
+            project,
+            cluster_name,
+            dry_run=dry_run,
+            validate=validate_infra,
+            skip_s3=bool(body.get("skip_s3", True)),
+        )
+        if not provision.get("ok"):
+            infra_error = dict(infra_before)
+            infra_error["provision_error"] = provision.get("error") or provision
+            blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_error)
+            blocked["provision"] = provision
+            return blocked
+    scheduler_plan = {{}}
+    yaml_path = _write_workflow_temp_yaml(yaml_text)
+    try:
+        scheduler_plan = _run_agent_npa_json(
+            [
+                "workbench",
+                "workflow",
+                "run-spec",
+                str(yaml_path),
+                "--run-id",
+                run_id,
+                "--plan-only",
+                "--scheduler-plan",
+                "--json",
+            ],
+            timeout_s=180,
+        )
+    finally:
+        try:
+            yaml_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    infra_after = _agent_k8s_backends(project)
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=True)
     submit_record = {{
@@ -2484,15 +3546,22 @@ def submit_npa_workflow(payload: dict):
         "name": str(validation.get("name") or ""),
         "validation": validation,
         "plan": plan,
-        "submit_mode": "validate-only",
-        "note": "Agent VM records validate+plan; live SkyPilot submit runs on operator machine.",
+        "scheduler_plan": scheduler_plan,
+        "infra": infra_after,
+        "provision": provision,
+        "submit_mode": "agent-live-infra-plan" if not dry_run else "agent-live-infra-dry-run",
+        "note": (
+            "Agent validated the workflow, ensured Kubernetes infra with NPA when needed, "
+            "and produced a scheduler plan. Workload execution uses the planned scheduler tasks."
+        ),
     }}
     state["workflow_submit"] = submit_record
     state["latest_submit"] = {{
         "run_id": run_id,
         "submitted_at": submit_record["submitted_at"],
         "workflow_name": str(validation.get("name") or ""),
-        "submit_mode": "validate-only",
+        "submit_mode": submit_record["submit_mode"],
+        "cluster_name": cluster_name,
     }}
     _record_sim_viz_run(
         state,
@@ -2503,8 +3572,9 @@ def submit_npa_workflow(payload: dict):
             "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
             "rrd_uri": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_uri") or ""),
             "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
-            "submit_mode": "validate-only",
+            "submit_mode": submit_record["submit_mode"],
             "workflow_name": str(validation.get("name") or ""),
+            "cluster_name": cluster_name,
         }},
     )
     _save_state(state)
@@ -2710,7 +3780,10 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
       .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
       .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
       .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
-      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }}
+      @media (max-width: 640px) {{
+        .sign-in, .sign-in button {{ max-width: none; width: 100%; }}
+      }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
@@ -2719,6 +3792,7 @@ cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
     <p class="ok">This page is public (no login). The workbench UI at <code>/</code> is protected by HTTP Basic Auth.</p>
 {strip_url_credentials_js}
 {login_form_html}
+{mobile_login_help_html}
     <ol>
       <li>Enter your password above and click <strong>Sign in</strong>, or open <a href="/">the workbench UI</a> if your browser shows the auth dialog.</li>
       <li>Username: <code>{auth_user}</code></li>
@@ -2748,7 +3822,10 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
       .sign-in {{ display: grid; gap: 10px; max-width: 360px; }}
       .sign-in label {{ font-weight: 600; font-size: 0.9rem; }}
       .sign-in input {{ padding: 8px 10px; border: 1px solid #c8ccd4; border-radius: 6px; font: inherit; }}
-      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }}
+      .sign-in button {{ justify-self: start; padding: 8px 16px; border: 0; border-radius: 6px; background: #5e43f3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }}
+      @media (max-width: 640px) {{
+        .sign-in, .sign-in button {{ max-width: none; width: 100%; }}
+      }}
       a {{ color: #5e43f3; }}
     </style>
   </head>
@@ -2757,6 +3834,7 @@ cat <<'LOGINHELP' | sudo tee /opt/npa-agent/login-help.html >/dev/null
     <p>The NPA Agent workbench did not receive valid credentials. Sign in below or use your browser&apos;s Basic-auth dialog for <code>/</code> and <code>/api/*</code>.</p>
 {strip_url_credentials_js}
 {login_form_html}
+{mobile_login_help_html}
     <ul>
       <li>Username: <code>{auth_user}</code></li>
       <li>Password: from your operator&apos;s <code>auth.env</code> file (<code>AGENT_PASSWORD</code>).</li>
@@ -2771,6 +3849,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
     <title>NPA Agent</title>
@@ -2792,12 +3871,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         --shadow: 0 8px 22px rgba(30, 31, 34, 0.08);
       }}
       * {{ box-sizing: border-box; }}
+      html {{
+        overflow-x: hidden;
+        width: 100%;
+        max-width: 100%;
+        -webkit-text-size-adjust: 100%;
+      }}
       body {{
         margin: 0;
         padding-bottom: 36px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: var(--bg);
         color: var(--text);
+        overflow-x: hidden;
+        width: 100%;
+        max-width: 100%;
+      }}
+      img, video, iframe, pre, textarea, select, input, .panel, .page, .chrome {{
+        max-width: 100%;
       }}
       .chrome {{
         max-width: 1640px;
@@ -2879,6 +3970,50 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .camera-frustum {{ display: flex; justify-content: center; }}
       .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
+      .chat-panel-head {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 4px;
+      }}
+      .chat-panel-head h3 {{ margin: 0; }}
+      .mobile-only-toggle {{ display: none; }}
+      .chat-composer {{
+        background: var(--surface);
+      }}
+      .mobile-chat-auth {{
+        display: none;
+        margin: 0 0 10px;
+        padding: 12px;
+        border: 1px solid #fcd34d;
+        border-radius: 10px;
+        background: #fffbeb;
+      }}
+      .mobile-chat-auth-row {{
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }}
+      .mobile-chat-auth-row input {{
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d4d8e2;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 16px;
+      }}
+      body.mobile-agent.mobile-needs-auth .mobile-chat-auth {{
+        display: block;
+      }}
+      body.mobile-agent.mobile-needs-auth #chatForm,
+      body.mobile-agent.mobile-needs-auth .actions-inline {{
+        opacity: 0.55;
+        pointer-events: none;
+      }}
+      body.mobile-agent .mobile-chat-auth {{
+        order: -1;
+      }}
       .chat-toolbar {{
         display: flex;
         justify-content: space-between;
@@ -2894,7 +4029,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-size: 12px;
         color: #4f5668;
       }}
+      .chat-session {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #4f5668;
+      }}
+      .chat-session select {{
+        max-width: 220px;
+      }}
       .chat-model select {{
+        border: 1px solid #d4d8e2;
+        border-radius: 999px;
+        padding: 6px 10px;
+        background: #fff;
+        color: #1f2430;
+        font: inherit;
+      }}
+      .chat-session select {{
         border: 1px solid #d4d8e2;
         border-radius: 999px;
         padding: 6px 10px;
@@ -3042,6 +4195,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 8px 12px;
         font-size: 13px;
         cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }}
       .btn:hover {{ background: #f5f6fb; }}
       .btn-primary {{
@@ -3136,12 +4291,111 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         .chat-input .btn {{ width: 100%; }}
         .btn, .quick-pill {{
-          min-height: 40px;
-          font-size: 13px;
+          min-height: 44px;
+          font-size: 14px;
         }}
         .status-bar {{
           padding-bottom: calc(8px + env(safe-area-inset-bottom));
         }}
+      }}
+      body.mobile-agent {{
+        padding-bottom: calc(56px + env(safe-area-inset-bottom));
+        overflow-x: hidden;
+      }}
+      body.mobile-agent .chrome {{
+        max-width: 100%;
+        width: 100%;
+        overflow-x: hidden;
+      }}
+      body.mobile-agent .page {{
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 10px 10px calc(68px + env(safe-area-inset-bottom));
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+      }}
+      body.mobile-agent .panel {{
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+      }}
+      body.mobile-agent .chat-panel {{
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: calc(100dvh - 112px);
+        margin-bottom: 0;
+      }}
+      body.mobile-agent .chat-panel .hint:first-of-type {{
+        display: none;
+      }}
+      body.mobile-agent .chat-toolbar {{
+        flex-direction: column;
+        align-items: stretch;
+      }}
+      body.mobile-agent .chat-model {{
+        width: 100%;
+        justify-content: space-between;
+      }}
+      body.mobile-agent .chat-session {{
+        width: 100%;
+      }}
+      body.mobile-agent .chat-model select,
+      body.mobile-agent .chat-session select {{
+        flex: 1 1 auto;
+        max-width: 100%;
+      }}
+      body.mobile-agent .chat-log {{
+        flex: 1 1 auto;
+        min-height: 38dvh;
+        max-height: 52dvh;
+        height: auto;
+      }}
+      body.mobile-agent .chat-composer {{
+        position: sticky;
+        bottom: calc(52px + env(safe-area-inset-bottom));
+        z-index: 850;
+        margin-top: auto;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+      }}
+      body.mobile-agent .actions-inline {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }}
+      body.mobile-agent .actions-inline .quick-pill {{
+        width: 100%;
+        justify-content: center;
+      }}
+      body.mobile-agent .workflow-panel,
+      body.mobile-agent .layout-3 {{
+        display: none;
+      }}
+      body.mobile-agent.mobile-show-panels .workflow-panel,
+      body.mobile-agent.mobile-show-panels .layout-3 {{
+        display: grid;
+      }}
+      body.mobile-agent .mobile-only-toggle {{
+        display: inline-flex;
+        flex-shrink: 0;
+        min-height: 36px;
+      }}
+      body.mobile-agent .topbar .badge {{
+        display: none;
+      }}
+      body.mobile-agent .brand-sub {{
+        display: none;
+      }}
+      body.mobile-agent .brand {{
+        font-size: 11px;
+        line-height: 1.35;
+        word-break: break-word;
+      }}
+      body.mobile-agent .chat-toolbar .hint {{
+        display: none;
       }}
       .workflow-panel textarea {{
         width: 100%;
@@ -3207,10 +4461,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       </header>
       <main class="page">
         <section class="panel chat-panel">
-          <h3>Workbench Chat</h3>
-          <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+          <div class="chat-panel-head">
+            <div>
+              <h3>Workbench Chat</h3>
+              <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
+            </div>
+            <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
+          </div>
           <div class="chat-toolbar">
             <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
+            <label for="chatSessionSelect" class="chat-session">
+              Session
+              <select id="chatSessionSelect">
+                <option value="default" selected>Default chat</option>
+              </select>
+            </label>
+            <button id="newChatSession" class="btn" type="button">New chat</button>
             <label for="chatModel" class="chat-model">
               Token Factory model
               <select id="chatModel">
@@ -3218,11 +4484,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </select>
             </label>
           </div>
-          <div id="chatLog" class="chat-log"></div>
-          <div class="chat-input">
-            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?"></textarea>
-            <button id="chatSend" class="btn btn-primary" type="button">Send</button>
+          <div id="mobileChatAuth" class="mobile-chat-auth" aria-live="polite">
+            <p class="hint">Mobile chat needs your agent password once on this device (iOS Safari does not send saved login on chat requests).</p>
+            <div class="mobile-chat-auth-row">
+              <input id="mobileChatPassword" type="password" placeholder="Agent password" autocomplete="current-password">
+              <button id="mobileChatAuthBtn" class="btn btn-primary" type="button">Unlock chat</button>
+            </div>
           </div>
+          <div id="chatLog" class="chat-log"></div>
+          <form id="chatForm" class="chat-composer chat-input" autocomplete="off">
+            <textarea id="chatInput" placeholder="How do I configure S3 for Sim2Real?" rows="2" enterkeyhint="send"></textarea>
+            <button id="chatSend" class="btn btn-primary" type="submit">Send</button>
+          </form>
           <div class="actions-inline">
             <button id="chatActionS3" class="btn quick-pill" type="button">Configure S3</button>
             <button id="chatActionCosmos" class="btn quick-pill" type="button">Setup Cosmos3</button>
@@ -3381,7 +4654,109 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
         history.replaceState(null, "", clean);
       }}
+      function detectMobileLayout() {{
+        const narrow = window.matchMedia("(max-width: 900px)").matches;
+        const coarse = window.matchMedia("(pointer: coarse)").matches;
+        const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+        return narrow || (coarse && mobileUa);
+      }}
+      function applyMobileLayout() {{
+        if (!detectMobileLayout()) return;
+        document.body.classList.add("mobile-agent");
+      }}
+      let mobileAuthTokenCache = "";
+      function mobileAuthHeader() {{
+        if (mobileAuthTokenCache) {{
+          return mobileAuthTokenCache;
+        }}
+        try {{
+          return String(sessionStorage.getItem("npa_agent_basic_auth") || "").trim();
+        }} catch (_err) {{
+          return "";
+        }}
+      }}
+      function hasMobileChatAuth() {{
+        return Boolean(mobileAuthHeader());
+      }}
+      function persistMobileBasicAuth(user, pass) {{
+        const token = "Basic " + btoa(unescape(encodeURIComponent(String(user || "") + ":" + String(pass || ""))));
+        mobileAuthTokenCache = token;
+        try {{
+          sessionStorage.setItem("npa_agent_basic_auth", token);
+        }} catch (_err) {{ /* sessionStorage may be blocked in private browsing */ }}
+        return token;
+      }}
+      function clearMobileBasicAuth() {{
+        mobileAuthTokenCache = "";
+        try {{
+          sessionStorage.removeItem("npa_agent_basic_auth");
+        }} catch (_err) {{ /* ignore */ }}
+      }}
+      function setMobileAuthNeeded(needed) {{
+        if (!document.body.classList.contains("mobile-agent")) return;
+        document.body.classList.toggle("mobile-needs-auth", Boolean(needed));
+        if (!needed) {{
+          document.body.classList.add("mobile-auth-ready");
+        }}
+      }}
+      async function verifyMobileChatAuth() {{
+        const auth = mobileAuthHeader();
+        if (!auth) {{
+          return false;
+        }}
+        try {{
+          const resp = await fetch("/api/health", {{
+            credentials: "omit",
+            cache: "no-store",
+            headers: {{ Authorization: auth }},
+          }});
+          if (resp.status === 401) {{
+            clearMobileBasicAuth();
+            return false;
+          }}
+          return resp.ok;
+        }} catch (_err) {{
+          return false;
+        }}
+      }}
+      async function probeMobileChatAuth() {{
+        if (!document.body.classList.contains("mobile-agent")) return true;
+        if (!hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
+          return false;
+        }}
+        const ok = await verifyMobileChatAuth();
+        setMobileAuthNeeded(!ok);
+        return ok;
+      }}
+      async function unlockMobileChatAuth(password) {{
+        const pass = String(password || "").trim();
+        if (!pass) {{
+          throw new Error("Enter your agent password.");
+        }}
+        persistMobileBasicAuth("{DEFAULT_AGENT_USER}", pass);
+        const ok = await verifyMobileChatAuth();
+        if (!ok) {{
+          clearMobileBasicAuth();
+          throw new Error("Invalid password — try again or reopen /login-help.html.");
+        }}
+        setMobileAuthNeeded(false);
+        showToast("Chat unlocked", "success");
+        return true;
+      }}
+      function withMobileAuth(headers) {{
+        const merged = {{ ...(headers || {{}}) }};
+        const auth = mobileAuthHeader();
+        if (auth && !merged.Authorization) {{
+          merged.Authorization = auth;
+        }}
+        return merged;
+      }}
+      applyMobileLayout();
+      window.addEventListener("resize", applyMobileLayout);
       const chatHistory = [];
+      let activeChatSessionId = "default";
+      let chatSendInFlight = false;
       let thinkingNode = null;
       function setStatus(text) {{
         const bar = document.getElementById("statusBar");
@@ -3428,7 +4803,41 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       function wireUi() {{
-        bindClick("chatSend", sendChat, "Send chat");
+        const chatForm = document.getElementById("chatForm");
+        if (chatForm) {{
+          chatForm.addEventListener("submit", (event) => {{
+            event.preventDefault();
+            sendChat().catch((err) => showToast(String(err), "error"));
+          }});
+        }}
+        const mobileToggle = document.getElementById("mobilePanelsToggle");
+        if (mobileToggle) {{
+          mobileToggle.addEventListener("click", () => {{
+            const open = document.body.classList.toggle("mobile-show-panels");
+            mobileToggle.setAttribute("aria-expanded", open ? "true" : "false");
+            mobileToggle.textContent = open ? "Hide panels" : "Panels";
+          }});
+        }}
+        const mobileAuthBtn = document.getElementById("mobileChatAuthBtn");
+        const mobileAuthPass = document.getElementById("mobileChatPassword");
+        if (mobileAuthBtn && mobileAuthPass) {{
+          mobileAuthBtn.addEventListener("click", async () => {{
+            try {{
+              mobileAuthBtn.disabled = true;
+              await unlockMobileChatAuth(mobileAuthPass.value);
+              mobileAuthPass.value = "";
+            }} catch (err) {{
+              showToast(String(err && err.message ? err.message : err), "error");
+            }} finally {{
+              mobileAuthBtn.disabled = false;
+            }}
+          }});
+          mobileAuthPass.addEventListener("keydown", async (event) => {{
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            mobileAuthBtn.click();
+          }});
+        }}
         bindClick("chatActionS3", () => {{
           setChatInput("Help me configure S3 credentials and bucket for NPA workflows.");
         }}, "Insert S3 prompt");
@@ -3441,6 +4850,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("chatActionWorkflow", () => {{
           setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
         }}, "Insert workflow YAML prompt");
+        bindClick("newChatSession", createNewChatSession, "New chat session");
         bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
@@ -3460,6 +4870,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (e.key === "Enter" && !e.shiftKey) {{
               e.preventDefault();
               sendChat().catch((err) => showToast(String(err), "error"));
+            }}
+          }});
+        }}
+        const chatSessionSelect = document.getElementById("chatSessionSelect");
+        if (chatSessionSelect) {{
+          chatSessionSelect.addEventListener("change", async () => {{
+            const sessionId = String(chatSessionSelect.value || "default");
+            try {{
+              await selectChatSession(sessionId);
+            }} catch (err) {{
+              showToast(String(err && err.message ? err.message : err), "error");
             }}
           }});
         }}
@@ -3616,7 +5037,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function extractFencedCode(text, preferredLang) {{
         const raw = String(text || "");
         const blocks = [];
-        const re = /```([a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)```/g;
+        const re = /```([a-zA-Z0-9_-]+)?\s*\\n([\\s\\S]*?)```/g;
         let match;
         while ((match = re.exec(raw)) !== null) {{
           blocks.push({{
@@ -3706,9 +5127,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const btn = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
         const model = document.getElementById("chatModel");
-        btn.disabled = Boolean(isBusy);
-        input.disabled = Boolean(isBusy);
-        if (model) model.disabled = Boolean(isBusy);
+        const busy = Boolean(isBusy);
+        if (btn) btn.disabled = busy;
+        if (input) input.disabled = busy;
+        if (model) model.disabled = busy;
       }}
       function setChatModels(models, selectedModel) {{
         const select = document.getElementById("chatModel");
@@ -3733,6 +5155,80 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function selectedChatModel() {{
         const select = document.getElementById("chatModel");
         return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}";
+      }}
+      function clearChatLog() {{
+        const log = document.getElementById("chatLog");
+        if (log) log.innerHTML = "";
+        chatHistory.splice(0, chatHistory.length);
+      }}
+      function renderChatHistory(history) {{
+        clearChatLog();
+        const hist = Array.isArray(history) ? history : [];
+        for (const msg of hist) {{
+          const role = String(msg.role || "");
+          const content = String(msg.content || "").trim();
+          if (!content || (role !== "user" && role !== "assistant")) continue;
+          appendChat(role, content);
+          chatHistory.push({{ role, content }});
+        }}
+      }}
+      function updateChatSessionSelector(sessions, activeId) {{
+        const select = document.getElementById("chatSessionSelect");
+        if (!select) return;
+        const rows = Array.isArray(sessions) ? sessions : [];
+        const active = String(activeId || activeChatSessionId || "default");
+        select.innerHTML = "";
+        if (!rows.length) {{
+          const opt = document.createElement("option");
+          opt.value = active;
+          opt.textContent = "Default chat";
+          opt.selected = true;
+          select.appendChild(opt);
+          return;
+        }}
+        for (const row of rows) {{
+          const id = String(row.id || "").trim();
+          if (!id) continue;
+          const opt = document.createElement("option");
+          opt.value = id;
+          const count = Number(row.message_count || 0);
+          opt.textContent = String(row.title || id) + (count ? " (" + String(count) + ")" : "");
+          if (id === active) opt.selected = true;
+          select.appendChild(opt);
+        }}
+      }}
+      async function refreshChatSessions(activeId) {{
+        const data = await apiJson("/api/chat/sessions");
+        activeChatSessionId = String(data.active_session_id || activeId || activeChatSessionId || "default");
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        return data;
+      }}
+      async function selectChatSession(sessionId) {{
+        const safeId = String(sessionId || "default").trim() || "default";
+        const data = await apiJson("/api/chat/sessions/" + encodeURIComponent(safeId) + "/select", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{}}),
+        }});
+        const session = data.session || {{}};
+        activeChatSessionId = String(data.active_session_id || session.id || safeId);
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        renderChatHistory(session.chat_history || []);
+        showToast("Loaded chat session", "success");
+        return session;
+      }}
+      async function createNewChatSession() {{
+        const data = await apiJson("/api/chat/sessions", {{
+          method: "POST",
+          headers: {{ "content-type": "application/json" }},
+          body: JSON.stringify({{ title: "New chat" }}),
+        }});
+        const session = data.session || {{}};
+        activeChatSessionId = String(data.active_session_id || session.id || "default");
+        updateChatSessionSelector(data.sessions, activeChatSessionId);
+        renderChatHistory([]);
+        showToast("New chat session ready", "success");
+        return true;
       }}
       function setWorkflowYaml(text, validation) {{
         const area = document.getElementById("workflowYaml");
@@ -3807,18 +5303,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ yaml }}),
         }});
         updateWorkflowMeta((data.validation) || {{}});
-        appendChat("assistant", "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") + "` (validate-only on agent VM).");
+        appendChat(
+          "assistant",
+          "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") +
+            "`, **mode**: `" + String(data.submit_mode || "") + "`."
+        );
         return true;
       }}
       async function sendChat() {{
         const input = document.getElementById("chatInput");
+        if (!input) {{
+          throw new Error("Chat input missing");
+        }}
+        if (chatSendInFlight) {{
+          return false;
+        }}
+        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
+          showToast("Unlock chat with your agent password first.", "error");
+          return false;
+        }}
         const text = String(input.value || "").trim();
         const model = selectedChatModel();
         if (!text) {{
           showToast("Enter a message first", "info");
           return false;
         }}
-        input.value = "";
+        chatSendInFlight = true;
         appendChat("user", text);
         chatHistory.push({{ role: "user", content: text }});
         setChatBusy(true);
@@ -3827,17 +5338,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const data = await apiJson("/api/chat", {{
             method: "POST",
             headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ messages: chatHistory, model }}),
+            body: JSON.stringify({{ messages: chatHistory, model, session_id: activeChatSessionId }}),
           }});
           clearThinkingBubble();
+          input.value = "";
           if (data && data.model) {{
             const select = document.getElementById("chatModel");
             if (select) select.value = String(data.model);
+          }}
+          if (data && data.session_id) {{
+            activeChatSessionId = String(data.session_id);
           }}
           const reply = normalizeAssistantReply(data.reply || "");
           if (reply) {{
             appendChat("assistant", reply);
             chatHistory.push({{ role: "assistant", content: reply }});
+            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort session list refresh */ }});
           }} else {{
             appendChat("error", "empty reply from model");
           }}
@@ -3850,9 +5366,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
         }} catch (err) {{
           clearThinkingBubble();
-          appendChat("error", String(err));
+          const message = String(err && err.message ? err.message : err);
+          input.value = text;
+          const tail = chatHistory[chatHistory.length - 1];
+          if (tail && tail.role === "user" && tail.content === text) {{
+            chatHistory.pop();
+          }}
+          appendChat("error", "Send failed; your draft was restored. " + message);
           throw err;
         }} finally {{
+          chatSendInFlight = false;
           setChatBusy(false);
           input.focus();
         }}
@@ -4232,16 +5755,29 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function apiJson(path, init) {{
         const req = init || {{}};
+        const isMobile = document.body.classList.contains("mobile-agent");
+        const headers = withMobileAuth({{
+          ...(req.headers || {{}}),
+        }});
+        if (isMobile && String(path || "").startsWith("/api/") && !headers.Authorization) {{
+          setMobileAuthNeeded(true);
+          throw new Error("Unlock chat with your agent password.");
+        }}
+        const useExplicitAuth = isMobile && Boolean(headers.Authorization);
         const opts = {{
           ...req,
-          credentials: "include",
-          headers: {{
-            ...(req.headers || {{}}),
-          }},
+          credentials: useExplicitAuth ? "omit" : "include",
+          headers,
         }};
+        const pathText = String(path || "");
+        const timeoutMs = (
+          pathText === "/api/chat" ||
+          pathText === "/api/workflows/submit" ||
+          pathText === "/api/infra/provision"
+        ) ? 900000 : 12000;
         let resp;
         try {{
-          resp = await fetchWithTimeout(path, opts, 12000);
+          resp = await fetchWithTimeout(path, opts, timeoutMs);
         }} catch (err) {{
           if (err && err.name === "AbortError") {{
             throw new Error("Request timed out: " + String(path));
@@ -4256,6 +5792,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         if (!resp.ok) {{
           if (resp.status === 401) {{
+            if (document.body.classList.contains("mobile-agent")) {{
+              setMobileAuthNeeded(true);
+              throw new Error("Unlock chat with your agent password.");
+            }}
             window.location.href = "/login-help.html";
             throw new Error("Authentication required. Open / and sign in with HTTP Basic Auth.");
           }}
@@ -4374,6 +5914,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               (session.llm.model || session.llm.default_model || session.llm.default || "")
             );
             setChatModels(session.llm.models, currentModel);
+          }}
+          if (session && session.chat_sessions) {{
+            activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+            updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           }}
           if (session && session.workflow_draft && session.workflow_draft.yaml) {{
             setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
@@ -4680,20 +6224,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function restoreSession() {{
         try {{
           const session = await loadJson("/api/session");
+          activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {{
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
             );
             setChatModels(session.llm.models, currentModel);
           }}
-          const hist = Array.isArray(session.chat_history) ? session.chat_history : [];
-          for (const msg of hist) {{
-            const role = String(msg.role || "");
-            const content = String(msg.content || "").trim();
-            if (!content || (role !== "user" && role !== "assistant")) continue;
-            appendChat(role, content);
-            chatHistory.push({{ role, content }});
-          }}
+          renderChatHistory(session.chat_history || []);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {{
             setWorkflowYaml(draft.yaml, draft.validation || draft);
@@ -4743,14 +6282,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }} catch (_artifactErr) {{
             // artifact discovery is optional when S3 credentials are missing.
           }}
-          await ensureFrankaRerunLoaded();
-          setStatus("Ready");
-          showToast("Franka demo ready in Rerun", "success");
+          if (document.body.classList.contains("mobile-agent")) {{
+            setStatus("Ready");
+            showToast("Mobile chat ready", "success");
+          }} else {{
+            await ensureFrankaRerunLoaded();
+            setStatus("Ready");
+            showToast("Franka demo ready in Rerun", "success");
+          }}
         }} catch (err) {{
           console.warn("franka auto-load failed", err);
-          showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
-          showToast(String(err && err.message ? err.message : err), "error");
-          setStatus("Ready");
+          if (document.body.classList.contains("mobile-agent")) {{
+            setStatus("Ready");
+          }} else {{
+            showRerunPlaceholder("Could not auto-load Franka. Click Load Franka in Rerun.");
+            showToast(String(err && err.message ? err.message : err), "error");
+            setStatus("Ready");
+          }}
         }} finally {{
           rerunBootInProgress = false;
         }}
@@ -4770,10 +6318,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           showToast("UI wiring failed: " + String(err), "error");
           console.error(err);
         }}
-        bootPage().catch((err) => {{
-          showToast("Boot failed: " + String(err), "error");
-          console.error(err);
-        }});
+        probeMobileChatAuth()
+          .catch(() => false)
+          .finally(() => {{
+            bootPage().catch((err) => {{
+              showToast("Boot failed: " + String(err), "error");
+              console.error(err);
+            }});
+          }});
         const armPeriodic = () => startPeriodicRefresh();
         document.addEventListener("click", armPeriodic, {{ once: true }});
         document.addEventListener("keydown", armPeriodic, {{ once: true }});
@@ -4796,6 +6348,7 @@ HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server]"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
@@ -4853,6 +6406,7 @@ sudo systemctl restart npa-agent-backend
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
+        _stage_agent_npa_source(ssh)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write(setup_script)
             local_setup_script = handle.name
@@ -4886,8 +6440,16 @@ sudo systemctl restart npa-agent-backend
         s3_secret_key=s3_secret_key,
         service_account_id=service_account_id,
     )
+    agent_iam_token = ""
+    try:
+        from npa.clients.nebius import get_iam_token
+
+        agent_iam_token = get_iam_token()
+    except Exception:
+        agent_iam_token = ""
     _write_agent_nebius_env(
         ssh,
+        project_alias=project_alias,
         project_id=nebius_project_id or project_id,
         tenant_id=nebius_tenant_id or tenant_id,
         region=s3_region,
@@ -4896,6 +6458,7 @@ sudo systemctl restart npa-agent-backend
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
+        iam_token=agent_iam_token,
     )
     if (
         tf_api_key.strip()
@@ -4953,6 +6516,9 @@ def deploy_cmd(
     ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
+    if profile and shutil.which("nebius"):
+        subprocess.run(["nebius", "profile", "activate", profile], check=False)
     saved_env = resolve_environment(
         project,
         project_id=project_id or None,
@@ -4978,6 +6544,12 @@ def deploy_cmd(
     except NebiusError as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
 
+    public_https = not no_public_https
+    extra_ingress_ports = _agent_extra_ingress_ports(
+        agent_port=agent_port,
+        rerun_port=rerun_port,
+        public_https=public_https,
+    )
     merged_vars: dict[str, str] = {
         "nebius_project_id": env_project_id,
         "nebius_region": env_region,
@@ -4989,6 +6561,11 @@ def deploy_cmd(
         "s3_endpoint": str(creds.get("s3_endpoint", "")),
         "instance_name": f"agent-{project}-{name}",
         "server_port": str(agent_port),
+        "extra_ingress_ports": (
+            "[" + ",".join(str(port) for port in extra_ingress_ports) + "]"
+            if extra_ingress_ports
+            else "[]"
+        ),
         "workbench_type": "lerobot",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
@@ -5002,29 +6579,33 @@ def deploy_cmd(
         key, value = item.split("=", 1)
         merged_vars[key.strip()] = value.strip()
 
+    tf_outputs: dict[str, Any] = {}
     try:
-        tf_dir = provisioner.prepare_working_dir(
-            project,
-            name,
-            bucket=merged_vars.get("s3_bucket", ""),
-            region=env_region,
-            endpoint=merged_vars.get("s3_endpoint", ""),
+        tf_outputs = _apply_agent_terraform(
+            project=project,
+            name=name,
+            merged_vars=merged_vars,
+            env_region=env_region,
         )
-        provisioner.init(
-            tf_dir=tf_dir,
-            backend_config={
-                "access_key": merged_vars.get("nebius_api_key", ""),
-                "secret_key": merged_vars.get("nebius_secret_key", ""),
-            },
-        )
-        tf_outputs = provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
     except ProvisionerError as exc:
+        try:
+            _destroy_agent_terraform(project, name)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"Terraform deploy failed: {exc}")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
     ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
     if not _is_routable_public_ip(public_ip):
+        try:
+            _destroy_agent_terraform(
+                project,
+                name,
+                record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
+            )
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail("Terraform output did not include a routable public IP")
 
     auth_password = secrets.token_urlsafe(18)
@@ -5044,7 +6625,12 @@ def deploy_cmd(
             "agent chat will return 503 until `npa agent bootstrap` with a configured key.",
             err=True,
         )
-    public_https = not no_public_https
+    rollback_record = {
+        "instance_id": instance_id,
+        "project_id": env_project_id,
+        "region": env_region,
+        "service_account_id": str(creds.get("service_account_id", "")),
+    }
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -5074,6 +6660,10 @@ def deploy_cmd(
             public_https=public_https,
         )
     except (ConfigError, SSHError, ValueError) as exc:
+        try:
+            _destroy_agent_terraform(project, name, record=rollback_record)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
 
     ingress_ports: list[int] = [agent_port, rerun_port]
@@ -5082,6 +6672,10 @@ def deploy_cmd(
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
+        try:
+            _destroy_agent_terraform(project, name, record=rollback_record)
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
@@ -5189,15 +6783,15 @@ def fresh_setup_cmd(
         _fail(
             f"Agent {project}/{name} already exists. Use --replace or choose a new --project/--name."
         )
+    if existing and replace:
+        typer.echo(f"Replacing existing agent {project}/{name} ...")
+        destroy_cmd(project=project, name=name)
     _store_project_environment(
         project=project,
         project_id=project_id.strip(),
         tenant_id=tenant_id.strip(),
         region=region.strip(),
     )
-    if existing and replace:
-        typer.echo(f"Replacing existing agent {project}/{name} ...")
-        destroy_cmd(project=project, name=name)
     deploy_cmd(
         project=project,
         name=name,
@@ -5463,40 +7057,14 @@ def destroy_cmd(
 ) -> None:
     """Destroy agent VM/resources and remove saved config entry."""
     record = _agent_record(project, name)
-    if not record:
+    if not record and not _agent_terraform_state_exists(project, name):
         _fail(f"Agent config not found for {project}/{name}")
-    state = resolve_terraform_state(project)
-    region = str(record.get("region", "")) or "us-central1"
-    tf_vars = {
-        "nebius_project_id": str(record.get("project_id", "")),
-        "nebius_region": region,
-        "instance_name": f"agent-{project}-{name}",
-        "server_port": str(DEFAULT_AGENT_PORT),
-        "workbench_type": "lerobot",
-        "gpu_platform": "cpu-d3",
-        "gpu_preset": "8vcpu-32gb",
-        "enable_preemptible": "false",
-        "nebius_api_key": state.access_key,
-        "nebius_secret_key": state.secret_key,
-        "s3_bucket": state.bucket,
-        "s3_endpoint": state.endpoint,
-    }
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=state.bucket,
-        region=region,
-        endpoint=state.endpoint,
-    )
     try:
-        provisioner.init(
-            tf_dir=tf_dir,
-            backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
-        )
-        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+        _destroy_agent_terraform(project, name, record=record or None)
     except ProvisionerError as exc:
         _fail(f"Terraform destroy failed: {exc}")
-    _remove_agent_record(project, name)
+    if record:
+        _remove_agent_record(project, name)
     typer.echo(f"destroyed: {project}/{name}")
 
 
@@ -5791,9 +7359,13 @@ def verify_live_cmd(
         _fail(f"UI html fetch failed (status={ui_resp.status_code})")
     ui_html = ui_resp.text
     for marker in (
-        'bindClick("chatSend"',
+        'name="viewport" content="width=device-width',
+        'id="chatForm"',
+        'id="mobileChatAuth"',
+        "function sendChat(",
         "function wireUi(",
         "initNpaAgentUi",
+        "mobile-agent",
         "history.replaceState",
         "location.username",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
@@ -5899,6 +7471,45 @@ def verify_live_cmd(
         _fail(f"workflow validate endpoint failed: {exc}")
     if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
         _fail("workflow validate endpoint did not return ok=true")
+    try:
+        infra_resp = httpx.get(
+            f"{agent_base}/api/infra/k8s",
+            auth=(auth_user, auth_password),
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        infra_resp.raise_for_status()
+        infra_payload = infra_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"infra discovery endpoint failed: {exc}")
+    if not isinstance(infra_payload, dict) or not infra_payload.get("ok"):
+        _fail("infra discovery endpoint did not return ok=true")
+    if not infra_payload.get("agent_npa_ready"):
+        _fail(f"agent NPA runtime is not ready: {infra_payload.get('agent_npa_error')}")
+    try:
+        wf_submit = httpx.post(
+            f"{agent_base}/api/workflows/submit",
+            auth=(auth_user, auth_password),
+            json={
+                "yaml": wf_yaml,
+                "run_id": "verify-live-agent-infra",
+                "dry_run": True,
+                "allow_provision": True,
+                "validate_infra": False,
+            },
+            timeout=120.0,
+            verify=tls_verify,
+        )
+        wf_submit.raise_for_status()
+        wf_submit_payload = wf_submit.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"workflow submit dry-run endpoint failed: {exc}")
+    if not isinstance(wf_submit_payload, dict) or not wf_submit_payload.get("ok"):
+        _fail("workflow submit dry-run endpoint did not return ok=true")
+    if "scheduler_plan" not in wf_submit_payload:
+        _fail("workflow submit dry-run missing scheduler_plan")
+    if str(wf_submit_payload.get("submit_mode") or "") != "agent-live-infra-dry-run":
+        _fail("workflow submit dry-run did not report agent-live-infra-dry-run")
 
     try:
         onboard_chat = httpx.post(

@@ -146,4 +146,9 @@ PY
 
 WORKDIR /workspace
 
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 USER ubuntu

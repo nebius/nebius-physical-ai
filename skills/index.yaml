@@ -210,6 +210,14 @@ skills:
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+  - name: soperator
+    category: tools
+    when_to_use: "Deploy or operate a Nebius soperator (Slurm-on-Kubernetes) cluster from npa: npa.soperator/v0.0.1 spec, multi-preset worker pools, per-pool Docker/Enroot image cache, quota preflight, and post-deploy fixes."
+    path: skills/tools/soperator/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["soperator", "deploy", "--help"]
+        contains: "spec"
   - name: npa-agent
     category: tools
     when_to_use: "Operate NPA agent VM, chat UX, API grounding, bootstrap deployment, and verify-live checks."
@@ -341,6 +349,19 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml
+  - name: agent-fresh-operate
+    category: workflows
+    when_to_use: "Deploy, teardown, or reproduce a fresh NPA agent VM from scratch; validate /api/models and /api/chat; debug destroy/fresh-setup failures."
+    path: skills/workflows/agent-fresh-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/scripts/agent_fresh_setup_loop.sh
+      - type: cli_help
+        args: ["agent", "fresh-setup", "--help"]
+        contains: "project-id"
+      - type: cli_help
+        args: ["agent", "destroy", "--help"]
+        contains: "Destroy agent VM"
   - name: author-npa-workflow
     category: workflows
     when_to_use: "Author, validate, or review NPA workflow specs (apiVersion npa.workflow/v0.0.1) and toolRef catalogs."

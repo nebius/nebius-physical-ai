@@ -11,6 +11,7 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 ## When To Use
 
 - Deploy, bootstrap, or verify an agent VM (`npa agent …`)
+- **Fresh deploy / teardown loops:** load `skills/workflows/agent-fresh-operate/SKILL.md`
 - Debug chat hallucinations (raw `GET /api/…` replies) or false “Loaded Franka” messages
 - Fix Rerun iframe black screen (basic auth + wasm fetch)
 - Operate customer HTTPS access and sign-in UX
@@ -76,7 +77,9 @@ Token Factory model selection is configurable via `--llm-model` and `--llm-model
 ## Customer HTTPS Access
 
 - Public URL: `https://<public_ip>/` (self-signed cert on VM IP)
-- Sign-in form at `/login-help.html` embeds credentials via URL then **replaceState** strips them
+- Sign-in form at `/login-help.html` and `/welcome` (mobile-safe XHR/fetch sign-in; URL-embed fallback on desktop only)
+- On phones: open `/healthz` first to accept the self-signed certificate, then sign in at `/login-help.html`
+- Mobile chat uses `sessionStorage` basic-auth fallback — sign out by clearing site data or use `/login-help.html` again
 - All `fetch` calls use `credentials: "include"` for session basic auth
 - Never suggest `localhost`, `127.0.0.1`, or port `8080` — use same-origin `/api/…` paths
 
@@ -238,6 +241,7 @@ Submits workflow with current selection; updates `latest_submit` and `sim_viz.ru
 - CLI + bootstrap: `npa/src/npa/cli/agent.py`
 - Chat router (testable): `npa/src/npa/cli/agent_chat.py`
 - Franka verify script: `npa/scripts/verify_agent_franka.sh`
+- Fresh deploy loop: `npa/scripts/agent_fresh_setup_loop.sh` (see `skills/workflows/agent-fresh-operate/SKILL.md`)
 - Mature deploy loop: `npa/scripts/agent_mature_verify_loop.sh`
 
 ## Security / Guardrails

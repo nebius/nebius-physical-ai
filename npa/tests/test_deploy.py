@@ -224,10 +224,15 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
 def test_apply_and_destroy_raise_on_nonzero(tmp_path: Path, mocker) -> None:
     mocker.patch(
         "npa.deploy.provisioner._run",
-        return_value=subprocess.CompletedProcess(args=["terraform"], returncode=1, stdout="", stderr=""),
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"],
+            returncode=1,
+            stdout="",
+            stderr="PermissionDenied: service compute",
+        ),
     )
 
-    with pytest.raises(ProvisionerError, match="terraform apply failed"):
+    with pytest.raises(ProvisionerError, match="PermissionDenied: service compute"):
         provisioner.apply(tmp_path)
     with pytest.raises(ProvisionerError, match="terraform destroy failed"):
         provisioner.destroy(tmp_path)

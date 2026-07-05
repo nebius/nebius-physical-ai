@@ -38,6 +38,11 @@ def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
     for control_id in UI_BUTTON_IDS:
         assert f'id="{control_id}"' in html
         assert f'bindClick("{control_id}"' in html
+    assert 'id="chatSend"' in html
+    assert 'id="chatForm"' in html
+    assert 'id="chatSessionSelect"' in html
+    assert 'chatForm.addEventListener("submit"' in html
+    assert "/api/chat/sessions" in html
 
 
 def test_agent_health_and_session(ctx: AgentLiveContext) -> None:

@@ -400,6 +400,23 @@ def test_nebius_service_account_reuses_id_from_permission_denied(mocker) -> None
     assert nebius.ensure_service_account("project") == "serviceaccount-u00example"
 
 
+def test_nebius_service_account_creates_when_not_found_despite_saved(mocker) -> None:
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json",
+        side_effect=[
+            nebius.NebiusError(
+                "nebius iam service-account get-by-name failed (exit 5):\n"
+                "NotFound: 'npa-agent' not found in project"
+            ),
+            {"metadata": {"id": "serviceaccount-new"}},
+        ],
+    )
+    mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="serviceaccount-saved")
+
+    assert nebius.ensure_service_account("project", name="npa-agent") == "serviceaccount-new"
+    assert run_json.call_count == 2
+
+
 def test_nebius_saved_storage_credentials_prefers_configured_bucket(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius._saved_service_account_id", return_value="sa-id")

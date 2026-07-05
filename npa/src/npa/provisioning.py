@@ -85,6 +85,9 @@ def provision_if_absent(
                 context_name=context,
                 validate=validate,
                 sky_smoke=sky_smoke,
+                sky_gpus="",
+                capacity_block_group="",
+                validation_timeout=60,
                 timeout=timeout,
             )
         actions.append(f"k8s:ensured terraform cluster {context}")

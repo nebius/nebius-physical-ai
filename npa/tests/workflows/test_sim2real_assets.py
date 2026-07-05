@@ -104,6 +104,42 @@ def test_resolve_robot_spec_from_consumed_ur5e_envelope() -> None:
     assert spec.ee_link == "tool0"
 
 
+def test_resolve_robot_spec_from_consumed_byo_usd_path_not_leaked_preset() -> None:
+    # Regression: Stage-2 consumption injects a default top-level robot_preset
+    # ("franka") even for a BYO robot. A minimal inner spec keyed on the usd_path
+    # alias (no robot_uri) must still resolve to the BYO robot — NOT short-circuit
+    # to the leaked Franka preset. Mirrors the real consumed_byo envelope.
+    from npa.genesis import robot_assets as ra
+
+    consumed = {
+        "schema": "npa.sim2real.consumed_robot_spec.v1",
+        "status": "consumed_byo",
+        "robot_preset": "franka",
+        "robot_source": "",
+        "robot_spec": {
+            "name": "lite6_parallel",
+            "robot_source": ra.ROBOT_SOURCE_BYO_USD,
+            "usd_path": "s3://bucket/robots/lite6_combined.usda",
+            "base_link": "world",
+            "ee_link": "tcp_ee",
+            "n_arm_joints": 6,
+            "n_gripper_joints": 2,
+            "joint_names": [
+                "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+                "finger_joint1", "finger_joint2",
+            ],
+            "gripper_joint_names": ["finger_joint1", "finger_joint2"],
+            "finger_links": ["uflite_finger1", "uflite_finger2"],
+        },
+    }
+    spec = resolve_robot_spec_from_consumed_doc(consumed)
+    assert spec is not None
+    assert spec.robot_source == ra.ROBOT_SOURCE_BYO_USD  # not stock_franka
+    assert spec.name == "lite6_parallel"
+    assert spec.robot_uri.endswith("lite6_combined.usda")
+    assert spec.dof_count == 8
+
+
 def test_resolve_stage_cameras_from_scene_spec_file(tmp_path: Path) -> None:
     stage_dir = tmp_path / "stage_02_assets"
     stage_dir.mkdir()

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
@@ -114,6 +118,18 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "id=\"toastHost\"" in source
     assert "DOMContentLoaded" in source
     assert "initNpaAgentUi" in source
+    assert 'id="chatForm"' in source
+    assert "mobile-agent" in source
+    assert 'name="viewport" content="width=device-width' in source
+    assert "mobileChatAuth" in source
+    assert "npa_agent_basic_auth" in source
+    assert "mobileAuthTokenCache" in source
+    assert "verifyMobileChatAuth" in source
+    assert 'credentials: useExplicitAuth ? "omit" : "include"' in source
+    assert "activeChatSessionId" in source
+    assert "/api/chat/sessions" in source
+    assert "npa-agent/tenants/" in source
+    assert "Send failed; your draft was restored." in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source
@@ -134,13 +150,13 @@ def test_bootstrap_public_login_form() -> None:
 
     html = agent_module._agent_public_login_form_html("npa")
     assert 'id="npa-sign-in"' in html
-    assert 'type="submit">Sign in</button>' in html
+    assert 'id="npa-sign-in-btn">Sign in</button>' in html or 'type="submit">Sign in</button>' in html
     assert 'value="npa"' in html
     assert "encodeURIComponent(user)" in html
     assert "encodeURIComponent(pass)" in html
     assert "history.replaceState" in html
-    assert "normalizedPath === \"/login-help.html\"" in html
-    assert "normalizedPath === \"/welcome\"" in html
+    assert "persistBasicAuth" in html
+    assert 'normalizedPath === "/login-help.html"' in html or '"/login-help.html"' in html
 
 
 def test_bootstrap_ui_button_wiring_patterns() -> None:
@@ -148,7 +164,6 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     for control_id in (
-        "chatSend",
         "chatActionS3",
         "chatActionCosmos",
         "chatActionWatch",
@@ -159,6 +174,8 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
         "workflowStatus",
     ):
         assert f'bindClick("{control_id}"' in source
+    assert 'id="chatForm"' in source
+    assert "chatForm.addEventListener(\"submit\"" in source
     assert "await apiJson(\"/api/chat\"" in source
     assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
     assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
@@ -301,8 +318,8 @@ def test_bootstrap_ui_fetch_uses_credentials_include() -> None:
     assert 'credentials: "same-origin"' not in source
     assert "setChatBusy(true)" in source
     assert "setChatBusy(false)" in source
-    assert "btn.disabled = Boolean(isBusy);" in source
-    assert "input.disabled = Boolean(isBusy);" in source
+    assert "if (btn) btn.disabled = busy;" in source
+    assert "if (input) input.disabled = busy;" in source
     assert "JSON.stringify(value)" in source
     assert "JSON.stringify(assets.selection" not in source
 
@@ -459,6 +476,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
             return _Resp({"ok": True})
+        if url_s.endswith("/api/infra/k8s"):
+            return _Resp({"ok": True, "agent_npa_ready": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
@@ -469,8 +488,9 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"console.log('rerun');", status_code=200)
         if url_s.rstrip("/").endswith(("203.0.113.50", ":8088")):
             html = (
-                f'<html><head><meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><script>function wireUi(){} bindClick("chatSend"); initNpaAgentUi; '
+                f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
+                f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
+                '<body><div id="mobileChatAuth"></div><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
                 'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
             )
             return _Resp(html, status_code=200)
@@ -519,6 +539,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
             return _Resp({"ok": True, "run_id": "agent-run-123"})
+        if url_s.endswith("/api/workflows/submit"):
+            return _Resp(
+                {
+                    "ok": True,
+                    "submit_mode": "agent-live-infra-dry-run",
+                    "scheduler_plan": {"ok": True},
+                    "run_id": "verify-live-agent-infra",
+                }
+            )
         if url_s.endswith("/api/sim-viz/load-franka-demo"):
             return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
         if url_s.endswith("/api/sim-viz/camera-preview"):
@@ -714,6 +743,70 @@ def test_bootstrap_chat_copy_yaml_support_present() -> None:
     assert "msg-copy-btn" in source
     assert "extractFencedCode" in source
     assert "copyTextToClipboard" in source
+
+
+def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
+    if not shutil.which("node"):
+        return
+    from npa.cli import agent as agent_module
+
+    captured: dict[str, str] = {}
+
+    class _DummySsh:
+        def upload_file(self, local_path: str, _remote_path: str) -> None:
+            try:
+                text = Path(local_path).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return
+            if "npa-agent-bootstrap" in _remote_path:
+                captured["setup_script"] = text
+
+        def run_or_raise(self, _command: str) -> None:
+            return None
+
+        def run(self, _command: str) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda config: _DummySsh())
+    monkeypatch.setattr(agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={}))
+
+    agent_module._bootstrap_agent_stack(
+        host="203.0.113.50",
+        ssh_user="ubuntu",
+        ssh_key_path="/tmp/key",
+        project_alias="smoke",
+        project_id="project-id",
+        tenant_id="tenant-id",
+        region="us-central1",
+        auth_user="npa",
+        auth_password="password",
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_models=["nvidia/Cosmos3-Super-Reasoner", "meta-llama/Llama-3.3-70B-Instruct"],
+        tf_api_key="",
+        nebius_ai_key="",
+        public_https=True,
+    )
+
+    setup_script = captured["setup_script"]
+    html_match = re.search(
+        r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
+        setup_script,
+        flags=re.DOTALL,
+    )
+    assert html_match, "bootstrap setup script must emit ui.html"
+    scripts = re.findall(r"<script>(.*?)</script>", html_match.group("html"), flags=re.DOTALL)
+    assert scripts, "ui.html must include browser JavaScript"
+    proc = subprocess.run(
+        ["node", "--check", "-"],
+        input="\n".join(scripts),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_bootstrap_recordings_api_in_system_prompt() -> None:

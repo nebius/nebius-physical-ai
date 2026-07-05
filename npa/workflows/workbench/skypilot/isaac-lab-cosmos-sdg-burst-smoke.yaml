@@ -1,0 +1,105 @@
+# Bursty Isaac Lab + Cosmos SDG single-task smoke.
+#
+# Render concrete values before submitting with:
+#
+#   npa burst submit-yaml npa/workflows/workbench/skypilot/isaac-lab-cosmos-sdg-burst-smoke.yaml \
+#     --name <run-id> \
+#     --var NPA_RUN_ID=<run-id> \
+#     --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:2.3.2.post1 \
+#     --var NPA_OUTPUT_URI=s3://<your-bucket>/<prefix>/<run-id>/
+#
+# This YAML is intentionally one executable SkyPilot task so it can run through
+# the burst Python-API path. Multi-stage workbench pipelines should use
+# `npa workbench workflow submit`.
+#
+# `npa burst submit-yaml` injects SkyPilot Docker-login secrets for private
+# Nebius Container Registry image pulls when the submitter can mint a Nebius IAM
+# token.
+name: isaac-lab-cosmos-sdg-burst-smoke
+resources:
+  cloud: nebius
+  accelerators: L40S:1
+  cpus: 16
+  memory: 64
+  image_id: "docker:${ISAAC_LAB_IMAGE}"
+envs:
+  NPA_RUN_ID: "${NPA_RUN_ID}"
+  NPA_OUTPUT_URI: "${NPA_OUTPUT_URI}"
+  ISAAC_LAB_TASK: "Isaac-Cartpole-v0"
+  ISAAC_LAB_NUM_ENVS: "8"
+  ISAAC_LAB_ITERATIONS: "1"
+  ISAAC_LAB_RUN_TRAIN: "1"
+setup: |
+  set -euo pipefail
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  if [ ! -x "${PYTHON_BIN}" ]; then
+    echo "Isaac Lab Python not found at ${PYTHON_BIN}" >&2
+    exit 2
+  fi
+  command -v nvidia-smi >/dev/null
+run: |
+  set -euo pipefail
+
+  PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
+  TRAIN_SCRIPT="/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
+  OUTPUT_DIR="/tmp/npa-isaac-cosmos-sdg/${NPA_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+
+  echo "NPA_BURST_WORKBENCH stage=isaac-lab run_id=${NPA_RUN_ID} task=${ISAAC_LAB_TASK}"
+  nvidia-smi -L
+  "${PYTHON_BIN}" - <<'PY'
+  import importlib.metadata as metadata
+  import json
+  import os
+  import time
+  payload = {
+      "schema": "npa.isaac_lab.headless_smoke.v1",
+      "run_id": os.environ["NPA_RUN_ID"],
+      "task": os.environ["ISAAC_LAB_TASK"],
+      "isaaclab_version": metadata.version("isaaclab"),
+      "created_unix": round(time.time(), 3),
+  }
+  print(json.dumps(payload, sort_keys=True), flush=True)
+  PY
+
+  if [ "${ISAAC_LAB_RUN_TRAIN}" = "1" ]; then
+    if [ ! -f "${TRAIN_SCRIPT}" ]; then
+      echo "Isaac Lab train script not found: ${TRAIN_SCRIPT}" >&2
+      exit 3
+    fi
+    cd "${OUTPUT_DIR}"
+    "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
+      --task "${ISAAC_LAB_TASK}" \
+      --num_envs "${ISAAC_LAB_NUM_ENVS}" \
+      --max_iterations "${ISAAC_LAB_ITERATIONS}" \
+      --headless \
+      --experiment_name npa_burst_isaac_cosmos_sdg \
+      --run_name "${NPA_RUN_ID}" \
+      agent.save_interval=1
+  fi
+
+  "${PYTHON_BIN}" - <<'PY'
+  import json
+  import os
+  import time
+  from pathlib import Path
+
+  output_dir = Path("/tmp/npa-isaac-cosmos-sdg") / os.environ["NPA_RUN_ID"]
+  output_dir.mkdir(parents=True, exist_ok=True)
+  manifest = {
+      "schema": "npa.cosmos_sdg.transfer_contract.v1",
+      "stage": "cosmos-sdg-contract",
+      "run_id": os.environ["NPA_RUN_ID"],
+      "input_uri": os.environ["NPA_OUTPUT_URI"].rstrip("/") + "/isaac/",
+      "output_uri": os.environ["NPA_OUTPUT_URI"].rstrip("/") + "/cosmos-sdg/",
+      "assets_uri": os.environ["NPA_OUTPUT_URI"].rstrip("/") + "/assets/",
+      "scene_spec_uri": os.environ["NPA_OUTPUT_URI"].rstrip("/") + "/scene_spec.json",
+      "source": "isaac-lab-headless",
+      "status": "contract_ready",
+      "created_unix": round(time.time(), 3),
+  }
+  path = output_dir / "cosmos_sdg_manifest.json"
+  path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  print("NPA_BURST_WORKBENCH stage=cosmos-sdg manifest=" + str(path), flush=True)
+  print(json.dumps(manifest, sort_keys=True), flush=True)
+  PY

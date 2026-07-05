@@ -83,17 +83,42 @@ jobs:
         include:
           - name: nvidia-cuda-12-4-1-devel-ubuntu22-04
             image: nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
+            purge_linux_libc_dev: true
           - name: nvidia-cuda-12-6-3-devel-ubuntu22-04
             image: nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
+            purge_linux_libc_dev: true
           - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
             image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
+            purge_linux_libc_dev: true
           - name: python-3-11-slim-trixie
             image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
+            purge_linux_libc_dev: false
     steps:
+      - name: Resolve scan target
+        id: scan-target
+        shell: bash
+        run: |
+          if [ "${{ matrix.purge_linux_libc_dev }}" = "true" ]; then
+            patched_image="npa-base-scan:${{ matrix.name }}"
+            docker build \
+              --build-arg BASE_IMAGE="${{ matrix.image }}" \
+              -t "${patched_image}" \
+              -f - . <<'DOCKERFILE'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          USER root
+          RUN dpkg --purge --force-depends linux-libc-dev \
+              && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+            echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "image=${{ matrix.image }}" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ matrix.image }}
+          image-ref: ${{ steps.scan-target.outputs.image }}
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
@@ -104,7 +129,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ matrix.image }}
+          image-ref: ${{ steps.scan-target.outputs.image }}
           severity: CRITICAL
           ignore-unfixed: true
           vuln-type: os

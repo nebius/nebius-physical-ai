@@ -371,3 +371,27 @@ def test_network_ensure_ingress_rejects_missing_target() -> None:
 
     assert result.exit_code != 0
     assert "pass exactly one of --vm or (--ip and --project)" in result.output
+
+
+def test_remove_npa_ingress_rules_deletes_allow_npa_rules(mocker) -> None:
+    from npa.clients import network as network_client
+
+    mocker.patch(
+        "npa.clients.network._list_security_rules",
+        return_value=[
+            {
+                "metadata": {"id": "rule-npa", "name": "allow-npa-agent-443"},
+                "spec": {"ingress": {"destination_ports": [443]}},
+            },
+            {
+                "metadata": {"id": "rule-tf", "name": "allow-server"},
+                "spec": {"ingress": {"destination_ports": [8088]}},
+            },
+        ],
+    )
+    run = mocker.patch("npa.clients.network.nebius._run")
+
+    deleted = network_client.remove_npa_ingress_rules(("sg-test",))
+
+    assert deleted == ["rule-npa"]
+    run.assert_called_once_with(["vpc", "security-rule", "delete", "--id", "rule-npa"])

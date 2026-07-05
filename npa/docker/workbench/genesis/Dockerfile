@@ -84,10 +84,14 @@ RUN python3 -m venv /opt/genesis/venv \
       "rich==15.0.0" \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
-      "pyarrow==22.0.0"
+      "pyarrow==24.0.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.2.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/genesis/venv/bin/pip uninstall -y wandb
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -106,6 +110,23 @@ if actual != expected:
     raise RuntimeError(f"expected genesis-world {expected}, found {actual}")
 print(f"GENESIS_BUILD_IMPORT_OK {actual}")
 PY
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 WORKDIR /opt/genesis
 ENTRYPOINT ["/bin/bash"]

@@ -130,6 +130,43 @@ def test_eval_manifest_embeds_custom_object_usd():
     assert 'EVAL_OBJECT_USD="http://assets/custom.usd"' in args
 
 
+def _byo_manifest_args(**kw):
+    m = ev.build_isaac_eval_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=2, checkpoint_uri="s3://b/m.pt",
+        per_env_s3_uri="s3://b/o/d.json", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        robot_spec={"name": "lite6", "robot_source": "byo_usd",
+                    "usd_path": "/tmp/npa_robot/robot.usd"},
+        **kw)
+    return m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+
+def test_eval_manifest_forwards_task_config_object_scale():
+    # A BYO-robot eval given a task config injects NPA_BYO_TASK_CONFIG_JSON so the
+    # eval sibling's register() sizes the manipuland to the SAME scale as training
+    # (else a shrunk-object policy is scored on the stock cube and reports a false 0).
+    args = _byo_manifest_args(task_config={"object_scale": 0.2, "gripper_open": 0.0089})
+    # Assert the actual env export line (the module source, cat'd into the sibling,
+    # also mentions the constant name, so match the `export ...=` form specifically).
+    assert "export NPA_BYO_TASK_CONFIG_JSON=" in args
+    assert '"object_scale": 0.2' in args  # json.dumps(sort_keys=True)
+
+
+def test_eval_manifest_no_task_config_no_injection():
+    # BYO robot but no task config -> the env var is not exported (stock placement);
+    # and the Franka/no-robot path never exports it at all.
+    assert "export NPA_BYO_TASK_CONFIG_JSON=" not in _byo_manifest_args(task_config=None)
+    m = ev.build_isaac_eval_job_manifest(
+        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0", num_envs=2, checkpoint_uri="s3://b/m.pt",
+        per_env_s3_uri="s3://b/o/d.json", s3_endpoint="https://s3", namespace="default",
+        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        task_config={"object_scale": 0.2})  # no robot_spec -> Franka path
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "export NPA_BYO_TASK_CONFIG_JSON=" not in args
+
+
 def test_normalize_heldout_preserves_render_manifest_and_provenance():
     """BYO-eval render_manifest + provenance must survive engine normalization."""
     from npa.workflows.sim2real.engine import _normalize_heldout_report
