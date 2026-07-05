@@ -192,7 +192,7 @@ run: |
         assert task["resources"]["image_id"] == "docker:registry.example/cosmos:latest"
         assert task["envs"]["NPA_RUN_ID"] == "run-123"
         assert task["envs"]["NPA_OUTPUT_URI"] == "s3://example/out"
-        assert "${" not in Path(payload["yaml_path"]).read_text(encoding="utf-8")
+        assert 'echo "${NPA_RUN_ID} ${NPA_OUTPUT_URI}"' in task["run"]
         return core.subprocess.CompletedProcess(
             cmd,
             0,

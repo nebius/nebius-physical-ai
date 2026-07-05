@@ -205,12 +205,12 @@ def submit_yaml(
     docs = _load_burst_yaml_documents(source)
     task = _single_task_from_documents(docs, source)
     if env_overrides:
-        task = _replace_placeholders(task, dict(env_overrides))
+        task = _replace_task_placeholders(task, dict(env_overrides))
         envs = task.setdefault("envs", {})
         if not isinstance(envs, dict):
             raise BurstConfigError(f"SkyPilot task envs must be a mapping: {source}")
         envs.update({str(key): str(value) for key, value in env_overrides.items()})
-    unresolved = _unresolved_placeholders(task)
+    unresolved = _unresolved_task_placeholders(task)
     if unresolved:
         values = ", ".join(sorted(unresolved))
         raise BurstConfigError(f"SkyPilot YAML has unresolved placeholders: {values}")
@@ -367,6 +367,15 @@ def _replace_placeholders(value: Any, replacements: Mapping[str, str]) -> Any:
     return value
 
 
+def _replace_task_placeholders(task: Mapping[str, Any], replacements: Mapping[str, str]) -> dict[str, Any]:
+    rendered = dict(task)
+    for key, value in list(rendered.items()):
+        if key in {"run", "setup"}:
+            continue
+        rendered[key] = _replace_placeholders(value, replacements)
+    return rendered
+
+
 def _unresolved_placeholders(value: Any) -> set[str]:
     unresolved: set[str] = set()
     if isinstance(value, str):
@@ -377,6 +386,15 @@ def _unresolved_placeholders(value: Any) -> set[str]:
     elif isinstance(value, dict):
         for item in value.values():
             unresolved.update(_unresolved_placeholders(item))
+    return unresolved
+
+
+def _unresolved_task_placeholders(task: Mapping[str, Any]) -> set[str]:
+    unresolved: set[str] = set()
+    for key, value in task.items():
+        if key in {"run", "setup"}:
+            continue
+        unresolved.update(_unresolved_placeholders(value))
     return unresolved
 
 
