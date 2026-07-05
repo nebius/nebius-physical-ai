@@ -82,8 +82,8 @@ def test_submit_invokes_skypilot_python_api_not_sky_cli(
         calls.append([str(part) for part in cmd])
         if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
             return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
-        assert cmd[:3] == [str(sky_python), "-m", "npa.burst._sky_api"]
-        assert cmd[3] == "launch"
+        assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
+        assert cmd[2] == "launch"
         payload = json.loads(kwargs["input"])
         task = yaml.safe_load(Path(payload["yaml_path"]).read_text(encoding="utf-8"))
         assert task["num_nodes"] == 2
@@ -131,7 +131,7 @@ def test_status_and_logs_use_handle_runtime(
     def fake_run(cmd, **kwargs):
         if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
             return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
-        action = cmd[3]
+        action = cmd[2]
         if action == "queue":
             return core.subprocess.CompletedProcess(
                 cmd,

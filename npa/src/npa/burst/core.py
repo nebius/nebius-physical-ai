@@ -354,7 +354,7 @@ def _prepare_runtime_from_handle(handle: BurstJobHandle, **kwargs: Any) -> _Runt
 
 
 def _run_sky_api(runtime: _Runtime, action: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-    command = [str(runtime.sky_python), "-m", "npa.burst._sky_api", action]
+    command = [str(runtime.sky_python), str(_sky_api_bridge_path()), action]
     result = subprocess.run(
         command,
         input=json.dumps(dict(payload)),
@@ -377,6 +377,10 @@ def _run_sky_api(runtime: _Runtime, action: str, payload: Mapping[str, Any]) -> 
     if not isinstance(decoded, dict):
         raise BurstSubmitError(f"SkyPilot Python API {action} returned invalid payload: {decoded!r}")
     return decoded
+
+
+def _sky_api_bridge_path() -> Path:
+    return Path(__file__).with_name("_sky_api.py")
 
 
 def _sky_python_from_bin(sky_bin: Path) -> Path:
