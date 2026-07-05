@@ -289,6 +289,10 @@ RUN apt-get update \
       software-properties-common \
     && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /opt/nvidia/nsight-compute \
+    && rm -rf /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim/extscache \
+    && find /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim \
+      -type d \( -name "pip_prebundle" -o -name "pip_prebundle_*" -o -name "pip_requests" \) \
+      -prune -exec rm -rf {} + \
     && rm -rf /home/ubuntu/.cache /root/.cache \
     && rm -rf /var/lib/apt/lists/*
 
