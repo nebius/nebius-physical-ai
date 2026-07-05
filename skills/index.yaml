@@ -304,6 +304,16 @@ skills:
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
+  - name: agent-workflow-operate
+    category: workflows
+    when_to_use: "Verify that a bootstrapped NPA agent VM can create, validate, plan, provision for, or run npa.workflow YAMLs using its staged config."
+    path: skills/workflows/agent-workflow-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/agent-workflow-operate/SKILL.md
+      - type: cli_help
+        args: ["workbench", "workflow", "validate-spec", "--help"]
+        contains: "npa.workflow"
   - name: sim2real-engine
     category: tools
     when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."
@@ -339,6 +349,19 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml
+  - name: agent-fresh-operate
+    category: workflows
+    when_to_use: "Deploy, teardown, or reproduce a fresh NPA agent VM from scratch; validate /api/models and /api/chat; debug destroy/fresh-setup failures."
+    path: skills/workflows/agent-fresh-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/scripts/agent_fresh_setup_loop.sh
+      - type: cli_help
+        args: ["agent", "fresh-setup", "--help"]
+        contains: "project-id"
+      - type: cli_help
+        args: ["agent", "destroy", "--help"]
+        contains: "Destroy agent VM"
   - name: author-npa-workflow
     category: workflows
     when_to_use: "Author, validate, or review NPA workflow specs (apiVersion npa.workflow/v0.0.1) and toolRef catalogs."

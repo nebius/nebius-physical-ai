@@ -199,6 +199,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "infra_backends",
+        re.compile(
+            r"\b(?:k8s|kubernetes|cluster|clusters|backend|backends|infra|infrastructure)\b"
+            r".{0,120}\b(?:present|available|configured|exists?|list|show|query|which|what)\b"
+            r"|\b(?:list|show|query|what|which)\b.{0,120}\b(?:k8s|kubernetes|clusters?|backends?|infra)\b"
+            r"|\bno\b.{0,80}\b(?:infra|infrastructure|cluster|backend)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "live_infra_loop",
         re.compile(
             r"\b(?:run|submit|launch|test)\b.{0,120}\b(?:live|real)\b.{0,120}\b(?:infra|infrastructure|dev\s*vm)\b"
@@ -271,7 +281,8 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
-    "live_infra_loop": ["workflows/validate", "workflows/plan", "tools"],
+    "infra_backends": ["infra/k8s", "infra/provision", "workflows/submit"],
+    "live_infra_loop": ["infra/k8s", "infra/provision", "workflows/validate", "workflows/plan", "workflows/submit", "tools"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -680,6 +691,63 @@ def format_live_infra_loop_guidance() -> str:
     )
 
 
+def format_infra_backends(state: dict[str, Any]) -> str:
+    infra = state.get("infra")
+    if not isinstance(infra, dict):
+        infra = {}
+    configured = infra.get("configured") if isinstance(infra.get("configured"), list) else []
+    local_clusters = infra.get("local_clusters") if isinstance(infra.get("local_clusters"), list) else []
+    cloud_clusters = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
+    has_infra = bool(infra.get("has_infra"))
+    project = str(infra.get("project") or "default")
+    lines = [
+        "**Kubernetes / workflow infra status**:",
+        f"- **project**: `{project}`",
+        f"- **agent_npa_ready**: `{bool(infra.get('agent_npa_ready'))}`",
+    ]
+    if configured:
+        lines.append("- **configured backends**:")
+        for item in configured[:5]:
+            if isinstance(item, dict):
+                lines.append(
+                    "  - "
+                    f"`{item.get('cluster_name') or item.get('context') or 'configured'}` "
+                    f"source=`{item.get('source', 'project_config')}` "
+                    f"kubeconfig=`{item.get('kubeconfig', '')}`"
+                )
+    if local_clusters:
+        lines.append("- **local agent clusters**:")
+        for item in local_clusters[:5]:
+            if isinstance(item, dict):
+                lines.append(
+                    "  - "
+                    f"`{item.get('cluster_name') or item.get('context') or 'cluster'}` "
+                    f"kubeconfig_exists=`{bool(item.get('kubeconfig_exists'))}`"
+                )
+    if cloud_clusters:
+        lines.append("- **Nebius MK8s clusters**:")
+        for item in cloud_clusters[:5]:
+            if isinstance(item, dict):
+                lines.append(
+                    "  - "
+                    f"`{item.get('name') or item.get('id') or 'cluster'}` "
+                    f"id=`{item.get('id', '')}` status=`{item.get('status', '')}`"
+                )
+    if not has_infra:
+        lines.extend(
+            [
+                "- **No Kubernetes infra is currently specified or available.**",
+                "- Options:",
+                "  1. Let the agent deploy minimal GPU Kubernetes for the workflow (`POST /api/infra/provision`).",
+                "  2. Configure an existing backend in `~/.npa/config.yaml` under `projects.<alias>.kubernetes`.",
+                "  3. Submit with explicit `project` / `cluster_name` once you choose a target.",
+            ]
+        )
+    else:
+        lines.append("- The agent can use the listed backend or provision another one if requested.")
+    return "\n".join(lines)
+
+
 def format_configure_s3() -> str:
     return "\n".join(
         [
@@ -842,6 +910,8 @@ def build_grounded_reply(
         return format_sim_assets(state)
     if intent == "cameras":
         return format_cameras(state, default_cameras=default_cameras)
+    if intent == "infra_backends":
+        return format_infra_backends(state)
     if intent == "live_infra_loop":
         return format_live_infra_loop_guidance()
     if intent == "cosmos_capabilities":

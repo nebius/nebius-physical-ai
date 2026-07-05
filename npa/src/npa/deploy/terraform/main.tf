@@ -54,7 +54,7 @@ resource "nebius_vpc_v1_security_rule" "allow_server" {
 
   ingress = {
     source_cidrs      = [var.ssh_cidr_block]
-    destination_ports = [var.server_port]
+    destination_ports = distinct(concat([var.server_port], var.extra_ingress_ports))
   }
 }
 
@@ -160,7 +160,7 @@ resource "nebius_compute_v1_instance" "workbench" {
 
   recovery_policy = var.enable_preemptible ? "FAIL" : "RECOVER"
 
-  service_account_id = var.service_account_id
+  service_account_id = trimspace(var.service_account_id) != "" ? trimspace(var.service_account_id) : null
 
   labels = {
     environment = "ml-workbench"

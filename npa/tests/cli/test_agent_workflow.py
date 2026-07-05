@@ -111,11 +111,37 @@ def test_create_workflow_apis() -> None:
     assert any("validate" in path for path in apis)
 
 
+def test_infra_backend_intent_and_reply() -> None:
+    assert match_chat_intent("which kubernetes clusters are available?") == "infra_backends"
+    apis = apis_for_intent("infra_backends")
+    assert "infra/k8s" in apis
+    reply = build_grounded_reply(
+        "infra_backends",
+        {
+            "infra": {
+                "project": "demo",
+                "has_infra": False,
+                "agent_npa_ready": True,
+                "configured": [],
+                "local_clusters": [],
+            }
+        },
+        [],
+    )
+    assert "No Kubernetes infra" in reply
+    assert "deploy minimal GPU Kubernetes" in reply
+
+
 def test_bootstrap_embeds_workflow_endpoints() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '@app.post("/workflows/validate")' in source
     assert '@app.post("/workflows/plan")' in source
     assert '@app.post("/workflows/submit")' in source
+    assert '@app.get("/infra/k8s")' in source
+    assert '@app.post("/infra/provision")' in source
+    assert "agent-live-infra-plan" in source
+    assert "pip install -e" in source
+    assert "deploy/cluster" in source
     assert '@app.get("/workflows/draft")' in source
     assert "workflowYaml" in source
     assert "validateWorkflowYaml" in source

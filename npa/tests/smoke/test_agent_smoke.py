@@ -13,10 +13,10 @@ TMUX_SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_agent_live_tmux.sh"
 AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
 
 UI_BUTTON_IDS = (
-    "chatSend",
     "chatActionS3",
     "chatActionCosmos",
     "chatActionWatch",
+    "newChatSession",
     "loadFrankaRerun",
     "openRerun",
     "applySelection",
@@ -50,6 +50,11 @@ def test_agent_bootstrap_source_smoke() -> None:
     assert 'name="npa-ui-version" content="{AGENT_UI_VERSION}"' in source
     for control_id in UI_BUTTON_IDS:
         assert f'bindClick("{control_id}"' in source
+    assert 'id="chatSend"' in source
+    assert 'id="chatForm"' in source
+    assert 'id="chatSessionSelect"' in source
+    assert 'chatForm.addEventListener("submit"' in source
+    assert "/api/chat/sessions" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
 
 
