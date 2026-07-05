@@ -579,6 +579,93 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _storage_credentials_allow_writes(
+    *,
+    bucket: str,
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
+    region: str,
+) -> bool:
+    """Return True when the credentials can write and delete in the bucket."""
+    bucket_name = str(bucket or "").strip()
+    if not bucket_name:
+        return False
+    endpoint_url = str(endpoint or "").strip()
+    if not endpoint_url:
+        endpoint_url = f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
+    try:
+        import boto3
+    except Exception:
+        return False
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=str(access_key or "").strip(),
+        aws_secret_access_key=str(secret_key or "").strip(),
+        region_name=str(region or "").strip() or None,
+    )
+    probe_key = f"npa-agent/probe/{secrets.token_hex(8)}.txt"
+    try:
+        client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
+        client.delete_object(Bucket=bucket_name, Key=probe_key)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_deploy_storage_credentials(
+    *,
+    region: str,
+    bootstrap_creds: dict[str, str],
+) -> dict[str, str]:
+    """Prefer bootstrap credentials, but fall back to shared storage keys when needed."""
+    candidate = dict(bootstrap_creds)
+    bucket = str(candidate.get("s3_bucket", "")).strip()
+    endpoint = str(candidate.get("s3_endpoint", "")).strip()
+    access_key = str(candidate.get("nebius_api_key", "")).strip()
+    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
+    if _storage_credentials_allow_writes(
+        bucket=bucket,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+    ):
+        return candidate
+    from npa.clients.credentials import load_credentials
+
+    shared = load_credentials()
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    if shared_bucket.startswith("s3://"):
+        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
+        region=region,
+    ):
+        typer.echo(
+            "  Bootstrap S3 key has no data-plane access; "
+            "falling back to shared configured storage credentials."
+        )
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
+        return candidate
+    typer.echo(
+        "  Warning: unable to verify writable S3 credentials for deploy; "
+        "continuing with bootstrap-provided keys.",
+        err=True,
+    )
+    return candidate
+
+
 def _resolve_agent_service_account_id(
     project_alias: str,
     record: dict[str, Any],
@@ -6866,6 +6953,10 @@ def deploy_cmd(
             env_tenant_id,
             env_region,
             on_status=lambda msg: typer.echo(f"  {msg}"),
+        )
+        creds = _resolve_deploy_storage_credentials(
+            region=env_region,
+            bootstrap_creds=creds,
         )
         iam_token = get_iam_token()
     except NebiusError as exc:

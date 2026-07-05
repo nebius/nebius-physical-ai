@@ -67,6 +67,55 @@ def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> Non
     assert called is False
 
 
+def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "bucket-boot"
+    assert resolved["nebius_api_key"] == "ak-boot"
+
+
+def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    calls = {"count": 0}
+
+    def _probe(**kwargs):
+        calls["count"] += 1
+        return calls["count"] > 1 and kwargs["bucket"] == "shared-bucket"
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "shared-bucket"
+    assert resolved["nebius_api_key"] == "ak-shared"
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     from npa.cli import agent as agent_module
 
