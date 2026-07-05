@@ -21,6 +21,8 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
 - `envs` does not support self-referencing variable interpolation. Use explicit comment blocks for alternatives, following the `BDD100K_LABEL_MAP` pattern in `npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml`.
 - `sky jobs launch` has no dry-run flag. Use mock-endpoint mode for validation before live submission.
 - Mixed serial/parallel task groups in one YAML are not fully supported. Serialize the workflow if needed.
+- Managed-job Python API `Dag` support is effectively single-task for this repo's burst path. Use `npa burst submit-yaml` only for rendered single-task SkyPilot YAMLs; use `npa workbench workflow submit` for multi-stage workbench YAMLs.
+- Direct Nebius burst jobs pull `resources.image_id` before YAML `setup` runs. For private `cr.*.nebius.cloud` images, the submitter must inject SkyPilot Docker login config (`SKYPILOT_DOCKER_SERVER`, `SKYPILOT_DOCKER_USERNAME`, `SKYPILOT_DOCKER_PASSWORD`) into task secrets before launch. `npa burst submit-yaml` does this by minting a short-lived Nebius IAM token when the submitter has Nebius credentials.
 
 ## Reference Pattern
 

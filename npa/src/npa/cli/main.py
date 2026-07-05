@@ -14,6 +14,7 @@ import typer
 
 from npa.cli._error_formatting import format_error_for_user
 from npa.cli.agent import app as agent_app
+from npa.cli.burst import app as burst_app
 from npa.cli.workbench import app as workbench_app
 from npa.cli.adapter import app as adapter_app
 from npa.cli.cluster import app as cluster_app
@@ -50,6 +51,7 @@ app.add_typer(
 # adding more top-level registrations here.
 app.add_typer(adapter_app, name="adapter", rich_help_panel="Platform utilities")
 app.add_typer(agent_app, name="agent", rich_help_panel="Platform utilities")
+app.add_typer(burst_app, name="burst", rich_help_panel="Platform utilities")
 app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
 app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
 app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
