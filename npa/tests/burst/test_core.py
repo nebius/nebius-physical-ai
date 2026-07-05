@@ -238,7 +238,13 @@ run: echo second
         core.submit_yaml(source)
 
 
-def test_submit_yaml_rejects_direct_nebius_private_registry_image(tmp_path: Path) -> None:
+def test_submit_yaml_injects_nebius_registry_login(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    sky_bin = _executable(tmp_path / "bin" / "sky")
+    sky_python = _executable(sky_bin.parent / "python")
     source = tmp_path / "private-nebius.yaml"
     source.write_text(
         """
@@ -252,5 +258,35 @@ run: echo should-not-submit
         encoding="utf-8",
     )
 
-    with pytest.raises(BurstConfigError, match="cannot authenticate"):
-        core.submit_yaml(source)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda: "token-abc",
+    )
+
+    def fake_run(cmd, **kwargs):
+        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
+            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
+        payload = json.loads(kwargs["input"])
+        task = yaml.safe_load(Path(payload["yaml_path"]).read_text(encoding="utf-8"))
+        assert task["secrets"] == {
+            "SKYPILOT_DOCKER_SERVER": "cr.eu-north1.nebius.cloud",
+            "SKYPILOT_DOCKER_USERNAME": "iam",
+            "SKYPILOT_DOCKER_PASSWORD": "token-abc",
+        }
+        return core.subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"job_ids": [456], "output": "submitted"}) + "\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+
+    handle = core.submit_yaml(
+        source,
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "sky-state",
+    )
+
+    assert handle.job_id == "456"
