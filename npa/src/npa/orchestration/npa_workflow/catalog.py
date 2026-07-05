@@ -49,6 +49,22 @@ _BYOF_REPO_ARGV = [
 ]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "infra.soperator.deploy": ToolEntry(
+        name="infra.soperator.deploy",
+        description=(
+            "Deploy a Nebius soperator (Slurm-on-Kubernetes) cluster from an "
+            "npa.soperator/v0.0.1 spec (multiple worker presets + optional docker cache)."
+        ),
+        argv_template=[
+            "npa",
+            "soperator",
+            "deploy",
+            "--spec",
+            "{{config.soperator_spec}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.vlm_eval.run": ToolEntry(
         name="workbench.vlm_eval.run",
         description="Score rollout directories with the VLM eval workbench tool.",

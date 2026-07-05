@@ -201,3 +201,17 @@ def test_embedded_agent_chat_source_strips_future_import() -> None:
     assert "INTENT_APIS" in source
     assert "onboard_solution" in source
     assert "format_onboard_solution" in source
+
+
+def test_match_soperator_intent() -> None:
+    assert match_chat_intent("deploy a soperator cluster") == "soperator"
+    assert match_chat_intent("deploy slurm on kubernetes") == "soperator"
+    assert match_chat_intent("spin up a slurm cluster with docker cache") == "soperator"
+    assert match_chat_intent("can npa deploy slurm-on-k8s?") == "soperator"
+
+
+def test_soperator_grounded_reply_points_to_npa_deploy() -> None:
+    reply = build_grounded_reply("soperator", {}, ["infra.soperator.deploy"])
+    assert "npa soperator deploy" in reply
+    assert "npa.soperator/v0.0.1" in reply
+    assert "docker_cache" in reply
