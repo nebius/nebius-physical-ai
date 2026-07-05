@@ -2,10 +2,14 @@
 
 Previously a BYO ``robot_spec_uri`` reached only the held-out eval USD-swap; the
 trainer sibling never received the robot vars, so the policy trained on the stock
-Franka. These cover the two seams that close that gap:
+Franka. These cover the seams that close that gap:
 
-* ``engine._byo_robot_trainer_env`` — forwards the robot inputs + opts the trainer
-  into the BYO-robot path, and is Franka-safe (empty for no-robot / stock).
+* ``engine._byo_robot_env`` — forwards the robot inputs + opts a component into the
+  BYO-robot path, and is Franka-safe (empty for no-robot / stock). Shared by the
+  trainer sibling AND the held-out eval so both build the SAME embodiment/dims.
+* ``engine.run_heldout_eval`` — merges ``_byo_robot_env`` into the eval env, so the
+  held-out eval opts into ``NPA_BYO_ROBOT_TASK=1`` (else it evaluates a stock
+  Franka-dimensioned env a non-Franka checkpoint can't load into).
 * ``byo_isaac_trainer._resolve_byo_robot_spec`` — resolves a ``robot_spec_uri``
   JSON via the same parser the eval uses (mocked here; no cluster / no network).
 """
@@ -14,26 +18,28 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from npa.workflows.sim2real import byo_isaac_trainer as trainer
 from npa.workflows.sim2real import engine
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 
 # --------------------------------------------------------------------------- #
-# engine._byo_robot_trainer_env — forward robot vars to the trainer sibling
+# engine._byo_robot_env — forward robot vars to the trainer sibling
 # --------------------------------------------------------------------------- #
 def test_trainer_env_empty_for_no_robot():
-    assert engine._byo_robot_trainer_env(Sim2RealLoopConfig(run_id="r")) == {}
+    assert engine._byo_robot_env(Sim2RealLoopConfig(run_id="r")) == {}
 
 
 def test_trainer_env_empty_for_stock_franka_source():
     cfg = Sim2RealLoopConfig(run_id="r", robot_source="stock_franka")
-    assert engine._byo_robot_trainer_env(cfg) == {}
+    assert engine._byo_robot_env(cfg) == {}
 
 
 def test_trainer_env_set_for_spec_uri():
     cfg = Sim2RealLoopConfig(run_id="r", robot_spec_uri="s3://b/kinova/robot-spec.json")
-    env = engine._byo_robot_trainer_env(cfg)
+    env = engine._byo_robot_env(cfg)
     assert env["NPA_BYO_ROBOT_TASK"] == "1"
     assert env["NPA_SIM2REAL_ROBOT_SPEC_URI"] == "s3://b/kinova/robot-spec.json"
     # forwarded even when blank so the trainer sees the same trio the eval does
@@ -42,12 +48,52 @@ def test_trainer_env_set_for_spec_uri():
 
 
 def test_trainer_env_set_for_preset_and_byo_source():
-    assert engine._byo_robot_trainer_env(
+    assert engine._byo_robot_env(
         Sim2RealLoopConfig(run_id="r", robot_preset="ur10e")
     )["NPA_BYO_ROBOT_TASK"] == "1"
-    assert engine._byo_robot_trainer_env(
+    assert engine._byo_robot_env(
         Sim2RealLoopConfig(run_id="r", robot_source="byo_usd")
     )["NPA_BYO_ROBOT_TASK"] == "1"
+
+
+# --------------------------------------------------------------------------- #
+# engine.run_heldout_eval — held-out eval opts into the BYO-robot path too, so it
+# evaluates the SAME retargeted variant (matching dims) the policy trained on.
+# --------------------------------------------------------------------------- #
+class _StopComponentEnv(RuntimeError):
+    """Sentinel to short-circuit run_heldout_eval right after the env is built."""
+
+
+def _capture_heldout_extra(cfg: Sim2RealLoopConfig, tmp_path, monkeypatch) -> dict:
+    captured: dict = {}
+
+    def _fake_component_env(config, *, component, output_json=None, extra=None):
+        captured.update(extra or {})
+        raise _StopComponentEnv
+
+    monkeypatch.setattr(engine, "_component_env", _fake_component_env)
+    with pytest.raises(_StopComponentEnv):
+        engine.run_heldout_eval(
+            cfg, local_dir=tmp_path, inner_evidence={}, outer_iteration=1
+        )
+    return captured
+
+
+def test_heldout_eval_opts_into_byo_robot_task(tmp_path, monkeypatch):
+    cfg = Sim2RealLoopConfig(
+        run_id="r", robot_spec_uri="s3://b/lite6/lite6_parallel.json"
+    )
+    extra = _capture_heldout_extra(cfg, tmp_path, monkeypatch)
+    # The gate byo_isaac_eval checks before resolving the spec + registering the
+    # retargeted task must be present, alongside the robot uri.
+    assert extra["NPA_BYO_ROBOT_TASK"] == "1"
+    assert extra["NPA_SIM2REAL_ROBOT_SPEC_URI"] == "s3://b/lite6/lite6_parallel.json"
+
+
+def test_heldout_eval_stock_franka_unchanged(tmp_path, monkeypatch):
+    cfg = Sim2RealLoopConfig(run_id="r")  # no robot -> stock Franka path
+    extra = _capture_heldout_extra(cfg, tmp_path, monkeypatch)
+    assert "NPA_BYO_ROBOT_TASK" not in extra  # byte-for-byte stock eval
 
 
 # --------------------------------------------------------------------------- #

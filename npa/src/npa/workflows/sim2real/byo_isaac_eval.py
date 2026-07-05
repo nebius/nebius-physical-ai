@@ -643,8 +643,10 @@ def run_isaac_eval_job(
     # spec resolution + payload so train and eval agree on the variant.
     robot_spec_dict = None
     robot_usd_uri = ""
+    task_config_dict = None
     if _env("NPA_BYO_ROBOT_TASK") == "1":
         from npa.workflows.sim2real import byo_isaac_trainer as _trainer
+        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
 
         spec = _trainer._resolve_byo_robot_spec()
         usd_dest = ""
@@ -656,8 +658,17 @@ def run_isaac_eval_job(
             elif robot_uri:
                 usd_dest = robot_uri
         robot_spec_dict = _trainer.robot_spec_payload(spec, usd_container_path=usd_dest)
+        # Matched robot-aware task config (object scale / placement / gripper targets)
+        # so the held-out eval spawns and rolls the policy on the SAME scaled task the
+        # trainer used — most importantly the SAME manipuland size. Without this a
+        # shrunk-object policy is scored on the stock ~5 cm cube and reports a false
+        # zero. register() in the eval sibling consumes it via task_config_from_env().
+        task_config_dict = _robotmod.task_config_from_env()
         print(f"byo_isaac_eval: BYO-ROBOT eval path "
               f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
+        print(f"byo_isaac_eval: BYO task config "
+              f"{'-> ' + json.dumps(task_config_dict, sort_keys=True) if task_config_dict else 'none'}",
+              flush=True)
 
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
@@ -665,7 +676,7 @@ def run_isaac_eval_job(
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
-        robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri,
+        robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)

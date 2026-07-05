@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import ipaddress
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,7 @@ DEFAULT_LLM_MODELS = (
 )
 AGENT_UI_VERSION = "2026070403"
 DEFAULT_HTTPS_PORT = 443
+AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 
 
 def _embedded_agent_workflow_source() -> str:
@@ -772,21 +774,25 @@ def _write_agent_operator_profile(
     config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
     creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
     user_home = f"/home/{ssh_user}"
-    npa_dir = f"{user_home}/.npa"
-    config_path = f"{npa_dir}/config.yaml"
-    creds_path = f"{npa_dir}/credentials.yaml"
-    ssh.run_or_raise(
-        " && ".join(
+    targets = [
+        (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
+        ("/root/.npa", "root:root"),
+    ]
+    commands: list[str] = []
+    for npa_dir, owner in targets:
+        config_path = f"{npa_dir}/config.yaml"
+        creds_path = f"{npa_dir}/credentials.yaml"
+        commands.extend(
             [
                 f"sudo mkdir -p {shlex.quote(npa_dir)}",
                 f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
                 f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(ssh_user)}:{shlex.quote(ssh_user)} {shlex.quote(npa_dir)}",
+                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
                 f"sudo chmod 700 {shlex.quote(npa_dir)}",
                 f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
             ]
         )
-    )
+    ssh.run_or_raise(" && ".join(commands))
 
 
 def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
@@ -808,6 +814,7 @@ def _store_project_environment(*, project: str, project_id: str, tenant_id: str,
 def _write_agent_nebius_env(
     ssh: SSHClient,
     *,
+    project_alias: str,
     project_id: str,
     tenant_id: str,
     region: str,
@@ -816,11 +823,13 @@ def _write_agent_nebius_env(
     endpoint: str,
     access_key: str,
     secret_key: str,
+    iam_token: str = "",
 ) -> None:
     """Stage long-lived Nebius project credentials on the agent VM."""
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
+        f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NEBIUS_PROJECT_ID={project_id.strip()}",
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
@@ -830,13 +839,107 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    if iam_token.strip():
+        env_lines.extend(
+            [
+                "NEBIUS_PROFILE=agent-bootstrap",
+                f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
+                f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
+                f"TF_VAR_iam_token={iam_token.strip()}",
+                "NPA_REUSE_IAM_TOKEN=1",
+            ]
+        )
+    env_lines.append("")
     env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
+    if iam_token.strip():
+        ssh.run_or_raise(
+            "sudo bash -lc "
+            + shlex.quote(
+                "\n".join(
+                    [
+                        "set -euo pipefail",
+                        "set -a",
+                        ". /opt/npa-agent/nebius.env",
+                        "set +a",
+                        "mkdir -p /root/.npa",
+                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
+                        "chmod 600 /root/.npa/nebius-token",
+                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
+                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
+                        "if [ -n \"$NEBIUS_BIN\" ]; then",
+                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
+                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
+                        "fi",
+                    ]
+                )
+            )
+        )
+
+
+def _create_agent_source_archive() -> str:
+    """Package the NPA source tree needed for agent-side workflow execution."""
+    repo_root = Path(__file__).resolve().parents[4]
+    include_roots = [
+        repo_root / "npa",
+        repo_root / "deploy" / "cluster",
+    ]
+    for path in include_roots:
+        if not path.exists():
+            raise ConfigError(f"Required agent source path is missing: {path}")
+
+    exclude_names = {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".terraform",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+    }
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+    tmp.close()
+
+    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        parts = set(Path(info.name).parts)
+        if parts & exclude_names:
+            return None
+        if info.name.endswith((".pyc", ".pyo")):
+            return None
+        return info
+
+    with tarfile.open(tmp.name, "w:gz") as archive:
+        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
+        archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
+    return tmp.name
+
+
+def _stage_agent_npa_source(ssh: SSHClient) -> None:
+    """Upload NPA package source and deploy assets to the agent VM."""
+    archive_path = _create_agent_source_archive()
+    remote_archive = f"/tmp/npa-agent-source-{secrets.token_hex(6)}.tar.gz"
+    try:
+        ssh.upload_file(archive_path, remote_archive)
+        ssh.run_or_raise(
+            " && ".join(
+                [
+                    f"sudo rm -rf {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo mkdir -p {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"sudo chown -R root:root {shlex.quote(AGENT_SOURCE_ROOT)}",
+                    f"rm -f {shlex.quote(remote_archive)}",
+                ]
+            )
+        )
+    finally:
+        Path(archive_path).unlink(missing_ok=True)
+        ssh.run(f"rm -f {shlex.quote(remote_archive)}")
 
 
 def _is_routable_public_ip(value: str) -> bool:
@@ -1147,7 +1250,7 @@ server {{
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     setup_script = f"""set -euo pipefail
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
 if ! command -v nebius >/dev/null 2>&1; then
   curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 fi
@@ -1161,6 +1264,19 @@ fi
 if [ -z "$NEBIUS_BIN" ] || [ ! -x "$NEBIUS_BIN" ]; then
   echo "nebius CLI binary not found after install" >&2
   exit 1
+fi
+if ! command -v terraform >/dev/null 2>&1; then
+  tmp_tf="$(mktemp -d)"
+  curl -fsSL -o "$tmp_tf/terraform.zip" https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip
+  (cd "$tmp_tf" && unzip -q terraform.zip)
+  sudo install -m 0755 "$tmp_tf/terraform" /usr/local/bin/terraform
+  rm -rf "$tmp_tf"
+fi
+if ! command -v kubectl >/dev/null 2>&1; then
+  kubectl_version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+  curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$kubectl_version/bin/linux/amd64/kubectl"
+  sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+  rm -f /tmp/kubectl
 fi
 if [ -s /mnt/cloud-metadata/token ]; then
   if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
@@ -1981,6 +2097,10 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
 LLM_MODELS_ENV = os.environ.get("NPA_AGENT_LLM_MODELS", "")
 DEFAULT_LLM_MODELS = {default_llm_models_json}
+NPA_PROJECT_ALIAS = os.environ.get("NPA_AGENT_PROJECT_ALIAS", "").strip() or "default"
+NPA_SOURCE_ROOT = Path("{AGENT_SOURCE_ROOT}")
+NPA_CLI = Path("/opt/npa-agent/venv/bin/npa")
+NPA_CLUSTER_TERRAFORM_DIR = NPA_SOURCE_ROOT / "deploy" / "cluster"
 TF_BASE_URL = os.environ.get(
     "NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/"
 ).rstrip("/")
@@ -2074,7 +2194,7 @@ def _agent_system_prompt() -> str:
         "- GET/POST /api/workflows/draft — workflow YAML draft in session",
         "- POST /api/workflows/validate — validate npa.workflow/v0.0.1 or npa.workflow/v0.0.1-beta YAML",
         "- POST /api/workflows/plan — dry-run plan-spec for workflow YAML",
-        "- POST /api/workflows/submit — validate + plan workflow YAML (validate-only on agent VM)",
+        "- POST /api/workflows/submit — validate workflow YAML, ensure agent-side Kubernetes infra when needed, and return scheduler plan",
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
         "",
@@ -2236,6 +2356,257 @@ def _resolve_workflow_yaml(payload: dict) -> str:
     draft = _workflow_draft_from_state(_load_state())
     return str(draft.get("yaml") or "").strip()
 
+
+def _agent_npa_ready() -> tuple[bool, str]:
+    if not NPA_CLI.exists():
+        return False, f"NPA CLI is not installed at {{NPA_CLI}}"
+    if not (NPA_SOURCE_ROOT / "npa" / "pyproject.toml").is_file():
+        return False, f"NPA source is not staged at {{NPA_SOURCE_ROOT}}"
+    if not NPA_CLUSTER_TERRAFORM_DIR.is_dir():
+        return False, f"Kubernetes Terraform assets are not staged at {{NPA_CLUSTER_TERRAFORM_DIR}}"
+    return True, ""
+
+
+def _load_agent_config_yaml() -> dict:
+    path = Path.home() / ".npa" / "config.yaml"
+    if not path.is_file():
+        return {{}}
+    try:
+        import yaml
+
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {{}}
+    return loaded if isinstance(loaded, dict) else {{}}
+
+
+def _agent_project_alias(requested: str = "") -> str:
+    requested = str(requested or "").strip()
+    if requested:
+        return requested
+    config = _load_agent_config_yaml()
+    configured = str(config.get("default_project") or "").strip()
+    if configured:
+        return configured
+    return NPA_PROJECT_ALIAS
+
+
+def _agent_k8s_backends(project: str = "") -> dict:
+    config = _load_agent_config_yaml()
+    alias = _agent_project_alias(project)
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        projects = {{}}
+    project_block = projects.get(alias)
+    if not isinstance(project_block, dict):
+        project_block = {{}}
+    configured: list[dict] = []
+    kube_block = project_block.get("kubernetes")
+    if isinstance(kube_block, dict) and kube_block:
+        configured.append({{
+            "source": "project_config",
+            "project": alias,
+            "cluster_name": str(kube_block.get("cluster_name") or kube_block.get("name") or ""),
+            "context": str(kube_block.get("context") or kube_block.get("context_name") or ""),
+            "kubeconfig": str(kube_block.get("kubeconfig") or kube_block.get("kubeconfig_path") or ""),
+            "gpu_profile": str(kube_block.get("gpu_profile") or ""),
+            "raw": {{k: v for k, v in kube_block.items() if k not in {{"token", "secret", "password"}}}},
+        }})
+    clusters_root = Path.home() / ".npa" / "clusters"
+    local_clusters: list[dict] = []
+    if clusters_root.is_dir():
+        for item in sorted(clusters_root.iterdir()):
+            if not item.is_dir():
+                continue
+            kubeconfig = item / "kubeconfig"
+            state_path = item / "state.json"
+            local_clusters.append({{
+                "source": "local_state",
+                "cluster_name": item.name,
+                "context": item.name,
+                "kubeconfig": str(kubeconfig),
+                "kubeconfig_exists": kubeconfig.is_file(),
+                "state_exists": state_path.is_file(),
+            }})
+    ready, reason = _agent_npa_ready()
+    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
+    return {{
+        "ok": True,
+        "project": alias,
+        "configured": configured,
+        "local_clusters": local_clusters,
+        "cloud_clusters": cloud_clusters,
+        "has_infra": bool(
+            configured
+            or any(item.get("kubeconfig_exists") for item in local_clusters)
+            or cloud_clusters
+        ),
+        "agent_npa_ready": ready,
+        "agent_npa_error": reason,
+        "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
+        "options": [
+            "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
+            "Add projects.<alias>.kubernetes to ~/.npa/config.yaml on the agent to use an existing backend.",
+            "Pass project/cluster_name in the workflow submit payload to target a known backend.",
+        ],
+    }}
+
+
+def _agent_command_env() -> dict:
+    env = dict(os.environ)
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
+    env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
+    env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
+    env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
+    if not env.get("TF_VAR_ssh_public_key"):
+        for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
+            if Path(candidate).is_file():
+                env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
+                break
+        if not env.get("TF_VAR_ssh_public_key"):
+            for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
+                path = Path(candidate)
+                if not path.is_file():
+                    continue
+                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    value = line.strip()
+                    if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+                        env["TF_VAR_ssh_public_key"] = json.dumps({{"key": value}})
+                        break
+                if env.get("TF_VAR_ssh_public_key"):
+                    break
+    return env
+
+
+def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
+    config = _load_agent_config_yaml()
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        projects = {{}}
+    project_block = projects.get(_agent_project_alias(project))
+    if not isinstance(project_block, dict):
+        project_block = {{}}
+    parent_id = str(os.environ.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
+    if not parent_id:
+        return []
+    nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
+    if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
+        return []
+    try:
+        proc = subprocess.run(
+            [nebius_bin, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return []
+        payload = json.loads(proc.stdout or "{{}}")
+    except Exception:
+        return []
+    items = payload.get("items") if isinstance(payload, dict) else []
+    clusters: list[dict] = []
+    if not isinstance(items, list):
+        return clusters
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
+        status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
+        clusters.append({{
+            "source": "nebius_mk8s",
+            "id": str(metadata.get("id") or ""),
+            "name": str(metadata.get("name") or ""),
+            "status": str(status.get("state") or status.get("status") or ""),
+            "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
+        }})
+    return clusters
+
+
+def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
+    ready, reason = _agent_npa_ready()
+    if not ready:
+        raise HTTPException(status_code=409, detail=reason)
+    proc = subprocess.run(
+        [str(NPA_CLI), *args],
+        cwd=str(NPA_SOURCE_ROOT),
+        env=_agent_command_env(),
+        text=True,
+        capture_output=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise HTTPException(status_code=502, detail=detail or f"NPA command failed: {{args}}")
+    stdout = (proc.stdout or "").strip()
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"NPA command did not return JSON: {{stdout[-1000:]}}") from exc
+
+
+def _write_workflow_temp_yaml(yaml_text: str) -> Path:
+    tmp_dir = Path("/tmp/npa-agent-workflows")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    path = tmp_dir / f"workflow-{{secrets.token_hex(8)}}.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    return path
+
+
+def _provision_agent_infra(
+    project: str,
+    cluster_name: str,
+    *,
+    dry_run: bool = False,
+    validate: bool = True,
+    skip_s3: bool = True,
+) -> dict:
+    ready, reason = _agent_npa_ready()
+    if not ready:
+        return {{"ok": False, "status": "blocked", "error": reason}}
+    try:
+        from npa.provisioning import provision_if_absent
+
+        result = provision_if_absent(
+            project=project or None,
+            cluster_name=cluster_name or "npa-cluster",
+            terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+            skip_s3=skip_s3,
+            validate=validate,
+            sky_smoke=False,
+            dry_run=dry_run,
+        )
+        payload = result.to_dict()
+        payload["ok"] = True
+        payload["dry_run"] = dry_run
+        return payload
+    except Exception as exc:
+        return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
+
+
+def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, infra: dict) -> dict:
+    return {{
+        "ok": False,
+        "run_id": run_id,
+        "submitted_at": _now_iso(),
+        "name": str(validation.get("name") or ""),
+        "validation": validation,
+        "plan": plan,
+        "infra": infra,
+        "submit_mode": "blocked-no-infra",
+        "reason": "no infra is specified or available",
+        "message": (
+            "No Kubernetes infra is specified or available for this workflow. "
+            "Choose one option: let the agent deploy minimal Kubernetes infra, "
+            "configure an existing backend in ~/.npa/config.yaml, or pass project/cluster_name in the submit payload."
+        ),
+        "options": infra.get("options", []),
+    }}
+
+
 def _last_user_message(raw_messages: list) -> str:
     for item in reversed(raw_messages):
         if not isinstance(item, dict):
@@ -2285,6 +2656,9 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
+    elif intent == "infra_backends":
+        state["infra"] = _agent_k8s_backends()
+        _save_state(state)
     elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
         draft = generate_workflow_draft(
             user_text=user_text,
@@ -2483,6 +2857,7 @@ def session_bootstrap():
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
         "sim_viz_runs": _sim_viz_runs(state),
+        "infra": _agent_k8s_backends(),
         "workflow_draft": _workflow_draft_from_state(state),
         "workflow_submit": state.get("workflow_submit", {{}}),
         "camera_selection": state.get("camera_selection", ["workspace"]),
@@ -3022,6 +3397,26 @@ def get_workflow_draft():
     draft = _workflow_draft_from_state(state)
     return {{"ok": True, "draft": draft}}
 
+
+@app.get("/infra/k8s")
+@app.get("/infra/backends")
+def list_k8s_infra(project: str = ""):
+    return _agent_k8s_backends(project)
+
+
+@app.post("/infra/provision")
+def provision_infra(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    project = _agent_project_alias(str(body.get("project") or ""))
+    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
+    dry_run = bool(body.get("dry_run", False))
+    validate = bool(body.get("validate", True))
+    skip_s3 = bool(body.get("skip_s3", True))
+    result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
+    status = _agent_k8s_backends(project)
+    return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+
+
 @app.post("/workflows/draft")
 @app.put("/workflows/npa/draft")
 def save_workflow_draft(payload: dict):
@@ -3097,6 +3492,52 @@ def submit_npa_workflow(payload: dict):
     )
     if not plan.get("ok"):
         raise HTTPException(status_code=400, detail=str(plan.get("error") or "plan failed"))
+    project = _agent_project_alias(str(body.get("project") or ""))
+    cluster_name = str(body.get("cluster_name") or "npa-cluster").strip() or "npa-cluster"
+    allow_provision = bool(body.get("allow_provision", True))
+    dry_run = bool(body.get("dry_run", False))
+    validate_infra = bool(body.get("validate_infra", True))
+    infra_before = _agent_k8s_backends(project)
+    if not infra_before.get("has_infra") and not allow_provision:
+        return _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+    provision = {{"ok": True, "status": "skipped", "actions": ["k8s:existing backend detected"]}}
+    if allow_provision and (dry_run or not infra_before.get("has_infra")):
+        provision = _provision_agent_infra(
+            project,
+            cluster_name,
+            dry_run=dry_run,
+            validate=validate_infra,
+            skip_s3=bool(body.get("skip_s3", True)),
+        )
+        if not provision.get("ok"):
+            infra_error = dict(infra_before)
+            infra_error["provision_error"] = provision.get("error") or provision
+            blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_error)
+            blocked["provision"] = provision
+            return blocked
+    scheduler_plan = {{}}
+    yaml_path = _write_workflow_temp_yaml(yaml_text)
+    try:
+        scheduler_plan = _run_agent_npa_json(
+            [
+                "workbench",
+                "workflow",
+                "run-spec",
+                str(yaml_path),
+                "--run-id",
+                run_id,
+                "--plan-only",
+                "--scheduler-plan",
+                "--json",
+            ],
+            timeout_s=180,
+        )
+    finally:
+        try:
+            yaml_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    infra_after = _agent_k8s_backends(project)
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=True)
     submit_record = {{
@@ -3105,15 +3546,22 @@ def submit_npa_workflow(payload: dict):
         "name": str(validation.get("name") or ""),
         "validation": validation,
         "plan": plan,
-        "submit_mode": "validate-only",
-        "note": "Agent VM records validate+plan; live SkyPilot submit runs on operator machine.",
+        "scheduler_plan": scheduler_plan,
+        "infra": infra_after,
+        "provision": provision,
+        "submit_mode": "agent-live-infra-plan" if not dry_run else "agent-live-infra-dry-run",
+        "note": (
+            "Agent validated the workflow, ensured Kubernetes infra with NPA when needed, "
+            "and produced a scheduler plan. Workload execution uses the planned scheduler tasks."
+        ),
     }}
     state["workflow_submit"] = submit_record
     state["latest_submit"] = {{
         "run_id": run_id,
         "submitted_at": submit_record["submitted_at"],
         "workflow_name": str(validation.get("name") or ""),
-        "submit_mode": "validate-only",
+        "submit_mode": submit_record["submit_mode"],
+        "cluster_name": cluster_name,
     }}
     _record_sim_viz_run(
         state,
@@ -3124,8 +3572,9 @@ def submit_npa_workflow(payload: dict):
             "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
             "rrd_uri": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_uri") or ""),
             "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
-            "submit_mode": "validate-only",
+            "submit_mode": submit_record["submit_mode"],
             "workflow_name": str(validation.get("name") or ""),
+            "cluster_name": cluster_name,
         }},
     )
     _save_state(state)
@@ -4854,7 +5303,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ yaml }}),
         }});
         updateWorkflowMeta((data.validation) || {{}});
-        appendChat("assistant", "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") + "` (validate-only on agent VM).");
+        appendChat(
+          "assistant",
+          "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") +
+            "`, **mode**: `" + String(data.submit_mode || "") + "`."
+        );
         return true;
       }}
       async function sendChat() {{
@@ -5316,7 +5769,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           credentials: useExplicitAuth ? "omit" : "include",
           headers,
         }};
-        const timeoutMs = String(path || "") === "/api/chat" ? 90000 : 12000;
+        const pathText = String(path || "");
+        const timeoutMs = (
+          pathText === "/api/chat" ||
+          pathText === "/api/workflows/submit" ||
+          pathText === "/api/infra/provision"
+        ) ? 900000 : 12000;
         let resp;
         try {{
           resp = await fetchWithTimeout(path, opts, timeoutMs);
@@ -5890,6 +6348,7 @@ HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server]"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
@@ -5947,6 +6406,7 @@ sudo systemctl restart npa-agent-backend
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
+        _stage_agent_npa_source(ssh)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write(setup_script)
             local_setup_script = handle.name
@@ -5980,8 +6440,16 @@ sudo systemctl restart npa-agent-backend
         s3_secret_key=s3_secret_key,
         service_account_id=service_account_id,
     )
+    agent_iam_token = ""
+    try:
+        from npa.clients.nebius import get_iam_token
+
+        agent_iam_token = get_iam_token()
+    except Exception:
+        agent_iam_token = ""
     _write_agent_nebius_env(
         ssh,
+        project_alias=project_alias,
         project_id=nebius_project_id or project_id,
         tenant_id=nebius_tenant_id or tenant_id,
         region=s3_region,
@@ -5990,6 +6458,7 @@ sudo systemctl restart npa-agent-backend
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
+        iam_token=agent_iam_token,
     )
     if (
         tf_api_key.strip()
@@ -7002,6 +7471,45 @@ def verify_live_cmd(
         _fail(f"workflow validate endpoint failed: {exc}")
     if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
         _fail("workflow validate endpoint did not return ok=true")
+    try:
+        infra_resp = httpx.get(
+            f"{agent_base}/api/infra/k8s",
+            auth=(auth_user, auth_password),
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        infra_resp.raise_for_status()
+        infra_payload = infra_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"infra discovery endpoint failed: {exc}")
+    if not isinstance(infra_payload, dict) or not infra_payload.get("ok"):
+        _fail("infra discovery endpoint did not return ok=true")
+    if not infra_payload.get("agent_npa_ready"):
+        _fail(f"agent NPA runtime is not ready: {infra_payload.get('agent_npa_error')}")
+    try:
+        wf_submit = httpx.post(
+            f"{agent_base}/api/workflows/submit",
+            auth=(auth_user, auth_password),
+            json={
+                "yaml": wf_yaml,
+                "run_id": "verify-live-agent-infra",
+                "dry_run": True,
+                "allow_provision": True,
+                "validate_infra": False,
+            },
+            timeout=120.0,
+            verify=tls_verify,
+        )
+        wf_submit.raise_for_status()
+        wf_submit_payload = wf_submit.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"workflow submit dry-run endpoint failed: {exc}")
+    if not isinstance(wf_submit_payload, dict) or not wf_submit_payload.get("ok"):
+        _fail("workflow submit dry-run endpoint did not return ok=true")
+    if "scheduler_plan" not in wf_submit_payload:
+        _fail("workflow submit dry-run missing scheduler_plan")
+    if str(wf_submit_payload.get("submit_mode") or "") != "agent-live-infra-dry-run":
+        _fail("workflow submit dry-run did not report agent-live-infra-dry-run")
 
     try:
         onboard_chat = httpx.post(

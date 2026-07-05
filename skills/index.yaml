@@ -210,6 +210,14 @@ skills:
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+  - name: soperator
+    category: tools
+    when_to_use: "Deploy or operate a Nebius soperator (Slurm-on-Kubernetes) cluster from npa: npa.soperator/v0.0.1 spec, multi-preset worker pools, per-pool Docker/Enroot image cache, quota preflight, and post-deploy fixes."
+    path: skills/tools/soperator/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["soperator", "deploy", "--help"]
+        contains: "spec"
   - name: npa-agent
     category: tools
     when_to_use: "Operate NPA agent VM, chat UX, API grounding, bootstrap deployment, and verify-live checks."
@@ -296,6 +304,16 @@ skills:
       - type: cli_help
         args: ["workbench", "health", "sim2real", "--help"]
         contains: "checks"
+  - name: agent-workflow-operate
+    category: workflows
+    when_to_use: "Verify that a bootstrapped NPA agent VM can create, validate, plan, provision for, or run npa.workflow YAMLs using its staged config."
+    path: skills/workflows/agent-workflow-operate/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/agent-workflow-operate/SKILL.md
+      - type: cli_help
+        args: ["workbench", "workflow", "validate-spec", "--help"]
+        contains: "npa.workflow"
   - name: sim2real-engine
     category: tools
     when_to_use: "Navigate or change the Sim2Real staged pipeline engine — 14-stage map, preamble/inner/outer/finalize entrypoints, and K8s sibling jobs."

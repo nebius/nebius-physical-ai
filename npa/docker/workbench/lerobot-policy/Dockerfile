@@ -36,18 +36,31 @@ COPY --chown=ubuntu:ubuntu docker/workbench/lerobot-policy/requirements.txt /tmp
 
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && /opt/lerobot/venv/bin/pip install --no-cache-dir -r /tmp/npa-lerobot-policy-requirements.txt
+    && /opt/lerobot/venv/bin/pip install --no-cache-dir -r /tmp/npa-lerobot-policy-requirements.txt \
+    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/lerobot/venv/bin/pip uninstall -y wandb
 
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg \
+    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

@@ -14,6 +14,7 @@ import typer
 
 from npa.cli._error_formatting import format_error_for_user
 from npa.cli.agent import app as agent_app
+from npa.cli.burst import app as burst_app
 from npa.cli.workbench import app as workbench_app
 from npa.cli.adapter import app as adapter_app
 from npa.cli.cluster import app as cluster_app
@@ -23,6 +24,7 @@ from npa.cli.network import app as network_app
 from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
+from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
@@ -49,6 +51,7 @@ app.add_typer(
 # adding more top-level registrations here.
 app.add_typer(adapter_app, name="adapter", rich_help_panel="Platform utilities")
 app.add_typer(agent_app, name="agent", rich_help_panel="Platform utilities")
+app.add_typer(burst_app, name="burst", rich_help_panel="Platform utilities")
 app.add_typer(cluster_app, name="cluster", rich_help_panel="Platform utilities")
 app.add_typer(convert_app, name="convert", rich_help_panel="Platform utilities")
 app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
@@ -56,6 +59,7 @@ app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
 app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup")
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
+app.add_typer(soperator_app, name="soperator", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
@@ -656,3 +660,7 @@ def _detect_error_format() -> str:
         if value in {"--output=json", "--output-format=json", "--format=json"}:
             return "json"
     return "text"
+
+
+if __name__ == "__main__":
+    app_entry()

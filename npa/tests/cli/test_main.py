@@ -23,6 +23,7 @@ runner = CliRunner()
         (["workbench", "lerobot", "--help"], "LeRobot policy training"),
         (["workbench", "genesis", "--help"], "Genesis simulation"),
         (["adapter", "--help"], "Convert simulation data"),
+        (["burst", "--help"], "multi-node SkyPilot GPU jobs"),
         (["convert", "--help"], "standalone formats"),
         (["demo", "--help"], "Demo artifact bootstrap"),
         (["network", "--help"], "Network operations"),
