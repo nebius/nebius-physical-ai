@@ -771,7 +771,7 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     monkeypatch.setattr(agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={}))
 
     agent_module._bootstrap_agent_stack(
-        host="203.0.113.10",
+        host="203.0.113.50",
         ssh_user="ubuntu",
         ssh_key_path="/tmp/key",
         project_alias="smoke",
