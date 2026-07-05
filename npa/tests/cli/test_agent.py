@@ -32,6 +32,41 @@ def test_build_agent_urls_http_legacy() -> None:
     assert urls["cameras_api_url"] == "http://203.0.113.50:8088/assets/api/sim-assets/cameras"
 
 
+def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _ensure_terraform_state_bucket
+
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("npa.clients.nebius.bucket_exists", lambda _project, _bucket: False)
+    monkeypatch.setattr(
+        "npa.clients.nebius.ensure_bucket",
+        lambda project, bucket: calls.append((project, bucket)),
+    )
+
+    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+
+    assert calls == [("project-1", "bucket-1")]
+
+
+def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _ensure_terraform_state_bucket
+
+    called = False
+
+    monkeypatch.setattr("npa.clients.nebius.bucket_exists", lambda _project, _bucket: True)
+
+    def _ensure(project: str, bucket: str) -> None:
+        nonlocal called
+        _ = (project, bucket)
+        called = True
+
+    monkeypatch.setattr("npa.clients.nebius.ensure_bucket", _ensure)
+
+    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+
+    assert called is False
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     from npa.cli import agent as agent_module
 

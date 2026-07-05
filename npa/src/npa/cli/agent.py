@@ -217,6 +217,38 @@ def _looks_like_compute_permission_denied(message: str) -> bool:
     return "permissiondenied" in lowered and "service compute" in lowered
 
 
+def _ensure_terraform_state_bucket(
+    *,
+    project_id: str,
+    bucket_name: str,
+) -> None:
+    """Ensure the Terraform backend bucket exists before terraform init.
+
+    Fresh deploys may receive reused credentials that point at a bucket deleted
+    out-of-band. In that case, recreate the bucket to keep fresh-setup
+    provisioning self-healing.
+    """
+    project = str(project_id or "").strip()
+    bucket = str(bucket_name or "").strip()
+    if not project or not bucket:
+        return
+    from npa.clients.nebius import (
+        NebiusError,
+        bucket_exists,
+        ensure_bucket,
+    )
+
+    try:
+        exists = bucket_exists(project, bucket)
+    except NebiusError:
+        # Let terraform init surface detailed auth/endpoint errors.
+        return
+    if exists:
+        return
+    typer.echo(f"  Terraform state bucket {bucket!r} missing; creating it ...")
+    ensure_bucket(project, bucket)
+
+
 def _apply_agent_terraform(
     *,
     project: str,
@@ -6873,6 +6905,13 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var value {item!r}; expected key=value")
         key, value = item.split("=", 1)
         merged_vars[key.strip()] = value.strip()
+    try:
+        _ensure_terraform_state_bucket(
+            project_id=env_project_id,
+            bucket_name=str(merged_vars.get("s3_bucket", "")),
+        )
+    except NebiusError as exc:
+        _fail(f"Unable to provision Terraform state bucket: {exc}")
 
     tf_outputs: dict[str, Any] = {}
     try:
