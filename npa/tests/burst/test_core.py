@@ -111,7 +111,7 @@ def test_submit_invokes_skypilot_python_api_not_sky_cli(
     assert handle.job_id == "123"
     assert handle.name == "burst-test"
     assert handle.sky_bin == str(sky_bin.resolve())
-    assert all("sky" not in call[0] for call in calls)
+    assert all(Path(call[0]).name != "sky" for call in calls)
 
 
 def test_status_and_logs_use_handle_runtime(
