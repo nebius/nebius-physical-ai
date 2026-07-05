@@ -11,6 +11,7 @@ from npa.burst.core import (
     logs,
     status,
     submit,
+    submit_yaml,
     task_yaml,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "logs",
     "status",
     "submit",
+    "submit_yaml",
     "task_yaml",
 ]

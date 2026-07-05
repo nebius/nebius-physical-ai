@@ -68,6 +68,40 @@ def submit_cmd(
     typer.echo(f"handle: {handle.to_json()}")
 
 
+@app.command("submit-yaml")
+def submit_yaml_cmd(
+    yaml_path: Path = typer.Argument(..., help="Rendered single-task SkyPilot/workbench YAML to submit."),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="SkyPilot managed job name. Defaults to the task name in the YAML.",
+    ),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        "-v",
+        help="Template/env override as KEY=VALUE. May be repeated.",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print only the serialized job handle.",
+    ),
+) -> None:
+    """Submit one rendered workbench YAML task through the burst path."""
+
+    handle = burst.submit_yaml(
+        yaml_path,
+        name=name,
+        env_overrides=_parse_vars(var),
+    )
+    if output_json:
+        typer.echo(handle.to_json())
+        return
+    typer.echo(f"submitted burst yaml job {handle.job_id} ({handle.name})")
+    typer.echo(f"handle: {handle.to_json()}")
+
+
 @app.command("status")
 def status_cmd(
     job: str = typer.Argument(..., help="Job ID or serialized burst handle JSON."),
@@ -98,3 +132,16 @@ def logs_cmd(
 
     result = burst.logs(job, follow=follow, tail=tail, config_path=config_path)
     typer.echo(result.text, nl=not result.text.endswith("\n"))
+
+
+def _parse_vars(values: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise typer.BadParameter(f"--var must be KEY=VALUE, got {value!r}")
+        key, item = value.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise typer.BadParameter("--var key must be non-empty")
+        parsed[key] = item
+    return parsed

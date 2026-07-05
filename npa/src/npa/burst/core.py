@@ -31,6 +31,7 @@ from npa.orchestration.skypilot.controller import (
 
 _ACCELERATOR_SPEC_RE = re.compile(r"^[A-Za-z0-9_.-]+:[1-9][0-9]*$")
 _JOB_NAME_RE = re.compile(r"^[a-zA-Z0-9]+(?:[._-]{1,2}[a-zA-Z0-9]+)*$")
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _DEFAULT_MASTER_PORT = 29500
 
 
@@ -184,6 +185,71 @@ def submit(
     )
 
 
+def submit_yaml(
+    yaml_path: Path | str,
+    *,
+    name: str | None = None,
+    env_overrides: Mapping[str, str] | None = None,
+    sky_bin: SkyBin = None,
+    config_path: Path | str | None = None,
+    isolated_config_dir: Path | str | None = None,
+    controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
+) -> BurstJobHandle:
+    """Submit a rendered single-task SkyPilot YAML through the burst API.
+
+    This is intentionally scoped to one executable SkyPilot task. Multi-stage
+    workbench workflows should continue to use ``npa workbench workflow submit``.
+    """
+
+    source = Path(yaml_path)
+    docs = _load_burst_yaml_documents(source)
+    task = _single_task_from_documents(docs, source)
+    if env_overrides:
+        task = _replace_placeholders(task, dict(env_overrides))
+        envs = task.setdefault("envs", {})
+        if not isinstance(envs, dict):
+            raise BurstConfigError(f"SkyPilot task envs must be a mapping: {source}")
+        envs.update({str(key): str(value) for key, value in env_overrides.items()})
+    unresolved = _unresolved_placeholders(task)
+    if unresolved:
+        values = ", ".join(sorted(unresolved))
+        raise BurstConfigError(f"SkyPilot YAML has unresolved placeholders: {values}")
+
+    resolved_name = name or str(task.get("name") or source.stem)
+    if not _JOB_NAME_RE.fullmatch(resolved_name):
+        raise BurstConfigError("name must be a valid SkyPilot task name")
+    task["name"] = resolved_name
+
+    runtime = _prepare_runtime(
+        name=resolved_name,
+        sky_bin=sky_bin,
+        config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+        controller_backend=controller_backend,
+    )
+    prepared_yaml = runtime.submission_dir / source.name
+    prepared_yaml.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
+
+    result = _run_sky_api(
+        runtime,
+        "launch",
+        {"yaml_path": str(prepared_yaml), "name": resolved_name},
+    )
+    job_ids = result.get("job_ids") or []
+    job_id = str(job_ids[0]) if job_ids else ""
+    if not job_id:
+        raise BurstSubmitError(f"SkyPilot launch did not return a job id: {result!r}")
+    return BurstJobHandle(
+        job_id=job_id,
+        name=resolved_name,
+        submitted_yaml_path=str(prepared_yaml),
+        config_path=str(runtime.config_path),
+        isolated_config_dir=str(runtime.isolated_config_dir or ""),
+        sky_bin=str(runtime.sky_bin),
+        raw=result,
+    )
+
+
 def status(handle: BurstJobHandle | str, **kwargs: Any) -> BurstStatus:
     """Return SkyPilot managed-job status for a burst handle or job id."""
 
@@ -255,6 +321,63 @@ def _docker_image_id(image: str) -> str:
     if value.startswith("docker:"):
         return value
     return f"docker:{value}"
+
+
+def _load_burst_yaml_documents(path: Path) -> list[dict[str, Any]]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
+    except OSError as exc:
+        raise BurstConfigError(f"Unable to read SkyPilot YAML {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise BurstConfigError(f"Unable to parse SkyPilot YAML {path}: {exc}") from exc
+    if not docs:
+        raise BurstConfigError(f"SkyPilot YAML is empty: {path}")
+    if not all(isinstance(doc, dict) for doc in docs):
+        raise BurstConfigError(f"SkyPilot YAML documents must be mappings: {path}")
+    return [dict(doc) for doc in docs]
+
+
+def _single_task_from_documents(docs: list[dict[str, Any]], path: Path) -> dict[str, Any]:
+    if len(docs) == 1:
+        return dict(docs[0])
+    header = docs[0]
+    header_keys = set(header)
+    if header_keys <= {"name", "execution"} and len(docs) == 2:
+        return dict(docs[1])
+    raise BurstConfigError(
+        "burst submit-yaml supports one executable SkyPilot task; "
+        f"{path} contains a multi-stage workflow. Use `npa workbench workflow submit` for that YAML."
+    )
+
+
+def _replace_placeholders(value: Any, replacements: Mapping[str, str]) -> Any:
+    if isinstance(value, str):
+        return _ENV_PLACEHOLDER_RE.sub(
+            lambda match: str(replacements.get(match.group(1), match.group(0))),
+            value,
+        )
+    if isinstance(value, list):
+        return [_replace_placeholders(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _replace_placeholders(item, replacements)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _unresolved_placeholders(value: Any) -> set[str]:
+    unresolved: set[str] = set()
+    if isinstance(value, str):
+        unresolved.update(match.group(1) for match in _ENV_PLACEHOLDER_RE.finditer(value))
+    elif isinstance(value, list):
+        for item in value:
+            unresolved.update(_unresolved_placeholders(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            unresolved.update(_unresolved_placeholders(item))
+    return unresolved
 
 
 def _setup_script() -> str:
