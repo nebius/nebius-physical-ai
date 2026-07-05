@@ -72,6 +72,11 @@ workflow environment variables.
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
   Unauthorized`, refresh the registry pull secret in the namespace that owns the
   pod.
+- Dev/operator VM Docker access to a private Nebius Container Registry image
+  does not automatically authenticate fresh SkyPilot worker VMs. Direct Nebius
+  burst jobs need SkyPilot Docker-login env/secrets injected before image pull;
+  `npa burst submit-yaml` handles this for `cr.*.nebius.cloud` images by minting
+  a short-lived IAM token with `nebius iam get-access-token`.
 - SkyPilot task pods run in `default`; deployed workbench services run in
   `workbench`.
 - Cached kubeconfig reuse is a success path for `provision-if-absent`; absence
