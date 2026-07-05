@@ -92,7 +92,8 @@ USER ubuntu
 WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \
@@ -192,13 +193,51 @@ RUN cd "${GROOT_REPO}" \
       paramiko==4.0.0 \
       pyyaml==6.0.3 \
       rich==15.0.0 \
-      jinja2==3.1.6
+      jinja2==3.1.6 \
+    && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
+      "GitPython>=3.1.50" \
+      "PyJWT>=2.13.0" \
+      "aiohttp>=3.13.3" \
+      "aiomysql>=0.3.0" \
+      "azure-core>=1.38.0" \
+      "cryptography>=48.0.1" \
+      "diffusers>=0.38.0" \
+      "jaraco.context>=6.1.0" \
+      "msgpack>=1.2.1" \
+      "onnx>=1.21.0" \
+      "pillow>=12.2.0" \
+      "python-multipart>=0.0.30" \
+      "starlette>=1.3.1" \
+      "tornado>=6.5.6" \
+      "transformers>=5.3.0" \
+      "urllib3>=2.7.0" \
+      "wheel>=0.46.2" \
+    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
 
 RUN python3.11 -m venv /opt/isaac-lab/venv \
     && /opt/isaac-lab/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/isaac-lab/venv/bin/python -m pip install \
       "isaaclab[isaacsim,all]==${ISAAC_LAB_VERSION}" \
-      --extra-index-url https://pypi.nvidia.com
+      --extra-index-url https://pypi.nvidia.com \
+    && /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
+      "GitPython>=3.1.50" \
+      "PyJWT>=2.13.0" \
+      "aiohttp>=3.13.3" \
+      "aiomysql>=0.3.0" \
+      "azure-core>=1.38.0" \
+      "cryptography>=48.0.1" \
+      "diffusers>=0.38.0" \
+      "jaraco.context>=6.1.0" \
+      "msgpack>=1.2.1" \
+      "onnx>=1.21.0" \
+      "pillow>=12.2.0" \
+      "python-multipart>=0.0.30" \
+      "starlette>=1.3.1" \
+      "tornado>=6.5.6" \
+      "transformers>=5.3.0" \
+      "urllib3>=2.7.0" \
+      "wheel>=0.46.2" \
+    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true)
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -235,6 +274,29 @@ if actual != expected:
     raise RuntimeError(f"expected isaaclab {expected}, found {actual}")
 print(f"ISAAC_LAB_BUILD_IMPORT_OK {actual}")
 PY
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && rm -rf /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim/extscache \
+    && find /opt/isaac-lab/venv/lib/python3.11/site-packages/isaacsim \
+      -type d \( -name "pip_prebundle" -o -name "pip_prebundle_*" -o -name "pip_requests" \) \
+      -prune -exec rm -rf {} + \
+    && rm -rf /home/ubuntu/.cache /root/.cache \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 WORKDIR /opt/groot
 EXPOSE 8080

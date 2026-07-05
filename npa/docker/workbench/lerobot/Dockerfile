@@ -82,10 +82,12 @@ RUN python3.12 -m venv /opt/lerobot/venv \
       num2words \
       tensorboard \
       "uvicorn[standard]" \
-      wandb
+    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/lerobot/venv/bin/pip uninstall -y wandb
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PYTHONPATH=/opt/npa/src \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
@@ -93,6 +95,24 @@ COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 
 RUN python -m npa.smoke.test_lerobot_env
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade openssl libssl3 \
+    && apt-get purge -y --auto-remove \
+      dirmngr \
+      gnupg \
+      gnupg-utils \
+      gnupg2 \
+      gpg \
+      gpg-agent \
+      nodejs \
+      software-properties-common \
+    && dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu
 
 EXPOSE 8080
 
