@@ -411,6 +411,31 @@ def _range_dict(value: Any) -> dict[str, tuple[float, float]]:
     return out
 
 
+def _scale_triple(value: Any) -> tuple[float, float, float] | None:
+    """Coerce an object-scale value to a positive ``(x, y, z)`` tuple, or ``None``.
+
+    Accepts a scalar (uniform scale) or a 3-element list/tuple. A small-aperture
+    gripper (e.g. a parallel jaw) cannot force-close on the stock ~5 cm Lift cube,
+    so the manipuland must be shrunk to fit; this normalizes whatever the derived
+    task config carries into the tuple the object spawn cfg expects. Non-positive
+    or malformed values return ``None`` (term dropped) rather than corrupting the
+    scene — mirrors the other ``task_config_overrides`` fields.
+    """
+
+    if isinstance(value, bool):  # bool is an int subclass; reject explicitly
+        return None
+    if isinstance(value, (int, float)):
+        s = float(value)
+        return (s, s, s) if s > 0 else None
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            triple = tuple(float(v) for v in value)
+        except (TypeError, ValueError):
+            return None
+        return triple if all(v > 0 for v in triple) else None
+    return None
+
+
 def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
     """Map a B2-derived task-config dict to the Lift-env mutations ``register`` applies.
 
@@ -430,6 +455,13 @@ def task_config_overrides(task_cfg: dict[str, Any] | None) -> dict[str, Any]:
             out["action_scale"] = float(action_scale)
         except (TypeError, ValueError):
             pass
+
+    # Object scale: shrink the Lift manipuland to the gripper's aperture. Only
+    # carried when the config explicitly sets it, so the Franka path (never sets
+    # it) and any large-gripper robot keep the stock object. See _scale_triple.
+    scale = _scale_triple(task_cfg.get("object_scale"))
+    if scale is not None:
+        out["object_scale"] = scale
 
     obj_range = _range_dict(task_cfg.get("object_init_range"))
     if obj_range:
@@ -965,6 +997,25 @@ def register(spec: dict[str, Any] | None = None, task_cfg: dict[str, Any] | None
             except Exception as exc:  # noqa: BLE001
                 print("ROBOT_TASKCFG_ERR grasp_hold", repr(exc), flush=True)
                 skipped.append("rewards.grasp_hold")
+
+        # (i) object scale: resize the Lift manipuland to the robot's gripper. A
+        # small parallel-jaw aperture cannot force-close on the stock ~5 cm cube, so
+        # the grasp->lift never completes; scaling the object down is what lets the
+        # STRETCH lift succeed. Applied in BOTH training and held-out eval (register()
+        # runs in each) so the policy is trained and scored on the SAME object size.
+        # Gated on object_scale in the derived config; never set on the Franka path.
+        if "object_scale" in task_over:
+            try:
+                obj = getattr(getattr(env_cfg, "scene", None), "object", None)
+                spawn = getattr(obj, "spawn", None)
+                if spawn is not None and hasattr(spawn, "scale"):
+                    spawn.scale = tuple(task_over["object_scale"])
+                    applied.append("scene.object.spawn.scale%s" % (tuple(task_over["object_scale"]),))
+                else:
+                    skipped.append("scene.object.spawn.scale")
+            except Exception as exc:  # noqa: BLE001
+                print("ROBOT_TASKCFG_ERR object_scale", repr(exc), flush=True)
+                skipped.append("scene.object.spawn.scale")
 
         print("ROBOT_TASKCFG applied=%s skipped=%s" % (applied, skipped), flush=True)
 

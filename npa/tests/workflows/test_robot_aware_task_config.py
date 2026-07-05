@@ -99,6 +99,19 @@ def test_grasp_hold_weight_passthrough_and_shipped():
     assert "def grasp_lift_hold" in robotmod.module_source()
 
 
+def test_object_scale_normalizes_and_gates():
+    # A scalar becomes a uniform (x, y, z) tuple; an explicit triple is preserved.
+    assert robotmod.task_config_overrides({"object_scale": 0.2})["object_scale"] == (0.2, 0.2, 0.2)
+    assert robotmod.task_config_overrides(
+        {"object_scale": [0.2, 0.3, 0.4]}
+    )["object_scale"] == (0.2, 0.3, 0.4)
+    # Non-positive / malformed / wrong-arity / bool are dropped (never corrupt the
+    # scene), and an absent object_scale is not carried (Franka + large-gripper safe).
+    for bad in (0, -1, "big", [0.2, 0.2], [0.2, 0.2, 0.2, 0.2], True, None):
+        assert "object_scale" not in robotmod.task_config_overrides({"object_scale": bad})
+    assert "object_scale" not in robotmod.task_config_overrides({"action_scale": 0.5})
+
+
 # --------------------------------------------------------------------------- #
 # Franka byte-for-byte: stock spec -> no overrides
 # --------------------------------------------------------------------------- #
