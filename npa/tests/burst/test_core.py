@@ -46,6 +46,7 @@ def test_task_yaml_uses_requested_accelerator_and_docker_image() -> None:
     }
     assert data["envs"]["BURST_ENTRYPOINT"] == "python train.py --epochs 1"
     assert "torchrun" in data["run"]
+    assert "--no-python" in data["run"]
     assert "SKYPILOT_NODE_RANK" in data["run"]
     assert "SKYPILOT_NUM_NODES" in data["run"]
     assert "SKYPILOT_NODE_IPS" in data["run"]

@@ -288,6 +288,7 @@ exec torchrun \
   --node-rank="${SKYPILOT_NODE_RANK}" \
   --master-addr="${MASTER_ADDR}" \
   --master-port="${MASTER_PORT}" \
+  --no-python \
   bash -lc "${BURST_ENTRYPOINT}"
 """
 
