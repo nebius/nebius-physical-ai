@@ -1,0 +1,100 @@
+"""CLI entrypoint for burst SkyPilot jobs."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional
+
+import typer
+
+from npa import burst
+
+
+app = typer.Typer(
+    name="burst",
+    help="Submit and inspect cold-start multi-node SkyPilot GPU jobs.",
+    no_args_is_help=True,
+)
+
+
+@app.command("submit")
+def submit_cmd(
+    image: str = typer.Option(
+        ...,
+        "--image",
+        help="Container image to run. Plain image refs are rendered as docker:<image>.",
+    ),
+    nodes: int = typer.Option(
+        ...,
+        "--nodes",
+        min=1,
+        help="Number of SkyPilot nodes to gang-schedule.",
+    ),
+    gpu_per_node: str = typer.Option(
+        ...,
+        "--gpu-per-node",
+        help="SkyPilot accelerator spec per node, e.g. L40S:1 or H100:8.",
+    ),
+    entrypoint: str = typer.Option(
+        ...,
+        "--entrypoint",
+        help="Shell command executed by torchrun on each worker process.",
+    ),
+    name: str = typer.Option(
+        "npa-burst",
+        "--name",
+        help="SkyPilot managed job name.",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print only the serialized job handle.",
+    ),
+) -> None:
+    """Submit one coupled multi-node burst job."""
+
+    handle = burst.submit(
+        image=image,
+        num_nodes=nodes,
+        gpu_per_node=gpu_per_node,
+        entrypoint=entrypoint,
+        name=name,
+    )
+    if output_json:
+        typer.echo(handle.to_json())
+        return
+    typer.echo(f"submitted burst job {handle.job_id} ({handle.name})")
+    typer.echo(f"handle: {handle.to_json()}")
+
+
+@app.command("status")
+def status_cmd(
+    job: str = typer.Argument(..., help="Job ID or serialized burst handle JSON."),
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="SkyPilot global config path to use for this query.",
+    ),
+) -> None:
+    """Query a burst job status."""
+
+    result = burst.status(job, config_path=config_path)
+    typer.echo(json.dumps(result.__dict__, sort_keys=True))
+
+
+@app.command("logs")
+def logs_cmd(
+    job: str = typer.Argument(..., help="Job ID or serialized burst handle JSON."),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow logs until completion."),
+    tail: Optional[int] = typer.Option(None, "--tail", min=1, help="Return only the last N lines."),
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="SkyPilot global config path to use for this query.",
+    ),
+) -> None:
+    """Stream or fetch burst job logs."""
+
+    result = burst.logs(job, follow=follow, tail=tail, config_path=config_path)
+    typer.echo(result.text, nl=not result.text.endswith("\n"))
