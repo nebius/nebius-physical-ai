@@ -236,3 +236,21 @@ run: echo second
 
     with pytest.raises(BurstConfigError, match="multi-stage workflow"):
         core.submit_yaml(source)
+
+
+def test_submit_yaml_rejects_direct_nebius_private_registry_image(tmp_path: Path) -> None:
+    source = tmp_path / "private-nebius.yaml"
+    source.write_text(
+        """
+name: private-nebius
+resources:
+  cloud: nebius
+  accelerators: L40S:1
+  image_id: docker:cr.eu-north1.nebius.cloud/example-registry/npa-isaac-lab:tag
+run: echo should-not-submit
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BurstConfigError, match="cannot authenticate"):
+        core.submit_yaml(source)

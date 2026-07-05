@@ -214,6 +214,7 @@ def submit_yaml(
     if unresolved:
         values = ", ".join(sorted(unresolved))
         raise BurstConfigError(f"SkyPilot YAML has unresolved placeholders: {values}")
+    _validate_burst_yaml_runtime(task, source)
 
     resolved_name = name or str(task.get("name") or source.stem)
     if not _JOB_NAME_RE.fullmatch(resolved_name):
@@ -396,6 +397,25 @@ def _unresolved_task_placeholders(task: Mapping[str, Any]) -> set[str]:
             continue
         unresolved.update(_unresolved_placeholders(value))
     return unresolved
+
+
+def _validate_burst_yaml_runtime(task: Mapping[str, Any], source: Path) -> None:
+    resources = task.get("resources") or {}
+    if not isinstance(resources, Mapping):
+        raise BurstConfigError(f"SkyPilot task resources must be a mapping: {source}")
+    cloud = str(resources.get("cloud") or "").strip().lower()
+    image = str(resources.get("image_id") or "").strip()
+    if cloud == "nebius" and _is_nebius_registry_image(image):
+        raise BurstConfigError(
+            "Direct Nebius burst jobs cannot authenticate to Nebius Container Registry before "
+            "SkyPilot pulls image_id. Use a public/pre-authenticated image, or run this "
+            "workbench YAML on Kubernetes with an imagePullSecret via `npa workbench workflow submit`."
+        )
+
+
+def _is_nebius_registry_image(image_id: str) -> bool:
+    value = image_id.removeprefix("docker:").removeprefix("http://").removeprefix("https://")
+    return value.startswith("cr.") and ".nebius.cloud/" in value
 
 
 def _setup_script() -> str:

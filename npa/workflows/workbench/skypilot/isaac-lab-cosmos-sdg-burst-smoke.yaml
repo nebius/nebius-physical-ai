@@ -5,12 +5,17 @@
 #   npa burst submit-yaml npa/workflows/workbench/skypilot/isaac-lab-cosmos-sdg-burst-smoke.yaml \
 #     --name <run-id> \
 #     --var NPA_RUN_ID=<run-id> \
-#     --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:2.3.2.post1 \
+#     --var ISAAC_LAB_IMAGE=<public-or-preauthenticated>/npa-isaac-lab:2.3.2.post1 \
 #     --var NPA_OUTPUT_URI=s3://<your-bucket>/<prefix>/<run-id>/
 #
 # This YAML is intentionally one executable SkyPilot task so it can run through
 # the burst Python-API path. Multi-stage workbench pipelines should use
 # `npa workbench workflow submit`.
+#
+# Direct Nebius SkyPilot jobs pull `image_id` before `setup`, so private Nebius
+# Container Registry images need a public/pre-authenticated image variant. For
+# private registry imagePullSecrets, run the equivalent workbench workflow on
+# Kubernetes instead of direct Nebius burst.
 name: isaac-lab-cosmos-sdg-burst-smoke
 resources:
   cloud: nebius
