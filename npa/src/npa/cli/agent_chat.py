@@ -40,6 +40,15 @@ _RERUN_SUCCESS_PHRASE_RE = re.compile(
 
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
+        "start_sim2real",
+        re.compile(
+            r"\b(?:start|run|launch|execute|kick\s*off|submit)\b"
+            r".{0,120}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|simulation\s+pipeline|pipeline)\b"
+            r"|\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,120}\b(?:start|run|launch|execute|kick\s*off|submit)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "watch_sim",
         re.compile(
             r"\b(?:watch|monitor|follow|observe)\b.*\b(?:sim|simulation|sim2real|rerun|timeline|rollout|run)\b"

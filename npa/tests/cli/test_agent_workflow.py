@@ -153,6 +153,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "run-monitor-panel" in source
     assert "Run status, result, and logs" in source
     assert "No run-specific Rerun recording yet" in source
+    assert "_run_sim2real_pipeline_background" in source
+    assert "agent-local-sim2real" in source
     embedded = agent_module._embedded_agent_workflow_source()
     assert "validate_workflow_yaml_text" in embedded
     assert "Could not generate runnable workflow YAML yet" in source

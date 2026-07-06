@@ -1421,6 +1421,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1439,6 +1440,7 @@ RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
+AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
     "goal_pos": [0.5, 0.3, 0.04],
@@ -2971,6 +2973,242 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
         raise HTTPException(status_code=502, detail=f"NPA command did not return JSON: {{stdout[-1000:]}}") from exc
 
 
+_SIM2REAL_STAGE_BY_NUMBER = {{
+    1: "stage_01_trigger",
+    2: "stage_02_assets",
+    3: "stage_03_augment",
+    4: "stage_04_envs_raw",
+    5: "stage_05_envs_train",
+    6: "stage_06_tokens",
+    7: "stage_07_actions_train",
+    8: "stage_08_vlm_eval_train",
+    9: "stage_09_training_signal",
+    10: "stage_10_eval_heldout",
+    11: "stage_11_outer_loop",
+    12: "stage_12_external_validation_stub",
+    13: "stage_13_retrigger",
+    14: "stage_14_rerun_viz",
+}}
+
+
+def _update_sim2real_run(run_id: str, *, mutate) -> dict:
+    state = _load_state()
+    runs_detail = state.get("sim2real_runs")
+    if not isinstance(runs_detail, dict):
+        runs_detail = {{}}
+    details = runs_detail.get(run_id)
+    if not isinstance(details, dict):
+        details = _default_sim2real_run_details(run_id, submitted_at=_now_iso(), selection={{}})
+    details = mutate(details) or details
+    details["updated_at"] = _now_iso()
+    runs_detail[run_id] = details
+    state["sim2real_runs"] = runs_detail
+    sim_viz = state.get("sim_viz")
+    if not isinstance(sim_viz, dict) or str(sim_viz.get("run_id") or "") == run_id:
+        state["sim_viz"] = {{
+            **(sim_viz if isinstance(sim_viz, dict) else {{}}),
+            "run_id": run_id,
+            "stage": str(details.get("status") or "running"),
+            "rrd_updated_at": details["updated_at"],
+            "camera": str((sim_viz or {{}}).get("camera") or "workspace") if isinstance(sim_viz, dict) else "workspace",
+        }}
+    _save_state(state)
+    return details
+
+
+def _append_run_log(details: dict, message: str, *, level: str = "info") -> None:
+    logs = details.get("logs")
+    if not isinstance(logs, list):
+        logs = []
+    logs.append({{"timestamp": _now_iso(), "level": level, "message": message}})
+    details["logs"] = logs[-200:]
+
+
+def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") -> None:
+    stages = details.get("stages")
+    if not isinstance(stages, list):
+        stages = _default_sim2real_run_details(str(details.get("run_id") or ""), submitted_at=str(details.get("submitted_at") or "")).get("stages", [])
+    for item in stages:
+        if isinstance(item, dict) and item.get("id") == stage_id:
+            item["status"] = status
+            if status == "running" and not item.get("started_at"):
+                item["started_at"] = _now_iso()
+            if status in {{"succeeded", "failed"}}:
+                item["finished_at"] = _now_iso()
+            if summary:
+                item["summary"] = summary
+            break
+    details["stages"] = stages
+
+
+def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
+    return [
+        str(AGENT_PYTHON),
+        "-m",
+        "npa.workflows.sim2real",
+        "run",
+        "--run-id",
+        run_id,
+        "--output-dir",
+        str(output_dir),
+        "--env-count",
+        "6",
+        "--train-fraction",
+        "0.5",
+        "--inner-iterations",
+        "1",
+        "--outer-iterations",
+        "1",
+        "--rollout-count",
+        "1",
+        "--steps-per-rollout",
+        "2",
+        "--heldout-env-count",
+        "2",
+        "--heldout-eval-limit",
+        "2",
+        "--sim-backend",
+        "genesis",
+        "--no-guardrails",
+        "--rerun",
+    ]
+
+
+def _apply_sim2real_report_to_details(details: dict, report: dict) -> None:
+    records = report.get("component_records")
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {{}}
+            stage_num = payload.get("stage")
+            try:
+                stage_id = _SIM2REAL_STAGE_BY_NUMBER.get(int(stage_num))
+            except Exception:
+                stage_id = None
+            if stage_id:
+                status = str(payload.get("status") or record.get("status") or "completed").lower()
+                normalized = "succeeded" if status in {{"completed", "succeeded", "success", "written"}} else status
+                _mark_stage(details, stage_id, normalized, str(record.get("component") or payload.get("schema") or stage_id))
+    viz = report.get("visualization")
+    if isinstance(viz, dict) and str(viz.get("status") or "").lower() in {{"written", "completed", "succeeded"}}:
+        _mark_stage(details, "stage_14_rerun_viz", "succeeded", "Rerun recording written.")
+    details["status"] = str(report.get("status") or "completed")
+    details["result"] = "completed" if str(details["status"]).lower() == "completed" else str(details["status"])
+    details["report"] = {{
+        "status": report.get("status"),
+        "run_id": report.get("run_id"),
+        "latest_decision": ((report.get("outer_loop") or {{}}).get("latest_decision") or {{}}),
+        "visualization": viz if isinstance(viz, dict) else {{}},
+    }}
+
+
+def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
+    output_dir = Path("/opt/npa-agent/runs") / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _start(details: dict) -> dict:
+        details["status"] = "running"
+        details["result"] = "running"
+        for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+            if stage_id == "submit":
+                _mark_stage(details, stage_id, "succeeded", "Agent accepted the Sim2Real run request.")
+            else:
+                _mark_stage(details, stage_id, "pending", "Waiting for local Sim2Real runner.")
+        _append_run_log(details, "Starting local Sim2Real runner on the agent VM.")
+        return details
+
+    _update_sim2real_run(run_id, mutate=_start)
+    cmd = _sim2real_agent_command(run_id, output_dir)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(NPA_SOURCE_ROOT),
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=900,
+            check=False,
+        )
+    except Exception as exc:
+        def _fail_exc(details: dict) -> dict:
+            details["status"] = "failed"
+            details["result"] = "failed"
+            _append_run_log(details, f"Sim2Real runner failed to start: {{exc}}", level="error")
+            for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+                if stage_id != "submit":
+                    _mark_stage(details, stage_id, "failed", "Runner failed before completing this stage.")
+            return details
+
+        _update_sim2real_run(run_id, mutate=_fail_exc)
+        return
+
+    report_path = output_dir / "reports" / "sim2real-report.json"
+    rrd_path = output_dir / "reports" / "sim2real.rrd"
+
+    def _finish(details: dict) -> dict:
+        stdout_tail = (proc.stdout or "")[-4000:].strip()
+        stderr_tail = (proc.stderr or "")[-4000:].strip()
+        if stdout_tail:
+            _append_run_log(details, "runner stdout tail:\\n" + stdout_tail)
+        if stderr_tail:
+            _append_run_log(details, "runner stderr tail:\\n" + stderr_tail, level="warn" if proc.returncode == 0 else "error")
+        if proc.returncode != 0:
+            details["status"] = "failed"
+            details["result"] = "failed"
+            _append_run_log(details, f"Sim2Real runner exited with code {{proc.returncode}}.", level="error")
+            for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+                if stage_id != "submit":
+                    current = next((s for s in details.get("stages", []) if isinstance(s, dict) and s.get("id") == stage_id), {{}})
+                    if current.get("status") not in {{"succeeded", "failed"}}:
+                        _mark_stage(details, stage_id, "failed", "Runner exited before this stage completed.")
+            return details
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                _apply_sim2real_report_to_details(details, report)
+            except Exception as exc:
+                details["status"] = "completed"
+                details["result"] = "completed_with_report_parse_error"
+                _append_run_log(details, f"Could not parse report: {{exc}}", level="warn")
+        else:
+            details["status"] = "completed"
+            details["result"] = "completed_missing_report"
+            _append_run_log(details, "Runner completed but report file was not found.", level="warn")
+        if rrd_path.is_file():
+            _publish_rrd_recording(rrd_path)
+            try:
+                shutil.copy2(rrd_path, RRD_PATH)
+            except Exception:
+                pass
+            _restart_rerun_serve(force=True)
+            _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
+        return details
+
+    _update_sim2real_run(run_id, mutate=_finish)
+    state = _load_state()
+    sim_viz = state.get("sim_viz")
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    if rrd_path.is_file():
+        sim_viz.update(
+            {{
+                "run_id": run_id,
+                "stage": "completed",
+                "rrd_uri": f"file://{{RECORDING_PATH}}",
+                "rrd_updated_at": _now_iso(),
+                "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
+                "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz.get('camera') or 'workspace'}}",
+                "camera": str(sim_viz.get("camera") or "workspace"),
+            }}
+        )
+    else:
+        sim_viz.update({{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso()}})
+    state["sim_viz"] = sim_viz
+    _record_sim_viz_run(state, sim_viz)
+    _save_state(state)
+
+
 def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     tmp_dir = Path("/tmp/npa-agent-workflows")
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -3037,6 +3275,7 @@ _INTENT_SKILLS = {{
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "cosmos3": ("cosmos3-setup",),
+    "start_sim2real": ("sim2real-operate", "sim2real-engine"),
     "sim2real_status": ("sim2real-operate",),
     "watch_sim": ("sim2real-operate",),
 }}
@@ -3153,6 +3392,17 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent == "start_sim2real":
+        submit = submit_sim2real({{}})
+        apis_used.append("workflows/sim2real/submit")
+        run_id = str(submit.get("run_id") or "")
+        reply = (
+            "**Started Sim2Real pipeline**\\n"
+            f"- **run_id**: `{{run_id}}`\\n"
+            "- **mode**: `agent-local-sim2real`\\n"
+            "- The Run Monitor will update stages, result, and logs; Rerun will switch to the run recording when it is written."
+        )
+        return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "load_franka":
         sim_viz = state.get("sim_viz", {{}})
         if not isinstance(sim_viz, dict):
@@ -4195,6 +4445,14 @@ def submit_sim2real(payload: dict):
             ),
         }}
     )
+    details["logs"].append(
+        {{
+            "timestamp": submitted_at,
+            "level": "info",
+            "message": "Launching local Sim2Real runner on the agent VM.",
+        }}
+    )
+    details["result"] = "queued"
     runs_detail = state.get("sim2real_runs")
     if not isinstance(runs_detail, dict):
         runs_detail = {{}}
@@ -4216,7 +4474,13 @@ def submit_sim2real(payload: dict):
         }},
     )
     _save_state(state)
-    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details}}
+    thread = threading.Thread(
+        target=_run_sim2real_pipeline_background,
+        args=(run_id, dict(selection)),
+        daemon=True,
+    )
+    thread.start()
+    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "agent-local-sim2real"}}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py >/dev/null
 import math
