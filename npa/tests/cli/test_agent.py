@@ -187,6 +187,8 @@ def test_agent_artifact_discovery_requires_s3_components() -> None:
     assert "list_artifacts(" in source
     assert "download_s3_uri(" in source
     assert '"source": "s3"' in source
+    assert "local_path.resolve() != target.resolve()" in source
+    assert "Uploaded run artifacts to S3" in source
     assert "def _local_run_summaries" not in source
 
 

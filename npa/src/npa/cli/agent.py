@@ -2394,7 +2394,8 @@ def _apply_loaded_artifact(
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(local_path, target)
+        if local_path.resolve() != target.resolve():
+            shutil.copy2(local_path, target)
         preview_url = _artifact_preview_url(filename)
         sim_viz["artifact_preview_url"] = preview_url
         sim_viz["artifact_download_url"] = preview_url
@@ -3226,6 +3227,23 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     report_path = output_dir / "reports" / "sim2real-report.json"
     rrd_path = output_dir / "reports" / "sim2real.rrd"
 
+    def _upload_output_file(path: Path, relative_key: str) -> str:
+        if not path.is_file():
+            return ""
+        settings = _agent_s3_settings()
+        if not settings.get("bucket"):
+            return ""
+        s3, settings = _agent_s3_client()
+        key = _join_agent_s3_prefix(
+            _join_agent_s3_prefix(str(settings.get("prefix") or ""), "sim2real-b"),
+            f"{{run_id}}/{{relative_key}}",
+        )
+        content_type = "application/octet-stream"
+        if path.suffix.lower() == ".json":
+            content_type = "application/json"
+        s3.put_object(Bucket=settings["bucket"], Key=key, Body=path.read_bytes(), ContentType=content_type)
+        return f"s3://{{settings['bucket']}}/{{key}}"
+
     def _finish(details: dict) -> dict:
         stdout_tail = (proc.stdout or "")[-4000:].strip()
         stderr_tail = (proc.stderr or "")[-4000:].strip()
@@ -3263,6 +3281,17 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
                 pass
             _restart_rerun_serve(force=True)
             _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
+        uploaded = []
+        for path, rel in ((report_path, "reports/sim2real-report.json"), (rrd_path, "reports/sim2real.rrd")):
+            try:
+                uri = _upload_output_file(path, rel)
+                if uri:
+                    uploaded.append(uri)
+            except Exception as exc:
+                _append_run_log(details, f"Failed to upload {{rel}} to S3: {{exc}}", level="warn")
+        if uploaded:
+            details["artifact_uris"] = uploaded
+            _append_run_log(details, "Uploaded run artifacts to S3: " + ", ".join(uploaded))
         return details
 
     _update_sim2real_run(run_id, mutate=_finish)
