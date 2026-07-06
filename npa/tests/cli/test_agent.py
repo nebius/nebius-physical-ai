@@ -514,6 +514,9 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "mountRerunIframeUntilSuccess" in source
     assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source
     assert "_wait_for_rerun_web_viewer" in source
+    apply_selection_source = source.split("async function applySelection")[1].split("async function submitWorkflow")[0]
+    assert "await waitForRerunSuccess" in apply_selection_source
+    assert "activeArtifactRender = \"rerun\"" in apply_selection_source
     api_json_before_fetch = source.split("async function apiJson")[1].split("let resp;")[0]
     assert 'throw new Error("Unlock chat with your agent password.");' not in api_json_before_fetch
     assert "lastRerunBlobStatus" in source

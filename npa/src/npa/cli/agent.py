@@ -7604,8 +7604,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify(selectionPayloadFromUi()),
         }});
-        if (data.sim_viz && rerunIframeLoaded) {{
-          reloadRerunIframe(data.sim_viz.camera || "workspace");
+        if (data.sim_viz && (data.sim_viz.rerun_ready || data.sim_viz.rrd_uri)) {{
+          activeArtifactRender = "rerun";
+          hideArtifactPreview();
+          const runId = String(data.sim_viz.run_id || activeRunId || "").trim();
+          if (runId) activeRunId = runId;
+          await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{
+            deadlineMs: 90000,
+            mountAttemptsPerLoop: 4,
+            runId,
+          }});
         }}
         await refresh();
       }}
