@@ -268,7 +268,7 @@ run id from submit output.
 ```bash
 source ~/.npa/sim2real-operator.env   # sets AWS_* and endpoint
 RUN=sim2real-staged-20260615t180818z
-BUCKET=lerobot-ccc9d3c7
+BUCKET="${S3_BUCKET:-<your-bucket>}"
 PREFIX="s3://${BUCKET}/sim2real-b/${RUN}"
 
 # E2E summary (includes rerun_serve.public_url when auto-serve ran)

@@ -71,6 +71,15 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_bucket="",
+            s3_endpoint="",
+            s3_access_key_id="",
+            s3_secret_access_key="",
+        ),
+    )
     bootstrap = {
         "s3_bucket": "bucket-boot",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
@@ -84,19 +93,43 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     assert resolved["nebius_api_key"] == "ak-boot"
 
 
+def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **kwargs: kwargs["bucket"] == "shared-bucket")
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/checkpoints/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "npa-bucket-terraform",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "shared-bucket"
+    assert resolved["s3_prefix"] == "checkpoints"
+    assert resolved["nebius_api_key"] == "ak-shared"
+
+
 def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
-    calls = {"count": 0}
-
     def _probe(**kwargs):
-        calls["count"] += 1
-        return calls["count"] > 1 and kwargs["bucket"] == "shared-bucket"
+        return kwargs["bucket"] == "shared-bucket"
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
             s3_access_key_id="ak-shared",
@@ -133,6 +166,32 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
     assert "alias /opt/npa-agent/recordings/" in source
+
+
+def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_franka_demo_joint_angles" in source
+    assert "frame_count = 90" in source
+    assert "world/camera_frustums/{{name}}" in source
+    assert 'f"{entity}/frustum"' not in source
+    assert 'f"{entity}/origin"' not in source
+
+
+def test_agent_artifact_discovery_requires_s3_components() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "list_runs(" in source
+    assert "list_artifacts(" in source
+    assert "download_s3_uri(" in source
+    assert "Use this S3-backed Sim2Real run" in source
+    assert "No S3 artifacts found for that run" in source
+    assert '"source": "s3"' in source
+    assert "local_path.resolve() != target.resolve()" in source
+    assert "run artifacts to S3" in source
+    assert "def _local_run_summaries" not in source
 
 
 def test_agent_help_smoke() -> None:
@@ -317,6 +376,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
+    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "/rerun/recordings/sim2real.rrd" in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
@@ -364,9 +424,15 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert 'id="artifactPrefix"' in source
     assert 'id="artifactRunSelect"' in source
     assert 'id="artifactList"' in source
+    assert 'id="renderedDataSummary"' in source
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
+    assert 'Select a discovered run or enter a run_id first' in source
+    assert 'No S3 artifacts found for <code>' in source
+    assert "updateRenderedDataSummary" in source
+    assert "_wait_rerun_web_viewer_healthy" in source
+    assert "await mountRerunIframeUntilSuccess(String(simViz.camera || \"workspace\"), 8, loadedRunId)" in source
     assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded
@@ -1002,16 +1068,18 @@ def test_resolve_agent_storage_credentials_prefers_record() -> None:
         "credentials": {
             "service_account_id": "serviceaccount-abc",
             "s3_bucket": "bucket",
+            "s3_prefix": "runs",
             "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
             "access_key": "key",
             "secret_key": "secret",
         },
     }
-    bucket, endpoint, access_key, secret_key, sa_id = _resolve_agent_storage_credentials(
+    bucket, prefix, endpoint, access_key, secret_key, sa_id = _resolve_agent_storage_credentials(
         "rtxpro",
         record,
     )
     assert bucket == "bucket"
+    assert prefix == "runs"
     assert endpoint.endswith("nebius.cloud")
     assert access_key == "key"
     assert secret_key == "secret"

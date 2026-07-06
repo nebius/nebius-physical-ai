@@ -40,9 +40,6 @@ regexes = [
     '''hf_testsecret123456''',
     '''hf_npae2eworkflowsecret1234567890''',
     '''AKIAABCDEFGHIJKLMNOP''',
-    # Validated sim2real working bucket already in public branch history (PR #147);
-    # an operational identifier, not a credential. The doc now renders a placeholder.
-    '''lerobot-ccc9d3c7''',
 ]
 paths = [
     '''SECURITY\.md''',

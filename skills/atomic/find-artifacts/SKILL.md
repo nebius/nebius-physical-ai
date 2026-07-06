@@ -81,4 +81,10 @@ Unknown types must stay visible/selectable.
 
 - Validate run ids (`validate_run_id`) before listing/loading.
 - Reject traversal keys (`..`, empty segments).
-- Surface S3 failures directly (`ok: false` or error detail); do not claim success when load/list fails.
+- Surface S3 failures directly (`ok: false` or error detail); do not claim
+  success when load/list fails.
+- Agent artifact discovery is S3-first and S3-only for run artifacts. The agent
+  must stage the configured artifact bucket credentials, upload completed run
+  artifacts there, and use `/api/artifacts/runs`, `/api/artifacts/run/{run_id}`,
+  and `/api/sim-viz/load-artifact` against that S3 data. Do not silently fall
+  back to `/opt/npa-agent/runs` for user-visible discovery.

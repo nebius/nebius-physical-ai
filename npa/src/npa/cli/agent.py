@@ -573,6 +573,7 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     return {
         "service_account_id": str(creds.get("service_account_id", "")).strip(),
         "s3_bucket": str(creds.get("s3_bucket", "")).strip(),
+        "s3_prefix": str(creds.get("s3_prefix", "")).strip().strip("/"),
         "s3_endpoint": str(creds.get("s3_endpoint", "")).strip(),
         "access_key": str(creds.get("nebius_api_key", "")).strip(),
         "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
@@ -586,8 +587,9 @@ def _storage_credentials_allow_writes(
     access_key: str,
     secret_key: str,
     region: str,
+    prefix: str = "",
 ) -> bool:
-    """Return True when the credentials can write and delete in the bucket."""
+    """Return True when credentials can list, write, and delete in the bucket."""
     bucket_name = str(bucket or "").strip()
     if not bucket_name:
         return False
@@ -605,8 +607,11 @@ def _storage_credentials_allow_writes(
         "aws_" "secret_access_key": str(secret_key or "").strip(),
     }
     client = boto3.client("s3", **client_kwargs)
-    probe_key = f"npa-agent/probe/{secrets.token_hex(8)}.txt"
+    normalized_prefix = str(prefix or "").strip().strip("/")
+    probe_base = "/".join(part for part in (normalized_prefix, "npa-agent/probe") if part)
+    probe_key = f"{probe_base}/{secrets.token_hex(8)}.txt"
     try:
+        client.list_objects_v2(Bucket=bucket_name, Prefix=(probe_base + "/") if probe_base else "", MaxKeys=1)
         client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
         client.delete_object(Bucket=bucket_name, Key=probe_key)
         return True
@@ -619,8 +624,36 @@ def _resolve_deploy_storage_credentials(
     region: str,
     bootstrap_creds: dict[str, str],
 ) -> dict[str, str]:
-    """Prefer bootstrap credentials, but fall back to shared storage keys when needed."""
+    """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
     candidate = dict(bootstrap_creds)
+    from npa.clients.credentials import load_credentials
+
+    shared = load_credentials(environ={})
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    shared_prefix = ""
+    if shared_bucket.startswith("s3://"):
+        rest = shared_bucket[len("s3://"):]
+        shared_bucket, _sep, shared_prefix = rest.partition("/")
+        shared_prefix = shared_prefix.strip("/")
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if shared_bucket and _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
+        region=region,
+        prefix=shared_prefix,
+    ):
+        typer.echo("  Using shared configured artifact storage credentials for the agent.")
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_prefix"] = shared_prefix
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
+        return candidate
+
     bucket = str(candidate.get("s3_bucket", "")).strip()
     endpoint = str(candidate.get("s3_endpoint", "")).strip()
     access_key = str(candidate.get("nebius_api_key", "")).strip()
@@ -631,32 +664,8 @@ def _resolve_deploy_storage_credentials(
         access_key=access_key,
         secret_key=secret_key,
         region=region,
+        prefix=str(candidate.get("s3_prefix", "")),
     ):
-        return candidate
-    from npa.clients.credentials import load_credentials
-
-    shared = load_credentials()
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    if shared_bucket.startswith("s3://"):
-        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
-        region=region,
-    ):
-        typer.echo(
-            "  Bootstrap S3 key has no data-plane access; "
-            "falling back to shared configured storage credentials."
-        )
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
         return candidate
     typer.echo(
         "  Warning: unable to verify writable S3 credentials for deploy; "
@@ -731,6 +740,7 @@ def _credentials_block_from_storage(
     *,
     service_account_id: str,
     s3_bucket: str,
+    s3_prefix: str = "",
     s3_endpoint: str,
     s3_access_key: str,
     s3_secret_key: str,
@@ -738,6 +748,7 @@ def _credentials_block_from_storage(
     return {
         "service_account_id": service_account_id.strip(),
         "s3_bucket": s3_bucket.strip(),
+        "s3_prefix": s3_prefix.strip().strip("/"),
         "s3_endpoint": s3_endpoint.strip(),
         "access_key": s3_access_key.strip(),
         "secret_key": s3_secret_key.strip(),
@@ -765,13 +776,14 @@ def _resolve_agent_ssh_key(
 def _resolve_agent_storage_credentials(
     project_alias: str,
     record: dict[str, Any],
-) -> tuple[str, str, str, str, str]:
-    """Return bucket, endpoint, access key, secret key, and service account id."""
+) -> tuple[str, str, str, str, str, str]:
+    """Return bucket, prefix, endpoint, access key, secret key, and service account id."""
     creds = record.get("credentials", {})
     if isinstance(creds, dict):
         access_key = str(creds.get("access_key", "")).strip()
         secret_key = str(creds.get("secret_key", "")).strip()
         bucket = str(creds.get("s3_bucket", "")).strip()
+        prefix = str(creds.get("s3_prefix", "")).strip().strip("/")
         endpoint = str(creds.get("s3_endpoint", "")).strip()
         service_account_id = str(
             creds.get("service_account_id", record.get("service_account_id", ""))
@@ -779,14 +791,15 @@ def _resolve_agent_storage_credentials(
         if bucket and access_key and secret_key:
             if not service_account_id:
                 service_account_id = _resolve_agent_service_account_id(project_alias, record)
-            return bucket, endpoint, access_key, secret_key, service_account_id
+            return bucket, prefix, endpoint, access_key, secret_key, service_account_id
     try:
         tf_state = resolve_terraform_state(project_alias)
     except ConfigError:
-        return "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
+        return "", "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
     service_account_id = _resolve_agent_service_account_id(project_alias, record)
     return (
         str(getattr(tf_state, "bucket", "") or ""),
+        "",
         str(getattr(tf_state, "endpoint", "") or ""),
         str(getattr(tf_state, "access_key", "") or ""),
         str(getattr(tf_state, "secret_key", "") or ""),
@@ -829,6 +842,7 @@ def _write_agent_s3_env(
     ssh: SSHClient,
     *,
     bucket: str,
+    prefix: str = "",
     endpoint: str,
     access_key: str,
     secret_key: str,
@@ -839,6 +853,7 @@ def _write_agent_s3_env(
         return
     env_lines = [
         f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
+        f"NPA_AGENT_S3_PREFIX={prefix.strip().strip('/')}",
         f"NPA_AGENT_S3_ENDPOINT={endpoint.strip()}",
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
@@ -863,6 +878,7 @@ def _write_agent_operator_profile(
     tf_api_key: str,
     nebius_ai_key: str,
     s3_bucket: str,
+    s3_prefix: str = "",
     s3_endpoint: str,
     s3_access_key: str,
     s3_secret_key: str,
@@ -892,7 +908,7 @@ def _write_agent_operator_profile(
         "access_key_id": s3_access_key.strip(),
         "secret_access_key": s3_secret_key.strip(),
         "endpoint": s3_endpoint.strip(),
-        "bucket": s3_bucket.strip(),
+        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
     }
     if any(storage_payload.values()):
         credentials_payload["storage"] = storage_payload
@@ -1326,6 +1342,7 @@ def _bootstrap_agent_stack(
     nebius_ai_key: str = "",
     service_account_id: str = "",
     s3_bucket: str = "",
+    s3_prefix: str = "",
     s3_endpoint: str = "",
     s3_access_key: str = "",
     s3_secret_key: str = "",
@@ -1421,6 +1438,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1440,6 +1458,7 @@ RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
+AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
 DEFAULT_SCENE_SPEC = {{
     "schema": "npa.sim2real.manip_scene_spec.v1",
     "goal_pos": [0.5, 0.3, 0.04],
@@ -1500,6 +1519,23 @@ DEFAULT_SIM_VIZ = {{
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
 }}
+SIM2REAL_STAGE_TEMPLATE = [
+    ("submit", "Submit request"),
+    ("stage_01_trigger", "1 Trigger"),
+    ("stage_02_assets", "2 Assets"),
+    ("stage_03_augment", "3 Augment"),
+    ("stage_04_envs_raw", "4 Raw envs"),
+    ("stage_05_envs_train", "5 Train split"),
+    ("stage_06_tokens", "6 Tokens"),
+    ("stage_07_actions_train", "7 Policy rollouts"),
+    ("stage_08_vlm_eval_train", "8 VLM eval"),
+    ("stage_09_training_signal", "9 Training signal"),
+    ("stage_10_eval_heldout", "10 Held-out eval"),
+    ("stage_11_outer_loop", "11 Threshold gate"),
+    ("stage_12_external_validation_stub", "12 External validation"),
+    ("stage_13_retrigger", "13 Retrigger"),
+    ("stage_14_rerun_viz", "14 Rerun viz"),
+]
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1586,6 +1622,7 @@ def _default_state() -> dict:
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "sim_viz_runs": {{}},
+        "sim2real_runs": {{}},
         "active_run_id": "",
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
@@ -1621,6 +1658,8 @@ def _load_state() -> dict:
         merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
     if not isinstance(merged.get("sim_viz_runs"), dict):
         merged["sim_viz_runs"] = {{}}
+    if not isinstance(merged.get("sim2real_runs"), dict):
+        merged["sim2real_runs"] = {{}}
     if not isinstance(merged.get("active_run_id"), str):
         merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
@@ -1655,15 +1694,113 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     state["active_run_id"] = run_id
 
 
+def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
+    stages = []
+    for index, (stage_id, label) in enumerate(SIM2REAL_STAGE_TEMPLATE):
+        stages.append(
+            {{
+                "id": stage_id,
+                "label": label,
+                "status": "not_run",
+                "started_at": "",
+                "finished_at": "",
+                "summary": "Not launched by the agent UI submit endpoint.",
+            }}
+        )
+    if stages:
+        stages[0]["status"] = "succeeded"
+        stages[0]["started_at"] = submitted_at
+        stages[0]["finished_at"] = submitted_at
+        stages[0]["summary"] = "Agent accepted the Sim2Real submit request."
+    return {{
+        "run_id": run_id,
+        "status": "submitted",
+        "result": "recorded_not_launched",
+        "submitted_at": submitted_at,
+        "updated_at": submitted_at or _now_iso(),
+        "selection": selection if isinstance(selection, dict) else {{}},
+        "stages": stages,
+        "logs": [
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "info",
+                "message": "Sim2Real submit recorded by NPA agent.",
+            }},
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "warn",
+                "message": "The agent UI submit endpoint recorded the request but did not launch the full K8s Sim2Real pipeline; unexecuted stages are marked not_run.",
+            }},
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "info",
+                "message": "Use the operator workflow submit path for a real staged K8s run; this view remains truthful until run artifacts or a recording exist.",
+            }},
+        ],
+        "artifacts": [],
+    }}
+
+
+def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
+    merged = dict(base)
+    if isinstance(update, dict):
+        for key, value in update.items():
+            if key == "stages" and isinstance(value, list):
+                merged[key] = value
+            elif key == "logs" and isinstance(value, list):
+                merged[key] = value
+            elif key == "selection" and isinstance(value, dict):
+                selection = dict(merged.get("selection", {{}}) if isinstance(merged.get("selection"), dict) else {{}})
+                selection.update(value)
+                merged[key] = selection
+            else:
+                merged[key] = value
+    return merged
+
+
+def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
+    latest = state.get("latest_submit", {{}})
+    if not isinstance(latest, dict):
+        latest = {{}}
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    resolved_run_id = str(run_id or latest.get("run_id") or sim_viz.get("run_id") or state.get("active_run_id") or "").strip()
+    details_map = state.get("sim2real_runs")
+    if not isinstance(details_map, dict):
+        details_map = {{}}
+    existing = details_map.get(resolved_run_id, {{}}) if resolved_run_id else {{}}
+    submitted_at = str(latest.get("submitted_at") or sim_viz.get("rrd_updated_at") or "")
+    selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
+    details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
+    details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
+    stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
+    if stage:
+        details["status"] = stage
+    if sim_viz.get("rrd_uri"):
+        if str(details.get("result") or "") not in {"completed", "failed", "running"}:
+            details["result"] = "recording_available"
+        for item in details.get("stages", []):
+            if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
+                item["status"] = "succeeded"
+                item["summary"] = "Rerun recording is available."
+    elif resolved_run_id:
+        details["result"] = "recorded_not_launched"
+    return details
+
+
 def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     payload = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        payload.update(current)
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
     if isinstance(runs, dict) and target and isinstance(runs.get(target), dict):
         payload.update(runs[target])
+    elif run_id:
+        payload["run_id"] = target
+    else:
+        current = state.get("sim_viz")
+        if isinstance(current, dict):
+            payload.update(current)
     return payload
 
 def _stock_franka_selection() -> dict:
@@ -1763,8 +1900,30 @@ def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]
     positions.append([ee[0], ee[1] - 0.04, ee[2]])
     return positions
 
-def _log_franka_robot_geometry(rr) -> None:
-    positions = _franka_joint_positions(_FRANKA_HOME_JOINTS)
+def _franka_demo_joint_angles(frame_index: int, frame_count: int) -> tuple[float, ...]:
+    import math
+
+    phase = (float(frame_index) / max(1.0, float(frame_count - 1))) * math.tau
+    return (
+        _FRANKA_HOME_JOINTS[0] + 0.22 * math.sin(phase),
+        _FRANKA_HOME_JOINTS[1] + 0.16 * math.sin(phase + 0.5),
+        _FRANKA_HOME_JOINTS[2] + 0.18 * math.sin(phase + 1.2),
+        _FRANKA_HOME_JOINTS[3] + 0.12 * math.sin(phase + 1.7),
+        _FRANKA_HOME_JOINTS[4] + 0.24 * math.sin(phase + 2.1),
+        _FRANKA_HOME_JOINTS[5] + 0.10 * math.sin(phase + 2.7),
+        _FRANKA_HOME_JOINTS[6] + 0.20 * math.sin(phase + 3.4),
+    )
+
+
+def _set_rerun_time(rr, seconds: float) -> None:
+    if hasattr(rr, "set_time_seconds"):
+        rr.set_time_seconds("log_time", seconds)
+    else:
+        rr.set_time("log_time", duration=seconds)
+
+
+def _log_franka_robot_geometry(rr, joint_angles: tuple[float, ...] = _FRANKA_HOME_JOINTS) -> None:
+    positions = _franka_joint_positions(joint_angles)
     arm_points = positions[:8]
     segments: list[list[list[float]]] = []
     for left, right in zip(arm_points, arm_points[1:]):
@@ -1845,15 +2004,21 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
             colors=[[180, 180, 180, 255]],
         ),
     )
-    rr.log(
-        "world/cube",
-        rr.Boxes3D(
-            centers=[[0.5, 0.3, 0.04]],
-            half_sizes=[[0.025, 0.025, 0.025]],
-            colors=[[59, 130, 246, 255]],
-        ),
-    )
-    _log_franka_robot_geometry(rr)
+    frame_count = 90
+    for frame_index in range(frame_count):
+        seconds = frame_index / 15.0
+        _set_rerun_time(rr, seconds)
+        phase = frame_index / max(1.0, float(frame_count - 1))
+        cube_y = 0.3 - 0.42 * phase
+        rr.log(
+            "world/cube",
+            rr.Boxes3D(
+                centers=[[0.5, cube_y, 0.04]],
+                half_sizes=[[0.025, 0.025, 0.025]],
+                colors=[[59, 130, 246, 255]],
+            ),
+        )
+        _log_franka_robot_geometry(rr, _franka_demo_joint_angles(frame_index, frame_count))
     cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
     active = camera if camera in cameras else "workspace"
     for name, cam in cameras.items():
@@ -1866,23 +2031,24 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
         width = int(res[0]) if len(res) > 0 else 640
         height = int(res[1]) if len(res) > 1 else 480
         entity = f"world/cameras/{{name}}"
+        frustum_entity = f"world/camera_frustums/{{name}}"
         focal = width / (2.0 * math.tan(math.radians(fov / 2.0)))
         rr.log(entity, rr.Pinhole(focal_length=focal, width=width, height=height))
         rr.log(entity, rr.Transform3D(translation=pos))
         origin, strips = _camera_frustum_lines(pos, look_at, fov)
         color = [59, 130, 246] if name == active else [148, 163, 184]
         rr.log(
-            f"{{entity}}/frustum",
+            f"{{frustum_entity}}/frustum",
             rr.LineStrips3D(strips, colors=[color] * len(strips)),
         )
-        rr.log(f"{{entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
+        rr.log(f"{{frustum_entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
         label = (
             f"**{{name}}** (selected for next rollout)"
             if name == active
             else f"**{{name}}**"
         )
         rr.log(
-            f"{{entity}}/label",
+            f"{{frustum_entity}}/label",
             rr.TextDocument(
                 f"{{label}}\\n"
                 f"pos={{pos}} look_at={{look_at}} fov={{fov}}° resolution={{width}}x{{height}}"
@@ -1923,11 +2089,24 @@ def _safe_artifact_key(key: str) -> str:
 def _agent_s3_settings() -> dict[str, str]:
     return {{
         "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
+        "prefix": str(os.environ.get("NPA_AGENT_S3_PREFIX", "")).strip().strip("/"),
         "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
         "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
         "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
         "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
     }}
+
+
+def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
+    return "/".join(part.strip("/") for part in (base_prefix, suffix) if str(part or "").strip().strip("/"))
+
+
+def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
+    requested = str(user_prefix or "").strip().strip("/")
+    base = str(settings.get("prefix") or "").strip().strip("/")
+    if requested:
+        return _join_agent_s3_prefix(base, requested)
+    return _join_agent_s3_prefix(base, "sim2real-b")
 
 
 def _agent_s3_client():
@@ -2209,17 +2388,19 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
-        _restart_rerun_serve(force=False)
+        _restart_rerun_serve(force=True)
+        rerun_ready = _wait_rerun_web_viewer_healthy()
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
-        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()
+        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(local_path, target)
+        if local_path.resolve() != target.resolve():
+            shutil.copy2(local_path, target)
         preview_url = _artifact_preview_url(filename)
         sim_viz["artifact_preview_url"] = preview_url
         sim_viz["artifact_download_url"] = preview_url
@@ -2260,8 +2441,18 @@ def _rerun_web_viewer_healthy() -> bool:
     except Exception:
         return False
 
+
+def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
+    deadline = time.monotonic() + max(0.5, float(timeout_s))
+    while time.monotonic() < deadline:
+        if _rerun_web_viewer_healthy():
+            return True
+        time.sleep(0.4)
+    return _rerun_web_viewer_healthy()
+
+
 def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
-    has_rrd = bool(str(rrd_uri or "").strip()) or RRD_PATH.is_file()
+    has_rrd = bool(str(rrd_uri or "").strip())
     return has_rrd and _rerun_web_viewer_healthy()
 
 def _restart_rerun_serve(*, force: bool = False) -> bool:
@@ -2899,6 +3090,318 @@ def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
         raise HTTPException(status_code=502, detail=f"NPA command did not return JSON: {{stdout[-1000:]}}") from exc
 
 
+_SIM2REAL_STAGE_BY_NUMBER = {{
+    1: "stage_01_trigger",
+    2: "stage_02_assets",
+    3: "stage_03_augment",
+    4: "stage_04_envs_raw",
+    5: "stage_05_envs_train",
+    6: "stage_06_tokens",
+    7: "stage_07_actions_train",
+    8: "stage_08_vlm_eval_train",
+    9: "stage_09_training_signal",
+    10: "stage_10_eval_heldout",
+    11: "stage_11_outer_loop",
+    12: "stage_12_external_validation_stub",
+    13: "stage_13_retrigger",
+    14: "stage_14_rerun_viz",
+}}
+
+
+def _update_sim2real_run(run_id: str, *, mutate) -> dict:
+    state = _load_state()
+    runs_detail = state.get("sim2real_runs")
+    if not isinstance(runs_detail, dict):
+        runs_detail = {{}}
+    details = runs_detail.get(run_id)
+    if not isinstance(details, dict):
+        details = _default_sim2real_run_details(run_id, submitted_at=_now_iso(), selection={{}})
+    details = mutate(details) or details
+    details["updated_at"] = _now_iso()
+    runs_detail[run_id] = details
+    state["sim2real_runs"] = runs_detail
+    sim_viz = state.get("sim_viz")
+    if not isinstance(sim_viz, dict) or str(sim_viz.get("run_id") or "") == run_id:
+        state["sim_viz"] = {{
+            **(sim_viz if isinstance(sim_viz, dict) else {{}}),
+            "run_id": run_id,
+            "stage": str(details.get("status") or "running"),
+            "rrd_updated_at": details["updated_at"],
+            "camera": str((sim_viz or {{}}).get("camera") or "workspace") if isinstance(sim_viz, dict) else "workspace",
+        }}
+    _save_state(state)
+    return details
+
+
+def _append_run_log(details: dict, message: str, *, level: str = "info") -> None:
+    logs = details.get("logs")
+    if not isinstance(logs, list):
+        logs = []
+    logs.append({{"timestamp": _now_iso(), "level": level, "message": message}})
+    details["logs"] = logs[-200:]
+
+
+def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") -> None:
+    stages = details.get("stages")
+    if not isinstance(stages, list):
+        stages = _default_sim2real_run_details(str(details.get("run_id") or ""), submitted_at=str(details.get("submitted_at") or "")).get("stages", [])
+    for item in stages:
+        if isinstance(item, dict) and item.get("id") == stage_id:
+            item["status"] = status
+            if status == "running" and not item.get("started_at"):
+                item["started_at"] = _now_iso()
+            if status in {{"succeeded", "failed"}}:
+                item["finished_at"] = _now_iso()
+            if summary:
+                item["summary"] = summary
+            break
+    details["stages"] = stages
+
+
+def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
+    settings = _agent_s3_settings()
+    cmd = [
+        str(AGENT_PYTHON),
+        "-m",
+        "npa.workflows.sim2real",
+        "run",
+        "--run-id",
+        run_id,
+        "--output-dir",
+        str(output_dir),
+        "--env-count",
+        "6",
+        "--train-fraction",
+        "0.5",
+        "--inner-iterations",
+        "1",
+        "--outer-iterations",
+        "1",
+        "--rollout-count",
+        "1",
+        "--steps-per-rollout",
+        "2",
+        "--heldout-env-count",
+        "2",
+        "--heldout-eval-limit",
+        "2",
+        "--sim-backend",
+        "genesis",
+        "--no-guardrails",
+        "--rerun",
+    ]
+    return cmd
+
+
+def _apply_sim2real_report_to_details(details: dict, report: dict) -> None:
+    report_status = str(report.get("status") or "").lower()
+    if report_status == "completed":
+        for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
+            if stage_id == "submit":
+                continue
+            if stage_id == "stage_14_rerun_viz":
+                continue
+            _mark_stage(details, stage_id, "succeeded", f"Completed during local Sim2Real run: {{label}}.")
+    records = report.get("component_records")
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {{}}
+            stage_num = payload.get("stage")
+            try:
+                stage_id = _SIM2REAL_STAGE_BY_NUMBER.get(int(stage_num))
+            except Exception:
+                stage_id = None
+            path_text = str(record.get("path") or "").lower()
+            component_text = str(record.get("component") or "").lower()
+            if stage_id is None:
+                if "stage_01_trigger" in path_text:
+                    stage_id = "stage_01_trigger"
+                elif "stage_02_assets" in path_text or "consumed_scene" in path_text:
+                    stage_id = "stage_02_assets"
+                elif "augment" in path_text or "cosmos2" in component_text:
+                    stage_id = "stage_03_augment"
+                elif "envs/raw" in path_text:
+                    stage_id = "stage_04_envs_raw"
+                elif "envs/train" in path_text:
+                    stage_id = "stage_05_envs_train"
+                elif "tokens" in path_text:
+                    stage_id = "stage_06_tokens"
+                elif "actions/train" in path_text or "policy" in component_text:
+                    stage_id = "stage_07_actions_train"
+                elif "vlm_eval" in path_text:
+                    stage_id = "stage_08_vlm_eval_train"
+                elif "training_signal" in path_text:
+                    stage_id = "stage_09_training_signal"
+                elif "eval/heldout" in path_text or "heldout" in component_text:
+                    stage_id = "stage_10_eval_heldout"
+                elif "outer_loop" in path_text or "decision" in path_text:
+                    stage_id = "stage_11_outer_loop"
+                elif "stage_12_external_validation" in path_text:
+                    stage_id = "stage_12_external_validation_stub"
+                elif "stage_13_retrigger" in path_text:
+                    stage_id = "stage_13_retrigger"
+            if stage_id:
+                status = str(payload.get("status") or record.get("status") or "completed").lower()
+                normalized = "succeeded" if status in {{"completed", "succeeded", "success", "written"}} else status
+                _mark_stage(details, stage_id, normalized, str(record.get("component") or payload.get("schema") or stage_id))
+    viz = report.get("visualization")
+    if isinstance(viz, dict) and str(viz.get("status") or "").lower() in {{"written", "completed", "succeeded"}}:
+        _mark_stage(details, "stage_14_rerun_viz", "succeeded", "Rerun recording written.")
+    details["status"] = str(report.get("status") or "completed")
+    details["result"] = "completed" if str(details["status"]).lower() == "completed" else str(details["status"])
+    details["report"] = {{
+        "status": report.get("status"),
+        "run_id": report.get("run_id"),
+        "latest_decision": ((report.get("outer_loop") or {{}}).get("latest_decision") or {{}}),
+        "visualization": viz if isinstance(viz, dict) else {{}},
+    }}
+
+
+def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
+    output_dir = Path("/opt/npa-agent/runs") / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _start(details: dict) -> dict:
+        details["status"] = "running"
+        details["result"] = "running"
+        for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+            if stage_id == "submit":
+                _mark_stage(details, stage_id, "succeeded", "Agent accepted the Sim2Real run request.")
+            else:
+                _mark_stage(details, stage_id, "pending", "Waiting for local Sim2Real runner.")
+        _append_run_log(details, "Starting local Sim2Real runner on the agent VM.")
+        return details
+
+    _update_sim2real_run(run_id, mutate=_start)
+    cmd = _sim2real_agent_command(run_id, output_dir)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(NPA_SOURCE_ROOT),
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            timeout=900,
+            check=False,
+        )
+    except Exception as exc:
+        def _fail_exc(details: dict) -> dict:
+            details["status"] = "failed"
+            details["result"] = "failed"
+            _append_run_log(details, f"Sim2Real runner failed to start: {{exc}}", level="error")
+            for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+                if stage_id != "submit":
+                    _mark_stage(details, stage_id, "failed", "Runner failed before completing this stage.")
+            return details
+
+        _update_sim2real_run(run_id, mutate=_fail_exc)
+        return
+
+    report_path = output_dir / "reports" / "sim2real-report.json"
+    rrd_path = output_dir / "reports" / "sim2real.rrd"
+
+    def _upload_output_file(path: Path, relative_key: str) -> str:
+        if not path.is_file():
+            return ""
+        settings = _agent_s3_settings()
+        if not settings.get("bucket"):
+            return ""
+        s3, settings = _agent_s3_client()
+        key = _join_agent_s3_prefix(
+            _join_agent_s3_prefix(str(settings.get("prefix") or ""), "sim2real-b"),
+            f"{{run_id}}/{{relative_key}}",
+        )
+        content_type = "application/octet-stream"
+        if path.suffix.lower() == ".json":
+            content_type = "application/json"
+        s3.put_object(Bucket=settings["bucket"], Key=key, Body=path.read_bytes(), ContentType=content_type)
+        return f"s3://{{settings['bucket']}}/{{key}}"
+
+    def _upload_output_tree() -> list[str]:
+        uploaded: list[str] = []
+        for path in sorted(p for p in output_dir.rglob("*") if p.is_file()):
+            rel = path.relative_to(output_dir).as_posix()
+            uri = _upload_output_file(path, rel)
+            if uri:
+                uploaded.append(uri)
+        return uploaded
+
+    def _finish(details: dict) -> dict:
+        stdout_tail = (proc.stdout or "")[-4000:].strip()
+        stderr_tail = (proc.stderr or "")[-4000:].strip()
+        if stdout_tail:
+            _append_run_log(details, "runner stdout tail:\\n" + stdout_tail)
+        if stderr_tail:
+            _append_run_log(details, "runner stderr tail:\\n" + stderr_tail, level="warn" if proc.returncode == 0 else "error")
+        if proc.returncode != 0:
+            details["status"] = "failed"
+            details["result"] = "failed"
+            _append_run_log(details, f"Sim2Real runner exited with code {{proc.returncode}}.", level="error")
+            for stage_id, _label in SIM2REAL_STAGE_TEMPLATE:
+                if stage_id != "submit":
+                    current = next((s for s in details.get("stages", []) if isinstance(s, dict) and s.get("id") == stage_id), {{}})
+                    if current.get("status") not in {{"succeeded", "failed"}}:
+                        _mark_stage(details, stage_id, "failed", "Runner exited before this stage completed.")
+            return details
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                _apply_sim2real_report_to_details(details, report)
+            except Exception as exc:
+                details["status"] = "completed"
+                details["result"] = "completed_with_report_parse_error"
+                _append_run_log(details, f"Could not parse report: {{exc}}", level="warn")
+        else:
+            details["status"] = "completed"
+            details["result"] = "completed_missing_report"
+            _append_run_log(details, "Runner completed but report file was not found.", level="warn")
+        if rrd_path.is_file():
+            _publish_rrd_recording(rrd_path)
+            try:
+                shutil.copy2(rrd_path, RRD_PATH)
+            except Exception:
+                pass
+            _restart_rerun_serve(force=True)
+            _wait_rerun_web_viewer_healthy()
+            _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
+        uploaded = []
+        try:
+            uploaded = _upload_output_tree()
+        except Exception as exc:
+            _append_run_log(details, f"Failed to upload run tree to S3: {{exc}}", level="warn")
+        if uploaded:
+            details["artifact_uris"] = uploaded
+            preview = ", ".join(uploaded[:5])
+            suffix = " ..." if len(uploaded) > 5 else ""
+            _append_run_log(details, f"Uploaded {{len(uploaded)}} run artifacts to S3: " + preview + suffix)
+        return details
+
+    _update_sim2real_run(run_id, mutate=_finish)
+    state = _load_state()
+    sim_viz = state.get("sim_viz")
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    if rrd_path.is_file():
+        sim_viz.update(
+            {{
+                "run_id": run_id,
+                "stage": "completed",
+                "rrd_uri": f"file://{{RECORDING_PATH}}",
+                "rrd_updated_at": _now_iso(),
+                "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
+                "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz.get('camera') or 'workspace'}}",
+                "camera": str(sim_viz.get("camera") or "workspace"),
+            }}
+        )
+    else:
+        sim_viz.update({{"run_id": run_id, "stage": "completed", "rrd_updated_at": _now_iso()}})
+    state["sim_viz"] = sim_viz
+    _record_sim_viz_run(state, sim_viz)
+    _save_state(state)
+
+
 def _write_workflow_temp_yaml(yaml_text: str) -> Path:
     tmp_dir = Path("/tmp/npa-agent-workflows")
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -2965,6 +3468,7 @@ _INTENT_SKILLS = {{
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
     "cosmos3": ("cosmos3-setup",),
+    "start_sim2real": ("sim2real-operate", "sim2real-engine"),
     "sim2real_status": ("sim2real-operate",),
     "watch_sim": ("sim2real-operate",),
 }}
@@ -3081,6 +3585,82 @@ def _maybe_toolground_chat_reply(
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
+    if intent == "start_sim2real":
+        submit = submit_sim2real({{}})
+        apis_used.append("workflows/sim2real/submit")
+        run_id = str(submit.get("run_id") or "")
+        reply = (
+            "**Started Sim2Real pipeline**\\n"
+            f"- **run_id**: `{{run_id}}`\\n"
+            "- **mode**: `agent-local-sim2real`\\n"
+            "- The Run Monitor will update stages, result, and logs; Rerun will switch to the run recording when it is written."
+        )
+        return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
+    if intent == "find_artifacts":
+        mentioned_run = ""
+        match = re.search(r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b", str(user_text or ""))
+        if match:
+            mentioned_run = match.group(1)
+        try:
+            if mentioned_run:
+                listed = artifacts_for_run(mentioned_run)
+                apis_used.append("artifacts/run/{{run_id}}")
+                if isinstance(listed, JSONResponse):
+                    payload = json.loads(listed.body.decode("utf-8"))
+                else:
+                    payload = listed
+                count = int(payload.get("count") or 0)
+                preferred = payload.get("preferred") if isinstance(payload.get("preferred"), dict) else {{}}
+                if count <= 0:
+                    reply = (
+                        "**No S3 artifacts found for that run.**\\n"
+                        f"- **run_id**: `{{mentioned_run}}`\\n"
+                        f"- **S3 prefix**: `{{payload.get('prefix', '')}}`\\n"
+                        "- It may predate S3 upload support or belong to a destroyed agent VM."
+                    )
+                    return reply, _dedupe(apis_used), suggested_apis, None, payload, intent
+                reply = (
+                    "**Run artifacts found.**\\n"
+                    f"- **run_id**: `{{mentioned_run}}`\\n"
+                    f"- **artifact_count**: `{{count}}`\\n"
+                    f"- **preferred**: `{{preferred.get('key', '')}}`\\n"
+                    f"- **render**: `{{preferred.get('render', '')}}`"
+                )
+                return reply, _dedupe(apis_used), suggested_apis, None, payload, intent
+            page = artifacts_runs(limit=5)
+            apis_used.append("artifacts/runs")
+            if isinstance(page, JSONResponse):
+                payload = json.loads(page.body.decode("utf-8"))
+            else:
+                payload = page
+            rows = payload.get("runs") if isinstance(payload, dict) else []
+            latest = rows[0] if isinstance(rows, list) and rows else {{}}
+            latest_run = str(latest.get("run_id") or "")
+            if not latest_run:
+                reply = (
+                    "**No S3-backed Sim2Real runs are discoverable yet.**\\n"
+                    f"- **S3 prefix**: `{{payload.get('prefix', '') if isinstance(payload, dict) else ''}}`"
+                )
+                return reply, _dedupe(apis_used), suggested_apis, None, payload if isinstance(payload, dict) else {{}}, intent
+            details = artifacts_for_run(latest_run)
+            apis_used.append("artifacts/run/{{run_id}}")
+            if isinstance(details, JSONResponse):
+                details_payload = json.loads(details.body.decode("utf-8"))
+            else:
+                details_payload = details
+            preferred = details_payload.get("preferred") if isinstance(details_payload.get("preferred"), dict) else {{}}
+            reply = (
+                "**Use this S3-backed Sim2Real run.**\\n"
+                f"- **run_id**: `{{latest_run}}`\\n"
+                f"- **artifact_count**: `{{latest.get('artifact_count', '')}}`\\n"
+                f"- **preferred_artifact**: `{{preferred.get('key', '')}}`\\n"
+                f"- **render**: `{{preferred.get('render', '')}}`\\n"
+                "- In the UI, paste this run id or select it from **Discovered runs**, then **List artifacts**."
+            )
+            return reply, _dedupe(apis_used), suggested_apis, None, details_payload, intent
+        except Exception as exc:
+            reply = f"**Artifact discovery failed.**\\n- **error**: `{{exc}}`"
+            return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "error": str(exc)}}, intent
     if intent == "load_franka":
         sim_viz = state.get("sim_viz", {{}})
         if not isinstance(sim_viz, dict):
@@ -3289,6 +3869,10 @@ def chat(payload: dict):
                 "chat_history": history[-80:],
             }}
         )
+        # Tool handlers may mutate session state (for example starting a Sim2Real
+        # run). Reload before saving chat history so an older state snapshot does
+        # not clobber the run monitor.
+        state = _load_state()
         session = _save_chat_session(state, session, active=True)
         tool_result["session_id"] = session["id"]
         tool_result["session"] = {{
@@ -3381,13 +3965,12 @@ def models(refresh: bool = False):
 def session_bootstrap():
     state = _load_state()
     active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    if isinstance(state.get("sim_viz"), dict):
-        sim_viz.update(state["sim_viz"])
+    sim_viz = _sim_viz_for_run(state)
     selected = state.get("camera_selection", ["workspace"])
     camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     sim_viz["camera"] = camera
-    if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
+    session_run_id = str(sim_viz.get("run_id") or "").strip()
+    if not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     history = active_session.get("chat_history", [])
@@ -3481,6 +4064,7 @@ def tool(tool_ref: str):
 def sim_viz_status(run_id: str = ""):
     state = _load_state()
     payload = _sim_viz_for_run(state, run_id=run_id)
+    requested_run = str(run_id or "").strip()
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
@@ -3492,13 +4076,21 @@ def sim_viz_status(run_id: str = ""):
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
     _record_sim_viz_run(state, payload)
-    if str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}:
-        live_url = str(payload.get("live_grpc_url") or "").strip()
+    payload_run = str(payload.get("run_id") or "").strip()
+    run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
+    live_url = str(payload.get("live_grpc_url") or "").strip()
+    may_use_default_recording = payload_run in {"", "franka-demo"} and not requested_run
+    if (
+        str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}
+        and (live_url or run_has_specific_rrd or may_use_default_recording)
+    ):
         if live_url:
             payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
         else:
             payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
-    if not payload.get("rrd_uri") and RRD_PATH.is_file():
+    else:
+        payload["rerun_iframe_url"] = ""
+    if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
@@ -3618,17 +4210,18 @@ def sim_viz_recordings():
 def artifacts_runs(prefix: str = "", limit: int = 50):
     try:
         s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, prefix)
         page = list_runs(
             settings["bucket"],
-            prefix=prefix,
+            prefix=effective_prefix,
             limit=limit,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": prefix, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.get("/artifacts/run/{{run_id:path}}")
@@ -3639,16 +4232,19 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, prefix)
         artifacts = list_artifacts(
             settings["bucket"],
             normalized_run,
-            prefix=prefix,
+            prefix=effective_prefix,
             s3=s3,
         )
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
             "bucket": settings["bucket"],
+            "prefix": effective_prefix,
+            "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
             "count": len(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
@@ -3657,7 +4253,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
     except HTTPException:
         raise
     except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.get("/artifacts/file/{{filename}}")
@@ -3708,7 +4304,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
     except HTTPException:
         raise
     except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.post("/sim-viz/load-franka-demo")
@@ -3900,15 +4496,27 @@ def get_sim_assets_selection():
     return selection
 
 @app.get("/workflows/sim2real/status")
-def sim2real_status():
+def sim2real_status(run_id: str = ""):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
+    details = _sim2real_run_details(state, run_id=run_id)
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
         "sim_viz": sim_viz if isinstance(sim_viz, dict) else dict(DEFAULT_SIM_VIZ),
+        "run": details,
+        "stages": details.get("stages", []),
+        "logs": details.get("logs", []),
     }}
+
+@app.get("/workflows/sim2real/runs/{{run_id:path}}")
+def sim2real_run_detail(run_id: str):
+    state = _load_state()
+    details = _sim2real_run_details(state, run_id=run_id)
+    if not str(details.get("run_id") or "").strip():
+        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+    return {{"ok": True, "run": details}}
 
 @app.get("/workbench/actions")
 def workbench_actions():
@@ -4150,25 +4758,55 @@ def submit_sim2real(payload: dict | None = None):
         "selection": selection,
         "env": env_block,
     }}
+    submitted_at = str(state["latest_submit"]["submitted_at"])
     state["sim_viz"] = {{
         "run_id": run_id,
         "stage": "submitted",
         "rrd_uri": "",
-        "rrd_updated_at": _now_iso(),
+        "rrd_updated_at": submitted_at,
         "live_grpc_url": "",
         "mode": "static",
+        "rerun_ready": False,
+        "rerun_iframe_url": "",
+        "camera": "workspace",
     }}
+    details = _default_sim2real_run_details(run_id, submitted_at=submitted_at, selection=selection)
+    details["logs"].append(
+        {{
+            "timestamp": submitted_at,
+            "level": "info",
+            "message": "Selection: robot_preset={{}}, sim_backend={{}}".format(
+                selection.get("robot_preset", "franka"),
+                selection.get("sim_backend", "isaac"),
+            ),
+        }}
+    )
+    details["logs"].append(
+        {{
+            "timestamp": submitted_at,
+            "level": "info",
+            "message": "Launching local Sim2Real runner on the agent VM.",
+        }}
+    )
+    details["result"] = "queued"
+    runs_detail = state.get("sim2real_runs")
+    if not isinstance(runs_detail, dict):
+        runs_detail = {{}}
+    runs_detail[run_id] = details
+    state["sim2real_runs"] = runs_detail
     _record_sim_viz_run(
         state,
         {{
             "run_id": run_id,
-            "submitted_at": state["latest_submit"]["submitted_at"],
+            "submitted_at": submitted_at,
             "stage": "submitted",
             "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
             "rrd_uri": "",
             "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
             "submit_mode": "sim2real",
             "workflow_name": "sim2real",
+            "rerun_ready": False,
+            "rerun_iframe_url": "",
         }},
     )
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
@@ -4181,11 +4819,19 @@ def submit_sim2real(payload: dict | None = None):
                 state["latest_submit"]["submit_mode"] = "live-k8s"
                 state["latest_submit"]["live_submit"] = live_submit
                 _save_state(state)
+                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "live-k8s", "live_submit": live_submit}}
             except Exception:
                 live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
         else:
             live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
-    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
+    _save_state(state)
+    thread = threading.Thread(
+        target=_run_sim2real_pipeline_background,
+        args=(run_id, dict(selection)),
+        daemon=True,
+    )
+    thread.start()
+    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "agent-local-sim2real"}}
     if live_submit is not None:
         response["live_submit"] = live_submit
     return response
@@ -4197,6 +4843,24 @@ from pathlib import Path
 import rerun as rr
 
 _FRANKA_HOME = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
+
+def _franka_demo_joint_angles(frame_index, frame_count):
+    phase = (float(frame_index) / max(1.0, float(frame_count - 1))) * math.tau
+    return (
+        _FRANKA_HOME[0] + 0.22 * math.sin(phase),
+        _FRANKA_HOME[1] + 0.16 * math.sin(phase + 0.5),
+        _FRANKA_HOME[2] + 0.18 * math.sin(phase + 1.2),
+        _FRANKA_HOME[3] + 0.12 * math.sin(phase + 1.7),
+        _FRANKA_HOME[4] + 0.24 * math.sin(phase + 2.1),
+        _FRANKA_HOME[5] + 0.10 * math.sin(phase + 2.7),
+        _FRANKA_HOME[6] + 0.20 * math.sin(phase + 3.4),
+    )
+
+def _set_rerun_time(seconds):
+    if hasattr(rr, "set_time_seconds"):
+        rr.set_time_seconds("log_time", seconds)
+    else:
+        rr.set_time("log_time", duration=seconds)
 
 def _franka_joint_positions(joint_angles):
     dh = [
@@ -4239,8 +4903,8 @@ def _franka_joint_positions(joint_angles):
     positions.append([ee[0], ee[1] - 0.04, ee[2]])
     return positions
 
-def _log_franka_robot_geometry():
-    positions = _franka_joint_positions(_FRANKA_HOME)
+def _log_franka_robot_geometry(joint_angles=_FRANKA_HOME):
+    positions = _franka_joint_positions(joint_angles)
     arm_points = positions[:8]
     segments = []
     for left, right in zip(arm_points, arm_points[1:]):
@@ -4307,15 +4971,21 @@ rr.log(
         colors=[[180, 180, 180, 255]],
     ),
 )
-rr.log(
-    "world/cube",
-    rr.Boxes3D(
-        centers=[[0.5, 0.3, 0.04]],
-        half_sizes=[[0.025, 0.025, 0.025]],
-        colors=[[59, 130, 246, 255]],
-    ),
-)
-_log_franka_robot_geometry()
+frame_count = 90
+for frame_index in range(frame_count):
+    seconds = frame_index / 15.0
+    _set_rerun_time(seconds)
+    phase = frame_index / max(1.0, float(frame_count - 1))
+    cube_y = 0.3 - 0.42 * phase
+    rr.log(
+        "world/cube",
+        rr.Boxes3D(
+            centers=[[0.5, cube_y, 0.04]],
+            half_sizes=[[0.025, 0.025, 0.025]],
+            colors=[[59, 130, 246, 255]],
+        ),
+    )
+    _log_franka_robot_geometry(_franka_demo_joint_angles(frame_index, frame_count))
 rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
 rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
 rr.save(str(target))
@@ -4777,6 +5447,64 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; }}
       .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
+      .run-details {{
+        margin-top: 10px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
+        padding: 10px;
+      }}
+      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #263247; }}
+      .run-summary {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+      }}
+      .stage-list {{
+        display: grid;
+        gap: 6px;
+        margin: 8px 0;
+      }}
+      .stage-item {{
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 8px;
+        align-items: start;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        border-radius: 8px;
+        padding: 7px 8px;
+        font-size: 12px;
+      }}
+      .stage-status {{
+        border-radius: 999px;
+        padding: 3px 7px;
+        text-align: center;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 10px;
+        background: #eef2ff;
+        color: #3730a3;
+      }}
+      .stage-status.succeeded {{ background: #dcfce7; color: #166534; }}
+      .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
+      .stage-status.running {{ background: #fef3c7; color: #92400e; }}
+      .stage-status.pending {{ background: #f1f5f9; color: #475569; }}
+      .stage-status.not_run {{ background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1; }}
+      .stage-label {{ font-weight: 700; color: #263247; }}
+      .stage-summary {{ color: #64748b; margin-top: 2px; }}
+      .run-log {{
+        margin: 8px 0 0 0;
+        max-height: 180px;
+        overflow: auto;
+        white-space: pre-wrap;
+        background: #0f172a;
+        color: #dbeafe;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 12px;
+      }}
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
@@ -5085,6 +5813,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
+        <section class="panel run-monitor-panel">
+          <h3>Sim2Real Run Monitor</h3>
+          <p class="hint">Stage timeline, result, and logs for the active run. This panel is independent from Rerun visualization.</p>
+          <div id="runDetails" class="run-details">
+            <h4>Run status, result, and logs</h4>
+            <div id="runSummary" class="run-summary"></div>
+            <div id="stageList" class="stage-list"></div>
+            <pre id="runLog" class="run-log">No run selected.</pre>
+          </div>
+        </section>
         <div class="layout layout-3">
           <section class="panel">
             <h3>Sim Assets</h3>
@@ -5192,6 +5930,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 <span>Stage: <span id="simStage" class="badge">idle</span></span>
                 <span>Camera: <strong id="simCamera">workspace</strong></span>
               </div>
+              <div id="renderedDataSummary" class="hint">Rendering: no run artifact loaded yet.</div>
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
@@ -6004,11 +6743,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!resp.ok) {{
           throw new Error("Rerun recording not published yet");
         }}
-        setRerunBlobStatus("fallback", "recording=public");
+        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
         return recordingUrl;
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
+        // Rerun's wasm viewer fetches the URL itself and cannot reliably use
+        // parent-page basic-auth/blob state. nginx exposes this recording path
+        // without auth specifically so the iframe can load visuals directly.
         const rrdUrl = await resolveRerunRecordingUrl();
         setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording-url");
         return (
@@ -6206,7 +6948,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (lastErr) {{
           throw lastErr;
         }}
-        throw new Error("Timed out waiting for rerun blob/iframe SUCCESS");
+        throw new Error("Timed out waiting for rerun recording/iframe SUCCESS");
       }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
@@ -6227,7 +6969,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
-        const simViz = await waitForRerunReady();
+        let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
+        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
+          showToast("No run recording yet; loading stock Franka visual fallback in Rerun.", "info");
+          await apiJson("/api/sim-viz/load-franka-demo", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{ camera: cam }}),
+          }});
+          activeRunId = "franka-demo";
+          simViz = await waitForRerunReady();
+        }} else {{
+          simViz = await waitForRerunReady();
+        }}
         const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
         if (runId) activeRunId = runId;
         await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4, runId }});
@@ -6375,8 +7129,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadArtifactsForSelectedRun() {{
         const select = document.getElementById("artifactRunSelect");
-        const runId = String((select && select.value) || "").trim();
-        if (!runId) throw new Error("Select a discovered run first");
+        const runInput = document.getElementById("runIdInput");
+        const runId = String((select && select.value) || (runInput && runInput.value) || activeRunId || "").trim();
+        if (!runId) throw new Error("Select a discovered run or enter a run_id first");
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
         const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
@@ -6384,7 +7139,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         if (!artifacts.length) {{
-          list.innerHTML = "<p>No artifacts found for this run.</p>";
+          list.innerHTML =
+            "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
+            "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
+            "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
           return true;
         }}
         list.innerHTML = artifacts.map((item, idx) => {{
@@ -6410,7 +7168,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await loadArtifact(payload);
           }});
         }});
+        const preferred = data && data.preferred ? data.preferred : null;
+        if (preferred && String(preferred.render || "") === "rerun") {{
+          appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
+          await loadArtifact({{
+            run_id: runId,
+            key: String(preferred.key || "").trim(),
+            s3_uri: String(preferred.s3_uri || "").trim(),
+          }});
+        }}
         return true;
+      }}
+      function updateRenderedDataSummary(simViz) {{
+        const node = document.getElementById("renderedDataSummary");
+        if (!node) return;
+        const runId = String((simViz && simViz.run_id) || activeRunId || "none");
+        const key = String((simViz && simViz.artifact_key) || "");
+        const uri = String((simViz && simViz.artifact_uri) || "");
+        const render = String((simViz && simViz.artifact_render) || "");
+        if (key || uri) {{
+          node.innerHTML =
+            "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
+            " from run <code>" + escapeHtml(runId) + "</code><br>" +
+            "<code>" + escapeHtml(key || uri) + "</code>";
+        }} else {{
+          node.textContent = "Rendering: no run artifact loaded yet.";
+        }}
       }}
       async function loadArtifact(payload) {{
         const body = {{
@@ -6426,10 +7209,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const simViz = data.sim_viz || {{}};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
+        const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
+        if (loadedRunId) activeRunId = loadedRunId;
+        updateRenderedDataSummary(simViz);
         if (render === "rerun") {{
           hideArtifactPreview();
-          await waitForRerunReady();
-          await waitForRerunSuccess(String(simViz.camera || "workspace"), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+          rerunIframeLoaded = false;
+          lastRrdUpdatedAt = "";
+          await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
         }} else {{
           showRerunPlaceholder("Artifact loaded. Use download/preview below.");
           await showArtifactPreview(simViz, render);
@@ -6465,15 +7252,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const simViz = await loadJson(statusPath);
           activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
           updateRunSelector(simViz);
+          await loadRunDetails(activeRunId);
           renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
+          updateRenderedDataSummary(simViz);
           activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
           const cta = document.getElementById("simvizCta");
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
           if (cta) {{
             cta.hidden = ready && rerunIframeLoaded;
+            if (!ready) {{
+              cta.textContent = "No run-specific Rerun recording yet. Use the Run status/logs panel below for stage progress and result.";
+            }}
           }}
           if (activeArtifactRender && activeArtifactRender !== "rerun") {{
             showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.");
@@ -6642,6 +7434,66 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("runIdInput");
         if (input && current) input.value = current;
       }}
+      function normalizeStageStatus(value) {{
+        const raw = String(value || "pending").trim().toLowerCase();
+        if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
+        if (["failed", "error", "blocked"].includes(raw)) return "failed";
+        if (["running", "active", "submitted", "queued"].includes(raw)) return raw === "submitted" ? "running" : raw;
+        if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
+        return "pending";
+      }}
+      function renderRunDetails(details) {{
+        const run = (details && details.run) || details || {{}};
+        const summary = document.getElementById("runSummary");
+        const stagesHost = document.getElementById("stageList");
+        const logHost = document.getElementById("runLog");
+        if (!summary || !stagesHost || !logHost) return;
+        const runId = String(run.run_id || "");
+        const result = String(run.result || "pending");
+        const status = String(run.status || "idle");
+        const updatedAt = String(run.updated_at || run.submitted_at || "");
+        summary.innerHTML =
+          '<span class="pill">run: <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          '<span class="pill">status: <strong>' + escapeHtml(status) + '</strong></span>' +
+          '<span class="pill">result: <strong>' + escapeHtml(result) + '</strong></span>' +
+          '<span class="pill">updated: <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
+        const stages = Array.isArray(run.stages) ? run.stages : [];
+        stagesHost.innerHTML = stages.map((stage) => {{
+          const statusClass = normalizeStageStatus(stage.status);
+          const label = String(stage.label || stage.id || "");
+          const stageSummary = String(stage.summary || "");
+          return (
+            '<div class="stage-item">' +
+            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusClass) + '</span>' +
+            '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
+            '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
+            '</div>'
+          );
+        }}).join("") || '<div class="hint">No stage data available yet.</div>';
+        const logs = Array.isArray(run.logs) ? run.logs : [];
+        logHost.textContent = logs.length
+          ? logs.map((entry) => {{
+              const ts = String(entry.timestamp || "");
+              const level = String(entry.level || "info").toUpperCase();
+              const message = String(entry.message || "");
+              return "[" + ts + "] " + level + " " + message;
+            }}).join("\\n")
+          : "No log entries yet.";
+      }}
+      async function loadRunDetails(runId) {{
+        const target = String(runId || activeRunId || "").trim();
+        const path = target
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
+          : "/api/workflows/sim2real/status";
+        try {{
+          const data = await loadJson(path);
+          renderRunDetails(data);
+          return data.run || data;
+        }} catch (err) {{
+          renderRunDetails({{ run: {{ run_id: target, status: "unknown", result: "unavailable", logs: [{{ timestamp: new Date().toISOString(), level: "error", message: String(err && err.message ? err.message : err) }}], stages: [] }} }});
+          return null;
+        }}
+      }}
       async function loadRunData() {{
         const input = document.getElementById("runIdInput");
         const runId = String((input && input.value) || "").trim();
@@ -6655,8 +7507,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
+        await loadRunDetails(runId);
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
           await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
+        }} else {{
+          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.");
         }}
         await refresh();
       }}
@@ -6706,10 +7561,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{}}),
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
-        appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
+        appendChat("assistant", "Watching sim progress: rendering stage/result/logs immediately; Rerun opens only after a run-specific `.rrd` is available.");
         const submittedRunId = String(data.run_id || "").trim();
         if (submittedRunId) activeRunId = submittedRunId;
-        const simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
+        renderRunDetails(data);
+        const simViz = await pollSimVizUntilRrd(8, 1500, submittedRunId);
         if (simViz && simViz.rrd_uri) {{
           await waitForRerunSuccess(
             simViz.camera || "workspace",
@@ -6732,12 +7588,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
           );
         }} else {{
-          throw new Error("Sim2Real run submitted, but no .rrd is available yet after polling");
+          await loadRunDetails(submittedRunId);
+          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          appendChat(
+            "assistant",
+            "Run `" + submittedRunId + "` is recorded with **stage** `" +
+              String((simViz && simViz.stage) || "submitted") +
+              "`. No `.rrd` recording is available yet, so the Run status/logs panel is the source of truth."
+          );
         }}
         await refresh();
       }}
       async function showWorkflowStatus() {{
         const status = await loadJson("/api/workflows/sim2real/status");
+        renderRunDetails(status);
         appendChat(
           "assistant",
           "Latest workflow status:\\n- run_id: `" +
@@ -6752,6 +7616,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
           : "/api/sim-viz/status";
         const simViz = await loadJson(statusPath);
+        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
+          await loadRunDetails(activeRunId);
+          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          showToast("No Rerun recording for this run yet; showing run logs instead.", "info");
+          return;
+        }}
         const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
         const src = await rerunIframeSrc(camera, String((simViz && simViz.run_id) || activeRunId || "").trim());
         window.open(src, "_blank", "noopener");
@@ -6760,6 +7630,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         try {{
           const session = await loadJson("/api/session");
           activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          if (session && session.sim_viz) {{
+            activeRunId = String((session.sim_viz.active_run_id || session.sim_viz.run_id || activeRunId || "")).trim();
+            activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
+            updateRenderedDataSummary(session.sim_viz);
+          }}
           updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {{
             const currentModel = String(
@@ -6962,6 +7837,7 @@ sudo systemctl restart npa-agent-backend
     _write_agent_s3_env(
         ssh,
         bucket=s3_bucket,
+        prefix=s3_prefix,
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
@@ -6977,6 +7853,7 @@ sudo systemctl restart npa-agent-backend
         tf_api_key=tf_api_key,
         nebius_ai_key=nebius_ai_key,
         s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
         s3_endpoint=s3_endpoint,
         s3_access_key=s3_access_key,
         s3_secret_key=s3_secret_key,
@@ -7105,6 +7982,7 @@ def deploy_cmd(
         "nebius_api_key": str(creds.get("nebius_api_key", "")),
         "nebius_secret_key": str(creds.get("nebius_secret_key", "")),
         "s3_bucket": str(creds.get("s3_bucket", "")),
+        "s3_prefix": str(creds.get("s3_prefix", "")),
         "s3_endpoint": str(creds.get("s3_endpoint", "")),
         "instance_name": f"agent-{project}-{name}",
         "server_port": str(agent_port),
@@ -7205,6 +8083,7 @@ def deploy_cmd(
             tf_api_key=tf_api_key,
             nebius_ai_key=nebius_ai_key,
             s3_bucket=str(merged_vars.get("s3_bucket", "")),
+            s3_prefix=str(merged_vars.get("s3_prefix", "")),
             s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
             s3_access_key=str(merged_vars.get("nebius_api_key", "")),
             s3_secret_key=str(merged_vars.get("nebius_secret_key", "")),
@@ -7431,7 +8310,7 @@ def bootstrap_cmd(
     project_id = str(record.get("project_id", "")).strip()
     tenant_id = str(record.get("tenant_id", "")).strip()
     region = str(record.get("region", "") or "eu-north1")
-    s3_bucket, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
+    s3_bucket, s3_prefix, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
         _resolve_agent_storage_credentials(project, record)
     )
     if not service_account_id:
@@ -7459,8 +8338,10 @@ def bootstrap_cmd(
             creds = _creds_from_terraform_state(project, record)
         if creds is None:
             _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
+        creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
         agent_credentials = _agent_credentials_payload(creds)
         s3_bucket = agent_credentials["s3_bucket"]
+        s3_prefix = agent_credentials.get("s3_prefix", "")
         s3_endpoint = agent_credentials["s3_endpoint"]
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
@@ -7503,6 +8384,7 @@ def bootstrap_cmd(
             tf_api_key=tf_api_key,
             nebius_ai_key=nebius_ai_key,
             s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
             s3_secret_key=s3_secret_key,
@@ -7544,6 +8426,7 @@ def bootstrap_cmd(
         updated["credentials"] = _credentials_block_from_storage(
             service_account_id=service_account_id,
             s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
             s3_secret_key=s3_secret_key,
