@@ -517,6 +517,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "/rerun/recordings/sim2real.rrd" in source
     assert "Prefer the public recording copy; authenticated blob fetch remains the fallback" in source
     assert "does not reliably consume parent-created blob URLs" in source
+    assert '"&renderer=webgl&hide_welcome_screen=1&camera="' not in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
     assert "waitForRerunRenderSettle" in source
