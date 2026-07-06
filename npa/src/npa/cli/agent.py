@@ -2369,7 +2369,7 @@ def _rerun_web_viewer_healthy() -> bool:
         return False
 
 def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
-    has_rrd = bool(str(rrd_uri or "").strip()) or RRD_PATH.is_file()
+    has_rrd = bool(str(rrd_uri or "").strip())
     return has_rrd and _rerun_web_viewer_healthy()
 
 def _restart_rerun_serve(*, force: bool = False) -> bool:
@@ -3358,7 +3358,8 @@ def session_bootstrap():
     selected = state.get("camera_selection", ["workspace"])
     camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     sim_viz["camera"] = camera
-    if not sim_viz.get("rrd_uri") and RRD_PATH.is_file():
+    session_run_id = str(sim_viz.get("run_id") or "").strip()
+    if not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     history = active_session.get("chat_history", [])
