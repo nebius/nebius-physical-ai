@@ -7824,6 +7824,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function startPeriodicRefresh() {{
         if (refreshTimer !== null) return;
         refreshTimer = window.setInterval(() => {{
+          const iframe = document.getElementById("rerunFrame");
+          if (rerunIframeLoaded && iframe && !iframe.hidden) {{
+            return;
+          }}
           refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
         }}, 10000);
       }}
