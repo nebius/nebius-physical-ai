@@ -423,11 +423,14 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert 'id="artifactPrefix"' in source
     assert 'id="artifactRunSelect"' in source
     assert 'id="artifactList"' in source
+    assert 'id="renderedDataSummary"' in source
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
     assert 'Select a discovered run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
+    assert "updateRenderedDataSummary" in source
+    assert "await mountRerunIframeUntilSuccess(String(simViz.camera || \"workspace\"), 8, loadedRunId)" in source
     assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded

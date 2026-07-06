@@ -5756,6 +5756,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 <span>Stage: <span id="simStage" class="badge">idle</span></span>
                 <span>Camera: <strong id="simCamera">workspace</strong></span>
               </div>
+              <div id="renderedDataSummary" class="hint">Rendering: no run artifact loaded yet.</div>
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
@@ -7028,6 +7029,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         return true;
       }}
+      function updateRenderedDataSummary(simViz) {{
+        const node = document.getElementById("renderedDataSummary");
+        if (!node) return;
+        const runId = String((simViz && simViz.run_id) || activeRunId || "none");
+        const key = String((simViz && simViz.artifact_key) || "");
+        const uri = String((simViz && simViz.artifact_uri) || "");
+        const render = String((simViz && simViz.artifact_render) || "");
+        if (key || uri) {{
+          node.innerHTML =
+            "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
+            " from run <code>" + escapeHtml(runId) + "</code><br>" +
+            "<code>" + escapeHtml(key || uri) + "</code>";
+        }} else {{
+          node.textContent = "Rendering: no run artifact loaded yet.";
+        }}
+      }}
       async function loadArtifact(payload) {{
         const body = {{
           run_id: String((payload && payload.run_id) || "").trim(),
@@ -7042,10 +7059,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const simViz = data.sim_viz || {{}};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
+        const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
+        if (loadedRunId) activeRunId = loadedRunId;
+        updateRenderedDataSummary(simViz);
         if (render === "rerun") {{
           hideArtifactPreview();
-          await waitForRerunReady();
-          await waitForRerunSuccess(String(simViz.camera || "workspace"), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+          rerunIframeLoaded = false;
+          lastRrdUpdatedAt = "";
+          await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
         }} else {{
           showRerunPlaceholder("Artifact loaded. Use download/preview below.");
           await showArtifactPreview(simViz, render);
@@ -7086,6 +7107,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
+          updateRenderedDataSummary(simViz);
           activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
           const cta = document.getElementById("simvizCta");
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
