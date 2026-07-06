@@ -2385,11 +2385,12 @@ def _apply_loaded_artifact(
     if render == "rerun":
         _publish_rrd_recording(local_path)
         _restart_rerun_serve(force=True)
+        rerun_ready = _wait_rerun_web_viewer_healthy()
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
-        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()
+        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
@@ -2435,6 +2436,16 @@ def _rerun_web_viewer_healthy() -> bool:
             return resp.status == 200
     except Exception:
         return False
+
+
+def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
+    deadline = time.monotonic() + max(0.5, float(timeout_s))
+    while time.monotonic() < deadline:
+        if _rerun_web_viewer_healthy():
+            return True
+        time.sleep(0.4)
+    return _rerun_web_viewer_healthy()
+
 
 def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
     has_rrd = bool(str(rrd_uri or "").strip())
@@ -3279,6 +3290,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             except Exception:
                 pass
             _restart_rerun_serve(force=True)
+            _wait_rerun_web_viewer_healthy()
             _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
         uploaded = []
         try:
