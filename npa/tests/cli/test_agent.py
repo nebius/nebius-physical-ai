@@ -190,7 +190,7 @@ def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monke
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False)
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
             s3_access_key_id="ak-shared",
@@ -516,7 +516,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
-    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "/rerun/recordings/sim2real.rrd" in source
     assert "Prefer the public recording copy; authenticated blob fetch remains the fallback" in source
     assert "does not reliably consume parent-created blob URLs" in source
