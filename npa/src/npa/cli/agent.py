@@ -7007,7 +7007,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
         const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
         const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
-        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 2));
+        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 1));
         const targetRunId = String(opts.runId || "").trim();
         const baselineUpdatedAt = String(opts.baselineRrdUpdatedAt || "").trim();
         const start = Date.now();
