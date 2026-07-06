@@ -471,6 +471,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
+    assert "world/camera_frustums/" in source
+    assert 'f"{{frustum_entity}}/frustum"' in source
+    assert 'f"{{entity}}/frustum"' not in source
     assert "The **Cameras** panel is the center column below chat" in source
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
@@ -507,7 +510,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Open in Rerun" in source
     assert "class=\"panel rerun-panel\"" in source
     assert ".layout-3 .rerun-panel" in source
-    assert "iframe#rerunFrame" in source
+    assert "height: min(78vh, 820px)" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
     assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
@@ -541,10 +544,10 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" not in source
+    assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     assert "URL.createObjectURL" not in source
@@ -567,7 +570,7 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "active_run_id" in source
     assert "_record_sim_viz_run" in source
     assert "_wire_sim2real_run_preview" in source
-    submit_source = source.split('def submit_sim2real(payload: dict):')[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
+    submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
 
@@ -877,7 +880,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/sim-viz/load-franka-demo"):
             return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
         if url_s.endswith("/api/sim-viz/camera-preview"):
-            return _Resp({"ok": True, "entity_path": "world/cameras/workspace"})
+            return _Resp({"ok": True, "entity_path": "world/camera_frustums/workspace/frustum"})
         return _Resp({"ok": True})
 
     monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)

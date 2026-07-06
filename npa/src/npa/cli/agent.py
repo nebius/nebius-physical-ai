@@ -2627,7 +2627,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "mode": "static",
         "camera": cam,
         "preview_camera": cam,
-        "preview_entity": f"world/cameras/{{cam}}",
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
@@ -2653,7 +2653,7 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
         "mode": "static",
         "camera": cam,
         "preview_camera": cam,
-        "preview_entity": f"world/cameras/{{cam}}",
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
         "submit_mode": "sim2real",
@@ -4430,14 +4430,14 @@ def sim_viz_camera_preview(payload: dict | None = None):
         raise HTTPException(status_code=404, detail=f"unknown camera: {{camera}}")
     state = _load_state()
     viz = _wire_franka_demo(state, camera=camera)
-    entity_path = f"world/cameras/{{camera}}"
+    entity_path = f"world/camera_frustums/{{camera}}/frustum"
     return {{
         "ok": True,
         "camera": camera,
         "entity_path": entity_path,
         "rollout_entity_guess": f"rollouts/latest/{{camera}}/camera",
         "sim_viz": viz,
-        "hint": "Open the Rerun panel and expand world/cameras/<name>.",
+        "hint": "Open the Rerun panel and expand world/camera_frustums/<name>.",
     }}
 
 def _sim_viz_rrd_file_response(run_id: str = ""):
@@ -4492,7 +4492,7 @@ def _boot_preload_sim_viz() -> None:
         "mode": "static",
         "camera": cam,
         "preview_camera": cam,
-        "preview_entity": f"world/cameras/{{cam}}",
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
@@ -7464,7 +7464,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>`;
           holder.appendChild(card);
         }}
-        const entity = String(simViz.preview_entity || ("world/cameras/" + activeName));
+        const entity = String(simViz.preview_entity || ("world/camera_frustums/" + activeName + "/frustum"));
         const rollout = "rollouts/latest/" + activeName + "/camera";
         document.getElementById("rerunEntityHint").textContent =
           (simViz.rerun_ready || simViz.rrd_uri)
@@ -7643,7 +7643,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
         await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        const entity = String(data.entity_path || ("world/cameras/" + camera));
+        const entity = String(data.entity_path || ("world/camera_frustums/" + camera + "/frustum"));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }}
