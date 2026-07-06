@@ -566,6 +566,10 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "available_run_ids" in source
     assert "active_run_id" in source
     assert "_record_sim_viz_run" in source
+    assert "_wire_sim2real_run_preview" in source
+    submit_source = source.split('def submit_sim2real(payload: dict):')[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
+    assert "_wire_sim2real_run_preview" in submit_source
+    assert '"sim_viz": sim_viz' in submit_source
 
 
 def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
@@ -773,7 +777,16 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/session"):
             return _Resp({"chat_history": [], "selection": {}})
         if url_s.endswith("/api/sim-viz/status"):
-            return _Resp({"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd", "stage": "demo"})
+            params = _kwargs.get("params") or {}
+            run_id = str(params.get("run_id") or "")
+            return _Resp(
+                {
+                    "run_id": run_id or "agent-run-123",
+                    "rerun_ready": True,
+                    "rrd_uri": "/api/sim-viz/rrd",
+                    "stage": "stage_14_rerun_viz" if run_id else "demo",
+                }
+            )
         if url_s.endswith("/api/sim-viz/rrd") or url_s.endswith("/api/sim-viz/rrd-blob"):
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
@@ -840,7 +853,18 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/sim-assets/selection"):
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
-            return _Resp({"ok": True, "run_id": "agent-run-123"})
+            return _Resp(
+                {
+                    "ok": True,
+                    "run_id": "agent-run-123",
+                    "sim_viz": {
+                        "run_id": "agent-run-123",
+                        "stage": "stage_14_rerun_viz",
+                        "rrd_uri": "/api/sim-viz/rrd",
+                        "rerun_ready": True,
+                    },
+                }
+            )
         if url_s.endswith("/api/workflows/submit"):
             return _Resp(
                 {

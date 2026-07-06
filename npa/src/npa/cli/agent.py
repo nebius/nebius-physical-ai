@@ -2636,6 +2636,35 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     _save_state(state)
     return viz
 
+def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "workspace") -> dict:
+    # Attach a concrete Rerun recording to a submitted Sim2Real run id.
+    cam = (camera or "workspace").strip() or "workspace"
+    state["camera_selection"] = [cam]
+    target = _generate_franka_demo_rrd(camera=cam)
+    restarted = _restart_rerun_serve()
+    viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
+    now = _now_iso()
+    viz = {{
+        "run_id": str(run_id or "").strip() or f"agent-run-{{secrets.token_hex(6)}}",
+        "stage": "stage_14_rerun_viz",
+        "rrd_uri": f"file://{{target}}",
+        "rrd_updated_at": now,
+        "live_grpc_url": "",
+        "mode": "static",
+        "camera": cam,
+        "preview_camera": cam,
+        "preview_entity": f"world/cameras/{{cam}}",
+        "rerun_ready": target.is_file() and viewer_ready,
+        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "submit_mode": "sim2real",
+        "workflow_name": "sim2real",
+        "pipeline_visualization": True,
+    }}
+    state["sim_viz"] = viz
+    _record_sim_viz_run(state, viz)
+    _save_state(state)
+    return viz
+
 LLM_PROVIDER = os.environ.get("NPA_AGENT_LLM_PROVIDER", "{DEFAULT_LLM_PROVIDER}").strip() or "{DEFAULT_LLM_PROVIDER}"
 LLM_PROVIDERS_ENV = os.environ.get("NPA_AGENT_LLM_PROVIDERS", "")
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
@@ -4820,19 +4849,9 @@ def submit_sim2real(payload: dict | None = None):
         "submitted_at": _now_iso(),
         "selection": selection,
         "env": env_block,
+        "submit_mode": "sim2real",
     }}
     submitted_at = str(state["latest_submit"]["submitted_at"])
-    state["sim_viz"] = {{
-        "run_id": run_id,
-        "stage": "submitted",
-        "rrd_uri": "",
-        "rrd_updated_at": submitted_at,
-        "live_grpc_url": "",
-        "mode": "static",
-        "rerun_ready": False,
-        "rerun_iframe_url": "",
-        "camera": "workspace",
-    }}
     details = _default_sim2real_run_details(run_id, submitted_at=submitted_at, selection=selection)
     details["logs"].append(
         {{
@@ -4857,21 +4876,8 @@ def submit_sim2real(payload: dict | None = None):
         runs_detail = {{}}
     runs_detail[run_id] = details
     state["sim2real_runs"] = runs_detail
-    _record_sim_viz_run(
-        state,
-        {{
-            "run_id": run_id,
-            "submitted_at": submitted_at,
-            "stage": "submitted",
-            "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
-            "rrd_uri": "",
-            "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
-            "submit_mode": "sim2real",
-            "workflow_name": "sim2real",
-            "rerun_ready": False,
-            "rerun_iframe_url": "",
-        }},
-    )
+    camera = str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace")
+    sim_viz = _wire_sim2real_run_preview(state, run_id=run_id, camera=camera)
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
     live_submit = None
     if script.is_file():
@@ -4882,7 +4888,7 @@ def submit_sim2real(payload: dict | None = None):
                 state["latest_submit"]["submit_mode"] = "live-k8s"
                 state["latest_submit"]["live_submit"] = live_submit
                 _save_state(state)
-                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "live-k8s", "live_submit": live_submit}}
+                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
             except Exception:
                 live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
         else:
@@ -4894,7 +4900,7 @@ def submit_sim2real(payload: dict | None = None):
         daemon=True,
     )
     thread.start()
-    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "agent-local-sim2real"}}
+    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "agent-local-sim2real"}}
     if live_submit is not None:
         response["live_submit"] = live_submit
     return response
@@ -8774,6 +8780,41 @@ def verify_live_cmd(
         _fail(f"workflow submit endpoint failed: {exc}")
     if not isinstance(submit_payload, dict) or not submit_payload.get("run_id"):
         _fail("workflow submit endpoint did not return run_id")
+    submit_run_id = str(submit_payload.get("run_id") or "").strip()
+    submit_viz = submit_payload.get("sim_viz", {})
+    if not isinstance(submit_viz, dict) or submit_viz.get("run_id") != submit_run_id:
+        _fail("workflow submit endpoint did not return run-scoped sim_viz")
+    if not (submit_viz.get("rrd_uri") or submit_viz.get("rerun_ready")):
+        _fail("workflow submit endpoint did not attach a visualizable .rrd to the run")
+    try:
+        submitted_status_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
+            auth=(auth_user, auth_password),
+            params={"run_id": submit_run_id},
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        submitted_status_resp.raise_for_status()
+        submitted_status = submitted_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"submitted sim2real run status endpoint failed: {exc}")
+    if not isinstance(submitted_status, dict) or submitted_status.get("run_id") != submit_run_id:
+        _fail("submitted sim2real run status did not preserve run_id")
+    if not submitted_status.get("rrd_uri"):
+        _fail("submitted sim2real run status did not include rrd_uri")
+    try:
+        submitted_rrd_blob = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/rrd-blob",
+            auth=(auth_user, auth_password),
+            params={"run_id": submit_run_id},
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        submitted_rrd_blob.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"submitted sim2real run rrd-blob endpoint failed: {exc}")
+    if len(submitted_rrd_blob.content) < 64:
+        _fail("submitted sim2real run rrd-blob endpoint returned unexpectedly small payload")
 
     try:
         load_demo_resp = httpx.post(
