@@ -7412,10 +7412,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           renderCameraCards(list, activeName, simViz);
           const updatedAt = String(simViz.rrd_updated_at || "");
-          if (rerunIframeLoaded && updatedAt && updatedAt !== lastRrdUpdatedAt) {{
-            lastRrdUpdatedAt = updatedAt;
-            reloadRerunIframe(simViz.camera || activeName);
-          }} else if (updatedAt) {{
+          if (updatedAt) {{
             lastRrdUpdatedAt = updatedAt;
           }}
         }} catch (err) {{
