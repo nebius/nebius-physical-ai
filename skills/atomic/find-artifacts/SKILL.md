@@ -82,3 +82,8 @@ Unknown types must stay visible/selectable.
 - Validate run ids (`validate_run_id`) before listing/loading.
 - Reject traversal keys (`..`, empty segments).
 - Surface S3 failures directly (`ok: false` or error detail); do not claim success when load/list fails.
+- On the NPA agent, local run artifacts under `/opt/npa-agent/runs/<run_id>/`
+  are a valid fallback when object-store list access is denied. In that case
+  `/api/artifacts/runs` should still return `ok: true`, `source: local`, and a
+  non-fatal `s3_error`, while `/api/artifacts/run/{run_id}` and
+  `/api/sim-viz/load-artifact` continue to work for local files.
