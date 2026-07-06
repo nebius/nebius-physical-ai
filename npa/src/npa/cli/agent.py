@@ -6972,10 +6972,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         iframe.src = src;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
-        setRerunMountStatus("retrying", "rendering");
-        await waitForRerunRenderSettle(iframe, 15000);
         rerunIframeLoaded = true;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
+        waitForRerunRenderSettle(iframe, 15000).catch((err) => {{
+          console.warn("rerun render settle probe failed", err);
+        }});
         return true;
       }}
       async function mountRerunIframeUntilSuccess(camera, maxAttempts, runId) {{
