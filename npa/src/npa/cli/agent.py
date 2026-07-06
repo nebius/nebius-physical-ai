@@ -8011,6 +8011,7 @@ def bootstrap_cmd(
             creds = _creds_from_terraform_state(project, record)
         if creds is None:
             _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
+        creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
         agent_credentials = _agent_credentials_payload(creds)
         s3_bucket = agent_credentials["s3_bucket"]
         s3_endpoint = agent_credentials["s3_endpoint"]
