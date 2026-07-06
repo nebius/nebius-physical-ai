@@ -6234,6 +6234,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!rerunIframeLoaded) return Promise.resolve();
         return mountRerunIframeUntilSuccess(camera, 6);
       }}
+      async function bestEffortMountRerun(camera, runId) {{
+        try {{
+          const cam = String(camera || "workspace");
+          const rid = String(runId || activeRunId || "").trim();
+          await mountRerunIframe(cam, rid);
+          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort");
+          return true;
+        }} catch (err) {{
+          console.warn("best-effort rerun mount failed", err);
+          setRerunMountStatus("degraded", String(err && err.message ? err.message : err).slice(0, 120));
+          return false;
+        }}
+      }}
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         const simViz = await waitForRerunReady();
@@ -6269,8 +6282,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
-        await waitForRerunReady();
-        await waitForRerunSuccess(camera, {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+        const simVizForMount = (result && result.sim_viz) || await waitForRerunReady();
+        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
         activeArtifactRender = "rerun";
         hideArtifactPreview();
         const simViz = await loadJson("/api/sim-viz/status");
@@ -6665,7 +6678,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
-          await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{ runId }});
+          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
         }}
         await refresh();
       }}
@@ -6689,8 +6702,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ camera }}),
         }});
-        await waitForRerunReady();
-        await waitForRerunSuccess(camera, {{ deadlineMs: 90000, mountAttemptsPerLoop: 4 }});
+        const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
+        await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
         const entity = String(data.entity_path || ("world/cameras/" + camera));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
