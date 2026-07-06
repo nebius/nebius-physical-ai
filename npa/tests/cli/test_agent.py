@@ -32,6 +32,90 @@ def test_build_agent_urls_http_legacy() -> None:
     assert urls["cameras_api_url"] == "http://203.0.113.50:8088/assets/api/sim-assets/cameras"
 
 
+def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _ensure_terraform_state_bucket
+
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("npa.clients.nebius.bucket_exists", lambda _project, _bucket: False)
+    monkeypatch.setattr(
+        "npa.clients.nebius.ensure_bucket",
+        lambda project, bucket: calls.append((project, bucket)),
+    )
+
+    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+
+    assert calls == [("project-1", "bucket-1")]
+
+
+def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _ensure_terraform_state_bucket
+
+    called = False
+
+    monkeypatch.setattr("npa.clients.nebius.bucket_exists", lambda _project, _bucket: True)
+
+    def _ensure(project: str, bucket: str) -> None:
+        nonlocal called
+        _ = (project, bucket)
+        called = True
+
+    monkeypatch.setattr("npa.clients.nebius.ensure_bucket", _ensure)
+
+    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+
+    assert called is False
+
+
+def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "bucket-boot"
+    assert resolved["nebius_api_key"] == "ak-boot"
+
+
+def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    calls = {"count": 0}
+
+    def _probe(**kwargs):
+        calls["count"] += 1
+        return calls["count"] > 1 and kwargs["bucket"] == "shared-bucket"
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "shared-bucket"
+    assert resolved["nebius_api_key"] == "ak-shared"
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     from npa.cli import agent as agent_module
 
@@ -983,6 +1067,39 @@ def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
     assert "{0,140}" in raw
     rendered = source.split("_AGENT_CHAT_EMBED = ", 1)[0]  # sanity: module loads
     assert rendered
+
+
+def test_bootstrap_embeds_skill_context_and_api_accounting() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_resolve_skill_context" in source
+    assert "_skill_index_candidates" in source
+    assert "apis_suggested" in source
+    assert "skills_used" in source
+    assert "_dedupe(apis_used)" in source
+
+
+def test_bootstrap_embeds_scoped_state_s3_persistence() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_state_s3_key" in source
+    assert "NPA_AGENT_STATE_S3_PREFIX" in source
+    assert "NPA_AGENT_SESSION_SCOPE" in source
+    assert "_save_state_to_s3" in source
+    assert "_load_state_from_s3" in source
+
+
+def test_bootstrap_embeds_provider_resilience_fallback() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_chat_with_resilience" in source
+    assert "_provider_chat" in source
+    assert "NPA_AGENT_LLM_PROVIDER" in source
+    assert "NPA_AGENT_LLM_PROVIDERS" in source
+    assert "default_provider" in source
 
 
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:

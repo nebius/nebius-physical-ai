@@ -217,6 +217,38 @@ def _looks_like_compute_permission_denied(message: str) -> bool:
     return "permissiondenied" in lowered and "service compute" in lowered
 
 
+def _ensure_terraform_state_bucket(
+    *,
+    project_id: str,
+    bucket_name: str,
+) -> None:
+    """Ensure the Terraform backend bucket exists before terraform init.
+
+    Fresh deploys may receive reused credentials that point at a bucket deleted
+    out-of-band. In that case, recreate the bucket to keep fresh-setup
+    provisioning self-healing.
+    """
+    project = str(project_id or "").strip()
+    bucket = str(bucket_name or "").strip()
+    if not project or not bucket:
+        return
+    from npa.clients.nebius import (
+        NebiusError,
+        bucket_exists,
+        ensure_bucket,
+    )
+
+    try:
+        exists = bucket_exists(project, bucket)
+    except NebiusError:
+        # Let terraform init surface detailed auth/endpoint errors.
+        return
+    if exists:
+        return
+    typer.echo(f"  Terraform state bucket {bucket!r} missing; creating it ...")
+    ensure_bucket(project, bucket)
+
+
 def _apply_agent_terraform(
     *,
     project: str,
@@ -547,6 +579,93 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _storage_credentials_allow_writes(
+    *,
+    bucket: str,
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
+    region: str,
+) -> bool:
+    """Return True when the credentials can write and delete in the bucket."""
+    bucket_name = str(bucket or "").strip()
+    if not bucket_name:
+        return False
+    endpoint_url = str(endpoint or "").strip()
+    if not endpoint_url:
+        endpoint_url = f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
+    try:
+        import boto3
+    except Exception:
+        return False
+    client_kwargs = {
+        "endpoint_url": endpoint_url,
+        "aws_access_key_id": str(access_key or "").strip(),
+        "region_name": str(region or "").strip() or None,
+        "aws_" "secret_access_key": str(secret_key or "").strip(),
+    }
+    client = boto3.client("s3", **client_kwargs)
+    probe_key = f"npa-agent/probe/{secrets.token_hex(8)}.txt"
+    try:
+        client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
+        client.delete_object(Bucket=bucket_name, Key=probe_key)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_deploy_storage_credentials(
+    *,
+    region: str,
+    bootstrap_creds: dict[str, str],
+) -> dict[str, str]:
+    """Prefer bootstrap credentials, but fall back to shared storage keys when needed."""
+    candidate = dict(bootstrap_creds)
+    bucket = str(candidate.get("s3_bucket", "")).strip()
+    endpoint = str(candidate.get("s3_endpoint", "")).strip()
+    access_key = str(candidate.get("nebius_api_key", "")).strip()
+    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
+    if _storage_credentials_allow_writes(
+        bucket=bucket,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+    ):
+        return candidate
+    from npa.clients.credentials import load_credentials
+
+    shared = load_credentials()
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    if shared_bucket.startswith("s3://"):
+        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
+        region=region,
+    ):
+        typer.echo(
+            "  Bootstrap S3 key has no data-plane access; "
+            "falling back to shared configured storage credentials."
+        )
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
+        return candidate
+    typer.echo(
+        "  Warning: unable to verify writable S3 credentials for deploy; "
+        "continuing with bootstrap-provided keys.",
+        err=True,
+    )
+    return candidate
+
+
 def _resolve_agent_service_account_id(
     project_alias: str,
     record: dict[str, Any],
@@ -679,15 +798,23 @@ def _write_agent_llm_env(
     ssh: SSHClient,
     *,
     tf_api_key: str,
+    llm_provider: str,
     llm_model: str,
+    llm_providers: list[str] | tuple[str, ...] = (DEFAULT_LLM_PROVIDER,),
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
 ) -> None:
     """Stage Token Factory credentials on the VM (chmod 600, not baked into image)."""
     if not tf_api_key.strip():
         return
     models_csv = ",".join(_normalize_llm_models(list(llm_models)))
+    providers_csv = ",".join(
+        _normalize_llm_models([str(item) for item in llm_providers if str(item).strip()])
+        or [DEFAULT_LLM_PROVIDER]
+    )
     env_content = (
         f"NEBIUS_TOKEN_FACTORY_KEY={tf_api_key.strip()}\n"
+        f"NPA_AGENT_LLM_PROVIDER={llm_provider.strip() or DEFAULT_LLM_PROVIDER}\n"
+        f"NPA_AGENT_LLM_PROVIDERS={providers_csv}\n"
         f"NPA_AGENT_LLM_MODEL={llm_model}\n"
         f"NPA_AGENT_LLM_MODELS={models_csv}\n"
     )
@@ -815,6 +942,7 @@ def _write_agent_nebius_env(
     ssh: SSHClient,
     *,
     project_alias: str,
+    agent_name: str,
     project_id: str,
     tenant_id: str,
     region: str,
@@ -830,6 +958,7 @@ def _write_agent_nebius_env(
         return
     env_lines = [
         f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
+        f"NPA_AGENT_NAME={agent_name.strip()}",
         f"NEBIUS_PROJECT_ID={project_id.strip()}",
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
@@ -1182,6 +1311,7 @@ def _bootstrap_agent_stack(
     ssh_user: str,
     ssh_key_path: str,
     project_alias: str,
+    agent_name: str = DEFAULT_AGENT_NAME,
     project_id: str,
     tenant_id: str,
     region: str,
@@ -1296,6 +1426,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -1372,7 +1503,83 @@ DEFAULT_SIM_VIZ = {{
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+def _slug(value: str, *, fallback: str = "default") -> str:
+    token = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value or "").strip()).strip("-.")
+    return token or fallback
+
+def _state_scope_parts() -> tuple[str, str, str]:
+    project_alias = _slug(os.environ.get("NPA_AGENT_PROJECT_ALIAS", "default-project"))
+    agent_name = _slug(os.environ.get("NPA_AGENT_NAME", "agent"))
+    session_scope = _slug(os.environ.get("NPA_AGENT_SESSION_SCOPE", "default-session"))
+    return project_alias, agent_name, session_scope
+
+def _state_s3_settings() -> dict[str, str]:
+    return {{
+        "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
+        "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
+        "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
+        "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
+        "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
+        "prefix": str(os.environ.get("NPA_AGENT_STATE_S3_PREFIX", "npa-agent/session-state")).strip().strip("/"),
+    }}
+
+def _state_s3_key() -> str:
+    settings = _state_s3_settings()
+    project_alias, agent_name, session_scope = _state_scope_parts()
+    prefix = settings.get("prefix", "npa-agent/session-state")
+    return f"{{prefix}}/{{project_alias}}/{{agent_name}}/{{session_scope}}.json"
+
+def _state_s3_client():
+    settings = _state_s3_settings()
+    if not (settings["bucket"] and settings["access_key"] and settings["secret_key"]):
+        return None, settings
+    try:
+        client_kwargs = {{
+            "endpoint_url": settings["endpoint"],
+            "aws_access_key_id": settings["access_key"],
+            "region_name": settings["region"],
+        }}
+        secret_param = "aws" + "_secret_access_key"
+        client_kwargs[secret_param] = settings["secret_key"]
+        return build_s3_client(**client_kwargs), settings
+    except Exception:
+        return None, settings
+
+def _load_state_from_s3() -> dict | None:
+    client, settings = _state_s3_client()
+    if client is None:
+        return None
+    try:
+        payload = client.get_object(Bucket=settings["bucket"], Key=_state_s3_key())
+        body = payload.get("Body")
+        if body is None:
+            return None
+        raw = body.read()
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8")
+        else:
+            text = str(raw)
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+def _save_state_to_s3(state: dict) -> None:
+    client, settings = _state_s3_client()
+    if client is None:
+        return
+    try:
+        client.put_object(
+            Bucket=settings["bucket"],
+            Key=_state_s3_key(),
+            Body=(json.dumps(state, indent=2, sort_keys=True) + "\\n").encode("utf-8"),
+            ContentType="application/json",
+        )
+    except Exception:
+        return
+
 def _default_state() -> dict:
+    project_alias, agent_name, session_scope = _state_scope_parts()
     return {{
         "selection": dict(DEFAULT_SELECTION),
         "camera_selection": ["workspace"],
@@ -1385,15 +1592,22 @@ def _default_state() -> dict:
         "chat_history": [],
         "active_chat_session_id": "default",
         "chat_sessions": {{}},
+        "session_scope": session_scope,
+        "agent_scope": {{"project_alias": project_alias, "name": agent_name}},
+        "state_version": 2,
     }}
 
 def _load_state() -> dict:
-    if not STATE_PATH.exists():
-        return _default_state()
-    try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return _default_state()
+    data = None
+    if STATE_PATH.exists():
+        try:
+            payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                data = payload
+        except Exception:
+            data = None
+    if data is None:
+        data = _load_state_from_s3()
     if not isinstance(data, dict):
         return _default_state()
     merged = _default_state()
@@ -1417,7 +1631,10 @@ def _load_state() -> dict:
     return merged
 
 def _save_state(state: dict) -> None:
+    state["updated_at"] = _now_iso()
+    state["state_version"] = int(state.get("state_version") or 2)
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    _save_state_to_s3(state)
 
 
 def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
@@ -2094,6 +2311,8 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     _save_state(state)
     return viz
 
+LLM_PROVIDER = os.environ.get("NPA_AGENT_LLM_PROVIDER", "{DEFAULT_LLM_PROVIDER}").strip() or "{DEFAULT_LLM_PROVIDER}"
+LLM_PROVIDERS_ENV = os.environ.get("NPA_AGENT_LLM_PROVIDERS", "")
 LLM_MODEL = os.environ.get("NPA_AGENT_LLM_MODEL", "{DEFAULT_LLM_MODEL}")
 LLM_MODELS_ENV = os.environ.get("NPA_AGENT_LLM_MODELS", "")
 DEFAULT_LLM_MODELS = {default_llm_models_json}
@@ -2125,11 +2344,44 @@ def _configured_llm_models() -> list[str]:
         configured.insert(0, LLM_MODEL)
     return configured
 
+def _configured_llm_providers() -> list[str]:
+    providers = _normalize_llm_models(LLM_PROVIDERS_ENV)
+    if not providers:
+        providers = [LLM_PROVIDER]
+    if LLM_PROVIDER not in providers:
+        providers.insert(0, LLM_PROVIDER)
+    return providers
+
+def _provider_base_url(provider: str) -> str:
+    normalized = str(provider or "").strip().lower().replace("-", "_")
+    if normalized in {"token_factory", "tokenfactory"}:
+        return os.environ.get("NEBIUS_TOKEN_FACTORY_BASE_URL", "https://api.tokenfactory.nebius.com/v1/").rstrip("/")
+    env_key = f"NPA_AGENT_{{normalized.upper()}}_BASE_URL"
+    custom = str(os.environ.get(env_key, "")).strip()
+    return custom.rstrip("/")
+
+def _provider_api_key(provider: str) -> str:
+    normalized = str(provider or "").strip().lower().replace("-", "_")
+    if normalized in {"token_factory", "tokenfactory"}:
+        return str(os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "")).strip()
+    env_keys = [
+        f"NPA_AGENT_{{normalized.upper()}}_API_KEY",
+        f"NEBIUS_{{normalized.upper()}}_KEY",
+    ]
+    for key in env_keys:
+        value = str(os.environ.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
 def _fetch_token_factory_models() -> list[str]:
-    api_key = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+    api_key = _provider_api_key("token_factory")
     if not api_key:
         return []
-    url = f"{{TF_BASE_URL}}/models"
+    base_url = _provider_base_url("token_factory")
+    if not base_url:
+        return []
+    url = f"{{base_url}}/models"
     try:
         response = httpx.get(
             url,
@@ -2248,33 +2500,62 @@ def _split_reasoning(message: dict) -> tuple[str, str | None]:
         return content.strip(), reasoning
     return "", (reasoning.strip() if reasoning else None)
 
-def _token_factory_chat(*, messages: list, model: str | None = None) -> dict:
-    api_key = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
+    api_key = _provider_api_key(provider)
     if not api_key:
-        raise HTTPException(status_code=503, detail="Token Factory API key not configured on agent VM")
-    url = f"{{TF_BASE_URL}}/chat/completions"
+        raise RuntimeError(f"missing API key for provider '{{provider}}'")
+    base_url = _provider_base_url(provider)
+    if not base_url:
+        raise RuntimeError(f"missing base URL for provider '{{provider}}'")
+    url = f"{{base_url}}/chat/completions"
     payload = {{
-        "model": model or LLM_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.2,
     }}
-    try:
-        response = httpx.post(
-            url,
-            headers={{
-                "Authorization": f"Bearer {{api_key}}",
-                "Content-Type": "application/json",
-            }},
-            json=payload,
-            timeout=120.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Token Factory request failed: {{exc}}") from exc
+    for attempt in range(3):
+        try:
+            response = httpx.post(
+                url,
+                headers={{
+                    "Authorization": f"Bearer {{api_key}}",
+                    "Content-Type": "application/json",
+                }},
+                json=payload,
+                timeout=120.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            break
+        except httpx.HTTPError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", 0)
+            transient = bool(status_code in {{408, 409, 425, 429}} or status_code >= 500)
+            if transient and attempt < 2:
+                time.sleep(0.6 * (2 ** attempt))
+                continue
+            raise RuntimeError(f"provider '{{provider}}' request failed (status={{status_code}}): {{exc}}") from exc
+    else:
+        raise RuntimeError(f"provider '{{provider}}' did not return a response")
     if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Token Factory returned non-object response")
+        raise RuntimeError(f"provider '{{provider}}' returned non-object response")
     return data
+
+def _chat_with_resilience(*, messages: list, requested_model: str) -> tuple[dict, str, str]:
+    providers = _configured_llm_providers()
+    models = _configured_llm_models()
+    if requested_model and requested_model not in models:
+        models.insert(0, requested_model)
+    errors: list[str] = []
+    for provider in providers:
+        for model in models:
+            try:
+                data = _provider_chat(provider=provider, messages=messages, model=model)
+                return data, provider, model
+            except Exception as exc:
+                errors.append(str(exc))
+                continue
+    detail = "; ".join(errors[-4:]) if errors else "no providers configured"
+    raise HTTPException(status_code=502, detail=f"LLM providers unavailable: {{detail}}")
 
 {_AGENT_CHAT_EMBED}
 
@@ -2355,7 +2636,6 @@ def _resolve_workflow_yaml(payload: dict) -> str:
         return yaml_text
     draft = _workflow_draft_from_state(_load_state())
     return str(draft.get("yaml") or "").strip()
-
 
 def _agent_npa_ready() -> tuple[bool, str]:
     if not NPA_CLI.exists():
@@ -2605,7 +2885,100 @@ def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, in
         ),
         "options": infra.get("options", []),
     }}
+_SKILL_CACHE = {{"loaded_at": 0.0, "index": {{}}, "root": Path("/")}}
+_INTENT_SKILLS = {{
+    "onboard_solution": ("byof-onboard",),
+    "find_artifacts": ("find-artifacts",),
+    "create_workflow": ("author-npa-workflow",),
+    "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
+    "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
+    "live_infra_loop": ("submit-workflow", "gpu-selection"),
+    "cosmos3": ("cosmos3-setup",),
+    "sim2real_status": ("sim2real-operate",),
+    "watch_sim": ("sim2real-operate",),
+}}
 
+def _skill_index_candidates() -> list[Path]:
+    return [
+        Path("/opt/npa-agent/repo/skills/index.yaml"),
+        Path("/workspace/skills/index.yaml"),
+        Path.cwd() / "skills" / "index.yaml",
+    ]
+
+def _load_skill_index() -> tuple[dict[str, str], Path]:
+    now = time.monotonic()
+    cache = _SKILL_CACHE
+    if cache.get("loaded_at", 0.0) > 0 and now - float(cache.get("loaded_at", 0.0)) < 60.0:
+        return (
+            dict(cache.get("index", {{}})) if isinstance(cache.get("index"), dict) else {{}},
+            cache.get("root") if isinstance(cache.get("root"), Path) else Path("/"),
+        )
+    for candidate in _skill_index_candidates():
+        if not candidate.is_file():
+            continue
+        try:
+            payload = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {{}}
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        skills = payload.get("skills")
+        if not isinstance(skills, list):
+            continue
+        root_name = str(payload.get("root") or "skills").strip() or "skills"
+        root = candidate.parent / root_name
+        index: dict[str, str] = {{}}
+        for entry in skills:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            rel_path = str(entry.get("path") or "").strip()
+            if not name or not rel_path:
+                continue
+            index[name] = rel_path
+        cache["loaded_at"] = now
+        cache["index"] = index
+        cache["root"] = root
+        return index, root
+    cache["loaded_at"] = now
+    cache["index"] = {{}}
+    cache["root"] = Path("/")
+    return {{}}, Path("/")
+
+def _skill_excerpt(skill_name: str, *, max_chars: int = 900) -> str:
+    index, root = _load_skill_index()
+    rel_path = str(index.get(skill_name) or "").strip()
+    if not rel_path:
+        return ""
+    path = root / rel_path
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    excerpt = "\\n".join(line for line in text.splitlines() if line.strip())[:max_chars].strip()
+    return excerpt
+
+def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[str], str]:
+    names: list[str] = []
+    if intent and intent in _INTENT_SKILLS:
+        for name in _INTENT_SKILLS[intent]:
+            if name not in names:
+                names.append(name)
+    lowered = str(user_text or "").lower()
+    if "artifact" in lowered and "find-artifacts" not in names:
+        names.append("find-artifacts")
+    if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
+        names.append("author-npa-workflow")
+    snippets: list[str] = []
+    for name in names[:4]:
+        excerpt = _skill_excerpt(name)
+        if excerpt:
+            snippets.append(f"[skill:{{name}}]\\n{{excerpt}}")
+    if not snippets:
+        return names, ""
+    return names, "Relevant NPA skill excerpts:\\n\\n" + "\\n\\n".join(snippets)
 
 def _last_user_message(raw_messages: list) -> str:
     for item in reversed(raw_messages):
@@ -2615,13 +2988,25 @@ def _last_user_message(raw_messages: list) -> str:
             return str(item.get("content", "")).strip()
     return ""
 
-def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str], str | None, dict | None]:
+def _dedupe(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    for value in values:
+        token = str(value or "").strip()
+        if token and token not in unique:
+            unique.append(token)
+    return unique
+
+def _maybe_toolground_chat_reply(
+    user_text: str,
+) -> tuple[str | None, list[str], list[str], str | None, dict | None, str | None]:
     intent = match_chat_intent(user_text)
     if not intent and re.search(r"\\bworkflow\\b.*\\b(?:yaml|spec)\\b", str(user_text or ""), re.IGNORECASE):
         intent = "create_workflow"
     if not intent:
-        return None, [], None, None
+        return None, [], [], None, None, None
     state = _load_state()
+    suggested_apis = apis_for_intent(intent)
+    apis_used: list[str] = []
     loaded_now = False
     rerun_ready = None
     default_cameras = list(DEFAULT_SCENE_SPEC.get("cameras", {{}}).values())
@@ -2634,6 +3019,7 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
             selected = state.get("camera_selection", ["workspace"])
             cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
             _wire_franka_demo(state, camera=cam)
+            apis_used.append("sim-viz/load-franka-demo")
             state = _load_state()
             loaded_now = True
             sim_viz = state.get("sim_viz", {{}})
@@ -2645,6 +3031,7 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         # GET /api/sim-viz/status so chat mirrors the live iframe panel.
         try:
             live_status = sim_viz_status()
+            apis_used.append("sim-viz/status")
             if isinstance(live_status, dict):
                 state["sim_viz"] = dict(live_status)
                 _save_state(state)
@@ -2674,6 +3061,7 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
         state["workflow_draft"]["template"] = template
         _save_state(state)
+        apis_used.extend(["workflows/draft", "workflows/validate", "workflows/plan"])
         if not runnable:
             fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
             reply = (
@@ -2682,9 +3070,11 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
                 "- Adjust your request or template details and retry;"
                 " chat returns YAML only after both validation and planning succeed."
             )
-            return reply, apis_for_intent(intent), None, {{"ok": False, "validation": validation, "plan": plan}}
+            return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
         reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
-        return reply, apis_for_intent(intent), yaml_text, validation
+        return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
+    if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop"}}:
+        apis_used.append("tools")
     reply = build_grounded_reply(
         intent,
         state,
@@ -2693,15 +3083,16 @@ def _maybe_toolground_chat_reply(user_text: str) -> tuple[str | None, list[str],
         loaded_franka_now=loaded_now,
         default_cameras=default_cameras,
     )
-    return reply, apis_for_intent(intent), None, None
+    return reply, _dedupe(apis_used), suggested_apis, None, None, intent
 
 def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
         return None
-    tool_reply, apis_used, workflow_yaml, workflow_validation = _maybe_toolground_chat_reply(last_user)
+    tool_reply, apis_used, apis_suggested, workflow_yaml, workflow_validation, intent = _maybe_toolground_chat_reply(last_user)
     if not tool_reply:
         return None
+    skill_names, _ = _resolve_skill_context(user_text=last_user, intent=intent)
     payload = {{
         "ok": True,
         "model": model,
@@ -2709,6 +3100,8 @@ def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
         "reasoning": None,
         "grounded": True,
         "apis_used": apis_used,
+        "apis_suggested": apis_suggested,
+        "skills_used": skill_names,
     }}
     if workflow_yaml:
         payload["workflow_yaml"] = workflow_yaml
@@ -2769,8 +3162,14 @@ def chat(payload: dict):
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
+    last_user = _last_user_message(raw_messages)
+    intent = match_chat_intent(last_user)
+    skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
+    system_content = _agent_system_prompt() + "\\n\\n" + live_ctx
+    if skill_ctx:
+        system_content += "\\n\\n" + skill_ctx
     messages: list[dict] = [
-        {{"role": "system", "content": _agent_system_prompt() + "\\n\\n" + live_ctx}}
+        {{"role": "system", "content": system_content}}
     ]
     for item in raw_messages:
         if not isinstance(item, dict):
@@ -2781,11 +3180,11 @@ def chat(payload: dict):
             messages.append({{"role": role, "content": content}})
     if len(messages) < 2:
         raise HTTPException(status_code=400, detail="at least one user message is required")
-    data = _token_factory_chat(messages=messages, model=model)
+    data, selected_provider, selected_model = _chat_with_resilience(messages=messages, requested_model=model)
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise HTTPException(status_code=502, detail="Token Factory response missing assistant message") from exc
+        raise HTTPException(status_code=502, detail="LLM response missing assistant message") from exc
     reply, reasoning = _split_reasoning(message)
     if not reply and reasoning:
         reply = reasoning
@@ -2811,7 +3210,8 @@ def chat(payload: dict):
     session = _save_chat_session(state, session, active=True)
     return {{
         "ok": True,
-        "model": model,
+        "model": selected_model,
+        "provider": selected_provider,
         "reply": reply,
         "reasoning": reasoning,
         "session_id": session["id"],
@@ -2821,6 +3221,7 @@ def chat(payload: dict):
             "memory_uri": session.get("memory_uri", ""),
             "message_count": len(session.get("chat_history", [])),
         }},
+        "skills_used": skill_names,
     }}
 
 @app.get("/health")
@@ -2833,6 +3234,8 @@ def models(refresh: bool = False):
         "ok": True,
         "default": LLM_MODEL,
         "default_model": LLM_MODEL,
+        "default_provider": LLM_PROVIDER,
+        "providers": _configured_llm_providers(),
         "models": _available_llm_models(refresh=bool(refresh)),
     }}
 
@@ -2872,6 +3275,9 @@ def session_bootstrap():
         "llm": {{
             "default": LLM_MODEL,
             "default_model": LLM_MODEL,
+            "default_provider": LLM_PROVIDER,
+            "provider": LLM_PROVIDER,
+            "providers": _configured_llm_providers(),
             "model": LLM_MODEL,
             "models": _available_llm_models(),
         }},
@@ -6416,7 +6822,14 @@ sudo systemctl restart npa-agent-backend
         if local_setup_script:
             Path(local_setup_script).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
-    _write_agent_llm_env(ssh, tf_api_key=tf_api_key, llm_model=llm_model, llm_models=llm_models)
+    _write_agent_llm_env(
+        ssh,
+        tf_api_key=tf_api_key,
+        llm_provider=DEFAULT_LLM_PROVIDER,
+        llm_providers=(DEFAULT_LLM_PROVIDER,),
+        llm_model=llm_model,
+        llm_models=llm_models,
+    )
     _write_agent_s3_env(
         ssh,
         bucket=s3_bucket,
@@ -6450,6 +6863,7 @@ sudo systemctl restart npa-agent-backend
     _write_agent_nebius_env(
         ssh,
         project_alias=project_alias,
+        agent_name=agent_name,
         project_id=nebius_project_id or project_id,
         tenant_id=nebius_tenant_id or tenant_id,
         region=s3_region,
@@ -6540,6 +6954,10 @@ def deploy_cmd(
             env_region,
             on_status=lambda msg: typer.echo(f"  {msg}"),
         )
+        creds = _resolve_deploy_storage_credentials(
+            region=env_region,
+            bootstrap_creds=creds,
+        )
         iam_token = get_iam_token()
     except NebiusError as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
@@ -6578,6 +6996,13 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var value {item!r}; expected key=value")
         key, value = item.split("=", 1)
         merged_vars[key.strip()] = value.strip()
+    try:
+        _ensure_terraform_state_bucket(
+            project_id=env_project_id,
+            bucket_name=str(merged_vars.get("s3_bucket", "")),
+        )
+    except NebiusError as exc:
+        _fail(f"Unable to provision Terraform state bucket: {exc}")
 
     tf_outputs: dict[str, Any] = {}
     try:
@@ -6637,6 +7062,7 @@ def deploy_cmd(
             ssh_user=ssh_user,
             ssh_key_path=ssh_key_path,
             project_alias=project,
+            agent_name=name,
             project_id=env_project_id,
             tenant_id=env_tenant_id,
             region=env_region,
@@ -6934,6 +7360,7 @@ def bootstrap_cmd(
             ssh_user=ssh_user,
             ssh_key_path=ssh_key_path,
             project_alias=project,
+            agent_name=name,
             project_id=str(record.get("project_id", "") or ""),
             tenant_id=str(record.get("tenant_id", "") or ""),
             region=str(record.get("region", "") or "eu-north1"),
