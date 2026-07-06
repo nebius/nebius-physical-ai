@@ -7667,29 +7667,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         await refresh();
       }}
       async function submitWorkflow() {{
-        const baseline = await loadJson("/api/sim-viz/status");
-        const baselineUpdatedAt = String((baseline && baseline.rrd_updated_at) || "").trim();
         const data = await apiJson("/api/workflows/sim2real/submit", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{}}),
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
-        appendChat("assistant", "Watching sim progress: rendering stage/result/logs immediately; Rerun opens only after a run-specific `.rrd` is available.");
+        appendChat("assistant", "Watching sim progress: loading the submitted run's Rerun recording.");
         const submittedRunId = String(data.run_id || "").trim();
         if (submittedRunId) activeRunId = submittedRunId;
         renderRunDetails(data);
-        const simViz = await pollSimVizUntilRrd(8, 1500, submittedRunId);
+        let simViz = (data && data.sim_viz) || {{}};
+        if (!simViz.rrd_uri) {{
+          simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
+        }}
         if (simViz && simViz.rrd_uri) {{
-          await waitForRerunSuccess(
-            simViz.camera || "workspace",
-            {{
-              deadlineMs: 180000,
-              mountAttemptsPerLoop: 5,
-              runId: submittedRunId,
-              baselineRrdUpdatedAt: baselineUpdatedAt,
-            }}
-          );
+          await bestEffortMountRerun(String(simViz.camera || "workspace"), submittedRunId);
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
             throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
           }}
@@ -7711,7 +7704,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               "`. No `.rrd` recording is available yet, so the Run status/logs panel is the source of truth."
           );
         }}
-        await refresh();
       }}
       async function showWorkflowStatus() {{
         const status = await loadJson("/api/workflows/sim2real/status");
