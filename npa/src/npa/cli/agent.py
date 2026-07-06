@@ -1790,13 +1790,16 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
 
 def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     payload = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        payload.update(current)
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
     if isinstance(runs, dict) and target and isinstance(runs.get(target), dict):
         payload.update(runs[target])
+    elif run_id:
+        payload["run_id"] = target
+    else:
+        current = state.get("sim_viz")
+        if isinstance(current, dict):
+            payload.update(current)
     return payload
 
 def _stock_franka_selection() -> dict:
@@ -3824,9 +3827,7 @@ def models(refresh: bool = False):
 def session_bootstrap():
     state = _load_state()
     active_session = _get_chat_session(state, str(state.get("active_chat_session_id") or "default"))
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    if isinstance(state.get("sim_viz"), dict):
-        sim_viz.update(state["sim_viz"])
+    sim_viz = _sim_viz_for_run(state)
     selected = state.get("camera_selection", ["workspace"])
     camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     sim_viz["camera"] = camera
@@ -7492,6 +7493,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         try {{
           const session = await loadJson("/api/session");
           activeChatSessionId = String(session.active_chat_session_id || activeChatSessionId || "default");
+          if (session && session.sim_viz) {{
+            activeRunId = String((session.sim_viz.active_run_id || session.sim_viz.run_id || activeRunId || "")).trim();
+            activeArtifactRender = String(session.sim_viz.artifact_render || activeArtifactRender || "");
+            updateRenderedDataSummary(session.sim_viz);
+          }}
           updateChatSessionSelector(session.chat_sessions, activeChatSessionId);
           if (session && session.llm) {{
             const currentModel = String(
