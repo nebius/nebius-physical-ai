@@ -296,6 +296,10 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
     assert "alias /opt/npa-agent/recordings/" in source
+    rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split("location / {{", 1)[0]
+    assert "auth_basic off;" in rerun_viewer_location
+    rerun_asset_location = source.split("location ~* ^/rerun/", 1)[1].split("location /rerun/ {{", 1)[0]
+    assert "auth_basic off;" in rerun_asset_location
 
 
 def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
@@ -517,6 +521,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     apply_selection_source = source.split("async function applySelection")[1].split("async function submitWorkflow")[0]
     assert "await waitForRerunSuccess" in apply_selection_source
     assert "activeArtifactRender = \"rerun\"" in apply_selection_source
+    fetch_with_timeout_source = source.split("async function fetchWithTimeout")[1].split("async function apiJson")[0]
+    assert "withMobileAuth" in fetch_with_timeout_source
     api_json_before_fetch = source.split("async function apiJson")[1].split("let resp;")[0]
     assert 'throw new Error("Unlock chat with your agent password.");' not in api_json_before_fetch
     assert "lastRerunBlobStatus" in source

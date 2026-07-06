@@ -1344,6 +1344,7 @@ def _nginx_agent_site_body(
     add_header Cache-Control "no-cache" always;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
+    auth_basic off;
     rewrite ^/rerun/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{rerun_port};
     proxy_http_version 1.1;
@@ -1357,6 +1358,7 @@ def _nginx_agent_site_body(
     add_header Cache-Control "public, max-age=31536000, immutable" always;
   }}
   location /rerun/ {{
+    auth_basic off;
     proxy_pass http://127.0.0.1:{rerun_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -7097,8 +7099,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const ms = Number(timeoutMs || 12000);
         const ctrl = new AbortController();
         const timer = window.setTimeout(() => ctrl.abort(), ms);
+        const req = init || {{}};
+        const headers = withMobileAuth({{
+          ...(req.headers || {{}}),
+        }});
+        const useExplicitAuth = document.body.classList.contains("mobile-agent") && Boolean(headers.Authorization);
         try {{
-          return await fetch(path, {{ ...(init || {{}}), signal: ctrl.signal }});
+          return await fetch(path, {{
+            ...req,
+            credentials: useExplicitAuth ? "omit" : (req.credentials || "include"),
+            headers,
+            signal: ctrl.signal,
+          }});
         }} finally {{
           window.clearTimeout(timer);
         }}
