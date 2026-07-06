@@ -328,6 +328,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'id="rerunFrame" title="rerun" hidden' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
+    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "/rerun/recordings/sim2real.rrd" in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
