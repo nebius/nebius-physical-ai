@@ -4484,7 +4484,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         gap: 14px;
       }}
       .layout {{ display: grid; gap: 14px; }}
-      .layout-3 {{ grid-template-columns: 1fr 0.95fr 1.35fr; }}
+      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(760px, 1fr); }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -4523,7 +4523,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 4px 9px;
         font-size: 12px;
       }}
-      .cameras-panel {{ border-color: #d7dbf6; }}
+      .cameras-panel {{ display: none; }}
       .camera-card {{
         border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
         background: #fff;
@@ -4738,7 +4738,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         outline: none;
       }}
       .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
-      iframe {{ width: 100%; height: 380px; border: 1px solid var(--border); border-radius: 10px; }}
+      iframe {{ width: 100%; height: min(78vh, 820px); min-height: 620px; border: 1px solid var(--border); border-radius: 10px; }}
       .rerun-placeholder {{
         width: 100%;
         min-height: 220px;
@@ -4843,7 +4843,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         .panel {{ padding: 12px; }}
         .field-row {{ grid-template-columns: 1fr; }}
         .msg-card {{ max-width: 92%; }}
-        iframe {{ height: 300px; }}
+        iframe {{ height: 360px; min-height: 360px; }}
       }}
       @media (max-width: 640px) {{
         body {{ padding-bottom: calc(52px + env(safe-area-inset-bottom)); }}
