@@ -44,7 +44,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b(?:start|run|launch|execute|kick\s*off|submit)\b"
             r".{0,120}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|simulation\s+pipeline|pipeline)\b"
-            r"|\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,120}\b(?:start|run|launch|execute|kick\s*off|submit)\b",
+            r"|\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,120}\b(?:start|launch|execute|kick\s*off|submit)\b",
             re.IGNORECASE,
         ),
     ),
@@ -161,6 +161,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"\b(?:find|discover|list|browse|show|view|open|inspect)\b.{0,120}\b(?:artifacts?|outputs?)\b"
             r"|\bwhat can i view\b"
             r"|\bwhat\b.{0,80}\bartifacts?\b.{0,120}\bview\b"
+            r"|\b(?:what|which)\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)?\s*run\b.{0,80}\b(?:view|load|open|use)\b"
             r"|\bartifact\b.{0,120}\b(?:browser|viewer|preview|download)\b",
             re.IGNORECASE,
         ),

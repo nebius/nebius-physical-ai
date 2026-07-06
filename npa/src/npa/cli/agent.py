@@ -3510,6 +3510,71 @@ def _maybe_toolground_chat_reply(
             "- The Run Monitor will update stages, result, and logs; Rerun will switch to the run recording when it is written."
         )
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
+    if intent == "find_artifacts":
+        mentioned_run = ""
+        match = re.search(r"\b(agent-run-[A-Za-z0-9_-]+|sim2real-[A-Za-z0-9_.:-]+)\b", str(user_text or ""))
+        if match:
+            mentioned_run = match.group(1)
+        try:
+            if mentioned_run:
+                listed = artifacts_for_run(mentioned_run)
+                apis_used.append("artifacts/run/{{run_id}}")
+                if isinstance(listed, JSONResponse):
+                    payload = json.loads(listed.body.decode("utf-8"))
+                else:
+                    payload = listed
+                count = int(payload.get("count") or 0)
+                preferred = payload.get("preferred") if isinstance(payload.get("preferred"), dict) else {{}}
+                if count <= 0:
+                    reply = (
+                        "**No S3 artifacts found for that run.**\\n"
+                        f"- **run_id**: `{{mentioned_run}}`\\n"
+                        f"- **S3 prefix**: `{{payload.get('prefix', '')}}`\\n"
+                        "- It may predate S3 upload support or belong to a destroyed agent VM."
+                    )
+                    return reply, _dedupe(apis_used), suggested_apis, None, payload, intent
+                reply = (
+                    "**Run artifacts found.**\\n"
+                    f"- **run_id**: `{{mentioned_run}}`\\n"
+                    f"- **artifact_count**: `{{count}}`\\n"
+                    f"- **preferred**: `{{preferred.get('key', '')}}`\\n"
+                    f"- **render**: `{{preferred.get('render', '')}}`"
+                )
+                return reply, _dedupe(apis_used), suggested_apis, None, payload, intent
+            page = artifacts_runs(limit=5)
+            apis_used.append("artifacts/runs")
+            if isinstance(page, JSONResponse):
+                payload = json.loads(page.body.decode("utf-8"))
+            else:
+                payload = page
+            rows = payload.get("runs") if isinstance(payload, dict) else []
+            latest = rows[0] if isinstance(rows, list) and rows else {{}}
+            latest_run = str(latest.get("run_id") or "")
+            if not latest_run:
+                reply = (
+                    "**No S3-backed Sim2Real runs are discoverable yet.**\\n"
+                    f"- **S3 prefix**: `{{payload.get('prefix', '') if isinstance(payload, dict) else ''}}`"
+                )
+                return reply, _dedupe(apis_used), suggested_apis, None, payload if isinstance(payload, dict) else {{}}, intent
+            details = artifacts_for_run(latest_run)
+            apis_used.append("artifacts/run/{{run_id}}")
+            if isinstance(details, JSONResponse):
+                details_payload = json.loads(details.body.decode("utf-8"))
+            else:
+                details_payload = details
+            preferred = details_payload.get("preferred") if isinstance(details_payload.get("preferred"), dict) else {{}}
+            reply = (
+                "**Use this S3-backed Sim2Real run.**\\n"
+                f"- **run_id**: `{{latest_run}}`\\n"
+                f"- **artifact_count**: `{{latest.get('artifact_count', '')}}`\\n"
+                f"- **preferred_artifact**: `{{preferred.get('key', '')}}`\\n"
+                f"- **render**: `{{preferred.get('render', '')}}`\\n"
+                "- In the UI, paste this run id or select it from **Discovered runs**, then **List artifacts**."
+            )
+            return reply, _dedupe(apis_used), suggested_apis, None, details_payload, intent
+        except Exception as exc:
+            reply = f"**Artifact discovery failed.**\\n- **error**: `{{exc}}`"
+            return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "error": str(exc)}}, intent
     if intent == "load_franka":
         sim_viz = state.get("sim_viz", {{}})
         if not isinstance(sim_viz, dict):

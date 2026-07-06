@@ -186,6 +186,8 @@ def test_agent_artifact_discovery_requires_s3_components() -> None:
     assert "list_runs(" in source
     assert "list_artifacts(" in source
     assert "download_s3_uri(" in source
+    assert "Use this S3-backed Sim2Real run" in source
+    assert "No S3 artifacts found for that run" in source
     assert '"source": "s3"' in source
     assert "local_path.resolve() != target.resolve()" in source
     assert "run artifacts to S3" in source
