@@ -1876,8 +1876,30 @@ def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]
     positions.append([ee[0], ee[1] - 0.04, ee[2]])
     return positions
 
-def _log_franka_robot_geometry(rr) -> None:
-    positions = _franka_joint_positions(_FRANKA_HOME_JOINTS)
+def _franka_demo_joint_angles(frame_index: int, frame_count: int) -> tuple[float, ...]:
+    import math
+
+    phase = (float(frame_index) / max(1.0, float(frame_count - 1))) * math.tau
+    return (
+        _FRANKA_HOME_JOINTS[0] + 0.22 * math.sin(phase),
+        _FRANKA_HOME_JOINTS[1] + 0.16 * math.sin(phase + 0.5),
+        _FRANKA_HOME_JOINTS[2] + 0.18 * math.sin(phase + 1.2),
+        _FRANKA_HOME_JOINTS[3] + 0.12 * math.sin(phase + 1.7),
+        _FRANKA_HOME_JOINTS[4] + 0.24 * math.sin(phase + 2.1),
+        _FRANKA_HOME_JOINTS[5] + 0.10 * math.sin(phase + 2.7),
+        _FRANKA_HOME_JOINTS[6] + 0.20 * math.sin(phase + 3.4),
+    )
+
+
+def _set_rerun_time(rr, seconds: float) -> None:
+    if hasattr(rr, "set_time_seconds"):
+        rr.set_time_seconds("log_time", seconds)
+    else:
+        rr.set_time("log_time", duration=seconds)
+
+
+def _log_franka_robot_geometry(rr, joint_angles: tuple[float, ...] = _FRANKA_HOME_JOINTS) -> None:
+    positions = _franka_joint_positions(joint_angles)
     arm_points = positions[:8]
     segments: list[list[list[float]]] = []
     for left, right in zip(arm_points, arm_points[1:]):
@@ -1958,15 +1980,21 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
             colors=[[180, 180, 180, 255]],
         ),
     )
-    rr.log(
-        "world/cube",
-        rr.Boxes3D(
-            centers=[[0.5, 0.3, 0.04]],
-            half_sizes=[[0.025, 0.025, 0.025]],
-            colors=[[59, 130, 246, 255]],
-        ),
-    )
-    _log_franka_robot_geometry(rr)
+    frame_count = 90
+    for frame_index in range(frame_count):
+        seconds = frame_index / 15.0
+        _set_rerun_time(rr, seconds)
+        phase = frame_index / max(1.0, float(frame_count - 1))
+        cube_y = 0.3 - 0.42 * phase
+        rr.log(
+            "world/cube",
+            rr.Boxes3D(
+                centers=[[0.5, cube_y, 0.04]],
+                half_sizes=[[0.025, 0.025, 0.025]],
+                colors=[[59, 130, 246, 255]],
+            ),
+        )
+        _log_franka_robot_geometry(rr, _franka_demo_joint_angles(frame_index, frame_count))
     cameras = DEFAULT_SCENE_SPEC.get("cameras", {{}})
     active = camera if camera in cameras else "workspace"
     for name, cam in cameras.items():
@@ -1979,23 +2007,24 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
         width = int(res[0]) if len(res) > 0 else 640
         height = int(res[1]) if len(res) > 1 else 480
         entity = f"world/cameras/{{name}}"
+        frustum_entity = f"world/camera_frustums/{{name}}"
         focal = width / (2.0 * math.tan(math.radians(fov / 2.0)))
         rr.log(entity, rr.Pinhole(focal_length=focal, width=width, height=height))
         rr.log(entity, rr.Transform3D(translation=pos))
         origin, strips = _camera_frustum_lines(pos, look_at, fov)
         color = [59, 130, 246] if name == active else [148, 163, 184]
         rr.log(
-            f"{{entity}}/frustum",
+            f"{{frustum_entity}}/frustum",
             rr.LineStrips3D(strips, colors=[color] * len(strips)),
         )
-        rr.log(f"{{entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
+        rr.log(f"{{frustum_entity}}/origin", rr.Points3D([origin], colors=[color], radii=[0.02]))
         label = (
             f"**{{name}}** (selected for next rollout)"
             if name == active
             else f"**{{name}}**"
         )
         rr.log(
-            f"{{entity}}/label",
+            f"{{frustum_entity}}/label",
             rr.TextDocument(
                 f"{{label}}\\n"
                 f"pos={{pos}} look_at={{look_at}} fov={{fov}}° resolution={{width}}x{{height}}"
@@ -4197,6 +4226,24 @@ import rerun as rr
 
 _FRANKA_HOME = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
 
+def _franka_demo_joint_angles(frame_index, frame_count):
+    phase = (float(frame_index) / max(1.0, float(frame_count - 1))) * math.tau
+    return (
+        _FRANKA_HOME[0] + 0.22 * math.sin(phase),
+        _FRANKA_HOME[1] + 0.16 * math.sin(phase + 0.5),
+        _FRANKA_HOME[2] + 0.18 * math.sin(phase + 1.2),
+        _FRANKA_HOME[3] + 0.12 * math.sin(phase + 1.7),
+        _FRANKA_HOME[4] + 0.24 * math.sin(phase + 2.1),
+        _FRANKA_HOME[5] + 0.10 * math.sin(phase + 2.7),
+        _FRANKA_HOME[6] + 0.20 * math.sin(phase + 3.4),
+    )
+
+def _set_rerun_time(seconds):
+    if hasattr(rr, "set_time_seconds"):
+        rr.set_time_seconds("log_time", seconds)
+    else:
+        rr.set_time("log_time", duration=seconds)
+
 def _franka_joint_positions(joint_angles):
     dh = [
         (0.0, 0.0, 0.333),
@@ -4238,8 +4285,8 @@ def _franka_joint_positions(joint_angles):
     positions.append([ee[0], ee[1] - 0.04, ee[2]])
     return positions
 
-def _log_franka_robot_geometry():
-    positions = _franka_joint_positions(_FRANKA_HOME)
+def _log_franka_robot_geometry(joint_angles=_FRANKA_HOME):
+    positions = _franka_joint_positions(joint_angles)
     arm_points = positions[:8]
     segments = []
     for left, right in zip(arm_points, arm_points[1:]):
@@ -4306,15 +4353,21 @@ rr.log(
         colors=[[180, 180, 180, 255]],
     ),
 )
-rr.log(
-    "world/cube",
-    rr.Boxes3D(
-        centers=[[0.5, 0.3, 0.04]],
-        half_sizes=[[0.025, 0.025, 0.025]],
-        colors=[[59, 130, 246, 255]],
-    ),
-)
-_log_franka_robot_geometry()
+frame_count = 90
+for frame_index in range(frame_count):
+    seconds = frame_index / 15.0
+    _set_rerun_time(seconds)
+    phase = frame_index / max(1.0, float(frame_count - 1))
+    cube_y = 0.3 - 0.42 * phase
+    rr.log(
+        "world/cube",
+        rr.Boxes3D(
+            centers=[[0.5, cube_y, 0.04]],
+            half_sizes=[[0.025, 0.025, 0.025]],
+            colors=[[59, 130, 246, 255]],
+        ),
+    )
+    _log_franka_robot_geometry(_franka_demo_joint_angles(frame_index, frame_count))
 rr.log("cameras/workspace", rr.Pinhole(fov_y=60.0))
 rr.log("cameras/wrist", rr.Pinhole(fov_y=90.0))
 rr.save(str(target))

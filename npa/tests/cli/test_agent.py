@@ -135,6 +135,17 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "alias /opt/npa-agent/recordings/" in source
 
 
+def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "_franka_demo_joint_angles" in source
+    assert "frame_count = 90" in source
+    assert "world/camera_frustums/{{name}}" in source
+    assert 'f"{entity}/frustum"' not in source
+    assert 'f"{entity}/origin"' not in source
+
+
 def test_agent_help_smoke() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
