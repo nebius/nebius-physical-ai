@@ -53,9 +53,9 @@ def request(path: str, *, method: str = "GET", payload: dict | None = None) -> d
         return json.loads(resp.read().decode())
 
 
-def ensure_local_run() -> str:
+def ensure_s3_run() -> str:
     runs = request("/api/artifacts/runs?limit=20")
-    if runs.get("ok") and runs.get("runs"):
+    if runs.get("ok") and runs.get("runs") and runs.get("source", "s3") != "local":
         return str(runs["runs"][0]["run_id"])
     submit = request("/api/workflows/sim2real/submit", method="POST", payload={})
     run_id = str(submit["run_id"])
@@ -65,19 +65,24 @@ def ensure_local_run() -> str:
         if run.get("result") in {"completed", "failed"} or run.get("status") in {"completed", "failed"}:
             break
         time.sleep(1)
+    assert request(f"/api/workflows/sim2real/runs/{urllib.parse.quote(run_id)}")["run"].get("result") == "completed"
     return run_id
 
 
-run_id = ensure_local_run()
+run_id = ensure_s3_run()
 
 # Component 1: discover runs.
 runs = request("/api/artifacts/runs?limit=50")
 assert runs.get("ok") is True, runs
+assert runs.get("source", "s3") != "local", runs
+assert not runs.get("s3_error"), runs
 assert any(str(item.get("run_id")) == run_id for item in runs.get("runs", [])), runs
 
 # Component 2: list artifacts for a run.
 listed = request(f"/api/artifacts/run/{urllib.parse.quote(run_id)}")
 assert listed.get("ok") is True, listed
+assert listed.get("source", "s3") != "local", listed
+assert not listed.get("s3_error"), listed
 artifacts = listed.get("artifacts", [])
 assert artifacts, listed
 preferred = listed.get("preferred") or artifacts[0]
@@ -90,6 +95,8 @@ loaded = request(
     payload={"run_id": run_id, "key": preferred["key"]},
 )
 assert loaded.get("ok") is True, loaded
+assert loaded.get("source", "s3") != "local", loaded
+assert not loaded.get("s3_error"), loaded
 assert loaded.get("render"), loaded
 sim_viz = loaded.get("sim_viz", {})
 assert sim_viz.get("run_id") == run_id, sim_viz

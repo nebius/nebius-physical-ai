@@ -587,7 +587,7 @@ def _storage_credentials_allow_writes(
     secret_key: str,
     region: str,
 ) -> bool:
-    """Return True when the credentials can write and delete in the bucket."""
+    """Return True when credentials can list, write, and delete in the bucket."""
     bucket_name = str(bucket or "").strip()
     if not bucket_name:
         return False
@@ -607,6 +607,7 @@ def _storage_credentials_allow_writes(
     client = boto3.client("s3", **client_kwargs)
     probe_key = f"npa-agent/probe/{secrets.token_hex(8)}.txt"
     try:
+        client.list_objects_v2(Bucket=bucket_name, Prefix="npa-agent/probe/", MaxKeys=1)
         client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
         client.delete_object(Bucket=bucket_name, Key=probe_key)
         return True
@@ -619,8 +620,31 @@ def _resolve_deploy_storage_credentials(
     region: str,
     bootstrap_creds: dict[str, str],
 ) -> dict[str, str]:
-    """Prefer bootstrap credentials, but fall back to shared storage keys when needed."""
+    """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
     candidate = dict(bootstrap_creds)
+    from npa.clients.credentials import load_credentials
+
+    shared = load_credentials()
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    if shared_bucket.startswith("s3://"):
+        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if shared_bucket and _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
+        region=region,
+    ):
+        typer.echo("  Using shared configured artifact storage credentials for the agent.")
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
+        return candidate
+
     bucket = str(candidate.get("s3_bucket", "")).strip()
     endpoint = str(candidate.get("s3_endpoint", "")).strip()
     access_key = str(candidate.get("nebius_api_key", "")).strip()
@@ -632,31 +656,6 @@ def _resolve_deploy_storage_credentials(
         secret_key=secret_key,
         region=region,
     ):
-        return candidate
-    from npa.clients.credentials import load_credentials
-
-    shared = load_credentials()
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    if shared_bucket.startswith("s3://"):
-        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
-        region=region,
-    ):
-        typer.echo(
-            "  Bootstrap S3 key has no data-plane access; "
-            "falling back to shared configured storage credentials."
-        )
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
         return candidate
     typer.echo(
         "  Warning: unable to verify writable S3 credentials for deploy; "
@@ -2326,96 +2325,6 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
-def _local_runs_root() -> Path:
-    return Path("/opt/npa-agent/runs")
-
-
-def _local_artifact_key(run_id: str, path: Path) -> str:
-    rel = path.relative_to(_local_runs_root() / run_id)
-    return f"{{run_id}}/{{rel.as_posix()}}"
-
-
-def _local_artifact_path(run_id: str, key: str) -> Path:
-    normalized_run = validate_run_id(run_id)
-    raw_key = str(key or "").strip().lstrip("/")
-    if raw_key.startswith(normalized_run + "/"):
-        raw_key = raw_key[len(normalized_run) + 1 :]
-    if not raw_key or any(part in {"", ".", ".."} for part in raw_key.split("/")):
-        raise HTTPException(status_code=400, detail="invalid local artifact key")
-    root = (_local_runs_root() / normalized_run).resolve()
-    target = (root / raw_key).resolve()
-    try:
-        target.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="local artifact key escapes run directory") from exc
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail=f"local artifact not found: {{key}}")
-    return target
-
-
-def _local_run_summaries(prefix: str = "", limit: int = 50) -> dict:
-    root = _local_runs_root()
-    token = str(prefix or "").strip().strip("/")
-    rows = []
-    if root.is_dir():
-        for run_dir in sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True):
-            run_id = run_dir.name
-            if token and token not in run_id:
-                continue
-            files = [p for p in run_dir.rglob("*") if p.is_file()]
-            if not files:
-                continue
-            latest = max(files, key=lambda p: p.stat().st_mtime)
-            rows.append(
-                {{
-                    "run_id": run_id,
-                    "last_modified": datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat(),
-                    "artifact_count": len(files),
-                    "has_viewable": any(render_hint_for_object(key=p.name) != "download" for p in files),
-                    "source": "local",
-                }}
-            )
-    total = len(rows)
-    return {{"runs": rows[:limit], "truncated": total > limit, "total_runs": total, "limit": limit}}
-
-
-def _local_artifacts_for_run(run_id: str, prefix: str = "") -> list[dict]:
-    normalized_run = validate_run_id(run_id)
-    root = _local_runs_root() / normalized_run
-    token = str(prefix or "").strip().strip("/")
-    rows = []
-    if root.is_dir():
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            key = _local_artifact_key(normalized_run, path)
-            if token and token not in key:
-                continue
-            stat = path.stat()
-            render = render_hint_for_object(key=key)
-            rows.append(
-                {{
-                    "run_id": normalized_run,
-                    "key": key,
-                    "s3_uri": "",
-                    "size": stat.st_size,
-                    "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                    "render": render,
-                    "inline": is_inline_render(render),
-                    "source": "local",
-                }}
-            )
-    rows.sort(key=lambda item: (str(item["last_modified"]), str(item["key"])), reverse=True)
-    return rows
-
-
-def _preferred_artifact_dict(artifacts: list[dict]) -> dict | None:
-    if not artifacts:
-        return None
-    order = {{"rerun": 0, "video": 1, "image": 2, "json": 3, "text": 4, "download": 5}}
-    return sorted(artifacts, key=lambda item: (order.get(str(item.get("render")), 99), str(item.get("last_modified")), str(item.get("key"))))[0]
-
-
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -3133,7 +3042,8 @@ def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") ->
 
 
 def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
-    return [
+    settings = _agent_s3_settings()
+    cmd = [
         str(AGENT_PYTHON),
         "-m",
         "npa.workflows.sim2real",
@@ -3163,6 +3073,11 @@ def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
         "--no-guardrails",
         "--rerun",
     ]
+    if settings.get("bucket"):
+        cmd.extend(["--s3-bucket", str(settings["bucket"]), "--s3-prefix", "sim2real-b", "--upload-artifacts"])
+    if settings.get("endpoint"):
+        cmd.extend(["--s3-endpoint", str(settings["endpoint"])])
+    return cmd
 
 
 def _apply_sim2real_report_to_details(details: dict, report: dict) -> None:
@@ -4009,7 +3924,6 @@ def sim_viz_recordings():
 
 @app.get("/artifacts/runs")
 def artifacts_runs(prefix: str = "", limit: int = 50):
-    s3_error = ""
     try:
         s3, settings = _agent_s3_client()
         page = list_runs(
@@ -4022,9 +3936,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50):
     except HTTPException:
         raise
     except Exception as exc:
-        s3_error = str(exc)
-    local_page = _local_run_summaries(prefix=prefix, limit=limit)
-    return {{"ok": True, "bucket": "", "prefix": prefix, "source": "local", "s3_error": s3_error, **local_page}}
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.get("/artifacts/run/{{run_id:path}}")
@@ -4053,19 +3965,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
     except HTTPException:
         raise
     except Exception as exc:
-        local_artifacts = _local_artifacts_for_run(normalized_run, prefix=prefix)
-        if local_artifacts:
-            return {{
-                "ok": True,
-                "bucket": "",
-                "source": "local",
-                "s3_error": str(exc),
-                "run_id": normalized_run,
-                "count": len(local_artifacts),
-                "artifacts": local_artifacts,
-                "preferred": _preferred_artifact_dict(local_artifacts),
-            }}
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.get("/artifacts/file/{{filename}}")
@@ -4116,22 +4016,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
     except HTTPException:
         raise
     except Exception as exc:
-        if requested_run and requested_key and not requested_uri:
-            run_id = validate_run_id(requested_run)
-            local_path = _local_artifact_path(run_id, requested_key)
-            key = _local_artifact_key(run_id, local_path)
-            render = render_hint_for_object(key=key)
-            state = _load_state()
-            sim_viz = _apply_loaded_artifact(
-                state=state,
-                run_id=run_id,
-                key=key,
-                s3_uri="",
-                render=render,
-                local_path=local_path,
-            )
-            return {{"ok": True, "source": "local", "s3_error": str(exc), "sim_viz": sim_viz, "render": render, "artifact_uri": ""}}
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
 @app.post("/sim-viz/load-franka-demo")

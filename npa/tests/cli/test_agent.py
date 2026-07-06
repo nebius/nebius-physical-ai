@@ -71,6 +71,15 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(
+            s3_bucket="",
+            s3_endpoint="",
+            s3_access_key_id="",
+            s3_secret_access_key="",
+        ),
+    )
     bootstrap = {
         "s3_bucket": "bucket-boot",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
@@ -84,14 +93,37 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     assert resolved["nebius_api_key"] == "ak-boot"
 
 
+def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **kwargs: kwargs["bucket"] == "shared-bucket")
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/checkpoints/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "npa-bucket-terraform",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+    assert resolved["s3_bucket"] == "shared-bucket"
+    assert resolved["nebius_api_key"] == "ak-shared"
+
+
 def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
-    calls = {"count": 0}
-
     def _probe(**kwargs):
-        calls["count"] += 1
-        return calls["count"] > 1 and kwargs["bucket"] == "shared-bucket"
+        return kwargs["bucket"] == "shared-bucket"
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
@@ -146,17 +178,15 @@ def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
     assert 'f"{entity}/origin"' not in source
 
 
-def test_agent_embeds_local_artifact_discovery_fallback_components() -> None:
+def test_agent_artifact_discovery_requires_s3_components() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Discover runs, list artifacts, and load artifact must all have a local
-    # fallback so the UI still works when object-store ListObjects is denied.
-    assert "def _local_run_summaries" in source
-    assert "def _local_artifacts_for_run" in source
-    assert "def _local_artifact_path" in source
-    assert '"source": "local"' in source
-    assert "s3_error" in source
+    assert "list_runs(" in source
+    assert "list_artifacts(" in source
+    assert "download_s3_uri(" in source
+    assert '"source": "s3"' in source
+    assert "def _local_run_summaries" not in source
 
 
 def test_agent_help_smoke() -> None:
