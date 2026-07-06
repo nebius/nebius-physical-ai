@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from typer import Exit
 from typer.testing import CliRunner
 
 from npa.cli.agent import AGENT_UI_VERSION, _normalize_llm_models, app, build_agent_urls
@@ -147,6 +149,30 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
 
     assert resolved["s3_bucket"] == "shared-bucket"
     assert resolved["nebius_api_key"] == "ak-shared"
+
+
+def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    with pytest.raises(Exit):
+        _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
 
 
 def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> None:

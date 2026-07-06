@@ -694,12 +694,10 @@ def _resolve_deploy_storage_credentials(
         prefix=str(candidate.get("s3_prefix", "")),
     ):
         return candidate
-    typer.echo(
-        "  Warning: unable to verify writable S3 credentials for deploy; "
-        "continuing with bootstrap-provided keys.",
-        err=True,
+    _fail(
+        "unable to verify writable S3 credentials for deploy; "
+        "configure object-storage credentials with data-plane access before deploying the agent"
     )
-    return candidate
 
 
 def _resolve_agent_service_account_id(
