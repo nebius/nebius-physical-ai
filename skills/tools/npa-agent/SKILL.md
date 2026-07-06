@@ -144,6 +144,12 @@ Rerun wasm inside `/rerun/?url=…` cannot send HTTP basic auth. Parent page:
 
 Do not point the iframe directly at `/api/sim-viz/rrd` (black screen).
 
+Submitted Sim2Real runs must not reuse the stock Franka/demo `.rrd` as if it
+were run-specific data. When no run `.rrd` exists yet, the agent UI should render
+the Run status/logs panel from `/api/workflows/sim2real/status` and
+`/api/workflows/sim2real/runs/{run_id}`; only mark Rerun ready after a real
+recording URI is present.
+
 ## HTTP API Reference
 
 All paths are under `/api/` (nginx proxies to FastAPI backend on `:8787`).
