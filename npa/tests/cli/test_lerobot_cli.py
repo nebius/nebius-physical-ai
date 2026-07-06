@@ -260,7 +260,7 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_cross_bucket() -
 
 def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_endpoint() -> None:
     storage = StorageConfig(
-        checkpoint_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+        checkpoint_bucket="s3://example-bucket/checkpoints/",
         endpoint_url="https://storage.eu-north1.nebius.cloud",
         aws_access_key_id="project-key",
         aws_secret_access_key="project-secret",
@@ -269,13 +269,13 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_
         s3_access_key_id="shared-key",
         s3_secret_access_key="shared-secret",
         s3_endpoint="https://storage.us-central1.nebius.cloud",
-        s3_bucket="s3://lerobot-ccc9d3c7/checkpoints/",
+        s3_bucket="s3://example-bucket/checkpoints/",
     )
 
     assert lerobot._serverless_storage_env_values(
         storage,
         credentials,
-        "s3://lerobot-ccc9d3c7/checkpoints/lerobot/default/run-1/",
+        "s3://example-bucket/checkpoints/lerobot/default/run-1/",
     ) == (
         "shared-key",
         "shared-secret",
