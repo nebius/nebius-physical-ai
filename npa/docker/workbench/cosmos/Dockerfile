@@ -85,7 +85,7 @@ RUN python3 -m venv /opt/cosmos/venv \
       "python-multipart==0.0.27" \
       "typer==0.24.1" \
       "httpx==0.28.1" \
-      "paramiko==4.0.0" \
+      "paramiko==5.0.0" \
       "pyyaml==6.0.3" \
       "rich==15.0.0" \
       "boto3==1.42.91" \
