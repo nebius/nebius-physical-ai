@@ -56,7 +56,15 @@ def request(path: str, *, method: str = "GET", payload: dict | None = None) -> d
 def ensure_s3_run() -> str:
     runs = request("/api/artifacts/runs?limit=20")
     if runs.get("ok") and runs.get("runs") and runs.get("source", "s3") != "local":
-        return str(runs["runs"][0]["run_id"])
+        for row in runs["runs"]:
+            run_id = str(row["run_id"])
+            try:
+                listed = request(f"/api/artifacts/run/{urllib.parse.quote(run_id)}")
+            except Exception:
+                continue
+            preferred = listed.get("preferred") or {}
+            if preferred.get("render") == "rerun":
+                return run_id
     submit = request("/api/workflows/sim2real/submit", method="POST", payload={})
     run_id = str(submit["run_id"])
     for _ in range(90):
@@ -87,6 +95,7 @@ artifacts = listed.get("artifacts", [])
 assert artifacts, listed
 preferred = listed.get("preferred") or artifacts[0]
 assert preferred.get("key"), preferred
+assert preferred.get("render") == "rerun", preferred
 
 # Component 3: load an artifact.
 loaded = request(
@@ -98,6 +107,7 @@ assert loaded.get("ok") is True, loaded
 assert loaded.get("source", "s3") != "local", loaded
 assert not loaded.get("s3_error"), loaded
 assert loaded.get("render"), loaded
+assert loaded.get("render") == "rerun", loaded
 sim_viz = loaded.get("sim_viz", {})
 assert sim_viz.get("run_id") == run_id, sim_viz
 

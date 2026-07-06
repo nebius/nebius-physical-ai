@@ -6950,6 +6950,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await loadArtifact(payload);
           }});
         }});
+        const preferred = data && data.preferred ? data.preferred : null;
+        if (preferred && String(preferred.render || "") === "rerun") {{
+          appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
+          await loadArtifact({{
+            run_id: runId,
+            key: String(preferred.key || "").trim(),
+            s3_uri: String(preferred.s3_uri || "").trim(),
+          }});
+        }}
         return true;
       }}
       async function loadArtifact(payload) {{

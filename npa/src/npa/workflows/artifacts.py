@@ -274,9 +274,24 @@ def list_artifacts(
 def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
     if not artifacts:
         return None
+    def _score(item: Artifact) -> tuple[int, int, str, str]:
+        key = item.key.lower()
+        if key.endswith("/reports/sim2real.rrd"):
+            specificity = 0
+        elif key.endswith(".rrd"):
+            specificity = 1
+        elif key.endswith("/reports/sim2real-report.json"):
+            specificity = 2
+        elif "/reports/" in key:
+            specificity = 3
+        elif "/component-io/" in key:
+            specificity = 20
+        else:
+            specificity = 10
+        return (_RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
     return sorted(
         artifacts,
-        key=lambda item: (_RENDER_ORDER.get(item.render, 99), item.last_modified, item.key),
+        key=_score,
     )[0]
 
 

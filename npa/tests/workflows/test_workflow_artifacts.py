@@ -89,6 +89,32 @@ def test_select_preferred_artifact_ranks_rerun_highest() -> None:
     assert chosen.render == "rerun"
 
 
+def test_select_preferred_artifact_chooses_run_report_rrd_before_component_images() -> None:
+    artifacts = [
+        Artifact(
+            "run",
+            "run/component-io/vlm/input/rollout/camera-001.ppm",
+            "s3://bucket/run/component-io/vlm/input/rollout/camera-001.ppm",
+            1,
+            "2026-01-02T00:00:00+00:00",
+            "image",
+            True,
+        ),
+        Artifact(
+            "run",
+            "run/reports/sim2real.rrd",
+            "s3://bucket/run/reports/sim2real.rrd",
+            1,
+            "2026-01-01T00:00:00+00:00",
+            "rerun",
+            True,
+        ),
+    ]
+    chosen = select_preferred_artifact(artifacts)
+    assert chosen is not None
+    assert chosen.key.endswith("reports/sim2real.rrd")
+
+
 def test_select_preferred_artifact_keeps_unknown_download_selectable() -> None:
     artifacts = [
         Artifact("run", "run/raw.foo", "s3://bucket/run/raw.foo", 1, "2026-01-01T00:00:00+00:00", "download", False)
