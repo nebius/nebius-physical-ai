@@ -538,6 +538,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert 'throw new Error("Unlock chat with your agent password.");' not in api_json_before_fetch
     assert "lastRerunBlobStatus" in source
     assert "lastRerunMountStatus" in source
+    assert "mountedRerunRunKey" in source
+    assert "already-mounted" in source
+    assert "iframe.dataset.rerunRunKey" in source
+    assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
+    assert 'showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }})' in source
     assert "baselineRrdUpdatedAt" in source
     assert "successStreakTarget" in source
     assert "successStreak" in source

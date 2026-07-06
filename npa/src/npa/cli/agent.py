@@ -6762,6 +6762,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
+      let mountedRerunRunKey = "";
       let activeRunId = "";
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
@@ -6840,9 +6841,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           encodeURIComponent(cam)
         );
       }}
-      function showRerunPlaceholder(message) {{
+      function showRerunPlaceholder(message, options) {{
+        const opts = options || {{}};
         const placeholder = document.getElementById("rerunPlaceholder");
         const iframe = document.getElementById("rerunFrame");
+        if (!opts.force && rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute("src")) {{
+          return;
+        }}
         if (placeholder) {{
           placeholder.hidden = false;
           if (message) {{
@@ -6855,6 +6860,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.removeAttribute("src");
         }}
         rerunIframeLoaded = false;
+        mountedRerunRunKey = "";
       }}
       function hideRerunPlaceholder() {{
         const placeholder = document.getElementById("rerunPlaceholder");
@@ -6967,12 +6973,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
+        const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
+        if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
+          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
+          return true;
+        }}
         const src = await rerunIframeSrc(camera, runId);
         setRerunMountStatus("retrying", "navigating");
         iframe.src = src;
+        iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
         rerunIframeLoaded = true;
+        mountedRerunRunKey = mountKey;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
         waitForRerunRenderSettle(iframe, 15000).catch((err) => {{
           console.warn("rerun render settle probe failed", err);
@@ -7328,7 +7341,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           lastRrdUpdatedAt = "";
           await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
         }} else {{
-          showRerunPlaceholder("Artifact loaded. Use download/preview below.");
+          showRerunPlaceholder("Artifact loaded. Use download/preview below.", {{ force: true }});
           await showArtifactPreview(simViz, render);
         }}
         appendChat(
@@ -7378,7 +7391,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           }}
           if (activeArtifactRender && activeArtifactRender !== "rerun") {{
-            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.");
+            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }});
             await showArtifactPreview(simViz, activeArtifactRender);
           }} else {{
             hideArtifactPreview();
