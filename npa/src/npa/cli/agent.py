@@ -650,6 +650,7 @@ def _resolve_deploy_storage_credentials(
     *,
     region: str,
     bootstrap_creds: dict[str, str],
+    project_alias: str = "",
 ) -> dict[str, str]:
     """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
     candidate = dict(bootstrap_creds)
@@ -694,6 +695,33 @@ def _resolve_deploy_storage_credentials(
         prefix=str(candidate.get("s3_prefix", "")),
     ):
         return candidate
+    project_name = str(project_alias or "").strip()
+    if project_name:
+        try:
+            saved_state = resolve_terraform_state(project_name)
+        except ConfigError:
+            saved_state = None
+        if saved_state is not None:
+            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
+            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
+            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
+            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
+            if _storage_credentials_allow_writes(
+                bucket=saved_bucket,
+                endpoint=saved_endpoint,
+                access_key=saved_access_key,
+                secret_key=saved_secret_key,
+                region=region,
+            ):
+                typer.echo(
+                    "  Bootstrap S3 key has no data-plane access; "
+                    "falling back to saved project terraform_state credentials."
+                )
+                candidate["s3_bucket"] = saved_bucket
+                candidate["s3_endpoint"] = saved_endpoint
+                candidate["nebius_api_key"] = saved_access_key
+                candidate["nebius_secret_key"] = saved_secret_key
+                return candidate
     _fail(
         "unable to verify writable S3 credentials for deploy; "
         "configure object-storage credentials with data-plane access before deploying the agent"
@@ -7996,6 +8024,7 @@ def deploy_cmd(
         creds = _resolve_deploy_storage_credentials(
             region=env_region,
             bootstrap_creds=creds,
+            project_alias=project,
         )
         iam_token = get_iam_token()
     except NebiusError as exc:

@@ -151,6 +151,39 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
+def test_resolve_deploy_storage_credentials_prefers_saved_project_state(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    class _TfState:
+        bucket = "state-bucket"
+        endpoint = "https://storage.us-central1.nebius.cloud"
+        access_key = "ak-state"
+        secret_key = "sk-state"
+
+    def _probe(**kwargs):
+        return kwargs["bucket"] == "state-bucket"
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
+    monkeypatch.setattr("npa.cli.agent.resolve_terraform_state", lambda _project: _TfState())
+    bootstrap = {
+        "service_account_id": "sa-agent",
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(
+        region="us-central1",
+        bootstrap_creds=bootstrap,
+        project_alias="fresh",
+    )
+
+    assert resolved["service_account_id"] == "sa-agent"
+    assert resolved["s3_bucket"] == "state-bucket"
+    assert resolved["nebius_api_key"] == "ak-state"
+
+
 def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
