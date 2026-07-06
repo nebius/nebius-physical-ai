@@ -394,7 +394,7 @@ containers:
         curated AV data; BDD100K perception pipeline stage.
     safety:
       runs_as: root
-      base_image: pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+      base_image: pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
       network: FastAPI service on :8790 (/health, /system-info, /train, /eval)
       external_fetch: [pypi, lancedb, s3]
       notes: >-

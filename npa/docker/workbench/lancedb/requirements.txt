@@ -6,5 +6,5 @@ numpy
 pyarrow
 pillow
 pydantic
-torch==2.8.0+cu128
+torch==2.12.1
 transformers==5.10.2

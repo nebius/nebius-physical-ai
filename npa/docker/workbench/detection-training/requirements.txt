@@ -1,10 +1,11 @@
 fastapi==0.136.1
 uvicorn[standard]==0.38.0
-lancedb==0.30.3
+lancedb==0.30.2
 pyarrow==23.0.1
 pillow==12.2.0
 boto3==1.42.9
 pydantic==2.13.4
 torchmetrics==1.8.2
 pycocotools==2.0.10
-torchvision==0.23.0
+torch==2.12.1
+torchvision==0.27.1

@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "typer~=0.24.1",
     "httpx~=0.28.1",
-    "paramiko~=4.0.0",
+    "paramiko~=5.0.0",
     "pyyaml~=6.0.3",
     "rich~=15.0.0",
     "boto3~=1.42.91",
@@ -34,8 +34,8 @@ server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
     "rsl-rl-lib==2.2.4",
-    "torch>=2.0",
-    "torchvision>=0.15",
+    "torch>=2.12.1",
+    "torchvision>=0.27.1",
     "tensorboard>=2.14",
     "numpy>=1.24",
     "pyarrow>=14.0",
@@ -48,7 +48,7 @@ groot = [
     "nvidia-gr00t-sdk==0.1.0",
 ]
 sonic = [
-    "torch>=2.0",
+    "torch>=2.12.1",
     "onnx>=1.16",
     "onnxscript>=0.5",
     "onnxruntime>=1.18",
