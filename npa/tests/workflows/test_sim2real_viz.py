@@ -40,6 +40,15 @@ class _FakeRerun:
     def TextDocument(self, text: str, media_type: str = "") -> dict[str, Any]:
         return {"kind": "text", "text": text}
 
+    def Boxes3D(self, **kwargs: Any) -> dict[str, Any]:
+        return {"kind": "boxes3d", **kwargs}
+
+    def Points3D(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"kind": "points3d", "args": args, **kwargs}
+
+    def LineStrips3D(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"kind": "lines3d", "args": args, **kwargs}
+
     # Recording lifecycle ---------------------------------------------------
     def RecordingStream(self, application_id: str) -> _FakeRecording:
         self.application_id = application_id
@@ -154,6 +163,11 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
     kinds = {entity: kind for entity, kind in fake.logged}
     # Rollout camera frames as image streams.
     assert any(e.endswith("/camera") and kinds[e] == "image" for e in entities)
+    # 3D scene overview is the primary visual context.
+    assert "world/table" in entities
+    assert "world/cube" in entities
+    assert "world/franka/joints" in entities
+    assert "world/franka/links" in entities
     # VLM critique overlays.
     assert any(e.endswith("/critique") and kinds[e] == "text" for e in entities)
     assert "rollouts/summary/critique" in entities
@@ -171,6 +185,7 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
 
     counts = result.entity_counts
     assert counts["/signal/reward"] == 6
+    assert counts["/world/franka/joints"] >= 1
     assert counts["/rollouts/iter_01/rollout-0000/actions/dim_00"] == 3
     assert counts["/heldout/scores"] == 2
     assert counts["/heldout/success_rate"] == 1
@@ -362,6 +377,11 @@ class _RecordingRRB:
         self.views.append(view)
         return view
 
+    def Spatial3DView(self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any) -> dict[str, Any]:
+        view = {"kind": "Spatial3DView", "origin": origin, "name": name}
+        self.views.append(view)
+        return view
+
     def Grid(self, *args: Any, name: str = "", **_: Any) -> dict[str, Any]:
         return {"kind": "Grid", "name": name, "children": list(args)}
 
@@ -389,6 +409,7 @@ def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
     viz_module._build_blueprint(
         rrb, heldout_env_ids=["env-00006", "env-00009", "env-00018"]
     )
+    assert any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
     heldout_origins = [
         v["origin"] for v in rrb.views
         if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")

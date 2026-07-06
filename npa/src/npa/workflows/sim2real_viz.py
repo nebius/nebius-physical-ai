@@ -16,6 +16,7 @@ but it MUST produce a non-empty ``.rrd`` whenever the SDK is available.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ TIMELINE = "frame_time"
 ROLLOUT_FRAME_SECONDS = 0.5
 HELDOUT_STEP_SECONDS = 1.0
 CRITIQUE_COLOR = (255, 136, 0, 255)
+FRANKA_HOME_JOINTS = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
 
 
 class Sim2RealVizError(Exception):
@@ -101,6 +103,7 @@ def emit_sim2real_rerun(
     heldout_frame_count = 0
     mp4_paths: list[str] = []
     critique_panel_rows: list[str] = []
+    _log_scene_overview(rr, recording, inner_evidence, counts)
 
     iterations = inner_evidence.get("iterations") or []
     for record in iterations:
@@ -275,6 +278,140 @@ def _log_vlm_critique_panel(
     _bump(counts, "rollouts/summary/critique")
 
 
+def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]]:
+    dh = [
+        (0.0, 0.0, 0.333),
+        (0.0, -math.pi / 2.0, 0.0),
+        (0.0, math.pi / 2.0, 0.316),
+        (0.0825, math.pi / 2.0, 0.0),
+        (-0.0825, -math.pi / 2.0, 0.384),
+        (0.0, math.pi / 2.0, 0.0),
+        (0.088, math.pi / 2.0, 0.0),
+    ]
+
+    def _matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+        return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+    transform = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    positions = [[0.0, 0.0, 0.0]]
+    for index, (a, alpha, d) in enumerate(dh):
+        theta = float(joint_angles[index])
+        ct, st = math.cos(theta), math.sin(theta)
+        ca, sa = math.cos(alpha), math.sin(alpha)
+        step = [
+            [ct, -st * ca, st * sa, a * ct],
+            [st, ct * ca, -ct * sa, a * st],
+            [0.0, sa, ca, d],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        transform = _matmul(transform, step)
+        positions.append([transform[0][3], transform[1][3], transform[2][3]])
+    ee = [transform[0][3], transform[1][3], transform[2][3] + 0.103]
+    positions.append(ee)
+    positions.append([ee[0], ee[1] + 0.04, ee[2]])
+    positions.append([ee[0], ee[1] - 0.04, ee[2]])
+    return positions
+
+
+def _scene_joint_angles(frame_index: int, frame_count: int) -> tuple[float, ...]:
+    phase = (float(frame_index) / max(1.0, float(frame_count - 1))) * math.tau
+    return (
+        FRANKA_HOME_JOINTS[0] + 0.20 * math.sin(phase),
+        FRANKA_HOME_JOINTS[1] + 0.14 * math.sin(phase + 0.5),
+        FRANKA_HOME_JOINTS[2] + 0.16 * math.sin(phase + 1.2),
+        FRANKA_HOME_JOINTS[3] + 0.10 * math.sin(phase + 1.7),
+        FRANKA_HOME_JOINTS[4] + 0.22 * math.sin(phase + 2.1),
+        FRANKA_HOME_JOINTS[5] + 0.09 * math.sin(phase + 2.7),
+        FRANKA_HOME_JOINTS[6] + 0.18 * math.sin(phase + 3.4),
+    )
+
+
+def _log_franka_scene_frame(
+    rr: Any,
+    recording: Any,
+    *,
+    frame_index: int,
+    frame_count: int,
+    counts: dict[str, int],
+) -> None:
+    positions = _franka_joint_positions(_scene_joint_angles(frame_index, frame_count))
+    arm_points = positions[:8]
+    segments = [[left, right] for left, right in zip(arm_points, arm_points[1:]) if left != right]
+    gripper_segments = [[positions[7], positions[8]], [positions[8], positions[9]], [positions[8], positions[10]]]
+    progress = frame_index / max(1.0, float(frame_count - 1))
+    cube_y = 0.28 - 0.36 * progress
+
+    rr.log(
+        "world/cube",
+        rr.Boxes3D(
+            centers=[[0.5, cube_y, 0.04]],
+            half_sizes=[[0.025, 0.025, 0.025]],
+            colors=[[59, 130, 246, 255]],
+        ),
+        recording=recording,
+    )
+    rr.log(
+        "world/franka/joints",
+        rr.Points3D(arm_points, colors=[[234, 88, 12, 255]] * len(arm_points), radii=[0.028] * len(arm_points)),
+        recording=recording,
+    )
+    if segments:
+        rr.log(
+            "world/franka/links",
+            rr.LineStrips3D(segments, colors=[[234, 88, 12]] * len(segments), radii=[0.018] * len(segments)),
+            recording=recording,
+        )
+    rr.log(
+        "world/franka/gripper",
+        rr.LineStrips3D(gripper_segments, colors=[[59, 130, 246]] * len(gripper_segments), radii=[0.012] * len(gripper_segments)),
+        recording=recording,
+    )
+    _bump(counts, "world/cube")
+    _bump(counts, "world/franka/joints")
+    _bump(counts, "world/franka/links")
+
+
+def _log_scene_overview(
+    rr: Any,
+    recording: Any,
+    inner_evidence: dict[str, Any],
+    counts: dict[str, int],
+) -> None:
+    rr.log(
+        "world/table",
+        rr.Boxes3D(
+            centers=[[0.5, 0.0, 0.0]],
+            half_sizes=[[0.4, 0.3, 0.02]],
+            colors=[[180, 180, 180, 255]],
+        ),
+        recording=recording,
+    )
+    rr.log(
+        "world/summary",
+        rr.TextDocument(
+            "# Sim2Real scene overview\n\n"
+            "Reference local run visualization: animated Franka proxy, moving cube, rollout signals, and held-out scores.",
+            media_type="text/markdown",
+        ),
+        recording=recording,
+    )
+    frame_count = max(12, sum(
+        len(_rollout_frames(rollout_dir))
+        for record in inner_evidence.get("iterations") or []
+        for rollout_dir in _rollout_dirs(_maybe_path(record.get("actions_dir")))
+    ))
+    for frame_index in range(frame_count):
+        _set_time(rr, recording, frame_index * ROLLOUT_FRAME_SECONDS)
+        _log_franka_scene_frame(rr, recording, frame_index=frame_index, frame_count=frame_count, counts=counts)
+    _bump(counts, "world/table")
+    _bump(counts, "world/summary")
+
+
 def _log_heldout(
     rr: Any,
     recording: Any,
@@ -434,13 +571,14 @@ def _build_blueprint(
     )
     return rrb.Blueprint(
         rrb.Horizontal(
+            rrb.Spatial3DView(origin="world", contents="world/**", name="Scene overview"),
             left_column,
             rrb.TextDocumentView(origin="rollouts", contents="rollouts/**/critique", name="VLM critiques"),
             rrb.Vertical(
                 rrb.TimeSeriesView(origin="signal", contents="signal/**", name="VLM->RL signal"),
                 rrb.TimeSeriesView(origin="heldout", contents="heldout/**", name="Held-out scores"),
             ),
-            column_shares=[2.0, 1.5, 1.5],
+            column_shares=[2.0, 1.4, 1.2, 1.3],
         ),
         rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=TIMELINE),
         auto_layout=False,
