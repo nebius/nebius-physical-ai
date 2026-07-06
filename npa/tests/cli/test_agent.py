@@ -149,6 +149,77 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
+def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> None:
+    from npa.cli.agent import deploy_cmd
+
+    events: list[tuple[str, dict]] = []
+    creds = {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+
+    def _write_config(payload: dict) -> None:
+        events.append(("write_config", payload))
+
+    def _apply_agent_terraform(**kwargs):
+        assert any(
+            event == "write_config"
+            and payload.get("projects", {}).get("fresh", {}).get("terraform_state", {}).get("bucket")
+            == "npa-agent-state"
+            for event, payload in events
+        )
+        events.append(("apply", kwargs))
+        return {
+            "vm_ip": "203.0.113.55",
+            "instance_id": "instance-agent",
+            "ssh_key_path": str(tmp_path / "id_ed25519"),
+        }
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *_args, **kwargs: SimpleNamespace(
+            project_id=kwargs.get("project_id"),
+            tenant_id=kwargs.get("tenant_id"),
+            region=kwargs.get("region"),
+        ),
+    )
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *_args, **_kwargs: creds)
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds)
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.cli.agent._ensure_terraform_state_bucket", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent._apply_agent_terraform", _apply_agent_terraform)
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+    monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **_kwargs: tmp_path / "auth.env")
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a"))
+    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
+    monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
+
+    deploy_cmd(
+        project="fresh",
+        name="agent",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="us-central1",
+        ssh_user="ubuntu",
+        ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+        tf_var=[],
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="model-a",
+        llm_models=[],
+        no_public_https=False,
+    )
+
+    assert [event for event, _payload in events].count("write_config") >= 2
+    assert any(event == "apply" for event, _payload in events)
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     from npa.cli import agent as agent_module
 
@@ -382,6 +453,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "waitForRerunReady" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
+    assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source
+    assert "_wait_for_rerun_web_viewer" in source
     assert "lastRerunBlobStatus" in source
     assert "lastRerunMountStatus" in source
     assert "baselineRrdUpdatedAt" in source

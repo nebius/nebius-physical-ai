@@ -249,6 +249,33 @@ def _ensure_terraform_state_bucket(
     ensure_bucket(project, bucket)
 
 
+def _persist_agent_project_config(
+    *,
+    project: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    merged_vars: dict[str, str],
+) -> None:
+    write_config(
+        {
+            "projects": {
+                project: {
+                    "project_id": project_id,
+                    "tenant_id": tenant_id,
+                    "region": region,
+                    "terraform_state": {
+                        "bucket": merged_vars.get("s3_bucket", ""),
+                        "endpoint": merged_vars.get("s3_endpoint", ""),
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                }
+            }
+        }
+    )
+
+
 def _apply_agent_terraform(
     *,
     project: str,
@@ -2388,8 +2415,8 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
-        _restart_rerun_serve(force=True)
-        rerun_ready = _wait_rerun_web_viewer_healthy()
+        restarted = _restart_rerun_serve(force=True)
+        rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
@@ -2441,7 +2468,6 @@ def _rerun_web_viewer_healthy() -> bool:
     except Exception:
         return False
 
-
 def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
     deadline = time.monotonic() + max(0.5, float(timeout_s))
     while time.monotonic() < deadline:
@@ -2451,8 +2477,16 @@ def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
     return _rerun_web_viewer_healthy()
 
 
+def _wait_for_rerun_web_viewer(*, timeout_s: float = 20.0) -> bool:
+    return _wait_rerun_web_viewer_healthy(timeout_s=timeout_s)
+
+
 def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
     has_rrd = bool(str(rrd_uri or "").strip())
+    if not has_rrd and RRD_PATH.is_file():
+        has_rrd = True
+    if has_rrd and not _rerun_service_active():
+        _restart_rerun_serve()
     return has_rrd and _rerun_web_viewer_healthy()
 
 def _restart_rerun_serve(*, force: bool = False) -> bool:
@@ -2552,6 +2586,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
     restarted = _restart_rerun_serve()
+    viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
     prior = state.get("sim_viz", {{}})
     run_id = str(prior.get("run_id") or "").strip() or "franka-demo"
@@ -2565,7 +2600,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "camera": cam,
         "preview_camera": cam,
         "preview_entity": f"world/cameras/{{cam}}",
-        "rerun_ready": target.is_file() and _rerun_web_viewer_healthy(),
+        "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
     state["sim_viz"] = viz
@@ -6828,12 +6863,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const attempts = Number(maxAttempts || 12);
         for (let i = 0; i < attempts; i += 1) {{
           const simViz = await loadJson("/api/sim-viz/status");
-          if (simViz && simViz.rerun_ready) {{
+          if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
             return simViz;
           }}
           await new Promise((resolve) => window.setTimeout(resolve, 500));
         }}
-        throw new Error("Rerun viewer is not ready yet (service or .rrd missing)");
+        throw new Error("Rerun recording is not ready yet (.rrd missing)");
       }}
       async function waitForIframeLoad(iframe, timeoutMs) {{
         const timeout = Math.max(500, Number(timeoutMs || 8000));
@@ -8010,6 +8045,13 @@ def deploy_cmd(
         )
     except NebiusError as exc:
         _fail(f"Unable to provision Terraform state bucket: {exc}")
+    _persist_agent_project_config(
+        project=project,
+        project_id=env_project_id,
+        tenant_id=env_tenant_id,
+        region=env_region,
+        merged_vars=merged_vars,
+    )
 
     tf_outputs: dict[str, Any] = {}
     try:
@@ -8140,22 +8182,12 @@ def deploy_cmd(
         credentials=agent_credentials,
     )
     _store_agent_record(project, name, record.to_dict())
-    write_config(
-        {
-            "projects": {
-                project: {
-                    "project_id": env_project_id,
-                    "tenant_id": env_tenant_id,
-                    "region": env_region,
-                    "terraform_state": {
-                        "bucket": merged_vars.get("s3_bucket", ""),
-                        "endpoint": merged_vars.get("s3_endpoint", ""),
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    },
-                }
-            }
-        }
+    _persist_agent_project_config(
+        project=project,
+        project_id=env_project_id,
+        tenant_id=env_tenant_id,
+        region=env_region,
+        merged_vars=merged_vars,
     )
 
     typer.echo(f"Customer URL: {urls['public_url']}")
