@@ -5136,6 +5136,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
+        <section class="panel run-monitor-panel">
+          <h3>Sim2Real Run Monitor</h3>
+          <p class="hint">Stage timeline, result, and logs for the active run. This panel is independent from Rerun visualization.</p>
+          <div id="runDetails" class="run-details">
+            <h4>Run status, result, and logs</h4>
+            <div id="runSummary" class="run-summary"></div>
+            <div id="stageList" class="stage-list"></div>
+            <pre id="runLog" class="run-log">No run selected.</pre>
+          </div>
+        </section>
         <div class="layout layout-3">
           <section class="panel">
             <h3>Sim Assets</h3>
@@ -5247,12 +5257,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
               <p id="simvizCta" class="cta">Discover artifacts first; use Franka demo fallback when no S3 artifacts are available.</p>
-              <div id="runDetails" class="run-details">
-                <h4>Run status, result, and logs</h4>
-                <div id="runSummary" class="run-summary"></div>
-                <div id="stageList" class="stage-list"></div>
-                <pre id="runLog" class="run-log">No run selected.</pre>
-              </div>
             </div>
             <div id="rerunPlaceholder" class="rerun-placeholder">
               <p>Loading Rerun viewer…</p>
@@ -6062,7 +6066,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!resp.ok) {{
           throw new Error("Rerun recording not published yet");
         }}
-        setRerunBlobStatus("fallback", "recording=public");
+        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
         return recordingUrl;
       }}
       async function resolveRerunRrdUrl(maxAttempts, runId) {{
@@ -6105,8 +6109,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
         let rrdUrl = "";
+        const targetRunId = String(runId || activeRunId || "").trim();
+        if (!targetRunId || targetRunId === "franka-demo") {{
+          rrdUrl = await resolveRerunRecordingUrl();
+          return (
+            "/rerun/?url=" +
+            encodeURIComponent(rrdUrl) +
+            "&renderer=webgl&hide_welcome_screen=1&camera=" +
+            encodeURIComponent(cam)
+          );
+        }}
         try {{
-          rrdUrl = await resolveRerunRrdUrl(18, runId);
+          rrdUrl = await resolveRerunRrdUrl(18, targetRunId);
         }} catch (_blobErr) {{
           rrdUrl = await resolveRerunRecordingUrl();
         }}
@@ -6314,7 +6328,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
-        const simViz = await waitForRerunReady();
+        let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
+        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
+          showToast("No run recording yet; loading stock Franka visual fallback in Rerun.", "info");
+          await apiJson("/api/sim-viz/load-franka-demo", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{ camera: cam }}),
+          }});
+          activeRunId = "franka-demo";
+          simViz = await waitForRerunReady();
+        }} else {{
+          simViz = await waitForRerunReady();
+        }}
         const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
         if (runId) activeRunId = runId;
         await waitForRerunSuccess(String(simViz.camera || cam), {{ deadlineMs: 90000, mountAttemptsPerLoop: 4, runId }});

@@ -150,6 +150,7 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.post("/sim-viz/select-run")' in source
     assert "sim_viz_runs" in source
     assert '@app.get("/workflows/sim2real/runs/{{run_id:path}}")' in source
+    assert "run-monitor-panel" in source
     assert "Run status, result, and logs" in source
     assert "No run-specific Rerun recording yet" in source
     embedded = agent_module._embedded_agent_workflow_source()
