@@ -2209,7 +2209,7 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
-        _restart_rerun_serve(force=True)
+        _restart_rerun_serve(force=False)
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
@@ -2304,7 +2304,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     if source != RRD_PATH and RECORDING_PATH.is_file():
         RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RECORDING_PATH, RRD_PATH)
-    _restart_rerun_serve(force=True)
+    _restart_rerun_serve(force=False)
     selection = _stock_franka_selection()
     state["selection"] = selection
     cam = (camera or "workspace").strip() or "workspace"
@@ -2331,7 +2331,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
         "camera": cam,
         "preview_camera": cam,
         "preview_entity": str(current.get("preview_entity") or "heldout/camera/env-00006/camera"),
-        "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
+        "rerun_ready": True,
         "rerun_iframe_url": iframe_url,
         "submit_mode": str(current.get("submit_mode") or latest.get("submit_mode") or "completed-k8s"),
         "workflow_name": "sim2real",
