@@ -150,6 +150,9 @@ such as "start/run the Sim2Real pipeline" should launch the agent-local Sim2Real
 runner, update the standalone Run status/logs panel from
 `/api/workflows/sim2real/status` and `/api/workflows/sim2real/runs/{run_id}`,
 and only mark Rerun ready after a real run recording URI is present.
+Run-specific recordings should open on a useful 3D scene overview (world/table,
+world/franka/*, world/cube) plus rollout/signal panels, not only sparse rollout
+or held-out image streams.
 
 ## HTTP API Reference
 
