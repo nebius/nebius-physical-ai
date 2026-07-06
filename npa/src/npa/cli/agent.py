@@ -5105,7 +5105,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>
             <div class="btn-row">
               <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-              <button id="loadFrankaRerun" class="btn" type="button">Load Franka in Rerun (fallback)</button>
+              <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
               <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
               <button id="workflowStatus" class="btn" type="button">Workflow status</button>
             </div>
@@ -5154,7 +5154,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <div id="rerunEntityHint" class="rollout-hint"></div>
           </section>
           <section class="panel">
-            <h3>Rerun (embedded)</h3>
+            <h3>Rerun simulation</h3>
             <div id="simviz">
               <div class="status-row">
                 <span>Run: <strong id="simRunId">—</strong></span>
@@ -5164,14 +5164,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <div class="btn-row">
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
-              <p id="simvizCta" class="cta">Discover artifacts first; use Franka demo fallback when no S3 artifacts are available.</p>
+              <p id="simvizCta" class="cta">Embedded real Sim2Real recording. Use Load active Sim2Real if the viewer needs a refresh.</p>
             </div>
             <div id="rerunPlaceholder" class="rerun-placeholder">
               <p>Loading Rerun viewer…</p>
-              <p class="hint">Preloading WASM and stock Franka recording from bootstrap cache.</p>
+              <p class="hint">Loading the active Sim2Real recording.</p>
               <button id="loadRerunViewer" class="btn btn-primary" type="button">Load Rerun viewer</button>
             </div>
-            <iframe id="rerunFrame" title="rerun" hidden></iframe>
+            <iframe id="rerunFrame" title="rerun" hidden style="height: 620px;"></iframe>
             <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
           </section>
         </div>
