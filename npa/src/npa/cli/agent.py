@@ -2310,7 +2310,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     updated_at = datetime.fromtimestamp(RRD_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
-    live_url = str(current.get("live_grpc_url") or os.environ.get("NPA_AGENT_RERUN_LIVE_URL", "")).strip()
+    live_url = str(os.environ.get("NPA_AGENT_RERUN_LIVE_URL", "")).strip()
     iframe_url = (
         f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
         if live_url
@@ -3242,6 +3242,20 @@ def chat(payload: dict):
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
+    last_content = _last_user_message(raw_messages)
+    if re.search(r"\b(?:run|start|submit|launch)\b.{0,80}\b(?:small|simple|tiny|minimal)\b.{0,80}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b", last_content, re.IGNORECASE):
+        run_id = f"agent-chat-small-{{secrets.token_hex(6)}}"
+        submit = submit_sim2real({{"run_id": run_id}})
+        live = submit.get("live_submit") if isinstance(submit, dict) else None
+        if isinstance(live, dict) and live.get("ok"):
+            reply = (
+                f"Started small Sim2Real pipeline: **run_id** `{{run_id}}`. "
+                f"Live submit session: `{{live.get('session')}}`; log: `{{live.get('log')}}`."
+            )
+        else:
+            detail = str((live or {{}}).get("error") if isinstance(live, dict) else "recorded locally")
+            reply = f"Recorded small Sim2Real submit **run_id** `{{run_id}}`; live launch detail: `{{detail}}`."
+        return {{"ok": True, "model": model, "reply": reply, "reasoning": None, "grounded": True, "apis_used": ["workflows/sim2real/submit"], "submit": submit}}
     state = _load_state()
     session_id = _sanitize_chat_session_id(
         str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
@@ -4115,12 +4129,13 @@ def submit_npa_workflow(payload: dict):
     return {{"ok": True, **submit_record}}
 
 @app.post("/workflows/sim2real/submit")
-def submit_sim2real(payload: dict):
+def submit_sim2real(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
     state = _load_state()
     selection = state.get("selection", {{}})
     if not isinstance(selection, dict):
         selection = dict(DEFAULT_SELECTION)
-    run_id = f"agent-run-{{secrets.token_hex(6)}}"
+    run_id = str(body.get("run_id") or f"agent-run-{{secrets.token_hex(6)}}")
     env_block = {{
         "NPA_SIM2REAL_SCENE_SPEC_URI": selection.get("scene_spec_uri", ""),
         "NPA_SIM2REAL_ASSETS_URI": selection.get("assets_uri", ""),
@@ -4156,8 +4171,24 @@ def submit_sim2real(payload: dict):
             "workflow_name": "sim2real",
         }},
     )
-    _save_state(state)
-    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
+    script = Path("/opt/npa-agent/run-live-sim2real.sh")
+    live_submit = None
+    if script.is_file():
+        proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
+        if proc.returncode == 0:
+            try:
+                live_submit = json.loads((proc.stdout or "{{}}").strip().splitlines()[-1])
+                state["latest_submit"]["submit_mode"] = "live-k8s"
+                state["latest_submit"]["live_submit"] = live_submit
+                _save_state(state)
+            except Exception:
+                live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
+        else:
+            live_submit = {{"ok": False, "error": (proc.stderr or proc.stdout or f"exit {{proc.returncode}}").strip()}}
+    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
+    if live_submit is not None:
+        response["live_submit"] = live_submit
+    return response
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py >/dev/null
 import math
@@ -6016,17 +6047,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
-        const statusPath = runId ? ("/api/sim-viz/status?run_id=" + encodeURIComponent(runId)) : "/api/sim-viz/status";
-        try {{
-          const status = await loadJson(statusPath);
-          const liveUrl = String((status && status.live_grpc_url) || "").trim();
-          if (liveUrl) {{
-            setRerunBlobStatus(RERUN_BLOB_SUCCESS, "live-proxy");
-            return "/rerun/?url=" + encodeURIComponent(liveUrl) + "&renderer=webgl&hide_welcome_screen=1&camera=" + encodeURIComponent(cam);
-          }}
-        }} catch (_statusErr) {{
-          // fall back to blob/file path below
-        }}
         let rrdUrl = "";
         try {{
           rrdUrl = await resolveRerunRrdUrl(18, runId);
