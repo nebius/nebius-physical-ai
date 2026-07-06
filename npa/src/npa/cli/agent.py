@@ -3105,16 +3105,6 @@ def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
         "--no-guardrails",
         "--rerun",
     ]
-    if settings.get("bucket"):
-        cmd.extend([
-            "--s3-bucket",
-            str(settings["bucket"]),
-            "--s3-prefix",
-            _join_agent_s3_prefix(str(settings.get("prefix") or ""), "sim2real-b"),
-            "--upload-artifacts",
-        ])
-    if settings.get("endpoint"):
-        cmd.extend(["--s3-endpoint", str(settings["endpoint"])])
     return cmd
 
 
@@ -3244,6 +3234,15 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
         s3.put_object(Bucket=settings["bucket"], Key=key, Body=path.read_bytes(), ContentType=content_type)
         return f"s3://{{settings['bucket']}}/{{key}}"
 
+    def _upload_output_tree() -> list[str]:
+        uploaded: list[str] = []
+        for path in sorted(p for p in output_dir.rglob("*") if p.is_file()):
+            rel = path.relative_to(output_dir).as_posix()
+            uri = _upload_output_file(path, rel)
+            if uri:
+                uploaded.append(uri)
+        return uploaded
+
     def _finish(details: dict) -> dict:
         stdout_tail = (proc.stdout or "")[-4000:].strip()
         stderr_tail = (proc.stderr or "")[-4000:].strip()
@@ -3282,16 +3281,15 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             _restart_rerun_serve(force=True)
             _append_run_log(details, f"Published Rerun recording: {{rrd_path}}")
         uploaded = []
-        for path, rel in ((report_path, "reports/sim2real-report.json"), (rrd_path, "reports/sim2real.rrd")):
-            try:
-                uri = _upload_output_file(path, rel)
-                if uri:
-                    uploaded.append(uri)
-            except Exception as exc:
-                _append_run_log(details, f"Failed to upload {{rel}} to S3: {{exc}}", level="warn")
+        try:
+            uploaded = _upload_output_tree()
+        except Exception as exc:
+            _append_run_log(details, f"Failed to upload run tree to S3: {{exc}}", level="warn")
         if uploaded:
             details["artifact_uris"] = uploaded
-            _append_run_log(details, "Uploaded run artifacts to S3: " + ", ".join(uploaded))
+            preview = ", ".join(uploaded[:5])
+            suffix = " ..." if len(uploaded) > 5 else ""
+            _append_run_log(details, f"Uploaded {{len(uploaded)}} run artifacts to S3: " + preview + suffix)
         return details
 
     _update_sim2real_run(run_id, mutate=_finish)
