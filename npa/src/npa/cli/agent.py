@@ -2097,6 +2097,14 @@ def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
     return "/".join(part.strip("/") for part in (base_prefix, suffix) if str(part or "").strip().strip("/"))
 
 
+def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
+    requested = str(user_prefix or "").strip().strip("/")
+    base = str(settings.get("prefix") or "").strip().strip("/")
+    if requested:
+        return _join_agent_s3_prefix(base, requested)
+    return _join_agent_s3_prefix(base, "sim2real-b")
+
+
 def _agent_s3_client():
     settings = _agent_s3_settings()
     if not settings["bucket"] or not settings["access_key"] or not settings["secret_key"]:
@@ -3955,7 +3963,7 @@ def sim_viz_recordings():
 def artifacts_runs(prefix: str = "", limit: int = 50):
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _join_agent_s3_prefix(settings.get("prefix", ""), prefix)
+        effective_prefix = _artifact_discovery_prefix(settings, prefix)
         page = list_runs(
             settings["bucket"],
             prefix=effective_prefix,
@@ -3977,7 +3985,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _join_agent_s3_prefix(settings.get("prefix", ""), prefix)
+        effective_prefix = _artifact_discovery_prefix(settings, prefix)
         artifacts = list_artifacts(
             settings["bucket"],
             normalized_run,
