@@ -56,7 +56,7 @@ DEFAULT_LLM_MODELS = (
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070403"
+AGENT_UI_VERSION = "2026070601"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 
@@ -1424,6 +1424,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import yaml
@@ -2283,7 +2284,77 @@ def _restart_rerun_serve(*, force: bool = False) -> bool:
             return True
         return False
 
+def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -> dict | None:
+    """Point the UI at an already-staged real Sim2Real recording, if present."""
+    current = state.get("sim_viz", {{}})
+    if not isinstance(current, dict):
+        current = {{}}
+    latest = state.get("latest_submit", {{}})
+    if not isinstance(latest, dict):
+        latest = {{}}
+    run_id = str(current.get("run_id") or latest.get("run_id") or "").strip()
+    if not run_id.startswith("sim2real-"):
+        return None
+    candidates = [RECORDINGS_DIR / f"{{run_id}}.rrd", RECORDING_PATH, RRD_PATH]
+    source = next((item for item in candidates if item.is_file() and item.stat().st_size > 65536), None)
+    if source is None:
+        return None
+    if source != RECORDING_PATH:
+        _publish_rrd_recording(source)
+    if source != RRD_PATH and RECORDING_PATH.is_file():
+        RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(RECORDING_PATH, RRD_PATH)
+    _restart_rerun_serve(force=True)
+    selection = _stock_franka_selection()
+    state["selection"] = selection
+    cam = (camera or "workspace").strip() or "workspace"
+    state["camera_selection"] = [cam]
+    updated_at = datetime.fromtimestamp(RRD_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
+    live_url = str(current.get("live_grpc_url") or os.environ.get("NPA_AGENT_RERUN_LIVE_URL", "")).strip()
+    iframe_url = (
+        f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
+        if live_url
+        else f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}"
+    )
+    viz = {{
+        "run_id": run_id,
+        "stage": str(current.get("stage") or "completed"),
+        "rrd_uri": f"file://{{RRD_PATH}}",
+        "rrd_updated_at": updated_at,
+        "artifact_uri": str(current.get("artifact_uri") or latest.get("rrd_uri") or ""),
+        "artifact_key": str(current.get("artifact_key") or ""),
+        "artifact_render": "rerun",
+        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
+        "live_grpc_url": live_url,
+        "mode": "live" if live_url else "static",
+        "camera": cam,
+        "preview_camera": cam,
+        "preview_entity": str(current.get("preview_entity") or "heldout/camera/env-00006/camera"),
+        "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
+        "rerun_iframe_url": iframe_url,
+        "submit_mode": str(current.get("submit_mode") or latest.get("submit_mode") or "completed-k8s"),
+        "workflow_name": "sim2real",
+    }}
+    for key in ("decision", "success_rate", "threshold"):
+        if key in current:
+            viz[key] = current[key]
+        elif key in latest:
+            viz[key] = latest[key]
+    state["sim_viz"] = viz
+    state["active_run_id"] = run_id
+    runs = state.get("sim_viz_runs")
+    if not isinstance(runs, dict):
+        runs = {{}}
+    runs[run_id] = {{**viz, "submitted_at": str(latest.get("submitted_at") or "")}}
+    state["sim_viz_runs"] = runs
+    _save_state(state)
+    return viz
+
 def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
+    active = _wire_active_sim2real_recording(state, camera=camera)
+    if active is not None:
+        return active
     selection = _stock_franka_selection()
     state["selection"] = selection
     cam = (camera or "workspace").strip() or "workspace"
@@ -3085,10 +3156,63 @@ def _maybe_toolground_chat_reply(
     )
     return reply, _dedupe(apis_used), suggested_apis, None, None, intent
 
+def _sim2real_stage_count_from_report(state: dict[str, Any]) -> int:
+    """Derive Sim2Real stage count from the active staged report when available."""
+    sim_viz = state.get("sim_viz", {{}})
+    latest = state.get("latest_submit", {{}})
+    run_id = ""
+    if isinstance(sim_viz, dict):
+        run_id = str(sim_viz.get("run_id") or "").strip()
+    if not run_id and isinstance(latest, dict):
+        run_id = str(latest.get("run_id") or "").strip()
+    if not run_id:
+        return 0
+    report_path = Path("/opt/npa-agent/reports") / run_id / "sim2real-report.json"
+    try:
+        report = json.loads(report_path.read_text())
+    except Exception:
+        return 0
+    artifacts = report.get("s3_artifacts") if isinstance(report, dict) else {{}}
+    if isinstance(artifacts, dict):
+        stage_keys = [str(key) for key in artifacts if str(key).startswith("stage_")]
+        if stage_keys:
+            return len(stage_keys)
+    records = report.get("stage_records") if isinstance(report, dict) else []
+    if isinstance(records, list) and records:
+        return len(records)
+    return 0
+
+
+def _maybe_stage_count_numeric_reply(user_text: str, state: dict[str, Any]) -> str | None:
+    lowered = str(user_text or "").lower()
+    if not re.search(r"\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real|pipeline|workflow)\b", lowered):
+        return None
+    if not re.search(r"\b(?:stage|stages|step|steps)\b", lowered):
+        return None
+    if not re.search(r"\b(?:count|number|how many)\b", lowered):
+        return None
+    value = _sim2real_stage_count_from_report(state)
+    if value <= 0:
+        return None
+    match = re.search(r"(?:count|number|stages?|steps?)\s*(?:-|minus)\s*(\d+)", lowered)
+    if match:
+        value -= int(match.group(1))
+    return str(value)
+
 def _agent_chat_with_tools(*, raw_messages: list, model: str) -> dict | None:
     last_user = _last_user_message(raw_messages)
     if not last_user:
         return None
+    numeric_reply = _maybe_stage_count_numeric_reply(last_user, _load_state())
+    if numeric_reply is not None:
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": numeric_reply,
+            "reasoning": None,
+            "grounded": True,
+            "apis_used": ["reports/sim2real-report.json"],
+        }}
     tool_reply, apis_used, apis_suggested, workflow_yaml, workflow_validation, intent = _maybe_toolground_chat_reply(last_user)
     if not tool_reply:
         return None
@@ -3355,7 +3479,11 @@ def sim_viz_status(run_id: str = ""):
         payload["stage"] = "submitted"
     _record_sim_viz_run(state, payload)
     if str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}:
-        payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
+        live_url = str(payload.get("live_grpc_url") or "").strip()
+        if live_url:
+            payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
+        else:
+            payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
     if not payload.get("rrd_uri") and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
@@ -5888,13 +6016,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
+        const statusPath = runId ? ("/api/sim-viz/status?run_id=" + encodeURIComponent(runId)) : "/api/sim-viz/status";
+        try {{
+          const status = await loadJson(statusPath);
+          const liveUrl = String((status && status.live_grpc_url) || "").trim();
+          if (liveUrl) {{
+            setRerunBlobStatus(RERUN_BLOB_SUCCESS, "live-proxy");
+            return "/rerun/?url=" + encodeURIComponent(liveUrl) + "&renderer=webgl&hide_welcome_screen=1&camera=" + encodeURIComponent(cam);
+          }}
+        }} catch (_statusErr) {{
+          // fall back to blob/file path below
+        }}
         let rrdUrl = "";
         try {{
           rrdUrl = await resolveRerunRrdUrl(18, runId);
         }} catch (_blobErr) {{
           rrdUrl = await resolveRerunRecordingUrl();
         }}
-        // Prefer authenticated blob fetch; public recording path is fallback.
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
