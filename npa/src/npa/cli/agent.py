@@ -6893,8 +6893,8 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
-EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
+EnvironmentFile=-/opt/npa-agent/s3.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
