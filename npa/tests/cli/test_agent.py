@@ -310,11 +310,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_generate_franka_demo_rrd" in source
     assert "_log_franka_robot_geometry" in source
     assert "robot/franka/links" in source
-    assert "Load Franka in Rerun" in source
+    assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
-    assert 'id="rerunFrame" title="rerun" hidden' in source
+    assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
     assert "/rerun/recordings/sim2real.rrd" in source
@@ -330,12 +330,13 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" in source
+    assert "resolveRerunRrdUrl" not in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
+    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
-    assert "URL.createObjectURL" in source
+    assert "URL.createObjectURL" not in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -413,7 +414,7 @@ def test_bootstrap_system_prompt_no_localhost() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert "Never suggest localhost" in source
-    assert "Load Franka in Rerun" in source
+    assert "Load active Sim2Real in Rerun" in source
     assert "/api/sim-viz/load-franka-demo" in source
     assert "localhost:8080" not in source.split("_agent_system_prompt")[1].split("return")[0]
 

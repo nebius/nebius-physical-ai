@@ -313,7 +313,7 @@ def _log_heldout_cameras(
 ) -> tuple[int, float]:
     logged = 0
     end_seconds = start_seconds
-    for env_id, frames in episodes:
+    for episode_index, (env_id, frames) in enumerate(episodes):
         root = f"heldout/camera/{env_id}"
         # Reset to the same start for every env so all held-out episodes share one
         # time window and play in sync (frame i of every env at the same t). Without
@@ -321,8 +321,12 @@ def _log_heldout_cameras(
         seconds = start_seconds
         for frame in frames:
             _set_time(rr, recording, seconds)
-            rr.log(f"{root}/camera", _rerun_image(rr, frame), recording=recording)
+            image = _rerun_image(rr, frame)
+            rr.log(f"{root}/camera", image, recording=recording)
             _bump(counts, f"{root}/camera")
+            if episode_index == 0:
+                rr.log("camera", image, recording=recording)
+                _bump(counts, "camera")
             seconds += ROLLOUT_FRAME_SECONDS
             logged += 1
         end_seconds = max(end_seconds, seconds)
@@ -392,19 +396,22 @@ def _build_blueprint(
     env_ids = list(heldout_env_ids or [])
     has_heldout_cameras = has_heldout_cameras or bool(env_ids)
     if env_ids:
-        # One 2D view per held-out env: a single Spatial2DView cannot lay out
-        # sibling image entities (heldout/camera/env-*/camera), so all envs render
-        # blank. A grid of per-env views shows every held-out episode at once, and
-        # paired with the time-aligned logging they scrub/play in sync.
-        camera_view = rrb.Grid(
-            *[
-                rrb.Spatial2DView(
-                    origin=f"heldout/camera/{env_id}",
-                    name=f"Held-out {env_id}",
-                )
-                for env_id in env_ids
-            ],
-            name="Held-out sim cameras",
+        # Keep a top-level camera alias first: the web viewer reliably opens this
+        # single Spatial2DView, while the per-env grid remains available for
+        # deeper inspection in the Streams tree.
+        camera_view = rrb.Vertical(
+            rrb.Spatial2DView(origin="camera", name="Franka held-out sim camera"),
+            rrb.Grid(
+                *[
+                    rrb.Spatial2DView(
+                        origin=f"heldout/camera/{env_id}",
+                        name=f"Held-out {env_id}",
+                    )
+                    for env_id in env_ids
+                ],
+                name="Held-out sim cameras",
+            ),
+            row_shares=[3.0, 1.0],
         )
     elif has_heldout_cameras:
         camera_view = rrb.Spatial2DView(
