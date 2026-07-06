@@ -1760,7 +1760,8 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     if stage:
         details["status"] = stage
     if sim_viz.get("rrd_uri"):
-        details["result"] = "recording_available"
+        if str(details.get("result") or "") not in {"completed", "failed", "running"}:
+            details["result"] = "recording_available"
         for item in details.get("stages", []):
             if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
                 item["status"] = "succeeded"
@@ -3075,6 +3076,14 @@ def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
 
 
 def _apply_sim2real_report_to_details(details: dict, report: dict) -> None:
+    report_status = str(report.get("status") or "").lower()
+    if report_status == "completed":
+        for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
+            if stage_id == "submit":
+                continue
+            if stage_id == "stage_14_rerun_viz":
+                continue
+            _mark_stage(details, stage_id, "succeeded", f"Completed during local Sim2Real run: {{label}}.")
     records = report.get("component_records")
     if isinstance(records, list):
         for record in records:
@@ -3086,6 +3095,35 @@ def _apply_sim2real_report_to_details(details: dict, report: dict) -> None:
                 stage_id = _SIM2REAL_STAGE_BY_NUMBER.get(int(stage_num))
             except Exception:
                 stage_id = None
+            path_text = str(record.get("path") or "").lower()
+            component_text = str(record.get("component") or "").lower()
+            if stage_id is None:
+                if "stage_01_trigger" in path_text:
+                    stage_id = "stage_01_trigger"
+                elif "stage_02_assets" in path_text or "consumed_scene" in path_text:
+                    stage_id = "stage_02_assets"
+                elif "augment" in path_text or "cosmos2" in component_text:
+                    stage_id = "stage_03_augment"
+                elif "envs/raw" in path_text:
+                    stage_id = "stage_04_envs_raw"
+                elif "envs/train" in path_text:
+                    stage_id = "stage_05_envs_train"
+                elif "tokens" in path_text:
+                    stage_id = "stage_06_tokens"
+                elif "actions/train" in path_text or "policy" in component_text:
+                    stage_id = "stage_07_actions_train"
+                elif "vlm_eval" in path_text:
+                    stage_id = "stage_08_vlm_eval_train"
+                elif "training_signal" in path_text:
+                    stage_id = "stage_09_training_signal"
+                elif "eval/heldout" in path_text or "heldout" in component_text:
+                    stage_id = "stage_10_eval_heldout"
+                elif "outer_loop" in path_text or "decision" in path_text:
+                    stage_id = "stage_11_outer_loop"
+                elif "stage_12_external_validation" in path_text:
+                    stage_id = "stage_12_external_validation_stub"
+                elif "stage_13_retrigger" in path_text:
+                    stage_id = "stage_13_retrigger"
             if stage_id:
                 status = str(payload.get("status") or record.get("status") or "completed").lower()
                 normalized = "succeeded" if status in {{"completed", "succeeded", "success", "written"}} else status
