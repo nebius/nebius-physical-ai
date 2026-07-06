@@ -5888,7 +5888,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
         </section>
         <div class="layout layout-3">
-          <section class="panel rerun-panel">
+          <section class="panel">
             <h3>Sim Assets</h3>
             <div class="subsection">
               <h4>Selection</h4>
@@ -5986,8 +5986,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <select id="cameraSelect" hidden aria-hidden="true"></select>
             <div id="rerunEntityHint" class="rollout-hint"></div>
           </section>
-          <section class="panel">
-            <h3>Rerun simulation</h3>
+          <section class="panel rerun-panel">
+            <h3>Rerun (embedded)</h3>
             <div id="simviz">
               <div class="status-row">
                 <span>Run: <strong id="simRunId">—</strong></span>
