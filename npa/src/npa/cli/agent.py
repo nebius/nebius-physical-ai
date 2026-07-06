@@ -1681,10 +1681,10 @@ def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", select
             {{
                 "id": stage_id,
                 "label": label,
-                "status": "pending",
+                "status": "not_run",
                 "started_at": "",
                 "finished_at": "",
-                "summary": "",
+                "summary": "Not launched by the agent UI submit endpoint.",
             }}
         )
     if stages:
@@ -1695,7 +1695,7 @@ def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", select
     return {{
         "run_id": run_id,
         "status": "submitted",
-        "result": "pending",
+        "result": "recorded_not_launched",
         "submitted_at": submitted_at,
         "updated_at": submitted_at or _now_iso(),
         "selection": selection if isinstance(selection, dict) else {{}},
@@ -1709,7 +1709,12 @@ def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", select
             {{
                 "timestamp": submitted_at or _now_iso(),
                 "level": "warn",
-                "message": "No run-specific Rerun .rrd recording is available yet; showing timeline and logs instead of stale demo data.",
+                "message": "The agent UI submit endpoint recorded the request but did not launch the full K8s Sim2Real pipeline; unexecuted stages are marked not_run.",
+            }},
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "info",
+                "message": "Use the operator workflow submit path for a real staged K8s run; this view remains truthful until run artifacts or a recording exist.",
             }},
         ],
         "artifacts": [],
@@ -1759,7 +1764,7 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
                 item["status"] = "succeeded"
                 item["summary"] = "Rerun recording is available."
     elif resolved_run_id:
-        details["result"] = "waiting_for_recording"
+        details["result"] = "recorded_not_launched"
     return details
 
 
@@ -4815,6 +4820,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
       .stage-status.running {{ background: #fef3c7; color: #92400e; }}
       .stage-status.pending {{ background: #f1f5f9; color: #475569; }}
+      .stage-status.not_run {{ background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1; }}
       .stage-label {{ font-weight: 700; color: #263247; }}
       .stage-summary {{ color: #64748b; margin-top: 2px; }}
       .run-log {{
@@ -6764,6 +6770,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
         if (["failed", "error", "blocked"].includes(raw)) return "failed";
         if (["running", "active", "submitted", "queued"].includes(raw)) return raw === "submitted" ? "running" : raw;
+        if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
         return "pending";
       }}
       function renderRunDetails(details) {{
