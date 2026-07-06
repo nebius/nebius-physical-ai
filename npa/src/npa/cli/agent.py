@@ -6811,15 +6811,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
-        // Rerun's wasm viewer fetches the URL itself and cannot reliably use
-        // parent-page basic-auth/blob state. nginx exposes this recording path
-        // without auth specifically so the iframe can load visuals directly.
-        const rrdUrl = await resolveRerunRecordingUrl();
-        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording-url");
+        let rrdUrl = "";
+        try {{
+          rrdUrl = await resolveRerunRecordingUrl();
+          // Still verify the authenticated blob path; the viewer itself loads
+          // the unauthenticated recording copy because Rerun's WASM fetch path
+          // does not reliably consume parent-created blob URLs across browsers.
+          try {{
+            await resolveRerunRrdUrl(3, runId);
+          }} catch (_blobErr) {{
+            // Keep the public recording URL when the recording is already present.
+          }}
+        }} catch (_recordingErr) {{
+          rrdUrl = await resolveRerunRrdUrl(18, runId);
+        }}
+        // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
-          "&renderer=webgl&hide_welcome_screen=1&camera=" +
+          "&hide_welcome_screen=1&camera=" +
           encodeURIComponent(cam)
         );
       }}
