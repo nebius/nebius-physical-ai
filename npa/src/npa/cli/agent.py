@@ -7053,7 +7053,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
-        return mountRerunIframeUntilSuccess(camera, 6);
+        return mountRerunIframeUntilSuccess(camera, 6).catch((err) => {{
+          console.warn("rerun iframe reload failed", err);
+          return false;
+        }});
       }}
       async function bestEffortMountRerun(camera, runId) {{
         try {{
