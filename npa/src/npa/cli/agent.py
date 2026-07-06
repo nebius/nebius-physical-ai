@@ -2285,7 +2285,7 @@ def _restart_rerun_serve(*, force: bool = False) -> bool:
         return False
 
 def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -> dict | None:
-    """Point the UI at an already-staged real Sim2Real recording, if present."""
+    # Point the UI at an already-staged real Sim2Real recording, if present.
     current = state.get("sim_viz", {{}})
     if not isinstance(current, dict):
         current = {{}}
@@ -3157,7 +3157,7 @@ def _maybe_toolground_chat_reply(
     return reply, _dedupe(apis_used), suggested_apis, None, None, intent
 
 def _sim2real_stage_count_from_report(state: dict[str, Any]) -> int:
-    """Derive Sim2Real stage count from the active staged report when available."""
+    # Derive Sim2Real stage count from the active staged report when available.
     sim_viz = state.get("sim_viz", {{}})
     latest = state.get("latest_submit", {{}})
     run_id = ""
