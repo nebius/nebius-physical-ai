@@ -7109,10 +7109,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const headers = withMobileAuth({{
           ...(req.headers || {{}}),
         }});
-        if (isMobile && String(path || "").startsWith("/api/") && !headers.Authorization) {{
-          setMobileAuthNeeded(true);
-          throw new Error("Unlock chat with your agent password.");
-        }}
         const useExplicitAuth = isMobile && Boolean(headers.Authorization);
         const opts = {{
           ...req,
