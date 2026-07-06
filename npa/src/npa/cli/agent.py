@@ -2326,6 +2326,96 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _local_runs_root() -> Path:
+    return Path("/opt/npa-agent/runs")
+
+
+def _local_artifact_key(run_id: str, path: Path) -> str:
+    rel = path.relative_to(_local_runs_root() / run_id)
+    return f"{{run_id}}/{{rel.as_posix()}}"
+
+
+def _local_artifact_path(run_id: str, key: str) -> Path:
+    normalized_run = validate_run_id(run_id)
+    raw_key = str(key or "").strip().lstrip("/")
+    if raw_key.startswith(normalized_run + "/"):
+        raw_key = raw_key[len(normalized_run) + 1 :]
+    if not raw_key or any(part in {"", ".", ".."} for part in raw_key.split("/")):
+        raise HTTPException(status_code=400, detail="invalid local artifact key")
+    root = (_local_runs_root() / normalized_run).resolve()
+    target = (root / raw_key).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="local artifact key escapes run directory") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"local artifact not found: {{key}}")
+    return target
+
+
+def _local_run_summaries(prefix: str = "", limit: int = 50) -> dict:
+    root = _local_runs_root()
+    token = str(prefix or "").strip().strip("/")
+    rows = []
+    if root.is_dir():
+        for run_dir in sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True):
+            run_id = run_dir.name
+            if token and token not in run_id:
+                continue
+            files = [p for p in run_dir.rglob("*") if p.is_file()]
+            if not files:
+                continue
+            latest = max(files, key=lambda p: p.stat().st_mtime)
+            rows.append(
+                {{
+                    "run_id": run_id,
+                    "last_modified": datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat(),
+                    "artifact_count": len(files),
+                    "has_viewable": any(render_hint_for_object(key=p.name) != "download" for p in files),
+                    "source": "local",
+                }}
+            )
+    total = len(rows)
+    return {{"runs": rows[:limit], "truncated": total > limit, "total_runs": total, "limit": limit}}
+
+
+def _local_artifacts_for_run(run_id: str, prefix: str = "") -> list[dict]:
+    normalized_run = validate_run_id(run_id)
+    root = _local_runs_root() / normalized_run
+    token = str(prefix or "").strip().strip("/")
+    rows = []
+    if root.is_dir():
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = _local_artifact_key(normalized_run, path)
+            if token and token not in key:
+                continue
+            stat = path.stat()
+            render = render_hint_for_object(key=key)
+            rows.append(
+                {{
+                    "run_id": normalized_run,
+                    "key": key,
+                    "s3_uri": "",
+                    "size": stat.st_size,
+                    "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    "render": render,
+                    "inline": is_inline_render(render),
+                    "source": "local",
+                }}
+            )
+    rows.sort(key=lambda item: (str(item["last_modified"]), str(item["key"])), reverse=True)
+    return rows
+
+
+def _preferred_artifact_dict(artifacts: list[dict]) -> dict | None:
+    if not artifacts:
+        return None
+    order = {{"rerun": 0, "video": 1, "image": 2, "json": 3, "text": 4, "download": 5}}
+    return sorted(artifacts, key=lambda item: (order.get(str(item.get("render")), 99), str(item.get("last_modified")), str(item.get("key"))))[0]
+
+
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -3919,6 +4009,7 @@ def sim_viz_recordings():
 
 @app.get("/artifacts/runs")
 def artifacts_runs(prefix: str = "", limit: int = 50):
+    s3_error = ""
     try:
         s3, settings = _agent_s3_client()
         page = list_runs(
@@ -3931,7 +4022,9 @@ def artifacts_runs(prefix: str = "", limit: int = 50):
     except HTTPException:
         raise
     except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
+        s3_error = str(exc)
+    local_page = _local_run_summaries(prefix=prefix, limit=limit)
+    return {{"ok": True, "bucket": "", "prefix": prefix, "source": "local", "s3_error": s3_error, **local_page}}
 
 
 @app.get("/artifacts/run/{{run_id:path}}")
@@ -3960,6 +4053,18 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
     except HTTPException:
         raise
     except Exception as exc:
+        local_artifacts = _local_artifacts_for_run(normalized_run, prefix=prefix)
+        if local_artifacts:
+            return {{
+                "ok": True,
+                "bucket": "",
+                "source": "local",
+                "s3_error": str(exc),
+                "run_id": normalized_run,
+                "count": len(local_artifacts),
+                "artifacts": local_artifacts,
+                "preferred": _preferred_artifact_dict(local_artifacts),
+            }}
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
 
 
@@ -4011,6 +4116,21 @@ def sim_viz_load_artifact(payload: dict | None = None):
     except HTTPException:
         raise
     except Exception as exc:
+        if requested_run and requested_key and not requested_uri:
+            run_id = validate_run_id(requested_run)
+            local_path = _local_artifact_path(run_id, requested_key)
+            key = _local_artifact_key(run_id, local_path)
+            render = render_hint_for_object(key=key)
+            state = _load_state()
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                s3_uri="",
+                render=render,
+                local_path=local_path,
+            )
+            return {{"ok": True, "source": "local", "s3_error": str(exc), "sim_viz": sim_viz, "render": render, "artifact_uri": ""}}
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc)}})
 
 

@@ -146,6 +146,19 @@ def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
     assert 'f"{entity}/origin"' not in source
 
 
+def test_agent_embeds_local_artifact_discovery_fallback_components() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Discover runs, list artifacts, and load artifact must all have a local
+    # fallback so the UI still works when object-store ListObjects is denied.
+    assert "def _local_run_summaries" in source
+    assert "def _local_artifacts_for_run" in source
+    assert "def _local_artifact_path" in source
+    assert '"source": "local"' in source
+    assert "s3_error" in source
+
+
 def test_agent_help_smoke() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
