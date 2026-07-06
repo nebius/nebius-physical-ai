@@ -5218,6 +5218,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .layout {{ display: grid; gap: 14px; }}
       .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(760px, 1fr); }}
+      .layout-3 .rerun-panel {{ grid-column: 1 / -1; }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -5887,7 +5888,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
         </section>
         <div class="layout layout-3">
-          <section class="panel">
+          <section class="panel rerun-panel">
             <h3>Sim Assets</h3>
             <div class="subsection">
               <h4>Selection</h4>

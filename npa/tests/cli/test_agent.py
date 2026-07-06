@@ -505,6 +505,9 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "robot/franka/links" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
+    assert "class=\"panel rerun-panel\"" in source
+    assert ".layout-3 .rerun-panel" in source
+    assert "iframe#rerunFrame" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
     assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
