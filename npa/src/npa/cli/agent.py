@@ -3582,6 +3582,10 @@ def chat(payload: dict):
                 "chat_history": history[-80:],
             }}
         )
+        # Tool handlers may mutate session state (for example starting a Sim2Real
+        # run). Reload before saving chat history so an older state snapshot does
+        # not clobber the run monitor.
+        state = _load_state()
         session = _save_chat_session(state, session, active=True)
         tool_result["session_id"] = session["id"]
         tool_result["session"] = {{
