@@ -5197,12 +5197,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
               <p id="simvizCta" class="cta">Embedded real Sim2Real recording. Use Load active Sim2Real if the viewer needs a refresh.</p>
             </div>
-            <div id="rerunPlaceholder" class="rerun-placeholder">
-              <p>Loading Rerun viewer…</p>
+            <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
+              <p>Rerun recording is embedded below.</p>
               <p class="hint">Loading the active Sim2Real recording.</p>
-              <button id="loadRerunViewer" class="btn btn-primary" type="button">Load Rerun viewer</button>
+              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a class="btn" href="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
             </div>
-            <iframe id="rerunFrame" title="rerun" hidden style="height: 620px;"></iframe>
+            <iframe id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
             <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
           </section>
         </div>
@@ -5410,7 +5410,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           setChatInput("How do I set up Cosmos3 in the NPA workbench?");
         }}, "Insert Cosmos3 prompt");
         bindClick("chatActionWatch", () => {{
-          setChatInput("Watch the sim in Rerun and keep retrying blob+iframe mount until SUCCESS using /api/sim-viz/status.");
+          setChatInput("Watch the sim in Rerun and keep retrying recording iframe mount until SUCCESS using /api/sim-viz/status.");
         }}, "Insert watch-sim prompt");
         bindClick("chatActionWorkflow", () => {{
           setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
@@ -5423,7 +5423,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("loadFrankaRerun", loadFrankaDemo, "Load Franka in Rerun");
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
-        bindClick("loadRerunViewer", () => loadRerunViewer(), "Load Rerun viewer");
+        bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
         bindClick("openRerun", openRerunTab, "Open Rerun");
         bindClick("applySelection", applySelection, "Apply stock selection");
         bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
@@ -5953,7 +5953,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
-      let lastRrdBlobUrl = "";
       let activeRunId = "";
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
@@ -5967,7 +5966,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const text = String(status || "").trim() || "pending";
         lastRerunBlobStatus = text;
         const extra = detail ? " (" + String(detail) + ")" : "";
-        setStatus("Rerun blob: " + text + extra);
+        setStatus("Rerun recording: " + text + extra);
       }}
       function setRerunMountStatus(status, detail) {{
         const text = String(status || "").trim() || "pending";
@@ -6008,51 +6007,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         setRerunBlobStatus("fallback", "recording=public");
         return recordingUrl;
       }}
-      async function resolveRerunRrdUrl(maxAttempts, runId) {{
-        const attempts = Math.max(1, Number(maxAttempts || 18));
-        const targetRunId = String(runId || activeRunId || "").trim();
-        const query = targetRunId ? ("?run_id=" + encodeURIComponent(targetRunId)) : "";
-        let lastErr = null;
-        for (let i = 0; i < attempts; i += 1) {{
-          try {{
-            const resp = await fetchWithTimeout("/api/sim-viz/rrd-blob" + query, {{ credentials: "include" }}, 12000);
-            if (!resp.ok) {{
-              if (resp.status === 401) {{
-                window.location.href = "/login-help.html";
-              }}
-              throw new Error("Failed to fetch .rrd for Rerun viewer");
-            }}
-            const blob = await resp.blob();
-            if (blob.size < 64) {{
-              throw new Error("Rerun .rrd payload is too small");
-            }}
-            if (lastRrdBlobUrl) {{
-              URL.revokeObjectURL(lastRrdBlobUrl);
-            }}
-            lastRrdBlobUrl = URL.createObjectURL(blob);
-            setRerunBlobStatus(RERUN_BLOB_SUCCESS, "bytes=" + String(blob.size));
-            return lastRrdBlobUrl;
-          }} catch (err) {{
-            lastErr = err;
-            setRerunBlobStatus("retrying", "attempt " + String(i + 1) + "/" + String(attempts));
-            if (i + 1 >= attempts) {{
-              break;
-            }}
-            const backoffMs = Math.min(2500, 700 + i * 175);
-            await new Promise((resolve) => window.setTimeout(resolve, backoffMs));
-          }}
-        }}
-        setRerunBlobStatus("failed");
-        throw lastErr || new Error("Failed to fetch .rrd for Rerun viewer");
-      }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
-        let rrdUrl = "";
-        try {{
-          rrdUrl = await resolveRerunRrdUrl(18, runId);
-        }} catch (_blobErr) {{
-          rrdUrl = await resolveRerunRecordingUrl();
-        }}
+        const rrdUrl = await resolveRerunRecordingUrl();
+        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording-url");
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
@@ -6526,7 +6484,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
             showRerunPlaceholder("Waiting for .rrd data. Click Load Franka in Rerun or submit Sim2Real.");
           }} else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {{
-            showRerunPlaceholder("Rerun is ready. Click Load Rerun viewer or Load Franka in Rerun.");
+            showRerunPlaceholder("Rerun is ready. Click Reload Rerun data or Load Franka in Rerun.");
           }}
           const robotPreset = document.getElementById("robotPreset");
           if (assets.selection && assets.selection.robot_preset) {{
@@ -6763,7 +6721,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           );
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
-            throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");
+            throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
           }}
           appendChat(
             "assistant",
@@ -6771,7 +6729,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               String(simViz.run_id || data.run_id || "unknown") +
               "`, **stage** `" +
               String(simViz.stage || "running") +
-              "`, **iframe** `/rerun/`, **blob_mount** `" + RERUN_BLOB_SUCCESS + "`"
+              "`, **iframe** `/rerun/`, **recording_mount** `" + RERUN_BLOB_SUCCESS + "`"
           );
         }} else {{
           throw new Error("Sim2Real run submitted, but no .rrd is available yet after polling");
