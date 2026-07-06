@@ -573,6 +573,7 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     return {
         "service_account_id": str(creds.get("service_account_id", "")).strip(),
         "s3_bucket": str(creds.get("s3_bucket", "")).strip(),
+        "s3_prefix": str(creds.get("s3_prefix", "")).strip().strip("/"),
         "s3_endpoint": str(creds.get("s3_endpoint", "")).strip(),
         "access_key": str(creds.get("nebius_api_key", "")).strip(),
         "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
@@ -586,6 +587,7 @@ def _storage_credentials_allow_writes(
     access_key: str,
     secret_key: str,
     region: str,
+    prefix: str = "",
 ) -> bool:
     """Return True when credentials can list, write, and delete in the bucket."""
     bucket_name = str(bucket or "").strip()
@@ -605,9 +607,11 @@ def _storage_credentials_allow_writes(
         "aws_" "secret_access_key": str(secret_key or "").strip(),
     }
     client = boto3.client("s3", **client_kwargs)
-    probe_key = f"npa-agent/probe/{secrets.token_hex(8)}.txt"
+    normalized_prefix = str(prefix or "").strip().strip("/")
+    probe_base = "/".join(part for part in (normalized_prefix, "npa-agent/probe") if part)
+    probe_key = f"{probe_base}/{secrets.token_hex(8)}.txt"
     try:
-        client.list_objects_v2(Bucket=bucket_name, Prefix="npa-agent/probe/", MaxKeys=1)
+        client.list_objects_v2(Bucket=bucket_name, Prefix=(probe_base + "/") if probe_base else "", MaxKeys=1)
         client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
         client.delete_object(Bucket=bucket_name, Key=probe_key)
         return True
@@ -624,10 +628,13 @@ def _resolve_deploy_storage_credentials(
     candidate = dict(bootstrap_creds)
     from npa.clients.credentials import load_credentials
 
-    shared = load_credentials()
+    shared = load_credentials(environ={})
     shared_bucket = str(shared.s3_bucket or "").strip()
+    shared_prefix = ""
     if shared_bucket.startswith("s3://"):
-        shared_bucket = shared_bucket[len("s3://"):].split("/", 1)[0]
+        rest = shared_bucket[len("s3://"):]
+        shared_bucket, _sep, shared_prefix = rest.partition("/")
+        shared_prefix = shared_prefix.strip("/")
     shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
     shared_access_key = str(shared.s3_access_key_id or "").strip()
     shared_secret_key = str(shared.s3_secret_access_key or "").strip()
@@ -637,9 +644,11 @@ def _resolve_deploy_storage_credentials(
         access_key=shared_access_key,
         secret_key=shared_secret_key,
         region=region,
+        prefix=shared_prefix,
     ):
         typer.echo("  Using shared configured artifact storage credentials for the agent.")
         candidate["s3_bucket"] = shared_bucket
+        candidate["s3_prefix"] = shared_prefix
         candidate["s3_endpoint"] = shared_endpoint
         candidate["nebius_api_key"] = shared_access_key
         candidate["nebius_secret_key"] = shared_secret_key
@@ -655,6 +664,7 @@ def _resolve_deploy_storage_credentials(
         access_key=access_key,
         secret_key=secret_key,
         region=region,
+        prefix=str(candidate.get("s3_prefix", "")),
     ):
         return candidate
     typer.echo(
@@ -730,6 +740,7 @@ def _credentials_block_from_storage(
     *,
     service_account_id: str,
     s3_bucket: str,
+    s3_prefix: str = "",
     s3_endpoint: str,
     s3_access_key: str,
     s3_secret_key: str,
@@ -737,6 +748,7 @@ def _credentials_block_from_storage(
     return {
         "service_account_id": service_account_id.strip(),
         "s3_bucket": s3_bucket.strip(),
+        "s3_prefix": s3_prefix.strip().strip("/"),
         "s3_endpoint": s3_endpoint.strip(),
         "access_key": s3_access_key.strip(),
         "secret_key": s3_secret_key.strip(),
@@ -764,13 +776,14 @@ def _resolve_agent_ssh_key(
 def _resolve_agent_storage_credentials(
     project_alias: str,
     record: dict[str, Any],
-) -> tuple[str, str, str, str, str]:
-    """Return bucket, endpoint, access key, secret key, and service account id."""
+) -> tuple[str, str, str, str, str, str]:
+    """Return bucket, prefix, endpoint, access key, secret key, and service account id."""
     creds = record.get("credentials", {})
     if isinstance(creds, dict):
         access_key = str(creds.get("access_key", "")).strip()
         secret_key = str(creds.get("secret_key", "")).strip()
         bucket = str(creds.get("s3_bucket", "")).strip()
+        prefix = str(creds.get("s3_prefix", "")).strip().strip("/")
         endpoint = str(creds.get("s3_endpoint", "")).strip()
         service_account_id = str(
             creds.get("service_account_id", record.get("service_account_id", ""))
@@ -778,14 +791,15 @@ def _resolve_agent_storage_credentials(
         if bucket and access_key and secret_key:
             if not service_account_id:
                 service_account_id = _resolve_agent_service_account_id(project_alias, record)
-            return bucket, endpoint, access_key, secret_key, service_account_id
+            return bucket, prefix, endpoint, access_key, secret_key, service_account_id
     try:
         tf_state = resolve_terraform_state(project_alias)
     except ConfigError:
-        return "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
+        return "", "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
     service_account_id = _resolve_agent_service_account_id(project_alias, record)
     return (
         str(getattr(tf_state, "bucket", "") or ""),
+        "",
         str(getattr(tf_state, "endpoint", "") or ""),
         str(getattr(tf_state, "access_key", "") or ""),
         str(getattr(tf_state, "secret_key", "") or ""),
@@ -828,6 +842,7 @@ def _write_agent_s3_env(
     ssh: SSHClient,
     *,
     bucket: str,
+    prefix: str = "",
     endpoint: str,
     access_key: str,
     secret_key: str,
@@ -838,6 +853,7 @@ def _write_agent_s3_env(
         return
     env_lines = [
         f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
+        f"NPA_AGENT_S3_PREFIX={prefix.strip().strip('/')}",
         f"NPA_AGENT_S3_ENDPOINT={endpoint.strip()}",
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
@@ -862,6 +878,7 @@ def _write_agent_operator_profile(
     tf_api_key: str,
     nebius_ai_key: str,
     s3_bucket: str,
+    s3_prefix: str = "",
     s3_endpoint: str,
     s3_access_key: str,
     s3_secret_key: str,
@@ -891,7 +908,7 @@ def _write_agent_operator_profile(
         "access_key_id": s3_access_key.strip(),
         "secret_access_key": s3_secret_key.strip(),
         "endpoint": s3_endpoint.strip(),
-        "bucket": s3_bucket.strip(),
+        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
     }
     if any(storage_payload.values()):
         credentials_payload["storage"] = storage_payload
@@ -1325,6 +1342,7 @@ def _bootstrap_agent_stack(
     nebius_ai_key: str = "",
     service_account_id: str = "",
     s3_bucket: str = "",
+    s3_prefix: str = "",
     s3_endpoint: str = "",
     s3_access_key: str = "",
     s3_secret_key: str = "",
@@ -2067,11 +2085,16 @@ def _safe_artifact_key(key: str) -> str:
 def _agent_s3_settings() -> dict[str, str]:
     return {{
         "bucket": str(os.environ.get("NPA_AGENT_S3_BUCKET", "")).strip(),
+        "prefix": str(os.environ.get("NPA_AGENT_S3_PREFIX", "")).strip().strip("/"),
         "endpoint": str(os.environ.get("NPA_AGENT_S3_ENDPOINT", "")).strip(),
         "access_key": str(os.environ.get("AWS_ACCESS_KEY_ID", "")).strip(),
         "secret_key": str(os.environ.get("AWS_SECRET_ACCESS_KEY", "")).strip(),
         "region": str(os.environ.get("AWS_REGION", "eu-north1")).strip() or "eu-north1",
     }}
+
+
+def _join_agent_s3_prefix(base_prefix: str, suffix: str = "") -> str:
+    return "/".join(part.strip("/") for part in (base_prefix, suffix) if str(part or "").strip().strip("/"))
 
 
 def _agent_s3_client():
@@ -3074,7 +3097,13 @@ def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
         "--rerun",
     ]
     if settings.get("bucket"):
-        cmd.extend(["--s3-bucket", str(settings["bucket"]), "--s3-prefix", "sim2real-b", "--upload-artifacts"])
+        cmd.extend([
+            "--s3-bucket",
+            str(settings["bucket"]),
+            "--s3-prefix",
+            _join_agent_s3_prefix(str(settings.get("prefix") or ""), "sim2real-b"),
+            "--upload-artifacts",
+        ])
     if settings.get("endpoint"):
         cmd.extend(["--s3-endpoint", str(settings["endpoint"])])
     return cmd
@@ -3926,13 +3955,14 @@ def sim_viz_recordings():
 def artifacts_runs(prefix: str = "", limit: int = 50):
     try:
         s3, settings = _agent_s3_client()
+        effective_prefix = _join_agent_s3_prefix(settings.get("prefix", ""), prefix)
         page = list_runs(
             settings["bucket"],
-            prefix=prefix,
+            prefix=effective_prefix,
             limit=limit,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "prefix": prefix, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -3947,16 +3977,19 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
+        effective_prefix = _join_agent_s3_prefix(settings.get("prefix", ""), prefix)
         artifacts = list_artifacts(
             settings["bucket"],
             normalized_run,
-            prefix=prefix,
+            prefix=effective_prefix,
             s3=s3,
         )
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
             "bucket": settings["bucket"],
+            "prefix": effective_prefix,
+            "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
             "count": len(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
@@ -7514,6 +7547,7 @@ sudo systemctl restart npa-agent-backend
     _write_agent_s3_env(
         ssh,
         bucket=s3_bucket,
+        prefix=s3_prefix,
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
@@ -7529,6 +7563,7 @@ sudo systemctl restart npa-agent-backend
         tf_api_key=tf_api_key,
         nebius_ai_key=nebius_ai_key,
         s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
         s3_endpoint=s3_endpoint,
         s3_access_key=s3_access_key,
         s3_secret_key=s3_secret_key,
@@ -7657,6 +7692,7 @@ def deploy_cmd(
         "nebius_api_key": str(creds.get("nebius_api_key", "")),
         "nebius_secret_key": str(creds.get("nebius_secret_key", "")),
         "s3_bucket": str(creds.get("s3_bucket", "")),
+        "s3_prefix": str(creds.get("s3_prefix", "")),
         "s3_endpoint": str(creds.get("s3_endpoint", "")),
         "instance_name": f"agent-{project}-{name}",
         "server_port": str(agent_port),
@@ -7757,6 +7793,7 @@ def deploy_cmd(
             tf_api_key=tf_api_key,
             nebius_ai_key=nebius_ai_key,
             s3_bucket=str(merged_vars.get("s3_bucket", "")),
+            s3_prefix=str(merged_vars.get("s3_prefix", "")),
             s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
             s3_access_key=str(merged_vars.get("nebius_api_key", "")),
             s3_secret_key=str(merged_vars.get("nebius_secret_key", "")),
@@ -7983,7 +8020,7 @@ def bootstrap_cmd(
     project_id = str(record.get("project_id", "")).strip()
     tenant_id = str(record.get("tenant_id", "")).strip()
     region = str(record.get("region", "") or "eu-north1")
-    s3_bucket, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
+    s3_bucket, s3_prefix, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
         _resolve_agent_storage_credentials(project, record)
     )
     if not service_account_id:
@@ -8014,6 +8051,7 @@ def bootstrap_cmd(
         creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
         agent_credentials = _agent_credentials_payload(creds)
         s3_bucket = agent_credentials["s3_bucket"]
+        s3_prefix = agent_credentials.get("s3_prefix", "")
         s3_endpoint = agent_credentials["s3_endpoint"]
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
@@ -8056,6 +8094,7 @@ def bootstrap_cmd(
             tf_api_key=tf_api_key,
             nebius_ai_key=nebius_ai_key,
             s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
             s3_secret_key=s3_secret_key,
@@ -8097,6 +8136,7 @@ def bootstrap_cmd(
         updated["credentials"] = _credentials_block_from_storage(
             service_account_id=service_account_id,
             s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
             s3_access_key=s3_access_key,
             s3_secret_key=s3_secret_key,

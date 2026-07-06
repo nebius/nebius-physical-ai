@@ -73,7 +73,7 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             s3_bucket="",
             s3_endpoint="",
             s3_access_key_id="",
@@ -99,7 +99,7 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monke
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **kwargs: kwargs["bucket"] == "shared-bucket")
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/checkpoints/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
             s3_access_key_id="ak-shared",
@@ -116,6 +116,7 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monke
     resolved = _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
 
     assert resolved["s3_bucket"] == "shared-bucket"
+    assert resolved["s3_prefix"] == "checkpoints"
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
@@ -128,7 +129,7 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
             s3_access_key_id="ak-shared",
@@ -1056,16 +1057,18 @@ def test_resolve_agent_storage_credentials_prefers_record() -> None:
         "credentials": {
             "service_account_id": "serviceaccount-abc",
             "s3_bucket": "bucket",
+            "s3_prefix": "runs",
             "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
             "access_key": "key",
             "secret_key": "secret",
         },
     }
-    bucket, endpoint, access_key, secret_key, sa_id = _resolve_agent_storage_credentials(
+    bucket, prefix, endpoint, access_key, secret_key, sa_id = _resolve_agent_storage_credentials(
         "rtxpro",
         record,
     )
     assert bucket == "bucket"
+    assert prefix == "runs"
     assert endpoint.endswith("nebius.cloud")
     assert access_key == "key"
     assert secret_key == "secret"
