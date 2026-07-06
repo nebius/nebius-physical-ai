@@ -6913,8 +6913,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function loadArtifactsForSelectedRun() {{
         const select = document.getElementById("artifactRunSelect");
-        const runId = String((select && select.value) || "").trim();
-        if (!runId) throw new Error("Select a discovered run first");
+        const runInput = document.getElementById("runIdInput");
+        const runId = String((select && select.value) || (runInput && runInput.value) || activeRunId || "").trim();
+        if (!runId) throw new Error("Select a discovered run or enter a run_id first");
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
         const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
@@ -6922,7 +6923,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         if (!artifacts.length) {{
-          list.innerHTML = "<p>No artifacts found for this run.</p>";
+          list.innerHTML =
+            "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
+            "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
+            "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
           return true;
         }}
         list.innerHTML = artifacts.map((item, idx) => {{
