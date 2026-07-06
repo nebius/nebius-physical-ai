@@ -5,7 +5,7 @@ version = "0.1"
 dependencies = [
   "torch",
   "torchvision",
-  "ray[default]==2.46.0",
+  "ray[default]==2.56.0",
   "pandas",
   "pyarrow",
   "python-dotenv",

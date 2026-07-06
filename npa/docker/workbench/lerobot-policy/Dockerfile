@@ -37,7 +37,10 @@ COPY --chown=ubuntu:ubuntu docker/workbench/lerobot-policy/requirements.txt /tmp
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/lerobot/venv/bin/pip install --no-cache-dir -r /tmp/npa-lerobot-policy-requirements.txt \
-    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
+    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
+      "torch==2.12.1" \
+      "torchvision==0.27.1" \
+      "diffusers>=0.38.0" \
     && /opt/lerobot/venv/bin/pip uninstall -y wandb
 
 USER root
