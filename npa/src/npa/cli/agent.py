@@ -5836,7 +5836,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           setChatInput("How do I set up Cosmos3 in the NPA workbench?");
         }}, "Insert Cosmos3 prompt");
         bindClick("chatActionWatch", () => {{
-          setChatInput("Watch the sim in Rerun and keep retrying blob+iframe mount until SUCCESS using /api/sim-viz/status.");
+          setChatInput("Watch the sim in Rerun and keep retrying recording+iframe mount until SUCCESS using /api/sim-viz/status.");
         }}, "Insert watch-sim prompt");
         bindClick("chatActionWorkflow", () => {{
           setChatInput("Create a 2-step sim2real workflow YAML with real toolRefs from the catalog.");
@@ -6393,7 +6393,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const text = String(status || "").trim() || "pending";
         lastRerunBlobStatus = text;
         const extra = detail ? " (" + String(detail) + ")" : "";
-        setStatus("Rerun blob: " + text + extra);
+        setStatus("Rerun recording: " + text + extra);
       }}
       function setRerunMountStatus(status, detail) {{
         const text = String(status || "").trim() || "pending";
@@ -6473,23 +6473,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
-        let rrdUrl = "";
-        const targetRunId = String(runId || activeRunId || "").trim();
-        if (!targetRunId || targetRunId === "franka-demo") {{
-          rrdUrl = await resolveRerunRecordingUrl();
-          return (
-            "/rerun/?url=" +
-            encodeURIComponent(rrdUrl) +
-            "&renderer=webgl&hide_welcome_screen=1&camera=" +
-            encodeURIComponent(cam)
-          );
-        }}
-        try {{
-          rrdUrl = await resolveRerunRrdUrl(18, targetRunId);
-        }} catch (_blobErr) {{
-          rrdUrl = await resolveRerunRecordingUrl();
-        }}
-        // Prefer authenticated blob fetch; public recording path is fallback.
+        // Rerun's wasm viewer fetches the URL itself and cannot reliably use
+        // parent-page basic-auth/blob state. nginx exposes this recording path
+        // without auth specifically so the iframe can load visuals directly.
+        const rrdUrl = await resolveRerunRecordingUrl();
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
@@ -6685,7 +6672,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (lastErr) {{
           throw lastErr;
         }}
-        throw new Error("Timed out waiting for rerun blob/iframe SUCCESS");
+        throw new Error("Timed out waiting for rerun recording/iframe SUCCESS");
       }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
@@ -7267,7 +7254,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           );
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
-            throw new Error("Rerun blob/iframe did not reach SUCCESS after workflow submit");
+            throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
           }}
           appendChat(
             "assistant",
