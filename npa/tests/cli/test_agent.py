@@ -519,6 +519,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "does not reliably consume parent-created blob URLs" in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
+    assert "waitForRerunRenderSettle" in source
+    assert "Rerun fires the iframe load event before WebGL has drawn the recording" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
     assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source

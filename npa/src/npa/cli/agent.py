@@ -6940,6 +6940,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.addEventListener("error", onError, {{ once: true }});
         }});
       }}
+      async function waitForRerunRenderSettle(iframe, timeoutMs) {{
+        const timeout = Math.max(3000, Number(timeoutMs || 15000));
+        const start = Date.now();
+        while (Date.now() - start < timeout) {{
+          try {{
+            const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
+            if (doc && doc.querySelectorAll("canvas").length > 0) {{
+              break;
+            }}
+          }} catch (_err) {{
+            break;
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }}
+        // Rerun fires the iframe load event before WebGL has drawn the recording.
+        // Give the viewer one render window so success does not race a blank canvas.
+        await new Promise((resolve) => window.setTimeout(resolve, 15000));
+      }}
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
@@ -6948,6 +6966,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         iframe.src = src;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
+        setRerunMountStatus("retrying", "rendering");
+        await waitForRerunRenderSettle(iframe, 15000);
         rerunIframeLoaded = true;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
         return true;
