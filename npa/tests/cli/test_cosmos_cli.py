@@ -1507,7 +1507,7 @@ def test_cosmos_install_command_installs_torch_before_flash_attn_and_cosmos() ->
         f"--extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}"
     )
     server_extras_install = (
-        f'/opt/cosmos/venv/bin/python -m pip install "diffusers>=0.34.0" '
+        f'/opt/cosmos/venv/bin/python -m pip install "diffusers>=0.38.0" '
         f'"peft>={COSMOS_PEFT_MIN_VERSION}"'
     )
     guardrail_install = "/opt/cosmos/venv/bin/python -m pip install --no-deps cosmos_guardrail"

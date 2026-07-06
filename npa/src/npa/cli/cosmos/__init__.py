@@ -1199,7 +1199,7 @@ natten_wheel="/tmp/natten-{COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl"
 curl -L -o "$natten_wheel" "{COSMOS_NATTEN_WHEEL_URL}"
 {COSMOS_VENV}/bin/python -m pip install --no-deps "$natten_wheel"
 {COSMOS_VENV}/bin/python -m pip install "cosmos-predict2[cu126]=={COSMOS_VERSION}" --extra-index-url {COSMOS_PIP_EXTRA_INDEX_URL}
-{COSMOS_VENV}/bin/python -m pip install "diffusers>=0.34.0" "peft>={COSMOS_PEFT_MIN_VERSION}" transformers accelerate fastapi "uvicorn[standard]" huggingface_hub pillow "imageio[ffmpeg]" pydantic python-multipart
+{COSMOS_VENV}/bin/python -m pip install "diffusers>=0.38.0" "peft>={COSMOS_PEFT_MIN_VERSION}" transformers accelerate fastapi "uvicorn[standard]" huggingface_hub pillow "imageio[ffmpeg]" pydantic python-multipart
 {COSMOS_VENV}/bin/python -m pip install --no-deps cosmos_guardrail
 cat > {COSMOS_HOME}/server.py <<'PY'
 {server_py}
