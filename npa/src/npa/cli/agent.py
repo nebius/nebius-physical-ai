@@ -1499,6 +1499,23 @@ DEFAULT_SIM_VIZ = {{
     "rerun_ready": False,
     "rerun_iframe_url": "/rerun/",
 }}
+SIM2REAL_STAGE_TEMPLATE = [
+    ("submit", "Submit request"),
+    ("stage_01_trigger", "1 Trigger"),
+    ("stage_02_assets", "2 Assets"),
+    ("stage_03_augment", "3 Augment"),
+    ("stage_04_envs_raw", "4 Raw envs"),
+    ("stage_05_envs_train", "5 Train split"),
+    ("stage_06_tokens", "6 Tokens"),
+    ("stage_07_actions_train", "7 Policy rollouts"),
+    ("stage_08_vlm_eval_train", "8 VLM eval"),
+    ("stage_09_training_signal", "9 Training signal"),
+    ("stage_10_eval_heldout", "10 Held-out eval"),
+    ("stage_11_outer_loop", "11 Threshold gate"),
+    ("stage_12_external_validation_stub", "12 External validation"),
+    ("stage_13_retrigger", "13 Retrigger"),
+    ("stage_14_rerun_viz", "14 Rerun viz"),
+]
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1585,6 +1602,7 @@ def _default_state() -> dict:
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "sim_viz_runs": {{}},
+        "sim2real_runs": {{}},
         "active_run_id": "",
         "latest_submit": {{}},
         "workflow_draft": {{"yaml": "", "name": "", "states": [], "updated_at": "", "plan": {{}}, "runnable": False}},
@@ -1620,6 +1638,8 @@ def _load_state() -> dict:
         merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
     if not isinstance(merged.get("sim_viz_runs"), dict):
         merged["sim_viz_runs"] = {{}}
+    if not isinstance(merged.get("sim2real_runs"), dict):
+        merged["sim2real_runs"] = {{}}
     if not isinstance(merged.get("active_run_id"), str):
         merged["active_run_id"] = ""
     if not isinstance(merged.get("chat_history"), list):
@@ -1652,6 +1672,95 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
+
+
+def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
+    stages = []
+    for index, (stage_id, label) in enumerate(SIM2REAL_STAGE_TEMPLATE):
+        stages.append(
+            {{
+                "id": stage_id,
+                "label": label,
+                "status": "pending",
+                "started_at": "",
+                "finished_at": "",
+                "summary": "",
+            }}
+        )
+    if stages:
+        stages[0]["status"] = "succeeded"
+        stages[0]["started_at"] = submitted_at
+        stages[0]["finished_at"] = submitted_at
+        stages[0]["summary"] = "Agent accepted the Sim2Real submit request."
+    return {{
+        "run_id": run_id,
+        "status": "submitted",
+        "result": "pending",
+        "submitted_at": submitted_at,
+        "updated_at": submitted_at or _now_iso(),
+        "selection": selection if isinstance(selection, dict) else {{}},
+        "stages": stages,
+        "logs": [
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "info",
+                "message": "Sim2Real submit recorded by NPA agent.",
+            }},
+            {{
+                "timestamp": submitted_at or _now_iso(),
+                "level": "warn",
+                "message": "No run-specific Rerun .rrd recording is available yet; showing timeline and logs instead of stale demo data.",
+            }},
+        ],
+        "artifacts": [],
+    }}
+
+
+def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
+    merged = dict(base)
+    if isinstance(update, dict):
+        for key, value in update.items():
+            if key == "stages" and isinstance(value, list):
+                merged[key] = value
+            elif key == "logs" and isinstance(value, list):
+                merged[key] = value
+            elif key == "selection" and isinstance(value, dict):
+                selection = dict(merged.get("selection", {{}}) if isinstance(merged.get("selection"), dict) else {{}})
+                selection.update(value)
+                merged[key] = selection
+            else:
+                merged[key] = value
+    return merged
+
+
+def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
+    latest = state.get("latest_submit", {{}})
+    if not isinstance(latest, dict):
+        latest = {{}}
+    sim_viz = state.get("sim_viz", {{}})
+    if not isinstance(sim_viz, dict):
+        sim_viz = {{}}
+    resolved_run_id = str(run_id or latest.get("run_id") or sim_viz.get("run_id") or state.get("active_run_id") or "").strip()
+    details_map = state.get("sim2real_runs")
+    if not isinstance(details_map, dict):
+        details_map = {{}}
+    existing = details_map.get(resolved_run_id, {{}}) if resolved_run_id else {{}}
+    submitted_at = str(latest.get("submitted_at") or sim_viz.get("rrd_updated_at") or "")
+    selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
+    details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
+    details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
+    stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
+    if stage:
+        details["status"] = stage
+    if sim_viz.get("rrd_uri"):
+        details["result"] = "recording_available"
+        for item in details.get("stages", []):
+            if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
+                item["status"] = "succeeded"
+                item["summary"] = "Rerun recording is available."
+    elif resolved_run_id:
+        details["result"] = "waiting_for_recording"
+    return details
 
 
 def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
@@ -3343,6 +3452,7 @@ def tool(tool_ref: str):
 def sim_viz_status(run_id: str = ""):
     state = _load_state()
     payload = _sim_viz_for_run(state, run_id=run_id)
+    requested_run = str(run_id or "").strip()
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
@@ -3354,9 +3464,17 @@ def sim_viz_status(run_id: str = ""):
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
     _record_sim_viz_run(state, payload)
-    if str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}:
+    payload_run = str(payload.get("run_id") or "").strip()
+    run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
+    may_use_default_recording = payload_run in {"", "franka-demo"} and not requested_run
+    if (
+        str(payload.get("artifact_render") or "").strip().lower() in {"", "rerun"}
+        and (run_has_specific_rrd or may_use_default_recording)
+    ):
         payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
-    if not payload.get("rrd_uri") and RRD_PATH.is_file():
+    else:
+        payload["rerun_iframe_url"] = ""
+    if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
@@ -3758,15 +3876,27 @@ def get_sim_assets_selection():
     return selection
 
 @app.get("/workflows/sim2real/status")
-def sim2real_status():
+def sim2real_status(run_id: str = ""):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
+    details = _sim2real_run_details(state, run_id=run_id)
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
         "sim_viz": sim_viz if isinstance(sim_viz, dict) else dict(DEFAULT_SIM_VIZ),
+        "run": details,
+        "stages": details.get("stages", []),
+        "logs": details.get("logs", []),
     }}
+
+@app.get("/workflows/sim2real/runs/{{run_id:path}}")
+def sim2real_run_detail(run_id: str):
+    state = _load_state()
+    details = _sim2real_run_details(state, run_id=run_id)
+    if not str(details.get("run_id") or "").strip():
+        raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
+    return {{"ok": True, "run": details}}
 
 @app.get("/workbench/actions")
 def workbench_actions():
@@ -4007,29 +4137,51 @@ def submit_sim2real(payload: dict):
         "selection": selection,
         "env": env_block,
     }}
+    submitted_at = str(state["latest_submit"]["submitted_at"])
     state["sim_viz"] = {{
         "run_id": run_id,
         "stage": "submitted",
         "rrd_uri": "",
-        "rrd_updated_at": _now_iso(),
+        "rrd_updated_at": submitted_at,
         "live_grpc_url": "",
         "mode": "static",
+        "rerun_ready": False,
+        "rerun_iframe_url": "",
+        "camera": "workspace",
     }}
+    details = _default_sim2real_run_details(run_id, submitted_at=submitted_at, selection=selection)
+    details["logs"].append(
+        {{
+            "timestamp": submitted_at,
+            "level": "info",
+            "message": "Selection: robot_preset={{}}, sim_backend={{}}".format(
+                selection.get("robot_preset", "franka"),
+                selection.get("sim_backend", "isaac"),
+            ),
+        }}
+    )
+    runs_detail = state.get("sim2real_runs")
+    if not isinstance(runs_detail, dict):
+        runs_detail = {{}}
+    runs_detail[run_id] = details
+    state["sim2real_runs"] = runs_detail
     _record_sim_viz_run(
         state,
         {{
             "run_id": run_id,
-            "submitted_at": state["latest_submit"]["submitted_at"],
+            "submitted_at": submitted_at,
             "stage": "submitted",
             "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
             "rrd_uri": "",
             "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
             "submit_mode": "sim2real",
             "workflow_name": "sim2real",
+            "rerun_ready": False,
+            "rerun_iframe_url": "",
         }},
     )
     _save_state(state)
-    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block}}
+    return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details}}
 PY
 cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py >/dev/null
 import math
@@ -4618,6 +4770,63 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; }}
       .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
+      .run-details {{
+        margin-top: 10px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
+        padding: 10px;
+      }}
+      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #263247; }}
+      .run-summary {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+      }}
+      .stage-list {{
+        display: grid;
+        gap: 6px;
+        margin: 8px 0;
+      }}
+      .stage-item {{
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 8px;
+        align-items: start;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        border-radius: 8px;
+        padding: 7px 8px;
+        font-size: 12px;
+      }}
+      .stage-status {{
+        border-radius: 999px;
+        padding: 3px 7px;
+        text-align: center;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 10px;
+        background: #eef2ff;
+        color: #3730a3;
+      }}
+      .stage-status.succeeded {{ background: #dcfce7; color: #166534; }}
+      .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
+      .stage-status.running {{ background: #fef3c7; color: #92400e; }}
+      .stage-status.pending {{ background: #f1f5f9; color: #475569; }}
+      .stage-label {{ font-weight: 700; color: #263247; }}
+      .stage-summary {{ color: #64748b; margin-top: 2px; }}
+      .run-log {{
+        margin: 8px 0 0 0;
+        max-height: 180px;
+        overflow: auto;
+        white-space: pre-wrap;
+        background: #0f172a;
+        color: #dbeafe;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 12px;
+      }}
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
@@ -5037,6 +5246,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 <button id="openRerun" class="btn" type="button">Open in Rerun</button>
               </div>
               <p id="simvizCta" class="cta">Discover artifacts first; use Franka demo fallback when no S3 artifacts are available.</p>
+              <div id="runDetails" class="run-details">
+                <h4>Run status, result, and logs</h4>
+                <div id="runSummary" class="run-summary"></div>
+                <div id="stageList" class="stage-list"></div>
+                <pre id="runLog" class="run-log">No run selected.</pre>
+              </div>
             </div>
             <div id="rerunPlaceholder" class="rerun-placeholder">
               <p>Loading Rerun viewer…</p>
@@ -6336,6 +6551,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const simViz = await loadJson(statusPath);
           activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
           updateRunSelector(simViz);
+          await loadRunDetails(activeRunId);
           renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
@@ -6345,6 +6561,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
           if (cta) {{
             cta.hidden = ready && rerunIframeLoaded;
+            if (!ready) {{
+              cta.textContent = "No run-specific Rerun recording yet. Use the Run status/logs panel below for stage progress and result.";
+            }}
           }}
           if (activeArtifactRender && activeArtifactRender !== "rerun") {{
             showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.");
@@ -6513,6 +6732,65 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("runIdInput");
         if (input && current) input.value = current;
       }}
+      function normalizeStageStatus(value) {{
+        const raw = String(value || "pending").trim().toLowerCase();
+        if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
+        if (["failed", "error", "blocked"].includes(raw)) return "failed";
+        if (["running", "active", "submitted", "queued"].includes(raw)) return raw === "submitted" ? "running" : raw;
+        return "pending";
+      }}
+      function renderRunDetails(details) {{
+        const run = (details && details.run) || details || {{}};
+        const summary = document.getElementById("runSummary");
+        const stagesHost = document.getElementById("stageList");
+        const logHost = document.getElementById("runLog");
+        if (!summary || !stagesHost || !logHost) return;
+        const runId = String(run.run_id || "");
+        const result = String(run.result || "pending");
+        const status = String(run.status || "idle");
+        const updatedAt = String(run.updated_at || run.submitted_at || "");
+        summary.innerHTML =
+          '<span class="pill">run: <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          '<span class="pill">status: <strong>' + escapeHtml(status) + '</strong></span>' +
+          '<span class="pill">result: <strong>' + escapeHtml(result) + '</strong></span>' +
+          '<span class="pill">updated: <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
+        const stages = Array.isArray(run.stages) ? run.stages : [];
+        stagesHost.innerHTML = stages.map((stage) => {{
+          const statusClass = normalizeStageStatus(stage.status);
+          const label = String(stage.label || stage.id || "");
+          const stageSummary = String(stage.summary || "");
+          return (
+            '<div class="stage-item">' +
+            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusClass) + '</span>' +
+            '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
+            '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
+            '</div>'
+          );
+        }}).join("") || '<div class="hint">No stage data available yet.</div>';
+        const logs = Array.isArray(run.logs) ? run.logs : [];
+        logHost.textContent = logs.length
+          ? logs.map((entry) => {{
+              const ts = String(entry.timestamp || "");
+              const level = String(entry.level || "info").toUpperCase();
+              const message = String(entry.message || "");
+              return "[" + ts + "] " + level + " " + message;
+            }}).join("\\n")
+          : "No log entries yet.";
+      }}
+      async function loadRunDetails(runId) {{
+        const target = String(runId || activeRunId || "").trim();
+        const path = target
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
+          : "/api/workflows/sim2real/status";
+        try {{
+          const data = await loadJson(path);
+          renderRunDetails(data);
+          return data.run || data;
+        }} catch (err) {{
+          renderRunDetails({{ run: {{ run_id: target, status: "unknown", result: "unavailable", logs: [{{ timestamp: new Date().toISOString(), level: "error", message: String(err && err.message ? err.message : err) }}], stages: [] }} }});
+          return null;
+        }}
+      }}
       async function loadRunData() {{
         const input = document.getElementById("runIdInput");
         const runId = String((input && input.value) || "").trim();
@@ -6526,8 +6804,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
+        await loadRunDetails(runId);
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {{
           await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{ runId }});
+        }} else {{
+          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.");
         }}
         await refresh();
       }}
@@ -6577,10 +6858,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{}}),
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
-        appendChat("assistant", "Watching sim progress: polling `/api/sim-viz/status` until `.rrd` is available and iframe blob mount reaches `SUCCESS`.");
+        appendChat("assistant", "Watching sim progress: rendering stage/result/logs immediately; Rerun opens only after a run-specific `.rrd` is available.");
         const submittedRunId = String(data.run_id || "").trim();
         if (submittedRunId) activeRunId = submittedRunId;
-        const simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
+        renderRunDetails(data);
+        const simViz = await pollSimVizUntilRrd(8, 1500, submittedRunId);
         if (simViz && simViz.rrd_uri) {{
           await waitForRerunSuccess(
             simViz.camera || "workspace",
@@ -6603,12 +6885,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               "`, **iframe** `/rerun/`, **blob_mount** `" + RERUN_BLOB_SUCCESS + "`"
           );
         }} else {{
-          throw new Error("Sim2Real run submitted, but no .rrd is available yet after polling");
+          await loadRunDetails(submittedRunId);
+          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          appendChat(
+            "assistant",
+            "Run `" + submittedRunId + "` is recorded with **stage** `" +
+              String((simViz && simViz.stage) || "submitted") +
+              "`. No `.rrd` recording is available yet, so the Run status/logs panel is the source of truth."
+          );
         }}
         await refresh();
       }}
       async function showWorkflowStatus() {{
         const status = await loadJson("/api/workflows/sim2real/status");
+        renderRunDetails(status);
         appendChat(
           "assistant",
           "Latest workflow status:\\n- run_id: `" +
@@ -6623,6 +6913,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
           : "/api/sim-viz/status";
         const simViz = await loadJson(statusPath);
+        if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
+          await loadRunDetails(activeRunId);
+          showRerunPlaceholder("No run-specific Rerun recording yet. Stage timeline, result, and logs are shown below.");
+          showToast("No Rerun recording for this run yet; showing run logs instead.", "info");
+          return;
+        }}
         const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
         const src = await rerunIframeSrc(camera, String((simViz && simViz.run_id) || activeRunId || "").trim());
         window.open(src, "_blank", "noopener");

@@ -149,6 +149,9 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.get("/sim-viz/runs")' in source
     assert '@app.post("/sim-viz/select-run")' in source
     assert "sim_viz_runs" in source
+    assert '@app.get("/workflows/sim2real/runs/{run_id:path}")' in source
+    assert "Run status, result, and logs" in source
+    assert "No run-specific Rerun recording yet" in source
     embedded = agent_module._embedded_agent_workflow_source()
     assert "validate_workflow_yaml_text" in embedded
     assert "Could not generate runnable workflow YAML yet" in source
