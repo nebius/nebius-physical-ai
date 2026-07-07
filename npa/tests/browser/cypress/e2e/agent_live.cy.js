@@ -6,6 +6,11 @@ function liveEnvAvailable() {
   return requiredLiveEnv.every((name) => Boolean(Cypress.env(name) || Cypress.env(name.replace("NPA_AGENT_", "agent"))));
 }
 
+function destructiveLiveEnabled() {
+  const value = Cypress.env("NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE");
+  return value === true || value === 1 || value === "1";
+}
+
 describe("NPA agent UI against live infra", () => {
   before(function () {
     if (!liveEnvAvailable()) {
@@ -55,7 +60,7 @@ describe("NPA agent UI against live infra", () => {
   });
 
   it("submits Sim2Real from the UI when live destructive Cypress is enabled", function () {
-    if (Cypress.env("NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE") !== "1") {
+    if (!destructiveLiveEnabled()) {
       this.skip();
     }
     cy.get("#submitWorkflow").click();
