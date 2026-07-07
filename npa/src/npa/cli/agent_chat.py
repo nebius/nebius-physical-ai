@@ -38,6 +38,13 @@ _RERUN_SUCCESS_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
+    r"\b(?:non[\s-]?stock|customer|custom)\b"
+    r".{0,160}\b(?:run|sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+    r".{0,160}\b(?:artifacts?|outputs?|recording|rrd|video|report|logs?|view|load|use)\b",
+    re.IGNORECASE,
+)
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "start_sim2real",
@@ -455,6 +462,8 @@ def match_chat_intent(user_text: str) -> str | None:
     if not text:
         return None
     lowered = _normalize_intent_text(text)
+    if _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered):
+        return "find_artifacts"
     if _success_gated_watch_request(lowered):
         return "watch_sim"
     # Keep watch intent precedence over load-franka whenever the user asks to
