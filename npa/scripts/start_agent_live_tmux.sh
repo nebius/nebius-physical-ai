@@ -4,6 +4,7 @@
 # Usage:
 #   ./npa/scripts/start_agent_live_tmux.sh --project rtxpro --name agent --verify
 #   ./npa/scripts/start_agent_live_tmux.sh --bootstrap --project rtxpro --name agent --verify
+#   ./npa/scripts/start_agent_live_tmux.sh --project rtxpro --name agent --verify --browser-e2e
 #   ./npa/scripts/start_agent_live_tmux.sh --dry-run
 #
 # Attach:  tmux attach -t npa-agent-live
@@ -32,6 +33,7 @@ BOOTSTRAP=0
 VERIFY=0
 DRY_RUN=0
 CHAT_LIVE="${NPA_AGENT_CHAT_LIVE:-0}"
+BROWSER_E2E="${NPA_AGENT_BROWSER_E2E:-0}"
 
 usage() {
   cat <<EOF
@@ -44,6 +46,7 @@ Options:
   --bootstrap        Run npa agent bootstrap before live checks
   --verify           Run npa agent verify-live after pytest live suite
   --chat-live        Set NPA_AGENT_CHAT_LIVE=1 for Token Factory chat smoke
+  --browser-e2e      Run Cypress live browser checks after HTTP live tests
   --dry-run          Print planned commands without launching tmux
   --help             Show this help
 EOF
@@ -75,6 +78,10 @@ while [[ $# -gt 0 ]]; do
       CHAT_LIVE=1
       shift
       ;;
+    --browser-e2e)
+      BROWSER_E2E=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -98,6 +105,7 @@ SMOKE_CMD="cd ${ROOT} && ${PYTHON} -m pytest npa/tests/smoke/test_agent_smoke.py
 LIVE_CMD="cd ${ROOT} && export NPA_INTEGRATION_E2E=1 NPA_AGENT_LIVE=1 NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} NPA_AGENT_CHAT_LIVE=${CHAT_LIVE} && ${PYTHON} -m pytest npa/tests/e2e/test_agent_live.py -q 2>&1 | tee ${LOG_ROOT}/live.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/live.exit"
 VERIFY_CMD="cd ${ROOT} && export NPA_INTEGRATION_E2E=1 NPA_AGENT_LIVE=1 NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} NPA_AGENT_CHAT_LIVE=${CHAT_LIVE} && ${NPA_BIN} agent verify-live --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/verify.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/verify.exit"
 BOOTSTRAP_CMD="cd ${ROOT} && NPA_SSH_KEY=\${NPA_SSH_KEY:-\$HOME/.ssh/id_ed25519} ${NPA_BIN} agent bootstrap --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/bootstrap.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/bootstrap.exit"
+BROWSER_CMD="cd ${ROOT} && export NPA_AGENT_PROJECT=${PROJECT} NPA_AGENT_NAME=${NAME} && bash npa/scripts/run_agent_cypress.sh --live --project ${PROJECT} --name ${NAME} 2>&1 | tee ${LOG_ROOT}/browser.log; ec=\${PIPESTATUS[0]}; echo \${ec} > ${LOG_ROOT}/browser.exit"
 DASH_CMD="watch -n 2 'echo session=${SESSION}; ls -1 ${LOG_ROOT}/*.exit 2>/dev/null | while read f; do printf \"%s: \" \"\$(basename \"\${f}\")\"; cat \"\${f}\"; echo; done; echo; tail -n 3 ${LOG_ROOT}/live.log 2>/dev/null || true'"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
@@ -110,6 +118,9 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "LIVE: ${LIVE_CMD}"
   if [[ "${VERIFY}" -eq 1 ]]; then
     echo "VERIFY: ${VERIFY_CMD}"
+  fi
+  if [[ "${BROWSER_E2E}" -eq 1 ]]; then
+    echo "BROWSER: ${BROWSER_CMD}"
   fi
   echo "DASHBOARD: ${DASH_CMD}"
   exit 0
@@ -125,7 +136,7 @@ tmux new-session -d -s "${SESSION}" -n smoke "bash -lc '${SMOKE_CMD}; exec bash'
 if [[ "${BOOTSTRAP}" -eq 1 ]]; then
   tmux new-window -t "${SESSION}" -n bootstrap "bash -lc '${BOOTSTRAP_CMD}; exec bash'"
 fi
-tmux new-window -t "${SESSION}" -n live "bash -lc '${LIVE_CMD}; if [[ ${VERIFY} -eq 1 ]]; then ${VERIFY_CMD}; fi; exec bash'"
+tmux new-window -t "${SESSION}" -n live "bash -lc '${LIVE_CMD}; if [[ ${VERIFY} -eq 1 ]]; then ${VERIFY_CMD}; fi; if [[ ${BROWSER_E2E} -eq 1 ]]; then ${BROWSER_CMD}; fi; exec bash'"
 tmux new-window -t "${SESSION}" -n dashboard "bash -lc '${DASH_CMD}'"
 
 echo "TMUX_SESSION=${SESSION}"

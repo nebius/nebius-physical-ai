@@ -69,6 +69,39 @@ def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> Non
     assert called is False
 
 
+def test_apply_agent_terraform_filters_runtime_only_s3_prefix(monkeypatch, tmp_path) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.prepare_working_dir", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+
+    def _apply(*, tf_dir, tf_vars):
+        assert tf_dir == tmp_path
+        captured.update(tf_vars)
+        return {"vm_ip": "203.0.113.50"}
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.apply", _apply)
+
+    _apply_agent_terraform(
+        project="fresh",
+        name="agent",
+        env_region="us-central1",
+        merged_vars={
+            "s3_bucket": "agent-state",
+            "s3_prefix": "runtime/artifacts",
+            "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+            "nebius_api_key": "ak",
+            "nebius_secret_key": "sk",
+            "service_account_id": "sa",
+        },
+    )
+
+    assert captured["s3_bucket"] == "agent-state"
+    assert "s3_prefix" not in captured
+
+
 def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 

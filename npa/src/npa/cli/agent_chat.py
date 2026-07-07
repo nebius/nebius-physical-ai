@@ -38,6 +38,13 @@ _RERUN_SUCCESS_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_NON_STOCK_ARTIFACT_DISCOVERY_RE = re.compile(
+    r"\b(?:non[\s-]?stock|customer|custom)\b"
+    r".{0,160}\b(?:run|sim\s*[- ]?2\s*[- ]?real|sim2real)\b"
+    r".{0,160}\b(?:artifacts?|outputs?|recording|rrd|video|report|logs?|view|load|use)\b",
+    re.IGNORECASE,
+)
+
 _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "start_sim2real",
@@ -108,7 +115,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:outer|inner)\b.{0,80}\b(?:loop|iteration)\b.{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:outer\s+loop|inner\s+loop)\b.{0,80}\b(?:gate|decision|promote)\b"
             r"|\b(?:create|generate|build|make)\b.{0,80}\b(?:vlm|critic)\b.{0,80}\b(?:gate|loop|workflow)\b"
-            r"|\b(?:policy\s+rollout|heldout\s+eval)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b",
+            r"|\b(?:policy\s+rollout|heldout\s+eval)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b"
+            r"|\b(?:workflow|yaml|spec)\b.{0,120}\b(?:policy\s+rollout|heldout\s+eval|vlm\s+critic|quality\s+gate)\b",
             re.IGNORECASE,
         ),
     ),
@@ -162,6 +170,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bwhat can i view\b"
             r"|\bwhat\b.{0,80}\bartifacts?\b.{0,120}\bview\b"
             r"|\b(?:what|which)\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)?\s*run\b.{0,80}\b(?:view|load|open|use)\b"
+            r"|\b(?:non[\s-]?stock|customer|custom)\b.{0,120}\b(?:run|sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,120}\b(?:artifacts?|outputs?|recording|rrd|video|report|logs?)\b"
             r"|\bartifact\b.{0,120}\b(?:browser|viewer|preview|download)\b",
             re.IGNORECASE,
         ),
@@ -215,6 +224,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,120}\b(?:present|available|configured|exists?|list|show|query|which|what)\b"
             r"|\b(?:list|show|query|what|which)\b.{0,120}\b(?:k8s|kubernetes|clusters?|backends?|infra)\b"
             r"|\bno\b.{0,80}\b(?:infra|infrastructure|cluster|backend)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "mk8s_provision",
+        re.compile(
+            r"\b(?:deploy|create|provision|ensure|spin\s*up)\b"
+            r".{0,120}\b(?:mk8s|managed\s+kubernetes|k8s|kubernetes)\b"
+            r".{0,80}\b(?:cluster|backend|infra|infrastructure)?\b",
             re.IGNORECASE,
         ),
     ),
@@ -292,6 +310,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "infra_backends": ["infra/k8s", "infra/provision", "workflows/submit"],
+    "mk8s_provision": ["infra/mk8s", "infra/mk8s/provision", "infra/k8s"],
     "live_infra_loop": ["infra/k8s", "infra/provision", "workflows/validate", "workflows/plan", "workflows/submit", "tools"],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
@@ -303,7 +322,7 @@ INTENT_APIS: dict[str, list[str]] = {
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
     "cosmos3": [],
-    "soperator": ["tools"],
+    "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
 }
 
@@ -453,6 +472,10 @@ def match_chat_intent(user_text: str) -> str | None:
     if not text:
         return None
     lowered = _normalize_intent_text(text)
+    if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):
+        return "soperator"
+    if _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered):
+        return "find_artifacts"
     if _success_gated_watch_request(lowered):
         return "watch_sim"
     # Keep watch intent precedence over load-franka whenever the user asks to
@@ -758,6 +781,19 @@ def format_infra_backends(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_mk8s_provision() -> str:
+    return "\n".join(
+        [
+            "**Deploy or ensure an mk8s Kubernetes backend with npa:**",
+            "- API: `POST /api/infra/mk8s/provision` with `project`, `cluster_name`, and optional `dry_run`.",
+            "- It calls `npa provision-if-absent` from the agent VM using staged `~/.npa/config.yaml` and credentials.",
+            "- Use `dry_run: true` to verify project, storage, and Terraform actions without changing infra.",
+            "- Use `GET /api/infra/mk8s` or `GET /api/infra/k8s` to list configured, cached, and cloud mk8s backends.",
+            "- Workflow submit can also provision mk8s when `allow_provision: true` and no backend exists.",
+        ]
+    )
+
+
 def format_configure_s3() -> str:
     return "\n".join(
         [
@@ -787,15 +823,17 @@ def format_generate_workflow(
 def format_soperator_deploy() -> str:
     return "\n".join(
         [
-            "**Deploy a soperator (Slurm-on-Kubernetes) cluster** with npa:",
-            "1. Write an `npa.soperator/v0.0.1` spec with one or more worker pools "
+            "**Deploy a soperator (Slurm-on-Kubernetes) cluster** from the agent with npa:",
+            "1. `POST /api/infra/soperator/validate` with `spec_yaml` (or `spec`) first.",
+            "2. `POST /api/infra/soperator/deploy` using the same `npa.soperator/v0.0.1` spec. "
+            "Set `dry_run: true` to validate and return the deploy command without mutating infra.",
+            "3. `GET /api/infra/soperator/status/{name}` checks the cluster (runs `npa soperator status --output json`).",
+            "4. The operator-machine equivalent remains `npa soperator deploy --spec cluster.yaml --output json`.",
+            "- Spec: one or more worker pools "
             "(mixed presets ok) and optional per-pool `docker_cache: true` (IO_M3 image cache).",
-            "2. Preflight quotas: `compute.instance.count`, `compute.instance.non-gpu.vcpu`, "
+            "- Preflight quotas: `compute.instance.count`, `compute.instance.non-gpu.vcpu`, "
             "`compute.disk.count`, and `compute.disk.size.network-ssd-io-m3` (GPU on-demand "
             "quota is often 0 -- use `preemptible: true` for GPU pools).",
-            "3. Deploy: `npa soperator deploy --spec cluster.yaml` "
-            "(requires terraform >= 1.12; set NPA_TERRAFORM_BIN if needed).",
-            "4. Check: `npa soperator status --name <name>` runs `sinfo` on the controller.",
             "- **workflow toolRef**: `infra.soperator.deploy` (config.soperator_spec = path to the spec).",
             "- GPU workers must be fabric-capable 8-GPU SXM presets; 1-GPU presets can't cluster.",
             "- See the `soperator` skill for post-deploy fixes and worker-registration gotchas.",
@@ -922,6 +960,8 @@ def build_grounded_reply(
         return format_cameras(state, default_cameras=default_cameras)
     if intent == "infra_backends":
         return format_infra_backends(state)
+    if intent == "mk8s_provision":
+        return format_mk8s_provision()
     if intent == "live_infra_loop":
         return format_live_infra_loop_guidance()
     if intent == "cosmos_capabilities":

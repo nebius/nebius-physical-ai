@@ -113,8 +113,11 @@ def test_create_workflow_apis() -> None:
 
 def test_infra_backend_intent_and_reply() -> None:
     assert match_chat_intent("which kubernetes clusters are available?") == "infra_backends"
+    assert match_chat_intent("deploy an mk8s cluster for workflow runs") == "mk8s_provision"
     apis = apis_for_intent("infra_backends")
     assert "infra/k8s" in apis
+    mk8s_apis = apis_for_intent("mk8s_provision")
+    assert "infra/mk8s/provision" in mk8s_apis
     reply = build_grounded_reply(
         "infra_backends",
         {
@@ -130,6 +133,9 @@ def test_infra_backend_intent_and_reply() -> None:
     )
     assert "No Kubernetes infra" in reply
     assert "deploy minimal GPU Kubernetes" in reply
+    mk8s_reply = build_grounded_reply("mk8s_provision", {}, [])
+    assert "POST /api/infra/mk8s/provision" in mk8s_reply
+    assert "npa provision-if-absent" in mk8s_reply
 
 
 def test_bootstrap_embeds_workflow_endpoints() -> None:
@@ -139,9 +145,15 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.post("/workflows/submit")' in source
     assert '@app.get("/infra/k8s")' in source
     assert '@app.post("/infra/provision")' in source
+    assert '@app.get("/infra/mk8s")' in source
+    assert '@app.post("/infra/mk8s/provision")' in source
+    assert '@app.post("/infra/soperator/validate")' in source
+    assert '@app.post("/infra/soperator/deploy")' in source
+    assert '@app.get("/infra/soperator/status/{{name}}")' in source
     assert "agent-live-infra-plan" in source
     assert "pip install -e" in source
     assert "deploy/cluster" in source
+    assert "_soperator_deploy_from_payload" in source
     assert '@app.get("/workflows/draft")' in source
     assert "workflowYaml" in source
     assert "validateWorkflowYaml" in source

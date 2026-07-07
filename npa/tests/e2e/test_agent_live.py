@@ -158,6 +158,104 @@ def test_agent_workbench_actions(ctx: AgentLiveContext) -> None:
     assert isinstance(payload, dict)
 
 
+def test_agent_mk8s_provision_dry_run(ctx: AgentLiveContext) -> None:
+    provision = ctx.post(
+        "/api/infra/mk8s/provision",
+        json={
+            "project": ctx.project,
+            "cluster_name": "agent-live-dry-run",
+            "dry_run": True,
+            "skip_s3": True,
+            "validate": False,
+        },
+        timeout=60.0,
+    )
+    provision.raise_for_status()
+    payload = provision.json()
+    assert payload.get("ok") is True
+    result = payload.get("result")
+    assert isinstance(result, dict)
+    assert result.get("dry_run") is True
+    actions = result.get("actions")
+    assert isinstance(actions, list)
+    assert any("k8s:" in str(item) for item in actions)
+
+
+def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> None:
+    spec = {
+        "apiVersion": "npa.soperator/v0.0.1",
+        "name": "agentdryrun",
+        "region": "us-central1",
+        "control_plane": {
+            "system": {"min_size": 3, "preset": "8vcpu-32gb"},
+            "controller": {"preset": "4vcpu-16gb"},
+            "login": {"preset": "16vcpu-64gb"},
+        },
+        "workers": [
+            {
+                "name": "cpu",
+                "platform": "cpu-d3",
+                "preset": "8vcpu-32gb",
+                "size": 1,
+                "docker_cache": True,
+                "docker_cache_gib": 372,
+            }
+        ],
+    }
+    validate = ctx.post("/api/infra/soperator/validate", json={"spec": spec}, timeout=30.0)
+    validate.raise_for_status()
+    validation = validate.json()
+    assert validation.get("ok") is True
+    assert validation.get("name") == "agentdryrun"
+    assert validation.get("worker_pools") == ["cpu"]
+
+    deploy = ctx.post(
+        "/api/infra/soperator/deploy",
+        json={"spec": spec, "dry_run": True},
+        timeout=30.0,
+    )
+    deploy.raise_for_status()
+    payload = deploy.json()
+    assert payload.get("ok") is True
+    assert payload.get("status") == "dry-run"
+    assert payload.get("dry_run") is True
+    assert "npa soperator deploy" in str(payload.get("command") or "")
+
+
+def test_agent_chat_soperator_and_mk8s_infra_prompts(ctx: AgentLiveContext) -> None:
+    soperator = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "deploy a soperator slurm on kubernetes cluster"}]},
+        timeout=30.0,
+    )
+    soperator.raise_for_status()
+    sop_payload = soperator.json()
+    assert sop_payload.get("ok") is True
+    assert sop_payload.get("grounded") is True
+    sop_reply = str(sop_payload.get("reply") or "")
+    assert "/api/infra/soperator/deploy" in sop_reply
+    assert "npa.soperator/v0.0.1" in sop_reply
+    sop_apis = sop_payload.get("apis_used")
+    assert isinstance(sop_apis, list)
+    assert "infra/soperator/deploy" in sop_apis
+
+    mk8s = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "deploy an mk8s kubernetes cluster for workflow runs"}]},
+        timeout=30.0,
+    )
+    mk8s.raise_for_status()
+    mk8s_payload = mk8s.json()
+    assert mk8s_payload.get("ok") is True
+    assert mk8s_payload.get("grounded") is True
+    mk8s_reply = str(mk8s_payload.get("reply") or "")
+    assert "/api/infra/mk8s/provision" in mk8s_reply
+    assert "npa provision-if-absent" in mk8s_reply
+    mk8s_apis = mk8s_payload.get("apis_used")
+    assert isinstance(mk8s_apis, list)
+    assert "infra/mk8s/provision" in mk8s_apis
+
+
 def test_agent_rerun_iframe_reachable(ctx: AgentLiveContext) -> None:
     base = ctx.agent_url.rstrip("/")
     rerun = httpx.get(
@@ -295,6 +393,64 @@ def test_agent_chat_onboard_solution_intent(ctx: AgentLiveContext) -> None:
     )
     chat.raise_for_status()
     assert_grounded_onboard_solution_reply(chat.json())
+
+
+def test_agent_chat_complex_artifact_discovery_intent(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "For a non-stock customer Sim2Real run, discover what artifacts I can view, "
+                        "tell me which run-specific Rerun recording/video/report/log outputs are usable, "
+                        "and do not fall back to stock Franka data."
+                    ),
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    apis_used = payload.get("apis_used")
+    assert isinstance(apis_used, list)
+    assert "artifacts/runs" in apis_used or "artifacts/run/{run_id}" in apis_used
+    reply = str(payload.get("reply") or "")
+    assert "S3" in reply or "artifact" in reply.lower()
+    assert not reply.strip().startswith("GET /api")
+
+
+def test_agent_chat_complex_workflow_yaml_intent(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Draft a VLM/RL outer-loop workflow YAML for non-stock assets with policy rollout, "
+                        "heldout eval, a Token Factory quality gate, promote_checkpoint, and loop_back."
+                    ),
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    yaml_text = str(payload.get("workflow_yaml") or "")
+    assert "apiVersion: npa.workflow/v0.0.1" in yaml_text
+    assert "toolRef" in yaml_text
+    assert "loop_back" in yaml_text or "promote_checkpoint" in yaml_text
+    validation = payload.get("workflow_validation")
+    assert isinstance(validation, dict)
+    assert validation.get("ok") is True
 
 
 @pytest.mark.skipif(
