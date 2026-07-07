@@ -13,6 +13,13 @@ cd ~/nebius-physical-ai-mlflow/workbench/mlflow
 ./scripts/deploy.sh
 ./scripts/verify.sh
 ./scripts/verify-twice-clean.sh
+
+# Publish the MLflow image to the configured Nebius Container Registry.
+./scripts/push-image.sh
+
+# Redeploy from the pushed image instead of rebuilding locally.
+export MLFLOW_IMAGE="$(cat evidence/pushed-image-ref.txt)"
+MLFLOW_USE_PUBLISHED_IMAGE=1 ./scripts/deploy.sh
 ```
 
-`bootstrap-nebius.sh` discovers the project region and storage endpoint from `~/.npa/config.yaml` for `project-u00zhx4tpr00xh99b28n52`, creates/reuses a dedicated bucket, service account, bucket-scoped access permit, and runtime-mounted S3 key files under `secrets/`.
+`bootstrap-nebius.sh` discovers the project region and storage endpoint from `~/.npa/config.yaml` for `project-u00zhx4tpr00xh99b28n52`, creates/reuses a dedicated bucket, service account, bucket policy scoped to the mlflow/* prefix, and runtime-mounted S3 key files under `secrets/`.

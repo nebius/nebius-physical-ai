@@ -47,7 +47,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: npa-mlflow-server:local
+    image: ${MLFLOW_IMAGE:-npa-mlflow-server:local}
     container_name: npa-mlflow-server
     user: "10001:10001"
     init: true
