@@ -3939,6 +3939,8 @@ def _maybe_toolground_chat_reply(
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop", "soperator", "mk8s_provision"}}:
         apis_used.append("tools")
+    if intent in {{"soperator", "mk8s_provision"}}:
+        apis_used.extend(suggested_apis)
     reply = build_grounded_reply(
         intent,
         state,
