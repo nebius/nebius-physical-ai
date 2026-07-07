@@ -222,6 +222,40 @@ def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> N
     assert "npa soperator deploy" in str(payload.get("command") or "")
 
 
+def test_agent_chat_soperator_and_mk8s_infra_prompts(ctx: AgentLiveContext) -> None:
+    soperator = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "deploy a soperator slurm on kubernetes cluster"}]},
+        timeout=30.0,
+    )
+    soperator.raise_for_status()
+    sop_payload = soperator.json()
+    assert sop_payload.get("ok") is True
+    assert sop_payload.get("grounded") is True
+    sop_reply = str(sop_payload.get("reply") or "")
+    assert "/api/infra/soperator/deploy" in sop_reply
+    assert "npa.soperator/v0.0.1" in sop_reply
+    sop_apis = sop_payload.get("apis_used")
+    assert isinstance(sop_apis, list)
+    assert "infra/soperator/deploy" in sop_apis
+
+    mk8s = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "deploy an mk8s kubernetes cluster for workflow runs"}]},
+        timeout=30.0,
+    )
+    mk8s.raise_for_status()
+    mk8s_payload = mk8s.json()
+    assert mk8s_payload.get("ok") is True
+    assert mk8s_payload.get("grounded") is True
+    mk8s_reply = str(mk8s_payload.get("reply") or "")
+    assert "/api/infra/mk8s/provision" in mk8s_reply
+    assert "npa provision-if-absent" in mk8s_reply
+    mk8s_apis = mk8s_payload.get("apis_used")
+    assert isinstance(mk8s_apis, list)
+    assert "infra/mk8s/provision" in mk8s_apis
+
+
 def test_agent_rerun_iframe_reachable(ctx: AgentLiveContext) -> None:
     base = ctx.agent_url.rstrip("/")
     rerun = httpx.get(
