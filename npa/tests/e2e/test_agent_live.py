@@ -158,6 +158,70 @@ def test_agent_workbench_actions(ctx: AgentLiveContext) -> None:
     assert isinstance(payload, dict)
 
 
+def test_agent_mk8s_provision_dry_run(ctx: AgentLiveContext) -> None:
+    provision = ctx.post(
+        "/api/infra/mk8s/provision",
+        json={
+            "project": ctx.project,
+            "cluster_name": "agent-live-dry-run",
+            "dry_run": True,
+            "skip_s3": True,
+            "validate": False,
+        },
+        timeout=60.0,
+    )
+    provision.raise_for_status()
+    payload = provision.json()
+    assert payload.get("ok") is True
+    result = payload.get("result")
+    assert isinstance(result, dict)
+    assert result.get("dry_run") is True
+    actions = result.get("actions")
+    assert isinstance(actions, list)
+    assert any("k8s:" in str(item) for item in actions)
+
+
+def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> None:
+    spec = {
+        "apiVersion": "npa.soperator/v0.0.1",
+        "name": "agentdryrun",
+        "region": "us-central1",
+        "control_plane": {
+            "system": {"min_size": 3, "preset": "8vcpu-32gb"},
+            "controller": {"preset": "4vcpu-16gb"},
+            "login": {"preset": "16vcpu-64gb"},
+        },
+        "workers": [
+            {
+                "name": "cpu",
+                "platform": "cpu-d3",
+                "preset": "8vcpu-32gb",
+                "size": 1,
+                "docker_cache": True,
+                "docker_cache_gib": 372,
+            }
+        ],
+    }
+    validate = ctx.post("/api/infra/soperator/validate", json={"spec": spec}, timeout=30.0)
+    validate.raise_for_status()
+    validation = validate.json()
+    assert validation.get("ok") is True
+    assert validation.get("name") == "agentdryrun"
+    assert validation.get("worker_pools") == ["cpu"]
+
+    deploy = ctx.post(
+        "/api/infra/soperator/deploy",
+        json={"spec": spec, "dry_run": True},
+        timeout=30.0,
+    )
+    deploy.raise_for_status()
+    payload = deploy.json()
+    assert payload.get("ok") is True
+    assert payload.get("status") == "dry-run"
+    assert payload.get("dry_run") is True
+    assert "npa soperator deploy" in str(payload.get("command") or "")
+
+
 def test_agent_rerun_iframe_reachable(ctx: AgentLiveContext) -> None:
     base = ctx.agent_url.rstrip("/")
     rerun = httpx.get(

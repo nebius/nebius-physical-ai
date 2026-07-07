@@ -3535,6 +3535,123 @@ def _provision_agent_infra(
         return {{"ok": False, "status": "error", "error": str(exc), "dry_run": dry_run}}
 
 
+def _write_soperator_temp_spec(spec_text: str) -> Path:
+    tmp_dir = Path("/tmp/npa-agent-soperator")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    path = tmp_dir / f"soperator-{{secrets.token_hex(8)}}.yaml"
+    path.write_text(spec_text, encoding="utf-8")
+    return path
+
+
+def _soperator_spec_text_from_payload(body: dict) -> str:
+    spec_text = str(body.get("spec_yaml") or body.get("yaml") or "").strip()
+    if spec_text:
+        return spec_text
+    spec = body.get("spec")
+    if isinstance(spec, dict):
+        return yaml.safe_dump(spec, sort_keys=False)
+    spec_path = str(body.get("spec_path") or "").strip()
+    if spec_path:
+        path = Path(spec_path).expanduser()
+        if not path.is_file():
+            raise HTTPException(status_code=400, detail=f"soperator spec file not found: {{spec_path}}")
+        return path.read_text(encoding="utf-8")
+    raise HTTPException(status_code=400, detail="Provide spec_yaml, yaml, spec, or spec_path")
+
+
+def _soperator_validate_payload(body: dict) -> dict:
+    try:
+        from npa.soperator.spec import SoperatorSpecError, spec_from_mapping
+
+        spec_text = _soperator_spec_text_from_payload(body)
+        loaded = yaml.safe_load(spec_text) or {{}}
+        spec = spec_from_mapping(loaded)
+        spec.validate()
+        return {{
+            "ok": True,
+            "apiVersion": "npa.soperator/v0.0.1",
+            "name": spec.name,
+            "region": spec.region,
+            "worker_pools": [pool.name for pool in spec.workers],
+            "docker_cache_pools": [pool.name for pool in spec.workers if pool.docker_cache],
+            "workers": [
+                {{
+                    "name": pool.name,
+                    "platform": pool.platform,
+                    "preset": pool.preset,
+                    "size": pool.size,
+                    "preemptible": pool.preemptible,
+                    "docker_cache": pool.docker_cache,
+                }}
+                for pool in spec.workers
+            ],
+        }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {{"ok": False, "error": str(exc), "apiVersion": "npa.soperator/v0.0.1"}}
+
+
+def _soperator_deploy_from_payload(body: dict) -> dict:
+    ready, reason = _agent_npa_ready()
+    if not ready:
+        return {{"ok": False, "status": "blocked", "error": reason}}
+    dry_run = bool(body.get("dry_run", False))
+    validation = _soperator_validate_payload(body)
+    if not validation.get("ok"):
+        return {{"ok": False, "status": "invalid", "validation": validation}}
+    if dry_run:
+        return {{
+            "ok": True,
+            "status": "dry-run",
+            "dry_run": True,
+            "validation": validation,
+            "command": "npa soperator deploy --spec <validated-spec> --output json",
+        }}
+    timeout_minutes = int(body.get("timeout_minutes") or body.get("timeout") or 90)
+    project = _agent_project_alias(str(body.get("project") or ""))
+    terraform_dir_text = str(body.get("terraform_dir") or "").strip()
+    terraform_dir = Path(terraform_dir_text).expanduser() if terraform_dir_text else None
+    ref = str(body.get("ref") or body.get("solutions_library_ref") or "main")
+    apply_fixes = bool(body.get("apply_fixes", True))
+    spec_path = _write_soperator_temp_spec(_soperator_spec_text_from_payload(body))
+    try:
+        from npa.soperator.lifecycle import deploy_cluster
+        from npa.soperator.spec import load_spec
+
+        spec = load_spec(spec_path)
+        result = deploy_cluster(
+            spec,
+            terraform_dir=terraform_dir,
+            solutions_library_ref=ref,
+            project=project or None,
+            timeout_minutes=timeout_minutes,
+            apply_fixes=apply_fixes,
+            on_status=lambda msg: None,
+        )
+        return {{
+            "ok": True,
+            "status": "deployed",
+            "dry_run": False,
+            "validation": validation,
+            "result": result,
+        }}
+    except Exception as exc:
+        return {{"ok": False, "status": "error", "error": str(exc), "validation": validation}}
+    finally:
+        try:
+            spec_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _soperator_status_payload(name: str) -> dict:
+    cluster_name = str(name or "").strip()
+    if not cluster_name:
+        raise HTTPException(status_code=400, detail="name is required")
+    return _run_agent_npa_json(["soperator", "status", "--name", cluster_name, "--output", "json"], timeout_s=60)
+
+
 def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, infra: dict) -> dict:
     return {{
         "ok": False,
@@ -3561,6 +3678,8 @@ _INTENT_SKILLS = {{
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
     "create_gate_workflow": ("author-npa-workflow", "sim-to-real"),
     "live_infra_loop": ("submit-workflow", "gpu-selection"),
+    "mk8s_provision": ("nebius-infra", "submit-workflow"),
+    "soperator": ("soperator", "nebius-infra"),
     "cosmos3": ("cosmos3-setup",),
     "start_sim2real": ("sim2real-operate", "sim2real-engine"),
     "sim2real_status": ("sim2real-operate",),
@@ -3788,7 +3907,7 @@ def _maybe_toolground_chat_reply(
         if not isinstance(sim_viz, dict):
             sim_viz = {{}}
         rerun_ready = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
-    elif intent == "infra_backends":
+    elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
     elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
@@ -3818,7 +3937,7 @@ def _maybe_toolground_chat_reply(
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
         reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
-    if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop"}}:
+    if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop", "soperator", "mk8s_provision"}}:
         apis_used.append("tools")
     reply = build_grounded_reply(
         intent,
@@ -4650,11 +4769,14 @@ def get_workflow_draft():
 
 @app.get("/infra/k8s")
 @app.get("/infra/backends")
+@app.get("/infra/mk8s")
 def list_k8s_infra(project: str = ""):
     return _agent_k8s_backends(project)
 
 
 @app.post("/infra/provision")
+@app.post("/infra/k8s/provision")
+@app.post("/infra/mk8s/provision")
 def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     project = _agent_project_alias(str(body.get("project") or ""))
@@ -4665,6 +4787,31 @@ def provision_infra(payload: dict | None = None):
     result = _provision_agent_infra(project, cluster_name, dry_run=dry_run, validate=validate, skip_s3=skip_s3)
     status = _agent_k8s_backends(project)
     return {{"ok": bool(result.get("ok")), "project": project, "cluster_name": cluster_name, "result": result, "infra": status}}
+
+
+@app.post("/infra/soperator/validate")
+def validate_soperator(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    result = _soperator_validate_payload(body)
+    if not result.get("ok"):
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.post("/infra/soperator/deploy")
+def deploy_soperator(payload: dict | None = None):
+    body = payload if isinstance(payload, dict) else {{}}
+    result = _soperator_deploy_from_payload(body)
+    if not result.get("ok") and result.get("status") in {{"invalid", "blocked"}}:
+        return JSONResponse(status_code=409 if result.get("status") == "blocked" else 400, content=result)
+    if not result.get("ok"):
+        return JSONResponse(status_code=502, content=result)
+    return result
+
+
+@app.get("/infra/soperator/status/{{name}}")
+def soperator_status(name: str):
+    return _soperator_status_payload(name)
 
 
 @app.post("/workflows/draft")

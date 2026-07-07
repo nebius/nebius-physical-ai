@@ -248,6 +248,17 @@ def test_match_soperator_intent() -> None:
 
 def test_soperator_grounded_reply_points_to_npa_deploy() -> None:
     reply = build_grounded_reply("soperator", {}, ["infra.soperator.deploy"])
+    assert "POST /api/infra/soperator/deploy" in reply
+    assert "POST /api/infra/soperator/validate" in reply
+    assert "GET /api/infra/soperator/status/{name}" in reply
     assert "npa soperator deploy" in reply
     assert "npa.soperator/v0.0.1" in reply
     assert "docker_cache" in reply
+
+
+def test_mk8s_provision_grounded_reply_points_to_agent_api() -> None:
+    assert match_chat_intent("deploy an mk8s cluster for workflows") == "mk8s_provision"
+    reply = build_grounded_reply("mk8s_provision", {}, [])
+    assert "POST /api/infra/mk8s/provision" in reply
+    assert "npa provision-if-absent" in reply
+    assert "dry_run" in reply
