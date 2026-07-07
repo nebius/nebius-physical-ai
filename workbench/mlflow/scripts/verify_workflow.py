@@ -17,12 +17,24 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 root = pathlib.Path(__file__).resolve().parents[1]
-for line in (root / ".env").read_text().splitlines():
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k, v)
-os.environ["AWS_ACCESS_KEY_ID"] = (root / "secrets/aws_access_key_id").read_text().strip()
-os.environ["AWS_SECRET_ACCESS_KEY"] = (root / "secrets/aws_secret_access_key").read_text().strip()
+if (root / ".env").exists():
+    for line in (root / ".env").read_text().splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k, v)
+
+def secret(name: str, fallback: pathlib.Path | None = None) -> str:
+    file_name = os.getenv(f"{name}_FILE")
+    if file_name and pathlib.Path(file_name).exists():
+        return pathlib.Path(file_name).read_text().strip()
+    if os.getenv(name):
+        return os.environ[name]
+    if fallback and fallback.exists():
+        return fallback.read_text().strip()
+    raise RuntimeError(f"missing secret {name}")
+
+os.environ["AWS_ACCESS_KEY_ID"] = secret("AWS_ACCESS_KEY_ID", root / "secrets/aws_access_key_id")
+os.environ["AWS_SECRET_ACCESS_KEY"] = secret("AWS_SECRET_ACCESS_KEY", root / "secrets/aws_secret_access_key")
 os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
 os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", os.environ["AWS_ENDPOINT_URL_S3"])
 
@@ -76,5 +88,8 @@ keys = [obj["Key"] for obj in objects.get("Contents", [])]
 if not any("checkpoint.npy" in k for k in keys) or not any("MLmodel" in k for k in keys):
     raise RuntimeError(f"expected artifacts missing from S3 listing: {keys}")
 summary = {"run_id": run_id, "model_name": model_name, "model_version": version.version, "prediction_sample": [float(x) for x in preds], "s3_keys_sample": keys[:20]}
-(root / "evidence/workflow-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+evidence_dir = os.getenv("EVIDENCE_DIR")
+if evidence_dir:
+    pathlib.Path(evidence_dir).mkdir(parents=True, exist_ok=True)
+    (pathlib.Path(evidence_dir) / "workflow-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 print(json.dumps(summary, indent=2))

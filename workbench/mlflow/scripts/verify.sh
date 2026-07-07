@@ -26,10 +26,7 @@ docker compose exec -T mlflow mlflow --version > evidence/mlflow-version.txt
 docker compose exec -T mlflow python -c "import psycopg; print(psycopg.__version__)" > evidence/psycopg-version.txt
 docker compose exec -T mlflow mlflow server --help > evidence/mlflow-server-help.txt
 
-python3 -m venv .verify-venv
-.verify-venv/bin/pip install --upgrade pip >/dev/null
-.verify-venv/bin/pip install --upgrade mlflow psycopg[binary] boto3 scikit-learn numpy >/dev/null
-.verify-venv/bin/python scripts/verify_workflow.py | tee evidence/workflow-output.json
+docker compose exec -T mlflow python /opt/mlflow/src/verify_workflow.py | tee evidence/workflow-summary.json
 run_id="$(jq -r .run_id evidence/workflow-summary.json)"
 model_name="$(jq -r .model_name evidence/workflow-summary.json)"
 
@@ -42,15 +39,13 @@ docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "
 
 docker compose restart postgres mlflow
 ./scripts/wait-healthy.sh
-.verify-venv/bin/python - <<PY | tee evidence/restart-client-check.json
-import json, mlflow, pathlib
+docker compose exec -T -e RUN_ID="$run_id" -e MODEL_NAME="$model_name" mlflow python - <<'PY' | tee evidence/restart-client-check.json
+import json, mlflow, os
 from mlflow import MlflowClient
-root=pathlib.Path(".")
-summary=json.loads((root/"evidence/workflow-summary.json").read_text())
 mlflow.set_tracking_uri("http://127.0.0.1:5000")
 client=MlflowClient()
-run=client.get_run(summary["run_id"])
-model=client.get_registered_model(summary["model_name"])
+run=client.get_run(os.environ["RUN_ID"])
+model=client.get_registered_model(os.environ["MODEL_NAME"])
 print(json.dumps({"run_id": run.info.run_id, "run_status": run.info.status, "model_name": model.name, "latest_versions": [v.version for v in model.latest_versions]}, indent=2))
 PY
 docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select count(*) as runs from runs; select count(*) as registered_models from registered_models;" > evidence/restart-sql-counts.txt

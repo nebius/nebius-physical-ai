@@ -17,6 +17,7 @@ RUN pip install --upgrade pip setuptools wheel \
     && pip install --upgrade -r /opt/mlflow/requirements.txt
 
 COPY --chown=10001:10001 src/ /opt/mlflow/src/
+COPY --chown=10001:10001 scripts/verify_workflow.py /opt/mlflow/src/verify_workflow.py
 USER 10001:10001
 EXPOSE 5000
 ENTRYPOINT ["python", "/opt/mlflow/src/mlflow_server.py"]
