@@ -10,15 +10,17 @@ PGPASSWORD="$(cat secrets/postgres_password)"
 export MLFLOW_S3_ENDPOINT_URL AWS_ENDPOINT_URL_S3
 
 docker compose ps > evidence/compose-ps.txt
+docker compose images > evidence/compose-images.txt
 curl -fsS http://127.0.0.1:5000/health > evidence/mlflow-health.txt
 docker compose exec -T postgres pg_isready -U mlflow -d mlflow > evidence/pg-isready.txt
 
-docker image history --no-trunc npa-mlflow-server:local > evidence/mlflow-image-history.txt
+MLFLOW_SCAN_IMAGE="${MLFLOW_IMAGE:-npa-mlflow-server:local}"
+docker image history --no-trunc "$MLFLOW_SCAN_IMAGE" > evidence/mlflow-image-history.txt
 if grep -Ei "(AWS_SECRET|SECRET_ACCESS|PASSWORD=|PRIVATE_KEY|BEGIN .* KEY)" evidence/mlflow-image-history.txt; then
   echo "secret-looking value found in mlflow image history" >&2
   exit 1
 fi
-for image in npa-mlflow-server:local cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b; do
+for image in "$MLFLOW_SCAN_IMAGE" cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b; do
   safe="$(echo "$image" | tr "/:@" "____")"
   trivy image --scanners vuln --parallel 1 --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image" > "evidence/trivy-vuln-${safe}.txt"
   trivy image --scanners secret --parallel 1 --exit-code 1 --no-progress "$image" > "evidence/trivy-secret-${safe}.txt"
