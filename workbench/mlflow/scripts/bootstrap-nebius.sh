@@ -3,13 +3,16 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 umask 077
 mkdir -p secrets evidence postgres-data
-chmod 700 secrets postgres-data
 if command -v sudo >/dev/null 2>&1; then
   sudo chown "$(id -u):$(id -g)" secrets secrets/* 2>/dev/null || true
+  chmod 700 secrets
   sudo chown 70:70 postgres-data
+  sudo chmod 700 postgres-data
 else
   chown "$(id -u):$(id -g)" secrets secrets/* 2>/dev/null || true
+  chmod 700 secrets
   chown 70:70 postgres-data
+  chmod 700 postgres-data
 fi
 
 PROJECT_ID="${NPA_PROJECT_ID:-project-u00zhx4tpr00xh99b28n52}"
