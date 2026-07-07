@@ -297,6 +297,64 @@ def test_agent_chat_onboard_solution_intent(ctx: AgentLiveContext) -> None:
     assert_grounded_onboard_solution_reply(chat.json())
 
 
+def test_agent_chat_complex_artifact_discovery_intent(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "For a non-stock customer Sim2Real run, discover what artifacts I can view, "
+                        "tell me which run-specific Rerun recording/video/report/log outputs are usable, "
+                        "and do not fall back to stock Franka data."
+                    ),
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    apis_used = payload.get("apis_used")
+    assert isinstance(apis_used, list)
+    assert "artifacts/runs" in apis_used or "artifacts/run/{run_id}" in apis_used
+    reply = str(payload.get("reply") or "")
+    assert "S3" in reply or "artifact" in reply.lower()
+    assert not reply.strip().startswith("GET /api")
+
+
+def test_agent_chat_complex_workflow_yaml_intent(ctx: AgentLiveContext) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Draft a VLM/RL outer-loop workflow YAML for non-stock assets with policy rollout, "
+                        "heldout eval, a Token Factory quality gate, promote_checkpoint, and loop_back."
+                    ),
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    yaml_text = str(payload.get("workflow_yaml") or "")
+    assert "apiVersion: npa.workflow/v0.0.1" in yaml_text
+    assert "toolRef" in yaml_text
+    assert "loop_back" in yaml_text or "promote_checkpoint" in yaml_text
+    validation = payload.get("workflow_validation")
+    assert isinstance(validation, dict)
+    assert validation.get("ok") is True
+
+
 @pytest.mark.skipif(
     os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
     reason="Set NPA_AGENT_CHAT_LIVE=1 to smoke-test Token Factory chat on the live agent.",
