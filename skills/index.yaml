@@ -387,6 +387,20 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
+  - name: diagram-to-npa-workflow
+    category: workflows
+    when_to_use: "Turn an architecture diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes/arrows/diamonds/back-edges -> states, loops, gates, catalog toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines."
+    path: skills/workflows/diagram-to-npa-workflow/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/diagram-to-npa-workflow/reference/mapping.md
+      - type: cli_help
+        args: ["workbench", "workflow", "validate-spec", "--help"]
+        contains: "npa.workflow"
+      - type: npa_workflow_yaml
+        paths:
+          - skills/workflows/diagram-to-npa-workflow/examples/sim2real-vlm-rl-from-diagram.yaml
+          - skills/workflows/diagram-to-npa-workflow/examples/av-failure-mode-from-diagram.yaml
   - name: workbench-reference-workflows
     category: workflows
     when_to_use: "Reference SkyPilot YAMLs, runner scripts, cookbooks, and customer-adaptable pipeline implementations."
