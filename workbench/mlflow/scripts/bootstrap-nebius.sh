@@ -22,6 +22,7 @@ REGION="${NPA_REGION:-}"
 ENDPOINT_URL="${NPA_STORAGE_ENDPOINT:-}"
 BUCKET_NAME="${MLFLOW_BUCKET_NAME:-npa-mlflow-$(printf %s "$PROJECT_ID" | sha256sum | cut -c1-10)}"
 SA_NAME="${MLFLOW_SERVICE_ACCOUNT_NAME:-npa-mlflow-artifacts}"
+GROUP_NAME="${MLFLOW_IAM_GROUP_NAME:-npa-mlflow-artifacts}"
 KEY_NAME="${MLFLOW_ACCESS_KEY_NAME:-npa-mlflow-artifacts}"
 
 if [[ -z "$REGION" || -z "$ENDPOINT_URL" ]]; then
@@ -50,13 +51,18 @@ if ! nebius iam service-account get-by-name --parent-id "$PROJECT_ID" --name "$S
 fi
 SA_ID="$(jq -r '.metadata.id // .id' evidence/service-account.json)"
 
-if ! nebius iam access-permit list --parent-id "$SA_ID" --profile "$PROFILE" --format json > evidence/access-permits.json 2>/dev/null; then
-  : > evidence/access-permits.json
+if ! nebius iam group get-by-name --parent-id "$PROJECT_ID" --name "$GROUP_NAME" --profile "$PROFILE" --format json > evidence/group.json 2>/dev/null; then
+  nebius iam group create --parent-id "$PROJECT_ID" --name "$GROUP_NAME" --profile "$PROFILE" --format json > evidence/group.json
 fi
-if ! jq -e --arg rid "$BUCKET_ID" '.. | objects | select((.spec.resource_id? // .resource_id? // "") == $rid)' evidence/access-permits.json >/dev/null; then
-  nebius iam access-permit create --parent-id "$SA_ID" --resource-id "$BUCKET_ID" --role storage.objectAdmin --name npa-mlflow-bucket-objects --profile "$PROFILE" --format json > evidence/access-permit-created.json || \
-  nebius iam access-permit create --parent-id "$SA_ID" --resource-id "$BUCKET_ID" --role storage.editor --name npa-mlflow-bucket-objects --profile "$PROFILE" --format json > evidence/access-permit-created.json
+GROUP_ID="$(jq -r '.metadata.id // .id' evidence/group.json)"
+if ! nebius iam group-membership create --parent-id "$GROUP_ID" --member-id "$SA_ID" --profile "$PROFILE" --format json > evidence/group-membership.json 2>evidence/group-membership.err; then
+  if ! grep -qi 'already\|exist\|duplicate' evidence/group-membership.err; then
+    cat evidence/group-membership.err >&2
+    exit 1
+  fi
 fi
+policy="$(jq -nc --arg group "$GROUP_ID" '[{group_id:$group,paths:["mlflow/*"],roles:["storage.editor"]}]')"
+nebius storage bucket update "$BUCKET_ID" --bucket-policy-rules "$policy" --profile "$PROFILE" --format json > evidence/bucket-policy.json
 
 if [[ ! -s secrets/aws_access_key_id || ! -s secrets/aws_secret_access_key ]]; then
   nebius iam v2 access-key create --parent-id "$PROJECT_ID" --account-service-account-id "$SA_ID" --name "$KEY_NAME-$(date -u +%Y%m%d%H%M%S)" --description "S3 key for ${BUCKET_NAME}/mlflow" --secret-delivery-mode inline --profile "$PROFILE" --format json > secrets/access-key-created.json
@@ -102,5 +108,5 @@ MLFLOW_PG_USER=mlflow
 ENV
 chmod 600 .env
 cat > evidence/resource-summary.json <<JSON
-{"project_id":"${PROJECT_ID}","tenant_id":"${TENANT_ID}","region":"${REGION}","endpoint_url":"${ENDPOINT_URL}","bucket":"${BUCKET_NAME}","bucket_id":"${BUCKET_ID}","service_account_id":"${SA_ID}","compose":"docker compose on dev VM","postgres_persistence":"./postgres-data bind mount on VM block device"}
+{"project_id":"${PROJECT_ID}","tenant_id":"${TENANT_ID}","region":"${REGION}","endpoint_url":"${ENDPOINT_URL}","bucket":"${BUCKET_NAME}","bucket_id":"${BUCKET_ID}","service_account_id":"${SA_ID}","group_id":"${GROUP_ID}","bucket_policy_role":"storage.editor","bucket_policy_paths":["mlflow/*"],"compose":"docker compose on dev VM","postgres_persistence":"./postgres-data bind mount on VM block device"}
 JSON
