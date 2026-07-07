@@ -55,6 +55,7 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m
       - /home/mlflow/.cache:rw,noexec,nosuid,nodev,size=64m
+      - /home/mlflow/.gunicorn:rw,noexec,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true
     cap_drop:
