@@ -59,6 +59,7 @@ DEFAULT_LLM_MODELS = (
 AGENT_UI_VERSION = "2026070601"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
+_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
 
 
 def _embedded_agent_workflow_source() -> str:
@@ -298,8 +299,9 @@ def _apply_agent_terraform(
             "secret_key": merged_vars.get("nebius_secret_key", ""),
         },
     )
+    tf_vars = {key: value for key, value in merged_vars.items() if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS}
     try:
-        return provisioner.apply(tf_dir=tf_dir, tf_vars=merged_vars)
+        return provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
     except ProvisionerError as exc:
         sa_id = str(merged_vars.get("service_account_id", "")).strip()
         if sa_id and _looks_like_compute_permission_denied(str(exc)):
@@ -307,7 +309,7 @@ def _apply_agent_terraform(
                 "  Compute create denied with VM service-account attachment; "
                 "retrying without attached service_account_id ..."
             )
-            retry_vars = dict(merged_vars)
+            retry_vars = dict(tf_vars)
             retry_vars["service_account_id"] = ""
             return provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
         raise
