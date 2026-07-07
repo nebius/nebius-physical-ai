@@ -3,7 +3,7 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 
-const repoRoot = path.resolve(__dirname, "../../..");
+const repoRoot = path.resolve(__dirname, "../..");
 const agentSourcePath = path.join(repoRoot, "src/npa/cli/agent.py");
 const generatedDir = path.join(__dirname, ".generated");
 const generatedUiPath = path.join(generatedDir, "agent-ui.html");
