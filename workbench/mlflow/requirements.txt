@@ -1,0 +1,5 @@
+mlflow
+psycopg[binary]
+boto3
+scikit-learn
+numpy
