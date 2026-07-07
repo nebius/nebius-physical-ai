@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b
+    image: ${POSTGRES_IMAGE:-cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b}
     container_name: npa-mlflow-postgres
     user: "70:70"
     init: true

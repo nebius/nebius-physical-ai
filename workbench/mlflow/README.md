@@ -16,11 +16,13 @@ export NPA_TENANT_ID="<tenant-id>"
 ./scripts/verify.sh
 ./scripts/verify-twice-clean.sh
 
-# Publish the MLflow image to the configured Nebius Container Registry.
+# Publish the MLflow and pinned Postgres images to the configured Nebius Container Registry.
 ./scripts/push-image.sh
 
-# Redeploy from the pushed image instead of rebuilding locally.
-export MLFLOW_IMAGE="$(cat evidence/pushed-image-ref.txt)"
+# Redeploy from the pushed images instead of rebuilding/pulling from public registries.
+set -a
+. evidence/pushed-images.env
+set +a
 MLFLOW_USE_PUBLISHED_IMAGE=1 ./scripts/deploy.sh
 ```
 

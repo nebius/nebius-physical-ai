@@ -20,7 +20,8 @@ if grep -Ei "(AWS_SECRET|SECRET_ACCESS|PASSWORD=|PRIVATE_KEY|BEGIN .* KEY)" evid
   echo "secret-looking value found in mlflow image history" >&2
   exit 1
 fi
-for image in "$MLFLOW_SCAN_IMAGE" cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b; do
+POSTGRES_SCAN_IMAGE="${POSTGRES_IMAGE:-cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b}"
+for image in "$MLFLOW_SCAN_IMAGE" "$POSTGRES_SCAN_IMAGE"; do
   safe="$(echo "$image" | tr "/:@" "____")"
   trivy image --scanners vuln --parallel 1 --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image" > "evidence/trivy-vuln-${safe}.txt"
   trivy image --scanners secret --parallel 1 --exit-code 1 --no-progress "$image" > "evidence/trivy-secret-${safe}.txt"
