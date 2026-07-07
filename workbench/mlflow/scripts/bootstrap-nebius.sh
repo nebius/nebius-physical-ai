@@ -4,6 +4,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 umask 077
 mkdir -p secrets evidence postgres-data
 chmod 700 secrets postgres-data
+if command -v sudo >/dev/null 2>&1; then
+  sudo chown 70:70 postgres-data
+else
+  chown 70:70 postgres-data
+fi
 
 PROJECT_ID="${NPA_PROJECT_ID:-project-u00zhx4tpr00xh99b28n52}"
 TENANT_ID="${NPA_TENANT_ID:-tenant-e00qjewwehnmpeh4tf}"
@@ -62,7 +67,16 @@ fi
 if [[ ! -s secrets/postgres_password ]]; then
   openssl rand -base64 36 > secrets/postgres_password
 fi
+cp secrets/postgres_password secrets/mlflow_db_password
 chmod 600 secrets/*
+if command -v sudo >/dev/null 2>&1; then
+  sudo chown 70:70 secrets/postgres_password
+  sudo chown 10001:10001 secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
+else
+  chown 70:70 secrets/postgres_password
+  chown 10001:10001 secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
+fi
+chmod 400 secrets/postgres_password secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
 cat > .env <<ENV
 NPA_PROJECT_ID=${PROJECT_ID}
 NPA_TENANT_ID=${TENANT_ID}

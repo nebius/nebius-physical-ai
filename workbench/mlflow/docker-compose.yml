@@ -65,13 +65,13 @@ services:
     env_file:
       - .env
     environment:
-      MLFLOW_DB_PASSWORD_FILE: /run/secrets/postgres_password
+      MLFLOW_DB_PASSWORD_FILE: /run/secrets/mlflow_db_password
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
       AWS_EC2_METADATA_DISABLED: "true"
       TMPDIR: /tmp
     secrets:
-      - postgres_password
+      - mlflow_db_password
       - aws_access_key_id
       - aws_secret_access_key
     networks:
@@ -97,6 +97,8 @@ services:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password
+  mlflow_db_password:
+    file: ./secrets/mlflow_db_password
   aws_access_key_id:
     file: ./secrets/aws_access_key_id
   aws_secret_access_key:
