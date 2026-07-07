@@ -5,8 +5,10 @@ umask 077
 mkdir -p secrets evidence postgres-data
 chmod 700 secrets postgres-data
 if command -v sudo >/dev/null 2>&1; then
+  sudo chown "$(id -u):$(id -g)" secrets secrets/* 2>/dev/null || true
   sudo chown 70:70 postgres-data
 else
+  chown "$(id -u):$(id -g)" secrets secrets/* 2>/dev/null || true
   chown 70:70 postgres-data
 fi
 
@@ -67,16 +69,21 @@ fi
 if [[ ! -s secrets/postgres_password ]]; then
   openssl rand -base64 36 > secrets/postgres_password
 fi
-cp secrets/postgres_password secrets/mlflow_db_password
-chmod 600 secrets/*
+chmod 600 secrets/postgres_password secrets/aws_access_key_id secrets/aws_secret_access_key
 if command -v sudo >/dev/null 2>&1; then
-  sudo chown 70:70 secrets/postgres_password
-  sudo chown 10001:10001 secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
+  sudo install -o 70 -g 70 -m 0400 secrets/postgres_password secrets/postgres_password.pg
+  sudo install -o 10001 -g 10001 -m 0400 secrets/postgres_password secrets/postgres_password.mlflow
+  sudo install -o 10001 -g 10001 -m 0400 secrets/aws_access_key_id secrets/aws_access_key_id.mlflow
+  sudo install -o 10001 -g 10001 -m 0400 secrets/aws_secret_access_key secrets/aws_secret_access_key.mlflow
 else
-  chown 70:70 secrets/postgres_password
-  chown 10001:10001 secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
+  cp secrets/postgres_password secrets/postgres_password.pg
+  cp secrets/postgres_password secrets/postgres_password.mlflow
+  cp secrets/aws_access_key_id secrets/aws_access_key_id.mlflow
+  cp secrets/aws_secret_access_key secrets/aws_secret_access_key.mlflow
+  chown 70:70 secrets/postgres_password.pg
+  chown 10001:10001 secrets/postgres_password.mlflow secrets/aws_access_key_id.mlflow secrets/aws_secret_access_key.mlflow
+  chmod 400 secrets/postgres_password.pg secrets/postgres_password.mlflow secrets/aws_access_key_id.mlflow secrets/aws_secret_access_key.mlflow
 fi
-chmod 400 secrets/postgres_password secrets/mlflow_db_password secrets/aws_access_key_id secrets/aws_secret_access_key
 cat > .env <<ENV
 NPA_PROJECT_ID=${PROJECT_ID}
 NPA_TENANT_ID=${TENANT_ID}

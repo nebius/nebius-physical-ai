@@ -96,13 +96,13 @@ services:
 
 secrets:
   postgres_password:
-    file: ./secrets/postgres_password
+    file: ./secrets/postgres_password.pg
   mlflow_db_password:
-    file: ./secrets/mlflow_db_password
+    file: ./secrets/postgres_password.mlflow
   aws_access_key_id:
-    file: ./secrets/aws_access_key_id
+    file: ./secrets/aws_access_key_id.mlflow
   aws_secret_access_key:
-    file: ./secrets/aws_secret_access_key
+    file: ./secrets/aws_secret_access_key.mlflow
 
 networks:
   backend:
