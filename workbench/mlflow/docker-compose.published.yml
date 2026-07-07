@@ -1,0 +1,4 @@
+services:
+  mlflow:
+    build: null
+    image: ${MLFLOW_IMAGE:?set MLFLOW_IMAGE to the pushed MLflow image reference}

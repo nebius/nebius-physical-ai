@@ -1,0 +1,7 @@
+.env
+secrets/
+evidence/
+postgres-data/
+*.pyc
+__pycache__/
+.verify-venv/
