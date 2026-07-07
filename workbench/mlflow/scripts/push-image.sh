@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-./scripts/install-compose.sh
+./scripts/install-compose.sh >&2
 
 PROJECT_ID="${NPA_PROJECT_ID:-project-u00zhx4tpr00xh99b28n52}"
 NPA_PYTHON="${NPA_PYTHON:-/home/ubuntu/nebius-physical-ai/npa/.venv/bin/python}"
@@ -24,12 +24,12 @@ IMAGE="${MLFLOW_IMAGE:-${REGISTRY}/npa-mlflow-server:${TAG}}"
 
 mkdir -p evidence
 if [[ "${MLFLOW_SKIP_BUILD:-0}" != "1" ]]; then
-  docker compose build --pull mlflow
+  docker compose build --pull mlflow >&2
 fi
 
 nebius iam get-access-token | docker login "$REGISTRY_HOST" -u iam --password-stdin >/tmp/npa-mlflow-registry-login.log
 docker tag npa-mlflow-server:local "$IMAGE"
-docker push "$IMAGE"
+docker push "$IMAGE" >&2
 printf "%s\n" "$IMAGE" > evidence/pushed-image-ref.txt
 docker image inspect "$IMAGE" --format "{{json .RepoDigests}}" > evidence/pushed-image-digests.json
 printf "MLFLOW_IMAGE=%s\n" "$IMAGE" > evidence/pushed-image.env
