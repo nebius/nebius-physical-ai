@@ -67,15 +67,15 @@ with mlflow.start_run(experiment_id=experiment_id, run_name="postgres-s3-round-t
 versions = client.search_model_versions(f"name='{model_name}'")
 version = max(versions, key=lambda v: int(v.version))
 for _ in range(60):
-    version = client.get_model_version(model_name, version.version)
+    version = client.get_model_version(model_name, int(version.version))
     if version.status == ModelVersionStatus.to_string(ModelVersionStatus.READY):
         break
 else:
     raise RuntimeError(f"model version not ready: {version.status}")
 try:
-    client.transition_model_version_stage(model_name, version.version, "Staging", archive_existing_versions=False)
+    client.transition_model_version_stage(model_name, int(version.version), "Staging", archive_existing_versions=False)
 except Exception:
-    client.set_registered_model_alias(model_name, "staging", version.version)
+    client.set_registered_model_alias(model_name, "staging", int(version.version))
 
 loaded = mlflow.pyfunc.load_model(f"models:/{model_name}/{version.version}")
 preds = loaded.predict(X_test[:3])
