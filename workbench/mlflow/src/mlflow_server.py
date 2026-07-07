@@ -14,6 +14,10 @@ def read_secret(name: str, default: str = "") -> str:
 
 def main() -> None:
     db_password = read_secret("MLFLOW_DB_PASSWORD")
+    for secret_name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        value = read_secret(secret_name)
+        if value:
+            os.environ[secret_name] = value
     pg_host = os.environ.get("MLFLOW_PG_HOST", "postgres")
     pg_port = os.environ.get("MLFLOW_PG_PORT", "5432")
     pg_db = os.environ.get("MLFLOW_PG_DATABASE", "mlflow")
