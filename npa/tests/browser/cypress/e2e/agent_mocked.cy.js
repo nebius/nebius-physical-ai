@@ -1,4 +1,10 @@
-import { FIELD_IDS, STATIC_BUTTON_IDS, WORKFLOW_YAML } from "../support/e2e";
+import {
+  COMPLEX_WORKFLOW_YAML,
+  FIELD_IDS,
+  NON_STOCK_RUN_ID,
+  STATIC_BUTTON_IDS,
+  WORKFLOW_YAML,
+} from "../support/e2e";
 
 describe("NPA agent UI with mocked APIs", () => {
   beforeEach(() => {
@@ -145,6 +151,94 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#cameraCards button[data-action='preview'][data-camera='workspace']").click({ force: true });
     cy.wait("@cameraPreview");
     cy.get("#chatLog").should("contain.text", "Previewing workspace in Rerun");
+  });
+
+  it("discovers and interacts with non-stock Sim2Real run artifacts", () => {
+    cy.window().then((win) => {
+      cy.stub(win, "open").as("windowOpen");
+    });
+
+    cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#artifactRunSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+    cy.get("#artifactList").should("contain.text", "render=rerun");
+    cy.get("#artifactList").should("contain.text", "render=video");
+    cy.get("#artifactList").should("contain.text", "render=json");
+    cy.get("#artifactList").should("contain.text", "render=text");
+    cy.get("#artifactList").should("contain.text", "render=download");
+    cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
+    cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
+    cy.get("#simCamera").should("contain.text", "customer-overhead");
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
+
+    cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
+    cy.get("#loadRunData").click();
+    cy.wait("@loadRun");
+    cy.get("#runSummary").should("contain.text", NON_STOCK_RUN_ID);
+    cy.get("#stageList").should("contain.text", "Customer assets");
+    cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
+
+    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#artifactPreviewHost video").should("have.attr", "src").and("include", "customer-camera.mp4");
+    cy.get("#renderedDataSummary").should("contain.text", "video");
+
+    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "promoted");
+
+    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "loaded customer scene mesh");
+
+    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#artifactPreviewHost").should("contain.text", "download");
+    cy.get("#artifactPreviewHost a").should("have.attr", "href").and("include", "custom-dynamics.fooz");
+
+    cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`).click();
+    cy.wait("@loadArtifact");
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
+
+    cy.get("#openRerun").click();
+    cy.get("@windowOpen").should("have.been.called");
+  });
+
+  it("grounds complex chat queries and complex workflow YAML drafts", () => {
+    cy.get("#chatInput").type(
+      "For the non-stock customer run, what can I view, which artifact should I load first, and how do I keep Rerun interactive?",
+      { delay: 0 },
+    );
+    cy.get("#chatSend").click();
+    cy.wait("@chat");
+    cy.get("#chatLog").should("contain.text", "Non-stock Sim2Real artifacts");
+    cy.get("#chatLog").should("contain.text", NON_STOCK_RUN_ID);
+    cy.get("#chatLog").should("contain.text", "Artifact browser");
+
+    cy.get("#chatInput").type(
+      "Draft a complex VLM/RL outer loop workflow YAML for non-stock assets with a quality gate and promote or loop-back transitions.",
+      { delay: 0 },
+    );
+    cy.get("#chatSend").click();
+    cy.wait("@chat");
+    cy.get("#workflowYaml").should("contain.value", "cypress-vlm-rl-loop");
+    cy.get("#workflowYaml").should("contain.value", "workbench.token_factory.reason");
+    cy.get("#workflowYaml").should("contain.value", "loop_back");
+
+    cy.get("#workflowYaml").clear().type(COMPLEX_WORKFLOW_YAML, { delay: 0 });
+    cy.get("#workflowValidate").click();
+    cy.wait("@workflowValidate");
+    cy.get("#workflowName").should("contain.text", "cypress-vlm-rl-loop");
+    cy.get("#workflowStates").should("contain.text", "vlm_gate");
+
+    cy.get("#workflowPlan").click();
+    cy.wait("@workflowPlan");
+    cy.get("#workflowPlanOutput").should("contain.text", "workbench.token_factory.reason");
   });
 
   it("covers mobile panels toggle and mobile chat auth flow", () => {

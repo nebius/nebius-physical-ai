@@ -58,6 +58,38 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
 
 
+def test_match_complex_non_stock_artifact_queries() -> None:
+    assert (
+        match_chat_intent(
+            "For the non-stock customer Sim2Real run, discover what outputs I can view, "
+            "load the run-specific Rerun recording, then show video/json/log artifacts."
+        )
+        == "find_artifacts"
+    )
+    assert (
+        match_chat_intent(
+            "Which customer run should I use if I need the non stock .rrd plus rollout video and report artifacts?"
+        )
+        == "find_artifacts"
+    )
+
+
+def test_match_complex_workflow_yaml_queries() -> None:
+    assert (
+        match_chat_intent(
+            "Draft a VLM/RL outer-loop workflow YAML for non-stock assets with a Token Factory quality gate, "
+            "promote_checkpoint transition, and loop_back transition."
+        )
+        == "create_vlm_rl_workflow"
+    )
+    assert (
+        match_chat_intent(
+            "Create a workflow yaml that runs policy rollout, heldout eval, and a VLM critic gate before finalizing."
+        )
+        == "create_vlm_rl_workflow"
+    )
+
+
 def test_match_watch_sim_intent_with_long_requirements_addendum() -> None:
     prompt = """
 Enhance NPA agent chat intent routing and Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent.

@@ -108,7 +108,8 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\b(?:outer|inner)\b.{0,80}\b(?:loop|iteration)\b.{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:outer\s+loop|inner\s+loop)\b.{0,80}\b(?:gate|decision|promote)\b"
             r"|\b(?:create|generate|build|make)\b.{0,80}\b(?:vlm|critic)\b.{0,80}\b(?:gate|loop|workflow)\b"
-            r"|\b(?:policy\s+rollout|heldout\s+eval)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b",
+            r"|\b(?:policy\s+rollout|heldout\s+eval)\b.{0,80}\b(?:workflow|yaml|spec|loop)\b"
+            r"|\b(?:workflow|yaml|spec)\b.{0,120}\b(?:policy\s+rollout|heldout\s+eval|vlm\s+critic|quality\s+gate)\b",
             re.IGNORECASE,
         ),
     ),
@@ -162,6 +163,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bwhat can i view\b"
             r"|\bwhat\b.{0,80}\bartifacts?\b.{0,120}\bview\b"
             r"|\b(?:what|which)\b.{0,80}\b(?:sim\s*[- ]?2\s*[- ]?real|sim2real)?\s*run\b.{0,80}\b(?:view|load|open|use)\b"
+            r"|\b(?:non[\s-]?stock|customer|custom)\b.{0,120}\b(?:run|sim\s*[- ]?2\s*[- ]?real|sim2real)\b.{0,120}\b(?:artifacts?|outputs?|recording|rrd|video|report|logs?)\b"
             r"|\bartifact\b.{0,120}\b(?:browser|viewer|preview|download)\b",
             re.IGNORECASE,
         ),

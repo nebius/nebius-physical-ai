@@ -10,6 +10,29 @@ const WORKFLOW_YAML = [
   "      description: mocked browser workflow state",
 ].join("\n");
 
+const COMPLEX_WORKFLOW_YAML = [
+  "apiVersion: npa.workflow/v0.0.1",
+  "kind: Workflow",
+  "metadata:",
+  "  name: cypress-vlm-rl-loop",
+  "spec:",
+  "  states:",
+  "    - id: rollout",
+  "      toolRef: workbench.sim2real.policy_rollout",
+  "      description: Roll out a policy on non-stock customer assets.",
+  "      outputs:",
+  "        rrd_uri: s3://mock/non-stock-customer-run/reports/sim2real.rrd",
+  "    - id: vlm_gate",
+  "      toolRef: workbench.token_factory.reason",
+  "      description: Score rollout quality and decide whether to promote.",
+  "      transitions:",
+  "        promote_checkpoint: finalize",
+  "        loop_back: rollout",
+  "    - id: finalize",
+  "      toolRef: workbench.sim2real.status",
+  "      description: Publish run-specific report and Rerun recording.",
+].join("\n");
+
 const SIM_VIZ = {
   run_id: "mock-run",
   active_run_id: "mock-run",
@@ -20,6 +43,25 @@ const SIM_VIZ = {
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace",
   available_run_ids: ["mock-run", "submitted-run"],
+};
+
+const NON_STOCK_RUN_ID = "non-stock-customer-run";
+
+const NON_STOCK_SIM_VIZ = {
+  run_id: NON_STOCK_RUN_ID,
+  active_run_id: NON_STOCK_RUN_ID,
+  stage: "stage_14_rerun_viz",
+  camera: "customer-overhead",
+  rrd_uri: "file:///opt/npa-agent/recordings/sim2real.rrd",
+  rrd_updated_at: "2026-07-07T04:12:00Z",
+  rerun_ready: true,
+  rerun_iframe_url: "/rerun/?url=/rerun/recordings/sim2real.rrd&camera=customer-overhead",
+  available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
+  artifact_render: "rerun",
+  artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
+  artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
+  artifact_preview_url: "/rerun/recordings/sim2real.rrd",
+  artifact_download_url: "/rerun/recordings/sim2real.rrd",
 };
 
 const RUN_DETAILS = {
@@ -33,6 +75,24 @@ const RUN_DETAILS = {
       { id: "render", label: "Render", status: "running", summary: "Rerun recording available" },
     ],
     logs: [{ timestamp: "2026-07-07T03:33:00Z", level: "info", message: "mock run log" }],
+  },
+};
+
+const NON_STOCK_RUN_DETAILS = {
+  run: {
+    run_id: NON_STOCK_RUN_ID,
+    status: "completed",
+    result: "promoted",
+    updated_at: "2026-07-07T04:12:00Z",
+    stages: [
+      { id: "stage_02_assets", label: "Customer assets", status: "succeeded", summary: "Loaded BYO scene mesh and custom robot." },
+      { id: "stage_10_eval_heldout", label: "Heldout eval", status: "succeeded", summary: "Non-stock heldout rollout passed." },
+      { id: "stage_14_rerun_viz", label: "Rerun viz", status: "succeeded", summary: "Run-specific Rerun recording published." },
+    ],
+    logs: [
+      { timestamp: "2026-07-07T04:10:00Z", level: "info", message: "loaded customer scene mesh" },
+      { timestamp: "2026-07-07T04:12:00Z", level: "info", message: "published non-stock sim2real artifacts" },
+    ],
   },
 };
 
@@ -77,11 +137,56 @@ const ASSETS = {
   },
 };
 
+const NON_STOCK_ARTIFACTS = [
+  {
+    key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
+    render: "rerun",
+    inline: true,
+    size: 8192,
+  },
+  {
+    key: `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`,
+    render: "video",
+    inline: true,
+    size: 4096,
+  },
+  {
+    key: `${NON_STOCK_RUN_ID}/reports/sim2real-report.json`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real-report.json`,
+    render: "json",
+    inline: true,
+    size: 2048,
+  },
+  {
+    key: `${NON_STOCK_RUN_ID}/logs/orchestrator.log`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/logs/orchestrator.log`,
+    render: "text",
+    inline: true,
+    size: 1024,
+  },
+  {
+    key: `${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz`,
+    s3_uri: `s3://mock/${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz`,
+    render: "download",
+    inline: false,
+    size: 512,
+  },
+];
+
 const WORKFLOW_VALIDATION = {
   ok: true,
   status: "valid",
   name: "cypress-sim2real",
   states: ["draft"],
+};
+
+const COMPLEX_WORKFLOW_VALIDATION = {
+  ok: true,
+  status: "valid",
+  name: "cypress-vlm-rl-loop",
+  states: ["rollout", "vlm_gate", "finalize"],
 };
 
 const CHAT_SESSIONS = [
@@ -158,7 +263,41 @@ function json(body) {
   };
 }
 
+function renderForArtifactKey(key) {
+  const artifact = NON_STOCK_ARTIFACTS.find((item) => item.key === key);
+  if (artifact) {
+    return artifact.render;
+  }
+  if (String(key || "").endsWith(".rrd")) return "rerun";
+  if (String(key || "").match(/\.(mp4|webm|mov)$/)) return "video";
+  if (String(key || "").match(/\.(png|jpg|jpeg|gif|webp)$/)) return "image";
+  if (String(key || "").endsWith(".json")) return "json";
+  if (String(key || "").match(/\.(txt|log|csv|yaml|yml|md)$/)) return "text";
+  return "download";
+}
+
+function simVizForArtifact(key) {
+  const render = renderForArtifactKey(key);
+  const base = String(key || "").startsWith(`${NON_STOCK_RUN_ID}/`) ? NON_STOCK_SIM_VIZ : SIM_VIZ;
+  const previewPath = `/api/artifacts/file/${encodeURIComponent(key.replaceAll("/", "__"))}`;
+  if (render === "rerun") {
+    return { ...base, artifact_render: render, artifact_key: key, artifact_uri: `s3://mock/${key}` };
+  }
+  return {
+    ...base,
+    rrd_uri: "",
+    rerun_ready: false,
+    rerun_iframe_url: "/rerun/",
+    artifact_render: render,
+    artifact_key: key,
+    artifact_uri: `s3://mock/${key}`,
+    artifact_preview_url: previewPath,
+    artifact_download_url: previewPath,
+  };
+}
+
 function installAgentApiMocks() {
+  let activeSimViz = SIM_VIZ;
   cy.intercept("GET", "/api/health", json({ ok: true, tool_refs: 19 })).as("health");
   cy.intercept("GET", "/api/models", json({
     ok: true,
@@ -201,6 +340,49 @@ function installAgentApiMocks() {
     sessions: CHAT_SESSIONS,
   })).as("selectChatSession");
   cy.intercept("POST", "/api/chat", (req) => {
+    const messages = Array.isArray(req.body.messages) ? req.body.messages : [];
+    const last = String(messages.length ? messages[messages.length - 1].content || "" : "");
+    const lowered = last.toLowerCase();
+    if (lowered.includes("outer loop") || lowered.includes("vlm") || lowered.includes("quality gate")) {
+      req.reply(json({
+        ok: true,
+        model: req.body.model || "nvidia/Cosmos3-Super-Reasoner",
+        session_id: req.body.session_id || "default",
+        grounded: true,
+        apis_used: ["workflows/draft", "workflows/validate", "workflows/plan"],
+        reply: [
+          "Here is a VLM/RL loop workflow for non-stock Sim2Real assets.",
+          "```yaml",
+          COMPLEX_WORKFLOW_YAML,
+          "```",
+        ].join("\n"),
+        workflow_yaml: COMPLEX_WORKFLOW_YAML,
+        workflow_validation: COMPLEX_WORKFLOW_VALIDATION,
+        workflow_draft: {
+          yaml: COMPLEX_WORKFLOW_YAML,
+          validation: COMPLEX_WORKFLOW_VALIDATION,
+          runnable: true,
+        },
+      }));
+      return;
+    }
+    if (lowered.includes("non-stock") || lowered.includes("customer run") || lowered.includes("what can i view")) {
+      req.reply(json({
+        ok: true,
+        model: req.body.model || "nvidia/Cosmos3-Super-Reasoner",
+        session_id: req.body.session_id || "default",
+        grounded: true,
+        apis_used: ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
+        reply: [
+          "**Non-stock Sim2Real artifacts**",
+          `- **run_id**: \`${NON_STOCK_RUN_ID}\``,
+          "- **preferred**: `reports/sim2real.rrd` (`rerun`)",
+          "- **interactive surfaces**: Rerun recording, rollout video, report JSON, logs, and download fallback.",
+          "- Use the Artifact browser to Discover runs, List artifacts, then Load the explicit object.",
+        ].join("\n"),
+      }));
+      return;
+    }
     req.reply(json({
       ok: true,
       model: req.body.model || "nvidia/Cosmos3-Super-Reasoner",
@@ -227,7 +409,15 @@ function installAgentApiMocks() {
   cy.intercept("PUT", "/api/sim-assets/cameras/selection", (req) => {
     req.reply(json({ ok: true, selected: req.body.selected || ["workspace"] }));
   }).as("setCamera");
-  cy.intercept("GET", "/api/sim-viz/status*", json(SIM_VIZ)).as("simVizStatus");
+  cy.intercept("GET", "/api/sim-viz/status*", (req) => {
+    const url = new URL(req.url);
+    const runId = url.searchParams.get("run_id") || "";
+    if (runId === NON_STOCK_RUN_ID) {
+      req.reply(json(activeSimViz.run_id === NON_STOCK_RUN_ID ? activeSimViz : NON_STOCK_SIM_VIZ));
+      return;
+    }
+    req.reply(json(runId ? { ...SIM_VIZ, run_id: runId } : activeSimViz));
+  }).as("simVizStatus");
   cy.intercept("GET", "/api/sim-viz/rrd-blob*", {
     statusCode: 200,
     headers: { "content-type": "application/octet-stream" },
@@ -240,7 +430,9 @@ function installAgentApiMocks() {
   }).as("rrd");
   cy.intercept("POST", "/api/sim-viz/load-franka-demo", json({ ok: true, sim_viz: SIM_VIZ })).as("loadFranka");
   cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
-    req.reply(json({ ok: true, sim_viz: { ...SIM_VIZ, run_id: req.body.run_id || "mock-run" } }));
+    const runId = String(req.body.run_id || "mock-run");
+    activeSimViz = runId === NON_STOCK_RUN_ID ? NON_STOCK_SIM_VIZ : { ...SIM_VIZ, run_id: runId };
+    req.reply(json({ ok: true, sim_viz: activeSimViz }));
   }).as("loadRun");
   cy.intercept("POST", "/api/sim-viz/camera-preview", (req) => {
     req.reply(json({
@@ -249,28 +441,61 @@ function installAgentApiMocks() {
       sim_viz: { ...SIM_VIZ, camera: req.body.camera || "workspace" },
     }));
   }).as("cameraPreview");
-  cy.intercept("POST", "/api/sim-viz/load-artifact", json({
-    ok: true,
-    render: "image",
-    sim_viz: {
-      ...SIM_VIZ,
-      artifact_render: "image",
-      artifact_key: "mock-run/preview.png",
-      artifact_uri: "s3://mock/mock-run/preview.png",
-      artifact_preview_url: "/api/artifacts/preview/mock-run/preview.png",
-      artifact_download_url: "/api/artifacts/download/mock-run/preview.png",
-    },
-  })).as("loadArtifact");
+  cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+    const key = String(req.body.key || "mock-run/preview.png");
+    const render = renderForArtifactKey(key);
+    activeSimViz = simVizForArtifact(key);
+    req.reply(json({
+      ok: true,
+      render,
+      sim_viz: activeSimViz,
+      artifact_uri: `s3://mock/${key}`,
+    }));
+  }).as("loadArtifact");
   cy.intercept("GET", "/api/artifacts/preview/mock-run/preview.png", {
     statusCode: 200,
     headers: { "content-type": "image/png" },
     body: "",
   }).as("artifactPreview");
+  cy.intercept("GET", "/api/artifacts/file/*", (req) => {
+    const decoded = decodeURIComponent(req.url.split("/").pop() || "");
+    if (decoded.includes("sim2real-report.json")) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ run_id: NON_STOCK_RUN_ID, result: "promoted", non_stock: true }),
+      });
+      return;
+    }
+    if (decoded.includes("orchestrator.log")) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "text/plain" },
+        body: "loaded customer scene mesh\npublished non-stock sim2real artifacts\n",
+      });
+      return;
+    }
+    req.reply({
+      statusCode: 200,
+      headers: { "content-type": "application/octet-stream" },
+      body: "mock artifact payload",
+    });
+  }).as("artifactFile");
   cy.intercept("GET", "/api/artifacts/runs*", json({
-    runs: [{ run_id: "mock-run", has_viewable: true }],
-    total_runs: 1,
+    runs: [
+      { run_id: NON_STOCK_RUN_ID, has_viewable: true, artifact_count: NON_STOCK_ARTIFACTS.length },
+      { run_id: "mock-run", has_viewable: true, artifact_count: 1 },
+    ],
+    total_runs: 2,
     truncated: false,
   })).as("artifactRuns");
+  cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
+    run_id: NON_STOCK_RUN_ID,
+    prefix: "sim2real-b",
+    count: NON_STOCK_ARTIFACTS.length,
+    artifacts: NON_STOCK_ARTIFACTS,
+    preferred: NON_STOCK_ARTIFACTS[0],
+  })).as("nonStockArtifactList");
   cy.intercept("GET", "/api/artifacts/run/mock-run*", json({
     run_id: "mock-run",
     prefix: "sim2real-b",
@@ -289,15 +514,20 @@ function installAgentApiMocks() {
     validation: WORKFLOW_VALIDATION,
     plan: { ok: true, steps: [{ state: "draft", tool_ref: "workbench.sim2real.status" }] },
   })).as("workflowDraft");
-  cy.intercept("POST", "/api/workflows/validate", json({
-    ok: true,
-    validation: WORKFLOW_VALIDATION,
-  })).as("workflowValidate");
+  cy.intercept("POST", "/api/workflows/validate", (req) => {
+    const yaml = String(req.body.yaml || "");
+    const validation = yaml.includes("cypress-vlm-rl-loop") ? COMPLEX_WORKFLOW_VALIDATION : WORKFLOW_VALIDATION;
+    req.reply(json({ ok: true, validation }));
+  }).as("workflowValidate");
   cy.intercept("POST", "/api/workflows/plan", json({
     ok: true,
     plan: {
-      workflow: "cypress-sim2real",
-      steps: [{ state: "draft", tool_ref: "workbench.sim2real.status" }],
+      workflow: "cypress-vlm-rl-loop",
+      steps: [
+        { state: "rollout", tool_ref: "workbench.sim2real.policy_rollout" },
+        { state: "vlm_gate", tool_ref: "workbench.token_factory.reason" },
+        { state: "finalize", tool_ref: "workbench.sim2real.status" },
+      ],
     },
   })).as("workflowPlan");
   cy.intercept("POST", "/api/workflows/submit", json({
@@ -319,7 +549,7 @@ function installAgentApiMocks() {
   })).as("workflowStatus");
   cy.intercept("GET", "/api/workflows/sim2real/runs/*", (req) => {
     const runId = decodeURIComponent(req.url.split("/").pop().split("?")[0] || "mock-run");
-    req.reply(json({ run: { ...RUN_DETAILS.run, run_id: runId } }));
+    req.reply(json(runId === NON_STOCK_RUN_ID ? NON_STOCK_RUN_DETAILS : { run: { ...RUN_DETAILS.run, run_id: runId } }));
   }).as("runDetails");
 }
 
@@ -348,7 +578,10 @@ Cypress.Commands.add("visitLiveAgent", () => {
 export {
   ASSETS,
   CAMERAS,
+  COMPLEX_WORKFLOW_YAML,
   FIELD_IDS,
+  NON_STOCK_ARTIFACTS,
+  NON_STOCK_RUN_ID,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
   WORKFLOW_YAML,
