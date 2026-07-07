@@ -24,7 +24,7 @@ for image in npa-mlflow-server:local cgr.dev/chainguard/postgres@sha256:0edb7d98
 done
 
 docker compose exec -T mlflow mlflow --version > evidence/mlflow-version.txt
-docker compose exec -T mlflow python -c "import psycopg; print(psycopg.__version__)" > evidence/psycopg-version.txt
+docker compose exec -T mlflow python -c "import psycopg, psycopg2; print(f'psycopg={psycopg.__version__} psycopg2={psycopg2.__version__}')" > evidence/psycopg-version.txt
 docker compose exec -T mlflow mlflow server --help > evidence/mlflow-server-help.txt
 
 docker compose exec -T mlflow python /opt/mlflow/src/verify_workflow.py | tee evidence/workflow-summary.json

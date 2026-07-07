@@ -24,11 +24,11 @@ def main() -> None:
     pg_user = os.environ.get("MLFLOW_PG_USER", "mlflow")
     artifact_root = os.environ["MLFLOW_ARTIFACT_ROOT"]
 
-    backend_uri = f"postgresql+psycopg://{pg_user}:{db_password}@{pg_host}:{pg_port}/{pg_db}"
+    backend_uri = f"postgresql+psycopg2://{pg_user}:{db_password}@{pg_host}:{pg_port}/{pg_db}"
     help_text = subprocess.check_output(["mlflow", "server", "--help"], text=True)
     version = subprocess.check_output(["mlflow", "--version"], text=True).strip()
     psycopg_version = subprocess.check_output(
-        [sys.executable, "-c", "import psycopg; print(psycopg.__version__)"], text=True
+        [sys.executable, "-c", "import psycopg, psycopg2; print(f'psycopg={psycopg.__version__} psycopg2={psycopg2.__version__}')"], text=True
     ).strip()
     print(f"Starting {version} with psycopg {psycopg_version}", flush=True)
 
