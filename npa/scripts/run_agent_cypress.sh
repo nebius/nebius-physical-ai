@@ -6,6 +6,7 @@
 #
 # Live mode:
 #   bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
+#   NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=1 bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +18,7 @@ PYTHON="${ROOT}/npa/.venv/bin/python"
 MODE="mock"
 PROJECT="${NPA_AGENT_PROJECT:-us-central1}"
 NAME="${NPA_AGENT_NAME:-agent}"
+LIVE_DESTRUCTIVE="${NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE:-0}"
 
 usage() {
   cat <<EOF
@@ -27,6 +29,7 @@ Options:
   --live            Run against a deployed agent using stored npa auth
   --project NAME    NPA project alias for live mode (default: ${PROJECT})
   --name NAME       Agent deployment name for live mode (default: ${NAME})
+  --destructive     Enable live Cypress Sim2Real submit button test
   --help            Show this help
 EOF
 }
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
     --name)
       NAME="$2"
       shift 2
+      ;;
+    --destructive)
+      LIVE_DESTRUCTIVE=1
+      shift
       ;;
     --help|-h)
       usage
@@ -103,5 +110,6 @@ fi
     CYPRESS_NPA_AGENT_BASE_URL="${AGENT_URL}" \
     CYPRESS_NPA_AGENT_USER="${AGENT_USER}" \
     CYPRESS_NPA_AGENT_PASSWORD="${AGENT_PASSWORD}" \
+    CYPRESS_NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE="${LIVE_DESTRUCTIVE}" \
     npm run cy:live
 )
