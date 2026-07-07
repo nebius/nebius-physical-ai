@@ -27,7 +27,20 @@ docker compose exec -T mlflow mlflow --version > evidence/mlflow-version.txt
 docker compose exec -T mlflow python -c "import psycopg, psycopg2; print(f'psycopg={psycopg.__version__} psycopg2={psycopg2.__version__}')" > evidence/psycopg-version.txt
 docker compose exec -T mlflow mlflow server --help > evidence/mlflow-server-help.txt
 
-docker compose exec -T mlflow python /opt/mlflow/src/verify_workflow.py | tee evidence/workflow-summary.json
+docker compose exec -T mlflow python /opt/mlflow/src/verify_workflow.py > evidence/workflow-raw.txt
+python3 - <<'EXTRACTPY' | tee evidence/workflow-summary.json
+import json, pathlib
+text = pathlib.Path("evidence/workflow-raw.txt").read_text()
+start = text.rfind("\n{")
+if start == -1:
+    start = text.find("{")
+else:
+    start += 1
+if start == -1:
+    raise SystemExit("workflow JSON summary not found")
+summary = json.loads(text[start:])
+print(json.dumps(summary, indent=2))
+EXTRACTPY
 run_id="$(jq -r .run_id evidence/workflow-summary.json)"
 model_name="$(jq -r .model_name evidence/workflow-summary.json)"
 
