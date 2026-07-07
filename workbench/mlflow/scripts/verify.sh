@@ -6,6 +6,7 @@ source .env
 export AWS_ACCESS_KEY_ID="$(cat secrets/aws_access_key_id)"
 export AWS_SECRET_ACCESS_KEY="$(cat secrets/aws_secret_access_key)"
 export AWS_EC2_METADATA_DISABLED=true
+PGPASSWORD="$(cat secrets/postgres_password)"
 export MLFLOW_S3_ENDPOINT_URL AWS_ENDPOINT_URL_S3
 
 docker compose ps > evidence/compose-ps.txt
@@ -47,9 +48,9 @@ model_name="$(jq -r .model_name evidence/workflow-summary.json)"
 aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 ls "s3://${MLFLOW_BUCKET_NAME}/mlflow/" --recursive > evidence/s3-listing.txt
 grep -E "checkpoint.npy|MLmodel" evidence/s3-listing.txt >/dev/null
 
-docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select run_uuid, status from runs where run_uuid = '${run_id}';" > evidence/sql-run.txt
-docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select name from registered_models where name = '${model_name}';" > evidence/sql-model.txt
-docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select key, value, step from latest_metrics where run_uuid = '${run_id}' order by step desc limit 5;" > evidence/sql-metrics.txt
+docker compose exec -T -e PGPASSWORD="$PGPASSWORD" postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select run_uuid, status from runs where run_uuid = '${run_id}';" > evidence/sql-run.txt
+docker compose exec -T -e PGPASSWORD="$PGPASSWORD" postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select name from registered_models where name = '${model_name}';" > evidence/sql-model.txt
+docker compose exec -T -e PGPASSWORD="$PGPASSWORD" postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select key, value, step from latest_metrics where run_uuid = '${run_id}' order by step desc limit 5;" > evidence/sql-metrics.txt
 
 docker compose restart postgres mlflow
 ./scripts/wait-healthy.sh
@@ -62,7 +63,7 @@ run=client.get_run(os.environ["RUN_ID"])
 model=client.get_registered_model(os.environ["MODEL_NAME"])
 print(json.dumps({"run_id": run.info.run_id, "run_status": run.info.status, "model_name": model.name, "latest_versions": [v.version for v in model.latest_versions]}, indent=2))
 PY
-docker compose exec -T postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select count(*) as runs from runs; select count(*) as registered_models from registered_models;" > evidence/restart-sql-counts.txt
+docker compose exec -T -e PGPASSWORD="$PGPASSWORD" postgres psql -U mlflow -d mlflow -v ON_ERROR_STOP=1 -c "select count(*) as runs from runs; select count(*) as registered_models from registered_models;" > evidence/restart-sql-counts.txt
 aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 ls "s3://${MLFLOW_BUCKET_NAME}/mlflow/" --recursive > evidence/restart-s3-listing.txt
 
 docker compose config > evidence/compose-rendered.yml
