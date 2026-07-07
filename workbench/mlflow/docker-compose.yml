@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: cgr.dev/chainguard/postgres@sha256:0edb7d98cf916a0f00f80c0f4b9257c8737c1ee1848d1e4e0f480b12a932d90b
+    container_name: npa-mlflow-postgres
+    user: "70:70"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /run:rw,noexec,nosuid,nodev,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
+    secrets:
+      - postgres_password
+    volumes:
+      - type: bind
+        source: ./postgres-data
+        target: /var/lib/postgresql/data
+    networks:
+      - backend
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+    mem_limit: 1g
+    cpus: 1.0
+    restart: unless-stopped
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${MLFLOW_IMAGE:-npa-mlflow-server:local}
+    container_name: npa-mlflow-server
+    user: "10001:10001"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /home/mlflow/.cache:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
+      - /home/mlflow/.gunicorn:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      MLFLOW_DB_PASSWORD_FILE: /run/secrets/mlflow_db_password
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+      AWS_EC2_METADATA_DISABLED: "true"
+      GIT_PYTHON_REFRESH: quiet
+      TMPDIR: /tmp
+    secrets:
+      - mlflow_db_password
+      - aws_access_key_id
+      - aws_secret_access_key
+    networks:
+      - backend
+      - frontend
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 6g
+    mem_limit: 6g
+    cpus: 2.0
+    restart: unless-stopped
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.pg
+  mlflow_db_password:
+    file: ./secrets/postgres_password.mlflow
+  aws_access_key_id:
+    file: ./secrets/aws_access_key_id.mlflow
+  aws_secret_access_key:
+    file: ./secrets/aws_secret_access_key.mlflow
+
+networks:
+  backend:
+    internal: true
+  frontend:
+    driver: bridge
