@@ -67,9 +67,9 @@ docker compose exec -T -e PGPASSWORD="$PGPASSWORD" postgres psql -U mlflow -d ml
 aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 ls "s3://${MLFLOW_BUCKET_NAME}/mlflow/" --recursive > evidence/restart-s3-listing.txt
 
 docker compose config > evidence/compose-rendered.yml
-if docker compose port postgres 5432 >/tmp/pg-port.txt 2>/dev/null && [ -s /tmp/pg-port.txt ]; then
-  echo "Postgres unexpectedly has a published port" >&2
-  cat /tmp/pg-port.txt >&2
+pg_bindings="$(docker inspect npa-mlflow-postgres --format '{{json .HostConfig.PortBindings}}')"
+if [ "$pg_bindings" != "null" ] && [ "$pg_bindings" != "{}" ]; then
+  echo "Postgres unexpectedly has published ports: ${pg_bindings}" >&2
   exit 1
 fi
 if ! docker compose port mlflow 5000 | grep -q "127.0.0.1:5000"; then
