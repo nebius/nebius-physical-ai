@@ -54,8 +54,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m
-      - /home/mlflow/.cache:rw,noexec,nosuid,nodev,size=64m
-      - /home/mlflow/.gunicorn:rw,noexec,nosuid,nodev,size=16m
+      - /home/mlflow/.cache:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=700
+      - /home/mlflow/.gunicorn:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
     security_opt:
       - no-new-privileges:true
     cap_drop:

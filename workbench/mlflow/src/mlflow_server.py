@@ -40,7 +40,7 @@ def main() -> None:
         cmd.extend(["--default-artifact-root", artifact_root])
 
     if "--gunicorn-opts" in help_text:
-        cmd.extend(["--gunicorn-opts", "--access-logfile - --error-logfile - --timeout 120"])
+        cmd.extend(["--gunicorn-opts", "--workers 1 --access-logfile - --error-logfile - --timeout 120"])
     print("Exec:", " ".join(shlex.quote(part if not part.startswith("postgresql+") else "postgresql+psycopg://[REDACTED]") for part in cmd), flush=True)
     os.execvp(cmd[0], cmd)
 
