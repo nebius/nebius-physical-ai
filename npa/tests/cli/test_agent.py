@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from typer import Exit
 from typer.testing import CliRunner
 
 from npa.cli.agent import AGENT_UI_VERSION, _normalize_llm_models, app, build_agent_urls
@@ -149,6 +151,134 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
+def test_resolve_deploy_storage_credentials_prefers_saved_project_state(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    class _TfState:
+        bucket = "state-bucket"
+        endpoint = "https://storage.us-central1.nebius.cloud"
+        access_key = "ak-state"
+        secret_key = "sk-state"
+
+    def _probe(**kwargs):
+        return kwargs["bucket"] == "state-bucket"
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
+    monkeypatch.setattr("npa.cli.agent.resolve_terraform_state", lambda _project: _TfState())
+    bootstrap = {
+        "service_account_id": "sa-agent",
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(
+        region="us-central1",
+        bootstrap_creds=bootstrap,
+        project_alias="fresh",
+    )
+
+    assert resolved["service_account_id"] == "sa-agent"
+    assert resolved["s3_bucket"] == "state-bucket"
+    assert resolved["nebius_api_key"] == "ak-state"
+
+
+def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    bootstrap = {
+        "s3_bucket": "bucket-boot",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-boot",
+        "nebius_secret_key": "sk-boot",
+    }
+
+    with pytest.raises(Exit):
+        _resolve_deploy_storage_credentials(region="us-central1", bootstrap_creds=bootstrap)
+
+
+def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> None:
+    from npa.cli.agent import deploy_cmd
+
+    events: list[tuple[str, dict]] = []
+    creds = {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "npa-agent-state",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+
+    def _write_config(payload: dict) -> None:
+        events.append(("write_config", payload))
+
+    def _apply_agent_terraform(**kwargs):
+        assert any(
+            event == "write_config"
+            and payload.get("projects", {}).get("fresh", {}).get("terraform_state", {}).get("bucket")
+            == "npa-agent-state"
+            for event, payload in events
+        )
+        events.append(("apply", kwargs))
+        return {
+            "vm_ip": "203.0.113.50",
+            "instance_id": "instance-agent",
+            "ssh_key_path": str(tmp_path / "id_ed25519"),
+        }
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *_args, **kwargs: SimpleNamespace(
+            project_id=kwargs.get("project_id"),
+            tenant_id=kwargs.get("tenant_id"),
+            region=kwargs.get("region"),
+        ),
+    )
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *_args, **_kwargs: creds)
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds)
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr("npa.cli.agent._ensure_terraform_state_bucket", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent._apply_agent_terraform", _apply_agent_terraform)
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+    monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **_kwargs: tmp_path / "auth.env")
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a"))
+    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
+    monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
+
+    deploy_cmd(
+        project="fresh",
+        name="agent",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="us-central1",
+        ssh_user="ubuntu",
+        ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+        tf_var=[],
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="model-a",
+        llm_models=[],
+        no_public_https=False,
+    )
+
+    assert [event for event, _payload in events].count("write_config") >= 2
+    assert any(event == "apply" for event, _payload in events)
+
+
 def test_bootstrap_enables_public_https_nginx() -> None:
     from npa.cli import agent as agent_module
 
@@ -166,6 +296,10 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
     assert "location /rerun/recordings/" in source
     assert "auth_basic off" in source
     assert "alias /opt/npa-agent/recordings/" in source
+    rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split("location / {{", 1)[0]
+    assert "auth_basic off;" in rerun_viewer_location
+    rerun_asset_location = source.split("location ~* ^/rerun/", 1)[1].split("location /rerun/ {{", 1)[0]
+    assert "auth_basic off;" in rerun_asset_location
 
 
 def test_franka_rerun_fallback_keeps_3d_outside_pinhole_projection() -> None:
@@ -337,6 +471,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
+    assert "world/camera_frustums/" in source
+    assert 'f"{{frustum_entity}}/frustum"' in source
+    assert 'f"{{entity}}/frustum"' not in source
     assert "The **Cameras** panel is the center column below chat" in source
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
@@ -371,29 +508,51 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "robot/franka/links" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
+    assert "class=\"panel rerun-panel\"" in source
+    assert ".layout-3 .rerun-panel" in source
+    assert "height: min(78vh, 820px)" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
     assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
-    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "/rerun/recordings/sim2real.rrd" in source
+    assert "Prefer the public recording copy; authenticated blob fetch remains the fallback" in source
+    assert "does not reliably consume parent-created blob URLs" in source
+    assert '"&renderer=webgl&hide_welcome_screen=1&camera="' not in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
+    assert "waitForRerunRenderSettle" in source
+    assert "Rerun fires the iframe load event before WebGL has drawn the recording" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
+    assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source
+    assert "_wait_for_rerun_web_viewer" in source
+    apply_selection_source = source.split("async function applySelection")[1].split("async function submitWorkflow")[0]
+    assert "await waitForRerunSuccess" in apply_selection_source
+    assert "activeArtifactRender = \"rerun\"" in apply_selection_source
+    fetch_with_timeout_source = source.split("async function fetchWithTimeout")[1].split("async function apiJson")[0]
+    assert "withMobileAuth" in fetch_with_timeout_source
+    api_json_before_fetch = source.split("async function apiJson")[1].split("let resp;")[0]
+    assert 'throw new Error("Unlock chat with your agent password.");' not in api_json_before_fetch
     assert "lastRerunBlobStatus" in source
     assert "lastRerunMountStatus" in source
+    assert "mountedRerunRunKey" in source
+    assert "already-mounted" in source
+    assert "iframe.dataset.rerunRunKey" in source
+    assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
+    assert 'showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }})' in source
     assert "baselineRrdUpdatedAt" in source
     assert "successStreakTarget" in source
     assert "successStreak" in source
     assert "stageAdvanced" in source
     assert "RERUN_MOUNT_SUCCESS" in source
     assert "Rerun iframe mount missing SUCCESS blob/mount state" in source
-    assert "resolveRerunRrdUrl" not in source
+    assert "resolveRerunRrdUrl" in source
     assert "RERUN_BLOB_SUCCESS" in source
     assert "/api/sim-viz/rrd-blob" in source
-    assert "const rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     assert "URL.createObjectURL" not in source
@@ -415,6 +574,10 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "available_run_ids" in source
     assert "active_run_id" in source
     assert "_record_sim_viz_run" in source
+    assert "_wire_sim2real_run_preview" in source
+    submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
+    assert "_wire_sim2real_run_preview" in submit_source
+    assert '"sim_viz": sim_viz' in submit_source
 
 
 def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
@@ -622,7 +785,16 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/session"):
             return _Resp({"chat_history": [], "selection": {}})
         if url_s.endswith("/api/sim-viz/status"):
-            return _Resp({"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd", "stage": "demo"})
+            params = _kwargs.get("params") or {}
+            run_id = str(params.get("run_id") or "")
+            return _Resp(
+                {
+                    "run_id": run_id or "agent-run-123",
+                    "rerun_ready": True,
+                    "rrd_uri": "/api/sim-viz/rrd",
+                    "stage": "stage_14_rerun_viz" if run_id else "demo",
+                }
+            )
         if url_s.endswith("/api/sim-viz/rrd") or url_s.endswith("/api/sim-viz/rrd-blob"):
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
@@ -689,7 +861,18 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/sim-assets/selection"):
             return _Resp({"ok": True, "selection": {"scene_spec_uri": "stock://scene/default"}})
         if url_s.endswith("/api/workflows/sim2real/submit"):
-            return _Resp({"ok": True, "run_id": "agent-run-123"})
+            return _Resp(
+                {
+                    "ok": True,
+                    "run_id": "agent-run-123",
+                    "sim_viz": {
+                        "run_id": "agent-run-123",
+                        "stage": "stage_14_rerun_viz",
+                        "rrd_uri": "/api/sim-viz/rrd",
+                        "rerun_ready": True,
+                    },
+                }
+            )
         if url_s.endswith("/api/workflows/submit"):
             return _Resp(
                 {
@@ -702,7 +885,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/sim-viz/load-franka-demo"):
             return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
         if url_s.endswith("/api/sim-viz/camera-preview"):
-            return _Resp({"ok": True, "entity_path": "world/cameras/workspace"})
+            return _Resp({"ok": True, "entity_path": "world/camera_frustums/workspace/frustum"})
         return _Resp({"ok": True})
 
     monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)

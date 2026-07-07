@@ -98,13 +98,43 @@ def test_agent_workflow_submit_and_status(ctx: AgentLiveContext) -> None:
     submit = ctx.post("/api/workflows/sim2real/submit", json={})
     submit.raise_for_status()
     submit_payload = submit.json()
-    assert submit_payload.get("run_id")
+    run_id = str(submit_payload.get("run_id") or "").strip()
+    assert run_id
+    submit_viz = submit_payload.get("sim_viz", {})
+    assert isinstance(submit_viz, dict)
+    assert submit_viz.get("run_id") == run_id
+    assert submit_viz.get("rrd_uri"), "submitted Sim2Real run did not get a visualization .rrd"
 
     status = ctx.get("/api/workflows/sim2real/status")
     status.raise_for_status()
     status_payload = status.json()
     assert isinstance(status_payload, dict)
-    assert "latest_submit" in status_payload or "sim_viz" in status_payload
+    latest_submit = status_payload.get("latest_submit", {})
+    sim_viz = status_payload.get("sim_viz", {})
+    assert isinstance(latest_submit, dict)
+    assert latest_submit.get("run_id") == run_id
+    assert isinstance(sim_viz, dict)
+    assert sim_viz.get("run_id") == run_id
+    assert sim_viz.get("rrd_uri")
+
+    run_status = ctx.get(f"/api/sim-viz/status?run_id={run_id}")
+    run_status.raise_for_status()
+    run_status_payload = run_status.json()
+    assert run_status_payload.get("run_id") == run_id
+    assert run_status_payload.get("rrd_uri")
+    assert run_status_payload.get("rerun_ready") or run_status_payload.get("rrd_uri")
+
+    load_run = ctx.post("/api/sim-viz/load-run", json={"run_id": run_id})
+    load_run.raise_for_status()
+    load_run_payload = load_run.json()
+    loaded_viz = load_run_payload.get("sim_viz", {})
+    assert isinstance(loaded_viz, dict)
+    assert loaded_viz.get("run_id") == run_id
+    assert loaded_viz.get("rrd_uri")
+
+    rrd_blob = ctx.get(f"/api/sim-viz/rrd-blob?run_id={run_id}")
+    rrd_blob.raise_for_status()
+    assert len(rrd_blob.content) > 64, "submitted Sim2Real run .rrd payload was empty"
 
 
 def test_agent_tools_catalog(ctx: AgentLiveContext) -> None:

@@ -249,6 +249,33 @@ def _ensure_terraform_state_bucket(
     ensure_bucket(project, bucket)
 
 
+def _persist_agent_project_config(
+    *,
+    project: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    merged_vars: dict[str, str],
+) -> None:
+    write_config(
+        {
+            "projects": {
+                project: {
+                    "project_id": project_id,
+                    "tenant_id": tenant_id,
+                    "region": region,
+                    "terraform_state": {
+                        "bucket": merged_vars.get("s3_bucket", ""),
+                        "endpoint": merged_vars.get("s3_endpoint", ""),
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                }
+            }
+        }
+    )
+
+
 def _apply_agent_terraform(
     *,
     project: str,
@@ -623,6 +650,7 @@ def _resolve_deploy_storage_credentials(
     *,
     region: str,
     bootstrap_creds: dict[str, str],
+    project_alias: str = "",
 ) -> dict[str, str]:
     """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
     candidate = dict(bootstrap_creds)
@@ -667,12 +695,37 @@ def _resolve_deploy_storage_credentials(
         prefix=str(candidate.get("s3_prefix", "")),
     ):
         return candidate
-    typer.echo(
-        "  Warning: unable to verify writable S3 credentials for deploy; "
-        "continuing with bootstrap-provided keys.",
-        err=True,
+    project_name = str(project_alias or "").strip()
+    if project_name:
+        try:
+            saved_state = resolve_terraform_state(project_name)
+        except ConfigError:
+            saved_state = None
+        if saved_state is not None:
+            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
+            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
+            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
+            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
+            if _storage_credentials_allow_writes(
+                bucket=saved_bucket,
+                endpoint=saved_endpoint,
+                access_key=saved_access_key,
+                secret_key=saved_secret_key,
+                region=region,
+            ):
+                typer.echo(
+                    "  Bootstrap S3 key has no data-plane access; "
+                    "falling back to saved project terraform_state credentials."
+                )
+                candidate["s3_bucket"] = saved_bucket
+                candidate["s3_endpoint"] = saved_endpoint
+                candidate["nebius_api_key"] = saved_access_key
+                candidate["nebius_secret_key"] = saved_secret_key
+                return candidate
+    _fail(
+        "unable to verify writable S3 credentials for deploy; "
+        "configure object-storage credentials with data-plane access before deploying the agent"
     )
-    return candidate
 
 
 def _resolve_agent_service_account_id(
@@ -1291,6 +1344,7 @@ def _nginx_agent_site_body(
     add_header Cache-Control "no-cache" always;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
+    auth_basic off;
     rewrite ^/rerun/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{rerun_port};
     proxy_http_version 1.1;
@@ -1304,6 +1358,7 @@ def _nginx_agent_site_body(
     add_header Cache-Control "public, max-age=31536000, immutable" always;
   }}
   location /rerun/ {{
+    auth_basic off;
     proxy_pass http://127.0.0.1:{rerun_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -2388,8 +2443,8 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
-        _restart_rerun_serve(force=True)
-        rerun_ready = _wait_rerun_web_viewer_healthy()
+        restarted = _restart_rerun_serve(force=True)
+        rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
@@ -2441,7 +2496,6 @@ def _rerun_web_viewer_healthy() -> bool:
     except Exception:
         return False
 
-
 def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
     deadline = time.monotonic() + max(0.5, float(timeout_s))
     while time.monotonic() < deadline:
@@ -2451,8 +2505,16 @@ def _wait_rerun_web_viewer_healthy(*, timeout_s: float = 12.0) -> bool:
     return _rerun_web_viewer_healthy()
 
 
+def _wait_for_rerun_web_viewer(*, timeout_s: float = 20.0) -> bool:
+    return _wait_rerun_web_viewer_healthy(timeout_s=timeout_s)
+
+
 def _rerun_ready_state(*, rrd_uri: str = "") -> bool:
     has_rrd = bool(str(rrd_uri or "").strip())
+    if not has_rrd and RRD_PATH.is_file():
+        has_rrd = True
+    if has_rrd and not _rerun_service_active():
+        _restart_rerun_serve()
     return has_rrd and _rerun_web_viewer_healthy()
 
 def _restart_rerun_serve(*, force: bool = False) -> bool:
@@ -2552,6 +2614,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
     restarted = _restart_rerun_serve()
+    viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
     prior = state.get("sim_viz", {{}})
     run_id = str(prior.get("run_id") or "").strip() or "franka-demo"
@@ -2564,9 +2627,38 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "mode": "static",
         "camera": cam,
         "preview_camera": cam,
-        "preview_entity": f"world/cameras/{{cam}}",
-        "rerun_ready": target.is_file() and _rerun_web_viewer_healthy(),
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
+        "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+    }}
+    state["sim_viz"] = viz
+    _record_sim_viz_run(state, viz)
+    _save_state(state)
+    return viz
+
+def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "workspace") -> dict:
+    # Attach a concrete Rerun recording to a submitted Sim2Real run id.
+    cam = (camera or "workspace").strip() or "workspace"
+    state["camera_selection"] = [cam]
+    target = _generate_franka_demo_rrd(camera=cam)
+    restarted = _restart_rerun_serve()
+    viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
+    now = _now_iso()
+    viz = {{
+        "run_id": str(run_id or "").strip() or f"agent-run-{{secrets.token_hex(6)}}",
+        "stage": "stage_14_rerun_viz",
+        "rrd_uri": f"file://{{target}}",
+        "rrd_updated_at": now,
+        "live_grpc_url": "",
+        "mode": "static",
+        "camera": cam,
+        "preview_camera": cam,
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
+        "rerun_ready": target.is_file() and viewer_ready,
+        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "submit_mode": "sim2real",
+        "workflow_name": "sim2real",
+        "pipeline_visualization": True,
     }}
     state["sim_viz"] = viz
     _record_sim_viz_run(state, viz)
@@ -4338,14 +4430,14 @@ def sim_viz_camera_preview(payload: dict | None = None):
         raise HTTPException(status_code=404, detail=f"unknown camera: {{camera}}")
     state = _load_state()
     viz = _wire_franka_demo(state, camera=camera)
-    entity_path = f"world/cameras/{{camera}}"
+    entity_path = f"world/camera_frustums/{{camera}}/frustum"
     return {{
         "ok": True,
         "camera": camera,
         "entity_path": entity_path,
         "rollout_entity_guess": f"rollouts/latest/{{camera}}/camera",
         "sim_viz": viz,
-        "hint": "Open the Rerun panel and expand world/cameras/<name>.",
+        "hint": "Open the Rerun panel and expand world/camera_frustums/<name>.",
     }}
 
 def _sim_viz_rrd_file_response(run_id: str = ""):
@@ -4400,7 +4492,7 @@ def _boot_preload_sim_viz() -> None:
         "mode": "static",
         "camera": cam,
         "preview_camera": cam,
-        "preview_entity": f"world/cameras/{{cam}}",
+        "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
         "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
     }}
@@ -4757,19 +4849,9 @@ def submit_sim2real(payload: dict | None = None):
         "submitted_at": _now_iso(),
         "selection": selection,
         "env": env_block,
+        "submit_mode": "sim2real",
     }}
     submitted_at = str(state["latest_submit"]["submitted_at"])
-    state["sim_viz"] = {{
-        "run_id": run_id,
-        "stage": "submitted",
-        "rrd_uri": "",
-        "rrd_updated_at": submitted_at,
-        "live_grpc_url": "",
-        "mode": "static",
-        "rerun_ready": False,
-        "rerun_iframe_url": "",
-        "camera": "workspace",
-    }}
     details = _default_sim2real_run_details(run_id, submitted_at=submitted_at, selection=selection)
     details["logs"].append(
         {{
@@ -4794,21 +4876,8 @@ def submit_sim2real(payload: dict | None = None):
         runs_detail = {{}}
     runs_detail[run_id] = details
     state["sim2real_runs"] = runs_detail
-    _record_sim_viz_run(
-        state,
-        {{
-            "run_id": run_id,
-            "submitted_at": submitted_at,
-            "stage": "submitted",
-            "camera": str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace"),
-            "rrd_uri": "",
-            "rrd_updated_at": str((state.get("sim_viz", {{}}) or {{}}).get("rrd_updated_at") or ""),
-            "submit_mode": "sim2real",
-            "workflow_name": "sim2real",
-            "rerun_ready": False,
-            "rerun_iframe_url": "",
-        }},
-    )
+    camera = str((state.get("sim_viz", {{}}) or {{}}).get("camera") or "workspace")
+    sim_viz = _wire_sim2real_run_preview(state, run_id=run_id, camera=camera)
     script = Path("/opt/npa-agent/run-live-sim2real.sh")
     live_submit = None
     if script.is_file():
@@ -4819,7 +4888,7 @@ def submit_sim2real(payload: dict | None = None):
                 state["latest_submit"]["submit_mode"] = "live-k8s"
                 state["latest_submit"]["live_submit"] = live_submit
                 _save_state(state)
-                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "live-k8s", "live_submit": live_submit}}
+                return {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "live-k8s", "live_submit": live_submit}}
             except Exception:
                 live_submit = {{"ok": False, "error": proc.stdout[-500:]}}
         else:
@@ -4831,7 +4900,7 @@ def submit_sim2real(payload: dict | None = None):
         daemon=True,
     )
     thread.start()
-    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "submit_mode": "agent-local-sim2real"}}
+    response = {{"ok": True, "run_id": run_id, "selection": selection, "env": env_block, "run": details, "sim_viz": sim_viz, "submit_mode": "agent-local-sim2real"}}
     if live_submit is not None:
         response["live_submit"] = live_submit
     return response
@@ -5155,6 +5224,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .layout {{ display: grid; gap: 14px; }}
       .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(760px, 1fr); }}
+      .layout-3 .rerun-panel {{ grid-column: 1 / -1; }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -5922,8 +5992,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <select id="cameraSelect" hidden aria-hidden="true"></select>
             <div id="rerunEntityHint" class="rollout-hint"></div>
           </section>
-          <section class="panel">
-            <h3>Rerun simulation</h3>
+          <section class="panel rerun-panel">
+            <h3>Rerun (embedded)</h3>
             <div id="simviz">
               <div class="status-row">
                 <span>Run: <strong id="simRunId">—</strong></span>
@@ -6692,6 +6762,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
       let rerunBootInProgress = false;
+      let mountedRerunRunKey = "";
       let activeRunId = "";
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
@@ -6748,21 +6819,35 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function rerunIframeSrc(camera, runId) {{
         const cam = String(camera || "workspace");
-        // Rerun's wasm viewer fetches the URL itself and cannot reliably use
-        // parent-page basic-auth/blob state. nginx exposes this recording path
-        // without auth specifically so the iframe can load visuals directly.
-        const rrdUrl = await resolveRerunRecordingUrl();
-        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording-url");
+        let rrdUrl = "";
+        try {{
+          rrdUrl = await resolveRerunRecordingUrl();
+          // Still verify the authenticated blob path; the viewer itself loads
+          // the unauthenticated recording copy because Rerun's WASM fetch path
+          // does not reliably consume parent-created blob URLs across browsers.
+          try {{
+            await resolveRerunRrdUrl(3, runId);
+          }} catch (_blobErr) {{
+            // Keep the public recording URL when the recording is already present.
+          }}
+        }} catch (_recordingErr) {{
+          rrdUrl = await resolveRerunRrdUrl(18, runId);
+        }}
+        // Prefer the public recording copy; authenticated blob fetch remains the fallback.
         return (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
-          "&renderer=webgl&hide_welcome_screen=1&camera=" +
+          "&hide_welcome_screen=1&camera=" +
           encodeURIComponent(cam)
         );
       }}
-      function showRerunPlaceholder(message) {{
+      function showRerunPlaceholder(message, options) {{
+        const opts = options || {{}};
         const placeholder = document.getElementById("rerunPlaceholder");
         const iframe = document.getElementById("rerunFrame");
+        if (!opts.force && rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute("src")) {{
+          return;
+        }}
         if (placeholder) {{
           placeholder.hidden = false;
           if (message) {{
@@ -6775,6 +6860,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.removeAttribute("src");
         }}
         rerunIframeLoaded = false;
+        mountedRerunRunKey = "";
       }}
       function hideRerunPlaceholder() {{
         const placeholder = document.getElementById("rerunPlaceholder");
@@ -6828,12 +6914,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const attempts = Number(maxAttempts || 12);
         for (let i = 0; i < attempts; i += 1) {{
           const simViz = await loadJson("/api/sim-viz/status");
-          if (simViz && simViz.rerun_ready) {{
+          if (simViz && (simViz.rerun_ready || simViz.rrd_uri)) {{
             return simViz;
           }}
           await new Promise((resolve) => window.setTimeout(resolve, 500));
         }}
-        throw new Error("Rerun viewer is not ready yet (service or .rrd missing)");
+        throw new Error("Rerun recording is not ready yet (.rrd missing)");
       }}
       async function waitForIframeLoad(iframe, timeoutMs) {{
         const timeout = Math.max(500, Number(timeoutMs || 8000));
@@ -6866,16 +6952,44 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.addEventListener("error", onError, {{ once: true }});
         }});
       }}
+      async function waitForRerunRenderSettle(iframe, timeoutMs) {{
+        const timeout = Math.max(3000, Number(timeoutMs || 15000));
+        const start = Date.now();
+        while (Date.now() - start < timeout) {{
+          try {{
+            const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
+            if (doc && doc.querySelectorAll("canvas").length > 0) {{
+              break;
+            }}
+          }} catch (_err) {{
+            break;
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }}
+        // Rerun fires the iframe load event before WebGL has drawn the recording.
+        // Give the viewer one render window so success does not race a blank canvas.
+        await new Promise((resolve) => window.setTimeout(resolve, 15000));
+      }}
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
+        const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
+        if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
+          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
+          return true;
+        }}
         const src = await rerunIframeSrc(camera, runId);
         setRerunMountStatus("retrying", "navigating");
         iframe.src = src;
+        iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
         rerunIframeLoaded = true;
+        mountedRerunRunKey = mountKey;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
+        waitForRerunRenderSettle(iframe, 15000).catch((err) => {{
+          console.warn("rerun render settle probe failed", err);
+        }});
         return true;
       }}
       async function mountRerunIframeUntilSuccess(camera, maxAttempts, runId) {{
@@ -6907,7 +7021,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const deadlineMs = Math.max(5000, Number(opts.deadlineMs || 120000));
         const sleepMs = Math.max(500, Number(opts.sleepMs || 1200));
         const mountAttemptsPerLoop = Math.max(1, Number(opts.mountAttemptsPerLoop || 4));
-        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 2));
+        const successStreakTarget = Math.max(1, Number(opts.successStreakTarget || 1));
         const targetRunId = String(opts.runId || "").trim();
         const baselineUpdatedAt = String(opts.baselineRrdUpdatedAt || "").trim();
         const start = Date.now();
@@ -6952,7 +7066,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function reloadRerunIframe(camera) {{
         if (!rerunIframeLoaded) return Promise.resolve();
-        return mountRerunIframeUntilSuccess(camera, 6);
+        return mountRerunIframeUntilSuccess(camera, 6).catch((err) => {{
+          console.warn("rerun iframe reload failed", err);
+          return false;
+        }});
       }}
       async function bestEffortMountRerun(camera, runId) {{
         try {{
@@ -7036,8 +7153,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const ms = Number(timeoutMs || 12000);
         const ctrl = new AbortController();
         const timer = window.setTimeout(() => ctrl.abort(), ms);
+        const req = init || {{}};
+        const headers = withMobileAuth({{
+          ...(req.headers || {{}}),
+        }});
+        const useExplicitAuth = document.body.classList.contains("mobile-agent") && Boolean(headers.Authorization);
         try {{
-          return await fetch(path, {{ ...(init || {{}}), signal: ctrl.signal }});
+          return await fetch(path, {{
+            ...req,
+            credentials: useExplicitAuth ? "omit" : (req.credentials || "include"),
+            headers,
+            signal: ctrl.signal,
+          }});
         }} finally {{
           window.clearTimeout(timer);
         }}
@@ -7048,10 +7175,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const headers = withMobileAuth({{
           ...(req.headers || {{}}),
         }});
-        if (isMobile && String(path || "").startsWith("/api/") && !headers.Authorization) {{
-          setMobileAuthNeeded(true);
-          throw new Error("Unlock chat with your agent password.");
-        }}
         const useExplicitAuth = isMobile && Boolean(headers.Authorization);
         const opts = {{
           ...req,
@@ -7218,7 +7341,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           lastRrdUpdatedAt = "";
           await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
         }} else {{
-          showRerunPlaceholder("Artifact loaded. Use download/preview below.");
+          showRerunPlaceholder("Artifact loaded. Use download/preview below.", {{ force: true }});
           await showArtifactPreview(simViz, render);
         }}
         appendChat(
@@ -7268,7 +7391,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           }}
           if (activeArtifactRender && activeArtifactRender !== "rerun") {{
-            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.");
+            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }});
             await showArtifactPreview(simViz, activeArtifactRender);
           }} else {{
             hideArtifactPreview();
@@ -7302,10 +7425,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           renderCameraCards(list, activeName, simViz);
           const updatedAt = String(simViz.rrd_updated_at || "");
-          if (rerunIframeLoaded && updatedAt && updatedAt !== lastRrdUpdatedAt) {{
-            lastRrdUpdatedAt = updatedAt;
-            reloadRerunIframe(simViz.camera || activeName);
-          }} else if (updatedAt) {{
+          if (updatedAt) {{
             lastRrdUpdatedAt = updatedAt;
           }}
         }} catch (err) {{
@@ -7358,7 +7478,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>`;
           holder.appendChild(card);
         }}
-        const entity = String(simViz.preview_entity || ("world/cameras/" + activeName));
+        const entity = String(simViz.preview_entity || ("world/camera_frustums/" + activeName + "/frustum"));
         const rollout = "rollouts/latest/" + activeName + "/camera";
         document.getElementById("rerunEntityHint").textContent =
           (simViz.rerun_ready || simViz.rrd_uri)
@@ -7537,7 +7657,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         const simVizForMount = (data && data.sim_viz) || await waitForRerunReady();
         await bestEffortMountRerun(String(simVizForMount.camera || camera), String(simVizForMount.run_id || activeRunId || ""));
-        const entity = String(data.entity_path || ("world/cameras/" + camera));
+        const entity = String(data.entity_path || ("world/camera_frustums/" + camera + "/frustum"));
         appendChat("assistant", "Previewing `" + camera + "` in Rerun at `" + entity + "`.");
         await refresh();
       }}
@@ -7547,35 +7667,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify(selectionPayloadFromUi()),
         }});
-        if (data.sim_viz && rerunIframeLoaded) {{
-          reloadRerunIframe(data.sim_viz.camera || "workspace");
+        if (data.sim_viz && (data.sim_viz.rerun_ready || data.sim_viz.rrd_uri)) {{
+          activeArtifactRender = "rerun";
+          hideArtifactPreview();
+          const runId = String(data.sim_viz.run_id || activeRunId || "").trim();
+          if (runId) activeRunId = runId;
+          await waitForRerunSuccess(String(data.sim_viz.camera || "workspace"), {{
+            deadlineMs: 90000,
+            mountAttemptsPerLoop: 4,
+            runId,
+          }});
         }}
         await refresh();
       }}
       async function submitWorkflow() {{
-        const baseline = await loadJson("/api/sim-viz/status");
-        const baselineUpdatedAt = String((baseline && baseline.rrd_updated_at) || "").trim();
         const data = await apiJson("/api/workflows/sim2real/submit", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{}}),
         }});
         appendChat("assistant", `Submitted Sim2Real run: **${{data.run_id || "unknown"}}**`);
-        appendChat("assistant", "Watching sim progress: rendering stage/result/logs immediately; Rerun opens only after a run-specific `.rrd` is available.");
+        appendChat("assistant", "Watching sim progress: loading the submitted run's Rerun recording.");
         const submittedRunId = String(data.run_id || "").trim();
         if (submittedRunId) activeRunId = submittedRunId;
         renderRunDetails(data);
-        const simViz = await pollSimVizUntilRrd(8, 1500, submittedRunId);
+        let simViz = (data && data.sim_viz) || {{}};
+        if (!simViz.rrd_uri) {{
+          simViz = await pollSimVizUntilRrd(60, 1500, submittedRunId);
+        }}
         if (simViz && simViz.rrd_uri) {{
-          await waitForRerunSuccess(
-            simViz.camera || "workspace",
-            {{
-              deadlineMs: 180000,
-              mountAttemptsPerLoop: 5,
-              runId: submittedRunId,
-              baselineRrdUpdatedAt: baselineUpdatedAt,
-            }}
-          );
+          await bestEffortMountRerun(String(simViz.camera || "workspace"), submittedRunId);
           if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS || lastRerunMountStatus !== RERUN_MOUNT_SUCCESS) {{
             throw new Error("Rerun recording/iframe did not reach SUCCESS after workflow submit");
           }}
@@ -7597,7 +7718,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               "`. No `.rrd` recording is available yet, so the Run status/logs panel is the source of truth."
           );
         }}
-        await refresh();
       }}
       async function showWorkflowStatus() {{
         const status = await loadJson("/api/workflows/sim2real/status");
@@ -7717,6 +7837,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function startPeriodicRefresh() {{
         if (refreshTimer !== null) return;
         refreshTimer = window.setInterval(() => {{
+          const iframe = document.getElementById("rerunFrame");
+          if (rerunIframeLoaded && iframe && !iframe.hidden) {{
+            return;
+          }}
           refresh().catch(() => {{ /* periodic refresh is best-effort */ }});
         }}, 10000);
       }}
@@ -7963,6 +8087,7 @@ def deploy_cmd(
         creds = _resolve_deploy_storage_credentials(
             region=env_region,
             bootstrap_creds=creds,
+            project_alias=project,
         )
         iam_token = get_iam_token()
     except NebiusError as exc:
@@ -8010,6 +8135,13 @@ def deploy_cmd(
         )
     except NebiusError as exc:
         _fail(f"Unable to provision Terraform state bucket: {exc}")
+    _persist_agent_project_config(
+        project=project,
+        project_id=env_project_id,
+        tenant_id=env_tenant_id,
+        region=env_region,
+        merged_vars=merged_vars,
+    )
 
     tf_outputs: dict[str, Any] = {}
     try:
@@ -8140,22 +8272,12 @@ def deploy_cmd(
         credentials=agent_credentials,
     )
     _store_agent_record(project, name, record.to_dict())
-    write_config(
-        {
-            "projects": {
-                project: {
-                    "project_id": env_project_id,
-                    "tenant_id": env_tenant_id,
-                    "region": env_region,
-                    "terraform_state": {
-                        "bucket": merged_vars.get("s3_bucket", ""),
-                        "endpoint": merged_vars.get("s3_endpoint", ""),
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    },
-                }
-            }
-        }
+    _persist_agent_project_config(
+        project=project,
+        project_id=env_project_id,
+        tenant_id=env_tenant_id,
+        region=env_region,
+        merged_vars=merged_vars,
     )
 
     typer.echo(f"Customer URL: {urls['public_url']}")
@@ -8668,6 +8790,41 @@ def verify_live_cmd(
         _fail(f"workflow submit endpoint failed: {exc}")
     if not isinstance(submit_payload, dict) or not submit_payload.get("run_id"):
         _fail("workflow submit endpoint did not return run_id")
+    submit_run_id = str(submit_payload.get("run_id") or "").strip()
+    submit_viz = submit_payload.get("sim_viz", {})
+    if not isinstance(submit_viz, dict) or submit_viz.get("run_id") != submit_run_id:
+        _fail("workflow submit endpoint did not return run-scoped sim_viz")
+    if not (submit_viz.get("rrd_uri") or submit_viz.get("rerun_ready")):
+        _fail("workflow submit endpoint did not attach a visualizable .rrd to the run")
+    try:
+        submitted_status_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
+            auth=(auth_user, auth_password),
+            params={"run_id": submit_run_id},
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        submitted_status_resp.raise_for_status()
+        submitted_status = submitted_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"submitted sim2real run status endpoint failed: {exc}")
+    if not isinstance(submitted_status, dict) or submitted_status.get("run_id") != submit_run_id:
+        _fail("submitted sim2real run status did not preserve run_id")
+    if not submitted_status.get("rrd_uri"):
+        _fail("submitted sim2real run status did not include rrd_uri")
+    try:
+        submitted_rrd_blob = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/rrd-blob",
+            auth=(auth_user, auth_password),
+            params={"run_id": submit_run_id},
+            timeout=15.0,
+            verify=tls_verify,
+        )
+        submitted_rrd_blob.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"submitted sim2real run rrd-blob endpoint failed: {exc}")
+    if len(submitted_rrd_blob.content) < 64:
+        _fail("submitted sim2real run rrd-blob endpoint returned unexpectedly small payload")
 
     try:
         load_demo_resp = httpx.post(

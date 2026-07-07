@@ -137,12 +137,21 @@ Guidance:
 
 ## Rerun Iframe Fix
 
-Rerun wasm inside `/rerun/?url=…` cannot send HTTP basic auth. Parent page:
+Rerun wasm inside `/rerun/?url=…` cannot send HTTP basic auth and does not
+reliably consume parent-created `blob:` URLs across browsers. Bootstrap publishes
+the active recording to unauthenticated `/rerun/recordings/sim2real.rrd` for the
+iframe, while the parent page still validates authenticated access by fetching
+`/api/sim-viz/rrd-blob`.
 
-1. `fetch("/api/sim-viz/rrd-blob", { credentials: "include" })` with auth
-2. `URL.createObjectURL(blob)` → pass blob URL to Rerun iframe `url=` param
+Use this order:
 
-Do not point the iframe directly at `/api/sim-viz/rrd` (black screen).
+1. Publish/copy the `.rrd` to `/opt/npa-agent/recordings/sim2real.rrd`.
+2. Point iframe `url=` at same-origin `/rerun/recordings/sim2real.rrd?t=...`.
+3. Also `fetch("/api/sim-viz/rrd-blob", { credentials: "include" })` as the
+   authenticated blob/bytes health gate and fallback.
+
+Do not point the iframe directly at `/api/sim-viz/rrd` (black screen / auth
+failure in browser contexts).
 
 Submitted Sim2Real runs must not reuse the stock Franka/demo `.rrd` as if it
 were run-specific data. `POST /api/workflows/sim2real/submit` and chat requests
