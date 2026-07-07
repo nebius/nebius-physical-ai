@@ -472,6 +472,8 @@ def match_chat_intent(user_text: str) -> str | None:
     if not text:
         return None
     lowered = _normalize_intent_text(text)
+    if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):
+        return "soperator"
     if _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered):
         return "find_artifacts"
     if _success_gated_watch_request(lowered):
@@ -822,10 +824,10 @@ def format_soperator_deploy() -> str:
     return "\n".join(
         [
             "**Deploy a soperator (Slurm-on-Kubernetes) cluster** from the agent with npa:",
-            "1. POST `spec_yaml` (or `spec`) to `/api/infra/soperator/validate` first.",
-            "2. Deploy with `POST /api/infra/soperator/deploy` using the same `npa.soperator/v0.0.1` spec. "
+            "1. `POST /api/infra/soperator/validate` with `spec_yaml` (or `spec`) first.",
+            "2. `POST /api/infra/soperator/deploy` using the same `npa.soperator/v0.0.1` spec. "
             "Set `dry_run: true` to validate and return the deploy command without mutating infra.",
-            "3. Check with `GET /api/infra/soperator/status/{name}` (runs `npa soperator status --output json`).",
+            "3. `GET /api/infra/soperator/status/{name}` checks the cluster (runs `npa soperator status --output json`).",
             "4. The operator-machine equivalent remains `npa soperator deploy --spec cluster.yaml --output json`.",
             "- Spec: one or more worker pools "
             "(mixed presets ok) and optional per-pool `docker_cache: true` (IO_M3 image cache).",
