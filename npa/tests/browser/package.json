@@ -1,0 +1,12 @@
+{
+  "name": "npa-agent-browser-tests",
+  "private": true,
+  "description": "Cypress browser coverage for the generated NPA agent UI.",
+  "scripts": {
+    "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js",
+    "cy:live": "cypress run --spec cypress/e2e/agent_live.cy.js"
+  },
+  "devDependencies": {
+    "cypress": "^15.18.0"
+  }
+}

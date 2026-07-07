@@ -90,12 +90,21 @@ UI_BUTTON_IDS = (
     "chatActionS3",
     "chatActionCosmos",
     "chatActionWatch",
+    "chatActionWorkflow",
     "newChatSession",
+    "workflowUpload",
+    "workflowValidate",
+    "workflowPlan",
+    "workflowSubmitYaml",
     "loadFrankaRerun",
+    "loadRerunViewer",
     "openRerun",
     "applySelection",
     "submitWorkflow",
     "workflowStatus",
+    "loadRunData",
+    "artifactRefreshRuns",
+    "artifactLoadRunArtifacts",
 )
 
 UI_WIRING_MARKERS = (
