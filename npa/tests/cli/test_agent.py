@@ -232,7 +232,7 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
         )
         events.append(("apply", kwargs))
         return {
-            "vm_ip": "203.0.113.55",
+            "vm_ip": "203.0.113.50",
             "instance_id": "instance-agent",
             "ssh_key_path": str(tmp_path / "id_ed25519"),
         }
