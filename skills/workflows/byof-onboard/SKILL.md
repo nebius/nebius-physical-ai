@@ -19,8 +19,11 @@ in chat replies; point operators here.
 For **registry/catalog admission** of an OSS Physical AI solution, also load
 `skills/workflows/oss-solution-registry-onboard/SKILL.md`. BYOF proves the repo
 can be packaged and run; registry admission additionally requires reading
-upstream docs, identifying real capabilities, testing those capability claims,
-and collecting live Nebius validation evidence.
+upstream docs, listing native capabilities by family (`sim_env`,
+`policy_config`, `dataset_contract`, …), encoding each accepted claim as a
+`solution-smoke` with a named JSON artifact, and collecting live Nebius
+validation evidence. See the skill's onboarded-solution capability matrices and
+`docs/workbench/oss-solution-catalog.md`.
 
 ## Prerequisites
 

@@ -165,6 +165,8 @@ def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     assert "oss-solution-registry-onboard" in reply
     assert "upstream docs" in reply
     assert "live Nebius" in reply
+    assert "solution-smoke" in reply
+    assert "capability" in reply.lower()
     assert "<repo-url>" in reply
     assert "container-verify" in reply or "byof-onboard" in reply
     assert "registry" in reply.lower()
