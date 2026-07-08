@@ -53,11 +53,11 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
 
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
     module = _load_module()
-    seen: dict[str, object] = {}
+    seen: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
-        seen["cmd"] = cmd
-        seen["env"] = kwargs.get("env")
+        del kwargs
+        seen.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -67,7 +67,10 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
         config_path="/tmp/skypilot.yaml",
     )
 
-    assert seen["cmd"] == ["/opt/sky", "check", "kubernetes", "-o", "json", "--config", "/tmp/skypilot.yaml"]
+    assert seen == [
+        ["/opt/sky", "api", "stop"],
+        ["/opt/sky", "check", "kubernetes", "-o", "json", "--config", "/tmp/skypilot.yaml"],
+    ]
 
 
 def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:

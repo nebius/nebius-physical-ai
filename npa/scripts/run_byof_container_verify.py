@@ -235,6 +235,15 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
     normalized = infra.strip().lower()
     if not normalized.startswith("kubernetes"):
         return
+    if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
+        subprocess.run(
+            [sky_bin, "api", "stop"],
+            env=sky_environment(None),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
     cmd = [sky_bin, "check", "kubernetes", "-o", "json"]
     if config_path:
         cmd.extend(["--config", config_path])
