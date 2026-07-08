@@ -11,7 +11,7 @@ config:
   repo_url: "https://github.com/google-deepmind/mujoco_playground.git"
   repo_ref: "v0.2.0"
   base_profile: ubuntu
-  base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
+  base_image: "nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
