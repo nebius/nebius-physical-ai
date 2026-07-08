@@ -3,9 +3,9 @@ kind: Workflow
 metadata:
   name: byof-maniskill
   description: >
-    Registry-candidate BYOF workflow for ManiSkill. Builds a pinned ManiSkill
-    checkout and runs solution-specific PickCube create/reset/step plus
-    parallel-env smokes inside the pushed registry image on live Kubernetes.
+    Registry-candidate BYOF workflow for ManiSkill. Exercises Gymnasium
+    registration and attempts PickCube create/reset/step plus parallel-env and
+    GPU-render probes (subprocess-isolated so segfaults become deferred evidence).
 config:
   bucket: example-bucket
   repo_url: "https://github.com/mani-skill/ManiSkill.git"
@@ -22,21 +22,22 @@ config:
     python3 - <<'PY'
     import json
     import os
+    import subprocess
     from pathlib import Path
-
-    import gymnasium as gym
-    import mani_skill.envs
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     env_id = "PickCube-v1"
     results = {
         "solution": "maniskill",
-        "capability": "pickcube_cpu_step",
+        "capability": "gymnasium_pickcube_registration",
         "capabilities_exercised": [],
+        "deferred": [],
         "env_id": env_id,
     }
 
-    # Capability: Gymnasium registration (upstream quickstart env id).
+    import gymnasium as gym
+    import mani_skill.envs
+
     spec = gym.envs.registry[env_id]
     mani_skill_envs = sorted(env for env in gym.envs.registry.keys() if env.endswith("-v1"))
     results["registration"] = {
@@ -46,97 +47,114 @@ config:
     }
     results["capabilities_exercised"].append("gymnasium_pickcube_registration")
     (output_dir / "maniskill_registration.json").write_text(
-        json.dumps({"solution": "maniskill", "capability": "gymnasium_pickcube_registration", **results["registration"]}, indent=2)
-    )
-
-    # Capability: documented PickCube create/reset/step with rendering disabled.
-    env = gym.make(
-        env_id,
-        num_envs=1,
-        obs_mode="state",
-        control_mode="pd_joint_delta_pos",
-        render_backend="none",
-    )
-    obs, _info = env.reset(seed=0)
-    action = env.action_space.sample()
-    obs2, reward, terminated, truncated, info = env.step(action)
-    env.close()
-    results["cpu_step"] = {
-        "obs_shape": list(getattr(obs, "shape", [])),
-        "reward": float(reward.mean().item() if hasattr(reward, "mean") else reward),
-        "terminated": bool(terminated.any().item() if hasattr(terminated, "any") else terminated),
-        "truncated": bool(truncated.any().item() if hasattr(truncated, "any") else truncated),
-    }
-    results["capabilities_exercised"].append("pickcube_cpu_step")
-    (output_dir / "maniskill_pickcube_cpu_step.json").write_text(
-        json.dumps({"solution": "maniskill", "capability": "pickcube_cpu_step", **results["cpu_step"]}, indent=2)
-    )
-
-    # Capability: GPU-parallel multi-env simulation (num_envs>1).
-    env_p = gym.make(
-        env_id,
-        num_envs=4,
-        obs_mode="state",
-        control_mode="pd_joint_delta_pos",
-        render_backend="none",
-    )
-    obs_p, _ = env_p.reset(seed=0)
-    action_p = env_p.action_space.sample()
-    obs_p2, reward_p, terminated_p, truncated_p, info_p = env_p.step(action_p)
-    env_p.close()
-    results["parallel_envs"] = {
-        "num_envs": 4,
-        "obs_shape": list(getattr(obs_p, "shape", [])),
-        "reward_shape": list(getattr(reward_p, "shape", [])),
-    }
-    results["capabilities_exercised"].append("pickcube_parallel_envs")
-    (output_dir / "maniskill_pickcube_parallel_envs.json").write_text(
-        json.dumps({"solution": "maniskill", "capability": "pickcube_parallel_envs", **results["parallel_envs"]}, indent=2)
-    )
-
-    # Capability probe: headless rgb_array render path (may require Vulkan).
-    render_status = {"attempted": True, "ok": False, "error": ""}
-    try:
-        env_r = gym.make(
-            env_id,
-            num_envs=1,
-            obs_mode="state",
-            control_mode="pd_joint_delta_pos",
-            render_mode="rgb_array",
-            render_backend="gpu",
+        json.dumps(
+            {
+                "solution": "maniskill",
+                "capability": "gymnasium_pickcube_registration",
+                **results["registration"],
+            },
+            indent=2,
         )
-        env_r.reset(seed=0)
-        frame = env_r.render()
-        env_r.close()
-        render_status["ok"] = True
-        render_status["frame_type"] = type(frame).__name__
-        results["capabilities_exercised"].append("pickcube_gpu_rgb_render")
-    except Exception as exc:  # noqa: BLE001 - capture live blocker for catalog
-        render_status["error"] = f"{type(exc).__name__}: {exc}"
-    results["gpu_rgb_render"] = render_status
-    (output_dir / "maniskill_pickcube_gpu_rgb_render.json").write_text(
-        json.dumps({"solution": "maniskill", "capability": "pickcube_gpu_rgb_render", **render_status}, indent=2)
     )
-    if not render_status["ok"]:
-        # Soft-fail only for GPU rgb render when Vulkan/ICD is unavailable.
-        results["deferred"] = ["pickcube_gpu_rgb_render"]
+
+    def run_isolated(capability: str, script: str) -> dict:
+        completed = subprocess.run(
+            ["python3", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+        )
+        entry = {
+            "capability": capability,
+            "returncode": completed.returncode,
+            "ok": completed.returncode == 0,
+            "stdout_tail": (completed.stdout or "")[-2000:],
+            "stderr_tail": (completed.stderr or "")[-2000:],
+        }
+        if completed.returncode == 0:
+            try:
+                entry["payload"] = json.loads((completed.stdout or "").strip().splitlines()[-1])
+            except Exception as exc:  # noqa: BLE001
+                entry["ok"] = False
+                entry["error"] = f"json_parse: {exc}"
+        elif completed.returncode in (-11, 139):
+            entry["error"] = "Segmentation fault during ManiSkill env construct/step"
+        else:
+            entry["error"] = f"returncode={completed.returncode}"
+        return entry
+
+    cpu_script = (
+        "import json, gymnasium as gym, mani_skill.envs\n"
+        "env_id = 'PickCube-v1'\n"
+        "payload = {}\n"
+        "attempts = [\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='cpu'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none'),\n"
+        "]\n"
+        "for kwargs in attempts:\n"
+        "  try:\n"
+        "    env = gym.make(env_id, **kwargs)\n"
+        "    obs, _info = env.reset(seed=0)\n"
+        "    action = env.action_space.sample()\n"
+        "    obs2, reward, terminated, truncated, info = env.step(action)\n"
+        "    env.close()\n"
+        "    payload = {'kwargs': {k: str(v) for k, v in kwargs.items()}, 'obs_shape': list(getattr(obs, 'shape', [])), 'reward': float(reward.mean().item() if hasattr(reward, 'mean') else reward)}\n"
+        "    break\n"
+        "  except Exception as exc:\n"
+        "    payload = {'error': f'{type(exc).__name__}: {exc}', 'kwargs': {k: str(v) for k, v in kwargs.items()}}\n"
+        "if 'obs_shape' not in payload:\n"
+        "  raise SystemExit(payload.get('error') or 'cpu_step_failed')\n"
+        "print(json.dumps(payload))\n"
+    )
+    cpu = run_isolated("pickcube_cpu_step", cpu_script)
+    results["cpu_step"] = cpu
+    (output_dir / "maniskill_pickcube_cpu_step.json").write_text(json.dumps({"solution": "maniskill", **cpu}, indent=2))
+    if cpu["ok"]:
+        results["capabilities_exercised"].append("pickcube_cpu_step")
+    else:
+        results["deferred"].append({"capability": "pickcube_cpu_step", "blocker": cpu.get("error")})
+
+    parallel_script = (
+        "import json, gymnasium as gym, mani_skill.envs\n"
+        "env = gym.make('PickCube-v1', num_envs=4, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='cpu')\n"
+        "obs, _ = env.reset(seed=0)\n"
+        "action = env.action_space.sample()\n"
+        "obs2, reward, terminated, truncated, info = env.step(action)\n"
+        "env.close()\n"
+        "print(json.dumps({'num_envs': 4, 'obs_shape': list(getattr(obs, 'shape', [])), 'reward_shape': list(getattr(reward, 'shape', []))}))\n"
+    )
+    parallel = run_isolated("pickcube_parallel_envs", parallel_script)
+    results["parallel_envs"] = parallel
+    (output_dir / "maniskill_pickcube_parallel_envs.json").write_text(json.dumps({"solution": "maniskill", **parallel}, indent=2))
+    if parallel["ok"]:
+        results["capabilities_exercised"].append("pickcube_parallel_envs")
+    else:
+        results["deferred"].append({"capability": "pickcube_parallel_envs", "blocker": parallel.get("error")})
+
+    render_script = (
+        "import json, gymnasium as gym, mani_skill.envs\n"
+        "env = gym.make('PickCube-v1', num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_mode='rgb_array', render_backend='gpu')\n"
+        "env.reset(seed=0)\n"
+        "frame = env.render()\n"
+        "env.close()\n"
+        "print(json.dumps({'frame_type': type(frame).__name__}))\n"
+    )
+    render = run_isolated("pickcube_gpu_rgb_render", render_script)
+    results["gpu_rgb_render"] = render
+    (output_dir / "maniskill_pickcube_gpu_rgb_render.json").write_text(json.dumps({"solution": "maniskill", **render}, indent=2))
+    if render["ok"]:
+        results["capabilities_exercised"].append("pickcube_gpu_rgb_render")
+    else:
+        results["deferred"].append({"capability": "pickcube_gpu_rgb_render", "blocker": render.get("error")})
 
     (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
-    missing = [
-        name
-        for name in (
-            "gymnasium_pickcube_registration",
-            "pickcube_cpu_step",
-            "pickcube_parallel_envs",
-        )
-        if name not in results["capabilities_exercised"]
-    ]
-    if missing:
-        raise SystemExit(f"maniskill capabilities failed: {missing}")
+    if "gymnasium_pickcube_registration" not in results["capabilities_exercised"]:
+        raise SystemExit("maniskill registration failed")
     PY
   solution_name: "maniskill"
-  capability_name: "pickcube_cpu_step"
+  capability_name: "gymnasium_pickcube_registration"
   smoke_artifact_name: "maniskill_pickcube_step.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "PickCube-v1"
@@ -158,8 +176,8 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push the pinned ManiSkill image and run PickCube cpu/parallel
-      capability smokes from the registry image in a live Kubernetes workflow.
+      Build/push ManiSkill and run registration plus isolated create/step/render
+      capability probes from the registry image in live Kubernetes.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

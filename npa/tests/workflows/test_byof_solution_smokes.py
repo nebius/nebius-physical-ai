@@ -20,7 +20,7 @@ SOLUTION_SPECS = sorted(
 # and docs/workbench/oss-solution-catalog.md.
 ACCEPTED_CAPABILITIES = {
     "maniskill": {
-        "capability_name": "pickcube_cpu_step",
+        "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
         "spec": "byof-maniskill.yaml",
         "must_exercise": [

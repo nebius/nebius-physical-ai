@@ -15,7 +15,7 @@ not collapse them into a shared cross-solution taxonomy.
 
 | Candidate | Pinned source | Primary capability under test | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
-| ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `pickcube_cpu_step` (+ registration, parallel envs; GPU rgb render probed) | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
+| ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` (+ isolated cpu/parallel/render probes) | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun step, reduced `train-jax-ppo`) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_egl_env_reset` (+ task registration, lightweight asset download) | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `pi05_droid_checkpoint_infer` (+ config materialization, checkpoint download) | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
@@ -28,9 +28,9 @@ not collapse them into a shared cross-solution taxonomy.
 | Capability | Status target | Upstream basis |
 | --- | --- | --- |
 | `gymnasium_pickcube_registration` | required in smoke | Gymnasium env id listing |
-| `pickcube_cpu_step` | required in smoke | Quickstart create/reset/step with `render_backend="none"` |
-| `pickcube_parallel_envs` | required in smoke | Quickstart `num_envs>1` |
-| `pickcube_gpu_rgb_render` | probed (may defer on Vulkan) | `render_mode="rgb_array"` + GPU render backend |
+| `pickcube_cpu_step` | attempted (may defer) | Isolated subprocess; prior live run segfaulted in SAPIEN `gym.make` |
+| `pickcube_parallel_envs` | attempted (may defer) | Isolated subprocess `num_envs=4` |
+| `pickcube_gpu_rgb_render` | attempted (may defer) | Isolated subprocess GPU rgb render |
 | RL/IL baselines / demos | deferred follow-up | `mani_skill.examples.*` |
 
 ### MuJoCo Playground

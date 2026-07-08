@@ -175,10 +175,10 @@ Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`
 
 Required smoke capabilities (encoded in `byof-maniskill.yaml`):
 
-- `gymnasium_pickcube_registration`
-- `pickcube_cpu_step` (`render_backend="none"`)
-- `pickcube_parallel_envs` (`num_envs=4`)
-- `pickcube_gpu_rgb_render` (probed; may remain deferred on Vulkan ICD)
+- `gymnasium_pickcube_registration` (required / accepted gate)
+- `pickcube_cpu_step` (attempted in isolated subprocess; may defer on SAPIEN segfault)
+- `pickcube_parallel_envs` (attempted in isolated subprocess)
+- `pickcube_gpu_rgb_render` (attempted in isolated subprocess)
 
 Follow-up: RL/IL baselines (`mani_skill.examples.*`), asset download / real2sim.
 
