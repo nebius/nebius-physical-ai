@@ -312,10 +312,24 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
         "resolve_container_registry",
         lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
     )
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {
+                "kubeconfig": "/tmp/kubeconfig",
+                "context": "customer-mk8s",
+                "namespace": "workbench",
+            },
+        )(),
+    )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd and cmd[0] == sys.executable and str(module.CONTAINER_VERIFY_RUNNER) in cmd:
             seen["cmd"] = list(cmd)
+            seen["env"] = dict(env or {})
             return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -349,6 +363,12 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert "--solution-name" in cmd and "demo-solution" in cmd
     assert "--capability-name" in cmd and "demo-capability" in cmd
     assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    env = seen.get("env")
+    assert isinstance(env, dict)
+    assert env["KUBECONFIG"] == "/tmp/kubeconfig"
+    assert env["KUBECONTEXT"] == "customer-mk8s"
+    assert env["NPA_BYOF_K8S_CONTEXT"] == "customer-mk8s"
+    assert env["NPA_BYOF_K8S_NAMESPACE"] == "workbench"
 
 
 def test_base_image_candidates_ubuntu_profile_default() -> None:

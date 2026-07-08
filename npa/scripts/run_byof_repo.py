@@ -16,6 +16,7 @@ from typing import Any
 
 from npa.clients.config import resolve_container_registry
 from npa.deploy.images import container_image_for_tool
+from npa.workflows.byof.live import resolve_byof_kubernetes_target
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -88,6 +89,19 @@ def _run(
 def _registry_server(image_ref: str) -> str:
     ref = image_ref.removeprefix("docker:")
     return ref.split("/", 1)[0]
+
+
+def _live_runner_env(project: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    target = resolve_byof_kubernetes_target(project or None)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["KUBECONTEXT"] = target.context
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    if target.namespace:
+        env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
+    return env
 
 
 def _registry_path(image_ref: str) -> str:
@@ -410,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            run_proc = _run(cmd, capture=True)
+            run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)
