@@ -11,6 +11,7 @@ resources:
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
@@ -24,6 +25,17 @@ run: |
   mkdir -p "${OUTPUT_DIR}"
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  export SMOKE_EXIT_CODE
   python3 <<'PY'
   import json
   import os
@@ -44,6 +56,8 @@ run: |
       "run_id": run_id,
       "repo_root": os.environ["BYOF_REPO_ROOT"],
       "metadata": metadata,
+      "smoke_command": os.environ.get("BYOF_SMOKE_COMMAND", ""),
+      "smoke_exit_code": int(os.environ.get("SMOKE_EXIT_CODE", "0")),
       "created_unix": round(time.time(), 3),
   }
   (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
@@ -67,3 +81,6 @@ run: |
               s3.upload_file(str(path), parsed.netloc, key)
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
   PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

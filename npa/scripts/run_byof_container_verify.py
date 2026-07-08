@@ -55,6 +55,7 @@ def render_workflow(
     output_root: str = DEFAULT_OUTPUT_ROOT,
     image: str = "",
     repo_root: str = "/opt/byof",
+    smoke_command: str = "",
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
     for doc in docs[1:]:
@@ -63,6 +64,7 @@ def render_workflow(
             continue
         envs["NPA_BYOF_RUN_ID"] = run_id
         envs["BYOF_REPO_ROOT"] = repo_root
+        envs["BYOF_SMOKE_COMMAND"] = smoke_command
         envs["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
         if image:
             resources = doc.setdefault("resources", {})
@@ -99,6 +101,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--image", default="")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--repo-root", default="/opt/byof")
+    parser.add_argument("--smoke-command", default="")
     parser.add_argument("--config-path", default="")
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--submit-timeout", type=int, default=600)
@@ -127,6 +130,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         output_root=args.output_root,
         image=args.image,
         repo_root=args.repo_root,
+        smoke_command=args.smoke_command,
     )
     outputs = {
         "root": args.output_root.rstrip("/") + f"/{run_id}/",

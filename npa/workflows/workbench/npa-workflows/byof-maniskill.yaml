@@ -1,0 +1,57 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-maniskill
+  description: >
+    Registry-candidate BYOF workflow for ManiSkill GPU-parallel robotics
+    simulation. Builds a pinned ManiSkill checkout and runs a documented
+    PickCube Gymnasium smoke inside the pushed registry image on live
+    Kubernetes.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/mani-skill/ManiSkill.git"
+  repo_ref: "v3.0.1"
+  base_profile: ubuntu
+  base_image: "maniskill/base:latest"
+  build_command: "python3 -m pip install --no-cache-dir -e ."
+  workload: solution-smoke
+  smoke_command: |
+    python3 - <<'PY'
+    import gymnasium as gym
+    import mani_skill.envs
+
+    env = gym.make("PickCube-v1", obs_mode="state", render_mode=None)
+    obs, _ = env.reset(seed=0)
+    action = env.action_space.sample()
+    env.step(action)
+    env.close()
+    print("maniskill PickCube-v1 state smoke ok", type(obs).__name__)
+    PY
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
+  task: "PickCube-v1"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/oss-solutions/maniskill/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build/push the pinned ManiSkill image and run the PickCube-v1 smoke from
+      the registry image in a live Kubernetes workflow.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

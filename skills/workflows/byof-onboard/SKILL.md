@@ -60,6 +60,7 @@ Workloads:
 | Workload | Base profile | SkyPilot YAML (rtxpro) |
 | --- | --- | --- |
 | `container-verify` | `ubuntu` or any | `byof-container-smoke-rtxpro.yaml` |
+| `solution-smoke` | `ubuntu` or custom | `byof-container-smoke-rtxpro.yaml` with `--smoke-command` |
 | `rl-train` | `isaac-lab` | `isaac-lab-rl-train-rtxpro-smoke.yaml` |
 | `datagen` | `isaac-lab` | `byof-datagen-rtxpro-smoke.yaml` |
 
@@ -73,6 +74,9 @@ Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
 3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
+   For registry candidates that have documented upstream commands, use
+   `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
+   so the pushed image is pulled and exercised by a real workflow.
 4. **Registry-ready gate** — if the operator asks to add the OSS project to the
    NPA registry/catalog, follow `oss-solution-registry-onboard`; do not claim
    readiness from build-only or generic import checks.

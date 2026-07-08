@@ -126,6 +126,9 @@ Build-only validation is not sufficient for registry admission.
    - Pick `--base-profile ubuntu` for generic repos.
    - Pick `--base-profile isaac-lab` for Isaac Lab/LeIsaac sim, datagen, or RL.
    - Use `--base-image <ref>` only when upstream runtime requirements demand it.
+   - For registry candidates with documented install/run commands, prefer
+     `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
+     so the pushed image is tested through the live BYOF workflow.
 
 3. **Capability smoke matrix**
    - Add or document smoke commands for each claim.

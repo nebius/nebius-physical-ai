@@ -11,7 +11,9 @@ config:
   repo_ref: "<repo-ref>"
   base_profile: ubuntu
   base_image: ""
+  build_command: ""
   workload: "<workload>"
+  smoke_command: ""
   resource_profile_yaml: "<resource-profile.yaml>"
   task: "<task>"
   iterations: 1

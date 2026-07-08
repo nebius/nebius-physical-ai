@@ -113,9 +113,12 @@ def _dockerfile_text() -> str:
         "FROM ${BYOF_BASE_IMAGE}\n"
         "ARG OSS_REPO_URL\n"
         "ARG OSS_REPO_REF\n"
+        "ARG BYOF_BUILD_COMMAND\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT}\n"
+        f"WORKDIR {BYOF_REPO_MOUNT}\n"
+        "RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]; then /bin/sh -lc \"${BYOF_BUILD_COMMAND}\"; fi\n"
         f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
         f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
         "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\"\n"
@@ -194,9 +197,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument(
         "--workload",
-        choices=("rl-train", "datagen", "container-verify"),
+        choices=("rl-train", "datagen", "container-verify", "solution-smoke"),
         default="rl-train",
-        help="Live workload: RL training, scripted datagen, or container-verify smoke.",
+        help="Live workload: RL training, scripted datagen, container-verify, or solution smoke.",
+    )
+    parser.add_argument(
+        "--build-command",
+        default=os.environ.get("NPA_BYOF_BUILD_COMMAND", ""),
+        help="Optional shell command run during image build from /opt/byof.",
+    )
+    parser.add_argument(
+        "--smoke-command",
+        default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
+        help="Optional documented shell command run during solution-smoke from /opt/byof.",
     )
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
     parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
@@ -243,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         "base_image_candidates": base_candidates,
         "run_id": args.run_id,
         "workload": args.workload,
+        "build_command": args.build_command,
+        "smoke_command": args.smoke_command,
     }
 
     docker_config_dir: str | None = None
@@ -274,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
                                 f"OSS_REPO_URL={args.repo_url}",
                                 "--build-arg",
                                 f"OSS_REPO_REF={args.repo_ref}",
+                                "--build-arg",
+                                f"BYOF_BUILD_COMMAND={args.build_command}",
                                 "-t",
                                 image,
                                 str(context),
@@ -333,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--repo-root",
                     BYOF_REPO_MOUNT,
                 ]
-            elif args.workload == "container-verify":
+            elif args.workload in {"container-verify", "solution-smoke"}:
                 cmd = [
                     sys.executable,
                     str(CONTAINER_VERIFY_RUNNER),
@@ -348,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
                     "--repo-root",
                     BYOF_REPO_MOUNT,
                 ]
+                if args.smoke_command:
+                    cmd.extend(["--smoke-command", args.smoke_command])
             else:
                 cmd = [
                     sys.executable,

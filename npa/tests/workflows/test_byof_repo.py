@@ -303,6 +303,45 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
 
 
+def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
+    )
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd and cmd[0] == sys.executable and str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            seen["cmd"] = list(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "oss-solution-smoke",
+            "--skip-build",
+            "--base-profile",
+            "ubuntu",
+            "--workload",
+            "solution-smoke",
+            "--smoke-command",
+            "python3 -c 'print(42)'",
+        ]
+    )
+
+    assert rc == 0
+    cmd = seen.get("cmd")
+    assert isinstance(cmd, list)
+    assert str(module.CONTAINER_VERIFY_RUNNER) in cmd
+    assert "--smoke-command" in cmd
+    assert "python3 -c 'print(42)'" in cmd
+
+
 def test_base_image_candidates_ubuntu_profile_default() -> None:
     module = _load_module()
     candidates = module._base_image_candidates(
@@ -371,21 +410,26 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
             "main",
             "--base-profile",
             "ubuntu",
+            "--build-command",
+            "python3 -m pip install -e .",
             "--skip-run",
         ]
     )
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args)
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
+    assert output["build_command"] == "python3 -m pip install -e ."
 
 
 def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
+    assert "BYOF_BUILD_COMMAND" in text
     assert "npa_source_metadata.json" in text
     assert "printf" in text
     assert "/opt/byof" in text

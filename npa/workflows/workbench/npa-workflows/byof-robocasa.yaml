@@ -1,0 +1,61 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-robocasa
+  description: >
+    Registry-candidate BYOF workflow for RoboCasa household manipulation
+    simulation, pinned to the RoboCasa365 release tag and smoke-tested with a
+    headless MuJoCo/EGL environment construction path.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/robocasa/robocasa.git"
+  repo_ref: "v1.0"
+  base_profile: ubuntu
+  base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
+  build_command: >
+    apt-get update &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+    python3 python3-pip python3-venv git libegl1 libgl1 libglvnd0 &&
+    python3 -m pip install --no-cache-dir --upgrade pip &&
+    python3 -m pip install --no-cache-dir -e .
+  workload: solution-smoke
+  smoke_command: |
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
+    python3 - <<'PY'
+    import gymnasium as gym
+    import robocasa
+
+    env = gym.make("robocasa/PickPlaceCounterToCabinet", split="pretrain", seed=0)
+    obs, _ = env.reset()
+    env.close()
+    print("robocasa PickPlaceCounterToCabinet smoke ok", type(obs).__name__)
+    PY
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
+  task: "robocasa/PickPlaceCounterToCabinet"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/oss-solutions/robocasa/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build/push RoboCasa and run its headless kitchen-task smoke from the
+      registry image in live Kubernetes.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

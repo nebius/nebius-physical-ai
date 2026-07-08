@@ -103,6 +103,12 @@ def test_resolve_byof_resource_yaml_container_verify(monkeypatch: pytest.MonkeyP
     assert path.endswith("byof-container-smoke-rtxpro.yaml")
 
 
+def test_resolve_byof_resource_yaml_solution_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
+    path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="solution-smoke")
+    assert path.endswith("byof-container-smoke-rtxpro.yaml")
+
+
 def test_byof_ubuntu_validation_repo_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_BYOF_REPO_URL", raising=False)
     monkeypatch.delenv("NPA_BYOF_UBUNTU_VALIDATION_REPO_URL", raising=False)

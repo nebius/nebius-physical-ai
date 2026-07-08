@@ -198,7 +198,7 @@ def resolve_byof_resource_yaml(
 
     normalized_workload = (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
     k8s = _project_kubernetes_block(project)
-    if normalized_workload == "container-verify":
+    if normalized_workload in {"container-verify", "solution-smoke"}:
         key = "byof_container_smoke_yaml" if smoke else "byof_container_yaml"
         configured = str(k8s.get(key) or "").strip()
         if configured:
