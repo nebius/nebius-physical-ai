@@ -108,6 +108,7 @@ A solution is registry-ready only after all applicable gates pass:
 | Contract | Inputs, outputs, runtime, GPU, credentials, and failure modes documented |
 | Workflow | NPA workflow validates/plans if a workflow is part of the registry entry |
 | Smoke | Capability-level smoke commands pass in the container or service |
+| Container E2E | The registry image is pulled and exercised by a real NPA/SkyPilot/Kubernetes E2E workflow, not only by local Docker |
 | Live Infra | Required GPU/K8s/SkyPilot path runs on live Nebius infrastructure |
 | Hygiene | No secrets, project IDs, tenant IDs, bucket names, private endpoints, or customer identifiers committed |
 | Docs | NPA registry/catalog docs and validation report are linkable |
@@ -130,6 +131,10 @@ Build-only validation is not sufficient for registry admission.
    - Add or document smoke commands for each claim.
    - Include container-local smokes and live SkyPilot/Kubernetes smokes where the
      capability needs GPU or cluster resources.
+   - Treat local container smokes as preflight only. The same pushed registry
+     image must be pulled by an NPA/SkyPilot/Kubernetes workflow and run through
+     at least one representative end-to-end path that consumes declared inputs
+     and writes declared outputs.
    - Keep commands grounded in upstream docs.
 
 4. **NPA contract**
@@ -148,6 +153,10 @@ Build-only validation is not sufficient for registry admission.
    - Use resolved project, registry, storage, and Kubernetes config from
      `~/.npa/config.yaml` and `~/.npa/credentials.yaml`.
    - Never hardcode infrastructure identifiers.
+   - Validate the actual registry image inside the real E2E path. For workflow
+     candidates, this means a checked-in or generated workflow that pulls the
+     image, runs the documented capability, writes artifacts to object storage,
+     and can be inspected through NPA workflow status/logs.
    - Run the relevant live path:
      ```bash
      export NPA_E2E_PROJECT=<project-alias>
@@ -172,9 +181,10 @@ Build-only validation is not sufficient for registry admission.
 ## Promotion Rules
 
 - **BYOF image**: repo builds, image pushes, and at least one documented
-  capability smoke passes.
+  capability smoke passes inside the built container.
 - **Registry/catalog entry**: BYOF image plus capability matrix, docs, artifact
-  contract, hygiene, and live Nebius validation.
+  contract, hygiene, live Nebius validation, and an E2E workflow that pulls and
+  runs the pushed registry image.
 - **Workbench workflow**: registry entry plus validated/planned
   `npa.workflow/v0.0.1` spec and live workflow evidence.
 - **First-class Workbench tool**: workflow or service has stable API/CLI,
@@ -200,12 +210,16 @@ npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/ \
 ```
 
 When claiming live readiness, include the BYOF live verification or a
-tool-specific live e2e command. If live infrastructure is unavailable, report
-the exact precheck failure and keep the solution out of registry-ready status.
+tool-specific live e2e command that pulls the registry image and runs a real
+workflow path. If live infrastructure is unavailable, report the exact precheck
+failure and keep the solution out of registry-ready status.
 
 ## Gotchas
 
 - A Docker build is evidence of packageability, not a capability test.
+- A local `docker run` is still only preflight; registry readiness requires the
+  pushed image to run inside the same kind of NPA/SkyPilot/Kubernetes E2E
+  workflow users will invoke.
 - An upstream README capability is not an NPA registry capability until it has a
   passing smoke or a documented live-infra blocker.
 - Generic import checks do not prove simulation, training, datagen, serving, or
