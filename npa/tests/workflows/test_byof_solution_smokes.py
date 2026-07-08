@@ -36,7 +36,7 @@ ACCEPTED_CAPABILITIES = {
         "must_exercise": [
             "mjx_cartpole_step",
             "mjx_cheetah_run_step",
-            "train_jax_ppo_cartpole_smoke",
+            "train_jax_ppo_cartpole_smoke",  # attempted; may remain deferred
         ],
     },
     "robocasa": {

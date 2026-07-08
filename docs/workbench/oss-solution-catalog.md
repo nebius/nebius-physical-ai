@@ -16,10 +16,25 @@ not collapse them into a shared cross-solution taxonomy.
 | Candidate | Pinned source | Primary capability under test | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` (+ isolated cpu/parallel/render probes) | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
-| MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun step, reduced `train-jax-ppo`) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
+| MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun step, reduced `train-jax-ppo` attempt) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_egl_env_reset` (+ task registration, lightweight asset download) | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `pi05_droid_checkpoint_infer` (+ config materialization, checkpoint download) | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `droid_100_config_gen` (+ RLDS contract, `droid_100` download) | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+
+## Live deferred-capability results
+
+| Solution | Capability | Live status | Evidence / blocker |
+| --- | --- | --- | --- |
+| ManiSkill | `gymnasium_pickcube_registration` | **accepted** | Live pass `defcap-maniskill-20260708-230227`; 81 registered `-v1` envs |
+| ManiSkill | `pickcube_cpu_step` | deferred | Isolated subprocess segfault (`returncode=-11`) in SAPIEN `gym.make` |
+| ManiSkill | `pickcube_parallel_envs` | deferred | Same SAPIEN segfault |
+| ManiSkill | `pickcube_gpu_rgb_render` | deferred | Same SAPIEN segfault |
+| MuJoCo Playground | `mjx_cartpole_step` | **accepted** | Live pass on prior matrix; reward/done artifact uploaded |
+| MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Live pass; reward≈0.0019 |
+| MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred / in progress | Entrypoint discovery fixed; full PPO script still heavy (video/EGL deps) |
+| RoboCasa | asset download + EGL reset | in progress | Rerunning after operator-VM disk cleanup |
+| OpenPI | checkpoint download + infer | in progress | Prior attempt hit disk-full during image build |
+| DROID | `droid_100` download + config gen | in progress | Queued after RoboCasa/OpenPI |
 
 ## Native Capabilities Per Container
 
@@ -27,19 +42,19 @@ not collapse them into a shared cross-solution taxonomy.
 
 | Capability | Status target | Upstream basis |
 | --- | --- | --- |
-| `gymnasium_pickcube_registration` | required in smoke | Gymnasium env id listing |
-| `pickcube_cpu_step` | attempted (may defer) | Isolated subprocess; prior live run segfaulted in SAPIEN `gym.make` |
-| `pickcube_parallel_envs` | attempted (may defer) | Isolated subprocess `num_envs=4` |
-| `pickcube_gpu_rgb_render` | attempted (may defer) | Isolated subprocess GPU rgb render |
+| `gymnasium_pickcube_registration` | accepted (live) | Gymnasium env id listing |
+| `pickcube_cpu_step` | deferred (segfault) | Isolated subprocess; SAPIEN `gym.make` crashes on cluster |
+| `pickcube_parallel_envs` | deferred (segfault) | Isolated subprocess `num_envs=4` |
+| `pickcube_gpu_rgb_render` | deferred (segfault) | Isolated subprocess GPU rgb render |
 | RL/IL baselines / demos | deferred follow-up | `mani_skill.examples.*` |
 
 ### MuJoCo Playground
 
 | Capability | Status target | Upstream basis |
 | --- | --- | --- |
-| `mjx_cartpole_step` | required in smoke | `registry.load("CartpoleBalance")` reset/step |
-| `mjx_cheetah_run_step` | required in smoke | Additional registered env beyond Cartpole |
-| `train_jax_ppo_cartpole_smoke` | required in smoke | `train-jax-ppo --env_name CartpoleBalance --num_timesteps 256` |
+| `mjx_cartpole_step` | accepted (live) | `registry.load("CartpoleBalance")` reset/step |
+| `mjx_cheetah_run_step` | accepted (live) | Additional registered env beyond Cartpole |
+| `train_jax_ppo_cartpole_smoke` | attempted | `learning/train_jax_ppo.py` with reduced timesteps |
 
 ### RoboCasa
 

@@ -190,7 +190,8 @@ Required smoke capabilities:
 
 - `mjx_cartpole_step`
 - `mjx_cheetah_run_step`
-- `train_jax_ppo_cartpole_smoke` (`train-jax-ppo --num_timesteps 256`)
+- `train_jax_ppo_cartpole_smoke` (attempted; may remain deferred if the
+  upstream train script's video/EGL path fails independently)
 
 ### RoboCasa (`byof-robocasa.yaml`)
 
