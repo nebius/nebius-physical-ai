@@ -11,6 +11,10 @@ function destructiveLiveEnabled() {
   return value === true || value === 1 || value === "1";
 }
 
+function liveRunId() {
+  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
+}
+
 describe("NPA agent UI against live infra", () => {
   before(function () {
     if (!liveEnvAvailable()) {
@@ -57,6 +61,46 @@ describe("NPA agent UI against live infra", () => {
     });
 
     cy.get("#openRerun").should("be.visible");
+  });
+
+  it("loads a live Sim2Real run as a Rerun artifact, not a stale JSON artifact", function () {
+    const runId = liveRunId();
+    if (!runId) {
+      this.skip();
+    }
+
+    cy.request({
+      method: "POST",
+      url: "/api/sim-viz/load-run",
+      body: { run_id: runId, camera: "workspace" },
+    }).then((response) => {
+      expect(response.status).to.eq(200);
+      expect(response.body).to.have.property("ok", true);
+      const simViz = response.body.sim_viz || {};
+      expect(simViz.run_id).to.eq(runId);
+      expect(simViz.artifact_render).to.eq("rerun");
+      expect(simViz.artifact_key).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(simViz.artifact_uri).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(simViz.rrd_uri).to.match(/^file:\/\//);
+      expect(simViz.rerun_ready).to.eq(true);
+      expect(simViz.rerun_iframe_url).to.include("/rerun/recordings/sim2real.rrd");
+    });
+
+    cy.request("/api/sim-viz/status").then((response) => {
+      expect(response.status).to.eq(200);
+      const simViz = response.body || {};
+      expect(simViz.active_run_id || simViz.run_id).to.eq(runId);
+      expect(simViz.artifact_render).to.eq("rerun");
+      expect(simViz.artifact_key).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(simViz.rerun_iframe_url).to.include("/rerun/recordings/sim2real.rrd");
+    });
+
+    cy.reload();
+    cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
+    cy.get("#rerunFrame")
+      .should("have.attr", "src")
+      .and("include", "/rerun/recordings/sim2real.rrd");
+    cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
   });
 
   it("submits Sim2Real from the UI when live destructive Cypress is enabled", function () {
