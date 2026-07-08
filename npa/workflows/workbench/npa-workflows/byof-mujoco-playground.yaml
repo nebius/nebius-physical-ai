@@ -29,7 +29,7 @@ config:
 
     from mujoco_playground import registry
 
-    env = registry.load("CartpoleBalance")
+    env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
     state = env.reset(0)
     action = env.action_spec().generate_value()
     next_state = env.step(state, action)
