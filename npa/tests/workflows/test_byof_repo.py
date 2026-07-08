@@ -331,6 +331,12 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
             "solution-smoke",
             "--smoke-command",
             "python3 -c 'print(42)'",
+            "--solution-name",
+            "demo-solution",
+            "--capability-name",
+            "demo-capability",
+            "--smoke-artifact-name",
+            "demo_artifact.json",
         ]
     )
 
@@ -340,6 +346,9 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert str(module.CONTAINER_VERIFY_RUNNER) in cmd
     assert "--smoke-command" in cmd
     assert "python3 -c 'print(42)'" in cmd
+    assert "--solution-name" in cmd and "demo-solution" in cmd
+    assert "--capability-name" in cmd and "demo-capability" in cmd
+    assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
 
 
 def test_base_image_candidates_ubuntu_profile_default() -> None:

@@ -21,12 +21,28 @@ config:
   workload: solution-smoke
   smoke_command: |
     python3 - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
     from openpi.training import config as openpi_config
 
     cfg = openpi_config.get_config("pi05_droid")
     assert cfg is not None
-    print("openpi pi05_droid config smoke ok", cfg.name)
+    artifact = {
+        "solution": "openpi",
+        "capability": "policy_config_materialization",
+        "config_name": cfg.name,
+        "model_type": type(cfg.model).__name__ if getattr(cfg, "model", None) is not None else "",
+        "data_type": type(cfg.data).__name__ if getattr(cfg, "data", None) is not None else "",
+    }
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    (output_dir / "openpi_pi05_droid_config.json").write_text(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2))
     PY
+  solution_name: "openpi"
+  capability_name: "policy_config_materialization"
+  smoke_artifact_name: "openpi_pi05_droid_config.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "pi05_droid"
   iterations: 1

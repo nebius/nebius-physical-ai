@@ -14,6 +14,9 @@ config:
   build_command: ""
   workload: "<workload>"
   smoke_command: ""
+  solution_name: ""
+  capability_name: ""
+  smoke_artifact_name: ""
   resource_profile_yaml: "<resource-profile.yaml>"
   task: "<task>"
   iterations: 1

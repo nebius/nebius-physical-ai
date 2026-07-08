@@ -215,6 +215,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
         help="Optional documented shell command run during solution-smoke from /opt/byof.",
     )
+    parser.add_argument("--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", ""))
+    parser.add_argument("--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", ""))
+    parser.add_argument("--smoke-artifact-name", default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""))
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
     parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
@@ -262,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
         "workload": args.workload,
         "build_command": args.build_command,
         "smoke_command": args.smoke_command,
+        "solution_name": args.solution_name,
+        "capability_name": args.capability_name,
+        "smoke_artifact_name": args.smoke_artifact_name,
     }
 
     docker_config_dir: str | None = None
@@ -371,6 +377,12 @@ def main(argv: list[str] | None = None) -> int:
                 ]
                 if args.smoke_command:
                     cmd.extend(["--smoke-command", args.smoke_command])
+                if args.solution_name:
+                    cmd.extend(["--solution-name", args.solution_name])
+                if args.capability_name:
+                    cmd.extend(["--capability-name", args.capability_name])
+                if args.smoke_artifact_name:
+                    cmd.extend(["--smoke-artifact-name", args.smoke_artifact_name])
             else:
                 cmd = [
                     sys.executable,

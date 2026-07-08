@@ -22,7 +22,31 @@ config:
   workload: solution-smoke
   smoke_command: |
     export JAX_DEFAULT_MATMUL_PRECISION=highest
-    /opt/venv/bin/python learning/train_jax_ppo.py --env_name CartpoleBalance
+    /opt/venv/bin/python - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
+    from mujoco_playground import registry
+
+    env = registry.load("CartpoleBalance")
+    state = env.reset(0)
+    action = env.action_spec().generate_value()
+    next_state = env.step(state, action)
+    artifact = {
+        "solution": "mujoco-playground",
+        "capability": "mjx_cartpole_step",
+        "env_id": "CartpoleBalance",
+        "reward": float(next_state.reward),
+        "done": bool(next_state.done),
+    }
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2))
+    PY
+  solution_name: "mujoco-playground"
+  capability_name: "mjx_cartpole_step"
+  smoke_artifact_name: "mujoco_playground_cartpole_step.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "CartpoleBalance"
   iterations: 1

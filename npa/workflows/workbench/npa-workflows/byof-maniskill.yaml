@@ -17,16 +17,35 @@ config:
   workload: solution-smoke
   smoke_command: |
     python3 - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
     import gymnasium as gym
     import mani_skill.envs
 
     env = gym.make("PickCube-v1", obs_mode="state", render_mode=None)
     obs, _ = env.reset(seed=0)
     action = env.action_space.sample()
-    env.step(action)
+    _, reward, terminated, truncated, info = env.step(action)
     env.close()
-    print("maniskill PickCube-v1 state smoke ok", type(obs).__name__)
+    artifact = {
+        "solution": "maniskill",
+        "capability": "gymnasium_pickcube_step",
+        "env_id": "PickCube-v1",
+        "observation_type": type(obs).__name__,
+        "reward": float(reward),
+        "terminated": bool(terminated),
+        "truncated": bool(truncated),
+        "info_keys": sorted(str(key) for key in getattr(info, "keys", lambda: [])()),
+    }
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2))
     PY
+  solution_name: "maniskill"
+  capability_name: "gymnasium_pickcube_step"
+  smoke_artifact_name: "maniskill_pickcube_step.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "PickCube-v1"
   iterations: 1

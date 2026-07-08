@@ -24,14 +24,29 @@ config:
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
     python3 - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
     import gymnasium as gym
     import robocasa
 
     env = gym.make("robocasa/PickPlaceCounterToCabinet", split="pretrain", seed=0)
     obs, _ = env.reset()
     env.close()
-    print("robocasa PickPlaceCounterToCabinet smoke ok", type(obs).__name__)
+    artifact = {
+        "solution": "robocasa",
+        "capability": "headless_kitchen_env_reset",
+        "env_id": "robocasa/PickPlaceCounterToCabinet",
+        "observation_type": type(obs).__name__,
+    }
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    (output_dir / "robocasa_kitchen_env_reset.json").write_text(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2))
     PY
+  solution_name: "robocasa"
+  capability_name: "headless_kitchen_env_reset"
+  smoke_artifact_name: "robocasa_kitchen_env_reset.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "robocasa/PickPlaceCounterToCabinet"
   iterations: 1

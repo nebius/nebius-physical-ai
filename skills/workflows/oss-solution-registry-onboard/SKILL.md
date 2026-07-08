@@ -128,7 +128,9 @@ Build-only validation is not sufficient for registry admission.
    - Use `--base-image <ref>` only when upstream runtime requirements demand it.
    - For registry candidates with documented install/run commands, prefer
      `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
-     so the pushed image is tested through the live BYOF workflow.
+     plus `--solution-name`, `--capability-name`, and
+     `--smoke-artifact-name` so the pushed image is tested through the live BYOF
+     workflow and writes an inspectable capability artifact.
 
 3. **Capability smoke matrix**
    - Add or document smoke commands for each claim.
@@ -138,6 +140,11 @@ Build-only validation is not sufficient for registry admission.
      image must be pulled by an NPA/SkyPilot/Kubernetes workflow and run through
      at least one representative end-to-end path that consumes declared inputs
      and writes declared outputs.
+   - A solution-smoke command must do more than import modules: it must execute a
+     documented capability hello-world (for example create/reset/step a sim env,
+     generate a tiny synthetic-data artifact, materialize a policy/training
+     config, or run a reduced inference/eval) and write the named JSON artifact
+     under `$NPA_SMOKE_OUTPUT_DIR`.
    - Keep commands grounded in upstream docs.
 
 4. **NPA contract**

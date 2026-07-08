@@ -12,11 +12,11 @@ Authoring skill: `skills/workflows/oss-solution-registry-onboard/SKILL.md`.
 
 | Candidate | Pinned source | Cloud fit | NPA workflow | Required E2E evidence |
 | --- | --- | --- | --- | --- |
-| ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | Strong fit for Linux NVIDIA cloud GPUs; rendering paths require Vulkan inside the container. | `npa/workflows/workbench/npa-workflows/byof-maniskill.yaml` | Build/push image, pull it on Kubernetes, run `PickCube-v1` Gymnasium smoke, upload `npa_byof_summary.json` and smoke logs. |
-| MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | Strong fit for JAX/MJX GPU training; no RT-core dependency. | `npa/workflows/workbench/npa-workflows/byof-mujoco-playground.yaml` | Build/push image, pull it on Kubernetes, run documented `CartpoleBalance` PPO entrypoint, upload summary and logs. |
-| RoboCasa | `robocasa/robocasa` `v1.0` | Good fit for benchmark/eval workloads; headless MuJoCo requires EGL/GLVND/NVIDIA graphics libraries in the container. | `npa/workflows/workbench/npa-workflows/byof-robocasa.yaml` | Build/push image, pull it on Kubernetes, create a `robocasa/PickPlaceCounterToCabinet` env with `MUJOCO_GL=egl`, upload summary and logs. |
-| OpenPI | `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac` | Strong fit for GPU inference/fine-tuning; checkpoint access uses upstream GCS paths and VRAM needs vary by mode. | `npa/workflows/workbench/npa-workflows/byof-openpi.yaml` | Build/push image, pull it on Kubernetes, load the documented `pi05_droid` policy config, upload summary and logs. |
-| DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddaca217581` | Good fit for data/training workflows; full RLDS data is large, so start with config/debug data before full-scale jobs. | `npa/workflows/workbench/npa-workflows/byof-droid-policy-learning.yaml` | Build/push image, pull it on Kubernetes, import the documented RLDS config generator, upload summary and logs. |
+| ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | Strong fit for Linux NVIDIA cloud GPUs; rendering paths require Vulkan inside the container. | `npa/workflows/workbench/npa-workflows/byof-maniskill.yaml` | Build/push image, pull it on Kubernetes, step `PickCube-v1`, upload `maniskill_pickcube_step.json`, summary, and logs. |
+| MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | Strong fit for JAX/MJX GPU training; no RT-core dependency. | `npa/workflows/workbench/npa-workflows/byof-mujoco-playground.yaml` | Build/push image, pull it on Kubernetes, reset/step `CartpoleBalance` via MJX registry, upload `mujoco_playground_cartpole_step.json`, summary, and logs. |
+| RoboCasa | `robocasa/robocasa` `v1.0` | Good fit for benchmark/eval workloads; headless MuJoCo requires EGL/GLVND/NVIDIA graphics libraries in the container. | `npa/workflows/workbench/npa-workflows/byof-robocasa.yaml` | Build/push image, pull it on Kubernetes, create/reset `robocasa/PickPlaceCounterToCabinet` with `MUJOCO_GL=egl`, upload `robocasa_kitchen_env_reset.json`, summary, and logs. |
+| OpenPI | `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac` | Strong fit for GPU inference/fine-tuning; checkpoint access uses upstream GCS paths and VRAM needs vary by mode. | `npa/workflows/workbench/npa-workflows/byof-openpi.yaml` | Build/push image, pull it on Kubernetes, materialize the documented `pi05_droid` policy config, upload `openpi_pi05_droid_config.json`, summary, and logs. |
+| DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddaca217581` | Good fit for data/training workflows; full RLDS data is large, so start with config/debug data before full-scale jobs. | `npa/workflows/workbench/npa-workflows/byof-droid-policy-learning.yaml` | Build/push image, pull it on Kubernetes, construct the RLDS config generator, upload `droid_rlds_config_generator.json`, summary, and logs. |
 
 ## Why These Make Sense For Cloud
 
@@ -98,5 +98,10 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
 ```
 
 The registry-ready gate is not satisfied until the live run pulls the pushed
-image, executes the smoke command, and writes `npa_byof_summary.json` plus smoke
-logs to object storage.
+image, executes the smoke command, and writes `npa_byof_summary.json`, smoke
+logs, and the named capability artifact to object storage.
+
+If live SkyPilot reports `FAILED_PRECHECKS` before the pod starts, first verify
+that the BYOF runner passed `--infra kubernetes/<context>` for the configured
+cluster and that the cluster can schedule the CPU container-smoke request. A
+precheck failure is infrastructure evidence, not a passing solution smoke.

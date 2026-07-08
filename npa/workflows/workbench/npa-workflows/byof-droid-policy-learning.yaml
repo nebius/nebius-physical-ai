@@ -21,11 +21,26 @@ config:
   workload: solution-smoke
   smoke_command: |
     python3 - <<'PY'
+    import json
+    import os
+    from pathlib import Path
+
     from robomimic.scripts.config_gen import droid_runs_language_conditioned_rlds
 
-    assert hasattr(droid_runs_language_conditioned_rlds, "make_generator")
-    print("droid policy learning RLDS config smoke ok")
+    generator = droid_runs_language_conditioned_rlds.make_generator()
+    artifact = {
+        "solution": "droid-policy-learning",
+        "capability": "rlds_config_generator",
+        "generator_type": type(generator).__name__,
+        "module": droid_runs_language_conditioned_rlds.__name__,
+    }
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    (output_dir / "droid_rlds_config_generator.json").write_text(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2))
     PY
+  solution_name: "droid-policy-learning"
+  capability_name: "rlds_config_generator"
+  smoke_artifact_name: "droid_rlds_config_generator.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "droid_rlds_config"
   iterations: 1

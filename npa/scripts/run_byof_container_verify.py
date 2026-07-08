@@ -56,6 +56,9 @@ def render_workflow(
     image: str = "",
     repo_root: str = "/opt/byof",
     smoke_command: str = "",
+    solution_name: str = "",
+    capability_name: str = "",
+    smoke_artifact_name: str = "",
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
     for doc in docs[1:]:
@@ -65,6 +68,9 @@ def render_workflow(
         envs["NPA_BYOF_RUN_ID"] = run_id
         envs["BYOF_REPO_ROOT"] = repo_root
         envs["BYOF_SMOKE_COMMAND"] = smoke_command
+        envs["BYOF_SOLUTION_NAME"] = solution_name
+        envs["BYOF_CAPABILITY_NAME"] = capability_name
+        envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
         envs["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
         for key in (
             "AWS_ACCESS_KEY_ID",
@@ -112,7 +118,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--repo-root", default="/opt/byof")
     parser.add_argument("--smoke-command", default="")
+    parser.add_argument("--solution-name", default="")
+    parser.add_argument("--capability-name", default="")
+    parser.add_argument("--smoke-artifact-name", default="")
     parser.add_argument("--config-path", default="")
+    parser.add_argument("--infra", default=os.environ.get("NPA_BYOF_INFRA", ""))
     parser.add_argument("--sky-bin", default="")
     parser.add_argument("--submit-timeout", type=int, default=600)
     parser.add_argument("--wait-timeout", type=int, default=3600)
@@ -141,6 +151,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         image=args.image,
         repo_root=args.repo_root,
         smoke_command=args.smoke_command,
+        solution_name=args.solution_name,
+        capability_name=args.capability_name,
+        smoke_artifact_name=args.smoke_artifact_name,
     )
     outputs = {
         "root": args.output_root.rstrip("/") + f"/{run_id}/",
@@ -175,6 +188,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 isolated_config_dir=args.isolated_config_dir,
                 config_path=args.config_path,
                 sky_bin=sky_bin,
+                infra=args.infra or _default_infra(),
                 timeout=args.submit_timeout,
             )
             config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
@@ -195,6 +209,20 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 teardown_guard.teardown()
         print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
         return return_code
+
+
+def _default_infra() -> str:
+    configured = os.environ.get("NPA_BYOF_INFRA", "").strip() or os.environ.get(
+        "NPA_SKYPILOT_INFRA", ""
+    ).strip()
+    if configured:
+        return configured
+    context = (
+        os.environ.get("NPA_BYOF_K8S_CONTEXT", "")
+        or os.environ.get("NPA_K8S_CONTEXT", "")
+        or os.environ.get("KUBECONTEXT", "")
+    ).strip()
+    return f"kubernetes/{context}" if context else ""
 
 
 if __name__ == "__main__":

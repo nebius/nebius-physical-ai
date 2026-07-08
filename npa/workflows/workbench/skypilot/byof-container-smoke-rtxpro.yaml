@@ -12,6 +12,9 @@ envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
   BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
@@ -23,6 +26,7 @@ run: |
   set -euo pipefail
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
   SMOKE_EXIT_CODE=0
@@ -34,6 +38,9 @@ run: |
     ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
     SMOKE_EXIT_CODE=$?
     set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
   fi
   export SMOKE_EXIT_CODE
   python3 <<'PY'
@@ -56,7 +63,10 @@ run: |
       "run_id": run_id,
       "repo_root": os.environ["BYOF_REPO_ROOT"],
       "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
       "smoke_command": os.environ.get("BYOF_SMOKE_COMMAND", ""),
+      "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
       "smoke_exit_code": int(os.environ.get("SMOKE_EXIT_CODE", "0")),
       "created_unix": round(time.time(), 3),
   }
