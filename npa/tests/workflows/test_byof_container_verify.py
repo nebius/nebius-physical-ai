@@ -41,7 +41,25 @@ def test_render_workflow_injects_solution_smoke_metadata() -> None:
     assert envs["BYOF_CAPABILITY_NAME"] == "demo-capability"
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
+    assert envs["NPA_S3_BUCKET"] == "bucket"
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_normalize_output_root_strips_double_s3_prefix() -> None:
+    module = _load_module()
+    assert module._normalize_s3_bucket("s3://lerobot-demo/checkpoints/") == "lerobot-demo"
+    assert module._normalize_output_root("s3://s3://lerobot-demo/checkpoints/") == "s3://lerobot-demo/checkpoints"
+    assert (
+        module._normalize_output_root("s3://lerobot-demo/checkpoints/")
+        == "s3://lerobot-demo/checkpoints"
+    )
+    docs = module.render_workflow(
+        YAML_PATH,
+        run_id="byof-demo",
+        output_root="s3://s3://lerobot-demo/checkpoints/",
+    )
+    assert docs[1]["envs"]["S3_OUTPUT_PREFIX"] == "s3://lerobot-demo/checkpoints/byof-demo/"
+    assert docs[1]["envs"]["NPA_S3_BUCKET"] == "lerobot-demo"
 
 
 def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:

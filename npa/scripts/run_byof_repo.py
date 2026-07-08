@@ -92,6 +92,15 @@ def _registry_server(image_ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
+def _bare_s3_bucket(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("s3://"):
+        text = text[len("s3://") :]
+    return text.split("/", 1)[0].strip()
+
+
 def _live_runner_env(project: str) -> dict[str, str]:
     env: dict[str, str] = {}
     target = resolve_byof_kubernetes_target(project or None)
@@ -106,6 +115,34 @@ def _live_runner_env(project: str) -> dict[str, str]:
         env.update(storage_env_for_project(project or None, allow_host_creds=True))
     except Exception as exc:
         print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+    # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
+    # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
+    for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
+        bare = _bare_s3_bucket(os.environ.get(key, "") or env.get(key, ""))
+        if bare:
+            env["NPA_S3_BUCKET"] = bare
+            break
+    if "NPA_S3_BUCKET" not in env:
+        try:
+            from npa.clients.config import _load_yaml, _resolve_project_section
+
+            yml = _load_yaml()
+            section = _resolve_project_section(yml, project or None) if project else {}
+            storage = section.get("storage") if isinstance(section, dict) else {}
+            if not isinstance(storage, dict):
+                storage = yml.get("storage") if isinstance(yml.get("storage"), dict) else {}
+            bare = _bare_s3_bucket(
+                str(
+                    storage.get("checkpoint_bucket")
+                    or storage.get("bucket")
+                    or storage.get("s3_bucket")
+                    or ""
+                )
+            )
+            if bare:
+                env["NPA_S3_BUCKET"] = bare
+        except Exception as exc:
+            print(f"WARN: skipped BYOF bucket resolution: {exc}", file=sys.stderr)
     return env
 
 

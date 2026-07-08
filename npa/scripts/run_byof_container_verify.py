@@ -37,9 +37,42 @@ DEFAULT_YAML = (
     / "skypilot"
     / "byof-container-smoke-rtxpro.yaml"
 )
-DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
-DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/byof"
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
+
+
+def _normalize_s3_bucket(value: str) -> str:
+    """Return a bare bucket name from ``bucket`` or ``s3://bucket[/prefix]``."""
+
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("s3://"):
+        remainder = text[len("s3://") :]
+        return remainder.split("/", 1)[0].strip()
+    return text.split("/", 1)[0].strip()
+
+
+def _normalize_output_root(value: str, *, default_prefix: str = "byof") -> str:
+    """Normalize output roots that may already include ``s3://`` or a path prefix."""
+
+    text = (value or "").strip()
+    if not text:
+        bucket = _normalize_s3_bucket(os.environ.get("NPA_S3_BUCKET", ""))
+        if not bucket:
+            bucket = "your-bucket-name"
+        return f"s3://{bucket}/{default_prefix}"
+    if text.startswith("s3://"):
+        # Collapse accidental ``s3://s3://bucket/...`` forms.
+        while text.startswith("s3://s3://"):
+            text = "s3://" + text[len("s3://s3://") :]
+        return text.rstrip("/")
+    bucket = _normalize_s3_bucket(text)
+    remainder = text.split("/", 1)[1].strip("/") if "/" in text else default_prefix
+    return f"s3://{bucket}/{remainder or default_prefix}"
+
+
+DEFAULT_BUCKET = _normalize_s3_bucket(os.environ.get("NPA_S3_BUCKET", "")) or "your-bucket-name"
+DEFAULT_OUTPUT_ROOT = _normalize_output_root(os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof")
 TERMINAL_STATUSES = {
     "SUCCEEDED",
     "CANCELLED",
@@ -74,7 +107,13 @@ def render_workflow(
         envs["BYOF_SOLUTION_NAME"] = solution_name
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
-        envs["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
+        normalized_root = _normalize_output_root(output_root)
+        envs["S3_OUTPUT_PREFIX"] = normalized_root.rstrip("/") + f"/{run_id}/"
+        bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
+            os.environ.get("NPA_S3_BUCKET", "")
+        )
+        if bucket:
+            envs["NPA_S3_BUCKET"] = bucket
         for key in (
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
@@ -152,10 +191,11 @@ def main(argv: list[str] | None = None) -> int:
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
+    output_root = _normalize_output_root(args.output_root)
     docs = render_workflow(
         args.yaml_path,
         run_id=run_id,
-        output_root=args.output_root,
+        output_root=output_root,
         image=args.image,
         repo_root=args.repo_root,
         smoke_command=args.smoke_command,
@@ -164,8 +204,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         smoke_artifact_name=args.smoke_artifact_name,
     )
     outputs = {
-        "root": args.output_root.rstrip("/") + f"/{run_id}/",
-        "summary": args.output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
+        "root": output_root.rstrip("/") + f"/{run_id}/",
+        "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
     }
 
     if args.render_only:
