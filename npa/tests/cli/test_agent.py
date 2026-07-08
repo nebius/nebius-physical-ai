@@ -611,6 +611,8 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_wire_sim2real_run_preview" in source
     assert "Prefer a run-scoped Rerun recording over stale history entries" in source
     assert "preferred and preferred.render == \"rerun\"" in source
+    assert "held-out simulation camera stream" in source
+    assert "reference proxy context" in source
     assert "def _artifact_backed_run_details" in source
     assert "def _workflow_stage_defs_from_state" in source
     assert "Derived stage timeline from" in source

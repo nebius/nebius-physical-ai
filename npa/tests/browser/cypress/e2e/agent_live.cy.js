@@ -93,6 +93,9 @@ describe("NPA agent UI against live infra", () => {
       expect(simViz.artifact_uri).to.match(/\/reports\/sim2real\.rrd$/);
       expect(simViz.rrd_uri).to.match(/^file:\/\//);
       expect(simViz.rerun_ready).to.eq(true);
+      expect(simViz.camera).to.eq("heldout-sim");
+      expect(simViz.preview_entity).to.eq("camera");
+      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
       expect(simViz.rerun_iframe_url).to.include("/rerun/recordings/sim2real.rrd");
     });
 
@@ -102,6 +105,8 @@ describe("NPA agent UI against live infra", () => {
       expect(simViz.active_run_id || simViz.run_id).to.eq(runId);
       expect(simViz.artifact_render).to.eq("rerun");
       expect(simViz.artifact_key).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(simViz.camera).to.eq("heldout-sim");
+      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
       expect(simViz.rerun_iframe_url).to.include("/rerun/recordings/sim2real.rrd");
     });
 
@@ -143,6 +148,8 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
     cy.get("#runLog").should("contain.text", "Derived stage timeline");
     cy.get("#renderedDataSummary").should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
+    cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");
+    cy.get("#simCamera").should("contain.text", "heldout-sim");
     cy.get("#rerunFrame").should("be.visible");
     cy.get("#chatForm").should("be.visible");
     cy.get("#cameraCards").should("be.visible");

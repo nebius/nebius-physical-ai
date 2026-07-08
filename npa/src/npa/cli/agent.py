@@ -2618,6 +2618,15 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _is_sim2real_pipeline_recording(key: str) -> bool:
+    return str(key or "").endswith("/reports/sim2real.rrd")
+
+
+def _sim2real_pipeline_camera_label(requested: str = "") -> str:
+    value = str(requested or "").strip()
+    return value if value and value != "workspace" else "heldout-sim"
+
+
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -2632,6 +2641,9 @@ def _apply_loaded_artifact(
     current = state.get("sim_viz")
     if isinstance(current, dict):
         sim_viz.update(current)
+    camera = str(sim_viz.get("camera") or "workspace")
+    if render == "rerun" and _is_sim2real_pipeline_recording(key):
+        camera = _sim2real_pipeline_camera_label(camera)
     sim_viz.update(
         {{
             "run_id": run_id,
@@ -2641,7 +2653,7 @@ def _apply_loaded_artifact(
             "artifact_key": key,
             "artifact_render": render,
             "mode": "static",
-            "camera": str(sim_viz.get("camera") or "workspace"),
+            "camera": camera,
         }}
     )
     if render == "rerun":
@@ -2653,6 +2665,13 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
+        if _is_sim2real_pipeline_recording(key):
+            sim_viz["preview_entity"] = "camera"
+            sim_viz["visualization_note"] = (
+                "Pipeline Sim2Real recording loaded. The primary Rerun view is the "
+                "held-out simulation camera stream; any 3D Franka/world entities are "
+                "reference proxy context, not custom hardware footage."
+            )
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
@@ -4618,7 +4637,8 @@ def sim_viz_load_run(payload: dict | None = None):
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
-    camera = str(body.get("camera") or "workspace").strip() or "workspace"
+    requested_camera = str(body.get("camera") or "").strip()
+    camera = requested_camera or "workspace"
     requested_rrd_uri = str(body.get("rrd_uri") or "").strip()
 
     # Prefer a run-scoped Rerun recording over stale history entries. History can
@@ -4639,7 +4659,8 @@ def sim_viz_load_run(payload: dict | None = None):
             render=render_hint_for_object(key=key),
             local_path=local_path,
         )
-        sim_viz["camera"] = camera
+        if requested_camera:
+            sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
         _save_state(state)
         return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id)}}
 
@@ -4661,7 +4682,8 @@ def sim_viz_load_run(payload: dict | None = None):
                 render=preferred.render,
                 local_path=local_path,
             )
-            sim_viz["camera"] = camera
+            if requested_camera:
+                sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
             _save_state(state)
             return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id), "preferred": preferred.to_dict()}}
     except Exception:
@@ -7848,10 +7870,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const uri = String((simViz && simViz.artifact_uri) || "");
         const render = String((simViz && simViz.artifact_render) || "");
         if (key || uri) {{
+          const note = String((simViz && simViz.visualization_note) || "");
           node.innerHTML =
             "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
             " from run <code>" + escapeHtml(runId) + "</code><br>" +
-            "<code>" + escapeHtml(key || uri) + "</code>";
+            "<code>" + escapeHtml(key || uri) + "</code>" +
+            (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
         }} else {{
           node.textContent = "Rendering: no run artifact loaded yet.";
         }}
