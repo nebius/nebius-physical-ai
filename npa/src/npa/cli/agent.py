@@ -2033,10 +2033,10 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     if artifact_details:
         details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
-    if stage:
+    if stage and not artifact_details:
         details["status"] = stage
     if sim_viz.get("rrd_uri"):
-        if str(details.get("result") or "") not in {"completed", "failed", "running"}:
+        if str(details.get("result") or "") not in {"completed", "failed", "running", "rerun_ready"}:
             details["result"] = "recording_available"
         for item in details.get("stages", []):
             if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
