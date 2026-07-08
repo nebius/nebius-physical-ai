@@ -5490,8 +5490,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         gap: 14px;
       }}
       .layout {{ display: grid; gap: 14px; }}
-      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(760px, 1fr); }}
-      .layout-3 .rerun-panel {{ grid-column: 1 / -1; }}
+      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -5530,7 +5529,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 4px 9px;
         font-size: 12px;
       }}
-      .cameras-panel {{ display: none; }}
+      .cameras-panel {{ display: block; }}
       .camera-card {{
         border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
         background: #fff;
