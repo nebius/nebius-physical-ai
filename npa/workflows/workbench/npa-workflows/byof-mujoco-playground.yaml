@@ -16,12 +16,13 @@ config:
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
     python3 python3-pip python3-venv git &&
-    python3 -m pip install --no-cache-dir --upgrade pip &&
-    python3 -m pip install --no-cache-dir -e ".[all]"
+    python3 -m venv /opt/venv &&
+    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
+    /opt/venv/bin/python -m pip install --no-cache-dir -e ".[all]"
   workload: solution-smoke
   smoke_command: |
     export JAX_DEFAULT_MATMUL_PRECISION=highest
-    python3 learning/train_jax_ppo.py --env_name CartpoleBalance
+    /opt/venv/bin/python learning/train_jax_ppo.py --env_name CartpoleBalance
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "CartpoleBalance"
   iterations: 1
