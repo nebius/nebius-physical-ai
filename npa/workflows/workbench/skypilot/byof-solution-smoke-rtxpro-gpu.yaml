@@ -26,7 +26,9 @@ setup: |
   set -euo pipefail
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
-  python3 -m pip install --quiet boto3
+  python3 - <<'PY' || python3 -m pip install --quiet --break-system-packages boto3 || python3 -m pip install --quiet boto3
+  import boto3
+  PY
 run: |
   set -euo pipefail
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
