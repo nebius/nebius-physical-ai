@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.byof.live import (
-    byof_onboard_skill_path,
     byof_ubuntu_validation_repo,
     byof_validation_repo,
     resolve_byof_kubernetes_target,
