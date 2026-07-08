@@ -66,6 +66,16 @@ def render_workflow(
         envs["BYOF_REPO_ROOT"] = repo_root
         envs["BYOF_SMOKE_COMMAND"] = smoke_command
         envs["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
+        for key in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_ENDPOINT_URL",
+            "NEBIUS_S3_ENDPOINT",
+        ):
+            value = os.environ.get(key, "").strip()
+            if value:
+                envs[key] = value
         if image:
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
