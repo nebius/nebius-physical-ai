@@ -32,7 +32,7 @@ config:
 
     env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
     state = env.reset(jax.random.PRNGKey(0))
-    action = env.action_spec().generate_value()
+    action = jax.numpy.zeros((env.action_size,))
     next_state = env.step(state, action)
     artifact = {
         "solution": "mujoco-playground",
