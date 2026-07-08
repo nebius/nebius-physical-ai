@@ -234,11 +234,22 @@ try:
         except Exception:
             pass
         print("EVAL_SEED_APPLIED", SEED, flush=True)
-    # Add a workspace camera so we can RENDER the (custom) object for Rerun viz.
+    # Add a workspace camera so we can RENDER the robot/object interaction for
+    # Rerun viz. Isaac Lab's "world" convention camera looks along +X; place it
+    # on the negative-X side of the table with a slight downward pitch. The
+    # previous +X-side/near-180deg quaternion often rendered only the floor grid.
     env_cfg.scene.heldout_cam = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/heldout_cam",
-        offset=TiledCameraCfg.OffsetCfg(pos=(1.5, 0.0, 0.9), rot=(0.259, 0.0, 0.966, 0.0), convention="world"),
-        data_types=["rgb"], width=128, height=128, spawn=sim_utils.PinholeCameraCfg())
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(-2.0, 0.0, 1.0),
+            rot=(0.9945, 0.0, 0.1045, 0.0),
+            convention="world",
+        ),
+        data_types=["rgb"],
+        width=256,
+        height=256,
+        spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)),
+    )
     env = gym.make(TASK, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env)
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,

@@ -119,6 +119,15 @@ def test_eval_manifest_embeds_generated_seed():
     assert 'EVAL_SEED="1744247227"' in args
 
 
+def test_eval_script_uses_oblique_workspace_camera_for_renders():
+    script = ev.ISAAC_EVAL_SCRIPT
+    assert "pos=(-2.0, 0.0, 1.0)" in script
+    assert "rot=(0.9945, 0.0, 0.1045, 0.0)" in script
+    assert 'convention="world"' in script
+    assert "width=256" in script and "height=256" in script
+    assert "clipping_range=(0.05, 20.0)" in script
+
+
 def test_eval_manifest_embeds_custom_object_usd():
     m = ev.build_isaac_eval_job_manifest(
         job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
