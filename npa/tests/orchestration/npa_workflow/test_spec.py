@@ -25,6 +25,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
         "sim2real-vlm-rl.yaml",
         "bdd100k-pipeline.yaml",
         "tokenfactory-cosmos-gate.yaml",
+        "av-night-scene-hardening.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:
