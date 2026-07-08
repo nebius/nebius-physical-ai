@@ -46,9 +46,14 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
 npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
 ```
 
-Dynamic branches: add `--assume-decision promote_checkpoint|loop_back`.
+`submit` accepts both `npa.workflow/v0.0.1` specs and legacy SkyPilot YAMLs.
+For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
+Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
+branches still need `--assume-decision`.
 
 Live infra (required before merge):
 
@@ -69,7 +74,9 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 1. One workflow file = one variant; do not add sim2real-specific Python orchestrators.
 2. Keep **terminal: true** on leaf completion states.
 3. Use `--assume-decision` when planning specs with `transitions`.
-4. SkyPilot submits each planned step; the spec does not call `engine.py` per workflow.
+4. `npa workbench workflow submit <npa.workflow.yaml>` plans the graph, renders
+   a serial SkyPilot multi-doc YAML, and submits it. The spec does not call
+   `engine.py` per workflow. Parallel fan-out stays on raw SkyPilot YAMLs.
 5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
 6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
 

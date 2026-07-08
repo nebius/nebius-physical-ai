@@ -16,17 +16,36 @@ npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real-
 # Plan + optional scheduler hints + S3 run manifest
 npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
   --plan-only --scheduler-plan --persist-state --json
+
+# Submit an npa.workflow spec (renders → SkyPilot multi-doc YAML → sky jobs launch)
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+
+# Render only (no submit) — inspect the generated SkyPilot YAML
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+  --plan-only --run-id demo
 ```
+
+`npa workbench workflow submit` accepts **both** `npa.workflow/v0.0.1` specs and
+legacy SkyPilot YAMLs. For npa.workflow specs it plans the state graph, renders
+a serial SkyPilot multi-doc YAML (resolved images, no `${VAR}` placeholders),
+and submits that. SkyPilot originals under `npa/workflows/workbench/skypilot/`
+are kept as the production runtime reference; see
+[`npa-workflows/README.md`](../../npa/workflows/workbench/npa-workflows/README.md)
+for the twin matrix and SkyPilot-only exceptions.
 
 Golden specs (all pytest-guarded):
 
 | File | Shows |
 | --- | --- |
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
+| `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic `transitions` |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
+| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool twins of SkyPilot YAMLs |
 
 ## Document shape
 
@@ -112,9 +131,13 @@ inventing YAML fields.
 | `--require-inputs` | Fail fast when declared input URIs are missing on S3 |
 | `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) for SkyPilot/K8s glue |
 | `run_workflow(..., execute=True)` | Dynamic traversal; not a static pre-built plan |
+| `npa workbench workflow submit <npa.workflow.yaml>` | Plan → render serial SkyPilot YAML → `sky jobs launch` |
 
-SkyPilot submit per step is **not** wired yet — scheduler output is the integration
-contract for the next layer.
+`npa workbench workflow submit` on an `npa.workflow/v0.0.1` spec plans the graph,
+renders a serial SkyPilot multi-doc YAML (resolved images, no `${VAR}`
+placeholders), and submits it. Use `--plan-only` to inspect the rendered YAML
+without launching. Parallel fan-out (`execution: parallel`) remains out of
+scope for v0.0.1 — those pipelines stay as raw SkyPilot YAMLs.
 
 ## SDK
 

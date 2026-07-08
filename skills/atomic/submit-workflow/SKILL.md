@@ -14,11 +14,13 @@ SkyPilot submission behavior.
 
 1. Read `skills/tools/skypilot-workflows/SKILL.md` for SkyPilot version and
    cleanup constraints.
-2. Parse the YAML locally before launch.
+2. Prefer `npa.workflow/v0.0.1` specs under
+   `npa/workflows/workbench/npa-workflows/`. Parse / `validate-spec` locally
+   before launch.
 3. Use `NPA_SKYPILOT_BIN` or `npa skypilot status --bin-path`; do not assume
    `sky` from `PATH`.
-4. Submit through `npa workbench workflow` or the shared workflow submission
-   helper.
+4. Submit through `npa workbench workflow submit` (accepts npa.workflow specs
+   and legacy SkyPilot YAML) or the shared workflow submission helper.
 5. Keep cleanup best-effort and avoid tearing down a shared controller unless
    the operator explicitly requests it.
 
@@ -27,16 +29,22 @@ SkyPilot submission behavior.
 - CLI: `npa workbench workflow --help` and tool-specific `workflow` commands.
 - SDK: use shared workflow submission helpers rather than shelling out from
   application logic.
-- YAML: SkyPilot YAML under `npa/workflows/workbench/skypilot/` is the
-  executable source of truth for resources, env, and task order.
+- YAML: prefer `npa.workflow/v0.0.1` specs under
+  `npa/workflows/workbench/npa-workflows/` for authoring. `npa workbench
+  workflow submit` accepts those specs (plans → renders → SkyPilot) and still
+  accepts raw SkyPilot YAML under `npa/workflows/workbench/skypilot/` for
+  operator/runtime and SkyPilot-only exceptions (parallel, burst, runbook).
 
 ## Gotchas
 
-- SkyPilot `envs` does not support self-referencing interpolation.
+- SkyPilot `envs` does not support self-referencing interpolation. The
+  npa.workflow renderer resolves images and config before submit so rendered
+  YAML has no `${VAR}` placeholders.
 - `sky jobs launch` does not provide a reliable dry-run path in the pinned
-  version; test YAML parsing and mocked submission before live launch.
+  version; use `npa workbench workflow submit --plan-only` for npa.workflow
+  specs, or mock submission before live launch.
 - Mixed serial and parallel task groups can be fragile; serialize when behavior
-  must be deterministic.
+  must be deterministic. Parallel sweeps stay SkyPilot-only in v0.0.1.
 
 ## Verify
 

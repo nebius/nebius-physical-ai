@@ -1,25 +1,70 @@
-# NPA workflow golden specs
+# NPA workflow specs (`apiVersion: npa.workflow/v0.0.1`)
 
-Declarative `apiVersion: npa.workflow/v0.0.1` workflows. Authoring guide:
-[docs/workbench/npa-workflow-guide.md](../../docs/workbench/npa-workflow-guide.md).
+Customer-facing authoring DSL for chaining Workbench tools. Prefer these over
+raw SkyPilot YAMLs when starting a new pipeline.
 
-Agent skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
-`skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
-
-| Spec | Stages | Pattern |
-| --- | --- | --- |
-| [vlm-eval-single.yaml](vlm-eval-single.yaml) | 1 | Single tool, terminal |
-| [tokenfactory-rollout-judge.yaml](tokenfactory-rollout-judge.yaml) | 2 | Serial chain with inputs |
-| [tokenfactory-cosmos-gate.yaml](tokenfactory-cosmos-gate.yaml) | 6 | Creative reason → augment → VLM gate loop |
-| [sim2real-vlm-rl.yaml](sim2real-vlm-rl.yaml) | 11 | Nested loops + dynamic gate |
-| [bdd100k-pipeline.yaml](bdd100k-pipeline.yaml) | 11 | LanceDB → train → eval → review |
+## Commands
 
 ```bash
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml \
-  --run-id demo --assume-decision loop_back
+npa workbench workflow validate-spec <spec.yaml>
+npa workbench workflow plan-spec <spec.yaml> --run-id demo
+npa workbench workflow submit <spec.yaml> --run-id demo   # renders → SkyPilot
+npa workbench workflow submit <spec.yaml> --plan-only     # render only
 ```
 
-SkyPilot execution for BDD100K remains at
-`npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml` (submitted via
-`npa/scripts/run_bdd100k_pipeline.py`).
+`npa workbench workflow submit` accepts **both** `npa.workflow/v0.0.1` specs and
+legacy SkyPilot YAMLs. For npa.workflow specs it plans the state graph, renders
+a serial SkyPilot multi-doc YAML, and submits that. SkyPilot originals under
+`../skypilot/` are kept as the production runtime reference until every twin
+has a live E2E.
+
+## Twins of SkyPilot YAMLs
+
+| npa.workflow spec | SkyPilot twin | Notes |
+| --- | --- | --- |
+| `vlm-eval-single.yaml` | `../skypilot/vlm-eval.yaml` | Self-hosted VLM; renderer adds vLLM setup |
+| `vlm-eval-benchmark.yaml` | `../skypilot/vlm-eval-benchmark.yaml` | |
+| `token-factory-caption.yaml` | `../skypilot/token-factory-caption.yaml` | Zero-GPU; needs `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
+| `token-factory-generate.yaml` | `../skypilot/token-factory-generate.yaml` | Zero-GPU |
+| `token-factory-cosmos-reason.yaml` | `../skypilot/token-factory-cosmos-reason.yaml` | Zero-GPU |
+| `tokenfactory-rollout-judge.yaml` | `../skypilot/tokenfactory-rollout-judge.yaml` | Spec is reason→VLM; SkyPilot twin is LeRobot→VLM |
+| `tokenfactory-cosmos-gate.yaml` | (creative) | Gate loop |
+| `bdd100k-pipeline.yaml` | `../skypilot/bdd100k-pipeline.yaml` | 11-stage AV pipeline |
+| `mjlab-eval.yaml` | `../skypilot/mjlab-eval.yaml` | |
+| `retargeting.yaml` | `../skypilot/retargeting.yaml` | |
+| `sonic-train.yaml` | `../skypilot/sonic-train-standalone.yaml` | |
+| `sonic-export.yaml` | `../skypilot/sonic-export.yaml` | |
+| `sonic-eval.yaml` | `../skypilot/sonic-eval.yaml` | |
+| `sonic-export-eval.yaml` | `../skypilot/sonic-export-eval.yaml` | |
+| `sonic-locomotion-finetuning.yaml` | `../skypilot/sonic-locomotion-finetuning.yaml` | retarget → train → mjlab |
+| `cosmos3-reason.yaml` | `../skypilot/cosmos3-reason.yaml` | |
+| `byof.yaml` | `../skypilot/byof-*-rtxpro*.yaml` | Delegates to `run_byof_repo.py` |
+| `rl-policy-training-sim-success.yaml` | `../skypilot/isaac-lab-rl-train.yaml` | Partial |
+| `sim2real-vlm-rl.yaml` | (demo) | Stub toolRefs; not the 14-stage engine |
+
+## Still SkyPilot-only (documented exceptions)
+
+These stay under `../skypilot/` for now — do not invent incomplete twins:
+
+| SkyPilot YAML | Why it stays |
+| --- | --- |
+| `isaac-lab-rl-sweep.yaml` | `execution: parallel` — out of v0.0.1 scope |
+| `skypilot-kubernetes-rtxpro.yaml` | Global SkyPilot config, not a workflow |
+| `isaac-lab-cosmos-sdg-burst-smoke.yaml` | `npa burst submit-yaml` path |
+| `sim-to-real-pipeline.yaml` | Monolithic driver, not a toolRef graph |
+| `sim-to-real-trigger.yaml` | Poll/submit orchestrator |
+| `sim-to-real-loop.yaml` | Custom eval loop script |
+| `sim2real-envgen-split.yaml` / `sim2real-actions.yaml` | Staged engine siblings |
+| `cosmos3-ea-fetch.yaml` / `cosmos3-text-to-image-inference.yaml` | Catalog toolRefs pending |
+| `isaac-franka-capture-reason.yaml` | Capture toolRef pending |
+| `tokenfactory-train-triage.yaml` / `tokenfactory-scene-to-rollout-judge.yaml` | Extra stages pending |
+| `byof-container-smoke-rtxpro.yaml` / `byof-datagen-rtxpro-smoke.yaml` | Covered via `byof.yaml` + runner |
+| `isaac-lab-rl-train-rtxpro*.yaml` | Resource-profile variants of Isaac train |
+
+The Sim2Real **14-stage engine** (`../sim2real/runbook.yaml`) is a separate
+path (`npa workbench workflow submit` detects it and routes to direct K8s).
+
+## Guide
+
+See `docs/workbench/npa-workflow-guide.md` and
+`docs/workbench/npa-workflow-tool-catalog.md`.

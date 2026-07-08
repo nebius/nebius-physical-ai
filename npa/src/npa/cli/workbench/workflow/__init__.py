@@ -47,7 +47,9 @@ def _fail(msg: str, code: int = 1) -> None:
 
 @app.command("submit")
 def submit_cmd(
-    yaml_path: Path = typer.Argument(help="SkyPilot workflow YAML path."),
+    yaml_path: Path = typer.Argument(
+        help="Workflow YAML path (SkyPilot or npa.workflow/v0.0.1)."
+    ),
     run_id: str = typer.Option(
         "",
         "--run-id",
@@ -86,7 +88,26 @@ def submit_cmd(
     var: list[str] = typer.Option(
         [],
         "--var",
-        help="Variable substitution as KEY=VALUE.",
+        help=(
+            "Variable substitution as KEY=VALUE. For SkyPilot YAML this replaces "
+            "${KEY}; for npa.workflow specs this merges into config."
+        ),
+    ),
+    assume_decision: str = typer.Option(
+        "",
+        "--assume-decision",
+        help=(
+            "For npa.workflow specs with dynamic transitions: "
+            "promote_checkpoint or loop_back."
+        ),
+    ),
+    plan_only: bool = typer.Option(
+        False,
+        "--plan-only/--no-plan-only",
+        help=(
+            "For npa.workflow specs: render the SkyPilot YAML and print it, "
+            "but do not submit."
+        ),
     ),
     tool: str = typer.Option(
         "",
@@ -96,12 +117,12 @@ def submit_cmd(
     registry: str = typer.Option(
         "",
         "--registry",
-        help="Container registry used by workflow materializers.",
+        help="Container registry used by workflow materializers / npa.workflow renderer.",
     ),
     image: str = typer.Option(
         "",
         "--image",
-        help="First-party tool image override used by workflow materializers.",
+        help="First-party tool image override used by workflow materializers / npa.workflow renderer.",
     ),
     npa_image: str = typer.Option(
         "",
@@ -135,7 +156,7 @@ def submit_cmd(
         "",
         "--gpu-target",
         "--gpu-type",
-        help="GPU target used by workflow materializers.",
+        help="GPU target used by workflow materializers / npa.workflow renderer.",
     ),
     image_variant: str = typer.Option(
         "",
@@ -219,7 +240,11 @@ def submit_cmd(
         help="Output format.",
     ),
 ) -> None:
-    """Submit a SkyPilot workflow YAML through the NPA controller convention."""
+    """Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller."""
+    from npa.orchestration.npa_workflow.detect import is_npa_workflow_spec
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
     from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, submit_workflow
     from npa.orchestration.skypilot.workflow_state import (
         SECRET_ENV_NAMES,
@@ -273,6 +298,74 @@ def submit_cmd(
             typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
             typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
         return
+
+    prepared_npa = None
+    if is_npa_workflow_spec(yaml_path):
+        image_overrides: dict[str, str] = {}
+        if image.strip():
+            image_overrides["*"] = image.strip()
+        try:
+            prepared_npa = prepare_npa_workflow_for_submit(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                config_overrides=substitutions,
+                render_options=SkypilotRenderOptions(
+                    registry=registry,
+                    image_overrides=image_overrides,
+                    aws_endpoint_url=s3_endpoint
+                    or "https://storage.eu-north1.nebius.cloud",
+                    gpu_target=gpu_target,
+                    image_variant=image_variant,
+                ),
+            )
+        except NpaWorkflowError as exc:
+            _fail(str(exc))
+            return
+
+        if plan_only:
+            rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
+            payload = {
+                "status": "PLANNED",
+                "run_id": resolved_run_id,
+                "workflow": prepared_npa.spec.name,
+                "steps": len(prepared_npa.plan.steps),
+                "secret_env_hints": list(prepared_npa.secret_env_hints),
+                "skypilot_yaml": rendered,
+            }
+            if output_format == OutputFormat.json:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                typer.echo("status: PLANNED")
+                typer.echo(f"run_id: {resolved_run_id}")
+                typer.echo(f"workflow: {prepared_npa.spec.name}")
+                typer.echo(f"steps: {len(prepared_npa.plan.steps)}")
+                if prepared_npa.secret_env_hints:
+                    typer.echo(
+                        "secret_env_hints: "
+                        + ",".join(prepared_npa.secret_env_hints)
+                    )
+                typer.echo("---")
+                typer.echo(rendered)
+            prepared_npa.temp_dir.cleanup()
+            return
+
+        # Skip SkyPilot-path materializers; npa.workflow already planned.
+        materializer = ""
+        substitutions = {}
+        yaml_path = prepared_npa.skypilot_yaml_path
+        if prepared_npa.secret_env_hints:
+            missing = [
+                name
+                for name in prepared_npa.secret_env_hints
+                if name not in secret_env
+            ]
+            if missing:
+                typer.echo(
+                    "Hint: consider --secret-env "
+                    + " --secret-env ".join(missing),
+                    err=True,
+                )
 
     submitted_yaml_path = yaml_path
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
@@ -393,6 +486,8 @@ def submit_cmd(
     finally:
         if submitted_yaml_context is not None:
             submitted_yaml_context.cleanup()
+        if prepared_npa is not None:
+            prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result.__dict__, indent=2, sort_keys=True))

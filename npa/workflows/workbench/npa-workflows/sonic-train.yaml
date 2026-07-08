@@ -1,0 +1,33 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sonic-train
+  description: Train or smoke-validate a SONIC locomotion policy.
+  skypilotTwin: npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/sonic-train"
+  sonic_runtime: serverless
+  checkpoint_uri: "nvidia/GEAR-SONIC"
+  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: train
+
+states:
+  train:
+    description: Run SONIC Isaac Lab training or smoke validation.
+    toolRef: workbench.sonic.train
+    resources: gpu
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
+        schema: npa.workbench.sonic.checkpoint.v1
+    terminal: true

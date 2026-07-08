@@ -1,0 +1,45 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sonic-export-eval
+  description: Export a SONIC checkpoint to ONNX, then evaluate it.
+  skypilotTwin: npa/workflows/workbench/skypilot/sonic-export-eval.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/sonic-export-eval"
+  episodes: "8"
+  env: smoke
+
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.pt"
+  onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+
+initial: export-onnx
+
+states:
+  export-onnx:
+    description: Export a SONIC locomotion checkpoint to ONNX.
+    toolRef: workbench.sonic.export
+    resources: gpu
+    outputs:
+      - uri: "{{config.onnx_uri}}"
+        schema: npa.workbench.sonic.onnx.v1
+    next: eval-onnx
+
+  eval-onnx:
+    description: Evaluate the exported ONNX policy.
+    needs: [export-onnx]
+    toolRef: workbench.sonic.eval
+    resources: gpu
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/eval.json"
+        schema: npa.workbench.sonic.eval.v1
+    terminal: true
