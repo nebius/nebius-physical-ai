@@ -185,6 +185,23 @@ def build_model_ladder(
     return ladder
 
 
+def filter_available(ladder: Sequence[str], available: Iterable[str] | None) -> list[str]:
+    """Drop ladder entries the endpoint cannot serve (e.g. missing ``-fast``).
+
+    ``available`` is the set of model IDs the Token Factory key actually
+    exposes. When it is empty/unknown we cannot filter safely, so the ladder is
+    returned unchanged and the resilience loop falls through on 404s. When
+    filtering removes everything (misconfiguration), the original ladder is
+    returned so a turn is never stranded with an empty ladder.
+    """
+    ladder_list = [str(m).strip() for m in (ladder or []) if str(m).strip()]
+    available_set = {str(m).strip() for m in (available or []) if str(m).strip()}
+    if not available_set:
+        return ladder_list
+    kept = [m for m in ladder_list if m in available_set]
+    return kept or ladder_list
+
+
 def thinking_enabled(tier: str) -> bool:
     """Only the reasoning tier keeps the (billed) hidden reasoning trace."""
     return tier == TIER_REASONING

@@ -2938,6 +2938,12 @@ def _chat_with_resilience(
         requested_model=requested_model,
         allow_tier_defaults=allow_tier_defaults,
     )
+    # Drop flavors/models the key cannot serve (e.g. missing -fast variants) so
+    # interactive turns do not burn a round-trip on a guaranteed 404.
+    try:
+        ladder = filter_available(ladder, _available_llm_models())
+    except Exception:
+        pass
     if not ladder:
         ladder = list(configured) or [requested_model] if requested_model else list(configured)
     extra = chat_extra(tier)

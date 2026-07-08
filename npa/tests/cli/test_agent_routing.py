@@ -129,6 +129,27 @@ def test_build_model_ladder_deduplicates() -> None:
     assert len(ladder) == len(set(ladder))
 
 
+# ── availability filtering ───────────────────────────────────────────────────
+
+
+def test_filter_available_drops_unavailable_fast_variants() -> None:
+    ladder = [f"{r.CHEAP_MODEL}-fast", r.CHEAP_MODEL, f"{r.STANDARD_MODEL}-fast", r.STANDARD_MODEL]
+    available = {r.CHEAP_MODEL, r.STANDARD_MODEL}  # no -fast in this key's catalog
+    assert r.filter_available(ladder, available) == [r.CHEAP_MODEL, r.STANDARD_MODEL]
+
+
+def test_filter_available_unchanged_when_availability_unknown() -> None:
+    ladder = [f"{r.CHEAP_MODEL}-fast", r.CHEAP_MODEL]
+    assert r.filter_available(ladder, None) == ladder
+    assert r.filter_available(ladder, []) == ladder
+
+
+def test_filter_available_never_strands_turn() -> None:
+    ladder = [f"{r.CHEAP_MODEL}-fast"]
+    # Nothing in the ladder is available -> return original rather than empty.
+    assert r.filter_available(ladder, {"some/other-model"}) == ladder
+
+
 # ── thinking / extra payload ─────────────────────────────────────────────────
 
 
