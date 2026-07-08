@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -48,7 +49,7 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
     monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-mk8s")
     monkeypatch.delenv("NPA_BYOF_INFRA", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_INFRA", raising=False)
-    assert module._default_infra() == "k8s/customer-mk8s"
+    assert module._default_infra() == "kubernetes"
 
 
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
@@ -138,3 +139,31 @@ def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
     assert "imagePullSecrets" in text
     assert "agent-sa" in text
     assert "npa-nebius-registry" in text
+
+
+def test_normalize_kubeconfig_current_context(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    source = tmp_path / "source-kubeconfig"
+    source.write_text(
+        """
+apiVersion: v1
+kind: Config
+current-context: old-context
+contexts:
+- name: target-context
+  context: {}
+clusters: []
+users: []
+""".strip(),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setenv("KUBECONFIG", str(source))
+    monkeypatch.setenv("KUBECONTEXT", "target-context")
+
+    module._normalize_kubeconfig_current_context(out)
+
+    updated = Path(os.environ["KUBECONFIG"]).read_text(encoding="utf-8")
+    assert "current-context: target-context" in updated
+    assert str(out) in os.environ["KUBECONFIG"]

@@ -177,6 +177,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
+        _normalize_kubeconfig_current_context(tmp_path)
         rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
@@ -296,7 +297,28 @@ def _default_infra() -> str:
         or os.environ.get("NPA_K8S_CONTEXT", "")
         or os.environ.get("KUBECONTEXT", "")
     ).strip()
-    return f"k8s/{context}" if context else ""
+    return "kubernetes" if context else ""
+
+
+def _normalize_kubeconfig_current_context(tmp_path: Path) -> None:
+    kubeconfig = os.environ.get("KUBECONFIG", "").strip()
+    context = (
+        os.environ.get("KUBECONTEXT", "")
+        or os.environ.get("NPA_BYOF_K8S_CONTEXT", "")
+        or os.environ.get("NPA_K8S_CONTEXT", "")
+    ).strip()
+    if not kubeconfig or not context:
+        return
+    path = Path(kubeconfig)
+    if not path.is_file():
+        return
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return
+    data["current-context"] = context
+    target = tmp_path / "kubeconfig"
+    target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    os.environ["KUBECONFIG"] = str(target)
 
 
 def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
