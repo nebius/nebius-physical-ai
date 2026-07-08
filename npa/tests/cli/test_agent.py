@@ -542,7 +542,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
     assert "class=\"panel rerun-panel\"" in source
-    assert ".layout-3 .rerun-panel" in source
+    assert ".layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}" in source
+    assert ".cameras-panel {{ display: block; }}" in source
     assert "height: min(78vh, 820px)" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
