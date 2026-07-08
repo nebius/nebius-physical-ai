@@ -1,0 +1,159 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Produced by the diagram-to-npa-workflow skill from the 13-step sim2real
+# write-up + architecture diagram. See ../reference/mapping.md "Sim2real worked
+# example" for the step->state->toolRef table and every discrepancy note.
+#
+# Loops (read off the diagram's back-edges):
+#   inner (fast)  = steps 7-9  : rollouts -> VLM critique -> RL update
+#   outer (slow)  = steps 7-11 : inner pass -> heldout eval -> threshold gate
+#   loop-of-loops = steps 12-13: real-world test -> retrigger (a NEW run, so the
+#                                retrigger is a terminal record, not a graph cycle)
+
+metadata:
+  name: sim2real-vlm-rl-from-diagram
+  description: >
+    VLM-to-RL sim2real staged loop rendered from an architecture diagram: Cosmos
+    Transfer augment -> Isaac Lab raw env gen + 80/20 split -> inner
+    rollouts/VLM-critique loop -> Isaac held-out eval -> promote/loop-back
+    threshold gate -> checkpoint + real-world retrigger record.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-b/{{run.id}}"
+
+  inner_iterations: 3          # step 9 back-edge: RL updates per training session
+  outer_iterations: 2          # step 11B back-edge: eval -> more RL until promote
+  vlm_backend: self-hosted
+  default_decision: loop_back  # planning-only; real decision read from S3 at execute
+
+  # step 5/6 knobs: total raw envs and the 80/20 train split (kept as config, not
+  # hardcoded topology — the write-up says 1K/800-200, the diagram says 8K/2K).
+  env_count: "10000"
+  train_fraction: "0.8"
+  success_threshold: "0.50"    # step 11 customer-chosen promote threshold
+
+  # step 1 trigger + step 4 sim assets (LeRobot data + Isaac scene/robot assets).
+  trigger_uri: "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
+  assets_uri: "s3://{{config.bucket}}/sim2real-assets/franka-tabletop/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/augment/"
+  raw_envs_uri: "s3://{{config.bucket}}/{{config.prefix}}/envs/raw/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/actions/train/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/vlm_eval/train/"
+  heldout_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/heldout/report.json"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/outer_loop/decision.json"
+  finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real-report.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+
+initial: augment
+
+states:
+  augment:
+    description: Step 3 — Cosmos Transfer 2.5 augments curated good LeRobot data.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.lerobot.dataset.v1
+    outputs:
+      - uri: "{{config.augment_uri}}manifest.json"
+        schema: npa.sim2real.augment.v1
+    next: envgen
+
+  envgen:
+    description: Steps 4-6 — Isaac Lab combines augment + sim assets into raw envs, emits 80/20 split.
+    needs: [augment]
+    toolRef: workbench.sim2real_envgen.raw_shard
+    resources: gpu
+    # note: step 4 assets and step 6 split are data ops on this one state — the
+    # "80/20" diamond in the diagram is a split manifest, NOT a decision diamond.
+    inputs:
+      - uri: "{{config.assets_uri}}"
+        schema: npa.sim2real.assets.v1
+    outputs:
+      - uri: "{{config.raw_envs_uri}}manifest.json"
+        schema: npa.sim2real.split_manifest.v1
+    next: outer
+
+  outer:
+    description: Outer loop (steps 7-11) — inner train pass, held-out eval, threshold gate.
+    needs: [envgen]
+    loop:
+      max: "{{config.outer_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - inner
+      - heldout
+      - decide
+    next: finalize
+
+  inner:
+    description: Inner loop (steps 7-9) — policy rollouts + VLM critique per RL update.
+    loop:
+      max: "{{config.inner_iterations}}"
+    sequence:
+      - rollouts
+      - vlm-score
+
+  rollouts:
+    description: Step 7 — LeRobot training image generates actions on the 80% train envs.
+    toolRef: workbench.sim2real.policy_rollouts
+    resources: gpu
+    outputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.sim2real.action_rollout.v1
+
+  vlm-score:
+    description: Step 8-9 — VLM judges rollouts; critique becomes the RL reward signal.
+    needs: [rollouts]
+    toolRef: workbench.vlm_eval.run
+    resources: gpu
+    inputs:
+      - uri: "{{config.rollouts_uri}}"
+        schema: npa.sim2real.action_rollout.v1
+    outputs:
+      - uri: "{{config.scores_uri}}report.json"
+        schema: npa.workbench.vlm_eval.report.v1
+
+  heldout:
+    description: Step 10 — Isaac Lab eval framework rolls the trained policy on the 20% held-out envs.
+    toolRef: workbench.sim2real.heldout_eval
+    resources: gpu
+    outputs:
+      - uri: "{{config.heldout_report_uri}}"
+        schema: npa.sim2real.heldout_eval.v1
+
+  decide:
+    description: Step 11 — threshold gate; promote checkpoint or loop back for more RL.
+    writesDecision: true
+    needs: [heldout]
+    toolRef: workbench.sim2real.write_decision
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+    transitions:
+      - when: promote_checkpoint   # step 11A — clears threshold
+        goto: finalize
+      - when: loop_back            # step 11B — misses threshold, more RL
+        goto: outer
+
+  finalize:
+    description: Steps 11A/12/13 — checkpoint to S3, record real-world test + retrigger manifest.
+    needs: [outer]
+    toolRef: workbench.sim2real.finalize
+    # note: steps 12 (real-world test) and 13 (retrigger Step 1 with real data) are
+    # the loop-of-loops. A back-edge to `augment` would be an unbounded cycle, so we
+    # record a retrigger manifest here and terminate; the next outer-of-outer pass is
+    # a brand-new run seeded with distribution-shifted real data. Loop exit = no retrigger.
+    outputs:
+      - uri: "{{config.finalize_report_uri}}"
+        schema: npa.sim2real.e2e_report.v1
+    terminal: true

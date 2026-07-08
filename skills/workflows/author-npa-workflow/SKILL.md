@@ -81,6 +81,8 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic gate |
 | `bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
+| `av-night-scene-hardening.yaml` | AV night-scene fan-out — two per-view detector train→eval branches |
+| `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 
 ## Verify

@@ -9,13 +9,13 @@ from __future__ import annotations
 import json as json_module
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Optional
 
 import typer
 
 from npa.clients.credentials import load_credentials
+from npa.clients.kube import run_kubectl
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
 from npa.workflows.sim2real_health import (
@@ -62,31 +62,16 @@ def _image_inspector(image: str) -> bool | None:
 
 
 def _kube_runner_factory(context: str, kubeconfig: str):
-    binary = os.environ.get("NPA_KUBECTL_BIN") or shutil.which("kubectl")
-    if not binary:
+    if not (os.environ.get("NPA_KUBECTL_BIN") or shutil.which("kubectl")):
         return None
 
     def _run(args: list[str]) -> KubeResult:
-        cmd = [binary]
-        if context:
-            cmd += ["--context", context]
-        cmd += args
-        proc_env = os.environ.copy()
-        if kubeconfig:
-            proc_env["KUBECONFIG"] = kubeconfig
-        try:
-            proc = subprocess.run(
-                cmd,
-                env=proc_env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            return KubeResult(returncode=1, stdout="", stderr=str(exc))
-        return KubeResult(returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+        # run_kubectl self-heals from a stale ambient NEBIUS_IAM_TOKEN that would
+        # otherwise shadow the kubeconfig exec plugin and fail every call.
+        result = run_kubectl(args, context=context, kubeconfig=kubeconfig, timeout=30)
+        return KubeResult(
+            returncode=result.returncode, stdout=result.stdout, stderr=result.stderr
+        )
 
     return _run
 

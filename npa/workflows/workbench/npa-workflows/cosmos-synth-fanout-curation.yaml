@@ -1,0 +1,112 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Reference blueprint: fan-out synthetic-data generation (Cosmos Transfer 2.5)
+# followed by data curation on Voxel51 / FiftyOne.
+#
+# Shape:
+#   [seed dataset] -> synth-fanout (N Cosmos Transfer 2.5 shard jobs, one GPU each,
+#                     run in parallel at the K8s execution layer) -> merge/index
+#                  -> curate on Voxel51 (FiftyOne) -> terminal
+#
+# Cosmos Transfer 2.5 is the synthetic-data engine: each shard perturbs the seed
+# episodes (lighting/texture/background/contrast) into augmented variants. The
+# shards fan out across GPUs; a merge step indexes all shard outputs, and FiftyOne
+# (Voxel51) curates the combined synthetic set for human review / filtering.
+#
+# NOTE on parallelism: npa.workflow/v0.0.1 has no native parallel fan-out (see the
+# npa-workflow-guide "out of scope" section), so the fan-out is expressed as a
+# `sequence` of shard states under one parent. Real parallel GPU execution is done
+# at the scheduler/K8s layer — this blueprint was validated by fanning out >=2
+# Cosmos Transfer 2.5 GPU jobs on the RTX PRO 6000 cluster (one nvidia.com/gpu each).
+#
+# Authored via the diagram-to-npa-workflow skill.
+
+metadata:
+  name: cosmos-synth-fanout-curation
+  description: >
+    Fan-out synthetic-data generation with Cosmos Transfer 2.5 followed by Voxel51
+    (FiftyOne) curation: seed dataset -> N Cosmos Transfer shard jobs (one GPU each)
+    -> merge/index -> FiftyOne curation. Fan-out topology; GPU synth + CPU curation tiers.
+
+config:
+  bucket: example-bucket
+  prefix: "cosmos-synth-fanout/{{run.id}}"
+
+  synth_shards: "2"          # number of Cosmos Transfer shard jobs (>=2 GPUs)
+  cosmos_transfer_image: "npa-cosmos2-transfer:2.5.1"
+
+  trigger_uri: "s3://{{config.bucket}}/synth-seeds/{{run.id}}/lerobot-pusht/"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
+  frames_index_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/index.json"
+  # FiftyOne / Voxel51 reads the curated dataset from this prefix.
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
+  curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 4
+    memory: 16Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: synth-fanout
+
+states:
+  synth-fanout:
+    description: Fan out Cosmos Transfer 2.5 synthetic-data jobs (one GPU per shard).
+    sequence:
+      - synth-shard-a
+      - synth-shard-b
+    next: merge-index
+
+  synth-shard-a:
+    description: Cosmos Transfer 2.5 synthetic shard A — perturb seed episodes on GPU.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.lerobot.dataset.v1
+    outputs:
+      - uri: "{{config.augment_uri}}shard-a/manifest.json"
+        schema: npa.sim2real.augment.v1
+
+  synth-shard-b:
+    description: Cosmos Transfer 2.5 synthetic shard B — perturb seed episodes on GPU.
+    toolRef: workbench.cosmos2.transfer
+    resources: gpu
+    inputs:
+      - uri: "{{config.trigger_uri}}"
+        schema: npa.lerobot.dataset.v1
+    outputs:
+      - uri: "{{config.augment_uri}}shard-b/manifest.json"
+        schema: npa.sim2real.augment.v1
+
+  merge-index:
+    description: Merge shard outputs into a single synthetic-frame index for curation.
+    needs: [synth-fanout]
+    run:
+      shell: >
+        echo "index {{config.synth_shards}} cosmos-transfer shards ->
+        {{config.frames_index_uri}}"
+    outputs:
+      - uri: "{{config.frames_index_uri}}"
+        schema: npa.sim2real.augmented_frames.v1
+    next: curate
+
+  curate:
+    description: Curate the combined synthetic set on Voxel51 (FiftyOne) for review/filtering.
+    needs: [merge-index]
+    toolRef: workbench.fiftyone.launch_app
+    resources: cpu
+    inputs:
+      - uri: "{{config.lance_uri}}"
+        schema: npa.sim2real.augmented_frames.v1
+    outputs:
+      - uri: "{{config.curation_report_uri}}"
+        schema: npa.fiftyone.curation.v1
+    terminal: true

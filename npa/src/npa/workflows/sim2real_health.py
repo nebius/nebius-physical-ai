@@ -459,7 +459,10 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             summary=f"Cannot create pods in namespace {namespace!r} on context {context!r}.",
             remedy=(
                 "Refresh the managed-Kubernetes credentials and confirm the context "
-                "and namespace. 'sky check' HTTP 403 anonymous has the same root cause."
+                "and namespace. A stale NEBIUS_IAM_TOKEN in the environment shadows "
+                "the kubeconfig exec plugin (npa retries once without it); clear it "
+                "with 'unset NEBIUS_IAM_TOKEN'. 'sky check' HTTP 403 anonymous has "
+                "the same root cause."
             ),
             details=(_short(can_i.stderr or can_i.stdout),),
         )

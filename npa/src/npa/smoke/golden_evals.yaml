@@ -5,7 +5,14 @@
 # must have exactly one entry here. Each entry records:
 #   - physical_ai: whether/why the container is useful for Physical AI work.
 #   - safety:      the safety posture of the image (runtime user, network, fetches).
-#   - golden_eval: the minimal "does this container actually work" rerun.
+#   - golden_eval: the minimal test that the container ACTUALLY DOES ITS JOB.
+#
+# "Golden eval" means a real capability test of the container — the smallest run
+# that exercises the tool's actual function and produces a real artifact/result
+# (e.g. Cosmos Transfer runs a real world-transfer and emits a video; LeRobot runs
+# a real train/eval step; a server answers a real request). It is NOT a wrapper or
+# a bare CUDA/import probe: `torch.cuda.is_available()` alone is not a golden eval.
+# A pure import/probe is only acceptable for foundation base images (build-import).
 #
 # Consumers:
 #   - npa.smoke.manifest          loads and validates this file.
@@ -14,11 +21,13 @@
 #   - npa/tests/smoke/test_golden_eval_manifest.py   completeness/consistency gate.
 #
 # golden_eval.kind values:
-#   container-smoke  module run inside the built image (env + functional smoke).
+#   container-smoke  real capability run inside the built image (exercises the
+#                    tool's function and checks a real result, not just imports).
 #   server-smoke     start the FastAPI service, poll /health, do one real op.
 #   entrypoint-smoke container ENTRYPOINT mode that self-reports a result artifact.
 #   workflow-smoke   workflow module entrypoint (CLI contract / help) proof.
-#   build-import     import/compile proof that the heavy deps resolve.
+#   build-import     import/compile proof that heavy deps resolve — foundation
+#                    base images only (not a substitute for a capability test).
 #
 # golden_eval.gpu values: required | optional | none
 # golden_eval.status values: ready | gpu-gated | blocked-on-upstream
@@ -242,16 +251,20 @@ containers:
       network: transfer/serve endpoint
       external_fetch: [huggingface, s3]
       notes: >-
-        Base transfer runtime is built outside this repo; this repo ships a thin
-        golden-eval wrapper Dockerfile that copies a CUDA probe script. PyTorch
-        lives in /opt/cosmos/venv, not on default python.
+        Base transfer runtime is built outside this repo; this repo's wrapper
+        Dockerfile bakes the real cosmos-transfer2.5 inference venv (Python 3.10 +
+        torch cu128 + flash-attn via `uv sync`) so the container can actually run
+        transfer. The golden eval runs a real video-to-video transfer on a bundled
+        robot control example and asserts a generated video; the gated
+        Cosmos-Transfer2.5-2B checkpoints auto-download on first use (HF_TOKEN +
+        NVIDIA Open Model License).
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional
       command: bash /opt/cosmos2-transfer/smoke_functional.sh
       serverless_gpu: h100
       gpu: required
-      timeout_seconds: 300
+      timeout_seconds: 1800
       status: gpu-gated
 
   cosmos3-reason:
@@ -269,14 +282,17 @@ containers:
       external_fetch: [pypi, huggingface]
       notes: >-
         B300/CUDA13 family currently blocked-on-upstream; inherits base-image
-        posture.
+        posture. The golden eval runs a real Cosmos-Reason VLM inference (the same
+        run_cosmos_reason_vlm path the sim2real VLM-eval uses) over synthetic
+        frames and asserts a structured judgment; gated Cosmos-Reason weights
+        auto-download on first use (HF_TOKEN + NVIDIA license).
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_cosmos3_reason_functional
       command: python -m npa.smoke.test_cosmos3_reason_functional
       serverless_gpu: b300
-      gpu: optional
-      timeout_seconds: 120
+      gpu: required
+      timeout_seconds: 1800
       status: blocked-on-upstream
 
   sonic:

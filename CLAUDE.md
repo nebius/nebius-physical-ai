@@ -31,7 +31,11 @@ making architecture, review, or domain judgments.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate
   declarative `npa.workflow/v0.0.1` specs (toolRef catalog, validate/plan/run CLI).
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative
-  npa.workflow pipelines from the workbench tool catalog.
+ npa.workflow pipelines from the workbench tool catalog.
+- `skills/workflows/diagram-to-npa-workflow/SKILL.md`: turn an architecture
+ diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes, arrows,
+ decision diamonds, and loop back-edges → states, loops, gates, catalog
+ toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 

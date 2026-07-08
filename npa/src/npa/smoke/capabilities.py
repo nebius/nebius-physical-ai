@@ -51,13 +51,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "single text2world inference",
     ],
     "cosmos2-transfer": [
-        "PyTorch in cosmos-transfer2.5 venv",
-        "CUDA device available",
-        "GPU tensor matmul probe",
+        "cosmos-transfer2.5 inference env (torch cu128 + flash-attn)",
+        "real video-to-video world transfer on a bundled robot control example",
+        "generated output video produced (capability, not a CUDA probe)",
     ],
     "cosmos3-reason": [
-        "CUDA available",
-        "Reason cache / model wiring imports",
+        "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
+        "structured rollout judgment returned (score + success verdict)",
     ],
     "sonic": [
         "entrypoint smoke mode",
