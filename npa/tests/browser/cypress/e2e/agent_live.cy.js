@@ -135,13 +135,13 @@ describe("NPA agent UI against live infra", () => {
       cy.contains("reports/sim2real-report.json").should("be.visible");
     });
     cy.get("#stageList", { timeout: 30000 }).within(() => {
-      cy.contains("1 Trigger").should("be.visible");
-      cy.contains("10 Held-out eval").should("be.visible");
-      cy.contains("14 Rerun viz").should("be.visible");
+      cy.contains("Trigger").should("be.visible");
+      cy.contains("Held-out eval").should("be.visible");
+      cy.contains("Reports / visualization").should("be.visible");
       cy.contains("succeeded").should("be.visible");
     });
     cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
-    cy.get("#runLog").should("contain.text", "Derived 14-stage timeline");
+    cy.get("#runLog").should("contain.text", "Derived stage timeline");
     cy.get("#renderedDataSummary").should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
     cy.get("#rerunFrame").should("be.visible");
     cy.get("#chatForm").should("be.visible");

@@ -1833,7 +1833,75 @@ def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
     return merged
 
 
-def _artifact_backed_sim2real_run_details(run_id: str) -> dict | None:
+def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[str]]]:
+    draft = _workflow_draft_from_state(state)
+    stages: list[tuple[str, str, list[str]]] = []
+    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
+    for source in (plan.get("steps"), plan.get("states"), draft.get("states")):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if isinstance(item, dict):
+                raw_id = str(item.get("state") or item.get("id") or item.get("name") or "").strip()
+                label = str(item.get("label") or item.get("description") or raw_id).strip() or raw_id
+            else:
+                raw_id = str(item or "").strip()
+                label = raw_id
+            if not raw_id:
+                continue
+            stage_id = _slug(raw_id, fallback="stage")
+            patterns = [raw_id, raw_id.replace("_", "-"), raw_id.replace("-", "_")]
+            if (stage_id, label, patterns) not in stages:
+                stages.append((stage_id, label, patterns))
+        if stages:
+            break
+    return stages
+
+
+def _artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
+    value = str(key or "").strip("/")
+    for lead in (prefix.strip("/"), ""):
+        scoped = value
+        if lead and scoped.startswith(lead + "/"):
+            scoped = scoped[len(lead) + 1 :]
+        if run_id and scoped.startswith(run_id + "/"):
+            scoped = scoped[len(run_id) + 1 :]
+            break
+    parts = [part for part in scoped.split("/") if part]
+    if not parts:
+        return "artifacts"
+    first = parts[0]
+    if first == "reports":
+        return "reports"
+    if first == "eval" and len(parts) > 1:
+        return "eval/" + parts[1]
+    if first in {{"actions", "vlm_eval", "training_signal", "envs"}} and len(parts) > 1:
+        return first + "/" + parts[1]
+    return first
+
+
+def _artifact_stage_label(stage_key: str) -> str:
+    labels = {{
+        "stage_01_trigger": "Trigger",
+        "stage_02_assets": "Assets",
+        "stage_12_external_validation": "External validation",
+        "stage_13_retrigger": "Retrigger",
+        "eval/heldout": "Held-out eval",
+        "actions/train": "Policy rollouts",
+        "vlm_eval/train": "VLM eval",
+        "training_signal/train": "Training signal",
+        "envs/raw": "Raw envs",
+        "envs/train": "Train envs",
+        "outer_loop": "Decision / outer loop",
+        "reports": "Reports / visualization",
+    }}
+    if stage_key in labels:
+        return labels[stage_key]
+    cleaned = stage_key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Artifacts"
+
+
+def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
     if not run_id:
         return None
     try:
@@ -1845,48 +1913,73 @@ def _artifact_backed_sim2real_run_details(run_id: str) -> dict | None:
     if not artifacts:
         return None
     keys = [str(item.key or "") for item in artifacts]
-
-    def _count(patterns: list[str]) -> int:
-        return sum(1 for key in keys if any(pattern in key for pattern in patterns))
-
-    stage_markers: dict[str, list[str]] = {{
-        "stage_01_trigger": ["stage_01_trigger/"],
-        "stage_02_assets": ["stage_02_assets/", "consumed_scene_spec", "consumed_robot_spec"],
-        "stage_03_augment": ["augment/manifest.json", "augment/"],
-        "stage_04_envs_raw": ["envs/raw/"],
-        "stage_05_envs_train": ["envs/train/"],
-        "stage_06_tokens": ["tokens/"],
-        "stage_07_actions_train": ["actions/train/"],
-        "stage_08_vlm_eval_train": ["vlm_eval/train/"],
-        "stage_09_training_signal": ["training_signal/train/", "checkpoints/candidate"],
-        "stage_10_eval_heldout": ["eval/heldout/"],
-        "stage_11_outer_loop": ["outer_loop/decision.json", "outer_loop/"],
-        "stage_12_external_validation_stub": ["stage_12_external_validation/"],
-        "stage_13_retrigger": ["stage_13_retrigger/"],
-        "stage_14_rerun_viz": ["reports/sim2real.rrd", "reports/sim2real-report.json"],
-    }}
     stages = []
-    for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
-        if stage_id == "submit":
+    workflow_stage_defs = _workflow_stage_defs_from_state(state)
+    used_keys: set[str] = set()
+    if workflow_stage_defs:
+        for stage_id, label, patterns in workflow_stage_defs:
+            matched = [
+                key
+                for key in keys
+                if any(pattern and pattern in key for pattern in patterns)
+            ]
+            used_keys.update(matched)
+            count = len(matched)
+            stages.append(
+                {{
+                    "id": stage_id,
+                    "label": label,
+                    "status": "succeeded" if count else "pending",
+                    "started_at": "",
+                    "finished_at": "",
+                    "summary": (
+                        f"{{count}} artifact{{'' if count == 1 else 's'}} matched workflow state '{{label}}'."
+                        if count
+                        else "No artifact matched this workflow state yet."
+                    ),
+                }}
+            )
+    grouped: dict[str, list[str]] = {{}}
+    for key in keys:
+        stage_key = _artifact_stage_key(key, run_id, effective_prefix)
+        grouped.setdefault(stage_key, []).append(key)
+    for stage_key, matched in sorted(grouped.items()):
+        if workflow_stage_defs and all(key in used_keys for key in matched):
             continue
-        marker_count = _count(stage_markers.get(stage_id, []))
+        count = len(matched)
         stages.append(
             {{
-                "id": stage_id,
-                "label": label,
-                "status": "succeeded" if marker_count else "pending",
+                "id": _slug(stage_key, fallback="artifacts"),
+                "label": _artifact_stage_label(stage_key),
+                "status": "succeeded",
                 "started_at": "",
                 "finished_at": "",
-                "summary": (
-                    f"{{marker_count}} S3 artifact marker{{'' if marker_count == 1 else 's'}} found."
-                    if marker_count
-                    else "No matching S3 marker found in the configured artifact prefix."
-                ),
+                "summary": f"{{count}} artifact{{'' if count == 1 else 's'}} found under '{{stage_key}}'.",
             }}
         )
-    report_ready = _count(["reports/sim2real-report.json"]) > 0
-    rrd_ready = _count(["reports/sim2real.rrd"]) > 0
+    report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
+    rrd_ready = any(key.endswith(".rrd") for key in keys)
     preferred = select_preferred_artifact(artifacts)
+    report_note = ""
+    report_artifact = next((item for item in artifacts if item.key.endswith("/reports/sim2real-report.json")), None)
+    if report_artifact:
+        local_report = RECORDINGS_DIR / (_artifact_filename(report_artifact.key) + ".json")
+        try:
+            download_s3_uri(report_artifact.s3_uri, local_report, s3=s3)
+            report = json.loads(local_report.read_text(encoding="utf-8"))
+            viz = report.get("visualization") if isinstance(report.get("visualization"), dict) else {{}}
+            decision = report.get("outer_loop", {{}}).get("latest_decision", {{}}) if isinstance(report.get("outer_loop"), dict) else {{}}
+            source = str(viz.get("source") or "").strip()
+            success_rate = decision.get("success_rate")
+            if source or success_rate is not None:
+                report_note = (
+                    "Report summary: visualization source="
+                    + (source or "unknown")
+                    + (f", success_rate={{success_rate}}" if success_rate is not None else "")
+                    + "."
+                )
+        except Exception:
+            report_note = ""
     return {{
         "run_id": run_id,
         "status": "completed" if report_ready else "artifact-backed",
@@ -1899,7 +1992,7 @@ def _artifact_backed_sim2real_run_details(run_id: str) -> dict | None:
             {{
                 "timestamp": _now_iso(),
                 "level": "info",
-                "message": f"Derived 14-stage timeline from {{len(artifacts)}} S3 artifacts.",
+                "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
             }},
             {{
                 "timestamp": _now_iso(),
@@ -1909,6 +2002,11 @@ def _artifact_backed_sim2real_run_details(run_id: str) -> dict | None:
                     if preferred
                     else "No preferred viewable artifact found."
                 ),
+            }},
+            {{
+                "timestamp": _now_iso(),
+                "level": "info",
+                "message": report_note or "No structured run report summary was available.",
             }},
         ],
         "artifacts": [item.to_dict() for item in artifacts[:25]],
@@ -1931,7 +2029,7 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
     details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
     details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
-    artifact_details = _artifact_backed_sim2real_run_details(resolved_run_id)
+    artifact_details = _artifact_backed_run_details(state, resolved_run_id)
     if artifact_details:
         details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
@@ -7669,33 +7767,52 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function renderArtifactDerivedRunDetails(runId, artifacts) {{
         const list = Array.isArray(artifacts) ? artifacts : [];
         const keys = list.map((item) => String(item.key || ""));
-        const countMatching = (patterns) => keys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
         const hasAny = (patterns) => countMatching(patterns) > 0;
-        const stageDefs = [
-          ["stage_01_trigger", "1 Trigger", ["stage_01_trigger/"]],
-          ["stage_02_assets", "2 Assets", ["stage_02_assets/", "consumed_scene_spec", "consumed_robot_spec"]],
-          ["stage_03_augment", "3 Augment", ["augment/manifest.json", "augment/"]],
-          ["stage_04_envs_raw", "4 Raw envs", ["envs/raw/"]],
-          ["stage_05_envs_train", "5 Train split", ["envs/train/"]],
-          ["stage_06_tokens", "6 Tokens", ["tokens/"]],
-          ["stage_07_actions_train", "7 Policy rollouts", ["actions/train/"]],
-          ["stage_08_vlm_eval_train", "8 VLM eval", ["vlm_eval/train/"]],
-          ["stage_09_training_signal", "9 Training signal", ["training_signal/train/", "checkpoints/candidate"]],
-          ["stage_10_eval_heldout", "10 Held-out eval", ["eval/heldout/"]],
-          ["stage_11_outer_loop", "11 Threshold gate", ["outer_loop/decision.json", "outer_loop/"]],
-          ["stage_12_external_validation_stub", "12 External validation", ["stage_12_external_validation/"]],
-          ["stage_13_retrigger", "13 Retrigger", ["stage_13_retrigger/"]],
-          ["stage_14_rerun_viz", "14 Rerun viz", ["reports/sim2real.rrd", "reports/sim2real-report.json"]],
-        ];
-        const stages = stageDefs.map(([id, label, patterns]) => {{
-          const count = countMatching(patterns);
+        function countMatching(patterns) {{
+          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
+        }}
+        function artifactStageKey(key) {{
+          const runMarker = "/" + runId + "/";
+          let scoped = String(key || "");
+          const idx = scoped.indexOf(runMarker);
+          if (idx >= 0) scoped = scoped.slice(idx + runMarker.length);
+          const parts = scoped.split("/").filter(Boolean);
+          const first = parts[0] || "artifacts";
+          if (first === "reports") return "reports";
+          if (first === "eval" && parts[1]) return "eval/" + parts[1];
+          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
+          return first;
+        }}
+        function artifactStageLabel(stageKey) {{
+          const labels = {{
+            "stage_01_trigger": "Trigger",
+            "stage_02_assets": "Assets",
+            "stage_12_external_validation": "External validation",
+            "stage_13_retrigger": "Retrigger",
+            "eval/heldout": "Held-out eval",
+            "actions/train": "Policy rollouts",
+            "vlm_eval/train": "VLM eval",
+            "training_signal/train": "Training signal",
+            "envs/raw": "Raw envs",
+            "envs/train": "Train envs",
+            "outer_loop": "Decision / outer loop",
+            "reports": "Reports / visualization",
+          }};
+          if (labels[stageKey]) return labels[stageKey];
+          const cleaned = String(stageKey || "artifacts").replaceAll("_", " ").replaceAll("/", " / ").replaceAll("-", " ");
+          return cleaned.slice(0, 1).toUpperCase() + cleaned.slice(1);
+        }}
+        const grouped = new Map();
+        for (const key of keys) {{
+          const stageKey = artifactStageKey(key);
+          grouped.set(stageKey, (grouped.get(stageKey) || 0) + 1);
+        }}
+        const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {{
           return {{
-            id,
-            label,
-            status: count > 0 ? "succeeded" : "pending",
-            summary: count > 0
-              ? String(count) + " artifact" + (count === 1 ? "" : "s") + " found in S3"
-              : "No matching S3 marker found in the current artifact prefix",
+            id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
+            label: artifactStageLabel(stageKey),
+            status: "succeeded",
+            summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
           }};
         }});
         const reportReady = hasAny(["reports/sim2real-report.json"]);
@@ -7712,7 +7829,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               {{
                 timestamp: now,
                 level: "info",
-                message: "Derived 14-stage timeline from " + String(list.length) + " S3 artifacts.",
+                message: "Derived stage timeline from " + String(list.length) + " S3 artifacts.",
               }},
               {{
                 timestamp: now,
