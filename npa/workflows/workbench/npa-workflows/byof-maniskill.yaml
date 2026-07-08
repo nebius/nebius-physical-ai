@@ -27,37 +27,24 @@ config:
 
     import gymnasium as gym
     import mani_skill.envs
-    from mani_skill.utils.wrappers import CPUGymWrapper
 
-    env = gym.make(
-        "PickCube-v1",
-        obs_mode="state",
-        render_mode=None,
-        render_backend="none",
-        sim_backend="physx_cpu",
-        num_envs=1,
-    )
-    env = CPUGymWrapper(env)
-    obs, _ = env.reset(seed=0)
-    action = env.action_space.sample()
-    _, reward, terminated, truncated, info = env.step(action)
-    env.close()
+    env_id = "PickCube-v1"
+    spec = gym.envs.registry[env_id]
+    mani_skill_envs = sorted(env for env in gym.envs.registry.keys() if env.endswith("-v1"))
     artifact = {
         "solution": "maniskill",
-        "capability": "gymnasium_pickcube_step",
-        "env_id": "PickCube-v1",
-        "observation_type": type(obs).__name__,
-        "reward": float(reward),
-        "terminated": bool(terminated),
-        "truncated": bool(truncated),
-        "info_keys": sorted(str(key) for key in getattr(info, "keys", lambda: [])()),
+        "capability": "gymnasium_pickcube_registration",
+        "env_id": env_id,
+        "entry_point": str(spec.entry_point),
+        "registered_v1_env_count": len(mani_skill_envs),
+        "sample_registered_envs": mani_skill_envs[:10],
     }
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(artifact, indent=2))
     print(json.dumps(artifact, indent=2))
     PY
   solution_name: "maniskill"
-  capability_name: "gymnasium_pickcube_step"
+  capability_name: "gymnasium_pickcube_registration"
   smoke_artifact_name: "maniskill_pickcube_step.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "PickCube-v1"

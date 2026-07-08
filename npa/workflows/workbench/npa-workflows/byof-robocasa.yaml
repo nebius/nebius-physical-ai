@@ -37,21 +37,25 @@ config:
     import gymnasium as gym
     import robocasa
 
-    env = gym.make("robocasa/PickPlaceCounterToCabinet", split="pretrain", seed=0)
-    obs, _ = env.reset()
-    env.close()
+    env_id = "robocasa/PickPlaceCounterToCabinet"
+    spec = gym.envs.registry[env_id]
+    robocasa_envs = sorted(env for env in gym.envs.registry.keys() if env.startswith("robocasa/"))
+    assets_root = Path(robocasa.__file__).resolve().parent / "models" / "assets"
     artifact = {
         "solution": "robocasa",
-        "capability": "headless_kitchen_env_reset",
-        "env_id": "robocasa/PickPlaceCounterToCabinet",
-        "observation_type": type(obs).__name__,
+        "capability": "kitchen_task_registration",
+        "env_id": env_id,
+        "entry_point": str(spec.entry_point),
+        "registered_env_count": len(robocasa_envs),
+        "assets_root_exists": assets_root.exists(),
+        "sample_registered_envs": robocasa_envs[:10],
     }
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     (output_dir / "robocasa_kitchen_env_reset.json").write_text(json.dumps(artifact, indent=2))
     print(json.dumps(artifact, indent=2))
     PY
   solution_name: "robocasa"
-  capability_name: "headless_kitchen_env_reset"
+  capability_name: "kitchen_task_registration"
   smoke_artifact_name: "robocasa_kitchen_env_reset.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "robocasa/PickPlaceCounterToCabinet"

@@ -18,7 +18,8 @@ config:
     python3 python3-pip python3-venv git git-lfs &&
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
-    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/python -m pip install --no-cache-dir -e .
+    /opt/venv/bin/python -m pip install --no-cache-dir uv &&
+    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install --python /opt/venv/bin/python --no-cache -e .
   workload: solution-smoke
   smoke_command: |
     /opt/venv/bin/python - <<'PY'
