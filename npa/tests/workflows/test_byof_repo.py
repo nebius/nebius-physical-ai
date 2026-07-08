@@ -326,6 +326,11 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
             },
         )(),
     )
+    monkeypatch.setattr(
+        module,
+        "storage_env_for_project",
+        lambda *_args, **_kwargs: {"AWS_ENDPOINT_URL": "https://storage.example", "AWS_ACCESS_KEY_ID": "key"},
+    )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd and cmd[0] == sys.executable and str(module.CONTAINER_VERIFY_RUNNER) in cmd:
@@ -370,6 +375,8 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["KUBECONTEXT"] == "customer-mk8s"
     assert env["NPA_BYOF_K8S_CONTEXT"] == "customer-mk8s"
     assert env["NPA_BYOF_K8S_NAMESPACE"] == "workbench"
+    assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert env["AWS_ACCESS_KEY_ID"] == "key"
 
 
 def test_base_image_candidates_ubuntu_profile_default() -> None:

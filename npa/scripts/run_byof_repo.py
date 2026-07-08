@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.config import resolve_container_registry
+from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 
@@ -101,6 +102,10 @@ def _live_runner_env(project: str) -> dict[str, str]:
         env["NPA_BYOF_K8S_CONTEXT"] = target.context
     if target.namespace:
         env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
+    try:
+        env.update(storage_env_for_project(project or None, allow_host_creds=True))
+    except Exception as exc:
+        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
     return env
 
 
