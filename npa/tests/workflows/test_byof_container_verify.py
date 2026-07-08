@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,3 +49,36 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
     monkeypatch.delenv("NPA_BYOF_INFRA", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_INFRA", raising=False)
     assert module._default_infra() == "kubernetes/customer-mk8s"
+
+
+def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._ensure_infra_enabled(
+        sky_bin="/opt/sky",
+        infra="kubernetes/customer-mk8s",
+        config_path="/tmp/skypilot.yaml",
+    )
+
+    assert seen["cmd"] == ["/opt/sky", "check", "kubernetes", "-o", "json", "--config", "/tmp/skypilot.yaml"]
+
+
+def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
+    module = _load_module()
+    called = False
+
+    def fake_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._ensure_infra_enabled(sky_bin="/opt/sky", infra="aws/us-east-1")
+    assert called is False

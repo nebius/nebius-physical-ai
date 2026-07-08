@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -22,6 +23,7 @@ from npa.orchestration.skypilot._bin import (
     SkyPilotVersionError,
     resolve_sky_bin,
 )
+from npa.orchestration.skypilot.cleanup import sky_environment
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
@@ -171,6 +173,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
+        infra = args.infra or _default_infra()
+        _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=args.config_path)
         teardown_guard = SignalTeardown(
             run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
@@ -188,7 +192,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 isolated_config_dir=args.isolated_config_dir,
                 config_path=args.config_path,
                 sky_bin=sky_bin,
-                infra=args.infra or _default_infra(),
+                infra=infra,
                 timeout=args.submit_timeout,
             )
             config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
@@ -223,6 +227,28 @@ def _default_infra() -> str:
         or os.environ.get("KUBECONTEXT", "")
     ).strip()
     return f"kubernetes/{context}" if context else ""
+
+
+def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:
+    if os.environ.get("NPA_BYOF_SKIP_SKY_CHECK") == "1":
+        return
+    normalized = infra.strip().lower()
+    if not normalized.startswith("kubernetes"):
+        return
+    cmd = [sky_bin, "check", "kubernetes", "-o", "json"]
+    if config_path:
+        cmd.extend(["--config", config_path])
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(None),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise SkyPilotConfigError(f"SkyPilot Kubernetes check failed before BYOF smoke submission: {detail}")
 
 
 if __name__ == "__main__":

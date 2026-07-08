@@ -28,6 +28,10 @@ and collecting live Nebius validation evidence.
 - `~/.npa/credentials.yaml` — Nebius IAM (registry push/pull)
 - Operator host: Docker, `nebius` CLI, `sky` (for GPU/container smokes)
 - Optional: `NPA_NEBIUS_PROFILE=agent-sa` for registry write on shared VMs
+- SkyPilot must have Kubernetes enabled for the target context. The
+  `solution-smoke` runner runs `sky check kubernetes` automatically before
+  submission; if debugging manually, run it with the resolved kubeconfig/context
+  before `sky jobs launch`.
 
 Project resolution: `npa.workflows.byof.live.resolve_byof_project()` — never hardcode VM paths.
 
