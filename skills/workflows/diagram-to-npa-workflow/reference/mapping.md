@@ -89,7 +89,7 @@ The user warned "there will be some discrepancy." Apply these rules and leave a
 | Step numbers skip/duplicate (e.g. no "Step 2") | Numbering is cosmetic; order states by arrows, not by step index. |
 | Env counts disagree (text "1,000 raw / 800-200" vs boxes "8K/2K") | Keep counts as `config` knobs (`env_count`, `train_fraction`); do not hardcode a specific integer into topology. Note both. |
 | Split "80/20" drawn as a diamond | The split is a data operation inside envgen, not a decision diamond — one `envgen` state emits a split manifest; only the **threshold** is a decision state. |
-| A vendor/product name (Cortex, Lightwheel, Newrobot) | Map to the *capability* tool, not the brand. "Cortex trainer fork" → `policy_rollouts` + VLM reward; "Lightwheel eval" → `heldout_eval`. |
+| A vendor/product/brand name in a box | Map to the *capability* tool, not the brand. A "custom trainer fork" box → `policy_rollouts` + VLM reward; an "eval platform" box → `heldout_eval`; a "data curation/review" box → `fiftyone.launch_app`. |
 | Two boxes, same tool (Isaac appears twice) | Two states, same `toolRef` family, different `resources`/URIs. |
 | Curate/review human step with no tool | Fold into the trigger artifact URI, or model as a `fiftyone.launch_app` review hook. |
 
@@ -107,7 +107,7 @@ The provided write-up + diagram map to `examples/sim2real-vlm-rl-from-diagram.ya
 | 7 LeRobot generates actions on train envs | 8K TrainEnvs → LeRobot | `rollouts` (in `inner`) | `workbench.sim2real.policy_rollouts` |
 | 8 VLM evaluation on training | VLM Eval box (inner loop) | `vlm-score` (in `inner`) | `workbench.vlm_eval.run` |
 | 9 VLM critique → RL update | inner back-edge | *(inner loop `loop.max`; reward wired via BYO trainer in engine)* | — |
-| 10 Isaac Lab eval framework | Lightwheel Eval → Results Report | `heldout` | `workbench.sim2real.heldout_eval` |
+| 10 Isaac Lab eval framework | Eval framework → Results Report | `heldout` | `workbench.sim2real.heldout_eval` |
 | 11A/11B Good/Bad threshold | Threshold diamond | `decide` | `workbench.sim2real.write_decision` |
 | 11A promote → checkpoint to S3 | Checkpoint → S3 | `finalize` (promote path) | `workbench.sim2real.finalize` |
 | 11B fail → more RL | outer back-edge | `decide` `loop_back` → `outer` | — |
