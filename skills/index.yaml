@@ -349,6 +349,13 @@ skills:
       - type: workflow_yaml
         paths:
           - npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml
+  - name: oss-solution-registry-onboard
+    category: workflows
+    when_to_use: "Evaluate and onboard an open-source Physical AI solution into the NPA registry/catalog by reading upstream docs, testing real capabilities, and running smoke plus live Nebius validation."
+    path: skills/workflows/oss-solution-registry-onboard/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/workflows/oss-solution-registry-onboard/SKILL.md
   - name: agent-fresh-operate
     category: workflows
     when_to_use: "Deploy, teardown, or reproduce a fresh NPA agent VM from scratch; validate /api/models and /api/chat; debug destroy/fresh-setup failures."

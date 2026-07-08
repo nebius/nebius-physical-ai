@@ -8,6 +8,9 @@ import re
 from typing import Any
 
 BYOF_ONBOARD_SKILL_PATH = "skills/workflows/byof-onboard/SKILL.md"
+OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH = (
+    "skills/workflows/oss-solution-registry-onboard/SKILL.md"
+)
 
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
@@ -856,12 +859,15 @@ def format_cosmos3_setup() -> str:
 
 def format_onboard_solution() -> str:
     registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
-    skill_path = BYOF_ONBOARD_SKILL_PATH
+    byof_skill_path = BYOF_ONBOARD_SKILL_PATH
+    registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
         [
             "**Yes — chat can onboard a new OSS solution end-to-end.**",
-            f"- **Skill (source of truth):** `{skill_path}`",
+            f"- **BYOF skill:** `{byof_skill_path}`",
+            f"- **Registry skill:** `{registry_skill_path}`",
             "- Flow: **contract** → **containerize** (`--base-profile ubuntu`) → **deploy/test** (`--workload container-verify`).",
+            "- Registry/catalog readiness additionally requires reading upstream docs, extracting real capability claims, testing those claims with smoke commands, and running the required live Nebius path.",
             "- Sim stacks (LeIsaac RL/datagen): use `--base-profile isaac-lab` per the skill workload table.",
             "- Generic Ubuntu onboarding (replace `<repo-url>` / `<repo-ref>`):",
             "```bash",
@@ -875,6 +881,7 @@ def format_onboard_solution() -> str:
             "```",
             "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
             "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
+            "- Do not mark a solution registry-ready from a Docker build or generic import check alone.",
         ]
     )
 

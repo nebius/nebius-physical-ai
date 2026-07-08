@@ -16,6 +16,12 @@ in chat replies; point operators here.
 - LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
 
+For **registry/catalog admission** of an OSS Physical AI solution, also load
+`skills/workflows/oss-solution-registry-onboard/SKILL.md`. BYOF proves the repo
+can be packaged and run; registry admission additionally requires reading
+upstream docs, identifying real capabilities, testing those capability claims,
+and collecting live Nebius validation evidence.
+
 ## Prerequisites
 
 - `~/.npa/config.yaml` — project alias, registry, `kubernetes` block (`cluster_name`, `gpu_profile`)
@@ -67,6 +73,9 @@ Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
 3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
+4. **Registry-ready gate** — if the operator asks to add the OSS project to the
+   NPA registry/catalog, follow `oss-solution-registry-onboard`; do not claim
+   readiness from build-only or generic import checks.
 
 Agent must return **grounded** markdown with `run_byof_repo.py`, `<repo-url>`, and base-image guidance —
 not raw `GET /api/...` paths.
@@ -117,3 +126,5 @@ npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py -q
 - Merge does **not** push images — build happens at operator `run_byof_repo.py` time.
 - Ubuntu images cannot run LeIsaac datagen; use `isaac-lab` profile for sim workloads.
 - GPU smokes may return `FAILED_PRECHECKS` when cluster capacity is tight; container tier is the gate for Ubuntu BYOF.
+- A successful BYOF build is not sufficient for registry/catalog admission; test
+  the documented upstream capabilities on smoke and live Nebius paths first.

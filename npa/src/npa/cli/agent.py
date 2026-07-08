@@ -3672,7 +3672,7 @@ def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, in
     }}
 _SKILL_CACHE = {{"loaded_at": 0.0, "index": {{}}, "root": Path("/")}}
 _INTENT_SKILLS = {{
-    "onboard_solution": ("byof-onboard",),
+    "onboard_solution": ("byof-onboard", "oss-solution-registry-onboard"),
     "find_artifacts": ("find-artifacts",),
     "create_workflow": ("author-npa-workflow",),
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
