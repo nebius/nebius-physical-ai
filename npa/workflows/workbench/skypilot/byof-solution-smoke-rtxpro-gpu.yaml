@@ -19,6 +19,7 @@ envs:
   BYOF_SMOKE_ARTIFACT_NAME: ""
   NVIDIA_VISIBLE_DEVICES: "all"
   NVIDIA_DRIVER_CAPABILITIES: "all"
+  VK_ICD_FILENAMES: "/usr/share/vulkan/icd.d/nvidia_icd.json"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
   AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
 setup: |
@@ -34,6 +35,7 @@ run: |
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
   nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1 || true
+  vulkaninfo --summary > "${OUTPUT_DIR}/vulkaninfo_summary.txt" 2>&1 || true
   SMOKE_EXIT_CODE=0
   if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
     set +e
