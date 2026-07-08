@@ -293,14 +293,14 @@ def _default_infra() -> str:
         or os.environ.get("NPA_K8S_CONTEXT", "")
         or os.environ.get("KUBECONTEXT", "")
     ).strip()
-    return f"kubernetes/{context}" if context else ""
+    return f"k8s/{context}" if context else ""
 
 
 def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:
     if os.environ.get("NPA_BYOF_SKIP_SKY_CHECK") == "1":
         return
     normalized = infra.strip().lower()
-    if not normalized.startswith("kubernetes"):
+    if not (normalized.startswith("kubernetes") or normalized.startswith("k8s")):
         return
     if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
         subprocess.run(

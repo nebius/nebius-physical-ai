@@ -48,7 +48,7 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
     monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-mk8s")
     monkeypatch.delenv("NPA_BYOF_INFRA", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_INFRA", raising=False)
-    assert module._default_infra() == "kubernetes/customer-mk8s"
+    assert module._default_infra() == "k8s/customer-mk8s"
 
 
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:
@@ -63,7 +63,7 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     module._ensure_infra_enabled(
         sky_bin="/opt/sky",
-        infra="kubernetes/customer-mk8s",
+        infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
     )
 
@@ -104,7 +104,7 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         run_id="byof-demo",
         outputs={"summary": "s3://bucket/summary.json"},
         sky_bin="/opt/sky",
-        infra="kubernetes/customer-mk8s",
+        infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
         cleanup=True,
     )
@@ -120,7 +120,7 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         "byof-demo",
         "--down",
         "--infra",
-        "kubernetes/customer-mk8s",
+        "k8s/customer-mk8s",
         "--config",
         "/tmp/skypilot.yaml",
         str(rendered_yaml),
