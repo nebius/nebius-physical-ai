@@ -32,6 +32,9 @@ and collecting live Nebius validation evidence.
   `solution-smoke` runner runs `sky check kubernetes` automatically before
   submission; if debugging manually, run it with the resolved kubeconfig/context
   before `sky jobs launch`.
+  Container/solution smokes use direct `sky launch --down` by default because
+  the managed-jobs controller can retain a stale enabled-infra cache for newly
+  synced Kubernetes contexts.
 
 Project resolution: `npa.workflows.byof.live.resolve_byof_project()` — never hardcode VM paths.
 

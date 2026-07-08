@@ -131,6 +131,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=int, default=30)
     parser.add_argument("--isolated-config-dir", default="")
     parser.add_argument("--render-only", action="store_true")
+    parser.add_argument(
+        "--direct-launch",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("NPA_BYOF_DIRECT_LAUNCH", "1") != "0",
+    )
     parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args(argv)
 
@@ -175,6 +180,16 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
         infra = args.infra or _default_infra()
         _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=args.config_path)
+        if args.direct_launch:
+            return _direct_launch(
+                rendered_yaml=rendered_yaml,
+                run_id=run_id,
+                outputs=outputs,
+                sky_bin=sky_bin,
+                infra=infra,
+                config_path=args.config_path,
+                cleanup=args.cleanup,
+            )
         teardown_guard = SignalTeardown(
             run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
@@ -213,6 +228,58 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 teardown_guard.teardown()
         print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
         return return_code
+
+
+def _direct_launch(
+    *,
+    rendered_yaml: Path,
+    run_id: str,
+    outputs: dict[str, str],
+    sky_bin: str,
+    infra: str,
+    config_path: str = "",
+    cleanup: bool = True,
+) -> int:
+    cmd = [
+        sky_bin,
+        "launch",
+        "--yes",
+        "--cluster",
+        run_id,
+        "--name",
+        run_id,
+    ]
+    if cleanup:
+        cmd.append("--down")
+    if infra:
+        cmd.extend(["--infra", infra])
+    if config_path:
+        cmd.extend(["--config", config_path])
+    cmd.append(str(rendered_yaml))
+    result = subprocess.run(
+        cmd,
+        env=sky_environment(None),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    summary = {
+        "run_id": run_id,
+        "mode": "direct-launch",
+        "outputs": outputs,
+        "command": cmd,
+        "final": {
+            "status": "SUCCEEDED" if result.returncode == 0 else "FAILED",
+            "returncode": result.returncode,
+        },
+    }
+    if result.stdout:
+        summary["stdout_tail"] = result.stdout[-8000:]
+    if result.stderr:
+        summary["stderr_tail"] = result.stderr[-8000:]
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if result.returncode == 0 else 1
 
 
 def _default_infra() -> str:

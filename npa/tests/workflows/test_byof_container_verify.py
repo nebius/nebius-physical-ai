@@ -85,3 +85,45 @@ def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     module._ensure_infra_enabled(sky_bin="/opt/sky", infra="aws/us-east-1")
     assert called is False
+
+
+def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) -> None:
+    module = _load_module()
+    rendered_yaml = tmp_path / "workflow.yaml"
+    rendered_yaml.write_text("name: demo\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = list(cmd)
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    rc = module._direct_launch(
+        rendered_yaml=rendered_yaml,
+        run_id="byof-demo",
+        outputs={"summary": "s3://bucket/summary.json"},
+        sky_bin="/opt/sky",
+        infra="kubernetes/customer-mk8s",
+        config_path="/tmp/skypilot.yaml",
+        cleanup=True,
+    )
+
+    assert rc == 0
+    assert seen["cmd"] == [
+        "/opt/sky",
+        "launch",
+        "--yes",
+        "--cluster",
+        "byof-demo",
+        "--name",
+        "byof-demo",
+        "--down",
+        "--infra",
+        "kubernetes/customer-mk8s",
+        "--config",
+        "/tmp/skypilot.yaml",
+        str(rendered_yaml),
+    ]
+    output = capsys.readouterr().out
+    assert '"mode": "direct-launch"' in output
