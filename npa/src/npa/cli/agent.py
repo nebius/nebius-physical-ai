@@ -7546,6 +7546,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
           return true;
         }}
+        renderArtifactDerivedRunDetails(runId, artifacts);
         list.innerHTML = artifacts.map((item, idx) => {{
           const key = String(item.key || "");
           const render = String(item.render || "download");
@@ -7577,8 +7578,66 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
           }});
+          renderArtifactDerivedRunDetails(runId, artifacts);
         }}
         return true;
+      }}
+      function renderArtifactDerivedRunDetails(runId, artifacts) {{
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        const keys = list.map((item) => String(item.key || ""));
+        const countMatching = (patterns) => keys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
+        const hasAny = (patterns) => countMatching(patterns) > 0;
+        const stageDefs = [
+          ["stage_01_trigger", "1 Trigger", ["stage_01_trigger/"]],
+          ["stage_02_assets", "2 Assets", ["stage_02_assets/", "consumed_scene_spec", "consumed_robot_spec"]],
+          ["stage_03_augment", "3 Augment", ["augment/manifest.json", "augment/"]],
+          ["stage_04_envs_raw", "4 Raw envs", ["envs/raw/"]],
+          ["stage_05_envs_train", "5 Train split", ["envs/train/"]],
+          ["stage_06_tokens", "6 Tokens", ["tokens/"]],
+          ["stage_07_actions_train", "7 Policy rollouts", ["actions/train/"]],
+          ["stage_08_vlm_eval_train", "8 VLM eval", ["vlm_eval/train/"]],
+          ["stage_09_training_signal", "9 Training signal", ["training_signal/train/", "checkpoints/candidate"]],
+          ["stage_10_eval_heldout", "10 Held-out eval", ["eval/heldout/"]],
+          ["stage_11_outer_loop", "11 Threshold gate", ["outer_loop/decision.json", "outer_loop/"]],
+          ["stage_12_external_validation_stub", "12 External validation", ["stage_12_external_validation/"]],
+          ["stage_13_retrigger", "13 Retrigger", ["stage_13_retrigger/"]],
+          ["stage_14_rerun_viz", "14 Rerun viz", ["reports/sim2real.rrd", "reports/sim2real-report.json"]],
+        ];
+        const stages = stageDefs.map(([id, label, patterns]) => {{
+          const count = countMatching(patterns);
+          return {{
+            id,
+            label,
+            status: count > 0 ? "succeeded" : "pending",
+            summary: count > 0
+              ? String(count) + " artifact" + (count === 1 ? "" : "s") + " found in S3"
+              : "No matching S3 marker found in the current artifact prefix",
+          }};
+        }});
+        const reportReady = hasAny(["reports/sim2real-report.json"]);
+        const rrdReady = hasAny(["reports/sim2real.rrd"]);
+        const now = new Date().toISOString();
+        renderRunDetails({{
+          run: {{
+            run_id: runId,
+            status: reportReady ? "completed" : "artifact-backed",
+            result: rrdReady ? "rerun_ready" : "artifacts_listed",
+            updated_at: now,
+            stages,
+            logs: [
+              {{
+                timestamp: now,
+                level: "info",
+                message: "Derived 14-stage timeline from " + String(list.length) + " S3 artifacts.",
+              }},
+              {{
+                timestamp: now,
+                level: rrdReady ? "info" : "warn",
+                message: rrdReady ? "Run-specific Rerun recording is available." : "Rerun recording not found in listed artifacts.",
+              }},
+            ],
+          }},
+        }});
       }}
       function updateRenderedDataSummary(simViz) {{
         const node = document.getElementById("renderedDataSummary");

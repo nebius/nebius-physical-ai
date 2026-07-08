@@ -114,6 +114,81 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
   });
 
+  it("presents the live run with an intuitive stage timeline and stable desktop layout", function () {
+    const runId = liveRunId();
+    if (!runId) {
+      this.skip();
+    }
+
+    cy.viewport(1440, 1000);
+    liveAgentRequest("/api/sim-viz/load-run", {
+      method: "POST",
+      body: { run_id: runId, camera: "workspace" },
+    });
+    cy.reload();
+    cy.get("#runIdInput", { timeout: 30000 }).clear().type(runId);
+    cy.get("#artifactLoadRunArtifacts").click();
+
+    cy.get("#artifactList", { timeout: 120000 }).within(() => {
+      cy.contains("reports/sim2real.rrd").should("be.visible");
+      cy.contains("render=rerun").should("be.visible");
+      cy.contains("reports/sim2real-report.json").should("be.visible");
+    });
+    cy.get("#stageList", { timeout: 30000 }).within(() => {
+      cy.contains("1 Trigger").should("be.visible");
+      cy.contains("10 Held-out eval").should("be.visible");
+      cy.contains("14 Rerun viz").should("be.visible");
+      cy.contains("succeeded").should("be.visible");
+    });
+    cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
+    cy.get("#runLog").should("contain.text", "Derived 14-stage timeline");
+    cy.get("#renderedDataSummary").should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
+    cy.get("#rerunFrame").should("be.visible");
+    cy.get("#chatForm").should("be.visible");
+    cy.get("#cameraCards").should("be.visible");
+
+    cy.window().then((win) => {
+      const doc = win.document.documentElement;
+      expect(doc.scrollWidth, "no distracting horizontal page overflow").to.be.lte(win.innerWidth + 24);
+      for (const id of ["chatForm", "runDetails", "artifactList", "rerunFrame", "cameraCards"]) {
+        const el = win.document.getElementById(id);
+        expect(el, `${id} exists`).to.exist;
+        const rect = el.getBoundingClientRect();
+        expect(rect.width, `${id} has usable width`).to.be.greaterThan(240);
+        expect(rect.height, `${id} has usable height`).to.be.greaterThan(id === "artifactList" ? 24 : 40);
+      }
+    });
+  });
+
+  it("answers advanced live run questions with grounded artifact and Rerun context", function () {
+    const runId = liveRunId();
+    if (!runId) {
+      this.skip();
+    }
+
+    liveAgentRequest("/api/chat", {
+      method: "POST",
+      body: {
+        messages: [
+          {
+            role: "user",
+            content: `For run ${runId}, what stages and artifacts can I view, and is the Rerun recording ready?`,
+          },
+        ],
+      },
+    }).then((response) => {
+      expect(response.status).to.eq(200);
+      expect(response.body).to.have.property("ok", true);
+      expect(response.body).to.have.property("grounded", true);
+      expect(response.body.apis_used || []).to.have.length.greaterThan(0);
+      const reply = String(response.body.reply || "");
+      expect(reply.trim()).not.to.match(/^GET\\s+\\/api\\//);
+      expect(reply).to.include(runId);
+      expect(reply).to.match(/Rerun|artifact|stage|rerun_ready/i);
+      expect(reply).to.match(/\\*\\*run_id\\*\\*|run_id/i);
+    });
+  });
+
   it("submits Sim2Real from the UI when live destructive Cypress is enabled", function () {
     if (!destructiveLiveEnabled()) {
       this.skip();
