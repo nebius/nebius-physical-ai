@@ -1833,6 +1833,88 @@ def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
     return merged
 
 
+def _artifact_backed_sim2real_run_details(run_id: str) -> dict | None:
+    if not run_id:
+        return None
+    try:
+        s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, "")
+        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+    except Exception:
+        return None
+    if not artifacts:
+        return None
+    keys = [str(item.key or "") for item in artifacts]
+
+    def _count(patterns: list[str]) -> int:
+        return sum(1 for key in keys if any(pattern in key for pattern in patterns))
+
+    stage_markers: dict[str, list[str]] = {{
+        "stage_01_trigger": ["stage_01_trigger/"],
+        "stage_02_assets": ["stage_02_assets/", "consumed_scene_spec", "consumed_robot_spec"],
+        "stage_03_augment": ["augment/manifest.json", "augment/"],
+        "stage_04_envs_raw": ["envs/raw/"],
+        "stage_05_envs_train": ["envs/train/"],
+        "stage_06_tokens": ["tokens/"],
+        "stage_07_actions_train": ["actions/train/"],
+        "stage_08_vlm_eval_train": ["vlm_eval/train/"],
+        "stage_09_training_signal": ["training_signal/train/", "checkpoints/candidate"],
+        "stage_10_eval_heldout": ["eval/heldout/"],
+        "stage_11_outer_loop": ["outer_loop/decision.json", "outer_loop/"],
+        "stage_12_external_validation_stub": ["stage_12_external_validation/"],
+        "stage_13_retrigger": ["stage_13_retrigger/"],
+        "stage_14_rerun_viz": ["reports/sim2real.rrd", "reports/sim2real-report.json"],
+    }}
+    stages = []
+    for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
+        if stage_id == "submit":
+            continue
+        marker_count = _count(stage_markers.get(stage_id, []))
+        stages.append(
+            {{
+                "id": stage_id,
+                "label": label,
+                "status": "succeeded" if marker_count else "pending",
+                "started_at": "",
+                "finished_at": "",
+                "summary": (
+                    f"{{marker_count}} S3 artifact marker{{'' if marker_count == 1 else 's'}} found."
+                    if marker_count
+                    else "No matching S3 marker found in the configured artifact prefix."
+                ),
+            }}
+        )
+    report_ready = _count(["reports/sim2real-report.json"]) > 0
+    rrd_ready = _count(["reports/sim2real.rrd"]) > 0
+    preferred = select_preferred_artifact(artifacts)
+    return {{
+        "run_id": run_id,
+        "status": "completed" if report_ready else "artifact-backed",
+        "result": "rerun_ready" if rrd_ready else "artifacts_available",
+        "submitted_at": "",
+        "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
+        "selection": {{}},
+        "stages": stages,
+        "logs": [
+            {{
+                "timestamp": _now_iso(),
+                "level": "info",
+                "message": f"Derived 14-stage timeline from {{len(artifacts)}} S3 artifacts.",
+            }},
+            {{
+                "timestamp": _now_iso(),
+                "level": "info" if rrd_ready else "warn",
+                "message": (
+                    f"Preferred viewable artifact: {{preferred.key}}"
+                    if preferred
+                    else "No preferred viewable artifact found."
+                ),
+            }},
+        ],
+        "artifacts": [item.to_dict() for item in artifacts[:25]],
+    }}
+
+
 def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     latest = state.get("latest_submit", {{}})
     if not isinstance(latest, dict):
@@ -1849,6 +1931,9 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
     details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
     details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
+    artifact_details = _artifact_backed_sim2real_run_details(resolved_run_id)
+    if artifact_details:
+        details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
     if stage:
         details["status"] = stage

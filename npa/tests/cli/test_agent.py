@@ -611,6 +611,8 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_wire_sim2real_run_preview" in source
     assert "Prefer a run-scoped Rerun recording over stale history entries" in source
     assert "preferred and preferred.render == \"rerun\"" in source
+    assert "def _artifact_backed_sim2real_run_details" in source
+    assert "Derived 14-stage timeline from" in source
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
