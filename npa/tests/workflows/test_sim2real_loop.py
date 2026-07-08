@@ -1427,7 +1427,7 @@ def test_component_heldout_payload_dispatches_isaac_backend(monkeypatch) -> None
     assert payload["per_env"][0]["success"] is False
 
 
-def test_reference_adapter_heldout_gate_promotes_from_inner_progress(monkeypatch) -> None:
+def test_reference_adapter_heldout_gate_keeps_real_sim_success(monkeypatch) -> None:
     envs = [
         {"env_id": "heldout-0000", "physics": {"friction": 0.5}},
         {"env_id": "heldout-0001", "physics": {"friction": 0.5}},
@@ -1468,11 +1468,12 @@ def test_reference_adapter_heldout_gate_promotes_from_inner_progress(monkeypatch
         sim_backend="isaac",
     )
 
-    assert payload["per_env"][0]["success"] is True
-    assert payload["per_env"][0]["score"] >= 0.75
+    assert payload["per_env"][0]["success"] is False
+    assert payload["per_env"][0]["score"] == 0.12
     assert payload["per_env"][0]["details"]["sim_success"] is False
     assert payload["per_env"][0]["details"]["reference_adapter_score"] >= 0.75
-    assert sum(int(row["success"]) for row in payload["per_env"]) >= 1
+    assert payload["per_env"][0]["details"]["reference_adapter_would_pass"] is True
+    assert sum(int(row["success"]) for row in payload["per_env"]) == 0
 
 
 def test_reference_adapter_heldout_gate_skips_byo_trainer(monkeypatch) -> None:

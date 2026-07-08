@@ -2849,12 +2849,11 @@ def _apply_reference_adapter_heldout_gate(
     inner_evidence: dict[str, Any],
     threshold: float,
 ) -> None:
-    """Blend sim rollout metrics with inner-loop progress for the reference adapter.
+    """Annotate reference-adapter progress without overriding real sim success.
 
-    The reference VLM→RL trainer only updates a compact action-bias adapter, so
-    native Isaac/Genesis task success stays near zero even when VLM scores and
-    reward trends show real progress. Sim metrics are preserved in ``details``,
-    but ``success`` can reflect closed-loop progress for the outer-loop gate.
+    Reference adapter scores are diagnostic only; the held-out gate must remain
+    grounded in the simulator's own success signal so the pipeline cannot promote
+    a checkpoint that did not actually succeed in sim.
     """
 
     trainer_source = inner_evidence.get("trainer_source")
@@ -2870,10 +2869,8 @@ def _apply_reference_adapter_heldout_gate(
         details["sim_success"] = sim_success
         details["sim_score"] = round(sim_score, 6)
         details["reference_adapter_score"] = round(cal_score, 6)
+        details["reference_adapter_would_pass"] = cal_score >= threshold
         item["details"] = details
-        item["success"] = sim_success or cal_success
-        if cal_success:
-            item["score"] = round(max(sim_score, cal_score), 6)
 
 
 def _reference_heldout_payload(
