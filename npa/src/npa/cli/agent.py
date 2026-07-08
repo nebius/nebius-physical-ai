@@ -8399,7 +8399,11 @@ def deploy_cmd(
     )
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     configured_llm_model = str(llm_model or "").strip() or default_llm_model
-    configured_llm_models = _normalize_llm_models([configured_llm_model, *llm_models])
+    # With no explicit --llm-models, seed the cost-ordered default ladder so
+    # per-turn routing can reach every tier (cheap/standard/reasoning/vision)
+    # out of the box. An explicit --llm-models acts as a governance allowlist.
+    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
+    configured_llm_models = _normalize_llm_models([configured_llm_model, *extra_llm_models])
     nebius_ai_key, _ = _resolve_operator_credentials()
     if not tf_api_key:
         typer.echo(
@@ -8631,7 +8635,11 @@ def bootstrap_cmd(
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     requested_llm_model = str(llm_model or "").strip()
     resolved_llm_model = requested_llm_model or default_llm_model
-    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *llm_models])
+    # No explicit --llm-models => seed the cost-ordered default ladder (all
+    # tiers). Existing record models are still merged below, so re-bootstrap
+    # keeps any previously configured set.
+    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
+    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *extra_llm_models])
     nebius_ai_key, _ = _resolve_operator_credentials()
     llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
     if isinstance(llm_block.get("models"), list):
