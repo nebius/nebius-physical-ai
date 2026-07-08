@@ -4435,6 +4435,57 @@ def sim_viz_load_run(payload: dict | None = None):
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
+    camera = str(body.get("camera") or "workspace").strip() or "workspace"
+    requested_rrd_uri = str(body.get("rrd_uri") or "").strip()
+
+    # Prefer a run-scoped Rerun recording over stale history entries. History can
+    # contain JSON artifacts from prior clicks, which otherwise makes Load Run
+    # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
+    if requested_rrd_uri:
+        s3, _settings = _agent_s3_client()
+        bucket, key = parse_s3_uri(requested_rrd_uri)
+        local_name = _artifact_filename(key)
+        local_path = RECORDINGS_DIR / local_name
+        download_s3_uri(requested_rrd_uri, local_path, s3=s3)
+        state = _load_state()
+        sim_viz = _apply_loaded_artifact(
+            state=state,
+            run_id=validate_run_id(run_id),
+            key=key,
+            s3_uri=requested_rrd_uri,
+            render=render_hint_for_object(key=key),
+            local_path=local_path,
+        )
+        sim_viz["camera"] = camera
+        _save_state(state)
+        return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id)}}
+
+    try:
+        s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, str(body.get("prefix") or ""))
+        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        preferred = select_preferred_artifact(artifacts)
+        if preferred and preferred.render == "rerun":
+            local_name = _artifact_filename(preferred.key)
+            local_path = RECORDINGS_DIR / local_name
+            download_s3_uri(preferred.s3_uri, local_path, s3=s3)
+            state = _load_state()
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=preferred.key,
+                s3_uri=preferred.s3_uri,
+                render=preferred.render,
+                local_path=local_path,
+            )
+            sim_viz["camera"] = camera
+            _save_state(state)
+            return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id), "preferred": preferred.to_dict()}}
+    except Exception:
+        # Fall back to the historical in-memory run selector below; callers still
+        # get a useful 404 if the run has never been seen.
+        pass
+
     state = _load_state()
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
@@ -4445,7 +4496,6 @@ def sim_viz_load_run(payload: dict | None = None):
     rrd_uri = str(body.get("rrd_uri") or "").strip()
     if rrd_uri:
         selected["rrd_uri"] = rrd_uri
-    camera = str(body.get("camera") or "").strip()
     if camera:
         selected["camera"] = camera
     stage = str(body.get("stage") or "").strip()
