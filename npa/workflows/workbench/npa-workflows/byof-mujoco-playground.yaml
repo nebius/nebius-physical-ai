@@ -72,25 +72,45 @@ config:
         json.dumps({"solution": "mujoco-playground", "capability": "mjx_cheetah_run_step", **extra}, indent=2)
     )
 
-    # Reduced documented PPO training entrypoint.
-    ppo = {"command": "train-jax-ppo --env_name CartpoleBalance --num_timesteps 256", "ok": False, "error": "", "returncode": None}
+    # Reduced documented PPO training entrypoint (module path; console script may be absent).
+    ppo = {
+        "command": "/opt/venv/bin/python -m mujoco_playground.learning.train_jax_ppo --env_name CartpoleBalance --num_timesteps 256",
+        "ok": False,
+        "error": "",
+        "returncode": None,
+    }
     try:
-        completed = subprocess.run(
-            ["train-jax-ppo", "--env_name", "CartpoleBalance", "--num_timesteps", "256"],
-            cwd="/opt/byof",
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=1800,
-        )
-        ppo["returncode"] = completed.returncode
-        ppo["stdout_tail"] = (completed.stdout or "")[-2000:]
-        ppo["stderr_tail"] = (completed.stderr or "")[-2000:]
-        ppo["ok"] = completed.returncode == 0
+        candidates = [
+            ["/opt/venv/bin/train-jax-ppo", "--env_name", "CartpoleBalance", "--num_timesteps", "256"],
+            ["/opt/venv/bin/python", "-m", "mujoco_playground.learning.train_jax_ppo", "--env_name", "CartpoleBalance", "--num_timesteps", "256"],
+            ["/opt/venv/bin/python", "/opt/byof/learning/train_jax_ppo.py", "--env_name", "CartpoleBalance", "--num_timesteps", "256"],
+        ]
+        last = None
+        for cmd in candidates:
+            completed = subprocess.run(
+                cmd,
+                cwd="/opt/byof",
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1800,
+            )
+            last = completed
+            ppo["attempted_command"] = " ".join(cmd)
+            ppo["returncode"] = completed.returncode
+            ppo["stdout_tail"] = (completed.stdout or "")[-2000:]
+            ppo["stderr_tail"] = (completed.stderr or "")[-2000:]
+            if completed.returncode == 0:
+                ppo["ok"] = True
+                break
+            if completed.returncode != 127 and "No such file" not in (completed.stderr or ""):
+                # Real training failure; stop trying alternate entrypoints.
+                ppo["error"] = f"returncode={completed.returncode}"
+                break
+        if not ppo["ok"] and not ppo.get("error"):
+            ppo["error"] = f"returncode={getattr(last, 'returncode', None)}"
         if ppo["ok"]:
             results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
-        else:
-            ppo["error"] = f"returncode={completed.returncode}"
     except Exception as exc:  # noqa: BLE001
         ppo["error"] = f"{type(exc).__name__}: {exc}"
     results["train_jax_ppo"] = ppo
@@ -98,20 +118,20 @@ config:
         json.dumps({"solution": "mujoco-playground", "capability": "train_jax_ppo_cartpole_smoke", **ppo}, indent=2)
     )
     if not ppo["ok"]:
-        results.setdefault("deferred", []).append("train_jax_ppo_cartpole_smoke")
+        results.setdefault("deferred", []).append({"capability": "train_jax_ppo_cartpole_smoke", "blocker": ppo.get("error")})
     if not extra["ok"]:
-        results.setdefault("deferred", []).append("mjx_cheetah_run_step")
+        results.setdefault("deferred", []).append({"capability": "mjx_cheetah_run_step", "blocker": extra.get("error")})
 
-    # Primary gate: Cartpole step must succeed.
+    # Hard gate: Cartpole + Cheetah steps. PPO remains required when entrypoint exists.
     if "mjx_cartpole_step" not in results["capabilities_exercised"]:
         raise SystemExit("CartpoleBalance step failed")
+    if "mjx_cheetah_run_step" not in results["capabilities_exercised"]:
+        raise SystemExit("CheetahRun step failed")
 
     (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
-    if not extra["ok"] or not ppo["ok"]:
-        # Fail the smoke so deferred capabilities are actually tested to green,
-        # not silently recorded. Re-run after fixing install/runtime.
-        raise SystemExit("one or more deferred MuJoCo Playground capabilities failed")
+    if not ppo["ok"]:
+        raise SystemExit(f"train_jax_ppo_cartpole_smoke failed: {ppo.get('error')}")
     PY
   solution_name: "mujoco-playground"
   capability_name: "mjx_cartpole_step"
