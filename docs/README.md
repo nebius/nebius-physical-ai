@@ -14,6 +14,7 @@ Nebius Physical AI.
 | [../npa/workflows/workbench/skypilot/README.md](../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
 | [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
+| [architecture/token-factory-agent-playbook.md](architecture/token-factory-agent-playbook.md) | **Research** — building and testing the NPA chat agent on Token Factory with cheap tokens (grounded-first routing, cost-ordered model ladder, batch/e2e test tiers) |
 | [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
 | [cli/README.md](cli/README.md) | CLI command reference index |
 | [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
