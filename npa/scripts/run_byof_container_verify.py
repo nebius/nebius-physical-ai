@@ -39,7 +39,7 @@ DEFAULT_YAML = (
 )
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/byof"
-DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa", "npa-nebius-registry")
+DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 TERMINAL_STATUSES = {
     "SUCCEEDED",
     "CANCELLED",

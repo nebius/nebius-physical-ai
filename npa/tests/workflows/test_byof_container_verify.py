@@ -138,7 +138,7 @@ def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
     text = Path(config_path).read_text(encoding="utf-8")
     assert "imagePullSecrets" in text
     assert "agent-sa" in text
-    assert "npa-nebius-registry" in text
+    assert "npa-nebius-registry" not in text
 
 
 def test_normalize_kubeconfig_current_context(monkeypatch, tmp_path) -> None:
