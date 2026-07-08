@@ -13,6 +13,11 @@ import pytest
 from typer.testing import Result
 
 from npa.clients.config import resolve_project_storage
+from npa.orchestration.npa_workflow.submit_matrix import (
+    SUBMIT_LIVE_MATRIX,
+    SubmitLiveCase,
+    selected_submit_cases,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
@@ -27,7 +32,30 @@ ALL_GOLDEN_SPECS = sorted(
     ]
 )
 
-DYNAMIC_SPECS = frozenset({"sim2real-vlm-rl.yaml", "tokenfactory-cosmos-gate.yaml"})
+DYNAMIC_SPECS = frozenset(
+    {
+        "sim2real-vlm-rl.yaml",
+        "tokenfactory-cosmos-gate.yaml",
+        "rl-policy-training-sim-success.yaml",
+    }
+)
+
+__all__ = [
+    "ALL_GOLDEN_SPECS",
+    "DYNAMIC_SPECS",
+    "SPECS_DIR",
+    "SUBMIT_LIVE_MATRIX",
+    "SubmitLiveCase",
+    "assume_decision_for",
+    "assert_cli_ok",
+    "assert_no_credential_leakage",
+    "live_bucket",
+    "live_credential_markers",
+    "materialize_live_spec",
+    "parse_json_output",
+    "parse_json_payload",
+    "selected_submit_cases",
+]
 
 _LEAK_PATTERNS = (
     re.compile(r"AKIA[0-9A-Z]{16}"),

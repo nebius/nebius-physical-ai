@@ -18,6 +18,27 @@ a serial SkyPilot multi-doc YAML, and submits that. SkyPilot originals under
 `../skypilot/` are kept as the production runtime reference until every twin
 has a live E2E.
 
+## Live GPU / CPU submit E2E
+
+Skip-by-default. On an operator VM with Nebius creds + SkyPilot:
+
+```bash
+# Cheap first: Token Factory CPU twins only
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu \
+  ./scripts/npa-workflow-submit-live-e2e.sh
+
+# Full matrix (cpu + gpu + multi)
+./scripts/npa-workflow-submit-live-e2e.sh
+
+# Plan-only preflight for every twin (no sky jobs launch)
+NPA_E2E_NPA_WORKFLOW_SUBMIT_PLAN_ONLY=1 \
+  ./scripts/npa-workflow-submit-live-e2e.sh
+```
+
+Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
+`NEBIUS_TOKEN_FACTORY_KEY`. Matrix source of truth:
+`npa/src/npa/orchestration/npa_workflow/submit_matrix.py`.
+
 ## Twins of SkyPilot YAMLs
 
 | npa.workflow spec | SkyPilot twin | Notes |

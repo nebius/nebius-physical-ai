@@ -63,6 +63,16 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_npa_workflow_live_infra.py -q
 ```
 
+Live **submit** matrix (operator VM with SkyPilot + registry; burns GPU-hours):
+
+```bash
+# CPU-only first
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
+
+# Full cpu+gpu+multi
+./scripts/npa-workflow-submit-live-e2e.sh
+```
+
 Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 
 ```bash

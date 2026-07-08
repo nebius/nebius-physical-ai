@@ -139,6 +139,21 @@ placeholders), and submits it. Use `--plan-only` to inspect the rendered YAML
 without launching. Parallel fan-out (`execution: parallel`) remains out of
 scope for v0.0.1 — those pipelines stay as raw SkyPilot YAMLs.
 
+### Live submit E2E
+
+On an operator VM with Nebius credentials, SkyPilot, and `NPA_REGISTRY`:
+
+```bash
+# Cheap first: Token Factory CPU twins
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
+
+# Full matrix
+./scripts/npa-workflow-submit-live-e2e.sh
+```
+
+Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
+(19 twins across cpu / gpu / multi; stub twins are plan-only).
+
 ## SDK
 
 ```python
