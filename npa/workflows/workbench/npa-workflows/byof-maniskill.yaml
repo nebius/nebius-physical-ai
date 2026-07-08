@@ -23,8 +23,17 @@ config:
 
     import gymnasium as gym
     import mani_skill.envs
+    from mani_skill.utils.wrappers import CPUGymWrapper
 
-    env = gym.make("PickCube-v1", obs_mode="state", render_mode=None)
+    env = gym.make(
+        "PickCube-v1",
+        obs_mode="state",
+        render_mode=None,
+        render_backend="none",
+        sim_backend="physx_cpu",
+        num_envs=1,
+    )
+    env = CPUGymWrapper(env)
     obs, _ = env.reset(seed=0)
     action = env.action_space.sample()
     _, reward, terminated, truncated, info = env.step(action)
@@ -46,7 +55,7 @@ config:
   solution_name: "maniskill"
   capability_name: "gymnasium_pickcube_step"
   smoke_artifact_name: "maniskill_pickcube_step.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   task: "PickCube-v1"
   iterations: 1
   num_envs: 1
