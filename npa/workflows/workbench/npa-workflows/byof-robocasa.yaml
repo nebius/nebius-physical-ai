@@ -47,7 +47,7 @@ config:
   solution_name: "robocasa"
   capability_name: "headless_kitchen_env_reset"
   smoke_artifact_name: "robocasa_kitchen_env_reset.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "robocasa/PickPlaceCounterToCabinet"
   iterations: 1
   num_envs: 1
