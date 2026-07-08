@@ -107,9 +107,10 @@ describe("NPA agent UI against live infra", () => {
 
     cy.reload();
     cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
-    cy.get("#rerunFrame")
-      .should("have.attr", "src")
-      .and("include", "/rerun/recordings/sim2real.rrd");
+    cy.get("#rerunFrame").should(($frame) => {
+      const src = String($frame.attr("src") || "");
+      expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
+    });
     cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
   });
 
