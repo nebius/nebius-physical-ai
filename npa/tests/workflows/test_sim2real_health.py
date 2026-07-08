@@ -57,6 +57,27 @@ def test_config_fails_without_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("s3_bucket" in d for d in result.details)
 
 
+def test_empty_bucket_override_falls_back_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: `npa workbench health sim2real` passes --s3-bucket "" (the flag
+    # default), which must NOT clobber NPA_SIM2REAL_BUCKET / S3_BUCKET from the env.
+    for key in ("NPA_S3_BUCKET", "NPA_SIM2REAL_BUCKET", "S3_BUCKET"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "env-bucket")
+    config = build_config_from_env(run_id="health-test", s3_bucket="")
+    assert config.s3_bucket == "env-bucket"
+    assert check_config(config).status in {health.PASS, health.WARN}
+
+    monkeypatch.delenv("NPA_SIM2REAL_BUCKET", raising=False)
+    monkeypatch.setenv("S3_BUCKET", "alias-bucket")
+    assert build_config_from_env(run_id="health-test", s3_bucket="").s3_bucket == "alias-bucket"
+
+
+def test_explicit_bucket_override_wins_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "env-bucket")
+    config = build_config_from_env(run_id="health-test", s3_bucket="explicit-bucket")
+    assert config.s3_bucket == "explicit-bucket"
+
+
 def test_config_warns_on_derived_optional_seams() -> None:
     result = check_config(_config(s3_bucket="real-bucket", trigger_dataset_uri="", assets_uri="", scene_spec_uri=""))
     assert result.status == health.WARN

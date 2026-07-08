@@ -357,15 +357,18 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    if "s3_bucket" in overrides:
-        bucket = str(overrides.get("s3_bucket") or "")
-    else:
-        bucket = str(
-            os.environ.get("NPA_SIM2REAL_BUCKET")
-            or os.environ.get("NPA_S3_BUCKET")
-            or os.environ.get("S3_BUCKET")
-            or ""
-        )
+    # An explicit but empty ``s3_bucket`` override (e.g. the ``--s3-bucket ""``
+    # default on ``npa workbench health sim2real``) must NOT clobber the env
+    # fallback — otherwise NPA_SIM2REAL_BUCKET / S3_BUCKET are ignored and the
+    # config falsely reports a missing bucket. Treat empty like absent, matching
+    # every other seam below (``override or env``).
+    bucket = str(
+        overrides.get("s3_bucket")
+        or os.environ.get("NPA_SIM2REAL_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or os.environ.get("S3_BUCKET")
+        or ""
+    )
     registry = os.environ.get("NPA_REGISTRY", "")
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
