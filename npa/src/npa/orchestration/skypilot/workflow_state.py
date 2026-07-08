@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
+
+UTC = timezone.utc
 
 import boto3
 import yaml

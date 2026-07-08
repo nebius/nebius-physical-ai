@@ -102,6 +102,17 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    # Optional live remap, e.g. NPA_E2E_ACCELERATOR_REMAP=H100:1=RTXPRO6000:1,H200:1=L40S:1
+    remap = os.environ.get("NPA_E2E_ACCELERATOR_REMAP", "").strip()
+    if remap:
+        for pair in remap.split(","):
+            pair = pair.strip()
+            if not pair or "=" not in pair:
+                continue
+            src, dst = pair.split("=", 1)
+            src, dst = src.strip(), dst.strip()
+            if src and dst:
+                text = text.replace(f"accelerators: {src}", f"accelerators: {dst}")
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
