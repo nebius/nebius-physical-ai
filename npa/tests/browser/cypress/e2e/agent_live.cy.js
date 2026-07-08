@@ -182,10 +182,10 @@ describe("NPA agent UI against live infra", () => {
       expect(response.body).to.have.property("grounded", true);
       expect(response.body.apis_used || []).to.have.length.greaterThan(0);
       const reply = String(response.body.reply || "");
-      expect(reply.trim()).not.to.match(/^GET\\s+\\/api\\//);
+      expect(reply.trim()).not.to.match(/^GET\s+\/api\//);
       expect(reply).to.include(runId);
       expect(reply).to.match(/Rerun|artifact|stage|rerun_ready/i);
-      expect(reply).to.match(/\\*\\*run_id\\*\\*|run_id/i);
+      expect(reply).to.match(/\*\*run_id\*\*|run_id/i);
     });
   });
 
