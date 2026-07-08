@@ -39,6 +39,7 @@ DEFAULT_YAML = (
 )
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/byof"
+DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa", "npa-nebius-registry")
 TERMINAL_STATUSES = {
     "SUCCEEDED",
     "CANCELLED",
@@ -175,11 +176,13 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         return 0
 
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
+        tmp_path = Path(tmp)
         rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
         infra = args.infra or _default_infra()
-        _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=args.config_path)
+        config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
+        _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
         if args.direct_launch:
             return _direct_launch(
                 rendered_yaml=rendered_yaml,
@@ -187,7 +190,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 outputs=outputs,
                 sky_bin=sky_bin,
                 infra=infra,
-                config_path=args.config_path,
+                config_path=config_path,
                 cleanup=args.cleanup,
             )
         teardown_guard = SignalTeardown(
@@ -205,7 +208,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 rendered_yaml,
                 run_id,
                 isolated_config_dir=args.isolated_config_dir,
-                config_path=args.config_path,
+                config_path=config_path,
                 sky_bin=sky_bin,
                 infra=infra,
                 timeout=args.submit_timeout,
@@ -294,6 +297,29 @@ def _default_infra() -> str:
         or os.environ.get("KUBECONTEXT", "")
     ).strip()
     return f"k8s/{context}" if context else ""
+
+
+def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
+    normalized = infra.strip().lower()
+    if not (normalized.startswith("k8s") or normalized.startswith("kubernetes")):
+        return ""
+    path = tmp_path / "skypilot-byof-k8s-config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS],
+                        }
+                    }
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
 
 
 def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") -> None:

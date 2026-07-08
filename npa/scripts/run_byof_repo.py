@@ -104,6 +104,30 @@ def _live_runner_env(project: str) -> dict[str, str]:
     return env
 
 
+def _refresh_registry_pull_secrets(image: str, project: str) -> None:
+    if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
+        return
+    registry_server = _registry_server(image)
+    if "nebius.cloud" not in registry_server:
+        return
+    try:
+        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+
+        target = resolve_byof_kubernetes_target(project or None)
+        namespaces = {target.namespace or "default", "default"}
+        for namespace in sorted(namespaces):
+            for secret_name in ("agent-sa", "npa-nebius-registry"):
+                ensure_nebius_registry_pull_secret(
+                    registry_server=registry_server,
+                    secret_name=secret_name,
+                    namespace=namespace,
+                    kubeconfig=target.kubeconfig,
+                    k8s_context=target.context,
+                )
+    except Exception as exc:
+        print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
+
+
 def _registry_path(image_ref: str) -> str:
     ref = image_ref.removeprefix("docker:")
     without_digest = ref.split("@", 1)[0]
@@ -424,6 +448,8 @@ def main(argv: list[str] | None = None) -> int:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
+            if args.workload in {"container-verify", "solution-smoke"}:
+                _refresh_registry_pull_secrets(image, args.project)
             run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:

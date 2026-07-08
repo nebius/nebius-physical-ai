@@ -71,6 +71,7 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
         "container_image_for_tool",
         lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
     )
+    monkeypatch.setenv("NPA_BYOF_SKIP_REGISTRY_REFRESH", "1")
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd == ["nebius", "iam", "get-access-token"]:

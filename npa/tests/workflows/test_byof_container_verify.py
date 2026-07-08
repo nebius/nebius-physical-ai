@@ -127,3 +127,14 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
     ]
     output = capsys.readouterr().out
     assert '"mode": "direct-launch"' in output
+
+
+def test_write_default_k8s_config_adds_pull_secrets(tmp_path) -> None:
+    module = _load_module()
+    config_path = module._write_default_k8s_config(tmp_path, "k8s/customer-mk8s")
+
+    assert config_path
+    text = Path(config_path).read_text(encoding="utf-8")
+    assert "imagePullSecrets" in text
+    assert "agent-sa" in text
+    assert "npa-nebius-registry" in text
