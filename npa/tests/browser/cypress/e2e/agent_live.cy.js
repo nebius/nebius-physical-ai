@@ -15,6 +15,17 @@ function liveRunId() {
   return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
 }
 
+function liveAgentRequest(path, options = {}) {
+  const baseUrl = Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl");
+  const username = Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER");
+  const password = Cypress.env("agentPassword") || Cypress.env("NPA_AGENT_PASSWORD");
+  return cy.request({
+    url: `${String(baseUrl || "").replace(/\/$/, "")}${path}`,
+    auth: { username, password },
+    ...options,
+  });
+}
+
 describe("NPA agent UI against live infra", () => {
   before(function () {
     if (!liveEnvAvailable()) {
@@ -69,9 +80,8 @@ describe("NPA agent UI against live infra", () => {
       this.skip();
     }
 
-    cy.request({
+    liveAgentRequest("/api/sim-viz/load-run", {
       method: "POST",
-      url: "/api/sim-viz/load-run",
       body: { run_id: runId, camera: "workspace" },
     }).then((response) => {
       expect(response.status).to.eq(200);
@@ -86,7 +96,7 @@ describe("NPA agent UI against live infra", () => {
       expect(simViz.rerun_iframe_url).to.include("/rerun/recordings/sim2real.rrd");
     });
 
-    cy.request("/api/sim-viz/status").then((response) => {
+    liveAgentRequest("/api/sim-viz/status").then((response) => {
       expect(response.status).to.eq(200);
       const simViz = response.body || {};
       expect(simViz.active_run_id || simViz.run_id).to.eq(runId);
