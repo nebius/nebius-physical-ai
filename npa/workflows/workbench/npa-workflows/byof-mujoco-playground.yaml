@@ -3,9 +3,9 @@ kind: Workflow
 metadata:
   name: byof-mujoco-playground
   description: >
-    Registry-candidate BYOF workflow for Google DeepMind MuJoCo Playground,
-    pinned to a tagged release and smoke-tested through the documented
-    CartpoleBalance training entrypoint.
+    Registry-candidate BYOF workflow for Google DeepMind MuJoCo Playground.
+    Exercises MJX CartpoleBalance reset/step, an additional registered env, and
+    a reduced train-jax-ppo smoke inside the pushed registry image.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/google-deepmind/mujoco_playground.git"
@@ -18,37 +18,105 @@ config:
     python3 python3-pip python3-venv git &&
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
-    /opt/venv/bin/python -m pip install --no-cache-dir -e .
+    /opt/venv/bin/python -m pip install --no-cache-dir -e ".[cuda12]" ||
+    /opt/venv/bin/python -m pip install --no-cache-dir -e . &&
+    /opt/venv/bin/python -m pip install --no-cache-dir "jax[cuda12]" brax || true
   workload: solution-smoke
   smoke_command: |
     export JAX_DEFAULT_MATMUL_PRECISION=highest
     /opt/venv/bin/python - <<'PY'
     import json
     import os
+    import subprocess
     from pathlib import Path
 
     import jax
     from mujoco_playground import registry
 
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    results = {
+        "solution": "mujoco-playground",
+        "capability": "mjx_cartpole_step",
+        "capabilities_exercised": [],
+        "jax_default_matmul_precision": os.environ.get("JAX_DEFAULT_MATMUL_PRECISION", ""),
+    }
+
     env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
     state = env.reset(jax.random.PRNGKey(0))
     action = jax.numpy.zeros((env.action_size,))
     next_state = env.step(state, action)
-    artifact = {
-        "solution": "mujoco-playground",
-        "capability": "mjx_cartpole_step",
+    results["cartpole"] = {
         "env_id": "CartpoleBalance",
         "reward": float(next_state.reward),
         "done": bool(next_state.done),
     }
-    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(artifact, indent=2))
-    print(json.dumps(artifact, indent=2))
+    results["capabilities_exercised"].append("mjx_cartpole_step")
+    (output_dir / "mujoco_playground_cartpole_step.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "mjx_cartpole_step", **results["cartpole"]}, indent=2)
+    )
+
+    # Additional registered locomotion/manipulation env beyond Cartpole.
+    extra_env_id = "CheetahRun"
+    extra = {"env_id": extra_env_id, "ok": False, "error": ""}
+    try:
+        env2 = registry.load(extra_env_id, config_overrides={"impl": "jax"})
+        state2 = env2.reset(jax.random.PRNGKey(1))
+        action2 = jax.numpy.zeros((env2.action_size,))
+        next2 = env2.step(state2, action2)
+        extra.update({"ok": True, "reward": float(next2.reward), "done": bool(next2.done)})
+        results["capabilities_exercised"].append("mjx_cheetah_run_step")
+    except Exception as exc:  # noqa: BLE001
+        extra["error"] = f"{type(exc).__name__}: {exc}"
+    results["cheetah_run"] = extra
+    (output_dir / "mujoco_playground_cheetah_run_step.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "mjx_cheetah_run_step", **extra}, indent=2)
+    )
+
+    # Reduced documented PPO training entrypoint.
+    ppo = {"command": "train-jax-ppo --env_name CartpoleBalance --num_timesteps 256", "ok": False, "error": "", "returncode": None}
+    try:
+        completed = subprocess.run(
+            ["train-jax-ppo", "--env_name", "CartpoleBalance", "--num_timesteps", "256"],
+            cwd="/opt/byof",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1800,
+        )
+        ppo["returncode"] = completed.returncode
+        ppo["stdout_tail"] = (completed.stdout or "")[-2000:]
+        ppo["stderr_tail"] = (completed.stderr or "")[-2000:]
+        ppo["ok"] = completed.returncode == 0
+        if ppo["ok"]:
+            results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
+        else:
+            ppo["error"] = f"returncode={completed.returncode}"
+    except Exception as exc:  # noqa: BLE001
+        ppo["error"] = f"{type(exc).__name__}: {exc}"
+    results["train_jax_ppo"] = ppo
+    (output_dir / "mujoco_playground_train_jax_ppo.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "train_jax_ppo_cartpole_smoke", **ppo}, indent=2)
+    )
+    if not ppo["ok"]:
+        results.setdefault("deferred", []).append("train_jax_ppo_cartpole_smoke")
+    if not extra["ok"]:
+        results.setdefault("deferred", []).append("mjx_cheetah_run_step")
+
+    # Primary gate: Cartpole step must succeed.
+    if "mjx_cartpole_step" not in results["capabilities_exercised"]:
+        raise SystemExit("CartpoleBalance step failed")
+
+    (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    if not extra["ok"] or not ppo["ok"]:
+        # Fail the smoke so deferred capabilities are actually tested to green,
+        # not silently recorded. Re-run after fixing install/runtime.
+        raise SystemExit("one or more deferred MuJoCo Playground capabilities failed")
     PY
   solution_name: "mujoco-playground"
   capability_name: "mjx_cartpole_step"
   smoke_artifact_name: "mujoco_playground_cartpole_step.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "CartpoleBalance"
   iterations: 1
   num_envs: 1
@@ -68,8 +136,8 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push MuJoCo Playground and run its CartpoleBalance PPO smoke from
-      the registry image in live Kubernetes.
+      Build/push MuJoCo Playground and run Cartpole/Cheetah/PPO capability
+      smokes from the registry image in live Kubernetes.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

@@ -15,52 +15,60 @@ SOLUTION_SPECS = sorted(
     if path.name != "byof.yaml"
 )
 
-# Accepted live-passing capability contracts for onboarded solutions.
+# Primary capability contracts for onboarded solutions (solution-specific ids).
 # Keep in sync with skills/workflows/oss-solution-registry-onboard/SKILL.md
 # and docs/workbench/oss-solution-catalog.md.
 ACCEPTED_CAPABILITIES = {
     "maniskill": {
-        "capability_name": "gymnasium_pickcube_registration",
-        "family": "sim_env",
+        "capability_name": "pickcube_cpu_step",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
         "spec": "byof-maniskill.yaml",
+        "must_exercise": [
+            "gymnasium_pickcube_registration",
+            "pickcube_cpu_step",
+            "pickcube_parallel_envs",
+        ],
     },
     "mujoco-playground": {
         "capability_name": "mjx_cartpole_step",
-        "family": "sim_env",
         "smoke_artifact_name": "mujoco_playground_cartpole_step.json",
         "spec": "byof-mujoco-playground.yaml",
+        "must_exercise": [
+            "mjx_cartpole_step",
+            "mjx_cheetah_run_step",
+            "train_jax_ppo_cartpole_smoke",
+        ],
     },
     "robocasa": {
-        "capability_name": "kitchen_task_registration",
-        "family": "sim_env",
+        "capability_name": "kitchen_egl_env_reset",
         "smoke_artifact_name": "robocasa_kitchen_env_reset.json",
         "spec": "byof-robocasa.yaml",
+        "must_exercise": [
+            "kitchen_task_registration",
+            "download_kitchen_assets_lw",
+            "kitchen_egl_env_reset",
+        ],
     },
     "openpi": {
-        "capability_name": "policy_config_materialization",
-        "family": "policy_config",
+        "capability_name": "pi05_droid_checkpoint_infer",
         "smoke_artifact_name": "openpi_pi05_droid_config.json",
         "spec": "byof-openpi.yaml",
+        "must_exercise": [
+            "policy_config_materialization",
+            "pi05_droid_checkpoint_download",
+            "pi05_droid_checkpoint_infer",
+        ],
     },
     "droid-policy-learning": {
-        "capability_name": "rlds_config_generator_contract",
-        "family": "dataset_contract",
+        "capability_name": "droid_100_config_gen",
         "smoke_artifact_name": "droid_rlds_config_generator.json",
         "spec": "byof-droid-policy-learning.yaml",
+        "must_exercise": [
+            "rlds_config_generator_contract",
+            "droid_100_download",
+            "droid_100_config_gen",
+        ],
     },
-}
-
-REQUIRED_CAPABILITY_FAMILIES = {
-    "sim_env",
-    "render_headless",
-    "datagen",
-    "policy_config",
-    "policy_infer",
-    "policy_train",
-    "dataset_contract",
-    "eval_benchmark",
-    "serve",
 }
 
 
@@ -93,6 +101,7 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
+        assert "capabilities_exercised" in smoke, path.name
 
 
 def test_accepted_capability_contracts_match_specs() -> None:
@@ -109,27 +118,24 @@ def test_accepted_capability_contracts_match_specs() -> None:
         smoke = str(config.get("smoke_command") or "")
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
+        for capability in expected["must_exercise"]:
+            assert capability in smoke, (solution, capability)
 
 
-def test_registry_skill_encodes_capability_testing_contract() -> None:
+def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
-    assert "Capability Families (required taxonomy)" in text
+    assert "Do **not** force capabilities into a shared taxonomy" in text
     assert "Capability Testing Built Into Onboarding" in text
-    assert "Current Onboarded Solutions (live-passing)" in text
-    for family in REQUIRED_CAPABILITY_FAMILIES:
-        assert f"`{family}`" in text, family
+    assert "Capability Families (required taxonomy)" not in text
     for solution, expected in ACCEPTED_CAPABILITIES.items():
-        assert expected["capability_name"] in text, solution
-        assert expected["smoke_artifact_name"] in text, solution
-        assert expected["family"] in text, solution
+        assert expected["capability_name"] in text or expected["spec"] in text, solution
+        assert f"byof-{solution}.yaml" in text or expected["spec"] in text
 
 
-def test_oss_catalog_lists_native_capabilities_and_live_pass() -> None:
+def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     text = CATALOG_PATH.read_text(encoding="utf-8")
     assert "Native Capabilities Per Container" in text
-    assert "all five containers below pass" in text.lower() or "Live status:** all five" in text
-    assert "Capability Testing In The Onboarding Skill" in text
+    assert "shared taxonomy" in text.lower() or "solution-specific" in text.lower()
     for solution, expected in ACCEPTED_CAPABILITIES.items():
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
-        assert "accepted" in text

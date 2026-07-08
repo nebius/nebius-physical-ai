@@ -3,10 +3,9 @@ kind: Workflow
 metadata:
   name: byof-maniskill
   description: >
-    Registry-candidate BYOF workflow for ManiSkill GPU-parallel robotics
-    simulation. Builds a pinned ManiSkill checkout and runs a documented
-    PickCube Gymnasium smoke inside the pushed registry image on live
-    Kubernetes.
+    Registry-candidate BYOF workflow for ManiSkill. Builds a pinned ManiSkill
+    checkout and runs solution-specific PickCube create/reset/step plus
+    parallel-env smokes inside the pushed registry image on live Kubernetes.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/mani-skill/ManiSkill.git"
@@ -28,23 +27,116 @@ config:
     import gymnasium as gym
     import mani_skill.envs
 
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     env_id = "PickCube-v1"
+    results = {
+        "solution": "maniskill",
+        "capability": "pickcube_cpu_step",
+        "capabilities_exercised": [],
+        "env_id": env_id,
+    }
+
+    # Capability: Gymnasium registration (upstream quickstart env id).
     spec = gym.envs.registry[env_id]
     mani_skill_envs = sorted(env for env in gym.envs.registry.keys() if env.endswith("-v1"))
-    artifact = {
-        "solution": "maniskill",
-        "capability": "gymnasium_pickcube_registration",
-        "env_id": env_id,
+    results["registration"] = {
         "entry_point": str(spec.entry_point),
         "registered_v1_env_count": len(mani_skill_envs),
         "sample_registered_envs": mani_skill_envs[:10],
     }
-    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(artifact, indent=2))
-    print(json.dumps(artifact, indent=2))
+    results["capabilities_exercised"].append("gymnasium_pickcube_registration")
+    (output_dir / "maniskill_registration.json").write_text(
+        json.dumps({"solution": "maniskill", "capability": "gymnasium_pickcube_registration", **results["registration"]}, indent=2)
+    )
+
+    # Capability: documented PickCube create/reset/step with rendering disabled.
+    env = gym.make(
+        env_id,
+        num_envs=1,
+        obs_mode="state",
+        control_mode="pd_joint_delta_pos",
+        render_backend="none",
+    )
+    obs, _info = env.reset(seed=0)
+    action = env.action_space.sample()
+    obs2, reward, terminated, truncated, info = env.step(action)
+    env.close()
+    results["cpu_step"] = {
+        "obs_shape": list(getattr(obs, "shape", [])),
+        "reward": float(reward.mean().item() if hasattr(reward, "mean") else reward),
+        "terminated": bool(terminated.any().item() if hasattr(terminated, "any") else terminated),
+        "truncated": bool(truncated.any().item() if hasattr(truncated, "any") else truncated),
+    }
+    results["capabilities_exercised"].append("pickcube_cpu_step")
+    (output_dir / "maniskill_pickcube_cpu_step.json").write_text(
+        json.dumps({"solution": "maniskill", "capability": "pickcube_cpu_step", **results["cpu_step"]}, indent=2)
+    )
+
+    # Capability: GPU-parallel multi-env simulation (num_envs>1).
+    env_p = gym.make(
+        env_id,
+        num_envs=4,
+        obs_mode="state",
+        control_mode="pd_joint_delta_pos",
+        render_backend="none",
+    )
+    obs_p, _ = env_p.reset(seed=0)
+    action_p = env_p.action_space.sample()
+    obs_p2, reward_p, terminated_p, truncated_p, info_p = env_p.step(action_p)
+    env_p.close()
+    results["parallel_envs"] = {
+        "num_envs": 4,
+        "obs_shape": list(getattr(obs_p, "shape", [])),
+        "reward_shape": list(getattr(reward_p, "shape", [])),
+    }
+    results["capabilities_exercised"].append("pickcube_parallel_envs")
+    (output_dir / "maniskill_pickcube_parallel_envs.json").write_text(
+        json.dumps({"solution": "maniskill", "capability": "pickcube_parallel_envs", **results["parallel_envs"]}, indent=2)
+    )
+
+    # Capability probe: headless rgb_array render path (may require Vulkan).
+    render_status = {"attempted": True, "ok": False, "error": ""}
+    try:
+        env_r = gym.make(
+            env_id,
+            num_envs=1,
+            obs_mode="state",
+            control_mode="pd_joint_delta_pos",
+            render_mode="rgb_array",
+            render_backend="gpu",
+        )
+        env_r.reset(seed=0)
+        frame = env_r.render()
+        env_r.close()
+        render_status["ok"] = True
+        render_status["frame_type"] = type(frame).__name__
+        results["capabilities_exercised"].append("pickcube_gpu_rgb_render")
+    except Exception as exc:  # noqa: BLE001 - capture live blocker for catalog
+        render_status["error"] = f"{type(exc).__name__}: {exc}"
+    results["gpu_rgb_render"] = render_status
+    (output_dir / "maniskill_pickcube_gpu_rgb_render.json").write_text(
+        json.dumps({"solution": "maniskill", "capability": "pickcube_gpu_rgb_render", **render_status}, indent=2)
+    )
+    if not render_status["ok"]:
+        # Soft-fail only for GPU rgb render when Vulkan/ICD is unavailable.
+        results["deferred"] = ["pickcube_gpu_rgb_render"]
+
+    (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    missing = [
+        name
+        for name in (
+            "gymnasium_pickcube_registration",
+            "pickcube_cpu_step",
+            "pickcube_parallel_envs",
+        )
+        if name not in results["capabilities_exercised"]
+    ]
+    if missing:
+        raise SystemExit(f"maniskill capabilities failed: {missing}")
     PY
   solution_name: "maniskill"
-  capability_name: "gymnasium_pickcube_registration"
+  capability_name: "pickcube_cpu_step"
   smoke_artifact_name: "maniskill_pickcube_step.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "PickCube-v1"
@@ -66,8 +158,8 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push the pinned ManiSkill image and run the PickCube-v1 smoke from
-      the registry image in a live Kubernetes workflow.
+      Build/push the pinned ManiSkill image and run PickCube cpu/parallel
+      capability smokes from the registry image in a live Kubernetes workflow.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

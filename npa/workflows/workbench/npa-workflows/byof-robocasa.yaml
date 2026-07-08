@@ -3,9 +3,9 @@ kind: Workflow
 metadata:
   name: byof-robocasa
   description: >
-    Registry-candidate BYOF workflow for RoboCasa household manipulation
-    simulation, pinned to the RoboCasa365 release tag and smoke-tested with a
-    headless MuJoCo/EGL environment construction path.
+    Registry-candidate BYOF workflow for RoboCasa. Downloads lightweight kitchen
+    assets and runs a headless MUJOCO_GL=egl PickPlaceCounterToCabinet
+    create/reset smoke inside the pushed registry image.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/robocasa/robocasa.git"
@@ -32,30 +32,140 @@ config:
     python3 - <<'PY'
     import json
     import os
+    import subprocess
     from pathlib import Path
 
     import gymnasium as gym
     import robocasa
 
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    results = {
+        "solution": "robocasa",
+        "capability": "kitchen_egl_env_reset",
+        "capabilities_exercised": [],
+        "mujoco_gl": os.environ.get("MUJOCO_GL", ""),
+    }
+
     env_id = "robocasa/PickPlaceCounterToCabinet"
     spec = gym.envs.registry[env_id]
     robocasa_envs = sorted(env for env in gym.envs.registry.keys() if env.startswith("robocasa/"))
     assets_root = Path(robocasa.__file__).resolve().parent / "models" / "assets"
-    artifact = {
-        "solution": "robocasa",
-        "capability": "kitchen_task_registration",
+    results["registration"] = {
         "env_id": env_id,
         "entry_point": str(spec.entry_point),
         "registered_env_count": len(robocasa_envs),
         "assets_root_exists": assets_root.exists(),
         "sample_registered_envs": robocasa_envs[:10],
     }
-    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    (output_dir / "robocasa_kitchen_env_reset.json").write_text(json.dumps(artifact, indent=2))
-    print(json.dumps(artifact, indent=2))
+    results["capabilities_exercised"].append("kitchen_task_registration")
+    (output_dir / "robocasa_kitchen_task_registration.json").write_text(
+        json.dumps({"solution": "robocasa", "capability": "kitchen_task_registration", **results["registration"]}, indent=2)
+    )
+
+    # Documented lightweight asset download (LeRobot/RoboCasa guidance).
+    download = {
+        "command": "python -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw objs_lw",
+        "ok": False,
+        "returncode": None,
+        "error": "",
+    }
+    try:
+        completed = subprocess.run(
+            [
+                "python3",
+                "-m",
+                "robocasa.scripts.setup_macros",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        download["setup_macros_returncode"] = completed.returncode
+        completed = subprocess.run(
+            [
+                "python3",
+                "-m",
+                "robocasa.scripts.download_kitchen_assets",
+                "--type",
+                "tex",
+                "tex_generative",
+                "fixtures_lw",
+                "objs_lw",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3600,
+        )
+        download["returncode"] = completed.returncode
+        download["stdout_tail"] = (completed.stdout or "")[-2000:]
+        download["stderr_tail"] = (completed.stderr or "")[-2000:]
+        download["ok"] = completed.returncode == 0
+        if download["ok"]:
+            results["capabilities_exercised"].append("download_kitchen_assets_lw")
+        else:
+            download["error"] = f"returncode={completed.returncode}"
+    except Exception as exc:  # noqa: BLE001
+        download["error"] = f"{type(exc).__name__}: {exc}"
+    results["download_kitchen_assets"] = download
+    (output_dir / "robocasa_download_kitchen_assets_lw.json").write_text(
+        json.dumps({"solution": "robocasa", "capability": "download_kitchen_assets_lw", **download}, indent=2)
+    )
+
+    # Headless EGL env create/reset (documented Gym interface).
+    reset = {"env_id": env_id, "ok": False, "error": ""}
+    try:
+        env = gym.make(env_id, split="pretrain", seed=0)
+        obs, info = env.reset(seed=0)
+        reset["ok"] = True
+        reset["obs_type"] = type(obs).__name__
+        reset["info_keys"] = sorted(list(info.keys())) if isinstance(info, dict) else []
+        env.close()
+        results["capabilities_exercised"].append("kitchen_egl_env_reset")
+    except Exception as exc:  # noqa: BLE001
+        reset["error"] = f"{type(exc).__name__}: {exc}"
+    results["kitchen_egl_env_reset"] = reset
+    (output_dir / "robocasa_kitchen_env_reset.json").write_text(
+        json.dumps({"solution": "robocasa", "capability": "kitchen_egl_env_reset", **reset}, indent=2)
+    )
+
+    # Optional tiny random rollout if reset worked.
+    rollout = {"ok": False, "error": ""}
+    if reset["ok"]:
+        try:
+            from robocasa.utils.env_utils import run_random_rollouts
+
+            env = gym.make(env_id, split="pretrain", seed=0)
+            video_path = str(output_dir / "robocasa_random_rollout.mp4")
+            run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=video_path)
+            env.close()
+            rollout["ok"] = True
+            rollout["video_path"] = video_path
+            rollout["video_exists"] = Path(video_path).exists()
+            results["capabilities_exercised"].append("kitchen_random_rollout")
+        except Exception as exc:  # noqa: BLE001
+            rollout["error"] = f"{type(exc).__name__}: {exc}"
+    results["kitchen_random_rollout"] = rollout
+    (output_dir / "robocasa_kitchen_random_rollout.json").write_text(
+        json.dumps({"solution": "robocasa", "capability": "kitchen_random_rollout", **rollout}, indent=2)
+    )
+
+    (output_dir / "robocasa_kitchen_env_reset.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    missing = [
+        name
+        for name in (
+            "kitchen_task_registration",
+            "download_kitchen_assets_lw",
+            "kitchen_egl_env_reset",
+        )
+        if name not in results["capabilities_exercised"]
+    ]
+    if missing:
+        raise SystemExit(f"robocasa capabilities failed: {missing}")
     PY
   solution_name: "robocasa"
-  capability_name: "kitchen_task_registration"
+  capability_name: "kitchen_egl_env_reset"
   smoke_artifact_name: "robocasa_kitchen_env_reset.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "robocasa/PickPlaceCounterToCabinet"
@@ -77,8 +187,8 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push RoboCasa and run its headless kitchen-task smoke from the
-      registry image in live Kubernetes.
+      Build/push RoboCasa and run asset-download plus headless kitchen-task
+      capability smokes from the registry image in live Kubernetes.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

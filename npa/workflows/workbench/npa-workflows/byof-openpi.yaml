@@ -3,9 +3,9 @@ kind: Workflow
 metadata:
   name: byof-openpi
   description: >
-    Registry-candidate BYOF workflow for Physical Intelligence OpenPI robot
-    foundation policies, pinned to a reviewed commit and smoke-tested through
-    the documented pi0.5 DROID policy configuration path.
+    Registry-candidate BYOF workflow for Physical Intelligence OpenPI. Materializes
+    pi05_droid config, downloads the public checkpoint, and runs one dummy
+    policy.infer inside the pushed registry image.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/Physical-Intelligence/openpi.git"
@@ -27,25 +27,89 @@ config:
     import os
     from pathlib import Path
 
+    import numpy as np
     from openpi.training import config as openpi_config
+    from openpi.policies import policy_config
+    from openpi.shared import download
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    results = {
+        "solution": "openpi",
+        "capability": "pi05_droid_checkpoint_infer",
+        "capabilities_exercised": [],
+    }
 
     cfg = openpi_config.get_config("pi05_droid")
     assert cfg is not None
-    artifact = {
-        "solution": "openpi",
-        "capability": "policy_config_materialization",
+    results["config"] = {
         "config_name": cfg.name,
         "model_type": type(cfg.model).__name__ if getattr(cfg, "model", None) is not None else "",
         "data_type": type(cfg.data).__name__ if getattr(cfg, "data", None) is not None else "",
     }
-    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
-    (output_dir / "openpi_pi05_droid_config.json").write_text(json.dumps(artifact, indent=2))
-    print(json.dumps(artifact, indent=2))
+    results["capabilities_exercised"].append("policy_config_materialization")
+    (output_dir / "openpi_pi05_droid_config.json").write_text(
+        json.dumps({"solution": "openpi", "capability": "policy_config_materialization", **results["config"]}, indent=2)
+    )
+
+    checkpoint = {"uri": "gs://openpi-assets/checkpoints/pi05_droid", "ok": False, "error": "", "path": ""}
+    infer = {"ok": False, "error": "", "action_shape": []}
+    try:
+        checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_droid")
+        checkpoint["path"] = str(checkpoint_dir)
+        checkpoint["ok"] = True
+        results["capabilities_exercised"].append("pi05_droid_checkpoint_download")
+        policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
+        # Dummy observation matching documented DROID keys; values are zeros.
+        example = {
+            "observation/exterior_image_1_left": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/wrist_image_left": np.zeros((224, 224, 3), dtype=np.uint8),
+            "prompt": "pick up the fork",
+        }
+        # Some OpenPI configs also expect proprio / state keys; fill common ones if required later.
+        out = policy.infer(example)
+        actions = out["actions"]
+        infer["ok"] = True
+        infer["action_type"] = type(actions).__name__
+        infer["action_shape"] = list(getattr(actions, "shape", []))
+        results["capabilities_exercised"].append("pi05_droid_checkpoint_infer")
+    except Exception as exc:  # noqa: BLE001
+        err = f"{type(exc).__name__}: {exc}"
+        if not checkpoint["ok"]:
+            checkpoint["error"] = err
+        else:
+            infer["error"] = err
+    results["checkpoint"] = checkpoint
+    results["infer"] = infer
+    (output_dir / "openpi_pi05_droid_checkpoint_infer.json").write_text(
+        json.dumps(
+            {
+                "solution": "openpi",
+                "capability": "pi05_droid_checkpoint_infer",
+                "checkpoint": checkpoint,
+                "infer": infer,
+            },
+            indent=2,
+        )
+    )
+
+    (output_dir / "openpi_pi05_droid_config.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    missing = [
+        name
+        for name in (
+            "policy_config_materialization",
+            "pi05_droid_checkpoint_download",
+            "pi05_droid_checkpoint_infer",
+        )
+        if name not in results["capabilities_exercised"]
+    ]
+    if missing:
+        raise SystemExit(f"openpi capabilities failed: {missing}")
     PY
   solution_name: "openpi"
-  capability_name: "policy_config_materialization"
+  capability_name: "pi05_droid_checkpoint_infer"
   smoke_artifact_name: "openpi_pi05_droid_config.json"
-  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
   task: "pi05_droid"
   iterations: 1
   num_envs: 1
@@ -65,8 +129,8 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Build/push OpenPI and run its pi05_droid config smoke from the registry
-      image in live Kubernetes.
+      Build/push OpenPI and run pi05_droid config + checkpoint infer capability
+      smokes from the registry image in live Kubernetes.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

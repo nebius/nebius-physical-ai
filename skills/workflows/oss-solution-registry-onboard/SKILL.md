@@ -7,9 +7,13 @@ description: Use when evaluating and onboarding an open-source Physical AI solut
 
 Use this skill when an agent is asked to turn a public Physical AI repository
 into a registry/catalog candidate for NPA. This is stricter than generic BYOF:
-the agent must discover the upstream project's real documented capabilities,
-test those capabilities, and produce validation evidence before calling the
-solution registry-ready.
+the agent must discover **that solution's** real documented capabilities, test
+those capabilities with solution-specific commands, and produce validation
+evidence before calling the solution registry-ready.
+
+Do **not** force capabilities into a shared taxonomy. Each OSS project has its
+own APIs, assets, and hello-worlds; name and test them as the upstream project
+does.
 
 ## When To Use
 
@@ -44,10 +48,13 @@ Load these as needed before making decisions:
 
 Do not invent capabilities from repo names, README badges, or marketing copy.
 Before authoring registry metadata, the agent must read upstream documentation
-and identify real user-facing capabilities that can be tested.
+and identify real user-facing capabilities that can be tested **for that
+solution**.
 
 For each claimed capability, record:
 
+- capability id unique to this solution (use upstream names: env ids, config
+  names, script entrypoints, dataset ids)
 - upstream doc path or URL
 - command, API, example, or config that demonstrates it
 - required runtime profile (`ubuntu`, `isaac-lab`, custom base, service image)
@@ -63,132 +70,39 @@ If a capability cannot be tested on available Nebius infrastructure, mark it
 `deferred` with the precise blocker. Do not list deferred capabilities as
 registry-ready.
 
-## Capability Families (required taxonomy)
-
-When creating or onboarding a solution, classify every native capability into
-one of these families and attach a capability-specific smoke. Import-only checks
-are never enough.
-
-| Family | What "works" means | Golden hello-world pattern |
-| --- | --- | --- |
-| `sim_env` | Env registry + create/reset/step | Load documented env id; reset; optional step; write reward/done or registration metadata JSON |
-| `render_headless` | Headless GPU graphics path | Prove EGL/Vulkan/GLVND visibility and a tiny render or env construct that needs it |
-| `datagen` | Synthetic/demo data creation | Generate a tiny dataset/demo artifact (HDF5/JSON/video frame list) |
-| `policy_config` | Train/eval/serve config materialization | Load documented config name; assert model/data fields; write config JSON |
-| `policy_infer` | Checkpoint load + inference | Load tiny/public checkpoint or documented smoke weights; run one forward/action |
-| `policy_train` | Reduced training loop | One documented debug/subset train step that writes a checkpoint or metrics JSON |
-| `dataset_contract` | Dataset/config generator contract | Import generator; assert schemas/exp names/signatures; write contract JSON |
-| `eval_benchmark` | Benchmark/eval entrypoint | Run documented eval on a tiny split; write score JSON |
-| `serve` | Model/service endpoint | Start smoke server or call documented client against a local stub; write response JSON |
-
-Every registry candidate must ship:
-
-1. At least one **accepted** capability smoke from the table above.
-2. A named JSON artifact under `$NPA_SMOKE_OUTPUT_DIR`.
-3. Live Nebius evidence that the **pushed registry image** was pulled on
-   Kubernetes and executed that smoke via `--workload solution-smoke`.
-
-## Current Onboarded Solutions (live-passing)
-
-All five containers below **work** on live Nebius Kubernetes: image build/push,
-registry pull, capability smoke, and S3 artifact upload all returned exit `0`.
-
-Catalog: `docs/workbench/oss-solution-catalog.md`.
-Specs: `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml`.
-
-### ManiSkill (`byof-maniskill.yaml`)
-
-Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`
-
-| Native capability | Family | Status | Evidence |
-| --- | --- | --- | --- |
-| Gymnasium env registration (`PickCube-v1` + registered `-v1` envs) | `sim_env` | **accepted** | `gymnasium_pickcube_registration` → `maniskill_pickcube_step.json` |
-| GPU-parallel multi-env simulation | `sim_env` | deferred | Needs stable Vulkan/SAPIEN scene construct on cluster GPUs |
-| Headless Vulkan rendering | `render_headless` | deferred | `vk::createInstanceUnique: ErrorIncompatibleDriver` on prior live attempt |
-| RL/IL baseline train entrypoints | `policy_train` | deferred | Not yet exercised in NPA smoke matrix |
-| Demo collection / real2sim examples | `datagen` | deferred | Asset/demo path not yet wired |
-
-Golden smoke (accepted): import `mani_skill.envs`, assert `PickCube-v1` in
-Gymnasium registry, write entry point + registered env sample JSON.
-
-### MuJoCo Playground (`byof-mujoco-playground.yaml`)
-
-Pinned: `google-deepmind/mujoco_playground` `v0.2.0` · CUDA 12.8 Ubuntu 24.04 + `/opt/venv`
-
-| Native capability | Family | Status | Evidence |
-| --- | --- | --- | --- |
-| MJX registry load + CartpoleBalance reset/step | `sim_env` | **accepted** | `mjx_cartpole_step` → `mujoco_playground_cartpole_step.json` |
-| JAX/MJX locomotion & manipulation env suite | `sim_env` | deferred | Only CartpoleBalance exercised |
-| Documented PPO / training recipes | `policy_train` | deferred | Full train loop not yet in smoke matrix |
-| NVIDIA TF32 precision guidance (`JAX_DEFAULT_MATMUL_PRECISION=highest`) | `policy_train` | accepted (env) | Set in golden smoke command |
-
-Golden smoke (accepted): `registry.load("CartpoleBalance", impl=jax)`,
-`reset(PRNGKey)`, zero-action `step`, write reward/done JSON.
-
-### RoboCasa (`byof-robocasa.yaml`)
-
-Pinned: `robocasa/robocasa` `v1.0` · CUDA 12.4 + robosuite pin + EGL libs
-
-| Native capability | Family | Status | Evidence |
-| --- | --- | --- | --- |
-| Kitchen Gymnasium task registration (`PickPlaceCounterToCabinet`) | `sim_env` | **accepted** | `kitchen_task_registration` → `robocasa_kitchen_env_reset.json` |
-| Packaged assets root present | `dataset_contract` | **accepted** | `assets_root_exists` in artifact |
-| Headless MuJoCo EGL env create/reset | `render_headless` | deferred | Full kitchen asset download / Window model path blocked prior runs |
-| Demo / benchmark evaluation hooks | `eval_benchmark` | deferred | Not yet exercised |
-| Diverse kitchen scene generation | `datagen` | deferred | Asset-heavy; defer until asset staging contract exists |
-
-Golden smoke (accepted): import `robocasa`, assert
-`robocasa/PickPlaceCounterToCabinet` registration and assets root existence
-with `MUJOCO_GL=egl`.
-
-### OpenPI (`byof-openpi.yaml`)
-
-Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac` · CUDA 12.8 + `uv` editable install
-
-| Native capability | Family | Status | Evidence |
-| --- | --- | --- | --- |
-| Documented policy config materialization (`pi05_droid`) | `policy_config` | **accepted** | `policy_config_materialization` → `openpi_pi05_droid_config.json` |
-| Checkpoint download + inference | `policy_infer` | deferred | Needs GCS/HF access + VRAM routing |
-| LoRA / fine-tune recipes | `policy_train` | deferred | Not yet exercised |
-
-Golden smoke (accepted): `openpi.training.config.get_config("pi05_droid")`,
-write model/data type metadata JSON.
-
-### DROID policy learning (`byof-droid-policy-learning.yaml`)
-
-Pinned: `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddaca217581` · CUDA 12.4
-
-| Native capability | Family | Status | Evidence |
-| --- | --- | --- | --- |
-| RLDS language-conditioned config generator contract | `dataset_contract` | **accepted** | `rlds_config_generator_contract` → `droid_rlds_config_generator.json` |
-| Debug subset training (`droid_100`) | `policy_train` | deferred | Needs staged debug data |
-| Full DROID RLDS training | `policy_train` | deferred | Large dataset; not registry-smoke scope |
-
-Golden smoke (accepted): import `droid_runs_language_conditioned_rlds`, assert
-`EXP_NAMES` / `DATA_PATH` / `make_generator_helper` signature, write contract JSON.
-
 ## Capability Testing Built Into Onboarding
 
 When **creating or onboarding any new solution**, agents must follow this
 procedure. Do not skip to Docker build.
 
-### 1. Discover native capabilities
+### 1. Discover this solution's native capabilities
 
 Read upstream README/docs/examples. Produce a capability table with columns:
 
-`capability_id`, `family`, `upstream_doc`, `command_or_api`, `runtime`,
-`gpu_or_assets`, `artifact_name`, `status`.
+`capability_id`, `upstream_doc`, `command_or_api`, `runtime`, `gpu_or_assets`,
+`artifact_name`, `status`.
 
-### 2. Choose golden hello-world per accepted claim
+Use the project's own vocabulary. Examples of good ids:
+
+- ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
+- MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
+- RoboCasa: `kitchen_egl_env_reset`, `download_kitchen_assets_lw`
+- OpenPI: `pi05_droid_config`, `pi05_droid_checkpoint_infer`
+- DROID: `rlds_config_generator`, `droid_100_config_gen`
+
+### 2. Choose a golden hello-world per accepted claim
 
 For each capability marked for admission:
 
-- Prefer the smallest documented command that proves the family (see taxonomy).
-- Require a JSON artifact named `<solution>_<capability>.json` written to
+- Prefer the smallest documented upstream command that proves that claim.
+- Require a JSON artifact named for the solution + capability, written to
   `$NPA_SMOKE_OUTPUT_DIR`.
 - Artifact must include at least: `solution`, `capability`, and one
-  capability-specific proof field (env id, reward, config name, schema keys,
-  etc.).
+  capability-specific proof field (env id, reward, config name, checkpoint
+  path, dataset keys, etc.).
+- A single `solution-smoke` may exercise several capabilities for one image;
+  write one primary artifact and optional per-capability JSON files. List every
+  exercised capability in the primary artifact.
 
 ### 3. Encode into BYOF + workflow
 
@@ -201,7 +115,7 @@ config:
   smoke_command: |
     # must write $NPA_SMOKE_OUTPUT_DIR/<smoke_artifact_name>
   solution_name: "<slug>"
-  capability_name: "<family_or_specific_id>"
+  capability_name: "<primary-capability-id>"
   smoke_artifact_name: "<solution>_<capability>.json"
   resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-container-smoke-rtxpro.yaml"
   # use byof-solution-smoke-rtxpro-gpu.yaml when CUDA/EGL/Vulkan is required
@@ -217,7 +131,7 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --base-image <if-required> \
   --build-command '<install>' \
   --workload solution-smoke \
-  --smoke-command '<capability hello-world>' \
+  --smoke-command '<solution-specific hello-world>' \
   --solution-name <slug> \
   --capability-name <capability_id> \
   --smoke-artifact-name <artifact.json> \
@@ -242,9 +156,76 @@ Registry admission requires all of:
 
 ### 5. Document accepted vs deferred
 
-Update `docs/workbench/oss-solution-catalog.md` with the native capability table
-and mark only live-passing capabilities as accepted. Keep deferred blockers
-explicit (assets, Vulkan, GCS, dataset size, VRAM).
+Update `docs/workbench/oss-solution-catalog.md` with **this solution's**
+capability table. Mark only live-passing capabilities as accepted. Keep deferred
+blockers explicit (assets, Vulkan, GCS, dataset size, VRAM).
+
+## Current Onboarded Solutions
+
+Catalog: `docs/workbench/oss-solution-catalog.md`.
+Specs: `npa/workflows/workbench/npa-workflows/byof-<solution>.yaml`.
+
+Keep each solution's capability list and smoke command unique. When promoting a
+deferred capability, change that solution's smoke (or add a second workflow
+spec) rather than mapping it onto a generic family label.
+
+### ManiSkill (`byof-maniskill.yaml`)
+
+Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`
+
+Required smoke capabilities (encoded in `byof-maniskill.yaml`):
+
+- `gymnasium_pickcube_registration`
+- `pickcube_cpu_step` (`render_backend="none"`)
+- `pickcube_parallel_envs` (`num_envs=4`)
+- `pickcube_gpu_rgb_render` (probed; may remain deferred on Vulkan ICD)
+
+Follow-up: RL/IL baselines (`mani_skill.examples.*`), asset download / real2sim.
+
+### MuJoCo Playground (`byof-mujoco-playground.yaml`)
+
+Pinned: `google-deepmind/mujoco_playground` `v0.2.0`
+
+Required smoke capabilities:
+
+- `mjx_cartpole_step`
+- `mjx_cheetah_run_step`
+- `train_jax_ppo_cartpole_smoke` (`train-jax-ppo --num_timesteps 256`)
+
+### RoboCasa (`byof-robocasa.yaml`)
+
+Pinned: `robocasa/robocasa` `v1.0`
+
+Required smoke capabilities:
+
+- `kitchen_task_registration`
+- `download_kitchen_assets_lw`
+- `kitchen_egl_env_reset`
+- `kitchen_random_rollout` (best-effort after reset)
+
+### OpenPI (`byof-openpi.yaml`)
+
+Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
+
+Required smoke capabilities:
+
+- `policy_config_materialization` (`get_config("pi05_droid")`)
+- `pi05_droid_checkpoint_download`
+- `pi05_droid_checkpoint_infer` (`create_trained_policy` + `policy.infer`)
+
+Follow-up: LoRA / fine-tune recipes.
+
+### DROID policy learning (`byof-droid-policy-learning.yaml`)
+
+Pinned: `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddaca217581`
+
+Required smoke capabilities:
+
+- `rlds_config_generator_contract`
+- `droid_100_download`
+- `droid_100_config_gen`
+
+Follow-up: full / debug `train.py` once data is staged.
 
 ## Capability Discovery Procedure
 
@@ -255,26 +236,19 @@ explicit (assets, Vulkan, GCS, dataset size, VRAM).
    - Capture the exact upstream refs used: repo URL, commit/ref, docs paths, and
      example names.
 
-2. **Classify the solution.**
-   - Domain: robotics, manipulation, locomotion, sim, synthetic data,
-     perception, model serving, policy training, evaluation, visualization.
-   - Runtime: CPU batch, CUDA batch, Isaac Lab, Mujoco, ROS, web service,
-     dataset tool, model server, or multi-stage workflow.
-   - NPA surface:
-     - BYOF image only
-     - Workbench registry/catalog entry
-     - `npa.workflow/v0.0.1` workflow
-     - future first-class Workbench tool
-     - future top-level solution namespace
+2. **Classify the solution (for NPA mapping only).**
+   - Domain and runtime help choose base image / GPU profile.
+   - NPA surface: BYOF image, registry entry, workflow, future Workbench tool,
+     or future top-level solution namespace.
+   - Do not collapse distinct upstream capabilities into shared family labels.
 
 3. **Select capability tests.**
    - Include at least one smoke per registry claim.
    - For multi-capability repos, test the smallest representative command for
-     each major capability family, not a single generic import check.
+     each major claim, not a single generic import check.
    - Favor documented example commands with reduced dataset/model sizes or smoke
      flags. Do not add artificial time, cost, or job-count limits unless the
      operator asks.
-   - Map each test to a family in the taxonomy above.
 
 4. **Map artifacts.**
    - Define S3-style inputs and outputs for every workflow-stage claim.
@@ -327,10 +301,8 @@ Build-only validation is not sufficient for registry admission.
      at least one representative end-to-end path that consumes declared inputs
      and writes declared outputs.
    - A solution-smoke command must do more than import modules: it must execute a
-     documented capability hello-world (for example create/reset/step a sim env,
-     generate a tiny synthetic-data artifact, materialize a policy/training
-     config, or run a reduced inference/eval) and write the named JSON artifact
-     under `$NPA_SMOKE_OUTPUT_DIR`.
+     documented capability hello-world and write the named JSON artifact under
+     `$NPA_SMOKE_OUTPUT_DIR`.
    - Keep commands grounded in upstream docs.
 
 4. **NPA contract**
@@ -349,10 +321,7 @@ Build-only validation is not sufficient for registry admission.
    - Use resolved project, registry, storage, and Kubernetes config from
      `~/.npa/config.yaml` and `~/.npa/credentials.yaml`.
    - Never hardcode infrastructure identifiers.
-   - Validate the actual registry image inside the real E2E path. For workflow
-     candidates, this means a checked-in or generated workflow that pulls the
-     image, runs the documented capability, writes artifacts to object storage,
-     and can be inspected through NPA workflow status/logs.
+   - Validate the actual registry image inside the real E2E path.
    - Run the relevant live path:
      ```bash
      export NPA_E2E_PROJECT=<project-alias>
@@ -421,9 +390,10 @@ failure and keep the solution out of registry-ready status.
   passing smoke or a documented live-infra blocker.
 - Generic import checks do not prove simulation, training, datagen, serving, or
   evaluation behavior.
-- Narrowing a smoke to a stable contract (registration/config/generator) is
-  valid for admission when full env/render/train paths are blocked; record the
-  fuller path as `deferred`, never as accepted.
+- Shared capability "families" are not part of this skill; do not invent a
+  cross-solution taxonomy that erases upstream-specific APIs.
+- Narrowing a smoke to a stable contract is valid when fuller paths are blocked;
+  record the fuller path as `deferred`, never as accepted.
 - Do not create new skills under `.agents/skills` or `.claude/skills`; update
   only the root `skills/` tree and `skills/index.yaml`.
 - Do not add hidden infrastructure defaults. Let project, registry, Kubernetes,
