@@ -401,6 +401,7 @@ skills:
         paths:
           - skills/workflows/diagram-to-npa-workflow/examples/sim2real-vlm-rl-from-diagram.yaml
           - skills/workflows/diagram-to-npa-workflow/examples/av-failure-mode-from-diagram.yaml
+          - skills/workflows/diagram-to-npa-workflow/examples/av-night-scene-hardening-from-diagram.yaml
   - name: workbench-reference-workflows
     category: workflows
     when_to_use: "Reference SkyPilot YAMLs, runner scripts, cookbooks, and customer-adaptable pipeline implementations."
