@@ -1387,6 +1387,35 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
     assert "default_provider" in source
 
 
+def test_bootstrap_embeds_cost_aware_routing() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Placeholder is declared, substituted, and consumed by the chat handler.
+    assert "_AGENT_ROUTING_EMBED" in source
+    assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
+    assert "build_model_ladder(" in source
+    assert "classify_tier(" in source
+    assert "chat_extra(tier)" in source
+    assert "enforce_input_budget(" in source
+    assert "usage_summary(data)" in source
+    # The embedded routing source must actually be inlined (function defs present).
+    raw = agent_module._embedded_agent_routing_source()
+    assert "def build_model_ladder(" in raw
+    assert "def classify_tier(" in raw
+    assert "FAST_CAPABLE" in raw
+
+
+def test_default_llm_models_are_cost_ordered() -> None:
+    from npa.cli import agent as agent_module
+
+    models = list(agent_module.DEFAULT_LLM_MODELS)
+    # Cheap workhorse leads; branded reasoner is not first.
+    assert models[0] == "Qwen/Qwen3-32B"
+    assert models[0] != agent_module.DEFAULT_LLM_MODEL
+    assert agent_module.DEFAULT_LLM_MODEL in models
+
+
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:
     from npa.cli.agent import _resolve_agent_service_account_id
 

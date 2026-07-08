@@ -51,9 +51,14 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Cost-ordered ladder (cheapest-capable first). Per-turn cost-tier routing
+# (see agent_routing.build_model_ladder) reorders this for each request, but the
+# default configured order still surfaces the cheap workhorse ahead of the
+# branded reasoner so no-routing paths and the /models picker default cheap.
 DEFAULT_LLM_MODELS = (
-    DEFAULT_LLM_MODEL,
+    "Qwen/Qwen3-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
+    DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
 AGENT_UI_VERSION = "2026070601"
@@ -67,6 +72,17 @@ def _embedded_agent_workflow_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_workflow.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_routing_source() -> str:
+    """Return agent_routing.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_routing.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -87,6 +103,7 @@ def _embedded_agent_chat_source() -> str:
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 
 
 def _embedded_agent_artifacts_source() -> str:
@@ -1421,6 +1438,7 @@ def _bootstrap_agent_stack(
     agent_chat_source = _embedded_agent_chat_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_routing_source = _embedded_agent_routing_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -2856,7 +2874,7 @@ def _split_reasoning(message: dict) -> tuple[str, str | None]:
         return content.strip(), reasoning
     return "", (reasoning.strip() if reasoning else None)
 
-def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
+def _provider_chat(*, provider: str, messages: list, model: str, extra: dict | None = None, max_tokens: int | None = None) -> dict:
     api_key = _provider_api_key(provider)
     if not api_key:
         raise RuntimeError(f"missing API key for provider '{{provider}}'")
@@ -2869,6 +2887,11 @@ def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
         "messages": messages,
         "temperature": 0.2,
     }}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if isinstance(extra, dict):
+        for _extra_key, _extra_value in extra.items():
+            payload[_extra_key] = _extra_value
     for attempt in range(3):
         try:
             response = httpx.post(
@@ -2896,22 +2919,41 @@ def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
         raise RuntimeError(f"provider '{{provider}}' returned non-object response")
     return data
 
-def _chat_with_resilience(*, messages: list, requested_model: str) -> tuple[dict, str, str]:
+def _chat_with_resilience(
+    *,
+    messages: list,
+    requested_model: str = "",
+    tier: str = "standard",
+    interactive: bool = True,
+) -> tuple[dict, str, str]:
     providers = _configured_llm_providers()
-    models = _configured_llm_models()
-    if requested_model and requested_model not in models:
-        models.insert(0, requested_model)
+    configured = _configured_llm_models()
+    # Respect an explicit operator allowlist (NPA_AGENT_LLM_MODELS) by not
+    # injecting tier-default models the operator did not opt into.
+    allow_tier_defaults = not str(LLM_MODELS_ENV or "").strip()
+    ladder = build_model_ladder(
+        tier,
+        configured,
+        interactive=interactive,
+        requested_model=requested_model,
+        allow_tier_defaults=allow_tier_defaults,
+    )
+    if not ladder:
+        ladder = list(configured) or [requested_model] if requested_model else list(configured)
+    extra = chat_extra(tier)
     errors: list[str] = []
     for provider in providers:
-        for model in models:
+        for model in ladder:
             try:
-                data = _provider_chat(provider=provider, messages=messages, model=model)
+                data = _provider_chat(provider=provider, messages=messages, model=model, extra=extra)
                 return data, provider, model
             except Exception as exc:
                 errors.append(str(exc))
                 continue
     detail = "; ".join(errors[-4:]) if errors else "no providers configured"
     raise HTTPException(status_code=502, detail=f"LLM providers unavailable: {{detail}}")
+
+{_AGENT_ROUTING_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -4101,6 +4143,12 @@ def chat(payload: dict):
     live_ctx = format_live_context_block(_load_state())
     last_user = _last_user_message(raw_messages)
     intent = match_chat_intent(last_user)
+    # Cost-tier routing: pick the cheapest adequate model for this turn and only
+    # honor an explicit user-selected model as an override (not the branded
+    # default), so no-model requests default to the cheap workhorse.
+    tier = classify_tier(last_user, intent=intent, messages=raw_messages)
+    explicit_model = str(payload.get("model") or "").strip()
+    budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
     system_content = _agent_system_prompt() + "\\n\\n" + live_ctx
     if skill_ctx:
@@ -4113,11 +4161,20 @@ def chat(payload: dict):
             continue
         role = str(item.get("role", "user")).strip() or "user"
         content = str(item.get("content", "")).strip()
+        if role == "user" and content:
+            # Guardrail: cap oversized pastes so one turn cannot blow the budget.
+            _within, content = enforce_input_budget(content)
         if content:
             messages.append({{"role": role, "content": content}})
     if len(messages) < 2:
         raise HTTPException(status_code=400, detail="at least one user message is required")
-    data, selected_provider, selected_model = _chat_with_resilience(messages=messages, requested_model=model)
+    data, selected_provider, selected_model = _chat_with_resilience(
+        messages=messages,
+        requested_model=explicit_model,
+        tier=tier,
+        interactive=True,
+    )
+    turn_usage = usage_summary(data)
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
@@ -4151,6 +4208,9 @@ def chat(payload: dict):
         "provider": selected_provider,
         "reply": reply,
         "reasoning": reasoning,
+        "tier": tier,
+        "usage": turn_usage,
+        "input_budget_ok": budget_ok,
         "session_id": session["id"],
         "session": {{
             "id": session["id"],
@@ -8086,6 +8146,7 @@ sudo systemctl restart npa-agent-backend
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
     )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
