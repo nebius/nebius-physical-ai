@@ -27,10 +27,11 @@ config:
     import os
     from pathlib import Path
 
+    import jax
     from mujoco_playground import registry
 
     env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
-    state = env.reset(0)
+    state = env.reset(jax.random.PRNGKey(0))
     action = env.action_spec().generate_value()
     next_state = env.step(state, action)
     artifact = {
