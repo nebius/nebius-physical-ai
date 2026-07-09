@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from npa.clients.project_credentials import storage_env_for_project
 from npa.orchestration.skypilot import submit_workflow, workflow_status
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
@@ -114,16 +115,29 @@ def render_workflow(
         )
         if bucket:
             envs["NPA_S3_BUCKET"] = bucket
+        storage_env = _resolved_storage_env()
         for key in (
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "AWS_SESSION_TOKEN",
             "AWS_ENDPOINT_URL",
             "NEBIUS_S3_ENDPOINT",
+            "NPA_S3_BUCKET",
         ):
-            value = os.environ.get(key, "").strip()
-            if value:
-                envs[key] = value
+            value = ""
+            for candidate in (
+                os.environ.get(key, "").strip(),
+                storage_env.get(key, "").strip(),
+            ):
+                if candidate and not (candidate.startswith("${") and candidate.endswith("}")):
+                    value = candidate
+                    break
+            if not value:
+                continue
+            # Prefer the bucket derived from --output-root when already set.
+            if key == "NPA_S3_BUCKET" and envs.get("NPA_S3_BUCKET"):
+                continue
+            envs[key] = value
         if image:
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
@@ -150,6 +164,21 @@ def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
 
 def _default_run_id() -> str:
     return datetime.now(timezone.utc).strftime("byof-container-%Y%m%dT%H%M%SZ")
+
+
+def _resolved_storage_env() -> dict[str, str]:
+    """Resolve project/host S3 env so rendered BYOF YAMLs are not left with ${...}."""
+
+    project = (
+        os.environ.get("NPA_E2E_PROJECT", "").strip()
+        or os.environ.get("NPA_PROJECT", "").strip()
+        or os.environ.get("NPA_BYOF_PROJECT", "").strip()
+    )
+    try:
+        return dict(storage_env_for_project(project or None, allow_host_creds=True))
+    except Exception as exc:  # noqa: BLE001 - best-effort for render/launch paths
+        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+        return {}
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

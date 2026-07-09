@@ -86,12 +86,16 @@ run: |
   parsed = urlparse(output)
   if parsed.scheme == "s3" and parsed.netloc:
       prefix = parsed.path.lstrip("/")
+      def _endpoint(value: str | None) -> str | None:
+          text = (value or "").strip()
+          if not text or (text.startswith("${") and text.endswith("}")):
+              return None
+          return text
+
       s3 = boto3.client(
           "s3",
-          endpoint_url=(
-              os.environ.get("AWS_ENDPOINT_URL")
-              or os.environ.get("NEBIUS_S3_ENDPOINT")
-              or None
+          endpoint_url=_endpoint(
+              os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
           ),
       )
       for path in root.rglob("*"):

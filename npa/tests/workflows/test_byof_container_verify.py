@@ -21,8 +21,12 @@ def _load_module():
     return module
 
 
-def test_render_workflow_injects_solution_smoke_metadata() -> None:
+def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     module = _load_module()
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
     docs = module.render_workflow(
         YAML_PATH,
         run_id="byof-demo",
@@ -42,11 +46,30 @@ def test_render_workflow_injects_solution_smoke_metadata() -> None:
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
     assert envs["NPA_S3_BUCKET"] == "bucket"
+    assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert envs["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
 
 
-def test_normalize_output_root_strips_double_s3_prefix() -> None:
+def test_render_workflow_rejects_unresolved_endpoint_placeholder(monkeypatch) -> None:
     module = _load_module()
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "${AWS_ENDPOINT_URL}")
+    monkeypatch.setattr(
+        module,
+        "_resolved_storage_env",
+        lambda: {"AWS_ENDPOINT_URL": "https://storage.from-project"},
+    )
+    docs = module.render_workflow(
+        YAML_PATH,
+        run_id="byof-demo",
+        output_root="s3://bucket/prefix",
+    )
+    assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == "https://storage.from-project"
+
+
+def test_normalize_output_root_strips_double_s3_prefix(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
     assert module._normalize_s3_bucket("s3://lerobot-demo/checkpoints/") == "lerobot-demo"
     assert module._normalize_output_root("s3://s3://lerobot-demo/checkpoints/") == "s3://lerobot-demo/checkpoints"
     assert (
