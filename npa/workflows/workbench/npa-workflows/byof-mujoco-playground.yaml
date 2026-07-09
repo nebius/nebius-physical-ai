@@ -15,15 +15,17 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    python3 python3-pip python3-venv git &&
+    python3 python3-pip python3-venv git libegl1 libgl1 libglvnd0 &&
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
     /opt/venv/bin/python -m pip install --no-cache-dir -e ".[cuda12]" ||
     /opt/venv/bin/python -m pip install --no-cache-dir -e . &&
-    /opt/venv/bin/python -m pip install --no-cache-dir "jax[cuda12]" brax || true
+    /opt/venv/bin/python -m pip install --no-cache-dir "jax[cuda12]" brax absl-py mediapy ml_collections etils || true
   workload: solution-smoke
   smoke_command: |
     export JAX_DEFAULT_MATMUL_PRECISION=highest
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
     /opt/venv/bin/python - <<'PY'
     import json
     import os
@@ -39,6 +41,7 @@ config:
         "capability": "mjx_cartpole_step",
         "capabilities_exercised": [],
         "jax_default_matmul_precision": os.environ.get("JAX_DEFAULT_MATMUL_PRECISION", ""),
+        "jax_devices": [str(d) for d in jax.devices()],
     }
 
     env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
@@ -72,14 +75,58 @@ config:
         json.dumps({"solution": "mujoco-playground", "capability": "mjx_cheetah_run_step", **extra}, indent=2)
     )
 
-    # Reduced documented PPO training entrypoint (module path; console script may be absent).
+    # Reduced PPO smoke: upstream train_jax_ppo always renders videos after train.
+    # Prefer a brax PPO train call (same stack) with num_videos=0 path via patched argv,
+    # falling back to the documented script with --num_videos 0.
     ppo = {
-        "command": "/opt/venv/bin/python -m mujoco_playground.learning.train_jax_ppo --env_name CartpoleBalance --num_timesteps 256",
+        "command": "brax.ppo.train CartpoleBalance reduced smoke",
         "ok": False,
         "error": "",
         "returncode": None,
+        "mode": "",
     }
     try:
+        from brax.training.agents.ppo import train as ppo_train
+        from mujoco_playground import wrapper
+        from mujoco_playground.config import dm_control_suite_params
+
+        env_name = "CartpoleBalance"
+        env_cfg = registry.get_default_config(env_name)
+        ppo_params = dm_control_suite_params.brax_ppo_config(env_name, "jax")
+        ppo_params.num_timesteps = 256
+        ppo_params.num_envs = 8
+        ppo_params.num_evals = 1
+        ppo_params.run_evals = False
+        if hasattr(ppo_params, "batch_size"):
+            ppo_params.batch_size = min(int(ppo_params.batch_size), 64)
+        if hasattr(ppo_params, "num_minibatches"):
+            ppo_params.num_minibatches = min(int(ppo_params.num_minibatches), 2)
+        train_env = registry.load(env_name, config=env_cfg, config_overrides={"impl": "jax"})
+        training_params = dict(ppo_params)
+        network_factory = training_params.pop("network_factory", None)
+        training_params.pop("num_eval_envs", None)
+        train_kwargs = dict(training_params)
+        if network_factory is not None:
+            from brax.training.agents.ppo import networks as ppo_networks
+            import functools
+
+            train_kwargs["network_factory"] = functools.partial(
+                ppo_networks.make_ppo_networks, **network_factory
+            )
+        make_inference_fn, params, _metrics = ppo_train.train(
+            environment=train_env,
+            wrap_env_fn=wrapper.wrap_for_brax_training,
+            progress_fn=lambda *_a, **_k: None,
+            **train_kwargs,
+        )
+        ppo["ok"] = True
+        ppo["mode"] = "brax_ppo_train_api"
+        ppo["returncode"] = 0
+        ppo["inference_fn_type"] = type(make_inference_fn).__name__
+        ppo["params_type"] = type(params).__name__
+        results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
+    except Exception as api_exc:  # noqa: BLE001
+        ppo["api_error"] = f"{type(api_exc).__name__}: {api_exc}"
         ppo_args = [
             "--env_name",
             "CartpoleBalance",
@@ -113,6 +160,7 @@ config:
                 text=True,
                 check=False,
                 timeout=1800,
+                env={**os.environ, "MUJOCO_GL": "egl", "PYOPENGL_PLATFORM": "egl"},
             )
             last = completed
             ppo["attempted_command"] = " ".join(cmd)
@@ -121,17 +169,17 @@ config:
             ppo["stderr_tail"] = (completed.stderr or "")[-2000:]
             if completed.returncode == 0:
                 ppo["ok"] = True
+                ppo["mode"] = "train_jax_ppo_script"
                 break
             if completed.returncode != 127 and "No such file" not in (completed.stderr or ""):
-                # Real training failure; stop trying alternate entrypoints.
                 ppo["error"] = f"returncode={completed.returncode}"
                 break
         if not ppo["ok"] and not ppo.get("error"):
-            ppo["error"] = f"returncode={getattr(last, 'returncode', None)}"
+            ppo["error"] = f"returncode={getattr(last, 'returncode', None)}; api={ppo.get('api_error')}"
         if ppo["ok"]:
             results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
-    except Exception as exc:  # noqa: BLE001
-        ppo["error"] = f"{type(exc).__name__}: {exc}"
+        elif not ppo.get("error"):
+            ppo["error"] = ppo.get("api_error") or "ppo_smoke_failed"
     results["train_jax_ppo"] = ppo
     (output_dir / "mujoco_playground_train_jax_ppo.json").write_text(
         json.dumps({"solution": "mujoco-playground", "capability": "train_jax_ppo_cartpole_smoke", **ppo}, indent=2)
@@ -141,7 +189,7 @@ config:
     if not extra["ok"]:
         results.setdefault("deferred", []).append({"capability": "mjx_cheetah_run_step", "blocker": extra.get("error")})
 
-    # Hard gate: Cartpole + Cheetah steps. PPO remains required when entrypoint exists.
+    # Hard gate: Cartpole + Cheetah steps. PPO remains attempted evidence.
     if "mjx_cartpole_step" not in results["capabilities_exercised"]:
         raise SystemExit("CartpoleBalance step failed")
     if "mjx_cheetah_run_step" not in results["capabilities_exercised"]:
@@ -149,9 +197,6 @@ config:
 
     (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
-    # PPO remains attempted evidence; Cartpole+Cheetah are the hard gates.
-    # Upstream train_jax_ppo also renders videos and pulls optional deps that can
-    # fail independently of the MJX env capability.
     PY
   solution_name: "mujoco-playground"
   capability_name: "mjx_cartpole_step"

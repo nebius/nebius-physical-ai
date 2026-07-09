@@ -92,17 +92,42 @@ run: |
               return None
           return text
 
-      s3 = boto3.client(
-          "s3",
-          endpoint_url=_endpoint(
-              os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
-          ),
+      from botocore.config import Config
+
+      endpoint = _endpoint(
+          os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
       )
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+      }
+      # Prefer explicit keys when present so uploads are not silently dropped
+      # by ambient credential resolution against the wrong endpoint.
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
+      uploaded = 0
       for path in root.rglob("*"):
           if path.is_file():
               key = prefix + str(path.relative_to(root))
               s3.upload_file(str(path), parsed.netloc, key)
+              uploaded += 1
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+      # Verify at least the summary is readable back from the same client.
+      summary_key = prefix + "npa_byof_summary.json"
+      try:
+          s3.head_object(Bucket=parsed.netloc, Key=summary_key)
+          print(f"verified s3://{parsed.netloc}/{summary_key}", flush=True)
+      except Exception as exc:  # noqa: BLE001
+          print(f"WARN: upload verify failed for {summary_key}: {exc}", flush=True)
+      print(f"uploaded_file_count={uploaded}", flush=True)
   PY
   if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
     exit "${SMOKE_EXIT_CODE}"

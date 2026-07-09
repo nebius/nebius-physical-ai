@@ -85,12 +85,25 @@ run: |
               return None
           return text
 
-      s3 = boto3.client(
-          "s3",
-          endpoint_url=_endpoint(
-              os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
-          ),
+      from botocore.config import Config
+
+      endpoint = _endpoint(
+          os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
       )
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
       for path in root.rglob("*"):
           if path.is_file():
               key = prefix + str(path.relative_to(root))

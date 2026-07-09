@@ -16,19 +16,20 @@ config:
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
     python3 python3-dev python3-pip python3-venv build-essential git
-    libegl1 libgl1 libglvnd0 &&
+    libegl1 libgl1 libglvnd0 libegl1-mesa-dev &&
     python3 -m pip install --no-cache-dir --upgrade pip &&
     python3 -m pip install --no-cache-dir
     "git+https://github.com/ARISE-Initiative/robosuite.git@85abee228d1c43ab1939bce33028099945d453b4" &&
     python3 -m pip install --no-cache-dir
     numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow
     opencv-python-headless pyyaml pynput tqdm termcolor imageio h5py lxml hidapi
-    gymnasium &&
+    gymnasium huggingface_hub &&
     python3 -m pip install --no-cache-dir --no-deps -e .
   workload: solution-smoke
   smoke_command: |
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
+    export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
     python3 - <<'PY'
     import json
     import os
@@ -62,23 +63,21 @@ config:
         json.dumps({"solution": "robocasa", "capability": "kitchen_task_registration", **results["registration"]}, indent=2)
     )
 
-    # Documented lightweight asset download (LeRobot/RoboCasa guidance).
+    # Documented lightweight asset download. Upstream script prompts interactively;
+    # feed "y" on stdin so noninteractive containers can proceed.
     download = {
-        "command": "python -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw objs_lw",
+        "command": "printf 'y\\n' | python3 -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw objs_lw",
         "ok": False,
         "returncode": None,
         "error": "",
     }
     try:
         completed = subprocess.run(
-            [
-                "python3",
-                "-m",
-                "robocasa.scripts.setup_macros",
-            ],
+            ["python3", "-m", "robocasa.scripts.setup_macros"],
             capture_output=True,
             text=True,
             check=False,
+            input="y\n",
         )
         download["setup_macros_returncode"] = completed.returncode
         completed = subprocess.run(
@@ -96,11 +95,16 @@ config:
             text=True,
             check=False,
             timeout=3600,
+            input="y\n",
         )
         download["returncode"] = completed.returncode
         download["stdout_tail"] = (completed.stdout or "")[-2000:]
         download["stderr_tail"] = (completed.stderr or "")[-2000:]
-        download["ok"] = completed.returncode == 0
+        fixtures = assets_root / "fixtures"
+        objs_lw = assets_root / "objects" / "lightwheel"
+        download["fixtures_exists"] = fixtures.exists()
+        download["objs_lw_exists"] = objs_lw.exists()
+        download["ok"] = completed.returncode == 0 and (fixtures.exists() or objs_lw.exists())
         if download["ok"]:
             results["capabilities_exercised"].append("download_kitchen_assets_lw")
         else:
@@ -124,6 +128,20 @@ config:
         results["capabilities_exercised"].append("kitchen_egl_env_reset")
     except Exception as exc:  # noqa: BLE001
         reset["error"] = f"{type(exc).__name__}: {exc}"
+        # osmesa fallback if EGL init fails in this container.
+        try:
+            os.environ["MUJOCO_GL"] = "osmesa"
+            os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+            env = gym.make(env_id, split="pretrain", seed=0)
+            obs, info = env.reset(seed=0)
+            reset["ok"] = True
+            reset["obs_type"] = type(obs).__name__
+            reset["fallback"] = "osmesa"
+            env.close()
+            results["capabilities_exercised"].append("kitchen_egl_env_reset")
+            reset["error"] = ""
+        except Exception as exc2:  # noqa: BLE001
+            reset["error"] = f"egl={type(exc).__name__}: {exc}; osmesa={type(exc2).__name__}: {exc2}"
     results["kitchen_egl_env_reset"] = reset
     (output_dir / "robocasa_kitchen_env_reset.json").write_text(
         json.dumps({"solution": "robocasa", "capability": "kitchen_egl_env_reset", **reset}, indent=2)

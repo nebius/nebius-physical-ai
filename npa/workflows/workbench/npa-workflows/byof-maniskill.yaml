@@ -15,10 +15,31 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    libvulkan1 vulkan-tools &&
+    libvulkan1 vulkan-tools mesa-vulkan-drivers &&
     python3 -m pip install --no-cache-dir -e .
   workload: solution-smoke
   smoke_command: |
+    export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
+    export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+    # Prefer host/container NVIDIA ICD; synthesize one if the image only has stubs.
+    if [ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]; then
+      export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+    elif [ -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
+      export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
+    else
+      mkdir -p /tmp/vulkan/icd.d
+      cat > /tmp/vulkan/icd.d/nvidia_icd.json <<'ICD'
+    {
+      "file_format_version": "1.0.0",
+      "ICD": {
+        "library_path": "libGLX_nvidia.so.0",
+        "api_version": "1.3.0"
+      }
+    }
+    ICD
+      export VK_ICD_FILENAMES=/tmp/vulkan/icd.d/nvidia_icd.json
+    fi
+    export VK_DRIVER_FILES="${VK_ICD_FILENAMES}"
     python3 - <<'PY'
     import json
     import os
@@ -33,6 +54,7 @@ config:
         "capabilities_exercised": [],
         "deferred": [],
         "env_id": env_id,
+        "vk_icd_filenames": os.environ.get("VK_ICD_FILENAMES", ""),
     }
 
     import gymnasium as gym
@@ -64,6 +86,7 @@ config:
             text=True,
             check=False,
             timeout=600,
+            env=os.environ.copy(),
         )
         entry = {
             "capability": capability,
@@ -84,12 +107,14 @@ config:
             entry["error"] = f"returncode={completed.returncode}"
         return entry
 
+    # Upstream accepts physx_cpu / physx_cuda / auto — not bare "cpu".
     cpu_script = (
-        "import json, gymnasium as gym, mani_skill.envs\n"
+        "import json, os, gymnasium as gym, mani_skill.envs\n"
         "env_id = 'PickCube-v1'\n"
         "payload = {}\n"
         "attempts = [\n"
-        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='cpu'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='physx_cpu'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='auto'),\n"
         "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none'),\n"
         "]\n"
         "for kwargs in attempts:\n"
@@ -117,7 +142,7 @@ config:
 
     parallel_script = (
         "import json, gymnasium as gym, mani_skill.envs\n"
-        "env = gym.make('PickCube-v1', num_envs=4, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='cpu')\n"
+        "env = gym.make('PickCube-v1', num_envs=4, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='physx_cuda')\n"
         "obs, _ = env.reset(seed=0)\n"
         "action = env.action_space.sample()\n"
         "obs2, reward, terminated, truncated, info = env.step(action)\n"
@@ -134,11 +159,12 @@ config:
 
     render_script = (
         "import json, gymnasium as gym, mani_skill.envs\n"
-        "env = gym.make('PickCube-v1', num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_mode='rgb_array', render_backend='gpu')\n"
+        "env = gym.make('PickCube-v1', num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_mode='rgb_array', render_backend='gpu', sim_backend='physx_cuda')\n"
         "env.reset(seed=0)\n"
         "frame = env.render()\n"
         "env.close()\n"
-        "print(json.dumps({'frame_type': type(frame).__name__}))\n"
+        "shape = list(getattr(frame, 'shape', [])) if frame is not None else []\n"
+        "print(json.dumps({'frame_type': type(frame).__name__, 'frame_shape': shape}))\n"
     )
     render = run_isolated("pickcube_gpu_rgb_render", render_script)
     results["gpu_rgb_render"] = render

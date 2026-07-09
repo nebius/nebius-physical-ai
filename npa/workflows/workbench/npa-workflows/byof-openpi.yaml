@@ -15,16 +15,21 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    python3 python3-dev python3-pip python3-venv git git-lfs &&
+    python3 python3-dev python3-pip python3-venv git git-lfs curl ca-certificates &&
     python3 -m venv /opt/venv &&
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
     /opt/venv/bin/python -m pip install --no-cache-dir uv &&
-    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install --python /opt/venv/bin/python --no-cache -e .
+    GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install --python /opt/venv/bin/python --no-cache -e . &&
+    curl -sSL https://sdk.cloud.google.com/install.sh | bash -s -- --disable-prompts --install-dir=/opt &&
+    ln -sf /opt/google-cloud-sdk/bin/gsutil /usr/local/bin/gsutil || true
   workload: solution-smoke
   smoke_command: |
+    export PATH="/opt/google-cloud-sdk/bin:/usr/local/bin:${PATH}"
     /opt/venv/bin/python - <<'PY'
     import json
     import os
+    import shutil
+    import subprocess
     from pathlib import Path
 
     import numpy as np
@@ -37,6 +42,7 @@ config:
         "solution": "openpi",
         "capability": "pi05_droid_checkpoint_infer",
         "capabilities_exercised": [],
+        "gsutil_path": shutil.which("gsutil") or "",
     }
 
     cfg = openpi_config.get_config("pi05_droid")
@@ -53,31 +59,69 @@ config:
 
     checkpoint = {"uri": "gs://openpi-assets/checkpoints/pi05_droid", "ok": False, "error": "", "path": ""}
     infer = {"ok": False, "error": "", "action_shape": []}
+    checkpoint_dir = None
     try:
+        # Prefer upstream helper (routes openpi-assets through gsutil when present).
         checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_droid")
         checkpoint["path"] = str(checkpoint_dir)
-        checkpoint["ok"] = True
-        results["capabilities_exercised"].append("pi05_droid_checkpoint_download")
-        policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
-        # Dummy observation matching documented DROID keys; values are zeros.
-        example = {
-            "observation/exterior_image_1_left": np.zeros((224, 224, 3), dtype=np.uint8),
-            "observation/wrist_image_left": np.zeros((224, 224, 3), dtype=np.uint8),
-            "prompt": "pick up the fork",
-        }
-        # Some OpenPI configs also expect proprio / state keys; fill common ones if required later.
-        out = policy.infer(example)
-        actions = out["actions"]
-        infer["ok"] = True
-        infer["action_type"] = type(actions).__name__
-        infer["action_shape"] = list(getattr(actions, "shape", []))
-        results["capabilities_exercised"].append("pi05_droid_checkpoint_infer")
+        checkpoint["ok"] = Path(checkpoint_dir).exists()
+        checkpoint["mode"] = "maybe_download"
     except Exception as exc:  # noqa: BLE001
-        err = f"{type(exc).__name__}: {exc}"
-        if not checkpoint["ok"]:
-            checkpoint["error"] = err
-        else:
-            infer["error"] = err
+        checkpoint["maybe_download_error"] = f"{type(exc).__name__}: {exc}"
+        # Anonymous HTTPS fallback via google storage JSON API + curl for a tiny proof,
+        # then full gsutil/fsspec retry with anonymous token.
+        try:
+            dest = Path(os.environ.get("OPENPI_DATA_HOME", str(Path.home() / ".cache" / "openpi"))) / "openpi-assets" / "checkpoints" / "pi05_droid"
+            dest.mkdir(parents=True, exist_ok=True)
+            if shutil.which("gsutil"):
+                completed = subprocess.run(
+                    ["gsutil", "-m", "cp", "-r", "gs://openpi-assets/checkpoints/pi05_droid/*", str(dest)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=7200,
+                )
+                checkpoint["gsutil_returncode"] = completed.returncode
+                checkpoint["gsutil_stderr_tail"] = (completed.stderr or "")[-1500:]
+                if completed.returncode == 0 and any(dest.rglob("*")):
+                    checkpoint_dir = dest
+                    checkpoint["path"] = str(dest)
+                    checkpoint["ok"] = True
+                    checkpoint["mode"] = "gsutil_direct"
+            if not checkpoint["ok"]:
+                import fsspec
+
+                fs = fsspec.filesystem("gs", token="anon")
+                fs.get("openpi-assets/checkpoints/pi05_droid", str(dest), recursive=True)
+                checkpoint_dir = dest
+                checkpoint["path"] = str(dest)
+                checkpoint["ok"] = True
+                checkpoint["mode"] = "fsspec_anon"
+        except Exception as exc2:  # noqa: BLE001
+            checkpoint["error"] = (
+                f"maybe_download={checkpoint.get('maybe_download_error')}; fallback={type(exc2).__name__}: {exc2}"
+            )
+
+    if checkpoint["ok"] and checkpoint_dir is not None:
+        results["capabilities_exercised"].append("pi05_droid_checkpoint_download")
+        try:
+            policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
+            example = {
+                "observation/exterior_image_1_left": np.zeros((224, 224, 3), dtype=np.uint8),
+                "observation/wrist_image_left": np.zeros((224, 224, 3), dtype=np.uint8),
+                "prompt": "pick up the fork",
+            }
+            out = policy.infer(example)
+            actions = out["actions"]
+            infer["ok"] = True
+            infer["action_type"] = type(actions).__name__
+            infer["action_shape"] = list(getattr(actions, "shape", []))
+            results["capabilities_exercised"].append("pi05_droid_checkpoint_infer")
+        except Exception as exc:  # noqa: BLE001
+            infer["error"] = f"{type(exc).__name__}: {exc}"
+    elif not checkpoint.get("error"):
+        checkpoint["error"] = checkpoint.get("maybe_download_error") or "checkpoint_download_failed"
+
     results["checkpoint"] = checkpoint
     results["infer"] = infer
     (output_dir / "openpi_pi05_droid_checkpoint_infer.json").write_text(
