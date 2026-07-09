@@ -39,6 +39,10 @@
 #   # For Token Factory on SkyPilot default images, stage the npa package to an
 #   # existing bucket and set NPA_SRC_S3_URI=s3://bucket/prefix/npa
 #
+#   # Clear workbench image pins when registry images fail SkyPilot k8s apt-ssh
+#   # (use default image + NPA_SRC_S3_URI instead):
+#   NPA_E2E_CLEAR_WORKBENCH_IMAGES=1 ./scripts/npa-workflow-submit-live-e2e.sh
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

@@ -183,6 +183,8 @@ def test_npa_workflow_submit_live_reaches_terminal(
         "--output-format",
         "json",
     ]
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+        plan_args.extend(["--image", "none"])
     assume = assume_decision_for(case.spec)
     if assume:
         plan_args.extend(["--assume-decision", assume])
@@ -211,6 +213,10 @@ def test_npa_workflow_submit_live_reaches_terminal(
     ]
     if assume:
         submit_args.extend(["--assume-decision", assume])
+    # Workbench images often fail SkyPilot k8s apt-ssh setup; clear pins and
+    # rely on NPA_SRC_S3_URI + default image (validated for Token Factory).
+    if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
+        submit_args.extend(["--image", "none"])
     submit_args.extend(_secret_env_args(case))
 
     submitted = RUNNER.invoke(app, submit_args)

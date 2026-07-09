@@ -303,8 +303,19 @@ def submit_cmd(
     prepared_npa = None
     if is_npa_workflow_spec(yaml_path):
         image_overrides: dict[str, str] = {}
-        if image.strip():
-            image_overrides["*"] = image.strip()
+        # ``none`` / ``default`` clears workbench image pins so tasks use the
+        # SkyPilot default image (needed when registry images fail k8s apt-ssh).
+        image_value = image.strip()
+        if not image_value and os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            image_value = "none"
+        if image_value.lower() in {"none", "default", "-"}:
+            image_overrides["*"] = ""
+        elif image_value:
+            image_overrides["*"] = image_value
         try:
             prepared_npa = prepare_npa_workflow_for_submit(
                 yaml_path,
