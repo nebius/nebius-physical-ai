@@ -213,57 +213,101 @@ config:
         json.dumps({"solution": "robocasa", "capability": "download_kitchen_assets_lw", **download}, indent=2)
     )
 
-    # Headless EGL env create/reset (documented Gym interface).
-    # Restrict object sampling to lightwheel — we only download objs_lw.
-    # Upstream default (objaverse, lightwheel) yields NaN probs when objaverse
-    # is absent (see kitchen_object_utils.py divide-by-zero warning).
+    # Headless EGL env create/reset must run in a fresh interpreter AFTER asset
+    # download. OBJ_CATEGORIES scans mjcf paths at import time; importing
+    # robocasa before objs_lw leaves lightwheel mjcf_paths empty and yields
+    # ValueError: Probabilities contain NaN during object sampling.
+    # Restrict registries to lightwheel (objs_lw only; no objaverse pack).
     make_kwargs = {"split": "pretrain", "seed": 0, "obj_registries": ["lightwheel"]}
     reset = {"env_id": env_id, "ok": False, "error": "", "make_kwargs": make_kwargs}
+    rollout = {"ok": False, "error": ""}
+    video_path = str(output_dir / "robocasa_random_rollout.mp4")
+    child_script = (
+        "import json, os\n"
+        "import gymnasium as gym\n"
+        "import robocasa  # noqa: F401\n"
+        "from robocasa.models.objects.kitchen_objects import OBJ_CATEGORIES\n"
+        "env_id = os.environ['NPA_RC_ENV_ID']\n"
+        "video_path = os.environ['NPA_RC_VIDEO_PATH']\n"
+        "make_kwargs = json.loads(os.environ['NPA_RC_MAKE_KWARGS'])\n"
+        "lw = sum(1 for c,m in OBJ_CATEGORIES.items() if 'lightwheel' in m and m['lightwheel'].mjcf_paths)\n"
+        "out = {'lightwheel_cats_with_paths': lw, 'make_kwargs': make_kwargs}\n"
+        "try:\n"
+        "  env = gym.make(env_id, **make_kwargs)\n"
+        "  obs, info = env.reset(seed=0)\n"
+        "  env.close()\n"
+        "  out['reset'] = {'ok': True, 'obs_type': type(obs).__name__, "
+        "'info_keys': sorted(list(info.keys())) if isinstance(info, dict) else []}\n"
+        "except Exception as exc:\n"
+        "  out['reset'] = {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}\n"
+        "  try:\n"
+        "    os.environ['MUJOCO_GL'] = 'osmesa'\n"
+        "    os.environ['PYOPENGL_PLATFORM'] = 'osmesa'\n"
+        "    env = gym.make(env_id, **make_kwargs)\n"
+        "    obs, info = env.reset(seed=0)\n"
+        "    env.close()\n"
+        "    out['reset'] = {'ok': True, 'obs_type': type(obs).__name__, 'fallback': 'osmesa'}\n"
+        "  except Exception as exc2:\n"
+        "    out['reset'] = {'ok': False, 'error': "
+        "f'egl={type(exc).__name__}: {exc}; osmesa={type(exc2).__name__}: {exc2}'}\n"
+        "out['rollout'] = {'ok': False, 'error': ''}\n"
+        "if out['reset'].get('ok'):\n"
+        "  try:\n"
+        "    from robocasa.utils.env_utils import run_random_rollouts\n"
+        "    env = gym.make(env_id, **make_kwargs)\n"
+        "    run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=video_path)\n"
+        "    env.close()\n"
+        "    out['rollout'] = {'ok': True, 'video_path': video_path, "
+        "'video_exists': __import__('pathlib').Path(video_path).exists()}\n"
+        "  except Exception as exc:\n"
+        "    out['rollout'] = {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}\n"
+        "print(json.dumps(out))\n"
+    )
+    child_env = os.environ.copy()
+    child_env["NPA_RC_ENV_ID"] = env_id
+    child_env["NPA_RC_VIDEO_PATH"] = video_path
+    child_env["NPA_RC_MAKE_KWARGS"] = json.dumps(make_kwargs)
+    child_env["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+    child_env["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
     try:
-        env = gym.make(env_id, **make_kwargs)
-        obs, info = env.reset(seed=0)
-        reset["ok"] = True
-        reset["obs_type"] = type(obs).__name__
-        reset["info_keys"] = sorted(list(info.keys())) if isinstance(info, dict) else []
-        env.close()
-        results["capabilities_exercised"].append("kitchen_egl_env_reset")
+        completed = subprocess.run(
+            ["python3", "-c", child_script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1800,
+            env=child_env,
+        )
+        reset["child_returncode"] = completed.returncode
+        reset["child_stderr_tail"] = (completed.stderr or "")[-1500:]
+        payload = None
+        for line in reversed((completed.stdout or "").splitlines()):
+            line = line.strip()
+            if line.startswith("{") and "reset" in line:
+                try:
+                    payload = json.loads(line)
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        if payload is None:
+            reset["error"] = (
+                f"child_no_json returncode={completed.returncode}; "
+                f"stdout_tail={(completed.stdout or '')[-500:]}"
+            )
+        else:
+            reset.update(payload.get("reset") or {})
+            reset["lightwheel_cats_with_paths"] = payload.get("lightwheel_cats_with_paths")
+            rollout = payload.get("rollout") or rollout
+            if reset.get("ok"):
+                results["capabilities_exercised"].append("kitchen_egl_env_reset")
+            if rollout.get("ok"):
+                results["capabilities_exercised"].append("kitchen_random_rollout")
     except Exception as exc:  # noqa: BLE001
         reset["error"] = f"{type(exc).__name__}: {exc}"
-        # osmesa fallback if EGL init fails in this container.
-        try:
-            os.environ["MUJOCO_GL"] = "osmesa"
-            os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-            env = gym.make(env_id, **make_kwargs)
-            obs, info = env.reset(seed=0)
-            reset["ok"] = True
-            reset["obs_type"] = type(obs).__name__
-            reset["fallback"] = "osmesa"
-            env.close()
-            results["capabilities_exercised"].append("kitchen_egl_env_reset")
-            reset["error"] = ""
-        except Exception as exc2:  # noqa: BLE001
-            reset["error"] = f"egl={type(exc).__name__}: {exc}; osmesa={type(exc2).__name__}: {exc2}"
     results["kitchen_egl_env_reset"] = reset
     (output_dir / "robocasa_kitchen_env_reset.json").write_text(
         json.dumps({"solution": "robocasa", "capability": "kitchen_egl_env_reset", **reset}, indent=2)
     )
-
-    # Optional tiny random rollout if reset worked.
-    rollout = {"ok": False, "error": ""}
-    if reset["ok"]:
-        try:
-            from robocasa.utils.env_utils import run_random_rollouts
-
-            env = gym.make(env_id, **make_kwargs)
-            video_path = str(output_dir / "robocasa_random_rollout.mp4")
-            run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=video_path)
-            env.close()
-            rollout["ok"] = True
-            rollout["video_path"] = video_path
-            rollout["video_exists"] = Path(video_path).exists()
-            results["capabilities_exercised"].append("kitchen_random_rollout")
-        except Exception as exc:  # noqa: BLE001
-            rollout["error"] = f"{type(exc).__name__}: {exc}"
     results["kitchen_random_rollout"] = rollout
     (output_dir / "robocasa_kitchen_random_rollout.json").write_text(
         json.dumps({"solution": "robocasa", "capability": "kitchen_random_rollout", **rollout}, indent=2)

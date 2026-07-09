@@ -33,7 +33,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap15-robocasa-20260709-053326` (IIFAN fixtures+objects; restored git accessories) |
-| RoboCasa | `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred | `defcap15`: assets OK; `Probabilities contain NaN` without `obj_registries=["lightwheel"]` — fix queued |
+| RoboCasa | `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred | `defcap16`: assets OK; NaN from importing robocasa before objs_lw (empty mjcf_paths) — post-download subprocess queued |
 | OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
 | OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
 | OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
@@ -66,7 +66,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- |
 | `kitchen_task_registration` | accepted hard gate (live) | Gymnasium `robocasa/PickPlaceCounterToCabinet` |
 | `download_kitchen_assets_lw` | accepted (live) | `download_kitchen_assets --type tex tex_generative fixtures_lw` |
-| `kitchen_egl_env_reset` | deferred (`obj_registries=lightwheel` queued) | `MUJOCO_GL=egl` gym.make + reset |
+| `kitchen_egl_env_reset` | deferred (post-download import queued) | `MUJOCO_GL=egl` gym.make + reset |
 | `kitchen_random_rollout` | deferred (depends on EGL reset) | `run_random_rollouts` |
 
 ### OpenPI
