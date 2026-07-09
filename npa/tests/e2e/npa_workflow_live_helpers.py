@@ -54,6 +54,7 @@ __all__ = [
     "materialize_live_spec",
     "parse_json_output",
     "parse_json_payload",
+    "seed_live_workflow_inputs",
     "selected_submit_cases",
 ]
 
@@ -81,6 +82,70 @@ def live_bucket(e2e_project: str | None) -> str:
     if not bucket:
         pytest.fail(f"could not resolve live bucket from {raw!r}")
     return bucket
+
+
+def seed_live_workflow_inputs(
+    *,
+    spec_name: str,
+    bucket: str,
+    run_id: str,
+    e2e_project: str | None = None,
+) -> None:
+    """Upload minimal S3 fixtures so Token Factory twins have real inputs."""
+
+    from io import BytesIO
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "token-factory-caption.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed caption fixtures: {exc}")
+        image = Image.new("RGB", (320, 240), (200, 200, 200))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([40, 80, 160, 200], fill=(180, 40, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/images/fixture.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+        return
+
+    if spec_name == "token-factory-generate.yaml":
+        body = b'{"id": "e2e-1", "prompt": "Reply with the single word: ready"}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
+    if spec_name == "token-factory-cosmos-reason.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed reason fixtures: {exc}")
+        image = Image.new("RGB", (320, 240), (200, 200, 200))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 180, 320, 240], fill=(120, 90, 60))
+        draw.rectangle([120, 100, 200, 180], fill=(180, 40, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/scene/frame_000.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+        return
 
 
 def materialize_live_spec(
@@ -130,10 +195,37 @@ def materialize_live_spec(
     force_accel = os.environ.get("NPA_E2E_FORCE_ACCELERATORS", "").strip()
     if force_accel:
         text = _force_accelerators_on_cpu_profiles(text, force_accel)
+    # When remapping onto denser GPU nodes (e.g. RTXPRO), high cpu/mem floors
+    # from H100-shaped twins fail prechecks. Optionally clamp to a smaller floor.
+    if os.environ.get("NPA_E2E_RELAX_CPU_MEM", "").strip() in {"1", "true", "yes"} or (
+        force_accel or remap
+    ):
+        text = _relax_all_cpu_mem_floors(
+            text,
+            cpus=os.environ.get("NPA_E2E_RELAX_CPUS", "4+"),
+            memory=os.environ.get("NPA_E2E_RELAX_MEMORY", "16+"),
+        )
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
 
+
+def _relax_all_cpu_mem_floors(text: str, *, cpus: str, memory: str) -> str:
+    """Rewrite every ``cpus`` / ``memory`` resource line to a smaller floor."""
+
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if re.match(r"^(\s*)cpus:\s*\S+", line):
+            indent = re.match(r"^(\s*)", line).group(1)  # type: ignore[union-attr]
+            out.append(f"{indent}cpus: {cpus}\n" if line.endswith("\n") else f"{indent}cpus: {cpus}")
+            continue
+        if re.match(r"^(\s*)memory:\s*\S+", line):
+            indent = re.match(r"^(\s*)", line).group(1)  # type: ignore[union-attr]
+            suffix = "\n" if line.endswith("\n") else ""
+            out.append(f"{indent}memory: {memory}{suffix}")
+            continue
+        out.append(line)
+    return "".join(out)
 
 def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
     """Add ``accelerators`` to named resource profiles that lack them.

@@ -42,6 +42,7 @@ from .npa_workflow_live_helpers import (
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
+    seed_live_workflow_inputs,
     selected_submit_cases,
 )
 
@@ -161,6 +162,12 @@ def test_npa_workflow_submit_live_reaches_terminal(
     bucket = live_bucket(e2e_project)
     run_id = _run_id_for(case)
     path = materialize_live_spec(tmp_path, case.spec, bucket=bucket, run_id=run_id)
+    seed_live_workflow_inputs(
+        spec_name=case.spec,
+        bucket=bucket,
+        run_id=run_id,
+        e2e_project=e2e_project,
+    )
 
     # Preflight: render only (no cluster).
     plan_args = [
