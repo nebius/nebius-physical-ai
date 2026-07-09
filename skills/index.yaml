@@ -22,6 +22,18 @@ licenses:
       - cosmos3-inference
       - cosmos3-post-training
 skills:
+  - name: agent-development
+    category: atomic
+    when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
+    path: skills/atomic/agent-development/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/cli/agent_routing.py
+      - type: file_exists
+        path: npa/tests/cli/test_agent_routing.py
+      - type: cli_help
+        args: ["agent", "deploy", "--help"]
+        contains: "llm-model"
   - name: architecture
     category: atomic
     when_to_use: "Platform architecture, tool-layer scope, orchestrator decisions, partner model, and validation state."
