@@ -153,7 +153,8 @@ def render_task_run_script(command: Sequence[str]) -> str:
     quoted = " ".join(shlex.quote(str(part)) for part in command)
     return (
         "set -euo pipefail\n"
-        'export PATH="${HOME}/.local/bin:${PATH}"\n'
+        # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
+        "export PATH=\"$HOME/.local/bin:$PATH\"\n"
         f"{quoted}\n"
     )
 
@@ -168,7 +169,7 @@ def default_npa_setup() -> str:
 
     return (
         "set -e\n"
-        'export PATH="${HOME}/.local/bin:${PATH}"\n'
+        "export PATH=\"$HOME/.local/bin:$PATH\"\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    python3 -m pip install --user -e /opt/nebius-physical-ai/npa\n"
