@@ -14,9 +14,11 @@ from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
+# Token Factory is a hosted HTTP API client — do not pin the heavy npa-cosmos
+# image; SkyPilot's default runtime image is enough and avoids k8s SSH races
+# while the 8GB cosmos image is still starting.
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
-    "workbench.token_factory": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.lancedb": "lancedb",
