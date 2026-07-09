@@ -86,9 +86,9 @@ Use the project's own vocabulary. Examples of good ids:
 
 - ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
 - MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
-- RoboCasa: `kitchen_egl_env_reset`, `download_kitchen_assets_lw`
-- OpenPI: `pi05_droid_config`, `pi05_droid_checkpoint_infer`
-- DROID: `rlds_config_generator`, `droid_100_config_gen`
+- RoboCasa: `kitchen_task_registration`, `download_kitchen_assets_lw`
+- OpenPI: `policy_config_materialization`, `pi05_droid_checkpoint_infer`
+- DROID: `rlds_config_generator_contract`, `droid_100_config_gen`
 
 ### 2. Choose a golden hello-world per accepted claim
 

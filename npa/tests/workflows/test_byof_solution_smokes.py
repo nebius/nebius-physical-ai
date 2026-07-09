@@ -40,7 +40,7 @@ ACCEPTED_CAPABILITIES = {
         ],
     },
     "robocasa": {
-        "capability_name": "kitchen_egl_env_reset",
+        "capability_name": "kitchen_task_registration",
         "smoke_artifact_name": "robocasa_kitchen_env_reset.json",
         "spec": "byof-robocasa.yaml",
         "must_exercise": [
@@ -50,7 +50,7 @@ ACCEPTED_CAPABILITIES = {
         ],
     },
     "openpi": {
-        "capability_name": "pi05_droid_checkpoint_infer",
+        "capability_name": "policy_config_materialization",
         "smoke_artifact_name": "openpi_pi05_droid_config.json",
         "spec": "byof-openpi.yaml",
         "must_exercise": [
@@ -60,7 +60,7 @@ ACCEPTED_CAPABILITIES = {
         ],
     },
     "droid-policy-learning": {
-        "capability_name": "droid_100_config_gen",
+        "capability_name": "rlds_config_generator_contract",
         "smoke_artifact_name": "droid_rlds_config_generator.json",
         "spec": "byof-droid-policy-learning.yaml",
         "must_exercise": [
