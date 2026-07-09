@@ -37,6 +37,22 @@ Override Ubuntu default: `NPA_BYOF_UBUNTU_BASE_IMAGE` or `--base-image ubuntu:24
 
 ## Operator Entrypoint
 
+Preferred CLI (Tier 0 of `docs/architecture/oss-onboarding-ladder.md`):
+
+```bash
+npa workbench byof run \
+  --repo-url <repo-url> \
+  --repo-ref <ref> \
+  --base-profile ubuntu \
+  --registry <resolved-from-config> \
+  --project <project-alias> \
+  --workload container-verify \
+  --run-id byof-<stamp> \
+  --cleanup
+```
+
+Equivalent script (same flags; used by older docs and shims):
+
 ```bash
 npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --repo-url <repo-url> \
@@ -48,6 +64,9 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --run-id byof-<stamp> \
   --cleanup
 ```
+
+SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
+YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
 
 Workloads:
 
@@ -112,8 +131,19 @@ npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py -q
 | `npa/src/npa/cli/agent_chat.py` | `onboard_solution` intent |
 | `skills/tools/npa-agent/SKILL.md` | Agent VM bootstrap + API reference |
 
+## After Container-Verify (promotion)
+
+Do **not** stop at a one-off image if the solution needs a repeatable pipeline or marketplace API:
+
+1. **Tier 1** — author an `npa.workflow` spec (`skills/workflows/author-npa-workflow`) and register any new `toolRef` in `catalog.py`.
+2. **Tier 2** — promote to a first-class workbench tool (FastAPI + CLI + SDK + golden eval) per `docs/architecture/contributor-context.md`.
+3. Packaging must satisfy `docs/workbench/container-packaging.md`.
+
+Full ladder: `docs/architecture/oss-onboarding-ladder.md`.
+
 ## Gotchas
 
-- Merge does **not** push images — build happens at operator `run_byof_repo.py` time.
+- Merge does **not** push images — build happens at operator `npa workbench byof run` / `run_byof_repo.py` time.
 - Ubuntu images cannot run LeIsaac datagen; use `isaac-lab` profile for sim workloads.
 - GPU smokes may return `FAILED_PRECHECKS` when cluster capacity is tight; container tier is the gate for Ubuntu BYOF.
+- BYOF images use ad-hoc `npa-byof:<run-id>` tags; they are outside `golden_evals.yaml` until Tier 2 promotion.

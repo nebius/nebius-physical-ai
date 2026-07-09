@@ -861,11 +861,12 @@ def format_onboard_solution() -> str:
         [
             "**Yes — chat can onboard a new OSS solution end-to-end.**",
             f"- **Skill (source of truth):** `{skill_path}`",
+            "- **Ladder:** `docs/architecture/oss-onboarding-ladder.md` (Tier 0 BYOF → Tier 1 workflow → Tier 2 first-class tool).",
             "- Flow: **contract** → **containerize** (`--base-profile ubuntu`) → **deploy/test** (`--workload container-verify`).",
             "- Sim stacks (LeIsaac RL/datagen): use `--base-profile isaac-lab` per the skill workload table.",
             "- Generic Ubuntu onboarding (replace `<repo-url>` / `<repo-ref>`):",
             "```bash",
-            "npa/.venv/bin/python npa/scripts/run_byof_repo.py \\",
+            "npa workbench byof run \\",
             "  --repo-url <repo-url> \\",
             "  --repo-ref <repo-ref> \\",
             "  --base-profile ubuntu \\",
@@ -873,8 +874,10 @@ def format_onboard_solution() -> str:
             "  --workload container-verify \\",
             "  --cleanup",
             "```",
+            "- Equivalent script still works: `npa/scripts/run_byof_repo.py` (same flags).",
             "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
             "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
+            "- After container-verify: author a solution workflow (`author-npa-workflow`) or promote to a first-class tool (`contributor-context.md`).",
         ]
     )
 

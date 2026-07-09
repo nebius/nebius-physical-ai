@@ -141,7 +141,7 @@ def assert_grounded_onboard_solution_reply(payload: dict[str, object]) -> str:
     assert payload.get("grounded") is True
     reply = str(payload.get("reply") or "")
     assert reply
-    assert "run_byof_repo.py" in reply
+    assert "npa workbench byof run" in reply or "run_byof_repo.py" in reply
     assert "--base-profile" in reply or "--base-image" in reply
     assert "byof-onboard" in reply or "skills/workflows/byof-onboard" in reply
     assert "<repo-url>" in reply

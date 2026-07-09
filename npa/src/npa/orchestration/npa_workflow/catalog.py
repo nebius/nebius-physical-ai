@@ -12,11 +12,14 @@ class ToolEntry:
     name: str
     argv_template: list[str]
     description: str = ""
+    stub: bool = False
 
 
 _BYOF_REPO_ARGV = [
-    "npa/.venv/bin/python",
-    "npa/scripts/run_byof_repo.py",
+    "npa",
+    "workbench",
+    "byof",
+    "run",
     "--repo-url",
     "{{config.repo_url}}",
     "--repo-ref",
@@ -127,11 +130,13 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.policy_rollouts",
         description="Policy rollouts on train envs (workflow stub until sim2real step wiring).",
         argv_template=["echo", "policy rollouts -> {{config.rollouts_uri}}"],
+        stub=True,
     ),
     "workbench.sim2real.heldout_eval": ToolEntry(
         name="workbench.sim2real.heldout_eval",
         description="Held-out simulation eval (workflow stub).",
         argv_template=["echo", "heldout eval -> {{config.heldout_report_uri}}"],
+        stub=True,
     ),
     "workbench.sim2real.write_decision": ToolEntry(
         name="workbench.sim2real.write_decision",
@@ -149,10 +154,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.finalize",
         description="Finalize run artifacts (workflow stub).",
         argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
+        stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
-        description="Build/push a BYOF OSS repo image and launch RL training or scripted datagen.",
+        description="Build/push a BYOF OSS repo image via npa workbench byof and launch a workload.",
         argv_template=_BYOF_REPO_ARGV,
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
@@ -525,8 +531,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.fiftyone.launch_app": ToolEntry(
         name="workbench.fiftyone.launch_app",
-        description="Launch FiftyOne App for pipeline review (workflow stage hook).",
+        description="Launch FiftyOne App for pipeline review (workflow stub).",
         argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+        stub=True,
     ),
 }
 

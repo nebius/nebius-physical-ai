@@ -1,0 +1,99 @@
+# Machine-readable packaging contract for workbench containers.
+# Enforced by npa/tests/docker/test_packaging_contract.py
+# Human companion: docs/workbench/container-packaging.md
+
+version: 1
+
+tiers:
+  service:
+    description: Container starts an HTTP or mode-based service by default.
+    entrypoint_must_not_be_bash: true
+    require_expose: true
+    prefer_healthcheck: true
+  job:
+    description: Container runs a workflow/CLI module; CMD may be overridden by orchestrator.
+    entrypoint_must_not_be_bash: true
+    require_expose: false
+    prefer_healthcheck: false
+  interactive:
+    description: Dev/job shell; CLI or SkyPilot must supply the command.
+    entrypoint_must_not_be_bash: false
+    require_expose: false
+    prefer_healthcheck: false
+
+security:
+  require_non_root_user: true
+  allowed_final_users:
+    - ubuntu
+    - nobody
+    - "1000"
+    - "10001"
+  forbid_secrets_in_dockerfile: true
+  secret_patterns:
+    - "(?i)(api[_-]?key|secret[_-]?key|password)\\s*=\\s*['\\\"][^'\\\"]+['\\\"]"
+    - "(?i)BEGIN (RSA |OPENSSH )?PRIVATE KEY"
+
+# Relative to npa/docker/workbench/
+images:
+  lerobot:
+    dockerfile: lerobot/Dockerfile
+    tier: service
+    ports: [8080]
+  lerobot-policy:
+    dockerfile: lerobot-policy/Dockerfile
+    tier: service
+    ports: [8080]
+  lancedb:
+    dockerfile: lancedb/Dockerfile
+    tier: service
+    ports: [8686]
+  detection-training:
+    dockerfile: detection-training/Dockerfile
+    tier: service
+    ports: [8790]
+  sonic:
+    dockerfile: sonic/Dockerfile
+    tier: job
+  sonic-mujoco:
+    dockerfile: sonic/Dockerfile.mujoco
+    tier: job
+  sim2real-eval:
+    dockerfile: sim2real-eval/Dockerfile
+    tier: job
+  cosmos3-reason:
+    dockerfile: cosmos3-reason/Dockerfile
+    tier: job
+  lerobot-vlm-rl:
+    dockerfile: lerobot-vlm-rl/Dockerfile
+    tier: job
+  genesis:
+    dockerfile: genesis/Dockerfile
+    tier: interactive
+  isaac-lab:
+    dockerfile: isaac-lab/Dockerfile
+    tier: interactive
+  fiftyone:
+    dockerfile: fiftyone/Dockerfile
+    tier: interactive
+    ports: [5151]
+  cosmos:
+    dockerfile: cosmos/Dockerfile
+    tier: interactive
+    ports: [8080]
+    notes: "Server is built into the image; promote to service when default CMD starts it."
+  groot:
+    dockerfile: groot/Dockerfile
+    tier: interactive
+    ports: [8080]
+    notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
+  retargeting:
+    dockerfile: retargeting/Dockerfile
+    tier: interactive
+  sim2real-envgen:
+    dockerfile: sim2real-envgen/Dockerfile
+    tier: interactive
+  rerun-viewer:
+    dockerfile: rerun-viewer/Dockerfile
+    tier: job
+    ports: [9090]
+    final_user: nobody

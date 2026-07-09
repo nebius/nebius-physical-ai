@@ -9,6 +9,10 @@ The machine-readable source of truth is
 This doc is the human-readable companion; if the two disagree, the manifest
 (which is test-enforced) wins.
 
+Packaging tiers, security baseline, and ENTRYPOINT expectations are documented
+in [`docs/workbench/container-packaging.md`](../workbench/container-packaging.md)
+and enforced by `npa/docker/workbench/packaging-contract.yaml`.
+
 ## How it is enforced
 
 - **Completeness/consistency gate** —

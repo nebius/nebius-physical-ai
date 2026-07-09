@@ -389,6 +389,9 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa_source_metadata.json" in text
     assert "printf" in text
     assert "/opt/byof" in text
+    assert "USER ubuntu" in text
+    assert "npa.packaging.tier=\"interactive\"" in text
+    assert "useradd" in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:

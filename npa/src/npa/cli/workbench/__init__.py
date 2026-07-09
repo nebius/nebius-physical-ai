@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from npa.clients.credentials import load_credentials
+from npa.cli.workbench.byof import app as byof_app
 from npa.cli.workbench.cosmos2 import app as cosmos2_app
 from npa.cli.workbench.cosmos3 import app as cosmos3_app
 from npa.cli.workbench.data import app as data_app
@@ -55,6 +56,7 @@ app.add_typer(lancedb_app, name="lancedb")
 app.add_typer(detection_training_app, name="detection-training")
 app.add_typer(vlm_eval_app, name="vlm-eval")
 app.add_typer(token_factory_app, name="token-factory")
+app.add_typer(byof_app, name="byof")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(health_app, name="health")
 app.add_typer(sim2real_app, name="sim2real", hidden=True)

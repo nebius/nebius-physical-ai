@@ -113,12 +113,19 @@ def _dockerfile_text() -> str:
         "FROM ${BYOF_BASE_IMAGE}\n"
         "ARG OSS_REPO_URL\n"
         "ARG OSS_REPO_REF\n"
+        "USER root\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
-        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT}\n"
+        "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
+        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
-        f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
-        "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\"\n"
+        f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n"
+        f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
+        "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\" "
+        "npa.packaging.tier=\"interactive\"\n"
+        "USER ubuntu\n"
+        f"WORKDIR {BYOF_REPO_MOUNT}\n"
     )
 
 
