@@ -252,6 +252,33 @@ config:
 
     (output_dir / "robocasa_kitchen_env_reset.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
+    # One-line marker for SkyPilot log scraping when S3 objects are unavailable.
+    print(
+        "NPA_CAPABILITY_RESULT "
+        + json.dumps(
+            {
+                "solution": "robocasa",
+                "capabilities_exercised": results.get("capabilities_exercised"),
+                "deferred": results.get("deferred"),
+                "download_ok": (results.get("download_kitchen_assets") or {}).get("ok"),
+                "wall_yaml_exists": (results.get("download_kitchen_assets") or {}).get(
+                    "wall_yaml_exists"
+                ),
+                "light_switch_exists": (results.get("download_kitchen_assets") or {}).get(
+                    "light_switch_exists"
+                ),
+                "egl_ok": (results.get("kitchen_egl_env_reset") or {}).get("ok"),
+                "egl_error": (results.get("kitchen_egl_env_reset") or {}).get("error"),
+                "rollout_ok": (results.get("kitchen_random_rollout") or {}).get("ok"),
+                "rollout_error": (results.get("kitchen_random_rollout") or {}).get("error"),
+                "restored_git_fixture_count": (results.get("download_kitchen_assets") or {}).get(
+                    "restored_git_fixture_count"
+                ),
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
     # Hard gate: Gymnasium task registration. Asset download + EGL reset remain
     # attempted evidence and can fail independently (network / MuJoCo-EGL stack).
     if "kitchen_task_registration" not in results["capabilities_exercised"]:
