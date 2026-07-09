@@ -11,7 +11,10 @@ making architecture, review, or domain judgments.
 - `skills/index.yaml`: root manifest with name, when-to-use, path, and CI smoke
   expectations.
 - `skills/atomic/architecture/SKILL.md`: platform architecture and validation
-  state.
+ state.
+- `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA
+ chat agent backend (grounded-first routing, cost-aware Token Factory model
+ selection, embedded-backend mechanism, cheap-token test tiers).
 - `skills/atomic/review-checklist/SKILL.md`: review risk classification.
 - `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
   GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K
