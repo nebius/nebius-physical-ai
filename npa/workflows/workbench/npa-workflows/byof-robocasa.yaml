@@ -214,9 +214,13 @@ config:
     )
 
     # Headless EGL env create/reset (documented Gym interface).
-    reset = {"env_id": env_id, "ok": False, "error": ""}
+    # Restrict object sampling to lightwheel — we only download objs_lw.
+    # Upstream default (objaverse, lightwheel) yields NaN probs when objaverse
+    # is absent (see kitchen_object_utils.py divide-by-zero warning).
+    make_kwargs = {"split": "pretrain", "seed": 0, "obj_registries": ["lightwheel"]}
+    reset = {"env_id": env_id, "ok": False, "error": "", "make_kwargs": make_kwargs}
     try:
-        env = gym.make(env_id, split="pretrain", seed=0)
+        env = gym.make(env_id, **make_kwargs)
         obs, info = env.reset(seed=0)
         reset["ok"] = True
         reset["obs_type"] = type(obs).__name__
@@ -229,7 +233,7 @@ config:
         try:
             os.environ["MUJOCO_GL"] = "osmesa"
             os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-            env = gym.make(env_id, split="pretrain", seed=0)
+            env = gym.make(env_id, **make_kwargs)
             obs, info = env.reset(seed=0)
             reset["ok"] = True
             reset["obs_type"] = type(obs).__name__
@@ -250,7 +254,7 @@ config:
         try:
             from robocasa.utils.env_utils import run_random_rollouts
 
-            env = gym.make(env_id, split="pretrain", seed=0)
+            env = gym.make(env_id, **make_kwargs)
             video_path = str(output_dir / "robocasa_random_rollout.mp4")
             run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=video_path)
             env.close()
