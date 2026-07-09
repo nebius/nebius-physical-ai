@@ -37,7 +37,10 @@ run: |
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
   nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1 || true
-  vulkaninfo --summary > "${OUTPUT_DIR}/vulkaninfo_summary.txt" 2>&1 || true
+  # Older vulkan-tools lack --summary; capture plain vulkaninfo head instead.
+  (vulkaninfo --summary 2>/dev/null || vulkaninfo 2>&1 | head -200) > "${OUTPUT_DIR}/vulkaninfo_summary.txt" 2>&1 || true
+  ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libvulkan' > "${OUTPUT_DIR}/nvidia_gl_libs.txt" 2>&1 || true
+  ls -la /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/share/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d > "${OUTPUT_DIR}/vulkan_icd_listing.txt" 2>&1 || true
   SMOKE_EXIT_CODE=0
   if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
     set +e

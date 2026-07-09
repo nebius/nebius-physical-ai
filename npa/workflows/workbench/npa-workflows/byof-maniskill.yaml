@@ -12,22 +12,26 @@ config:
   repo_ref: "v3.0.1"
   base_profile: ubuntu
   base_image: "maniskill/base:latest"
+  # Do not install mesa-vulkan-drivers alongside NVIDIA — llvmpipe ICDs can
+  # race with nvidia_icd and contribute to SAPIEN segfaults on GPU nodes.
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
-    libvulkan1 vulkan-tools mesa-vulkan-drivers &&
+    libvulkan1 vulkan-tools libglvnd0 libegl1 libgl1 &&
     python3 -m pip install --no-cache-dir -e .
   workload: solution-smoke
   smoke_command: |
     export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
     export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+    export MS_SKIP_ASSET_DOWNLOAD_PROMPT=1
     # Prefer host/container NVIDIA ICD; synthesize one if the image only has stubs.
+    # Also ensure EGL vendor + Optimus layer files exist (ManiSkill troubleshooting).
+    mkdir -p /tmp/vulkan/icd.d /tmp/vulkan/implicit_layer.d /tmp/glvnd/egl_vendor.d
     if [ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]; then
       export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
     elif [ -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
       export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
     else
-      mkdir -p /tmp/vulkan/icd.d
       cat > /tmp/vulkan/icd.d/nvidia_icd.json <<'ICD'
     {
       "file_format_version": "1.0.0",
@@ -40,6 +44,56 @@ config:
       export VK_ICD_FILENAMES=/tmp/vulkan/icd.d/nvidia_icd.json
     fi
     export VK_DRIVER_FILES="${VK_ICD_FILENAMES}"
+    if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && [ ! -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
+      cat > /tmp/glvnd/egl_vendor.d/10_nvidia.json <<'EGL'
+    {
+      "file_format_version": "1.0.0",
+      "ICD": {
+        "library_path": "libEGL_nvidia.so.0"
+      }
+    }
+    EGL
+      export __EGL_VENDOR_LIBRARY_FILENAMES=/tmp/glvnd/egl_vendor.d/10_nvidia.json
+      export __EGL_VENDOR_LIBRARY_DIRS=/tmp/glvnd/egl_vendor.d
+    fi
+    if [ ! -f /etc/vulkan/implicit_layer.d/nvidia_layers.json ] && [ ! -f /usr/share/vulkan/implicit_layer.d/nvidia_layers.json ]; then
+      cat > /tmp/vulkan/implicit_layer.d/nvidia_layers.json <<'LAYER'
+    {
+      "file_format_version": "1.0.0",
+      "layer": {
+        "name": "VK_LAYER_NV_optimus",
+        "type": "INSTANCE",
+        "library_path": "libGLX_nvidia.so.0",
+        "api_version": "1.2.155",
+        "implementation_version": "1",
+        "description": "NVIDIA Optimus layer",
+        "functions": {
+          "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",
+          "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"
+        },
+        "enable_environment": {
+          "__NV_PRIME_RENDER_OFFLOAD": "1"
+        },
+        "disable_environment": {
+          "DISABLE_LAYER_NV_OPTIMUS_1": ""
+        }
+      }
+    }
+    LAYER
+      export VK_LAYER_PATH=/tmp/vulkan/implicit_layer.d
+    fi
+    # Capture Vulkan/SAPIEN diagnostics before capability probes.
+    {
+      echo "=== ldconfig libGLX_nvidia ==="
+      ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libvulkan' || true
+      echo "=== ICD files ==="
+      ls -la /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/share/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d 2>/dev/null || true
+      echo "=== vulkaninfo (no --summary; older tools lack it) ==="
+      vulkaninfo 2>&1 | head -120 || true
+      echo "=== sapien info ==="
+      python3 -c 'import sapien; print("sapien", getattr(sapien, "__version__", "?"))' 2>&1 || true
+      python3 -c 'import sapien; print(sapien.render.get_device_summary())' 2>&1 || true
+    } > "${NPA_SMOKE_OUTPUT_DIR}/maniskill_vulkan_diag.txt" 2>&1 || true
     python3 - <<'PY'
     import json
     import os
@@ -55,6 +109,8 @@ config:
         "deferred": [],
         "env_id": env_id,
         "vk_icd_filenames": os.environ.get("VK_ICD_FILENAMES", ""),
+        "egl_vendor_filenames": os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES", ""),
+        "vk_layer_path": os.environ.get("VK_LAYER_PATH", ""),
     }
 
     import gymnasium as gym
@@ -107,12 +163,29 @@ config:
             entry["error"] = f"returncode={completed.returncode}"
         return entry
 
+    # Minimal SAPIEN physx-only probe (no ManiSkill env) to separate Vulkan vs PhysX crashes.
+    sapien_probe = run_isolated(
+        "sapien_physx_cpu_probe",
+        "import json\n"
+        "import sapien\n"
+        "from sapien import physx\n"
+        "scene = sapien.Scene([physx.PhysxCpuSystem()])\n"
+        "scene.step()\n"
+        "print(json.dumps({'ok': True, 'systems': 'PhysxCpuSystem'}))\n",
+    )
+    results["sapien_physx_cpu_probe"] = sapien_probe
+    (output_dir / "maniskill_sapien_physx_cpu_probe.json").write_text(
+        json.dumps({"solution": "maniskill", **sapien_probe}, indent=2)
+    )
+
     # Upstream accepts physx_cpu / physx_cuda / auto — not bare "cpu".
+    # Try sapien_cpu render backend before none/auto (Blackwell Vulkan path).
     cpu_script = (
         "import json, os, gymnasium as gym, mani_skill.envs\n"
         "env_id = 'PickCube-v1'\n"
         "payload = {}\n"
         "attempts = [\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='sapien_cpu', sim_backend='physx_cpu'),\n"
         "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='physx_cpu'),\n"
         "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='auto'),\n"
         "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none'),\n"

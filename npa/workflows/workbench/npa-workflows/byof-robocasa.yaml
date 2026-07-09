@@ -30,6 +30,9 @@ config:
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
     export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
+    # Ensure HF hub is present even when reusing an older registry image.
+    python3 -m pip install --quiet --no-cache-dir huggingface_hub 2>/dev/null ||
+    python3 -m pip install --quiet --break-system-packages --no-cache-dir huggingface_hub || true
     python3 - <<'PY'
     import json
     import os

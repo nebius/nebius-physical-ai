@@ -27,12 +27,12 @@ unique and must be tested with its own upstream-named capabilities.
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
-| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | Isolated subprocess SAPIEN segfault (`returncode=-11`) |
-| MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap-mujoco-playground-20260709-005745` (+ prior `…-20260708-230227`) |
+| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | `defcap8b-maniskill-reverify`: SAPIEN segfault (`-11`) with `physx_cpu` + NVIDIA ICD; Vulkan/EGL diag + rebuild in flight |
+| MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
-| MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred | Attempted; PPO script video/EGL path remains heavy |
-| RoboCasa | `kitchen_task_registration` | **accepted** | `defcap-robocasa-20260709-011138` (`smoke_exit_code=0`) |
-| RoboCasa | `download_kitchen_assets_lw` / `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred / attempted | Same run uploaded per-capability JSON evidence |
+| MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred | `defcap8-…-024455`: brax/JAX `device_put_replicated` removed + cuSPARSE; pin/shim rebuild in flight |
+| RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
+| RoboCasa | `download_kitchen_assets_lw` / `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred / attempted | `defcap8-robocasa-20260709-024455` uploaded per-capability JSON |
 | OpenPI | `policy_config_materialization` | **accepted** | `defcap-openpi-20260709-011138` (`smoke_exit_code=0`) |
 | OpenPI | `pi05_droid_checkpoint_download` / `pi05_droid_checkpoint_infer` | deferred / attempted | Same run uploaded `openpi_pi05_droid_checkpoint_infer.json` |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap-droid-policy-learning-20260709-011138` (`smoke_exit_code=0`) |
