@@ -86,7 +86,7 @@ run: |
   parsed = urlparse(output)
   if parsed.scheme == "s3" and parsed.netloc:
       prefix = parsed.path.lstrip("/")
-      def _endpoint(value: str | None) -> str | None:
+      def _endpoint(value):
           text = (value or "").strip()
           if not text or (text.startswith("${") and text.endswith("}")):
               return None
