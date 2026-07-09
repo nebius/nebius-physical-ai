@@ -341,6 +341,10 @@ def _ensure_pip(state: VenvState) -> None:
 def _install_package(state: VenvState, package_spec: str) -> None:
     result = _run_no_raise([str(state.python_bin), "-m", "pip", "install", package_spec])
     if result.returncode == 0:
+        # SkyPilot 0.12.2 declares click<8.2, but pip can still resolve a newer
+        # Click that breaks `sky launch --docker` flag parsing (backend_name=False).
+        # Re-pin after install so bootstrap stays launchable.
+        _pin_skypilot_click(state)
         return
     detail = _combined_output(result) or "no output"
     if _looks_like_network_failure(detail):
@@ -350,6 +354,26 @@ def _install_package(state: VenvState, package_spec: str) -> None:
         )
     raise SkyPilotBootstrapError(
         f"pip failed while installing {package_spec}: {detail}. "
+        "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
+    )
+
+
+def _pin_skypilot_click(state: VenvState) -> None:
+    """Keep Click inside SkyPilot's declared range after bootstrap installs."""
+
+    result = _run_no_raise(
+        [str(state.python_bin), "-m", "pip", "install", "click>=8.1,<8.2"]
+    )
+    if result.returncode == 0:
+        return
+    detail = _combined_output(result) or "no output"
+    if _looks_like_network_failure(detail):
+        raise SkyPilotBootstrapError(
+            f"Network failure while pinning click for SkyPilot: {detail}. "
+            "Suggested action: verify package index connectivity and rerun bootstrap."
+        )
+    raise SkyPilotBootstrapError(
+        f"pip failed while pinning click for SkyPilot: {detail}. "
         "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
     )
 
