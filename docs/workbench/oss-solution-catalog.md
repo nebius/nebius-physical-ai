@@ -27,7 +27,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
-| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | `defcap8b-maniskill-reverify`: SAPIEN segfault (`-11`) with `physx_cpu` + NVIDIA ICD; Vulkan/EGL diag + rebuild in flight |
+| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | `defcap9-maniskill-20260709-034059`: PhysX OK; `sapien.render.get_device_summary` segfaults on Blackwell; upgrading SAPIEN≥3.0.3 |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred | `defcap8-…-024455`: brax/JAX `device_put_replicated` removed + cuSPARSE; pin/shim rebuild in flight |
@@ -47,7 +47,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `gymnasium_pickcube_registration` | accepted (live) | Gymnasium env id listing |
-| `pickcube_cpu_step` | deferred (segfault) | Isolated subprocess; SAPIEN `gym.make` |
+| `pickcube_cpu_step` | deferred (segfault) | Isolated subprocess; SAPIEN render path (PhysX-only OK) |
 | `pickcube_parallel_envs` | deferred (segfault) | Isolated subprocess `num_envs=4` |
 | `pickcube_gpu_rgb_render` | deferred (segfault) | Isolated subprocess GPU rgb render |
 

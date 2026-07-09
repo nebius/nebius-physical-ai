@@ -14,11 +14,15 @@ config:
   base_image: "maniskill/base:latest"
   # Do not install mesa-vulkan-drivers alongside NVIDIA — llvmpipe ICDs can
   # race with nvidia_icd and contribute to SAPIEN segfaults on GPU nodes.
+  # ManiSkill v3.0.1 pins an older SAPIEN; upgrade to 3.0.3 after editable
+  # install — SAPIEN render init segfaults on Blackwell with the stock pin
+  # while PhysxCpuSystem works (see Round9 sapien_physx_cpu_probe).
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
     libvulkan1 vulkan-tools libglvnd0 libegl1 libgl1 &&
-    python3 -m pip install --no-cache-dir -e .
+    python3 -m pip install --no-cache-dir -e . &&
+    python3 -m pip install --no-cache-dir --upgrade "sapien>=3.0.3"
   workload: solution-smoke
   smoke_command: |
     export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
@@ -171,11 +175,22 @@ config:
         "from sapien import physx\n"
         "scene = sapien.Scene([physx.PhysxCpuSystem()])\n"
         "scene.step()\n"
-        "print(json.dumps({'ok': True, 'systems': 'PhysxCpuSystem'}))\n",
+        "print(json.dumps({'ok': True, 'systems': 'PhysxCpuSystem', 'sapien': getattr(sapien, '__version__', '')}))\n",
     )
     results["sapien_physx_cpu_probe"] = sapien_probe
     (output_dir / "maniskill_sapien_physx_cpu_probe.json").write_text(
         json.dumps({"solution": "maniskill", **sapien_probe}, indent=2)
+    )
+    render_probe = run_isolated(
+        "sapien_render_device_probe",
+        "import json\n"
+        "import sapien\n"
+        "summary = sapien.render.get_device_summary()\n"
+        "print(json.dumps({'ok': True, 'summary': str(summary)[:1000], 'sapien': getattr(sapien, '__version__', '')}))\n",
+    )
+    results["sapien_render_device_probe"] = render_probe
+    (output_dir / "maniskill_sapien_render_device_probe.json").write_text(
+        json.dumps({"solution": "maniskill", **render_probe}, indent=2)
     )
 
     # Upstream accepts physx_cpu / physx_cuda / auto — not bare "cpu".
