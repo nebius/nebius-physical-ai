@@ -44,6 +44,9 @@ def test_force_accelerators_on_cpu_profiles() -> None:
     assert out.count("accelerators: L40S:1") == 1
     assert "accelerators: H100:1" in out
     assert "cloud: kubernetes" in out
+    assert "cpus: 4+" in out
+    assert "memory: 16+" in out
+    assert "cpus: 4\n" not in out
 
 
 def test_submit_live_matrix_specs_exist() -> None:

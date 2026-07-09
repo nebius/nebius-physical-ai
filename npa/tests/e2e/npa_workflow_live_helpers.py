@@ -136,13 +136,32 @@ def materialize_live_spec(
 
 
 def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
-    """Add ``accelerators`` to named resource profiles that lack them."""
+    """Add ``accelerators`` to named resource profiles that lack them.
+
+    Also relax exact ``cpus`` / ``memory`` to ``N+`` so GPU instance shapes
+    (e.g. L40S) can satisfy the request — Nebius has no ``cpus=4,mem=16,L40S:1``.
+    """
 
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     in_resources = False
     profile_lines: list[str] = []
     profile_has_accel = False
+
+    def _relax_cpu_mem(line: str) -> str:
+        match = re.match(r"^(\s*(?:cpus|memory):\s*)(\S+)(\s*)$", line)
+        if not match:
+            return line
+        prefix, value, suffix = match.groups()
+        raw = value.strip()
+        if raw.endswith("+") or raw.endswith("*"):
+            return line
+        if raw.lower().endswith("gi"):
+            raw = raw[:-2]
+        elif raw.lower().endswith("g"):
+            raw = raw[:-1]
+        relaxed = f"{prefix}{raw}+{suffix}"
+        return relaxed if line.endswith("\n") or not line.endswith("\n") else relaxed
 
     def flush_profile() -> None:
         nonlocal profile_lines, profile_has_accel
@@ -152,13 +171,13 @@ def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
             inserted = False
             rebuilt: list[str] = []
             for pl in profile_lines:
-                rebuilt.append(pl)
+                rebuilt.append(_relax_cpu_mem(pl))
                 if not inserted and re.match(r"^    cloud:\s*", pl):
                     rebuilt.append(f"    accelerators: {accelerators}\n")
                     inserted = True
             if not inserted:
-                rebuilt = [profile_lines[0], f"    accelerators: {accelerators}\n"] + profile_lines[
-                    1:
+                rebuilt = [profile_lines[0], f"    accelerators: {accelerators}\n"] + [
+                    _relax_cpu_mem(pl) for pl in profile_lines[1:]
                 ]
             profile_lines = rebuilt
         out.extend(profile_lines)
