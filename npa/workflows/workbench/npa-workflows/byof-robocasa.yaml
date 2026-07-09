@@ -69,7 +69,7 @@ config:
     # Documented lightweight asset download. Upstream script prompts interactively;
     # feed "y" on stdin so noninteractive containers can proceed.
     download = {
-        "command": "printf 'y\\n' | python3 -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw objs_lw",
+        "command": "printf 'y\\n' | python3 -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw",
         "ok": False,
         "returncode": None,
         "error": "",
@@ -83,6 +83,13 @@ config:
             input="y\n",
         )
         download["setup_macros_returncode"] = completed.returncode
+        # Remove stale/partial fixtures so HF extract is not skipped over an incomplete tree.
+        fixtures = assets_root / "fixtures"
+        if fixtures.exists():
+            import shutil
+
+            shutil.rmtree(fixtures, ignore_errors=True)
+            download["cleared_stale_fixtures"] = True
         completed = subprocess.run(
             [
                 "python3",
@@ -92,7 +99,6 @@ config:
                 "tex",
                 "tex_generative",
                 "fixtures_lw",
-                "objs_lw",
             ],
             capture_output=True,
             text=True,
@@ -103,15 +109,34 @@ config:
         download["returncode"] = completed.returncode
         download["stdout_tail"] = (completed.stdout or "")[-2000:]
         download["stderr_tail"] = (completed.stderr or "")[-2000:]
-        fixtures = assets_root / "fixtures"
-        objs_lw = assets_root / "objects" / "lightwheel"
+        # objs_lw currently 404s on HF (PhysicalAI-Kitchen-Assets); fixtures_lw is the hard requirement.
+        window_xml = fixtures / "windows" / "Window069" / "model.xml"
         download["fixtures_exists"] = fixtures.exists()
-        download["objs_lw_exists"] = objs_lw.exists()
-        download["ok"] = completed.returncode == 0 and (fixtures.exists() or objs_lw.exists())
+        download["window069_exists"] = window_xml.exists()
+        if not window_xml.exists():
+            # Community mirror of fixtures_lightwheel.zip when upstream HF/Box is incomplete.
+            try:
+                from huggingface_hub import hf_hub_download
+                from zipfile import ZipFile
+
+                zip_path = hf_hub_download(
+                    repo_id="IIFAN/robocasa365-lightwheel-fixtures",
+                    repo_type="dataset",
+                    filename="fixtures_lightwheel.zip",
+                )
+                with ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(path=str(assets_root))
+                download["mirror"] = "IIFAN/robocasa365-lightwheel-fixtures"
+                download["window069_exists"] = window_xml.exists()
+            except Exception as mirror_exc:  # noqa: BLE001
+                download["mirror_error"] = f"{type(mirror_exc).__name__}: {mirror_exc}"
+        download["ok"] = window_xml.exists()
         if download["ok"]:
             results["capabilities_exercised"].append("download_kitchen_assets_lw")
         else:
-            download["error"] = f"returncode={completed.returncode}"
+            download["error"] = (
+                f"returncode={completed.returncode}; window069_exists={window_xml.exists()}"
+            )
     except Exception as exc:  # noqa: BLE001
         download["error"] = f"{type(exc).__name__}: {exc}"
     results["download_kitchen_assets"] = download

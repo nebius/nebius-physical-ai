@@ -30,12 +30,13 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | `defcap9-maniskill-20260709-034059`: PhysX OK; `sapien.render.get_device_summary` segfaults on Blackwell; upgrading SAPIEN≥3.0.3 |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
-| MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred | `defcap8-…-024455`: brax/JAX `device_put_replicated` removed + cuSPARSE; pin/shim rebuild in flight |
+| MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
-| RoboCasa | `download_kitchen_assets_lw` / `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred / attempted | `defcap8-robocasa-20260709-024455` uploaded per-capability JSON |
-| OpenPI | `policy_config_materialization` | **accepted** | `defcap8-openpi-20260709-024455` (+ prior `…-011138`) |
-| OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap8-openpi-20260709-024455` via `maybe_download` |
-| OpenPI | `pi05_droid_checkpoint_infer` | deferred | Same run: missing `observation/gripper_position` in dummy example; fixed to `make_droid_example()` |
+| RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap9-robocasa-20260709-034059` (fixtures_lw; objs_lw HF 404) |
+| RoboCasa | `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred | Same run: missing `fixtures/windows/Window069/model.xml` after partial fixtures tree; clear+mirror fallback queued |
+| OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
+| OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
+| OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -57,16 +58,16 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- |
 | `mjx_cartpole_step` | accepted (live) | `registry.load("CartpoleBalance")` reset/step |
 | `mjx_cheetah_run_step` | accepted (live) | Additional registered env beyond Cartpole |
-| `train_jax_ppo_cartpole_smoke` | deferred | `learning/train_jax_ppo.py` reduced timesteps |
+| `train_jax_ppo_cartpole_smoke` | accepted (live) | brax PPO train API reduced timesteps (jax&lt;0.8.1) |
 
 ### RoboCasa
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `kitchen_task_registration` | accepted hard gate (live) | Gymnasium `robocasa/PickPlaceCounterToCabinet` |
-| `download_kitchen_assets_lw` | attempted / deferred | `download_kitchen_assets --type tex …` |
-| `kitchen_egl_env_reset` | attempted / deferred | `MUJOCO_GL=egl` gym.make + reset |
-| `kitchen_random_rollout` | best-effort | `run_random_rollouts` |
+| `download_kitchen_assets_lw` | accepted (live) | `download_kitchen_assets --type tex tex_generative fixtures_lw` |
+| `kitchen_egl_env_reset` | deferred | `MUJOCO_GL=egl` gym.make + reset (needs complete fixtures) |
+| `kitchen_random_rollout` | deferred | `run_random_rollouts` |
 
 ### OpenPI
 
@@ -74,7 +75,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- |
 | `policy_config_materialization` | accepted hard gate (live) | `get_config("pi05_droid")` |
 | `pi05_droid_checkpoint_download` | accepted (live) | `download.maybe_download(gs://openpi-assets/…)` |
-| `pi05_droid_checkpoint_infer` | deferred → fix queued | `make_droid_example()` + `policy.infer` |
+| `pi05_droid_checkpoint_infer` | accepted (live) | `make_droid_example()` + `policy.infer` |
 
 ### DROID policy learning
 
