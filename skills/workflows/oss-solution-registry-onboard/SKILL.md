@@ -197,9 +197,10 @@ Required smoke capabilities:
 
 Pinned: `robocasa/robocasa` `v1.0`
 
-Required smoke capabilities:
+Hard-gate capability: `kitchen_task_registration`.
 
-- `kitchen_task_registration`
+Also attempted in the same smoke (may remain deferred with evidence):
+
 - `download_kitchen_assets_lw`
 - `kitchen_egl_env_reset`
 - `kitchen_random_rollout` (best-effort after reset)
@@ -208,9 +209,10 @@ Required smoke capabilities:
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
 
-Required smoke capabilities:
+Hard-gate capability: `policy_config_materialization` (`get_config("pi05_droid")`).
 
-- `policy_config_materialization` (`get_config("pi05_droid")`)
+Also attempted in the same smoke (may remain deferred with evidence):
+
 - `pi05_droid_checkpoint_download`
 - `pi05_droid_checkpoint_infer` (`create_trained_policy` + `policy.infer`)
 
@@ -220,9 +222,10 @@ Follow-up: LoRA / fine-tune recipes.
 
 Pinned: `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddaca217581`
 
-Required smoke capabilities:
+Hard-gate capability: `rlds_config_generator_contract`.
 
-- `rlds_config_generator_contract`
+Also attempted in the same smoke (may remain deferred with evidence):
+
 - `droid_100_download`
 - `droid_100_config_gen`
 
