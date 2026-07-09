@@ -124,6 +124,14 @@ def _secret_env_args(case: SubmitLiveCase) -> list[str]:
             args.extend(["--secret-env", name])
         elif case.tier == "cpu" and name == "NEBIUS_TOKEN_FACTORY_KEY":
             pytest.skip(f"{name} required for cpu-tier twin {case.spec}")
+    # Nebius VM / burst path needs registry login before image pull.
+    for name in (
+        "SKYPILOT_DOCKER_SERVER",
+        "SKYPILOT_DOCKER_USERNAME",
+        "SKYPILOT_DOCKER_PASSWORD",
+    ):
+        if os.environ.get(name):
+            args.extend(["--secret-env", name])
     return args
 
 

@@ -26,6 +26,11 @@
 #   # Remap scarce GPUs when capacity is elsewhere (e.g. H100→RTXPRO on rtxpro mk8s)
 #   NPA_E2E_ACCELERATOR_REMAP=H100:1=RTXPRO6000:1 ./scripts/npa-workflow-submit-live-e2e.sh
 #
+#   # Prefer Nebius VMs when the shared k8s jobs-controller auth/pull path is unhealthy
+#   NPA_E2E_CLOUD_REMAP=kubernetes=nebius \
+#   NPA_E2E_ACCELERATOR_REMAP=H100:1=L40S:1,RTXPRO6000:1=L40S:1 \
+#     ./scripts/npa-workflow-submit-live-e2e.sh
+#
 #   # Remap scarce GPUs when capacity is elsewhere (e.g. H100→RTXPRO on rtxpro mk8s)
 #   NPA_E2E_ACCELERATOR_REMAP=H100:1=RTXPRO6000:1 ./scripts/npa-workflow-submit-live-e2e.sh
 #
