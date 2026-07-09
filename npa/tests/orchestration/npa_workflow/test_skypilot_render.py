@@ -143,8 +143,8 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
         ]
         assert docs[0]["execution"] == "serial"
         assert "accelerators" not in docs[1]["resources"]
-        assert "image_id" not in docs[1]["resources"]
-        assert "NPA_SRC_S3_URI" in docs[1]["setup"] or "npa" in docs[1]["setup"]
+        assert "image_id" in docs[1]["resources"]
+        assert "npa-cosmos" in docs[1]["resources"]["image_id"]
         assert "token-factory caption" in docs[1]["run"]
         assert "NEBIUS_TOKEN_FACTORY_KEY" in docs[1]["setup"]
     finally:
@@ -152,11 +152,15 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
 
 
 def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only applies when no workbench image is resolved (override to empty).
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     prepared = prepare_npa_workflow_for_submit(
         NPA_SPECS / "token-factory-caption.yaml",
         run_id="caption-demo",
-        render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        render_options=SkypilotRenderOptions(
+            registry="cr.example.invalid/reg",
+            image_overrides={"*": ""},
+        ),
     )
     try:
         docs = [
@@ -166,6 +170,8 @@ def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatc
             )
             if doc is not None
         ]
+        # Empty override still yields no image_id; S3 URI is injected for setup.
+        assert "image_id" not in docs[1]["resources"]
         assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
         assert "file_mounts" not in docs[1]
     finally:

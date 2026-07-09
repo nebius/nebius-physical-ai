@@ -14,11 +14,12 @@ from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
-# Token Factory is a hosted HTTP API client — do not pin the heavy npa-cosmos
-# image; SkyPilot's default runtime image is enough and avoids k8s SSH races
-# while the 8GB cosmos image is still starting.
+# Token Factory is a hosted HTTP API client. Prefer the workbench cosmos image
+# (npa CLI baked at /opt/nebius-physical-ai/npa). When that image is unavailable,
+# operators can clear the mapping via image overrides and set NPA_SRC_S3_URI.
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
+    "workbench.token_factory": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.lancedb": "lancedb",
@@ -120,9 +121,10 @@ def resolve_task_image(
 ) -> str:
     """Resolve a fully-qualified image ref for one planned step."""
 
-    override = options.image_overrides.get(tool_ref) or options.image_overrides.get("*")
-    if override:
-        return str(override).strip()
+    if tool_ref in options.image_overrides:
+        return str(options.image_overrides[tool_ref] or "").strip()
+    if "*" in options.image_overrides:
+        return str(options.image_overrides["*"] or "").strip()
 
     explicit = str(resources.get("image") or "").strip()
     if explicit:
@@ -362,7 +364,9 @@ def _inject_nebius_registry_docker_secrets(doc: dict[str, Any]) -> None:
         return
     cloud = str(resources.get("cloud") or "").strip().lower()
     image_id = str(resources.get("image_id") or "").strip()
-    if cloud != "nebius" or not _is_nebius_registry_image(image_id):
+    # Nebius VMs need SKYPILOT_DOCKER_* for private pulls; k8s uses imagePullSecrets
+    # but still benefits from secrets when the controller falls back to docker login.
+    if cloud not in {"nebius", "kubernetes", "k8s"} or not _is_nebius_registry_image(image_id):
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
