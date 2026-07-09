@@ -325,7 +325,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "set -euo pipefail; "
                 "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
                 "npa workbench lancedb backfill "
-                "--udf \"${udf}\" "
+                "--udf \"$udf\" "
                 "--table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--batch-size 512 "

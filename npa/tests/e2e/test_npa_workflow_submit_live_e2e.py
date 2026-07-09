@@ -57,11 +57,27 @@ RUNNER = CliRunner()
 
 TERMINAL_OK = frozenset({"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"})
 TERMINAL_FAIL = frozenset(
-    {"FAILED", "FAIL", "CANCELLED", "CANCELED", "STOPPED", "CANCELLING"}
+    {
+        "FAILED",
+        "FAIL",
+        "FAILED_PRECHECKS",
+        "FAILED_SETUP",
+        "FAILED_RUNTIME",
+        "FAILED_CONTROLLER",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+        "CANCELLING",
+    }
 )
 NONTERMINAL = frozenset(
     {"PENDING", "STARTING", "RUNNING", "RECOVERING", "SUBMITTED", "INIT", "UNKNOWN"}
 )
+
+
+def _is_terminal_fail(status: str) -> bool:
+    upper = status.upper()
+    return upper in TERMINAL_FAIL or upper.startswith("FAILED")
 
 
 @pytest.fixture(autouse=True)
@@ -201,7 +217,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
             )
             if last_status in TERMINAL_OK:
                 return
-            if last_status in TERMINAL_FAIL:
+            if _is_terminal_fail(last_status):
                 pytest.fail(
                     f"{case.spec} reached terminal failure status={last_status} "
                     f"job_id={job_id} stderr={current.stderr[-500:]}"
@@ -212,7 +228,9 @@ def test_npa_workflow_submit_live_reaches_terminal(
             f"last_status={last_status} job_id={job_id}"
         )
     finally:
-        if _cancel_on_timeout() and last_status not in TERMINAL_OK | TERMINAL_FAIL:
+        if _cancel_on_timeout() and last_status not in TERMINAL_OK and not _is_terminal_fail(
+            last_status
+        ):
             # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config

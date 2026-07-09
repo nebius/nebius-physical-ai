@@ -63,7 +63,12 @@ class SkypilotRenderOptions:
 
 
 def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
-    """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block."""
+    """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block.
+
+    On Kubernetes, exact ``cpus`` / ``memory`` often fail prechecks when no node
+    has that precise free shape. Append ``+`` so SkyPilot can schedule on larger
+    nodes (including GPU nodes with spare CPU).
+    """
 
     out: dict[str, Any] = {}
     for key in ("cloud", "accelerators", "cpus", "memory", "use_spot", "region"):
@@ -77,6 +82,15 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
             elif stripped.lower().endswith("g"):
                 value = stripped[:-1]
         out[key] = value
+
+    cloud = str(out.get("cloud") or "").strip().lower()
+    if cloud in {"kubernetes", "k8s"}:
+        for key in ("cpus", "memory"):
+            if key not in out:
+                continue
+            raw = str(out[key]).strip()
+            if raw and not raw.endswith("+"):
+                out[key] = f"{raw}+"
     return out
 
 

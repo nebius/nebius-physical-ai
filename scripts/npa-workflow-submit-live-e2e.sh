@@ -109,7 +109,7 @@ fi
 
 log "--- live submit matrix (sky jobs launch + poll) ---"
 "$PY" -m pytest \
-  npa/tests/e2e/test_npa_workflow_submit_live_e2e.py \
+  npa/tests/e2e/test_npa_workflow_submit_live_e2e.py::test_npa_workflow_submit_live_reaches_terminal \
   -q --timeout="${NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS}" \
   -s --tb=short
 

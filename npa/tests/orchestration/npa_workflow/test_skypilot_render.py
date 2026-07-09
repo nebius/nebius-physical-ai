@@ -48,8 +48,16 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 def test_normalize_resources_strips_gi_suffix() -> None:
     assert normalize_resources({"memory": "80Gi", "cpus": 16, "cloud": "k8s"}) == {
         "cloud": "k8s",
-        "cpus": 16,
-        "memory": "80",
+        "cpus": "16+",
+        "memory": "80+",
+    }
+
+
+def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
+    assert normalize_resources({"memory": "16Gi", "cpus": 4, "cloud": "nebius"}) == {
+        "cloud": "nebius",
+        "cpus": 4,
+        "memory": "16",
     }
 
 
@@ -77,7 +85,8 @@ def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
     task = docs[1]
     assert task["name"] == "score-rollouts"
     assert task["resources"]["accelerators"] == "H100:1"
-    assert task["resources"]["memory"] == "80"
+    assert task["resources"]["cpus"] == "16+"
+    assert task["resources"]["memory"] == "80+"
     assert task["resources"]["image_id"].startswith("docker:cr.example.invalid/reg/")
     assert "npa workbench vlm-eval run" in task["run"]
     assert "set -euo pipefail" in task["run"]
