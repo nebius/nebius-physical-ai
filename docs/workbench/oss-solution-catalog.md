@@ -33,10 +33,12 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | deferred | `defcap8-…-024455`: brax/JAX `device_put_replicated` removed + cuSPARSE; pin/shim rebuild in flight |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` / `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred / attempted | `defcap8-robocasa-20260709-024455` uploaded per-capability JSON |
-| OpenPI | `policy_config_materialization` | **accepted** | `defcap-openpi-20260709-011138` (`smoke_exit_code=0`) |
-| OpenPI | `pi05_droid_checkpoint_download` / `pi05_droid_checkpoint_infer` | deferred / attempted | Same run uploaded `openpi_pi05_droid_checkpoint_infer.json` |
-| DROID | `rlds_config_generator_contract` | **accepted** | `defcap-droid-policy-learning-20260709-011138` (`smoke_exit_code=0`) |
-| DROID | `droid_100_download` / `droid_100_config_gen` | deferred / attempted | Same run uploaded `droid_100_download.json` + `droid_100_config_gen.json` |
+| OpenPI | `policy_config_materialization` | **accepted** | `defcap8-openpi-20260709-024455` (+ prior `…-011138`) |
+| OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap8-openpi-20260709-024455` via `maybe_download` |
+| OpenPI | `pi05_droid_checkpoint_infer` | deferred | Same run: missing `observation/gripper_position` in dummy example; fixed to `make_droid_example()` |
+| DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
+| DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
+| DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
 
 ## Native Capabilities Per Container
 
@@ -71,16 +73,16 @@ unique and must be tested with its own upstream-named capabilities.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `policy_config_materialization` | accepted hard gate (live) | `get_config("pi05_droid")` |
-| `pi05_droid_checkpoint_download` | attempted / deferred | `download.maybe_download(gs://openpi-assets/…)` |
-| `pi05_droid_checkpoint_infer` | attempted / deferred | `create_trained_policy` + `policy.infer` |
+| `pi05_droid_checkpoint_download` | accepted (live) | `download.maybe_download(gs://openpi-assets/…)` |
+| `pi05_droid_checkpoint_infer` | deferred → fix queued | `make_droid_example()` + `policy.infer` |
 
 ### DROID policy learning
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
-| `droid_100_download` | attempted / deferred | `gsutil cp gs://gresearch/robotics/droid_100` |
-| `droid_100_config_gen` | attempted / deferred | Documented `EXP_NAMES` debug subset wiring |
+| `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
+| `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
 
 ## Capability Testing In The Onboarding Skill
 
