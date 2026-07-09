@@ -388,8 +388,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "font-family: Inter, system-ui" in source
     assert "font-family: monospace" not in source
     assert "quick-pill" in source
-    assert "--brand: #5e43f3;" in source
-    assert "--sidebar: #1e1f22;" in source
+    assert "--brand: #e5ff4f;" in source
+    assert "--sidebar: #0d2a3d;" in source
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
