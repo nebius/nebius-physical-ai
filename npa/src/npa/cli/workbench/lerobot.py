@@ -67,6 +67,7 @@ from npa.deploy.byovm import (
     ssh_config_for_target,
     workbench_storage_outputs,
 )
+from npa.deploy.confirm import confirm_vm_destroy
 
 app = typer.Typer(
     name="lerobot",
@@ -1905,6 +1906,12 @@ def deploy(
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip app deployment, only provision infra."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompts (use with deploy --destroy for automation).",
+    ),
     no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     checkpoint: str = typer.Option("", "--checkpoint", help="Pre-load a checkpoint after deploy."),
     server_port: int = typer.Option(8080, "--server-port", help="Server port on the VM."),
@@ -2068,6 +2075,13 @@ def deploy(
 
     # ── Destroy flow ─────────────────────────────────────────────────
     if destroy:
+        confirm_vm_destroy(
+            proj_alias,
+            wb_name,
+            byovm=byovm,
+            dry_run=dry_run,
+            yes=yes,
+        )
         if byovm:
             step += 1
             console.print(f"  [{step}/{total_steps}] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")

@@ -928,7 +928,160 @@ def test_groot_storage_env_tokens_include_s3_credentials() -> None:
         "NEBIUS_S3_ENDPOINT": "https://storage.example",
         "AWS_ACCESS_KEY_ID": "key",
         "AWS_SECRET_ACCESS_KEY": "secret",
+        "NEBIUS_S3_BUCKET": "s3://bucket/checkpoints/",
     }
+
+
+def test_shared_groot_env_includes_project_storage(mocker) -> None:
+    from npa.cli.groot import _shared_groot_env_or_fail
+
+    cfg = _cfg()
+    credentials = CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"})
+    env = _shared_groot_env_or_fail(cfg, credentials)
+    assert env["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
+    assert env["AWS_ACCESS_KEY_ID"] == "key"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "secret"
+    assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert env["NEBIUS_S3_ENDPOINT"] == "https://storage.example"
+    assert env["NEBIUS_S3_BUCKET"] == "s3://bucket/checkpoints/"
+
+
+def test_groot_deploy_destroy_aborts_without_confirmation(mocker) -> None:
+    mocker.patch("npa.cli.groot.typer.confirm", return_value=False)
+    destroy = mocker.patch("npa.cli.groot.provisioner.destroy")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--destroy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            "/tmp",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+    destroy.assert_not_called()
+
+
+def test_groot_deploy_destroy_skips_confirmation_with_yes(tmp_path: Path, mocker) -> None:
+    confirm = mocker.patch("npa.cli.groot.typer.confirm")
+    destroy = mocker.patch("npa.cli.groot.provisioner.destroy")
+    mocker.patch("npa.cli.groot.provisioner.init")
+    mocker.patch("npa.cli.groot.provisioner.cleanup_working_dir")
+    mocker.patch("npa.cli.groot.remove_workbench_config")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+    mocker.patch(
+        "npa.cli.groot.resolve_ssh_config",
+        return_value=_cfg(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--destroy",
+            "--yes",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    destroy.assert_called_once()
+
+
+def test_groot_byovm_deploy_calls_apply_storage_env_vars(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.side_effect = [
+        (0, "connected\n", ""),
+        (0, "NVIDIA H200\n", ""),
+        (0, "GR00T_ENV_SMOKE_OK\nISAAC_LAB_ENV_SMOKE_OK\n", ""),
+    ]
+    mocker.patch("npa.cli.groot.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.groot.provisioner.init")
+    mocker.patch("npa.cli.groot.provisioner.apply")
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "PLACEHOLDER_HF_TOKEN"}),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.write_config")
+    mocker.patch("npa.cli.groot.update_workbench_app_status")
+    mocker.patch("npa.cli.groot.audit_remote_env", return_value=[])
+    mocker.patch("npa.cli.groot.health_check_auto", return_value=(True, ""))
+    mocker.patch("npa.cli.groot.write_manifest")
+    apply_storage = mocker.patch("npa.cli.groot.apply_storage_env_vars")
+    mocker.patch(
+        "npa.cli.groot.apply_project_storage_vars",
+        return_value=True,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.10",
+            "--ssh-key",
+            "~/.ssh/byovm",
+            "--region",
+            "eu-north1",
+            "--skip-model-check",
+            "--no-auto-serve",
+        ],
+    )
+    assert result.exit_code == 0
+    assert apply_storage.called
 
 
 def test_groot_reload_env_command_updates_credentials_without_embedding_secret() -> None:

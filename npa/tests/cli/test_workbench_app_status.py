@@ -230,6 +230,7 @@ def test_cosmos_destroy_removes_install_failed_workbench(
             "cosmos",
             "deploy",
             "--destroy",
+            "--yes",
             "--tf-dir",
             str(tmp_path),
             "--gpu-type",
