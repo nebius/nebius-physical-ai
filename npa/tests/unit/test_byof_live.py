@@ -39,6 +39,23 @@ def test_resolve_byof_kubernetes_target_prefers_env(monkeypatch: pytest.MonkeyPa
     assert target.kubeconfig == "/tmp/customer-kubeconfig"
 
 
+def test_resolve_byof_kubernetes_target_falls_back_to_home_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_BYOF_KUBECONFIG", raising=False)
+    monkeypatch.delenv("NPA_KUBECONFIG", raising=False)
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-context")
+    home = tmp_path / "home"
+    kube = home / ".kube" / "config"
+    kube.parent.mkdir(parents=True)
+    kube.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    target = resolve_byof_kubernetes_target("rtxpro")
+    assert target.context == "customer-context"
+    assert target.kubeconfig == str(kube)
+
+
 def test_resolve_byof_kubernetes_target_from_cluster_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

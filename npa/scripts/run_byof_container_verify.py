@@ -296,13 +296,21 @@ def _direct_launch(
     if cleanup:
         cmd.append("--down")
     if infra:
+        # Prefer k8s/<context> form when we know the context; bare "kubernetes"
+        # is fine once sky check has enabled it.
         cmd.extend(["--infra", infra])
     if config_path:
         cmd.extend(["--config", config_path])
     cmd.append(str(rendered_yaml))
+    launch_env = sky_environment(None)
+    # Ensure kubeconfig is visible to sky even when only KUBECONTEXT was set.
+    if not launch_env.get("KUBECONFIG"):
+        default_kube = Path.home() / ".kube" / "config"
+        if default_kube.is_file():
+            launch_env["KUBECONFIG"] = str(default_kube)
     result = subprocess.run(
         cmd,
-        env=sky_environment(None),
+        env=launch_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -337,7 +345,9 @@ def _default_infra() -> str:
         or os.environ.get("NPA_K8S_CONTEXT", "")
         or os.environ.get("KUBECONTEXT", "")
     ).strip()
-    return "kubernetes" if context else ""
+    if context:
+        return f"k8s/{context}"
+    return "kubernetes"
 
 
 def _normalize_kubeconfig_current_context(tmp_path: Path) -> None:

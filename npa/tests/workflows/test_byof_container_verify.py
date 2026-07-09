@@ -67,7 +67,7 @@ def test_default_infra_uses_resolved_kubernetes_context(monkeypatch) -> None:
     monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-mk8s")
     monkeypatch.delenv("NPA_BYOF_INFRA", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_INFRA", raising=False)
-    assert module._default_infra() == "kubernetes"
+    assert module._default_infra() == "k8s/customer-mk8s"
 
 
 def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None:

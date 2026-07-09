@@ -167,6 +167,13 @@ def resolve_byof_kubernetes_target(project: str | None = None) -> ByofKubernetes
         if isinstance(global_storage, dict):
             context = str(global_storage.get("k8s_context") or "").strip()
 
+    if not kubeconfig:
+        # Fall back to the operator host kubeconfig when project config only
+        # records a context name (common on shared Nebius operator VMs).
+        default_kube = Path.home() / ".kube" / "config"
+        if default_kube.is_file():
+            kubeconfig = str(default_kube)
+
     return ByofKubernetesTarget(context=context, kubeconfig=kubeconfig, namespace=namespace)
 
 
