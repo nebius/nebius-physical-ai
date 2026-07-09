@@ -27,13 +27,13 @@ unique and must be tested with its own upstream-named capabilities.
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
-| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | deferred | `defcap9`: PhysX OK; render segfault on Blackwell. `defcap10` rebuild failed: `maniskill/base` is py39, no `sapien>=3.0.3` wheel — rebuilding on CUDA Ubuntu22.04/py3.10 |
+| ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
-| RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap9`/`defcap10` (IIFAN mirror Window069; objs_lw HF 404) |
-| RoboCasa | `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred | `defcap10`: mirror OK but smoke wiped git-tracked `fixture_registry/wall.yaml`; preserve+restore queued |
+| RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap11-robocasa-20260709-043408` (IIFAN mirror + fixture_registry; objs_lw HF 404) |
+| RoboCasa | `kitchen_egl_env_reset` / `kitchen_random_rollout` | deferred | `defcap11`: missing git-tracked `accessories/light_switches/...` after clear; restore-missing-from-backup queued |
 | OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
 | OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
 | OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
@@ -48,9 +48,9 @@ unique and must be tested with its own upstream-named capabilities.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `gymnasium_pickcube_registration` | accepted (live) | Gymnasium env id listing |
-| `pickcube_cpu_step` | deferred (segfault; py3.10+sapien≥3.0.3 rebuild queued) | Isolated subprocess; SAPIEN render path (PhysX-only OK) |
-| `pickcube_parallel_envs` | deferred (segfault; rebuild queued) | Isolated subprocess `num_envs=4` |
-| `pickcube_gpu_rgb_render` | deferred (segfault; rebuild queued) | Isolated subprocess GPU rgb render |
+| `pickcube_cpu_step` | accepted (live) | Isolated subprocess; sapien 3.0.3 + physx_cpu |
+| `pickcube_parallel_envs` | accepted (live) | Isolated subprocess `num_envs=4` physx_cuda |
+| `pickcube_gpu_rgb_render` | accepted (live) | Isolated subprocess GPU rgb render on Blackwell |
 
 ### MuJoCo Playground
 
@@ -66,7 +66,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- |
 | `kitchen_task_registration` | accepted hard gate (live) | Gymnasium `robocasa/PickPlaceCounterToCabinet` |
 | `download_kitchen_assets_lw` | accepted (live) | `download_kitchen_assets --type tex tex_generative fixtures_lw` |
-| `kitchen_egl_env_reset` | deferred (fixture_registry preserve queued) | `MUJOCO_GL=egl` gym.make + reset |
+| `kitchen_egl_env_reset` | deferred (restore git accessories queued) | `MUJOCO_GL=egl` gym.make + reset |
 | `kitchen_random_rollout` | deferred (depends on EGL reset) | `run_random_rollouts` |
 
 ### OpenPI
