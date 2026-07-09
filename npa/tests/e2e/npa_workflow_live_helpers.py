@@ -113,6 +113,17 @@ def materialize_live_spec(
             src, dst = src.strip(), dst.strip()
             if src and dst:
                 text = text.replace(f"accelerators: {src}", f"accelerators: {dst}")
+    # Optional cloud remap for live capacity, e.g. NPA_E2E_CLOUD_REMAP=kubernetes=nebius
+    cloud_remap = os.environ.get("NPA_E2E_CLOUD_REMAP", "").strip()
+    if cloud_remap:
+        for pair in cloud_remap.split(","):
+            pair = pair.strip()
+            if not pair or "=" not in pair:
+                continue
+            src, dst = pair.split("=", 1)
+            src, dst = src.strip(), dst.strip()
+            if src and dst:
+                text = text.replace(f"cloud: {src}", f"cloud: {dst}")
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
