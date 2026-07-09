@@ -5640,17 +5640,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <link rel="prefetch" href="/rerun/recordings/sim2real.rrd" as="fetch">
     <style>
       :root {{
-        --bg: #f5f6f8;
+        --bg: #edf7ff;
         --surface: #ffffff;
-        --text: #1f2430;
-        --muted: #5f6573;
-        --border: #e0e0e0;
-        --brand: #5e43f3;
-        --brand-strong: #4d35d4;
-        --sidebar: #1e1f22;
-        --ok-bg: #e8f7ee;
-        --ok-text: #18794e;
-        --shadow: 0 8px 22px rgba(30, 31, 34, 0.08);
+        --surface-soft: #f3f9ff;
+        --surface-blue: #dceeff;
+        --text: #102b3f;
+        --muted: #60798c;
+        --border: #c9ddec;
+        --brand: #e5ff4f;
+        --brand-strong: #d7f82f;
+        --brand-ink: #102b3f;
+        --sidebar: #0d2a3d;
+        --sidebar-2: #17405d;
+        --ok-bg: #e8ffbd;
+        --ok-text: #21440f;
+        --shadow: 0 10px 24px rgba(13, 42, 61, 0.14);
       }}
       * {{ box-sizing: border-box; }}
       html {{
@@ -5663,7 +5667,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         margin: 0;
         padding-bottom: 36px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        background: var(--bg);
+        background:
+          radial-gradient(circle at 14% 0%, rgba(229, 255, 79, 0.20), transparent 28%),
+          linear-gradient(180deg, #f8fcff 0%, var(--bg) 42%, #f6fbff 100%);
         color: var(--text);
         overflow-x: hidden;
         width: 100%;
@@ -5679,20 +5685,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .topbar {{
         background: var(--sidebar);
-        color: #eef0f3;
-        padding: 14px 18px;
-        border-bottom: 1px solid #2a2c31;
+        color: #ffffff;
+        padding: 18px 22px;
+        border-bottom: 4px solid var(--brand);
         display: flex;
         align-items: center;
         justify-content: space-between;
       }}
       .brand {{
         font-weight: 700;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.22em;
         font-size: 13px;
+        text-transform: uppercase;
       }}
       .brand-sub {{
-        color: #abb2bf;
+        color: #b9d1e3;
         font-size: 12px;
       }}
       .page {{
@@ -5709,48 +5716,49 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         background: var(--surface);
         box-shadow: var(--shadow);
       }}
-      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; }}
+      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); }}
       .panel p {{ margin: 0; color: var(--muted); }}
       .subsection {{
-        border: 1px solid #e7e8ee;
+        border: 1px solid var(--border);
         border-radius: 10px;
-        background: #fafbff;
+        background: var(--surface-soft);
         padding: 10px;
         margin-top: 10px;
       }}
-      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #303649; }}
+      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); letter-spacing: 0.08em; text-transform: uppercase; }}
       .field-row {{ display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }}
-      .field label {{ display: block; font-size: 12px; color: #4f5668; margin-bottom: 4px; }}
+      .field label {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }}
       .field select, .field input {{
         width: 100%;
-        border: 1px solid #d4d8e2;
+        border: 1px solid var(--border);
         border-radius: 9px;
         padding: 8px;
         font-family: inherit;
         background: #fff;
+        color: var(--text);
       }}
       .pill-list {{ display: flex; gap: 6px; flex-wrap: wrap; }}
       .pill {{
         display: inline-flex;
         align-items: center;
         border-radius: 999px;
-        border: 1px solid #d8dbeb;
-        color: #394056;
-        background: #fff;
+        border: 1px solid var(--border);
+        color: var(--text);
+        background: var(--surface-blue);
         padding: 4px 9px;
         font-size: 12px;
       }}
       .cameras-panel {{ display: block; }}
       .camera-card {{
-        border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
+        border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px;
         background: #fff;
       }}
-      .camera-card.selected {{ border: 2px solid #5e43f3; box-shadow: 0 0 0 1px rgba(94, 67, 243, 0.18); }}
+      .camera-card.selected {{ border: 2px solid var(--brand); box-shadow: 0 0 0 2px rgba(229, 255, 79, 0.45); }}
       .camera-card h4 {{ margin: 0 0 6px 0; }}
-      .camera-meta {{ font-size: 12px; color: #4b5568; margin-bottom: 6px; }}
+      .camera-meta {{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }}
       .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
       .camera-frustum {{ display: flex; justify-content: center; }}
-      .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
+      .rollout-hint {{ font-size: 13px; color: var(--muted); margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-panel-head {{
         display: flex;
@@ -5930,7 +5938,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: #6f7785;
+        background: var(--brand);
         display: inline-block;
         animation: pulse 1s infinite ease-in-out;
       }}
@@ -5938,7 +5946,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
       .sparkle {{
         display: inline-block;
-        color: #5e43f3;
+        color: var(--brand);
         margin-right: 6px;
         font-size: 13px;
       }}
@@ -5954,7 +5962,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-size: 16px;
         outline: none;
       }}
-      .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
+      .chat-input textarea:focus {{ border-color: var(--brand); box-shadow: 0 0 0 3px rgba(229, 255, 79, 0.28); }}
       iframe {{ width: 100%; height: min(78vh, 820px); min-height: 620px; border: 1px solid var(--border); border-radius: 10px; }}
       .rerun-placeholder {{
         width: 100%;
@@ -5964,44 +5972,45 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 24px 20px;
         text-align: center;
         color: var(--muted);
-        background: #fafbff;
+        background: var(--surface-soft);
       }}
       .rerun-placeholder strong {{ color: var(--text); }}
       .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
       .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
       .btn {{
-        border: 1px solid #d6d9e4;
+        border: 1px solid var(--border);
         background: #fff;
         border-radius: 999px;
-        color: #2d3342;
+        color: var(--text);
         padding: 8px 12px;
         font-size: 13px;
         cursor: pointer;
         touch-action: manipulation;
         -webkit-tap-highlight-color: transparent;
       }}
-      .btn:hover {{ background: #f5f6fb; }}
+      .btn:hover {{ background: var(--surface-blue); border-color: #8fb8d4; }}
       .btn-primary {{
         background: var(--brand);
         border-color: var(--brand);
-        color: #fff;
+        color: var(--brand-ink);
+        font-weight: 800;
       }}
       .btn-primary:hover {{ background: var(--brand-strong); }}
       .btn[disabled], .btn:disabled {{
         opacity: 0.65;
         cursor: not-allowed;
       }}
-      .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; }}
-      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
+      .cta {{ color: var(--text); background: #f4ffbc; border: 1px solid var(--brand); border-radius: 8px; padding: 8px 10px; }}
+      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: var(--sidebar-2); color: #f5fbff; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
       .run-details {{
         margin-top: 10px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--border);
         border-radius: 10px;
-        background: #f8fafc;
+        background: var(--surface-soft);
         padding: 10px;
       }}
-      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #263247; }}
+      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); }}
       .run-summary {{
         display: flex;
         flex-wrap: wrap;
@@ -6018,7 +6027,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         grid-template-columns: 92px 1fr;
         gap: 8px;
         align-items: start;
-        border: 1px solid #e5e7eb;
+        border: 1px solid var(--border);
         background: #fff;
         border-radius: 8px;
         padding: 7px 8px;
@@ -6031,16 +6040,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-weight: 700;
         text-transform: uppercase;
         font-size: 10px;
-        background: #eef2ff;
-        color: #3730a3;
+        background: var(--surface-blue);
+        color: var(--text);
       }}
-      .stage-status.succeeded {{ background: #dcfce7; color: #166534; }}
+      .stage-status.succeeded {{ background: var(--ok-bg); color: var(--ok-text); }}
       .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
       .stage-status.running {{ background: #fef3c7; color: #92400e; }}
-      .stage-status.pending {{ background: #f1f5f9; color: #475569; }}
-      .stage-status.not_run {{ background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1; }}
-      .stage-label {{ font-weight: 700; color: #263247; }}
-      .stage-summary {{ color: #64748b; margin-top: 2px; }}
+      .stage-status.pending {{ background: #eef6fc; color: var(--muted); }}
+      .stage-status.not_run {{ background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }}
+      .stage-label {{ font-weight: 700; color: var(--text); }}
+      .stage-summary {{ color: var(--muted); margin-top: 2px; }}
       .run-log {{
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -6055,13 +6064,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
-        border: 1px solid #c8c0f5;
-        background: #f6f4ff;
-        color: #3d2f9c;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
         font-size: 12px;
         padding: 7px 12px;
       }}
-      .quick-pill:hover {{ background: #ede9ff; }}
+      .quick-pill:hover {{ background: var(--brand); }}
       .hint {{ font-size: 13px; color: var(--muted); }}
       .status-bar {{
         position: fixed;
@@ -6071,8 +6080,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         z-index: 900;
         padding: 8px 14px;
         font-size: 12px;
-        color: #334155;
-        background: rgba(255, 255, 255, 0.96);
+        color: #ffffff;
+        background: rgba(13, 42, 61, 0.94);
         border-top: 1px solid var(--border);
         box-shadow: 0 -4px 16px rgba(30, 31, 34, 0.06);
       }}
@@ -6092,13 +6101,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 10px 12px;
         border-radius: 10px;
         font-size: 13px;
-        border: 1px solid #d6d9e4;
+        border: 1px solid var(--border);
         background: #fff;
-        color: #1f2430;
+        color: var(--text);
         box-shadow: var(--shadow);
         animation: toast-in 0.18s ease-out;
       }}
-      .toast-info {{ border-color: #c8c0f5; background: #f6f4ff; color: #3d2f9c; }}
+      .toast-info {{ border-color: var(--border); background: var(--surface-blue); color: var(--text); }}
       .toast-success {{ border-color: #86efac; background: var(--ok-bg); color: var(--ok-text); }}
       .toast-error {{ border-color: #fca5a5; background: #fef2f2; color: #991b1b; }}
       @keyframes toast-in {{

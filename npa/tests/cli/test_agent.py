@@ -534,6 +534,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "--sidebar: #0d2a3d" in source
+    assert "--brand: #e5ff4f" in source
+    assert "--surface-blue: #dceeff" in source
+    assert "letter-spacing: 0.22em" in source
+    assert "border-bottom: 4px solid var(--brand)" in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert "_wire_franka_demo" in source
     assert "_generate_franka_demo_rrd" in source
@@ -626,6 +631,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert 'id="artifactPrefix"' in source
+    assert 'id="artifactTypeFilter"' in source
+    assert 'id="artifactSort"' in source
     assert 'id="artifactRunSelect"' in source
     assert 'id="artifactList"' in source
     assert 'id="renderedDataSummary"' in source
