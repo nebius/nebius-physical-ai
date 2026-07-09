@@ -61,6 +61,49 @@ def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
     }
 
 
+def test_nebius_cloud_render_injects_docker_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    text = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: nebius-docker-secret
+config:
+  bucket: example-bucket
+  prefix: "runs/demo"
+resources:
+  cpu:
+    cloud: nebius
+    cpus: 4
+    memory: 16Gi
+initial: caption
+states:
+  caption:
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    terminal: true
+"""
+    path = NPA_SPECS / "token-factory-caption.yaml"
+    # Use golden twin but force nebius cloud via in-memory override path:
+    spec = load_spec(path)
+    # mutate resources cloud for this unit test
+    spec.resources["cpu"]["cloud"] = "nebius"
+    plan = build_plan(spec, run_id="demo")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
+    task = docs[1]
+    assert task["resources"]["cloud"] == "nebius"
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
+    assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "iam"
+    assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
+
+
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"

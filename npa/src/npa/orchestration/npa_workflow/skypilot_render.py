@@ -260,7 +260,61 @@ def build_skypilot_task_doc(
     )
     if setup.strip():
         doc["setup"] = setup
+    _inject_nebius_registry_docker_secrets(doc)
     return doc
+
+
+def _is_nebius_registry_image(image_id: str) -> bool:
+    value = image_id.removeprefix("docker:").strip()
+    host = value.split("/", 1)[0] if "/" in value else ""
+    return host.startswith("cr.") and host.endswith(".nebius.cloud")
+
+
+def _inject_nebius_registry_docker_secrets(doc: dict[str, Any]) -> None:
+    """Embed SkyPilot Docker login secrets for private Nebius registry images.
+
+    Matches the burst submit path: ``resources.image_id`` is pulled before YAML
+    ``setup`` runs, so registry auth must live in task ``secrets``.
+    """
+
+    import os
+
+    resources = doc.get("resources") or {}
+    if not isinstance(resources, dict):
+        return
+    cloud = str(resources.get("cloud") or "").strip().lower()
+    image_id = str(resources.get("image_id") or "").strip()
+    if cloud != "nebius" or not _is_nebius_registry_image(image_id):
+        return
+
+    server = image_id.removeprefix("docker:").split("/", 1)[0]
+    username = (
+        os.environ.get("SKYPILOT_DOCKER_USERNAME")
+        or os.environ.get("NPA_REGISTRY_USERNAME")
+        or "iam"
+    )
+    password = (
+        os.environ.get("SKYPILOT_DOCKER_PASSWORD")
+        or os.environ.get("NPA_REGISTRY_PASSWORD")
+        or ""
+    )
+    if not password:
+        try:
+            from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
+
+            password = mint_nebius_registry_token()
+        except Exception as exc:  # noqa: BLE001
+            raise NpaWorkflowRenderError(
+                "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
+                f"(or mintable IAM token); failed to mint: {exc}"
+            ) from exc
+
+    secrets = doc.setdefault("secrets", {})
+    if not isinstance(secrets, dict):
+        raise NpaWorkflowRenderError("SkyPilot task secrets must be a mapping")
+    secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
+    secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
+    secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
 
 
 def render_skypilot_yaml(

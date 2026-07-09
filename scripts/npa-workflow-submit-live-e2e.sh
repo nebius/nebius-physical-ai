@@ -31,9 +31,6 @@
 #   NPA_E2E_ACCELERATOR_REMAP=H100:1=L40S:1,RTXPRO6000:1=L40S:1 \
 #     ./scripts/npa-workflow-submit-live-e2e.sh
 #
-#   # Remap scarce GPUs when capacity is elsewhere (e.g. H100→RTXPRO on rtxpro mk8s)
-#   NPA_E2E_ACCELERATOR_REMAP=H100:1=RTXPRO6000:1 ./scripts/npa-workflow-submit-live-e2e.sh
-#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
