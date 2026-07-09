@@ -4577,7 +4577,13 @@ def sim_viz_status(run_id: str = ""):
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
-    payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
+    artifact_render = str(payload.get("artifact_render") or "").strip().lower()
+    if artifact_render and artifact_render != "rerun":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    else:
+        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
     runs = state.get("sim_viz_runs")
     if isinstance(runs, dict):
         payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
@@ -6448,6 +6454,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                   </select>
                 </div>
               </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="artifactTypeFilter">Type</label>
+                  <select id="artifactTypeFilter">
+                    <option value="">All types</option>
+                    <option value="rerun">Rerun .rrd</option>
+                    <option value="video">Video .mp4/.webm/.mov</option>
+                    <option value="json">JSON</option>
+                    <option value="text">Text/logs</option>
+                    <option value="image">Images</option>
+                    <option value="download">Other/download</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="artifactSort">Sort</label>
+                  <select id="artifactSort">
+                    <option value="preferred">Recommended first</option>
+                    <option value="type">Type, then newest</option>
+                    <option value="newest">Newest first</option>
+                    <option value="largest">Largest first</option>
+                    <option value="name">Name A-Z</option>
+                  </select>
+                </div>
+              </div>
               <div class="btn-row" style="margin-top:8px;">
                 <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
                 <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
@@ -6755,6 +6785,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (!selectedRun) return;
             await loadArtifactsForSelectedRun();
           }});
+        }}
+        for (const id of ["artifactTypeFilter", "artifactSort"]) {{
+          const node = document.getElementById(id);
+          if (node) {{
+            node.addEventListener("change", async () => {{
+              const selectedRun = String((document.getElementById("artifactRunSelect") || {{}}).value || (document.getElementById("runIdInput") || {{}}).value || activeRunId || "").trim();
+              if (!selectedRun) return;
+              await loadArtifactsForSelectedRun();
+            }});
+          }}
         }}
         const robotPreset = document.getElementById("robotPreset");
         if (robotPreset) {{
@@ -7569,6 +7609,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
+        const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
+        if (render && render !== "rerun") {{
+          activeArtifactRender = render;
+          showRerunPlaceholder("This artifact is a " + render + " preview, not a Rerun .rrd recording. Use the preview/download below or choose Type = Rerun .rrd.", {{ force: true }});
+          await showArtifactPreview(simViz, render);
+          showToast("Only .rrd artifacts open in Rerun; showing " + render + " preview.", "info");
+          return false;
+        }}
         if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
           showToast("No run recording yet; loading stock Franka visual fallback in Rerun.", "info");
           await apiJson("/api/sim-viz/load-franka-demo", {{
@@ -7708,6 +7756,46 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("artifactPrefix");
         return String((input && input.value) || "").trim();
       }}
+      function artifactTypeFilterValue() {{
+        const input = document.getElementById("artifactTypeFilter");
+        return String((input && input.value) || "").trim();
+      }}
+      function artifactSortValue() {{
+        const input = document.getElementById("artifactSort");
+        return String((input && input.value) || "preferred").trim();
+      }}
+      function sortAndFilterArtifacts(artifacts, preferred) {{
+        const filter = artifactTypeFilterValue();
+        const sortMode = artifactSortValue();
+        const preferredKey = String((preferred && preferred.key) || "");
+        const typeRank = {{ rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 }};
+        const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {{
+          return !filter || String(item.render || "download") === filter;
+        }});
+        items.sort((a, b) => {{
+          const ar = String(a.render || "download");
+          const br = String(b.render || "download");
+          if (sortMode === "preferred") {{
+            const ap = String(a.key || "") === preferredKey ? -1 : 0;
+            const bp = String(b.key || "") === preferredKey ? -1 : 0;
+            if (ap !== bp) return ap - bp;
+            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
+            if (tr !== 0) return tr;
+          }}
+          if (sortMode === "type") {{
+            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
+            if (tr !== 0) return tr;
+          }}
+          if (sortMode === "largest") {{
+            return Number(b.size || 0) - Number(a.size || 0);
+          }}
+          if (sortMode === "name") {{
+            return String(a.key || "").localeCompare(String(b.key || ""));
+          }}
+          return String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
+        }});
+        return items;
+      }}
       async function refreshArtifactRuns() {{
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
@@ -7751,14 +7839,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return true;
         }}
         renderArtifactDerivedRunDetails(runId, artifacts);
-        list.innerHTML = artifacts.map((item, idx) => {{
+        const preferred = data && data.preferred ? data.preferred : null;
+        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred);
+        if (!displayArtifacts.length) {{
+          list.innerHTML =
+            "<p>No artifacts of selected type for <code>" + escapeHtml(runId) + "</code>.</p>" +
+            "<p>Clear the Type filter to show all " + String(artifacts.length) + " artifacts.</p>";
+          return true;
+        }}
+        const counts = artifacts.reduce((acc, item) => {{
+          const key = String(item.render || "download");
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }}, {{}});
+        const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
+        list.innerHTML =
+          '<div style="font-size:12px;color:#475569;margin:4px 0 8px;">Showing ' +
+          String(displayArtifacts.length) + " of " + String(artifacts.length) +
+          " artifacts · " + escapeHtml(countText) + "</div>" +
+          displayArtifacts.map((item, idx) => {{
           const key = String(item.key || "");
           const render = String(item.render || "download");
           const s3uri = String(item.s3_uri || "");
           return (
             '<div style="padding:8px 0;border-top:1px solid #e2e8f0;">' +
             '<div><code>' + escapeHtml(key) + '</code></div>' +
-            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + '</div>' +
+            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + ' updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
             '</div>'
           );
@@ -7774,7 +7880,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await loadArtifact(payload);
           }});
         }});
-        const preferred = data && data.preferred ? data.preferred : null;
         if (preferred && String(preferred.render || "") === "rerun") {{
           appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
           await loadArtifact({{
