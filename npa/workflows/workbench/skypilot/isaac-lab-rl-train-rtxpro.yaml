@@ -29,7 +29,7 @@ envs:
   NPA_CHECKPOINT_S3_ENDPOINT_URL: ""
   ISAAC_LAB_HYDRA_OVERRIDES: "agent.save_interval=1"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/isaac-lab-rl/${NPA_ISAAC_LAB_RUN_ID}/"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"
