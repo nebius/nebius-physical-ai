@@ -1387,6 +1387,23 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
     assert "default_provider" in source
 
 
+def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # An explicit Auto option lets the UI post an empty model so the backend
+    # applies cost-tier routing instead of pinning the branded reasoner.
+    assert "Auto (cost-aware)" in source
+    # The old behaviors that defeated cost routing must be gone:
+    # 1) selectedChatModel no longer hardcodes the default model as a fallback,
+    assert (
+        'return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}"'
+        not in source
+    )
+    # 2) the chat response no longer overwrites the selector (would hijack Auto).
+    assert "if (select) select.value = String(data.model);" not in source
+
+
 def test_bootstrap_embeds_cost_aware_routing() -> None:
     from npa.cli import agent as agent_module
 

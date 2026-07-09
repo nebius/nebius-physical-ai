@@ -6060,7 +6060,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <label for="chatModel" class="chat-model">
               Token Factory model
               <select id="chatModel">
-                <option value="{DEFAULT_LLM_MODEL}" selected>{DEFAULT_LLM_MODEL}</option>
+                <option value="" selected>Auto (cost-aware)</option>
               </select>
             </label>
           </div>
@@ -6726,26 +6726,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function setChatModels(models, selectedModel) {{
         const select = document.getElementById("chatModel");
         if (!select) return;
+        // Preserve any explicit prior user choice across refreshes.
+        const prior = String((select && select.value) || "").trim();
         const values = Array.isArray(models)
           ? [...new Set(models.map((item) => String(item || "").trim()).filter(Boolean))]
           : [];
-        if (!values.length) {{
-          values.push("{DEFAULT_LLM_MODEL}");
-        }}
-        const preferred = String(selectedModel || select.value || values[0] || "").trim();
-        const chosen = values.includes(preferred) ? preferred : values[0];
         select.innerHTML = "";
+        // Default option: empty value => backend applies cost-tier routing
+        // (cheapest adequate model per turn) instead of pinning the reasoner.
+        const autoOpt = document.createElement("option");
+        autoOpt.value = "";
+        autoOpt.textContent = "Auto (cost-aware)";
+        select.appendChild(autoOpt);
         for (const model of values) {{
           const opt = document.createElement("option");
           opt.value = model;
           opt.textContent = model;
-          if (model === chosen) opt.selected = true;
           select.appendChild(opt);
         }}
+        // Keep an explicit prior selection; otherwise default to Auto (""). The
+        // server-provided default model is intentionally not auto-selected.
+        select.value = prior && values.includes(prior) ? prior : "";
       }}
       function selectedChatModel() {{
+        // Empty string ("Auto") lets the backend route by cost tier.
         const select = document.getElementById("chatModel");
-        return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}";
+        return String((select && select.value) || "").trim();
       }}
       function clearChatLog() {{
         const log = document.getElementById("chatLog");
@@ -6934,8 +6940,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           clearThinkingBubble();
           input.value = "";
           if (data && data.model) {{
+            // Surface the model/tier actually used without hijacking the user's
+            // selection — "Auto" must stay Auto so routing keeps applying.
             const select = document.getElementById("chatModel");
-            if (select) select.value = String(data.model);
+            if (select) {{
+              const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
+              select.title = "last used: " + String(data.model) + tierNote;
+            }}
           }}
           if (data && data.session_id) {{
             activeChatSessionId = String(data.session_id);
