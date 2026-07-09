@@ -11,7 +11,9 @@ config:
   repo_url: "https://github.com/mani-skill/ManiSkill.git"
   repo_ref: "v3.0.1"
   base_profile: ubuntu
-  base_image: "maniskill/base:latest"
+  # maniskill/base:latest is Python 3.9; PyPI sapien>=3.0.3 only ships cp310+.
+  # Use CUDA Ubuntu 22.04 (python3.10) so we can upgrade SAPIEN for Blackwell.
+  base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
   # Do not install mesa-vulkan-drivers alongside NVIDIA — llvmpipe ICDs can
   # race with nvidia_icd and contribute to SAPIEN segfaults on GPU nodes.
   # ManiSkill v3.0.1 pins an older SAPIEN; upgrade to 3.0.3 after editable
@@ -20,9 +22,12 @@ config:
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+    python3 python3-dev python3-pip python3-venv build-essential git
     libvulkan1 vulkan-tools libglvnd0 libegl1 libgl1 &&
+    python3 -m pip install --no-cache-dir --upgrade pip &&
     python3 -m pip install --no-cache-dir -e . &&
-    python3 -m pip install --no-cache-dir --upgrade "sapien>=3.0.3"
+    python3 -m pip install --no-cache-dir --upgrade "sapien>=3.0.3" &&
+    python3 -c "import sapien, sys; v=getattr(sapien,'__version__',''); print('sapien', v, 'python', sys.version); assert v.startswith('3.0.') and int(v.split('.')[2].split('+')[0].split('b')[0] or '0') >= 3, v"
   workload: solution-smoke
   smoke_command: |
     export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
