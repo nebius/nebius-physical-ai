@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -314,6 +315,8 @@ def submit_cmd(
                     registry=registry,
                     image_overrides=image_overrides,
                     aws_endpoint_url=s3_endpoint
+                    or os.environ.get("AWS_ENDPOINT_URL")
+                    or os.environ.get("NEBIUS_S3_ENDPOINT")
                     or "https://storage.eu-north1.nebius.cloud",
                     gpu_target=gpu_target,
                     image_variant=image_variant,

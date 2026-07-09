@@ -89,9 +89,35 @@ def test_nebius_cloud_render_injects_docker_secrets(monkeypatch: pytest.MonkeyPa
 
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
+    assert tool_image_key("workbench.token_factory.caption") is None
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"
     assert tool_image_key("workbench.sonic.train") == "sonic"
     assert tool_image_key("unknown.tool") is None
+
+
+def test_render_token_factory_uses_env_aws_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.us-central1.nebius.cloud")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    prepared = prepare_npa_workflow_for_submit(
+        NPA_SPECS / "token-factory-caption.yaml",
+        run_id="caption-demo",
+        render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
+    try:
+        docs = [
+            doc
+            for doc in yaml.safe_load_all(
+                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+            )
+            if doc is not None
+        ]
+        assert "image_id" not in docs[1]["resources"]
+        assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == (
+            "https://storage.us-central1.nebius.cloud"
+        )
+        assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
+    finally:
+        prepared.temp_dir.cleanup()
 
 
 def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
@@ -118,10 +144,18 @@ def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
     assert "set -euo pipefail" in task["run"]
 
 
-def test_render_self_hosted_vlm_includes_vllm_setup() -> None:
+def test_render_self_hosted_vlm_includes_vllm_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="demo")
-    text = render_skypilot_yaml(spec, plan, run_id="demo")
+    text = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     assert "vllm" in docs[1]["setup"]
 
@@ -143,8 +177,8 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
         ]
         assert docs[0]["execution"] == "serial"
         assert "accelerators" not in docs[1]["resources"]
-        assert "image_id" in docs[1]["resources"]
-        assert "npa-cosmos" in docs[1]["resources"]["image_id"]
+        # Token Factory uses the default SkyPilot image (no cosmos pin).
+        assert "image_id" not in docs[1]["resources"]
         assert "token-factory caption" in docs[1]["run"]
         assert "NEBIUS_TOKEN_FACTORY_KEY" in docs[1]["setup"]
     finally:
@@ -152,15 +186,11 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
 
 
 def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Only applies when no workbench image is resolved (override to empty).
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     prepared = prepare_npa_workflow_for_submit(
         NPA_SPECS / "token-factory-caption.yaml",
         run_id="caption-demo",
-        render_options=SkypilotRenderOptions(
-            registry="cr.example.invalid/reg",
-            image_overrides={"*": ""},
-        ),
+        render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
     )
     try:
         docs = [
@@ -170,7 +200,6 @@ def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatc
             )
             if doc is not None
         ]
-        # Empty override still yields no image_id; S3 URI is injected for setup.
         assert "image_id" not in docs[1]["resources"]
         assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
         assert "file_mounts" not in docs[1]

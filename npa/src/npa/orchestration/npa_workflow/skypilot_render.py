@@ -14,12 +14,11 @@ from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
-# Token Factory is a hosted HTTP API client. Prefer the workbench cosmos image
-# (npa CLI baked at /opt/nebius-physical-ai/npa). When that image is unavailable,
-# operators can clear the mapping via image overrides and set NPA_SRC_S3_URI.
+# Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
+# SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
+# SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.vlm_eval": "cosmos",
-    "workbench.token_factory": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     "workbench.cosmos3": "cosmos3-reason",
     "workbench.lancedb": "lancedb",
@@ -51,6 +50,18 @@ class NpaWorkflowRenderError(NpaWorkflowError):
     """Raised when an npa.workflow plan cannot be rendered to SkyPilot YAML."""
 
 
+def _default_aws_endpoint_url() -> str:
+    """Prefer the operator's configured endpoint over a hard-coded region."""
+
+    import os
+
+    return (
+        os.environ.get("AWS_ENDPOINT_URL")
+        or os.environ.get("NEBIUS_S3_ENDPOINT")
+        or "https://storage.eu-north1.nebius.cloud"
+    )
+
+
 @dataclass(frozen=True)
 class SkypilotRenderOptions:
     """Controls how planned steps become SkyPilot task documents."""
@@ -59,7 +70,7 @@ class SkypilotRenderOptions:
     image_overrides: Mapping[str, str] = field(default_factory=dict)
     default_setup: bool = True
     execution: str = "serial"
-    aws_endpoint_url: str = "https://storage.eu-north1.nebius.cloud"
+    aws_endpoint_url: str = field(default_factory=_default_aws_endpoint_url)
     include_aws_endpoint: bool = True
     gpu_target: str = ""
     image_variant: str = ""
