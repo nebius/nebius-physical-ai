@@ -180,7 +180,17 @@ def _registry_path(image_ref: str) -> str:
 
 
 def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    token_proc = _run(["nebius", "iam", "get-access-token"], capture=True)
+    # Prefer an explicit write-capable profile when operators set one (e.g. agent-sa).
+    merged = {**os.environ, **(env or {})}
+    profile = (
+        merged.get("NPA_NEBIUS_PROFILE", "").strip()
+        or merged.get("NEBIUS_PROFILE", "").strip()
+    )
+    token_cmd = ["nebius"]
+    if profile:
+        token_cmd.extend(["--profile", profile])
+    token_cmd.extend(["iam", "get-access-token"])
+    token_proc = _run(token_cmd, capture=True)
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")

@@ -43,19 +43,43 @@ def test_docker_login_uses_profile_token_for_password_stdin(monkeypatch) -> None
     seen: dict[str, object] = {}
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:4] == ["docker", "login", "-u", "iam"]:
             seen["stdin"] = stdin
             seen["env"] = env
+            seen["token_cmd"] = None
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
     monkeypatch.setattr(module, "_run", fake_run)
     module._docker_login_nebius("cr.example.nebius.cloud", env={"DOCKER_CONFIG": "/tmp/docker-auth"})
 
     assert seen["stdin"] == "profile-token"
     assert seen["env"] == {"DOCKER_CONFIG": "/tmp/docker-auth"}
+
+
+def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
+            seen["token_cmd"] = list(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="agent-token\n", stderr="")
+        if cmd[:4] == ["docker", "login", "-u", "iam"]:
+            seen["stdin"] = stdin
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setenv("NEBIUS_PROFILE", "agent-sa")
+    monkeypatch.setattr(module, "_run", fake_run)
+    module._docker_login_nebius("cr.example.nebius.cloud")
+
+    assert seen["token_cmd"] == ["nebius", "--profile", "agent-sa", "iam", "get-access-token"]
+    assert seen["stdin"] == "agent-token"
 
 
 def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
@@ -74,7 +98,7 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
     monkeypatch.setenv("NPA_BYOF_SKIP_REGISTRY_REFRESH", "1")
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
@@ -105,7 +129,7 @@ def test_main_reports_403_push_hint(monkeypatch, capsys) -> None:
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "push"]:
             raise RuntimeError("command failed (1): docker push ... 403 Forbidden")
@@ -181,7 +205,7 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
         return "ghcr.io/nebius/npa-isaac-lab:stable"
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             base = next((part for part in cmd if part.startswith("BYOF_BASE_IMAGE=")), "")
@@ -430,7 +454,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
