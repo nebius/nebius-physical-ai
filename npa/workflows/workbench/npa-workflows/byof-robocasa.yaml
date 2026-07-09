@@ -69,7 +69,7 @@ config:
     # Documented lightweight asset download. Upstream script prompts interactively;
     # feed "y" on stdin so noninteractive containers can proceed.
     download = {
-        "command": "printf 'y\\n' | python3 -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw",
+        "command": "printf 'y\\n' | python3 -m robocasa.scripts.download_kitchen_assets --type tex tex_generative fixtures_lw objs_lw",
         "ok": False,
         "returncode": None,
         "error": "",
@@ -107,6 +107,7 @@ config:
                 "tex",
                 "tex_generative",
                 "fixtures_lw",
+                "objs_lw",
             ],
             capture_output=True,
             text=True,
@@ -117,22 +118,28 @@ config:
         download["returncode"] = completed.returncode
         download["stdout_tail"] = (completed.stdout or "")[-2000:]
         download["stderr_tail"] = (completed.stderr or "")[-2000:]
-        # objs_lw currently 404s on HF (PhysicalAI-Kitchen-Assets); fixtures_lw is the hard requirement.
+        # Official nvidia/PhysicalAI-Kitchen-Assets zips 404; use IIFAN mirrors.
         window_xml = fixtures / "windows" / "Window069" / "model.xml"
         wall_yaml = fixtures / "fixture_registry" / "wall.yaml"
         switch_xml = (
             fixtures / "accessories" / "light_switches" / "white_wide_switch" / "model.xml"
         )
+        objects_root = assets_root / "objects"
+        stool_xml = objects_root / "lightwheel" / "stool" / "Stool012" / "model.xml"
         download["fixtures_exists"] = fixtures.exists()
         download["window069_exists"] = window_xml.exists()
         download["wall_yaml_exists"] = wall_yaml.exists()
         download["light_switch_exists"] = switch_xml.exists()
-        if not window_xml.exists():
-            # Community mirror of fixtures_lightwheel.zip when upstream HF/Box is incomplete.
+        download["stool012_exists"] = stool_xml.exists()
+        try:
+            from huggingface_hub import hf_hub_download
+            from zipfile import ZipFile
+        except Exception as hub_exc:  # noqa: BLE001
+            download["hf_hub_error"] = f"{type(hub_exc).__name__}: {hub_exc}"
+            hf_hub_download = None  # type: ignore[assignment]
+            ZipFile = None  # type: ignore[assignment]
+        if not window_xml.exists() and hf_hub_download is not None:
             try:
-                from huggingface_hub import hf_hub_download
-                from zipfile import ZipFile
-
                 zip_path = hf_hub_download(
                     repo_id="IIFAN/robocasa365-lightwheel-fixtures",
                     repo_type="dataset",
@@ -140,10 +147,26 @@ config:
                 )
                 with ZipFile(zip_path, "r") as zip_ref:
                     zip_ref.extractall(path=str(assets_root))
-                download["mirror"] = "IIFAN/robocasa365-lightwheel-fixtures"
+                download["fixtures_mirror"] = "IIFAN/robocasa365-lightwheel-fixtures"
                 download["window069_exists"] = window_xml.exists()
             except Exception as mirror_exc:  # noqa: BLE001
-                download["mirror_error"] = f"{type(mirror_exc).__name__}: {mirror_exc}"
+                download["fixtures_mirror_error"] = f"{type(mirror_exc).__name__}: {mirror_exc}"
+        if not stool_xml.exists() and hf_hub_download is not None:
+            # Zip tops with lightwheel/; extract into objects/ so path is
+            # objects/lightwheel/stool/Stool012/model.xml (upstream objs_lw layout).
+            try:
+                zip_path = hf_hub_download(
+                    repo_id="IIFAN/robocasa365-lightwheel-objects",
+                    repo_type="dataset",
+                    filename="objects_lightwheel.zip",
+                )
+                objects_root.mkdir(parents=True, exist_ok=True)
+                with ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(path=str(objects_root))
+                download["objects_mirror"] = "IIFAN/robocasa365-lightwheel-objects"
+                download["stool012_exists"] = stool_xml.exists()
+            except Exception as mirror_exc:  # noqa: BLE001
+                download["objects_mirror_error"] = f"{type(mirror_exc).__name__}: {mirror_exc}"
 
         def _restore_missing(src: Path, dst: Path, restored: list) -> None:
             if not src.exists():
@@ -166,8 +189,12 @@ config:
             download["restored_git_fixture_sample"] = restored_paths[:20]
         download["wall_yaml_exists"] = wall_yaml.exists()
         download["light_switch_exists"] = switch_xml.exists()
+        download["stool012_exists"] = stool_xml.exists()
         download["ok"] = (
-            window_xml.exists() and wall_yaml.exists() and switch_xml.exists()
+            window_xml.exists()
+            and wall_yaml.exists()
+            and switch_xml.exists()
+            and stool_xml.exists()
         )
         if download["ok"]:
             results["capabilities_exercised"].append("download_kitchen_assets_lw")
@@ -176,7 +203,8 @@ config:
                 f"returncode={completed.returncode}; "
                 f"window069_exists={window_xml.exists()}; "
                 f"wall_yaml_exists={wall_yaml.exists()}; "
-                f"light_switch_exists={switch_xml.exists()}"
+                f"light_switch_exists={switch_xml.exists()}; "
+                f"stool012_exists={stool_xml.exists()}"
             )
     except Exception as exc:  # noqa: BLE001
         download["error"] = f"{type(exc).__name__}: {exc}"
@@ -266,6 +294,9 @@ config:
                 ),
                 "light_switch_exists": (results.get("download_kitchen_assets") or {}).get(
                     "light_switch_exists"
+                ),
+                "stool012_exists": (results.get("download_kitchen_assets") or {}).get(
+                    "stool012_exists"
                 ),
                 "egl_ok": (results.get("kitchen_egl_env_reset") or {}).get("ok"),
                 "egl_error": (results.get("kitchen_egl_env_reset") or {}).get("error"),
