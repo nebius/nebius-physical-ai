@@ -151,15 +151,36 @@ def render_task_run_script(command: Sequence[str]) -> str:
     if not command:
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
     quoted = " ".join(shlex.quote(str(part)) for part in command)
-    return f"set -euo pipefail\n{quoted}\n"
+    return (
+        "set -euo pipefail\n"
+        'export PATH="${HOME}/.local/bin:${PATH}"\n'
+        f"{quoted}\n"
+    )
 
 
 def default_npa_setup() -> str:
+    """Ensure the ``npa`` CLI is available on the SkyPilot worker.
+
+    Workbench images bake npa at ``/opt/nebius-physical-ai/npa``. When a task
+    uses SkyPilot's default image (e.g. Token Factory API twins), the renderer
+    mounts the local package at ``/tmp/npa-src`` and this setup installs it.
+    """
+
     return (
         "set -e\n"
-        "if ! command -v npa >/dev/null 2>&1 && [ -d /opt/nebius-physical-ai/npa ]; then\n"
-        "  python3 -m pip install -e /opt/nebius-physical-ai/npa\n"
+        'export PATH="${HOME}/.local/bin:${PATH}"\n'
+        "if ! command -v npa >/dev/null 2>&1; then\n"
+        "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        "    python3 -m pip install --user -e /opt/nebius-physical-ai/npa\n"
+        "  elif [ -d /tmp/npa-src ]; then\n"
+        "    python3 -m pip install --user -e /tmp/npa-src\n"
+        "  else\n"
+        "    echo 'npa CLI not found; use a workbench image or mount /tmp/npa-src' >&2\n"
+        "    exit 1\n"
+        "  fi\n"
         "fi\n"
+        "command -v npa >/dev/null 2>&1 || "
+        "{ echo 'npa still missing after setup' >&2; exit 1; }\n"
     )
 
 
@@ -223,6 +244,8 @@ def build_skypilot_task_doc(
 ) -> dict[str, Any]:
     """Build one SkyPilot task document from a planned step."""
 
+    from pathlib import Path
+
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
     resources = normalize_resources(scheduler_task.get("resources") or {})
     image = resolve_task_image(
@@ -262,6 +285,12 @@ def build_skypilot_task_doc(
     )
     if setup.strip():
         doc["setup"] = setup
+    # When no workbench image is pinned, mount the local npa package so setup
+    # can ``pip install -e /tmp/npa-src`` on SkyPilot's default runtime image.
+    if not image:
+        npa_pkg = Path(__file__).resolve().parents[4]
+        if (npa_pkg / "pyproject.toml").is_file():
+            doc["file_mounts"] = {"/tmp/npa-src": str(npa_pkg)}
     _inject_nebius_registry_docker_secrets(doc)
     return doc
 

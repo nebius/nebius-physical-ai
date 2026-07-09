@@ -144,6 +144,8 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
         assert docs[0]["execution"] == "serial"
         assert "accelerators" not in docs[1]["resources"]
         assert "image_id" not in docs[1]["resources"]
+        assert docs[1]["file_mounts"]["/tmp/npa-src"]
+        assert "/tmp/npa-src" in docs[1]["setup"]
         assert "token-factory caption" in docs[1]["run"]
         assert "NEBIUS_TOKEN_FACTORY_KEY" in docs[1]["setup"]
     finally:
