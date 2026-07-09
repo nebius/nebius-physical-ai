@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 from npa.orchestration.npa_workflow.submit_matrix import (
@@ -16,6 +17,33 @@ SPECS_DIR = (
     / "workbench"
     / "npa-workflows"
 )
+
+
+def _load_live_helpers():
+    path = Path(__file__).resolve().parents[2] / "e2e" / "npa_workflow_live_helpers.py"
+    spec = importlib.util.spec_from_file_location("npa_workflow_live_helpers", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_force_accelerators_on_cpu_profiles() -> None:
+    helpers = _load_live_helpers()
+    src = """resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+"""
+    out = helpers._force_accelerators_on_cpu_profiles(src, "L40S:1")
+    assert "accelerators: L40S:1" in out
+    assert out.count("accelerators: L40S:1") == 1
+    assert "accelerators: H100:1" in out
+    assert "cloud: kubernetes" in out
 
 
 def test_submit_live_matrix_specs_exist() -> None:

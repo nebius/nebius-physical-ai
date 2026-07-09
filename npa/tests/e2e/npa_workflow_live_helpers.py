@@ -124,9 +124,72 @@ def materialize_live_spec(
             src, dst = src.strip(), dst.strip()
             if src and dst:
                 text = text.replace(f"cloud: {src}", f"cloud: {dst}")
+    # Optional: inject accelerators into CPU-only resource profiles (Nebius CPU
+    # docker images currently fail apt setup; L40S/H100 VMs are healthy).
+    # Example: NPA_E2E_FORCE_ACCELERATORS=L40S:1
+    force_accel = os.environ.get("NPA_E2E_FORCE_ACCELERATORS", "").strip()
+    if force_accel:
+        text = _force_accelerators_on_cpu_profiles(text, force_accel)
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _force_accelerators_on_cpu_profiles(text: str, accelerators: str) -> str:
+    """Add ``accelerators`` to named resource profiles that lack them."""
+
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    in_resources = False
+    profile_lines: list[str] = []
+    profile_has_accel = False
+
+    def flush_profile() -> None:
+        nonlocal profile_lines, profile_has_accel
+        if not profile_lines:
+            return
+        if not profile_has_accel:
+            inserted = False
+            rebuilt: list[str] = []
+            for pl in profile_lines:
+                rebuilt.append(pl)
+                if not inserted and re.match(r"^    cloud:\s*", pl):
+                    rebuilt.append(f"    accelerators: {accelerators}\n")
+                    inserted = True
+            if not inserted:
+                rebuilt = [profile_lines[0], f"    accelerators: {accelerators}\n"] + profile_lines[
+                    1:
+                ]
+            profile_lines = rebuilt
+        out.extend(profile_lines)
+        profile_lines = []
+        profile_has_accel = False
+
+    for line in lines:
+        if re.match(r"^resources:\s*$", line):
+            flush_profile()
+            in_resources = True
+            out.append(line)
+            continue
+        if in_resources:
+            if re.match(r"^\S", line):
+                flush_profile()
+                in_resources = False
+                out.append(line)
+                continue
+            if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+                flush_profile()
+                profile_lines = [line]
+                profile_has_accel = False
+                continue
+            if profile_lines:
+                if re.search(r"^\s*accelerators:\s*", line):
+                    profile_has_accel = True
+                profile_lines.append(line)
+                continue
+        out.append(line)
+    flush_profile()
+    return "".join(out)
 
 
 def live_credential_markers() -> list[str]:

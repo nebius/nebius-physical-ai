@@ -29,7 +29,12 @@
 #   # Prefer Nebius VMs when the shared k8s jobs-controller auth/pull path is unhealthy
 #   NPA_E2E_CLOUD_REMAP=kubernetes=nebius \
 #   NPA_E2E_ACCELERATOR_REMAP=H100:1=L40S:1,RTXPRO6000:1=L40S:1 \
+#   NPA_E2E_FORCE_ACCELERATORS=L40S:1 \
 #     ./scripts/npa-workflow-submit-live-e2e.sh
+#
+#   # NPA_E2E_FORCE_ACCELERATORS injects accelerators into CPU-only resource
+#   # profiles (Token Factory / retargeting) so they land on healthy GPU VMs
+#   # when Nebius CPU docker setup is broken.
 #
 set -euo pipefail
 
