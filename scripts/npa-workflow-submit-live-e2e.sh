@@ -36,6 +36,9 @@
 #   # profiles (Token Factory / retargeting) so they land on healthy GPU VMs
 #   # when Nebius CPU docker setup is broken.
 #
+#   # For Token Factory on SkyPilot default images, stage the npa package to an
+#   # existing bucket and set NPA_SRC_S3_URI=s3://bucket/prefix/npa
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

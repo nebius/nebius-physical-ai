@@ -163,8 +163,10 @@ def default_npa_setup() -> str:
     """Ensure the ``npa`` CLI is available on the SkyPilot worker.
 
     Workbench images bake npa at ``/opt/nebius-physical-ai/npa``. When a task
-    uses SkyPilot's default image (e.g. Token Factory API twins), the renderer
-    mounts the local package at ``/tmp/npa-src`` and this setup installs it.
+    uses SkyPilot's default image (e.g. Token Factory API twins), setup can:
+
+    1. install from a mounted ``/tmp/npa-src`` (S3 URI via ``NPA_SRC_S3_URI``), or
+    2. sync from ``NPA_SRC_S3_URI`` with the AWS CLI / boto3, then install.
     """
 
     return (
@@ -173,11 +175,26 @@ def default_npa_setup() -> str:
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    python3 -m pip install --user -e /opt/nebius-physical-ai/npa\n"
-        "  elif [ -d /tmp/npa-src ]; then\n"
-        "    python3 -m pip install --user -e /tmp/npa-src\n"
         "  else\n"
-        "    echo 'npa CLI not found; use a workbench image or mount /tmp/npa-src' >&2\n"
-        "    exit 1\n"
+        "    if [ ! -d /tmp/npa-src ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
+        "      python3 - <<'PY'\n"
+        "import os, pathlib, subprocess, sys\n"
+        "uri = os.environ['NPA_SRC_S3_URI'].rstrip('/')\n"
+        "dest = pathlib.Path('/tmp/npa-src')\n"
+        "dest.mkdir(parents=True, exist_ok=True)\n"
+        "cmd = ['aws', 's3', 'sync', uri, str(dest)]\n"
+        "if os.environ.get('AWS_ENDPOINT_URL'):\n"
+        "    cmd[1:1] = ['--endpoint-url', os.environ['AWS_ENDPOINT_URL']]\n"
+        "print('syncing', uri, '->', dest, flush=True)\n"
+        "subprocess.check_call(cmd)\n"
+        "PY\n"
+        "    fi\n"
+        "    if [ -d /tmp/npa-src ]; then\n"
+        "      python3 -m pip install --user -e /tmp/npa-src\n"
+        "    else\n"
+        "      echo 'npa CLI not found; set NPA_SRC_S3_URI or use a workbench image' >&2\n"
+        "      exit 1\n"
+        "    fi\n"
         "  fi\n"
         "fi\n"
         "command -v npa >/dev/null 2>&1 || "
@@ -245,8 +262,6 @@ def build_skypilot_task_doc(
 ) -> dict[str, Any]:
     """Build one SkyPilot task document from a planned step."""
 
-    from pathlib import Path
-
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
     resources = normalize_resources(scheduler_task.get("resources") or {})
     image = resolve_task_image(
@@ -286,12 +301,20 @@ def build_skypilot_task_doc(
     )
     if setup.strip():
         doc["setup"] = setup
-    # When no workbench image is pinned, mount the local npa package so setup
-    # can ``pip install -e /tmp/npa-src`` on SkyPilot's default runtime image.
+    # When no workbench image is pinned, point setup at an existing S3 copy of
+    # the npa package (SkyPilot local file_mounts create new buckets and fail
+    # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa.
     if not image:
-        npa_pkg = Path(__file__).resolve().parents[4]
-        if (npa_pkg / "pyproject.toml").is_file():
-            doc["file_mounts"] = {"/tmp/npa-src": str(npa_pkg)}
+        import os
+
+        src_uri = (
+            os.environ.get("NPA_SRC_S3_URI")
+            or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
+            or ""
+        ).strip()
+        if src_uri:
+            envs["NPA_SRC_S3_URI"] = src_uri
+            doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(doc)
     return doc
 

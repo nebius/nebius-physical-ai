@@ -144,10 +144,30 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
         assert docs[0]["execution"] == "serial"
         assert "accelerators" not in docs[1]["resources"]
         assert "image_id" not in docs[1]["resources"]
-        assert docs[1]["file_mounts"]["/tmp/npa-src"]
-        assert "/tmp/npa-src" in docs[1]["setup"]
+        assert "NPA_SRC_S3_URI" in docs[1]["setup"] or "npa" in docs[1]["setup"]
         assert "token-factory caption" in docs[1]["run"]
         assert "NEBIUS_TOKEN_FACTORY_KEY" in docs[1]["setup"]
+    finally:
+        prepared.temp_dir.cleanup()
+
+
+def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    prepared = prepare_npa_workflow_for_submit(
+        NPA_SPECS / "token-factory-caption.yaml",
+        run_id="caption-demo",
+        render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
+    try:
+        docs = [
+            doc
+            for doc in yaml.safe_load_all(
+                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+            )
+            if doc is not None
+        ]
+        assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
+        assert "file_mounts" not in docs[1]
     finally:
         prepared.temp_dir.cleanup()
 
