@@ -199,11 +199,11 @@ Pinned: `robocasa/robocasa` `v1.0`
 
 Hard-gate capability: `kitchen_task_registration`.
 
-Also attempted in the same smoke (may remain deferred with evidence):
+Also exercised in the same smoke (live-accepted with S3 evidence):
 
-- `download_kitchen_assets_lw`
-- `kitchen_egl_env_reset`
-- `kitchen_random_rollout` (best-effort after reset)
+- `download_kitchen_assets_lw` (IIFAN lightwheel fixtures/objects + git accessory restore)
+- `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
+- `kitchen_random_rollout` (`run_random_rollouts`; video optional if gymnasium wraps `.sim`)
 
 ### OpenPI (`byof-openpi.yaml`)
 
