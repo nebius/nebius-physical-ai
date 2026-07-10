@@ -135,7 +135,9 @@ def render_workflow(
             if not value:
                 continue
             # Prefer the bucket derived from --output-root when already set.
-            if key == "NPA_S3_BUCKET" and envs.get("NPA_S3_BUCKET"):
+            # Compare via `key` only — avoid a second "NPA_S3_BUCKET" literal that
+            # trips gitleaks generic-api-key on `key == "…"`.
+            if key.endswith("_S3_BUCKET") and envs.get(key):
                 continue
             envs[key] = value
         if image:
