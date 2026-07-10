@@ -144,6 +144,7 @@ Full ladder: `docs/architecture/oss-onboarding-ladder.md`.
 ## Gotchas
 
 - Merge does **not** push images — build happens at operator `npa workbench byof run` / `run_byof_repo.py` time.
+- Ubuntu BYOF images install `python3` so container-verify / SkyPilot smokes can run metadata checks.
 - Ubuntu images cannot run LeIsaac datagen; use `isaac-lab` profile for sim workloads.
 - GPU smokes may return `FAILED_PRECHECKS` when cluster capacity is tight; container tier is the gate for Ubuntu BYOF.
 - BYOF images use ad-hoc `npa-byof:<run-id>` tags; they are outside `golden_evals.yaml` until Tier 2 promotion.
