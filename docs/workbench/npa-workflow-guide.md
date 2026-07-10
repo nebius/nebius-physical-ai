@@ -22,7 +22,9 @@ npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-sin
   --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
 
 # Render only (no submit) — inspect the generated SkyPilot YAML
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+# Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
+NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
+  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
   --plan-only --run-id demo
 ```
 
@@ -33,6 +35,12 @@ and submits that. SkyPilot originals under `npa/workflows/workbench/skypilot/`
 are kept as the production runtime reference; see
 [`npa-workflows/README.md`](../../npa/workflows/workbench/npa-workflows/README.md)
 for the twin matrix and SkyPilot-only exceptions.
+
+**No-image tools** (Token Factory twins): the renderer does not pin `npa-cosmos`
+(SkyPilot k8s apt-ssh fails on that image). Set `NPA_SRC_S3_URI=s3://bucket/prefix/npa`
+so setup can sync and `pip install -e` the package, or pass `--image` to a workbench
+image that already includes `npa`. `--plan-only` prints a
+`<SKYPILOT_DOCKER_PASSWORD>` placeholder instead of minting live registry tokens.
 
 Golden specs (all pytest-guarded):
 

@@ -160,7 +160,10 @@ def test_render_self_hosted_vlm_includes_vllm_setup(
     assert "vllm" in docs[1]["setup"]
 
 
-def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
+def test_render_token_factory_caption_cpu_and_secret_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     prepared = prepare_npa_workflow_for_submit(
         NPA_SPECS / "token-factory-caption.yaml",
         run_id="caption-demo",
@@ -179,10 +182,24 @@ def test_render_token_factory_caption_cpu_and_secret_hint() -> None:
         assert "accelerators" not in docs[1]["resources"]
         # Token Factory uses the default SkyPilot image (no cosmos pin).
         assert "image_id" not in docs[1]["resources"]
+        assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
         assert "token-factory caption" in docs[1]["run"]
         assert "NEBIUS_TOKEN_FACTORY_KEY" in docs[1]["setup"]
     finally:
         prepared.temp_dir.cleanup()
+
+
+def test_render_token_factory_requires_npa_src_s3_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+    with pytest.raises(NpaWorkflowRenderError, match="NPA_SRC_S3_URI is unset"):
+        prepare_npa_workflow_for_submit(
+            NPA_SPECS / "token-factory-caption.yaml",
+            run_id="caption-demo",
+            render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        )
 
 
 def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,6 +222,34 @@ def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatc
         assert "file_mounts" not in docs[1]
     finally:
         prepared.temp_dir.cleanup()
+
+
+def test_plan_only_registry_secrets_use_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--plan-only must not mint or embed live SKYPILOT_DOCKER_PASSWORD values."""
+
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-should-not-appear")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    path = NPA_SPECS / "vlm-eval-single.yaml"
+    spec = load_spec(path)
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["cloud"] = "nebius"
+    plan = build_plan(spec, run_id="demo")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(
+            registry="cr.eu-north1.nebius.cloud/reg",
+            materialize_registry_secrets=False,
+        ),
+    )
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
+    task = docs[1]
+    assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "<SKYPILOT_DOCKER_PASSWORD>"
+    assert "live-should-not-appear" not in rendered
 
 
 def test_render_bdd100k_task_count() -> None:
@@ -290,7 +335,11 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     assert "${" not in content
 
 
-def test_workbench_workflow_submit_npa_plan_only() -> None:
+def test_workbench_workflow_submit_npa_plan_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-plan-only-token")
     result = RUNNER.invoke(
         app,
         [
@@ -309,9 +358,37 @@ def test_workbench_workflow_submit_npa_plan_only() -> None:
     assert "status: PLANNED" in result.output
     assert "token-factory caption" in result.output
     assert "NEBIUS_TOKEN_FACTORY_KEY" in result.output
+    assert "live-plan-only-token" not in result.output
 
 
-def test_workbench_workflow_submit_npa_var_merges_config(mocker) -> None:
+def test_workbench_workflow_submit_plan_only_redacts_registry_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "live-plan-only-token")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "plan-only-redact",
+            "--plan-only",
+            "--registry",
+            "cr.eu-north1.nebius.cloud/reg",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "status: PLANNED" in result.output
+    assert "<SKYPILOT_DOCKER_PASSWORD>" in result.output
+    assert "live-plan-only-token" not in result.output
+
+
+def test_workbench_workflow_submit_npa_var_merges_config(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):

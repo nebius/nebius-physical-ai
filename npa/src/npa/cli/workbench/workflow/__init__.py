@@ -331,6 +331,8 @@ def submit_cmd(
                     or "https://storage.eu-north1.nebius.cloud",
                     gpu_target=gpu_target,
                     image_variant=image_variant,
+                    # Never mint/print live registry tokens for --plan-only.
+                    materialize_registry_secrets=not plan_only,
                 ),
             )
         except NpaWorkflowError as exc:

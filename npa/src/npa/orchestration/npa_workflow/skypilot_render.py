@@ -74,6 +74,9 @@ class SkypilotRenderOptions:
     include_aws_endpoint: bool = True
     gpu_target: str = ""
     image_variant: str = ""
+    # When False (``--plan-only``), embed placeholders instead of minting live
+    # Nebius registry tokens into rendered YAML that may be printed to stdout.
+    materialize_registry_secrets: bool = True
 
 
 def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
@@ -348,10 +351,18 @@ def build_skypilot_task_doc(
             or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
             or ""
         ).strip()
-        if src_uri:
-            envs["NPA_SRC_S3_URI"] = src_uri
-            doc["envs"] = envs
-    _inject_nebius_registry_docker_secrets(doc)
+        if not src_uri:
+            raise NpaWorkflowRenderError(
+                f"planned step {scheduler_task['name']!r} has no workbench image "
+                "and NPA_SRC_S3_URI is unset; set NPA_SRC_S3_URI=s3://bucket/prefix/npa "
+                "or pass --image <registry>/npa-<tool>:<tag>"
+            )
+        envs["NPA_SRC_S3_URI"] = src_uri
+        doc["envs"] = envs
+    _inject_nebius_registry_docker_secrets(
+        doc,
+        materialize=options.materialize_registry_secrets,
+    )
     return doc
 
 
@@ -361,11 +372,18 @@ def _is_nebius_registry_image(image_id: str) -> bool:
     return host.startswith("cr.") and host.endswith(".nebius.cloud")
 
 
-def _inject_nebius_registry_docker_secrets(doc: dict[str, Any]) -> None:
+def _inject_nebius_registry_docker_secrets(
+    doc: dict[str, Any],
+    *,
+    materialize: bool = True,
+) -> None:
     """Embed SkyPilot Docker login secrets for private Nebius registry images.
 
     Matches the burst submit path: ``resources.image_id`` is pulled before YAML
     ``setup`` runs, so registry auth must live in task ``secrets``.
+
+    When ``materialize`` is False (plan-only), embed a placeholder password so
+    rendered YAML can be printed without minting or leaking live IAM tokens.
     """
 
     import os
@@ -386,21 +404,24 @@ def _inject_nebius_registry_docker_secrets(doc: dict[str, Any]) -> None:
         or os.environ.get("NPA_REGISTRY_USERNAME")
         or "iam"
     )
-    password = (
-        os.environ.get("SKYPILOT_DOCKER_PASSWORD")
-        or os.environ.get("NPA_REGISTRY_PASSWORD")
-        or ""
-    )
-    if not password:
-        try:
-            from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
+    if materialize:
+        password = (
+            os.environ.get("SKYPILOT_DOCKER_PASSWORD")
+            or os.environ.get("NPA_REGISTRY_PASSWORD")
+            or ""
+        )
+        if not password:
+            try:
+                from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
 
-            password = mint_nebius_registry_token()
-        except Exception as exc:  # noqa: BLE001
-            raise NpaWorkflowRenderError(
-                "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
-                f"(or mintable IAM token); failed to mint: {exc}"
-            ) from exc
+                password = mint_nebius_registry_token()
+            except Exception as exc:  # noqa: BLE001
+                raise NpaWorkflowRenderError(
+                    "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
+                    f"(or mintable IAM token); failed to mint: {exc}"
+                ) from exc
+    else:
+        password = "<SKYPILOT_DOCKER_PASSWORD>"
 
     secrets = doc.setdefault("secrets", {})
     if not isinstance(secrets, dict):

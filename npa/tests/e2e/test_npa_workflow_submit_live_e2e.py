@@ -306,3 +306,9 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
     yaml_text = payload.get("skypilot_yaml", "")
     assert "execution: serial" in yaml_text
     assert "${" not in yaml_text
+    # Plan-only must never mint/print live registry passwords.
+    if "SKYPILOT_DOCKER_PASSWORD" in yaml_text:
+        assert "<SKYPILOT_DOCKER_PASSWORD>" in yaml_text
+        live_pw = (os.environ.get("SKYPILOT_DOCKER_PASSWORD") or "").strip()
+        if live_pw and len(live_pw) >= 8:
+            assert live_pw not in yaml_text

@@ -45,9 +45,9 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 | --- | --- | --- |
 | `vlm-eval-single.yaml` | `../skypilot/vlm-eval.yaml` | Self-hosted VLM; renderer adds vLLM setup |
 | `vlm-eval-benchmark.yaml` | `../skypilot/vlm-eval-benchmark.yaml` | |
-| `token-factory-caption.yaml` | `../skypilot/token-factory-caption.yaml` | Zero-GPU; needs `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
-| `token-factory-generate.yaml` | `../skypilot/token-factory-generate.yaml` | Zero-GPU |
-| `token-factory-cosmos-reason.yaml` | `../skypilot/token-factory-cosmos-reason.yaml` | Zero-GPU |
+| `token-factory-caption.yaml` | `../skypilot/token-factory-caption.yaml` | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) + `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
+| `token-factory-generate.yaml` | `../skypilot/token-factory-generate.yaml` | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) |
+| `token-factory-cosmos-reason.yaml` | `../skypilot/token-factory-cosmos-reason.yaml` | Zero-GPU; needs `NPA_SRC_S3_URI` (or `--image`) |
 | `tokenfactory-rollout-judge.yaml` | `../skypilot/tokenfactory-rollout-judge.yaml` | Spec is reason→VLM; SkyPilot twin is LeRobot→VLM |
 | `tokenfactory-cosmos-gate.yaml` | (creative) | Gate loop |
 | `bdd100k-pipeline.yaml` | `../skypilot/bdd100k-pipeline.yaml` | 11-stage AV pipeline |
