@@ -23,7 +23,7 @@ config:
     python3 -m pip install --no-cache-dir
     numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow
     opencv-python-headless pyyaml pynput tqdm termcolor "imageio[ffmpeg]" h5py lxml hidapi
-    gymnasium huggingface_hub &&
+    "gymnasium==0.29.1" huggingface_hub &&
     python3 -m pip install --no-cache-dir --no-deps -e .
   workload: solution-smoke
   smoke_command: |
@@ -31,8 +31,9 @@ config:
     export PYOPENGL_PLATFORM=egl
     export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
     # Ensure HF hub + imageio ffmpeg backend are present (rollout video writer).
-    python3 -m pip install --quiet --no-cache-dir huggingface_hub "imageio[ffmpeg]" 2>/dev/null ||
-    python3 -m pip install --quiet --break-system-packages --no-cache-dir huggingface_hub "imageio[ffmpeg]" || true
+    # Keep gymnasium pinned: >=1 wrappers drop __getattr__ and break env.sim video.
+    python3 -m pip install --quiet --no-cache-dir huggingface_hub "imageio[ffmpeg]" "gymnasium==0.29.1" 2>/dev/null ||
+    python3 -m pip install --quiet --break-system-packages --no-cache-dir huggingface_hub "imageio[ffmpeg]" "gymnasium==0.29.1" || true
     python3 - <<'PY'
     import json
     import os
@@ -255,12 +256,24 @@ config:
         "  try:\n"
         "    from robocasa.utils.env_utils import run_random_rollouts\n"
         "    env = gym.make(env_id, **make_kwargs)\n"
+        "    # run_random_rollouts calls env.sim.render for video. gymnasium>=1\n"
+        "    # wrappers dropped __getattr__ forwarding, so bind .sim explicitly.\n"
+        "    base = getattr(env, 'unwrapped', env)\n"
+        "    if not hasattr(env, 'sim') and hasattr(base, 'sim'):\n"
+        "      try:\n"
+        "        object.__setattr__(env, 'sim', base.sim)\n"
+        "      except Exception:\n"
+        "        env.sim = base.sim\n"
+        "    out['env_type'] = type(env).__name__\n"
+        "    out['has_sim'] = hasattr(env, 'sim')\n"
         "    try:\n"
         "      run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=video_path)\n"
+        "      exists = __import__('pathlib').Path(video_path).exists()\n"
         "      out['rollout'] = {'ok': True, 'video_path': video_path, "
-        "'video_exists': __import__('pathlib').Path(video_path).exists()}\n"
+        "'video_exists': exists, 'video_bytes': "
+        "(__import__('pathlib').Path(video_path).stat().st_size if exists else 0)}\n"
         "    except Exception as video_exc:\n"
-        "      # Fallback: exercise rollout without video if ffmpeg backend missing.\n"
+        "      # Last-resort: still exercise rollout steps without video.\n"
         "      run_random_rollouts(env, num_rollouts=1, num_steps=5, video_path=None)\n"
         "      out['rollout'] = {'ok': True, 'video_path': None, 'video_fallback': True, "
         "'video_error': f'{type(video_exc).__name__}: {video_exc}'}\n"
@@ -356,6 +369,9 @@ config:
                 "egl_error": (results.get("kitchen_egl_env_reset") or {}).get("error"),
                 "rollout_ok": (results.get("kitchen_random_rollout") or {}).get("ok"),
                 "rollout_error": (results.get("kitchen_random_rollout") or {}).get("error"),
+                "video_exists": (results.get("kitchen_random_rollout") or {}).get("video_exists"),
+                "video_fallback": (results.get("kitchen_random_rollout") or {}).get("video_fallback"),
+                "video_bytes": (results.get("kitchen_random_rollout") or {}).get("video_bytes"),
                 "restored_git_fixture_count": (results.get("download_kitchen_assets") or {}).get(
                     "restored_git_fixture_count"
                 ),

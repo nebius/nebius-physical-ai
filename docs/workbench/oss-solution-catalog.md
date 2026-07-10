@@ -34,7 +34,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
-| RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap19-robocasa-20260709-062927` (`run_random_rollouts` ok; video falls back when gymnasium `OrderEnforcing` wraps `.sim`) |
+| RoboCasa | `kitchen_random_rollout` | **accepted** | `defcap19-robocasa-20260709-062927` (+ video fix: pin `gymnasium==0.29.1` + bind `env.sim` from `unwrapped`) |
 | OpenPI | `policy_config_materialization` | **accepted** | `defcap9-openpi-20260709-034059` (+ prior) |
 | OpenPI | `pi05_droid_checkpoint_download` | **accepted** | `defcap9-openpi-20260709-034059` via `maybe_download` |
 | OpenPI | `pi05_droid_checkpoint_infer` | **accepted** | `defcap9-openpi-20260709-034059` (`make_droid_example`, actions `[15,8]`) |
