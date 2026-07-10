@@ -241,6 +241,8 @@ const FIELD_IDS = [
   "runIdInput",
   "runIdSelect",
   "artifactPrefix",
+  "artifactTypeFilter",
+  "artifactSort",
   "artifactRunSelect",
   "artifactList",
   "activeCameraLabel",

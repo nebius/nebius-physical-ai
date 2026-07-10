@@ -142,7 +142,7 @@ run_teardown_step() {
     return 0
   fi
   TEARDOWN_DONE=1
-  run_npa_step "destroy workbench" deploy --destroy --gpu-type "$GPU_TYPE" --gpu-preset "$GPU_PRESET"
+  run_npa_step "destroy workbench" deploy --destroy --yes --gpu-type "$GPU_TYPE" --gpu-preset "$GPU_PRESET"
 }
 
 cleanup_s3_prefix() {

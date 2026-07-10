@@ -16,7 +16,7 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
   test -d "${BYOF_REPO_ROOT}"

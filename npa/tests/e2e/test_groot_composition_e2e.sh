@@ -243,6 +243,7 @@ destroy_groot() {
   if [ "$GROOT_DEPLOYED" -eq 1 ] && [ "$GROOT_DESTROYED" -eq 0 ]; then
     "$CLI" workbench groot -p "$PROJECT" -n "$GROOT_NAME" deploy \
       --destroy \
+      --yes \
       --gpu-type "$GROOT_GPU_TYPE" \
       --gpu-preset "$GROOT_GPU_PRESET"
     GROOT_DESTROYED=1
