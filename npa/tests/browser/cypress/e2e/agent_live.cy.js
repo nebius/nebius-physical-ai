@@ -85,7 +85,8 @@ describe("NPA agent UI against live infra", () => {
     }
     cy.get("#chatForm").should("exist");
     cy.get("#workflowYaml").should("exist");
-    cy.get("#cameraCards", { timeout: 30000 }).should("exist");
+    cy.get("#tabChat").should("exist");
+    cy.get("#tabRerun").should("exist");
     cy.get("#rerunFrame").should("exist");
   });
 
@@ -249,19 +250,29 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#renderedDataSummary").should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
     cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");
     cy.get("#simCamera").should("contain.text", "heldout-sim");
+    cy.get("#tabRerun").click();
     cy.get("#rerunFrame").should("be.visible");
+    cy.get("#tabChat").click();
     cy.get("#chatForm").should("be.visible");
-    cy.get("#cameraCards").should("be.visible");
 
     cy.window().then((win) => {
       const doc = win.document.documentElement;
       expect(doc.scrollWidth, "no distracting horizontal page overflow").to.be.lte(win.innerWidth + 24);
-      for (const id of ["chatForm", "runDetails", "artifactList", "rerunFrame", "cameraCards"]) {
+      win.document.getElementById("tabRerun").click();
+      for (const id of ["artifactList", "rerunFrame"]) {
         const el = win.document.getElementById(id);
         expect(el, `${id} exists`).to.exist;
         const rect = el.getBoundingClientRect();
         expect(rect.width, `${id} has usable width`).to.be.greaterThan(240);
         expect(rect.height, `${id} has usable height`).to.be.greaterThan(id === "artifactList" ? 24 : 40);
+      }
+      win.document.getElementById("tabChat").click();
+      for (const id of ["chatForm", "runDetails"]) {
+        const el = win.document.getElementById(id);
+        expect(el, `${id} exists`).to.exist;
+        const rect = el.getBoundingClientRect();
+        expect(rect.width, `${id} has usable width`).to.be.greaterThan(240);
+        expect(rect.height, `${id} has usable height`).to.be.greaterThan(40);
       }
     });
   });

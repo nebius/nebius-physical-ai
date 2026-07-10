@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070901"
+AGENT_UI_VERSION = "2026071001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -1569,10 +1569,10 @@ def _rerun_recording_url(*, cache_bust: bool = False) -> str:
 def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
     cam = (camera or "workspace").strip() or "workspace"
     if live_url:
-        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
     recording = _rerun_recording_url()
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
-    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
 
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
@@ -3069,12 +3069,12 @@ def _agent_system_prompt() -> str:
         "- GET /api/models — list Token Factory chat models available to this VM key",
         "- GET /api/tools — workbench toolRef catalog",
         "",
-        "To view Franka immediately, tell users to click **Load Franka in Rerun** in the Sim Assets panel",
-        "(or POST /api/sim-viz/load-franka-demo). Open the embedded viewer at /rerun/.",
+        "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
+        "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
         "Artifact-first browsing flow: call `/api/artifacts/runs`, inspect `/api/artifacts/run/{{id}}`,",
         "then `POST /api/sim-viz/load-artifact` with explicit `s3_uri` or `run_id` + `key`.",
-        "The **Cameras** panel is the center column below chat: stock workspace and wrist cameras",
-        "with 2D frustum schematics, selection, and **Preview in Rerun**.",
+        "The **Rerun** tab embeds the viewer full-bleed beside a run-loading rail (mp4/video preview,",
+        "artifact browser, and Load run data). There is no separate Cameras panel in the UI.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
         "When asked about Sim2Real, workflow, or Rerun status, summarize run_id, stage, camera,",
         "rerun_ready, and latest_submit from session state — never reply with only a raw GET path.",
@@ -5751,8 +5751,44 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         display: grid;
         gap: 14px;
       }}
+      .main-tabs {{
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px 0;
+        max-width: 1640px;
+        margin: 0 auto;
+        width: 100%;
+      }}
+      .main-tab {{
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
+        color: #b9d1e3;
+        font: inherit;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 12px;
+        padding: 10px 16px;
+        border-radius: 10px 10px 0 0;
+        cursor: pointer;
+      }}
+      .main-tab[aria-selected="true"] {{
+        background: var(--surface);
+        color: var(--text);
+        border-color: var(--border);
+        border-bottom-color: var(--surface);
+        box-shadow: var(--shadow);
+      }}
+      .tab-panel[hidden] {{
+        display: none !important;
+      }}
       .layout {{ display: grid; gap: 14px; }}
-      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}
+      .layout-rerun {{
+        grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+        align-items: stretch;
+        min-height: calc(100dvh - 140px);
+      }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -5792,17 +5828,58 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 4px 9px;
         font-size: 12px;
       }}
-      .cameras-panel {{ display: block; }}
-      .camera-card {{
-        border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px;
-        background: #fff;
-      }}
-      .camera-card.selected {{ border: 2px solid var(--brand); box-shadow: 0 0 0 2px rgba(229, 255, 79, 0.45); }}
-      .camera-card h4 {{ margin: 0 0 6px 0; }}
-      .camera-meta {{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }}
-      .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
-      .camera-frustum {{ display: flex; justify-content: center; }}
       .rollout-hint {{ font-size: 13px; color: var(--muted); margin: 0 0 10px 0; }}
+      .rerun-rail {{
+        max-height: calc(100dvh - 140px);
+        overflow: auto;
+      }}
+      .rerun-stage {{
+        display: flex;
+        flex-direction: column;
+        min-height: calc(100dvh - 140px);
+        padding: 0;
+        overflow: hidden;
+        background: #0b1220;
+        border-color: #1e293b;
+        color: #e2e8f0;
+      }}
+      .rerun-stage h3,
+      .rerun-stage .hint,
+      .rerun-stage .cta,
+      .rerun-stage .status-row,
+      .rerun-stage .rollout-hint {{
+        color: #cbd5e1;
+      }}
+      .rerun-stage-chrome {{
+        padding: 14px 14px 10px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+      }}
+      .rerun-frame-shell {{
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 560px;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(229, 255, 79, 0.08), transparent 35%),
+          linear-gradient(180deg, #0f172a 0%, #020617 100%);
+      }}
+      #rerunFrame {{
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 560px;
+        border: 0;
+        background: #000;
+      }}
+      #artifactPreviewHost {{
+        padding: 12px 14px 14px;
+        border-top: 1px solid rgba(148, 163, 184, 0.25);
+      }}
+      #artifactPreviewHost video,
+      #artifactPreviewHost img {{
+        width: 100%;
+        max-height: 320px;
+        background: #000;
+      }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-panel-head {{
         display: flex;
@@ -6008,7 +6085,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         outline: none;
       }}
       .chat-input textarea:focus {{ border-color: var(--brand); box-shadow: 0 0 0 3px rgba(229, 255, 79, 0.28); }}
-      iframe {{ width: 100%; height: min(78vh, 820px); min-height: 620px; border: 1px solid var(--border); border-radius: 10px; }}
+      iframe {{ width: 100%; border: 0; }}
       .rerun-placeholder {{
         width: 100%;
         min-height: 220px;
@@ -6160,7 +6237,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         to {{ opacity: 1; transform: translateY(0); }}
       }}
       @media (max-width: 1280px) {{
-        .layout-3 {{ grid-template-columns: 1fr; }}
+        .layout-rerun {{ grid-template-columns: 1fr; }}
+        .rerun-rail,
+        .rerun-stage {{
+          max-height: none;
+          min-height: 0;
+        }}
+        .rerun-frame-shell,
+        #rerunFrame {{
+          min-height: 480px;
+          height: min(70vh, 720px);
+        }}
       }}
       @media (max-width: 900px) {{
         .topbar {{
@@ -6168,11 +6255,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           align-items: flex-start;
           gap: 8px;
         }}
+        .main-tabs {{
+          padding: 10px 12px 0;
+        }}
         .page {{ padding: 12px; gap: 12px; }}
         .panel {{ padding: 12px; }}
         .field-row {{ grid-template-columns: 1fr; }}
         .msg-card {{ max-width: 92%; }}
-        iframe {{ height: 360px; min-height: 360px; }}
+        .rerun-frame-shell,
+        #rerunFrame {{
+          height: 360px;
+          min-height: 360px;
+        }}
       }}
       @media (max-width: 640px) {{
         body {{ padding-bottom: calc(52px + env(safe-area-inset-bottom)); }}
@@ -6265,12 +6359,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         justify-content: center;
       }}
       body.mobile-agent .workflow-panel,
-      body.mobile-agent .layout-3 {{
+      body.mobile-agent .run-monitor-panel,
+      body.mobile-agent .layout-rerun {{
         display: none;
       }}
       body.mobile-agent.mobile-show-panels .workflow-panel,
-      body.mobile-agent.mobile-show-panels .layout-3 {{
+      body.mobile-agent.mobile-show-panels .run-monitor-panel {{
+        display: block;
+      }}
+      body.mobile-agent.mobile-show-panels .layout-rerun {{
         display: grid;
+      }}
+      body.mobile-agent .main-tabs {{
+        padding: 8px 10px 0;
+        gap: 6px;
+      }}
+      body.mobile-agent .main-tab {{
+        flex: 1 1 auto;
+        text-align: center;
+        padding: 12px 10px;
+        min-height: 44px;
       }}
       body.mobile-agent .mobile-only-toggle {{
         display: inline-flex;
@@ -6349,11 +6457,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       <header class="topbar">
         <div>
           <div class="brand">NEBIUS | NPA WORKBENCH AGENT</div>
-          <div class="brand-sub">Sim2Real operations, assets, cameras, and Rerun visualization</div>
+          <div class="brand-sub">Chat operations and full-bleed Rerun visualization</div>
         </div>
         <span class="badge badge-ok">Secure basic-auth session</span>
       </header>
+      <nav class="main-tabs" role="tablist" aria-label="Workbench views">
+        <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
+        <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
+      </nav>
       <main class="page">
+        <div id="panelChat" class="tab-panel" role="tabpanel" aria-labelledby="tabChat">
         <section class="panel chat-panel">
           <div class="chat-panel-head">
             <div>
@@ -6424,9 +6537,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <pre id="runLog" class="run-log">No run selected.</pre>
           </div>
         </section>
-        <div class="layout layout-3">
-          <section class="panel">
-            <h3>Sim Assets</h3>
+        </div>
+        <div id="panelRerun" class="tab-panel" role="tabpanel" aria-labelledby="tabRerun" hidden>
+        <div class="layout layout-rerun">
+          <section class="panel rerun-rail">
+            <h3>Sim Assets &amp; Runs</h3>
             <div class="subsection">
               <h4>Selection</h4>
               <div class="field-row">
@@ -6496,6 +6611,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>
             <div class="subsection" style="margin-top:10px;">
               <h4>Artifact browser</h4>
+              <p class="rollout-hint">Load `.rrd` into Rerun or preview `.mp4` / images inline.</p>
               <div class="field-row">
                 <div class="field">
                   <label for="artifactPrefix">Prefix</label>
@@ -6538,37 +6654,38 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
               <div id="artifactList" class="hint" style="margin-top:8px;"></div>
             </div>
+            <select id="cameraSelect" hidden aria-hidden="true">
+              <option value="workspace" selected>workspace</option>
+            </select>
           </section>
-          <section class="panel cameras-panel">
-            <h3>Cameras</h3>
-            <p id="cameraRolloutHint" class="rollout-hint">Active for next rollout: <strong id="activeCameraLabel">workspace</strong></p>
-            <p class="rollout-hint">Stock workspace and wrist cameras from the Sim2Real default scene spec.</p>
-            <div id="cameraCards"></div>
-            <select id="cameraSelect" hidden aria-hidden="true"></select>
-            <div id="rerunEntityHint" class="rollout-hint"></div>
-          </section>
-          <section class="panel rerun-panel">
-            <h3>Rerun (embedded)</h3>
-            <div id="simviz">
-              <div class="status-row">
-                <span>Run: <strong id="simRunId">—</strong></span>
-                <span>Stage: <span id="simStage" class="badge">idle</span></span>
-                <span>Camera: <strong id="simCamera">workspace</strong></span>
+          <section class="panel rerun-panel rerun-stage">
+            <div class="rerun-stage-chrome">
+              <h3>Rerun</h3>
+              <div id="simviz">
+                <div class="status-row">
+                  <span>Run: <strong id="simRunId">—</strong></span>
+                  <span>Stage: <span id="simStage" class="badge">idle</span></span>
+                  <span>Camera: <strong id="simCamera">workspace</strong></span>
+                </div>
+                <div id="renderedDataSummary" class="hint">Rendering: no run artifact loaded yet.</div>
+                <div class="btn-row">
+                  <button id="openRerun" class="btn" type="button">Open in Rerun</button>
+                  <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
+                  <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+                </div>
+                <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
-              <div id="renderedDataSummary" class="hint">Rendering: no run artifact loaded yet.</div>
-              <div class="btn-row">
-                <button id="openRerun" class="btn" type="button">Open in Rerun</button>
+              <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
+                <p>Rerun recording mounts in the stage below.</p>
+                <p class="hint">Loading the active Sim2Real recording.</p>
               </div>
-              <p id="simvizCta" class="cta">Embedded real Sim2Real recording. Use Load active Sim2Real if the viewer needs a refresh.</p>
             </div>
-            <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
-              <p>Rerun recording is embedded below.</p>
-              <p class="hint">Loading the active Sim2Real recording.</p>
-              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+            <div class="rerun-frame-shell">
+              <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen loading="lazy"></iframe>
             </div>
-            <iframe id="rerunFrame" title="rerun" src="about:blank" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
-            <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
+            <div id="artifactPreviewHost" class="hint" hidden></div>
           </section>
+        </div>
         </div>
       </main>
     </div>
@@ -6687,6 +6804,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let activeChatSessionId = "default";
       let chatSendInFlight = false;
       let thinkingNode = null;
+      let activeMainTab = "chat";
+      async function activateMainTab(name, options) {{
+        const opts = options || {{}};
+        const tab = String(name || "chat").trim() === "rerun" ? "rerun" : "chat";
+        activeMainTab = tab;
+        const chatPanel = document.getElementById("panelChat");
+        const rerunPanel = document.getElementById("panelRerun");
+        const tabChat = document.getElementById("tabChat");
+        const tabRerun = document.getElementById("tabRerun");
+        if (chatPanel) chatPanel.hidden = tab !== "chat";
+        if (rerunPanel) rerunPanel.hidden = tab !== "rerun";
+        if (tabChat) tabChat.setAttribute("aria-selected", tab === "chat" ? "true" : "false");
+        if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
+        if (tab === "rerun" && !opts.skipEnsure) {{
+          // Remount after display:none so WebGL recovers from a hidden iframe.
+          if (rerunIframeLoaded) {{
+            rerunIframeLoaded = false;
+            mountedRerunRunKey = "";
+          }}
+          try {{
+            await ensureFrankaRerunLoaded();
+          }} catch (err) {{
+            console.warn("rerun tab activate failed", err);
+          }}
+        }}
+      }}
       function setStatus(text) {{
         const bar = document.getElementById("statusBar");
         if (bar) bar.textContent = String(text || "");
@@ -6739,6 +6882,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             sendChat().catch((err) => showToast(String(err), "error"));
           }});
         }}
+        document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {{
+          btn.addEventListener("click", () => {{
+            activateMainTab(String(btn.getAttribute("data-tab") || "chat")).catch((err) => {{
+              console.warn("tab switch failed", err);
+            }});
+          }});
+        }});
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {{
           mobileToggle.addEventListener("click", () => {{
@@ -7419,7 +7569,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const fullHref = (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
-          "&hide_welcome_screen=1&camera=" +
+          "&hide_welcome_screen=1&theme=dark&camera=" +
           encodeURIComponent(cam)
         );
         const openLink = document.getElementById("openFullRerun");
@@ -7670,7 +7820,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
       }}
       async function loadRerunViewer(camera) {{
-        const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
+        const cam = String(camera || selectedCamera());
         let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
         const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
         if (render && render !== "rerun") {{
@@ -7718,7 +7868,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return last || {{}};
       }}
       async function loadFrankaDemo() {{
-        const camera = String(document.getElementById("cameraSelect").value || "workspace");
+        const camera = selectedCamera();
+        await activateMainTab("rerun", {{ skipEnsure: true }});
         const result = await apiJson("/api/sim-viz/load-franka-demo", {{
           method: "POST",
           headers: {{ "content-type": "application/json" }},
@@ -8065,6 +8216,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
         if (loadedRunId) activeRunId = loadedRunId;
         updateRenderedDataSummary(simViz);
+        await activateMainTab("rerun", {{ skipEnsure: true }});
         if (render === "rerun") {{
           hideArtifactPreview();
           rerunIframeLoaded = false;
@@ -8098,7 +8250,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             setWorkflowYaml(session.workflow_draft.yaml, session.workflow_draft.validation || {{}});
           }}
           const assets = await loadJson("/api/sim-assets");
-          const cameras = await loadJson("/api/sim-assets/cameras");
           const statusPath = activeRunId
             ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
             : "/api/sim-viz/status";
@@ -8139,21 +8290,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const props = Array.isArray(assets.selection && assets.selection.props) ? assets.selection.props.map(String) : [];
           document.getElementById("propCube").checked = props.includes("cube");
           const select = document.getElementById("cameraSelect");
-          const selected = new Set((cameras.selected || []).map(String));
-          const list = Array.isArray(cameras.cameras) ? cameras.cameras : [];
-          const activeName = String(
-            (selected.size ? [...selected][0] : null) || simViz.camera || "workspace"
-          );
-          document.getElementById("activeCameraLabel").textContent = activeName;
-          select.innerHTML = "";
-          for (const cam of list) {{
-            const opt = document.createElement("option");
-            opt.value = String(cam.name || "");
-            opt.textContent = String(cam.name || "");
-            if (selected.has(opt.value) || opt.value === activeName) opt.selected = true;
-            select.appendChild(opt);
+          if (select) {{
+            const activeName = String(simViz.camera || select.value || "workspace");
+            if (![...select.options].some((opt) => opt.value === activeName)) {{
+              const opt = document.createElement("option");
+              opt.value = activeName;
+              opt.textContent = activeName;
+              select.appendChild(opt);
+            }}
+            select.value = activeName;
           }}
-          renderCameraCards(list, activeName, simViz);
           const updatedAt = String(simViz.rrd_updated_at || "");
           if (updatedAt) {{
             lastRrdUpdatedAt = updatedAt;
@@ -8162,6 +8308,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           document.getElementById("simvizCta").hidden = false;
           document.getElementById("simvizCta").textContent = "Failed to fetch sim viz status";
         }}
+      }}
+      function selectedCamera() {{
+        const select = document.getElementById("cameraSelect");
+        return String((select && select.value) || "workspace");
       }}
       function frustumSvg(camera, selected) {{
         const pos = Array.isArray(camera.pos) ? camera.pos : [0, 0, 0];
@@ -8187,55 +8337,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </svg>`;
       }}
       function renderCameraCards(list, activeName, simViz) {{
-        const holder = document.getElementById("cameraCards");
-        holder.innerHTML = "";
-        for (const cam of list) {{
-          const name = String(cam.name || "");
-          const selected = name === activeName;
-          const card = document.createElement("div");
-          card.className = "camera-card" + (selected ? " selected" : "");
-          const pos = Array.isArray(cam.pos) ? cam.pos.map((v) => Number(v).toFixed(2)).join(", ") : "-";
-          const look = Array.isArray(cam.look_at) ? cam.look_at.map((v) => Number(v).toFixed(2)).join(", ") : "-";
-          const res = Array.isArray(cam.resolution) ? cam.resolution.join("x") : "640x480";
-          card.innerHTML = `
-            <h4>` + name + (selected ? ' <span class="badge">selected</span>' : '') + `</h4>
-            <div class="camera-meta">placement: ${{String(cam.placement || "custom")}} - fov ${{Number(cam.fov || 60)}}deg - ${{res}}</div>
-            <div class="camera-meta">pos [${{pos}}] - look_at [${{look}}]</div>
-            <div class="camera-frustum">${{frustumSvg(cam, selected)}}</div>
-            <div class="camera-actions">
-              <button class="btn" type="button" data-action="select" data-camera="${{name}}">Select</button>
-              <button class="btn" type="button" data-action="preview" data-camera="${{name}}">Preview in Rerun</button>
-            </div>`;
-          holder.appendChild(card);
-        }}
-        const entity = String(simViz.preview_entity || ("world/camera_frustums/" + activeName + "/frustum"));
-        const rollout = "rollouts/latest/" + activeName + "/camera";
-        document.getElementById("rerunEntityHint").textContent =
-          (simViz.rerun_ready || simViz.rrd_uri)
-            ? "Rerun entities: " + entity + " (frustum) - " + rollout + " (rollout frames when available)"
-            : "Preview in Rerun to log camera frustums; rollout frames appear after Sim2Real runs.";
-        holder.querySelectorAll("button[data-action]").forEach((btn) => {{
-          btn.addEventListener("click", async (event) => {{
-            event.preventDefault();
-            const camera = String(btn.getAttribute("data-camera") || "");
-            const action = String(btn.getAttribute("data-action") || "");
-            const label = action === "select" ? "Select " + camera : "Preview " + camera;
-            setStatus(label + "...");
-            showToast(label, "info");
-            try {{
-              if (action === "select") {{
-                await selectCamera(camera);
-              }} else {{
-                await previewCamera(camera);
-              }}
-              setStatus(label + " done");
-              showToast(label + " done", "success");
-            }} catch (err) {{
-              setStatus(label + " failed");
-              showToast(String(err), "error");
-            }}
-          }});
-        }});
+        // Cameras panel removed from UI; keep helper for API-driven camera metadata.
+        return;
       }}
       function renderAssetsSummary(assets) {{
         const selection = (assets && assets.selection) || {{}};
@@ -8472,7 +8575,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           showToast("No Rerun recording for this run yet; showing run logs instead.", "info");
           return;
         }}
-        const camera = String(simViz.camera || document.getElementById("cameraSelect").value || "workspace");
+        const camera = String(simViz.camera || selectedCamera());
         const src = await rerunIframeSrc(camera, String((simViz && simViz.run_id) || activeRunId || "").trim());
         window.open(src, "_blank", "noopener");
       }}

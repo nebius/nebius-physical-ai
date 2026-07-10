@@ -629,7 +629,7 @@ def format_cameras(state: dict[str, Any], *, default_cameras: list[dict[str, Any
                 "- **wrist**: end-effector mounted camera",
             ]
         )
-    lines.append("- Use **Preview in Rerun** in the Cameras panel to highlight a frustum.")
+    lines.append("- Open the **Rerun** tab to inspect camera entities in the embedded viewer.")
     return "\n".join(lines)
 
 

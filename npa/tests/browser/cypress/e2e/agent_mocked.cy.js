@@ -11,7 +11,6 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.visitMockAgent();
     cy.wait("@session");
     cy.wait("@simAssets");
-    cy.wait("@cameras");
   });
 
   it("renders every static control and generated panel", () => {
@@ -21,9 +20,11 @@ describe("NPA agent UI with mocked APIs", () => {
     for (const id of FIELD_IDS) {
       cy.get(`#${id}`).should("exist");
     }
-    cy.get("#cameraCards button[data-action='select']").should("have.length.at.least", 1);
-    cy.get("#cameraCards button[data-action='preview']").should("have.length.at.least", 1);
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
+    cy.get("#tabChat").should("have.attr", "aria-selected", "true");
+    cy.get("#tabRerun").click();
+    cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
+    cy.get("#panelRerun").should("not.have.attr", "hidden");
     cy.get("#assetsSummary").should("contain.text", "stock://robot/franka");
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
@@ -144,13 +145,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Loaded artifact");
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
-    cy.get("#cameraCards button[data-action='select'][data-camera='wrist']").click({ force: true });
-    cy.wait("@setCamera");
-    cy.get("#activeCameraLabel").should("contain.text", "workspace");
-
-    cy.get("#cameraCards button[data-action='preview'][data-camera='workspace']").click({ force: true });
-    cy.wait("@cameraPreview");
-    cy.get("#chatLog").should("contain.text", "Previewing workspace in Rerun");
+    cy.get("#tabChat").click();
+    cy.get("#panelChat").should("not.have.attr", "hidden");
   });
 
   it("discovers and interacts with non-stock Sim2Real run artifacts", () => {

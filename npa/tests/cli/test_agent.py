@@ -500,19 +500,24 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    assert "cameras-panel" in source
-    assert "Preview in Rerun" in source
-    assert "cameraCards" in source
+    # Cameras panel removed from UI; APIs and stock camera metadata remain.
+    assert "cameras-panel" not in source
+    assert "cameraCards" not in source
+    assert "Preview in Rerun" not in source
     assert '@app.get("/sim-assets/cameras")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
     assert "world/cameras/" in source
     assert "world/camera_frustums/" in source
     assert 'f"{{frustum_entity}}/frustum"' in source
     assert 'f"{{entity}}/frustum"' not in source
-    assert "The **Cameras** panel is the center column below chat" in source
+    assert "There is no separate Cameras panel in the UI" in source
     assert "stock_workspace" in source
     assert "stock_ee_mounted" in source
     assert "frustumSvg" in source
+    assert 'id="tabChat"' in source
+    assert 'id="tabRerun"' in source
+    assert "layout-rerun" in source
+    assert "activateMainTab" in source
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
@@ -548,13 +553,15 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "robot/franka/links" in source
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
-    assert "class=\"panel rerun-panel\"" in source
-    assert ".layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}" in source
-    assert ".cameras-panel {{ display: block; }}" in source
-    assert "height: min(78vh, 820px)" in source
+    assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
+    assert ".layout-rerun {{" in source
+    assert "cameras-panel" not in source
+    assert "rerun-frame-shell" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
     assert 'id="rerunFrame" title="rerun" src="about:blank"' in source
+    assert "theme=dark" in source
+    assert "allowfullscreen" in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
