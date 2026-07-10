@@ -393,6 +393,8 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "npa.packaging.tier=\"interactive\"" in text
     assert "useradd" in text
     assert "python3" in text
+    assert "NOPASSWD:ALL" in text
+    assert "sudo" in text
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:
