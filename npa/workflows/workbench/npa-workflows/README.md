@@ -13,6 +13,11 @@ Agent skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
 | [tokenfactory-cosmos-gate.yaml](tokenfactory-cosmos-gate.yaml) | 6 | Creative reason → augment → VLM gate loop |
 | [sim2real-vlm-rl.yaml](sim2real-vlm-rl.yaml) | 11 | Nested loops + dynamic gate |
 | [bdd100k-pipeline.yaml](bdd100k-pipeline.yaml) | 11 | LanceDB → train → eval → review |
+| [byof-maniskill.yaml](byof-maniskill.yaml) | 1 | OSS registry candidate: ManiSkill pinned image + PickCube smoke |
+| [byof-mujoco-playground.yaml](byof-mujoco-playground.yaml) | 1 | OSS registry candidate: MuJoCo Playground pinned image + Cartpole smoke |
+| [byof-robocasa.yaml](byof-robocasa.yaml) | 1 | OSS registry candidate: RoboCasa pinned image + headless kitchen-task smoke |
+| [byof-openpi.yaml](byof-openpi.yaml) | 1 | OSS registry candidate: OpenPI pinned image + pi05 DROID config smoke |
+| [byof-droid-policy-learning.yaml](byof-droid-policy-learning.yaml) | 1 | OSS registry candidate: DROID policy learning pinned image + RLDS config smoke |
 
 ```bash
 npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml

@@ -78,6 +78,35 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(monk
     }
 
 
+def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8")
+    global_config = tmp_path / "global.yaml"
+    global_config.write_text(
+        "name: human-readable-config\nkubernetes:\n  pod_config:\n    spec: {}\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 11\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-global-config",
+        config_path=global_config,
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text(encoding="utf-8"))
+    assert "name" not in rendered
+    assert "kubernetes" in rendered
+
+
 def test_submit_workflow_runs_sky_from_stable_cwd(monkeypatch, tmp_path) -> None:
     """All sky invocations must run from a durable cwd so the auto-started
     API server daemon never inherits an ephemeral (later-deleted) directory."""
