@@ -190,8 +190,7 @@ Required smoke capabilities:
 
 - `mjx_cartpole_step`
 - `mjx_cheetah_run_step`
-- `train_jax_ppo_cartpole_smoke` (attempted; may remain deferred if the
-  upstream train script's video/EGL path fails independently)
+- `train_jax_ppo_cartpole_smoke` (live-accepted; brax PPO train API, jax&lt;0.8.1)
 
 ### RoboCasa (`byof-robocasa.yaml`)
 
@@ -203,7 +202,7 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 - `download_kitchen_assets_lw` (IIFAN lightwheel fixtures/objects + git accessory restore)
 - `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
-- `kitchen_random_rollout` (`run_random_rollouts`; video optional if gymnasium wraps `.sim`)
+- `kitchen_random_rollout` (`run_random_rollouts` with mp4; pin `gymnasium==0.29.1` and bind `env.sim`)
 
 ### OpenPI (`byof-openpi.yaml`)
 
@@ -211,7 +210,7 @@ Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac
 
 Hard-gate capability: `policy_config_materialization` (`get_config("pi05_droid")`).
 
-Also attempted in the same smoke (may remain deferred with evidence):
+Also exercised in the same smoke (live-accepted with S3 evidence):
 
 - `pi05_droid_checkpoint_download`
 - `pi05_droid_checkpoint_infer` (`create_trained_policy` + `policy.infer`)
@@ -224,7 +223,7 @@ Pinned: `droid-dataset/droid_policy_learning` `9a29c832b4c81bf38401111f5e4cdddac
 
 Hard-gate capability: `rlds_config_generator_contract`.
 
-Also attempted in the same smoke (may remain deferred with evidence):
+Also exercised in the same smoke (live-accepted with S3 evidence):
 
 - `droid_100_download`
 - `droid_100_config_gen`
