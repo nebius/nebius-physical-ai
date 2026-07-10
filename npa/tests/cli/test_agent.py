@@ -546,13 +546,19 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "height: min(78vh, 820px)" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
-    assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
+    assert 'id="rerunFrame" title="rerun" src="about:blank"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl.startsWith" in source
+    assert "location.origin + rrdUrl" in source
+    assert "_rerun_iframe_url" in source
+    assert "NPA_AGENT_PUBLIC_URL" in source
     assert "/rerun/recordings/sim2real.rrd" in source
     assert "Prefer the public recording copy; authenticated blob fetch remains the fallback" in source
     assert "does not reliably consume parent-created blob URLs" in source
+    # Path-only `/rerun/...` is parsed by Rerun as host `rerun` and must not be emitted.
+    assert "url=/rerun/recordings/sim2real.rrd" not in source
     assert '"&renderer=webgl&hide_welcome_screen=1&camera="' not in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
