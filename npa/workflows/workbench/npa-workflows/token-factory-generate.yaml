@@ -1,0 +1,34 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: token-factory-generate
+  description: Generate text completions with Nebius Token Factory (zero-GPU).
+  skypilotTwin: npa/workflows/workbench/skypilot/token-factory-generate.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory"
+  generate_model: "meta-llama/Llama-3.3-70B-Instruct"
+  max_tokens: "512"
+
+  prompts_uri: "s3://{{config.bucket}}/{{config.prefix}}/prompts.jsonl"
+  generations_uri: "s3://{{config.bucket}}/{{config.prefix}}/generations.jsonl"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: generate-text
+
+states:
+  generate-text:
+    description: Generate completions for each prompt via Token Factory.
+    toolRef: workbench.token_factory.generate
+    resources: cpu
+    outputs:
+      - uri: "{{config.generations_uri}}"
+        schema: npa.token_factory.generations.v1
+    terminal: true

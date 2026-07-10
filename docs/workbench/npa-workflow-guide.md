@@ -16,19 +16,41 @@ npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real-
 # Plan + optional scheduler hints + S3 run manifest
 npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
   --plan-only --scheduler-plan --persist-state --json
+
+# Submit an npa.workflow spec
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
+
+# Plan only (no submit) — inspect planned steps
+# Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
+NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
+  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+  --plan-only --run-id demo
 ```
+
+Author and submit `npa.workflow/v0.0.1` specs under
+[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
+README for the full catalog.
+
+**No-image tools** (Token Factory specs): set
+`NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
+or pass `--image` to a workbench image that already includes it. `--plan-only`
+does not mint or print live registry tokens.
 
 Golden specs (all pytest-guarded):
 
 | File | Shows |
 | --- | --- |
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
+| `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic `transitions` |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
+| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
 ## Document shape
 
@@ -112,11 +134,28 @@ inventing YAML fields.
 | --- | --- |
 | `--persist-state` | Write `npa-workflow/manifest.json` + `status.json` under `config.prefix` |
 | `--require-inputs` | Fail fast when declared input URIs are missing on S3 |
-| `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) for SkyPilot/K8s glue |
+| `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) |
 | `run_workflow(..., execute=True)` | Dynamic traversal; not a static pre-built plan |
+| `npa workbench workflow submit <npa.workflow.yaml>` | Plan the graph and launch the run |
 
-SkyPilot submit per step is **not** wired yet — scheduler output is the integration
-contract for the next layer.
+`npa workbench workflow submit` on an `npa.workflow/v0.0.1` spec plans the graph
+and launches it. Use `--plan-only` to inspect the plan without launching.
+Parallel fan-out remains out of scope for v0.0.1.
+
+### Live submit E2E
+
+On an operator VM with Nebius credentials and `NPA_REGISTRY`:
+
+```bash
+# Cheap first: Token Factory CPU twins
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
+
+# Full matrix
+./scripts/npa-workflow-submit-live-e2e.sh
+```
+
+Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
+(19 twins across cpu / gpu / multi; stub twins are plan-only).
 
 ## SDK
 

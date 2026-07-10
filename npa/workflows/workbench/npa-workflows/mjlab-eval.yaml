@@ -1,0 +1,37 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: mjlab-eval
+  description: Score a SONIC locomotion checkpoint with MJLab metrics.
+  skypilotTwin: npa/workflows/workbench/skypilot/mjlab-eval.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/mjlab"
+  suite: locomotion
+  embodiment: unitree-g1
+  episodes: "8"
+
+  motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
+  mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+
+initial: mjlab-eval
+
+states:
+  mjlab-eval:
+    description: Evaluate a SONIC locomotion checkpoint against MJLab metrics.
+    toolRef: workbench.mjlab.eval
+    resources: gpu
+    outputs:
+      - uri: "{{config.mjlab_uri}}report.json"
+        schema: npa.workbench.mjlab.report.v1
+    terminal: true

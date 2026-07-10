@@ -1,0 +1,34 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-reason
+  description: Build a Cosmos3 reason-stage manifest over input frames.
+  skypilotTwin: npa/workflows/workbench/skypilot/cosmos3-reason.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-reason"
+  cosmos3_model: "nvidia/Cosmos-Reason1-7B"
+
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/frames/"
+  reason_uri: "s3://{{config.bucket}}/{{config.prefix}}/reason/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: reason
+
+states:
+  reason:
+    description: Build the Cosmos3 reason stage manifest.
+    toolRef: workbench.cosmos3.reason
+    resources: gpu
+    outputs:
+      - uri: "{{config.reason_uri}}manifest.json"
+        schema: npa.workbench.cosmos3.reason.v1
+    terminal: true
