@@ -17,30 +17,25 @@ npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real-
 npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
   --plan-only --scheduler-plan --persist-state --json
 
-# Submit an npa.workflow spec (renders → SkyPilot multi-doc YAML → sky jobs launch)
+# Submit an npa.workflow spec
 npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
   --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
 
-# Render only (no submit) — inspect the generated SkyPilot YAML
+# Plan only (no submit) — inspect planned steps
 # Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
 NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
   npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
   --plan-only --run-id demo
 ```
 
-`npa workbench workflow submit` accepts **both** `npa.workflow/v0.0.1` specs and
-legacy SkyPilot YAMLs. For npa.workflow specs it plans the state graph, renders
-a serial SkyPilot multi-doc YAML (resolved images, no `${VAR}` placeholders),
-and submits that. SkyPilot originals under `npa/workflows/workbench/skypilot/`
-are kept as the production runtime reference; see
-[`npa-workflows/README.md`](../../npa/workflows/workbench/npa-workflows/README.md)
-for the twin matrix and SkyPilot-only exceptions.
+Author and submit `npa.workflow/v0.0.1` specs under
+[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
+README for the full catalog.
 
-**No-image tools** (Token Factory twins): the renderer does not pin `npa-cosmos`
-(SkyPilot k8s apt-ssh fails on that image). Set `NPA_SRC_S3_URI=s3://bucket/prefix/npa`
-so setup can sync and `pip install -e` the package, or pass `--image` to a workbench
-image that already includes `npa`. `--plan-only` prints a
-`<SKYPILOT_DOCKER_PASSWORD>` placeholder instead of minting live registry tokens.
+**No-image tools** (Token Factory specs): set
+`NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
+or pass `--image` to a workbench image that already includes it. `--plan-only`
+does not mint or print live registry tokens.
 
 Golden specs (all pytest-guarded):
 
@@ -53,7 +48,7 @@ Golden specs (all pytest-guarded):
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 | `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
-| `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool twins of SkyPilot YAMLs |
+| `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
 ## Document shape
 
@@ -137,19 +132,17 @@ inventing YAML fields.
 | --- | --- |
 | `--persist-state` | Write `npa-workflow/manifest.json` + `status.json` under `config.prefix` |
 | `--require-inputs` | Fail fast when declared input URIs are missing on S3 |
-| `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) for SkyPilot/K8s glue |
+| `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) |
 | `run_workflow(..., execute=True)` | Dynamic traversal; not a static pre-built plan |
-| `npa workbench workflow submit <npa.workflow.yaml>` | Plan → render serial SkyPilot YAML → `sky jobs launch` |
+| `npa workbench workflow submit <npa.workflow.yaml>` | Plan the graph and launch the run |
 
-`npa workbench workflow submit` on an `npa.workflow/v0.0.1` spec plans the graph,
-renders a serial SkyPilot multi-doc YAML (resolved images, no `${VAR}`
-placeholders), and submits it. Use `--plan-only` to inspect the rendered YAML
-without launching. Parallel fan-out (`execution: parallel`) remains out of
-scope for v0.0.1 — those pipelines stay as raw SkyPilot YAMLs.
+`npa workbench workflow submit` on an `npa.workflow/v0.0.1` spec plans the graph
+and launches it. Use `--plan-only` to inspect the plan without launching.
+Parallel fan-out remains out of scope for v0.0.1.
 
 ### Live submit E2E
 
-On an operator VM with Nebius credentials, SkyPilot, and `NPA_REGISTRY`:
+On an operator VM with Nebius credentials and `NPA_REGISTRY`:
 
 ```bash
 # Cheap first: Token Factory CPU twins
