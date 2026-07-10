@@ -4612,7 +4612,9 @@ def sim_viz_status(run_id: str = ""):
         and (live_url or run_has_specific_rrd or may_use_default_recording)
     ):
         if live_url:
-            payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
+            payload["rerun_iframe_url"] = (
+                f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{camera}}"
+            )
         else:
             payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
     else:
