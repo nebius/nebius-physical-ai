@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070601"
+AGENT_UI_VERSION = "2026070901"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -1361,6 +1361,9 @@ def _nginx_agent_site_body(
     alias /opt/npa-agent/recordings/;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Cross-Origin-Resource-Policy "cross-origin" always;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;
@@ -1506,6 +1509,10 @@ if [ -s /mnt/cloud-metadata/token ]; then
   fi
 fi
 sudo mkdir -p /opt/npa-agent
+cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
+NPA_AGENT_PUBLIC_URL=https://{host}
+NPA_AGENT_PUBLIC_HOST={host}
+ENV
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
 import os
@@ -1531,6 +1538,42 @@ STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
+
+RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+
+
+def _agent_public_origin() -> str:
+    # HTTPS origin for Rerun .rrd fetches (must be absolute; path-only URLs break).
+    for key in ("NPA_AGENT_PUBLIC_URL", "NPA_AGENT_PUBLIC_ORIGIN"):
+        raw = str(os.environ.get(key, "")).strip().rstrip("/")
+        if raw.startswith("https://") or raw.startswith("http://"):
+            return raw
+    host = str(os.environ.get("NPA_AGENT_PUBLIC_HOST", "")).strip()
+    if host:
+        return f"https://{{host}}"
+    return ""
+
+
+def _rerun_recording_url(*, cache_bust: bool = False) -> str:
+    origin = _agent_public_origin()
+    path = RERUN_RECORDING_HTTP_PATH
+    if origin:
+        url = f"{{origin}}{{path}}"
+    else:
+        url = path
+    if cache_bust:
+        url = f"{{url}}?t={{int(time.time() * 1000)}}"
+    return url
+
+
+def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
+    cam = (camera or "workspace").strip() or "workspace"
+    if live_url:
+        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+    recording = _rerun_recording_url()
+    # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
+    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
 AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
@@ -2663,7 +2706,7 @@ def _apply_loaded_artifact(
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
         if _is_sim2real_pipeline_recording(key):
             sim_viz["preview_entity"] = "camera"
@@ -2789,7 +2832,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     iframe_url = (
         f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
         if live_url
-        else f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}"
+        else _rerun_iframe_url(cam)
     )
     viz = {{
         "run_id": run_id,
@@ -2851,7 +2894,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
     }}
     state["sim_viz"] = viz
     _record_sim_viz_run(state, viz)
@@ -2877,7 +2920,7 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
         "submit_mode": "sim2real",
         "workflow_name": "sim2real",
         "pipeline_visualization": True,
@@ -3735,7 +3778,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
                 "rrd_uri": f"file://{{RECORDING_PATH}}",
                 "rrd_updated_at": _now_iso(),
                 "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
-                "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz.get('camera') or 'workspace'}}",
+                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")),
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
@@ -4570,7 +4613,7 @@ def sim_viz_status(run_id: str = ""):
         if live_url:
             payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
         else:
-            payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
+            payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
     else:
         payload["rerun_iframe_url"] = ""
     if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
@@ -4944,7 +4987,7 @@ def _boot_preload_sim_viz() -> None:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
     }}
     _record_sim_viz_run(state, state["sim_viz"])
     _save_state(state)
@@ -6520,9 +6563,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
               <p>Rerun recording is embedded below.</p>
               <p class="hint">Loading the active Sim2Real recording.</p>
-              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a class="btn" href="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
             </div>
-            <iframe id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
+            <iframe id="rerunFrame" title="rerun" src="about:blank" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
             <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
           </section>
         </div>
@@ -7366,12 +7409,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           rrdUrl = await resolveRerunRrdUrl(18, runId);
         }}
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
-        return (
+        // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
+        if (rrdUrl.startsWith("/")) {{
+          rrdUrl = location.origin + rrdUrl;
+        }} else if (rrdUrl && !/^https?:\/\//i.test(rrdUrl)) {{
+          rrdUrl = location.origin + "/" + String(rrdUrl).replace(/^\/+/, "");
+        }}
+        const fullHref = (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
           "&hide_welcome_screen=1&camera=" +
           encodeURIComponent(cam)
         );
+        const openLink = document.getElementById("openFullRerun");
+        if (openLink) openLink.href = fullHref;
+        return fullHref;
       }}
       function showRerunPlaceholder(message, options) {{
         const opts = options || {{}};
@@ -8571,6 +8623,7 @@ Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
+EnvironmentFile=-/opt/npa-agent/public.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
