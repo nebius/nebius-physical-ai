@@ -48,6 +48,7 @@ class Workload(str, Enum):
     container_verify = "container-verify"
     rl_train = "rl-train"
     datagen = "datagen"
+    solution_smoke = "solution-smoke"
 
 
 class OutputFormat(str, Enum):
@@ -73,6 +74,11 @@ def build_byof_argv(
     base_profile: str = "ubuntu",
     base_image: str = "",
     workload: str = "container-verify",
+    build_command: str = "",
+    smoke_command: str = "",
+    solution_name: str = "",
+    capability_name: str = "",
+    smoke_artifact_name: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -118,6 +124,16 @@ def build_byof_argv(
     ]
     if base_image:
         argv.extend(["--base-image", base_image])
+    if build_command:
+        argv.extend(["--build-command", build_command])
+    if smoke_command:
+        argv.extend(["--smoke-command", smoke_command])
+    if solution_name:
+        argv.extend(["--solution-name", solution_name])
+    if capability_name:
+        argv.extend(["--capability-name", capability_name])
+    if smoke_artifact_name:
+        argv.extend(["--smoke-artifact-name", smoke_artifact_name])
     if project:
         argv.extend(["--project", project])
     if registry:
@@ -157,7 +173,24 @@ def run_cmd(
     workload: Workload = typer.Option(
         Workload.container_verify,
         "--workload",
-        help="container-verify, rl-train, or datagen.",
+        help="container-verify, rl-train, datagen, or solution-smoke.",
+    ),
+    build_command: str = typer.Option(
+        "",
+        "--build-command",
+        help="Optional shell command run at image build time from /opt/byof.",
+    ),
+    smoke_command: str = typer.Option(
+        "",
+        "--smoke-command",
+        help="Optional documented shell command for solution-smoke from /opt/byof.",
+    ),
+    solution_name: str = typer.Option("", "--solution-name", help="Registry solution name."),
+    capability_name: str = typer.Option("", "--capability-name", help="Registry capability name."),
+    smoke_artifact_name: str = typer.Option(
+        "",
+        "--smoke-artifact-name",
+        help="Expected JSON artifact filename for solution-smoke.",
     ),
     project: str = typer.Option("", "--project", help="Project alias for registry resolution."),
     registry: str = typer.Option("", "--registry", help="Override registry host/path."),
@@ -188,6 +221,11 @@ def run_cmd(
         base_profile=base_profile.value,
         base_image=base_image,
         workload=workload.value,
+        build_command=build_command,
+        smoke_command=smoke_command,
+        solution_name=solution_name,
+        capability_name=capability_name,
+        smoke_artifact_name=smoke_artifact_name,
         project=project,
         registry=registry,
         image=image,

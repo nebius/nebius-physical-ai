@@ -81,6 +81,7 @@ from npa.deploy.byovm import (
     ssh_config_for_target,
     workbench_storage_outputs,
 )
+from npa.deploy.confirm import confirm_vm_destroy
 from npa.deploy.configurator import (
     HealthCheckMode,
     audit_remote_env,
@@ -2713,7 +2714,7 @@ def deploy_cmd(
         False,
         "--yes",
         "-y",
-        help="Skip confirmation prompts (use with --replace for automation).",
+        help="Skip confirmation prompts (use with --replace or deploy --destroy for automation).",
     ),
     no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     health_check_mode: HealthCheckMode = typer.Option(
@@ -2975,6 +2976,13 @@ def deploy_cmd(
     )
 
     if destroy:
+        confirm_vm_destroy(
+            proj_alias,
+            wb_name,
+            byovm=byovm,
+            dry_run=dry_run,
+            yes=yes,
+        )
         if byovm:
             console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
             if not dry_run:

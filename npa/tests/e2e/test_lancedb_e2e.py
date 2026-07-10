@@ -121,6 +121,7 @@ def lancedb_service(test_id: str, lancedb_storage: dict[str, str]) -> Iterator[d
                 "--container-name",
                 container,
                 "--destroy",
+                "--yes",
                 "--output",
                 "json",
             ],

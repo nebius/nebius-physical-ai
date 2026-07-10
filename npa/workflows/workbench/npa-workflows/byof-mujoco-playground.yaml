@@ -1,0 +1,308 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-mujoco-playground
+  description: >
+    Registry-candidate BYOF workflow for Google DeepMind MuJoCo Playground.
+    Exercises MJX CartpoleBalance reset/step, an additional registered env, and
+    a reduced train-jax-ppo smoke inside the pushed registry image.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/google-deepmind/mujoco_playground.git"
+  repo_ref: "v0.2.0"
+  base_profile: ubuntu
+  base_image: "nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"
+  build_command: >
+    apt-get update &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+    python3 python3-pip python3-venv git libegl1 libgl1 libglvnd0 &&
+    python3 -m venv /opt/venv &&
+    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip &&
+    /opt/venv/bin/python -m pip install --no-cache-dir -e ".[cuda12]" ||
+    /opt/venv/bin/python -m pip install --no-cache-dir -e . &&
+    /opt/venv/bin/python -m pip install --no-cache-dir
+    "jax[cuda12]<0.8.1" "jaxlib<0.8.1" "brax>=0.12,<0.13"
+    absl-py mediapy ml_collections etils
+    nvidia-cusparse-cu12 nvidia-cublas-cu12 nvidia-cuda-nvrtc-cu12
+    nvidia-cuda-runtime-cu12 ||
+    /opt/venv/bin/python -m pip install --no-cache-dir
+    "jax<0.8.1" "jaxlib<0.8.1" "brax>=0.12,<0.13"
+    absl-py mediapy ml_collections etils || true
+  workload: solution-smoke
+  smoke_command: |
+    export JAX_DEFAULT_MATMUL_PRECISION=highest
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    /opt/venv/bin/python - <<'PY'
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    # Newer JAX removed jax.device_put_replicated; brax PPO still calls it.
+    # Install a drop-in shim before importing brax training.
+    if not hasattr(jax, "device_put_replicated"):
+        from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+
+        def _device_put_replicated(x, devices):
+            devices = list(devices)
+            mesh = Mesh(np.array(devices), ("x",))
+            sharding = NamedSharding(mesh, P("x"))
+
+            def _put(y):
+                stacked = jnp.stack([y] * len(devices)) if isinstance(y, jax.Array) else np.stack([y] * len(devices))
+                return jax.device_put(stacked, sharding)
+
+            return jax.tree_util.tree_map(_put, x)
+
+        jax.device_put_replicated = _device_put_replicated  # type: ignore[attr-defined]
+
+    from mujoco_playground import registry
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    results = {
+        "solution": "mujoco-playground",
+        "capability": "mjx_cartpole_step",
+        "capabilities_exercised": [],
+        "jax_default_matmul_precision": os.environ.get("JAX_DEFAULT_MATMUL_PRECISION", ""),
+        "jax_devices": [str(d) for d in jax.devices()],
+    }
+
+    env = registry.load("CartpoleBalance", config_overrides={"impl": "jax"})
+    state = env.reset(jax.random.PRNGKey(0))
+    action = jax.numpy.zeros((env.action_size,))
+    next_state = env.step(state, action)
+    results["cartpole"] = {
+        "env_id": "CartpoleBalance",
+        "reward": float(next_state.reward),
+        "done": bool(next_state.done),
+    }
+    results["capabilities_exercised"].append("mjx_cartpole_step")
+    (output_dir / "mujoco_playground_cartpole_step.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "mjx_cartpole_step", **results["cartpole"]}, indent=2)
+    )
+
+    # Additional registered locomotion/manipulation env beyond Cartpole.
+    extra_env_id = "CheetahRun"
+    extra = {"env_id": extra_env_id, "ok": False, "error": ""}
+    try:
+        env2 = registry.load(extra_env_id, config_overrides={"impl": "jax"})
+        state2 = env2.reset(jax.random.PRNGKey(1))
+        action2 = jax.numpy.zeros((env2.action_size,))
+        next2 = env2.step(state2, action2)
+        extra.update({"ok": True, "reward": float(next2.reward), "done": bool(next2.done)})
+        results["capabilities_exercised"].append("mjx_cheetah_run_step")
+    except Exception as exc:  # noqa: BLE001
+        extra["error"] = f"{type(exc).__name__}: {exc}"
+    results["cheetah_run"] = extra
+    (output_dir / "mujoco_playground_cheetah_run_step.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "mjx_cheetah_run_step", **extra}, indent=2)
+    )
+
+    # Reduced PPO smoke: upstream train_jax_ppo always renders videos after train.
+    # Prefer a brax PPO train call (same stack) with num_videos=0 path via patched argv,
+    # falling back to the documented script with --num_videos 0.
+    ppo = {
+        "command": "brax.ppo.train CartpoleBalance reduced smoke",
+        "ok": False,
+        "error": "",
+        "returncode": None,
+        "mode": "",
+    }
+    try:
+        from brax.training.agents.ppo import train as ppo_train
+        from mujoco_playground import wrapper
+        from mujoco_playground.config import dm_control_suite_params
+
+        env_name = "CartpoleBalance"
+        env_cfg = registry.get_default_config(env_name)
+        ppo_params = dm_control_suite_params.brax_ppo_config(env_name, "jax")
+        ppo_params.num_timesteps = 256
+        ppo_params.num_envs = 8
+        ppo_params.num_evals = 1
+        ppo_params.run_evals = False
+        # Keep batch math valid for tiny smoke: batch_size * num_minibatches <= num_envs * unroll_length
+        if hasattr(ppo_params, "unroll_length"):
+            ppo_params.unroll_length = min(int(ppo_params.unroll_length), 8)
+        if hasattr(ppo_params, "batch_size"):
+            ppo_params.batch_size = min(int(ppo_params.batch_size), 16)
+        if hasattr(ppo_params, "num_minibatches"):
+            ppo_params.num_minibatches = 1
+        if hasattr(ppo_params, "num_updates_per_batch"):
+            ppo_params.num_updates_per_batch = min(int(ppo_params.num_updates_per_batch), 1)
+        train_env = registry.load(env_name, config=env_cfg, config_overrides={"impl": "jax"})
+        training_params = dict(ppo_params)
+        network_factory = training_params.pop("network_factory", None)
+        training_params.pop("num_eval_envs", None)
+        train_kwargs = dict(training_params)
+        if network_factory is not None:
+            from brax.training.agents.ppo import networks as ppo_networks
+            import functools
+
+            train_kwargs["network_factory"] = functools.partial(
+                ppo_networks.make_ppo_networks, **network_factory
+            )
+        make_inference_fn, params, _metrics = ppo_train.train(
+            environment=train_env,
+            wrap_env_fn=wrapper.wrap_for_brax_training,
+            progress_fn=lambda *_a, **_k: None,
+            **train_kwargs,
+        )
+        ppo["ok"] = True
+        ppo["mode"] = "brax_ppo_train_api"
+        ppo["returncode"] = 0
+        ppo["jax_version"] = getattr(jax, "__version__", "")
+        ppo["inference_fn_type"] = type(make_inference_fn).__name__
+        ppo["params_type"] = type(params).__name__
+        results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
+    except Exception as api_exc:  # noqa: BLE001
+        ppo["api_error"] = f"{type(api_exc).__name__}: {api_exc}"
+        # Script fallback: inject the same JAX shim via PYTHONSTARTUP for interactive-less runs.
+        shim_path = output_dir / "jax_shim_startup.py"
+        shim_path.write_text(
+            "import jax\n"
+            "import jax.numpy as jnp\n"
+            "import numpy as np\n"
+            "if not hasattr(jax, 'device_put_replicated'):\n"
+            "    from jax.sharding import Mesh, NamedSharding, PartitionSpec as P\n"
+            "    def _device_put_replicated(x, devices):\n"
+            "        devices = list(devices)\n"
+            "        mesh = Mesh(np.array(devices), ('x',))\n"
+            "        sharding = NamedSharding(mesh, P('x'))\n"
+            "        def _put(y):\n"
+            "            stacked = jnp.stack([y] * len(devices)) if isinstance(y, jax.Array) else np.stack([y] * len(devices))\n"
+            "            return jax.device_put(stacked, sharding)\n"
+            "        return jax.tree_util.tree_map(_put, x)\n"
+            "    jax.device_put_replicated = _device_put_replicated\n"
+        )
+        ppo_args = [
+            "--env_name",
+            "CartpoleBalance",
+            "--impl",
+            "jax",
+            "--num_timesteps",
+            "256",
+            "--num_envs",
+            "8",
+            "--num_eval_envs",
+            "2",
+            "--num_evals",
+            "1",
+            "--run_evals=False",
+            "--num_videos",
+            "0",
+            "--batch_size",
+            "16",
+            "--num_minibatches",
+            "1",
+            "--unroll_length",
+            "8",
+            "--logdir",
+            str(output_dir / "mujoco_ppo_logs"),
+        ]
+        # Prefer python -c with shim + runpy so PYTHONSTARTUP is not required
+        # (PYTHONSTARTUP is skipped when -c / -m is used in some interpreters).
+        shim_run = (
+            shim_path.read_text()
+            + "\nimport sys\nsys.argv = ['train_jax_ppo.py'] + "
+            + repr(ppo_args)
+            + "\nimport runpy\nrunpy.run_path('/opt/byof/learning/train_jax_ppo.py', run_name='__main__')\n"
+        )
+        candidates = [
+            ["/opt/venv/bin/python", "-c", shim_run],
+            ["/opt/venv/bin/train-jax-ppo", *ppo_args],
+            ["/opt/venv/bin/python", "-m", "mujoco_playground.learning.train_jax_ppo", *ppo_args],
+            ["/opt/venv/bin/python", "/opt/byof/learning/train_jax_ppo.py", *ppo_args],
+        ]
+        last = None
+        for cmd in candidates:
+            completed = subprocess.run(
+                cmd,
+                cwd="/opt/byof",
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1800,
+                env={
+                    **os.environ,
+                    "MUJOCO_GL": "egl",
+                    "PYOPENGL_PLATFORM": "egl",
+                    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                },
+            )
+            last = completed
+            ppo["attempted_command"] = " ".join(cmd[:3]) if cmd[:2] == ["/opt/venv/bin/python", "-c"] else " ".join(cmd)
+            ppo["returncode"] = completed.returncode
+            ppo["stdout_tail"] = (completed.stdout or "")[-2000:]
+            ppo["stderr_tail"] = (completed.stderr or "")[-2000:]
+            if completed.returncode == 0:
+                ppo["ok"] = True
+                ppo["mode"] = "train_jax_ppo_script"
+                break
+            if completed.returncode != 127 and "No such file" not in (completed.stderr or ""):
+                # Keep trying remaining candidates for missing entrypoints only.
+                if "No module named" in (completed.stderr or "") or completed.returncode == 127:
+                    continue
+                ppo["error"] = f"returncode={completed.returncode}"
+                # Still try next candidate; shim path may succeed where console script fails.
+                continue
+        if not ppo["ok"] and not ppo.get("error"):
+            ppo["error"] = f"returncode={getattr(last, 'returncode', None)}; api={ppo.get('api_error')}"
+        if ppo["ok"]:
+            results["capabilities_exercised"].append("train_jax_ppo_cartpole_smoke")
+        elif not ppo.get("error"):
+            ppo["error"] = ppo.get("api_error") or "ppo_smoke_failed"
+    results["train_jax_ppo"] = ppo
+    (output_dir / "mujoco_playground_train_jax_ppo.json").write_text(
+        json.dumps({"solution": "mujoco-playground", "capability": "train_jax_ppo_cartpole_smoke", **ppo}, indent=2)
+    )
+    if not ppo["ok"]:
+        results.setdefault("deferred", []).append({"capability": "train_jax_ppo_cartpole_smoke", "blocker": ppo.get("error")})
+    if not extra["ok"]:
+        results.setdefault("deferred", []).append({"capability": "mjx_cheetah_run_step", "blocker": extra.get("error")})
+
+    # Hard gate: Cartpole + Cheetah steps. PPO remains attempted evidence.
+    if "mjx_cartpole_step" not in results["capabilities_exercised"]:
+        raise SystemExit("CartpoleBalance step failed")
+    if "mjx_cheetah_run_step" not in results["capabilities_exercised"]:
+        raise SystemExit("CheetahRun step failed")
+
+    (output_dir / "mujoco_playground_cartpole_step.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    PY
+  solution_name: "mujoco-playground"
+  capability_name: "mjx_cartpole_step"
+  smoke_artifact_name: "mujoco_playground_cartpole_step.json"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  task: "CartpoleBalance"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/oss-solutions/mujoco-playground/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build/push MuJoCo Playground and run Cartpole/Cheetah/PPO capability
+      smokes from the registry image in live Kubernetes.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

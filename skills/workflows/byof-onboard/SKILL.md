@@ -16,12 +16,27 @@ in chat replies; point operators here.
 - LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
 
+For **registry/catalog admission** of an OSS Physical AI solution, also load
+`skills/workflows/oss-solution-registry-onboard/SKILL.md`. BYOF proves the repo
+can be packaged and run; registry admission additionally requires reading
+upstream docs, listing **that solution's** native capabilities (use upstream
+names), encoding each accepted claim as a `solution-smoke` with a named JSON
+artifact, and collecting live Nebius validation evidence. See
+`docs/workbench/oss-solution-catalog.md`.
+
 ## Prerequisites
 
 - `~/.npa/config.yaml` — project alias, registry, `kubernetes` block (`cluster_name`, `gpu_profile`)
 - `~/.npa/credentials.yaml` — Nebius IAM (registry push/pull)
 - Operator host: Docker, `nebius` CLI, `sky` (for GPU/container smokes)
 - Optional: `NPA_NEBIUS_PROFILE=agent-sa` for registry write on shared VMs
+- SkyPilot must have Kubernetes enabled for the target context. The
+  `solution-smoke` runner runs `sky check kubernetes` automatically before
+  submission; if debugging manually, run it with the resolved kubeconfig/context
+  before `sky jobs launch`.
+  Container/solution smokes use direct `sky launch --down` by default because
+  the managed-jobs controller can retain a stale enabled-infra cache for newly
+  synced Kubernetes contexts.
 
 Project resolution: `npa.workflows.byof.live.resolve_byof_project()` — never hardcode VM paths.
 
@@ -73,6 +88,7 @@ Workloads:
 | Workload | Base profile | SkyPilot YAML (rtxpro) |
 | --- | --- | --- |
 | `container-verify` | `ubuntu` or any | `byof-container-smoke-rtxpro.yaml` |
+| `solution-smoke` | `ubuntu` or custom | `byof-container-smoke-rtxpro.yaml` with `--smoke-command`, `--solution-name`, `--capability-name`, and `--smoke-artifact-name` |
 | `rl-train` | `isaac-lab` | `isaac-lab-rl-train-rtxpro-smoke.yaml` |
 | `datagen` | `isaac-lab` | `byof-datagen-rtxpro-smoke.yaml` |
 
@@ -86,6 +102,14 @@ Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
 3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
+   For registry candidates that have documented upstream commands, use
+   `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
+   with `--solution-name`, `--capability-name`, and
+   `--smoke-artifact-name`. The smoke must create the named artifact under
+   `$NPA_SMOKE_OUTPUT_DIR`; import-only checks are not enough.
+4. **Registry-ready gate** — if the operator asks to add the OSS project to the
+   NPA registry/catalog, follow `oss-solution-registry-onboard`; do not claim
+   readiness from build-only or generic import checks.
 
 Agent must return **grounded** markdown with `run_byof_repo.py`, `<repo-url>`, and base-image guidance —
 not raw `GET /api/...` paths.
@@ -152,3 +176,5 @@ Full ladder: `docs/architecture/oss-onboarding-ladder.md`.
 - Ubuntu images cannot run LeIsaac datagen; use `isaac-lab` profile for sim workloads.
 - GPU smokes may return `FAILED_PRECHECKS` when cluster capacity is tight; container tier is the gate for Ubuntu BYOF.
 - BYOF images use ad-hoc `npa-byof:<run-id>` tags; they are outside `golden_evals.yaml` until Tier 2 promotion.
+- A successful BYOF build is not sufficient for registry/catalog admission; test
+  the documented upstream capabilities on smoke and live Nebius paths first.

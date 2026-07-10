@@ -17,7 +17,7 @@ envs:
   BYOF_REPO_ROOT: "/opt/byof"
   BYOF_DATASET_FILE: "/workspace/byof-runs/${NPA_BYOF_RUN_ID}/dataset.hdf5"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
   PYTHON_BIN="${ISAAC_LAB_PYTHON:-/isaac-sim/python.sh}"

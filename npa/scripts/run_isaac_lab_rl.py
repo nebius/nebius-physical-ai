@@ -98,9 +98,19 @@ def render_workflow(
         envs["WANDB_MODE"] = wandb_mode if wandb_enabled else "disabled"
         envs["NPA_CHECKPOINT_S3_URI"] = checkpoint_s3_uri
         envs["NPA_CHECKPOINT_S3_ENDPOINT_URL"] = checkpoint_s3_endpoint_url
-        if checkpoint_s3_endpoint_url:
-            envs["AWS_ENDPOINT_URL"] = checkpoint_s3_endpoint_url
-            envs["NEBIUS_S3_ENDPOINT"] = checkpoint_s3_endpoint_url
+        # SkyPilot does not interpolate ${VAR} inside YAML envs; always materialize.
+        endpoint = (
+            checkpoint_s3_endpoint_url
+            or os.environ.get("AWS_ENDPOINT_URL")
+            or os.environ.get("NEBIUS_S3_ENDPOINT")
+            or "https://storage.eu-north1.nebius.cloud"
+        )
+        if endpoint.startswith("${") or not endpoint.strip():
+            endpoint = "https://storage.eu-north1.nebius.cloud"
+        envs["AWS_ENDPOINT_URL"] = endpoint
+        envs["NEBIUS_S3_ENDPOINT"] = endpoint
+        if not envs.get("NPA_CHECKPOINT_S3_ENDPOINT_URL"):
+            envs["NPA_CHECKPOINT_S3_ENDPOINT_URL"] = endpoint
         envs["ISAAC_LAB_HYDRA_OVERRIDES"] = " ".join(["agent.save_interval=1", *rendered_overrides]).strip()
         variant = str(envs.get("RUN_VARIANT") or doc.get("name") or "").strip()
         prefix = output_root.rstrip("/") + f"/{run_id}/"

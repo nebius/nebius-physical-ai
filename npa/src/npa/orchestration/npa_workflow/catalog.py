@@ -28,8 +28,18 @@ _BYOF_REPO_ARGV = [
     "{{config.base_profile}}",
     "--base-image",
     "{{config.base_image}}",
+    "--build-command",
+    "{{config.build_command}}",
     "--workload",
     "{{config.workload}}",
+    "--smoke-command",
+    "{{config.smoke_command}}",
+    "--solution-name",
+    "{{config.solution_name}}",
+    "--capability-name",
+    "{{config.capability_name}}",
+    "--smoke-artifact-name",
+    "{{config.smoke_artifact_name}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -158,7 +168,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
-        description="Build/push a BYOF OSS repo image via npa workbench byof and launch a workload.",
+        description=(
+            "Build/push a BYOF OSS repo image via npa workbench byof and launch "
+            "RL, datagen, container-verify, or solution smoke."
+        ),
         argv_template=_BYOF_REPO_ARGV,
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(

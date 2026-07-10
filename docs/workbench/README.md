@@ -13,6 +13,7 @@ workflows, and operational runbooks.
 | [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |
 | [../../npa/workflows/workbench/skypilot/README.md](../../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
+| [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
 | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) | One-command H100 sim-to-real proof run with checkpoint, metric, S3 artifacts, and teardown |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
