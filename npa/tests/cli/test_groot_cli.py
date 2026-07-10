@@ -1250,7 +1250,16 @@ def test_groot_reload_env_dry_run_shows_changes(mocker) -> None:
 
 
 def test_groot_reload_env_requires_shared_credentials(mocker) -> None:
-    mocker.patch("npa.cli.groot.resolve_config", return_value=_cfg())
+    # Empty workbench storage + empty credentials.yaml must still fail loudly.
+    # Configs with project storage tokens are allowed (Cosmos parity).
+    cfg = _cfg()
+    cfg.storage = StorageConfig(
+        checkpoint_bucket="",
+        endpoint_url="",
+        aws_access_key_id="",
+        aws_secret_access_key="",
+    )
+    mocker.patch("npa.cli.groot.resolve_config", return_value=cfg)
     mocker.patch("npa.cli.groot.resolve_credentials", return_value=CredentialsConfig())
     ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
 
