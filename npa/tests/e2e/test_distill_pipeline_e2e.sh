@@ -395,7 +395,7 @@ destroy_genesis() {
   if [ "$GENESIS_CREATED" -eq 0 ] || [ "$GENESIS_DESTROYED" -eq 1 ]; then
     return 0
   fi
-  if run_npa_workbench_step "destroy Genesis workbench" genesis "$GENESIS_PROJECT" "$GENESIS_NAME" deploy --destroy --gpu-type "$GENESIS_GPU_TYPE" --gpu-preset "$GENESIS_GPU_PRESET"; then
+  if run_npa_workbench_step "destroy Genesis workbench" genesis "$GENESIS_PROJECT" "$GENESIS_NAME" deploy --destroy --yes --gpu-type "$GENESIS_GPU_TYPE" --gpu-preset "$GENESIS_GPU_PRESET"; then
     GENESIS_DESTROYED=1
     return 0
   fi
@@ -406,7 +406,7 @@ destroy_lerobot() {
   if [ "$LEROBOT_CREATED" -eq 0 ] || [ "$LEROBOT_DESTROYED" -eq 1 ]; then
     return 0
   fi
-  if run_npa_workbench_step "destroy LeRobot workbench" lerobot "$LEROBOT_PROJECT" "$LEROBOT_NAME" deploy --destroy --gpu-type "$LEROBOT_GPU_TYPE" --gpu-preset "$LEROBOT_GPU_PRESET"; then
+  if run_npa_workbench_step "destroy LeRobot workbench" lerobot "$LEROBOT_PROJECT" "$LEROBOT_NAME" deploy --destroy --yes --gpu-type "$LEROBOT_GPU_TYPE" --gpu-preset "$LEROBOT_GPU_PRESET"; then
     LEROBOT_DESTROYED=1
     return 0
   fi

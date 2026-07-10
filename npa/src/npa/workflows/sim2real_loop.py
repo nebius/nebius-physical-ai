@@ -2231,6 +2231,15 @@ def _run_kubernetes_image_component(
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
+    # Refresh before each sibling Job: IAM registry tokens expire mid-pipeline.
+    from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+
+    ensure_registry_pull_secret_for_images(
+        image,
+        namespace=namespace,
+        kubeconfig=config.k8s_kubeconfig,
+        k8s_context=config.k8s_context,
+    )
     manifest = _component_job_manifest(
         image,
         component=component,

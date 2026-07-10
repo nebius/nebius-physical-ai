@@ -115,6 +115,7 @@ from npa.deploy.byovm import (
     ssh_config_for_target,
     workbench_storage_outputs,
 )
+from npa.deploy.confirm import confirm_vm_destroy
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 from npa.deploy.safety import (
@@ -2034,7 +2035,7 @@ def deploy_cmd(
         False,
         "--yes",
         "-y",
-        help="Skip confirmation prompts (use with --replace for automation).",
+        help="Skip confirmation prompts (use with --replace or deploy --destroy for automation).",
     ),
     no_shared_creds: bool = typer.Option(
         False,
@@ -2317,6 +2318,13 @@ def deploy_cmd(
     instance_name = f"cosmos-{proj_alias}-{wb_name}"
 
     if destroy:
+        confirm_vm_destroy(
+            proj_alias,
+            wb_name,
+            byovm=byovm,
+            dry_run=dry_run,
+            yes=yes,
+        )
         if byovm:
             console.print(
                 f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."

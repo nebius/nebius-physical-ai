@@ -47,6 +47,7 @@ from npa.deploy.byovm import (
     ssh_config_for_target,
     workbench_storage_outputs,
 )
+from npa.deploy.confirm import confirm_vm_destroy
 from npa.deploy.images import container_image_for_tool
 from npa.serverless_common import (
     SubnetResolutionError,
@@ -1696,6 +1697,12 @@ def deploy_cmd(
     skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only verify connectivity."),
     destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompts (use with deploy --destroy for automation).",
+    ),
     no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
     runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
@@ -1857,6 +1864,13 @@ def deploy_cmd(
 
     # ── Destroy flow ─────────────────────────────────────────────────
     if destroy:
+        confirm_vm_destroy(
+            proj_alias,
+            wb_name,
+            byovm=byovm,
+            dry_run=dry_run,
+            yes=yes,
+        )
         if byovm:
             console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
             if not dry_run:
