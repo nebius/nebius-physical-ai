@@ -41,7 +41,7 @@ const SIM_VIZ = {
   rrd_uri: "file:///opt/npa-agent/sim2real.rrd",
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
-  rerun_iframe_url: "/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace",
+  rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
   available_run_ids: ["mock-run", "submitted-run"],
 };
 
@@ -55,7 +55,7 @@ const NON_STOCK_SIM_VIZ = {
   rrd_uri: "file:///opt/npa-agent/recordings/sim2real.rrd",
   rrd_updated_at: "2026-07-07T04:12:00Z",
   rerun_ready: true,
-  rerun_iframe_url: "/rerun/?url=/rerun/recordings/sim2real.rrd&camera=customer-overhead",
+  rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=customer-overhead",
   available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
   artifact_render: "rerun",
   artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
@@ -241,6 +241,8 @@ const FIELD_IDS = [
   "runIdInput",
   "runIdSelect",
   "artifactPrefix",
+  "artifactTypeFilter",
+  "artifactSort",
   "artifactRunSelect",
   "artifactList",
   "activeCameraLabel",

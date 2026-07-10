@@ -79,10 +79,12 @@ def test_apply_reference_adapter_heldout_gate_preserves_sim_details() -> None:
         threshold=0.75,
     )
 
-    assert per_env[0]["success"] is True
+    assert per_env[0]["success"] is False
+    assert per_env[0]["score"] == 0.11
     assert per_env[0]["details"]["sim_success"] is False
     assert per_env[0]["details"]["sim_score"] == 0.11
     assert per_env[0]["details"]["reference_adapter_score"] >= 0.75
+    assert per_env[0]["details"]["reference_adapter_would_pass"] is True
 
 
 def test_signal_diversity_report_flags_degenerate_batch() -> None:

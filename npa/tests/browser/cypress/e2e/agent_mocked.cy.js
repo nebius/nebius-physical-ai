@@ -171,6 +171,15 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "render=json");
     cy.get("#artifactList").should("contain.text", "render=text");
     cy.get("#artifactList").should("contain.text", "render=download");
+    cy.get("#artifactTypeFilter").select("video");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
+    cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+    cy.get("#artifactSort").select("largest");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#artifactList").should("contain.text", "Showing 1 of");
+    cy.get("#artifactTypeFilter").select("");
+    cy.wait("@nonStockArtifactList");
     cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
