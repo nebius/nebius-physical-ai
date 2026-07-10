@@ -2830,7 +2830,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     updated_at = datetime.fromtimestamp(RRD_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
     live_url = str(os.environ.get("NPA_AGENT_RERUN_LIVE_URL", "")).strip()
     iframe_url = (
-        f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
+        f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
         if live_url
         else _rerun_iframe_url(cam)
     )
