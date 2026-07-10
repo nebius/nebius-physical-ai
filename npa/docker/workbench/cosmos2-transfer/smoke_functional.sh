@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
-# Golden-eval CUDA probe for npa-cosmos2-transfer.
-# Published transfer images install PyTorch in the cosmos-transfer2.5 uv venv
-# (Python 3.10 + cu128), not on the default system/python alias.
+# Golden eval for npa-cosmos2-transfer — a REAL capability test.
+#
+# Runs an actual Cosmos-Transfer2.5 video-to-video world-transfer inference on a
+# bundled robot control example and asserts a non-trivial generated video is
+# produced. This exercises the container's real job (synthetic-data augmentation
+# via world transfer), not just a torch+CUDA probe.
+#
+# GPU-gated and heavy: the model runs a multi-step diffusion sample and the gated
+# Cosmos-Transfer2.5-2B checkpoints auto-download on first use (HF_TOKEN + NVIDIA
+# Open Model License acceptance required). Budget ~10-15 min end to end.
 set -euo pipefail
 
-PROBE='import torch; assert torch.cuda.is_available(); t=torch.ones((64, 64), device="cuda"); print("[PASS] cuda", torch.cuda.get_device_name(0), float(t.sum()))'
+REPO="${COSMOS_TRANSFER_REPO:-/opt/cosmos/cosmos-transfer2.5}"
+cd "${REPO}"
 
-for candidate in \
-  /opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
-  /opt/cosmos/venv/bin/python \
-  /workspace/.venv/bin/python; do
-  if [[ -x "${candidate}" ]]; then
-    "${candidate}" -c "${PROBE}"
-    exit 0
-  fi
-done
+# The capability image ships a ready py3.10 inference env (torch cu128 +
+# flash-attn). Self-heal if it is absent so the eval still exercises the real
+# model on an un-baked base image.
+if ! .venv/bin/python -c "import torch, flash_attn" >/dev/null 2>&1; then
+  echo "[setup] building cosmos-transfer2.5 inference env (py3.10 + cu128)"
+  uv python install 3.10
+  echo "3.10" > .python-version
+  uv sync --extra=cu128 --python 3.10
+fi
 
-for candidate in python3 python; do
-  if command -v "${candidate}" >/dev/null 2>&1; then
-    if "${candidate}" -c "${PROBE}"; then
-      exit 0
-    fi
-  fi
-done
+SPEC="${COSMOS_TRANSFER_SPEC:-assets/robot_example/depth/robot_depth_spec.json}"
+OUT="${COSMOS_TRANSFER_OUT:-outputs/golden-eval}"
+rm -rf "${OUT}"
 
-echo "[FAIL] no python with torch+cuda found" >&2
-exit 1
+echo "[run] cosmos-transfer2.5 inference: ${SPEC} -> ${OUT}"
+.venv/bin/python examples/inference.py -i "${SPEC}" -o "${OUT}"
+
+# Assert a real, non-trivial generated video exists (exclude the control-map viz).
+.venv/bin/python - "${OUT}" <<'PY'
+import glob
+import os
+import sys
+
+out = sys.argv[1]
+videos = [
+    f
+    for f in glob.glob(os.path.join(out, "**", "*.mp4"), recursive=True)
+    if "control" not in os.path.basename(f)
+]
+big = [f for f in videos if os.path.getsize(f) > 100_000]
+if not big:
+    sizes = [(f, os.path.getsize(f)) for f in videos]
+    print(f"[FAIL] no non-trivial output video in {out}: {sizes}", file=sys.stderr)
+    raise SystemExit(1)
+result = big[0]
+print(f"[PASS] cosmos-transfer2.5 generated {result} ({os.path.getsize(result)} bytes)")
+PY

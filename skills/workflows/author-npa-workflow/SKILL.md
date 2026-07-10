@@ -46,9 +46,14 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
 npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
+npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
 ```
 
-Dynamic branches: add `--assume-decision promote_checkpoint|loop_back`.
+`submit` accepts both `npa.workflow/v0.0.1` specs and legacy SkyPilot YAMLs.
+For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
+Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
+branches still need `--assume-decision`.
 
 Live infra (required before merge):
 
@@ -56,6 +61,16 @@ Live infra (required before merge):
 NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_npa_workflow_live_e2e.py \
   npa/tests/e2e/test_npa_workflow_live_infra.py -q
+```
+
+Live **submit** matrix (operator VM with SkyPilot + registry; burns GPU-hours):
+
+```bash
+# CPU-only first
+NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
+
+# Full cpu+gpu+multi
+./scripts/npa-workflow-submit-live-e2e.sh
 ```
 
 Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
@@ -69,7 +84,9 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 1. One workflow file = one variant; do not add sim2real-specific Python orchestrators.
 2. Keep **terminal: true** on leaf completion states.
 3. Use `--assume-decision` when planning specs with `transitions`.
-4. SkyPilot submits each planned step; the spec does not call `engine.py` per workflow.
+4. `npa workbench workflow submit <npa.workflow.yaml>` plans the graph, renders
+   a serial SkyPilot multi-doc YAML, and submits it. The spec does not call
+   `engine.py` per workflow. Parallel fan-out stays on raw SkyPilot YAMLs.
 5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
 6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
 
@@ -81,6 +98,8 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool |
 | `sim2real-vlm-rl.yaml` | Nested loops + dynamic gate |
 | `bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
+| `av-night-scene-hardening.yaml` | AV night-scene fan-out — two per-view detector train→eval branches |
+| `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 
 ## Verify

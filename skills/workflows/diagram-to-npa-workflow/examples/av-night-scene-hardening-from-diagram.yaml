@@ -1,0 +1,157 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# SECOND-ARCHITECTURE demo for the diagram-to-npa-workflow skill. Produced from
+# this diagram + write-up (a different domain and a fan-out topology vs sim2real):
+#
+#   [BDD100K night subset] -> (ingest LanceDB)
+#        -> (backfill CPU cols: person/rider/bbox/timeofday/dedup)
+#        -> (backfill CLIP embeddings, GPU)
+#        -> (curate 2 failure-mode views: nighttime-person, distant-person)
+#        -> curate fans out to TWO detector branches, run in order:
+#              (train nighttime) -> (eval nighttime)
+#              (train distant)   -> (eval distant)
+#        -> (FiftyOne review)   [terminal]
+#
+# Steps:
+#  1. Ingest a night-driving BDD100K subset into a per-run LanceDB table.
+#  2. Backfill the CPU UDF columns the views filter on.
+#  3. Backfill CLIP embeddings on the GPU UDF path.
+#  4. Curate the nighttime-person and distant-person materialized views.
+#  5. Train one detector per failure-mode view (GPU).
+#  6. Evaluate each detector on its view (GPU) -> metrics.json.
+#  7. Open FiftyOne for human review.
+#
+# No loops, no threshold gate: a linear ingest/curate spine that fans out into two
+# train->eval branches (grouped with `sequence`) and rejoins at review.
+
+metadata:
+  name: av-night-scene-hardening-from-diagram
+  description: >
+    AV night-scene perception hardening from a fan-out diagram: LanceDB ingest ->
+    CPU/CLIP backfill -> two failure-mode views -> per-view detector train+eval ->
+    FiftyOne review. Second-architecture generalization proof for the skill.
+
+config:
+  bucket: example-bucket
+  prefix: "av-night-scene/{{run.id}}"
+  lance_table: bdd100k_night
+
+  bdd100k_limit: "5000"
+  train_epochs: "10"
+  train_batch_size: "8"
+  train_learning_rate: "0.005"
+
+  lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
+  detection_endpoint: http://npa-detection-training.workbench.svc.cluster.local:8790
+
+  rider_view: bdd100k_rider_train
+  nighttime_view: bdd100k_nighttime_person_train
+  distant_view: bdd100k_distant_person_train
+
+  source_uri: "s3://{{config.bucket}}/raw-bdd100k/night-subset/"
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
+  nighttime_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/nighttime"
+  distant_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/distant"
+  nighttime_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/nighttime"
+  distant_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/distant"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu-embed:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+  gpu-train:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+
+initial: ingest
+
+states:
+  ingest:
+    description: Step 1 — import a night-driving BDD100K subset into LanceDB.
+    toolRef: workbench.lancedb.import_bdd100k
+    resources: cpu
+    outputs:
+      - uri: "{{config.lance_uri}}"
+        schema: npa.lancedb.table.v1
+    next: backfill-cpu
+
+  backfill-cpu:
+    description: Step 2 — backfill CPU UDF columns (person/rider/bbox/timeofday/dedup).
+    needs: [ingest]
+    toolRef: workbench.lancedb.backfill_cpu_bundle
+    resources: cpu
+    next: backfill-clip
+
+  backfill-clip:
+    description: Step 3 — backfill CLIP embeddings on the GPU UDF path.
+    needs: [backfill-cpu]
+    toolRef: workbench.lancedb.backfill_clip
+    resources: gpu-embed
+    next: curate-views
+
+  curate-views:
+    description: Step 4 — create nighttime-person and distant-person views.
+    needs: [backfill-clip]
+    toolRef: workbench.lancedb.create_failure_views
+    resources: cpu
+    next: detectors
+
+  detectors:
+    description: Step 5-6 — fan out into two per-view train->eval branches.
+    needs: [curate-views]
+    sequence:
+      - train-nighttime
+      - eval-nighttime
+      - train-distant
+      - eval-distant
+    next: review
+
+  train-nighttime:
+    description: Step 5a — train the nighttime-person detector (GPU).
+    toolRef: workbench.detection_training.train_nighttime
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.nighttime_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+
+  eval-nighttime:
+    description: Step 6a — evaluate the nighttime-person detector (GPU).
+    needs: [train-nighttime]
+    toolRef: workbench.detection_training.eval_nighttime
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.nighttime_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+
+  train-distant:
+    description: Step 5b — train the distant-person detector (GPU).
+    toolRef: workbench.detection_training.train_distant
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.distant_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+
+  eval-distant:
+    description: Step 6b — evaluate the distant-person detector (GPU).
+    needs: [train-distant]
+    toolRef: workbench.detection_training.eval_distant
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.distant_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+
+  review:
+    description: Step 7 — launch FiftyOne for human review of both detectors.
+    needs: [detectors]
+    toolRef: workbench.fiftyone.launch_app
+    resources: cpu
+    terminal: true

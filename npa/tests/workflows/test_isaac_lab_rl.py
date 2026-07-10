@@ -46,6 +46,28 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
     assert "--num_envs" in task["run"]
     assert "--max_iterations" in task["run"]
     assert "agent.save_interval=1" in task["envs"]["ISAAC_LAB_HYDRA_OVERRIDES"]
+    # SkyPilot does not interpolate ${VAR} in envs; ship a concrete endpoint.
+    assert task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+    assert "${AWS_ENDPOINT_URL}" not in task["envs"]["AWS_ENDPOINT_URL"]
+
+
+def test_isaac_lab_yaml_files_have_no_literal_aws_endpoint_placeholders() -> None:
+    yaml_paths = [
+        SINGLE_YAML,
+        SWEEP_YAML,
+        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro.yaml",
+        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "isaac-lab-rl-train-rtxpro-smoke.yaml",
+        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "byof-datagen-rtxpro-smoke.yaml",
+        ROOT / "npa" / "workflows" / "workbench" / "skypilot" / "byof-container-smoke-rtxpro.yaml",
+    ]
+    for path in yaml_paths:
+        text = path.read_text(encoding="utf-8")
+        assert 'AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"' not in text, path
+        docs = _docs(path)
+        for doc in docs[1:]:
+            envs = doc.get("envs") or {}
+            if "AWS_ENDPOINT_URL" in envs:
+                assert envs["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
 
 
 def test_isaac_lab_sweep_yaml_uses_parallel_group_and_distinct_variants() -> None:
@@ -110,6 +132,24 @@ def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> 
     assert rendered_task["envs"]["ISAAC_LAB_ITERATIONS"] == "3"
     assert rendered_task["envs"]["S3_OUTPUT_PREFIX"] == "s3://bucket/isaac-lab-rl/isaac-test-run/"
     assert rendered_task["resources"]["image_id"] == "docker:registry.example/npa-isaac-lab:test"
+    assert rendered_task["envs"]["AWS_ENDPOINT_URL"] == "https://storage.eu-north1.nebius.cloud"
+    assert rendered_task["envs"]["NEBIUS_S3_ENDPOINT"] == "https://storage.eu-north1.nebius.cloud"
+
+
+def test_isaac_lab_runner_materializes_endpoint_from_env(monkeypatch, tmp_path) -> None:
+    wrapper = _load_wrapper_module()
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.custom.example")
+    docs = wrapper.render_workflow(
+        SINGLE_YAML,
+        run_id="endpoint-env",
+        task="Isaac-Cartpole-v0",
+        iterations=1,
+        output_root="s3://bucket/isaac-lab-rl",
+    )
+    envs = docs[1]["envs"]
+    assert envs["AWS_ENDPOINT_URL"] == "https://storage.custom.example"
+    assert envs["NEBIUS_S3_ENDPOINT"] == "https://storage.custom.example"
+    assert envs["NPA_CHECKPOINT_S3_ENDPOINT_URL"] == "https://storage.custom.example"
 
 
 def test_isaac_lab_runner_render_only_keeps_rendered_yaml(capsys) -> None:

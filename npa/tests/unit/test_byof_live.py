@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.byof.live import (
-    byof_onboard_skill_path,
     byof_ubuntu_validation_repo,
     byof_validation_repo,
     resolve_byof_kubernetes_target,
@@ -38,6 +37,23 @@ def test_resolve_byof_kubernetes_target_prefers_env(monkeypatch: pytest.MonkeyPa
     target = resolve_byof_kubernetes_target("rtxpro")
     assert target.context == "customer-context"
     assert target.kubeconfig == "/tmp/customer-kubeconfig"
+
+
+def test_resolve_byof_kubernetes_target_falls_back_to_home_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_BYOF_KUBECONFIG", raising=False)
+    monkeypatch.delenv("NPA_KUBECONFIG", raising=False)
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-context")
+    home = tmp_path / "home"
+    kube = home / ".kube" / "config"
+    kube.parent.mkdir(parents=True)
+    kube.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    target = resolve_byof_kubernetes_target("rtxpro")
+    assert target.context == "customer-context"
+    assert target.kubeconfig == str(kube)
 
 
 def test_resolve_byof_kubernetes_target_from_cluster_state(
@@ -100,6 +116,12 @@ def test_resolve_byof_resource_yaml_datagen_rtxpro_profile(monkeypatch: pytest.M
 def test_resolve_byof_resource_yaml_container_verify(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
     path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="container-verify")
+    assert path.endswith("byof-container-smoke-rtxpro.yaml")
+
+
+def test_resolve_byof_resource_yaml_solution_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
+    path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="solution-smoke")
     assert path.endswith("byof-container-smoke-rtxpro.yaml")
 
 

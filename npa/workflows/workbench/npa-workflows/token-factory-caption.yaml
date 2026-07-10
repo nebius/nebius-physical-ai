@@ -1,0 +1,35 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: token-factory-caption
+  description: Caption a folder of images with Nebius Token Factory (zero-GPU).
+  skypilotTwin: npa/workflows/workbench/skypilot/token-factory-caption.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory"
+  caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  max_images: "50"
+  max_tokens: "512"
+
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/images/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/captions/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: caption-images
+
+states:
+  caption-images:
+    description: Caption images via Token Factory hosted vision model.
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    outputs:
+      - uri: "{{config.captions_uri}}captions.json"
+        schema: npa.token_factory.captions.v1
+    terminal: true

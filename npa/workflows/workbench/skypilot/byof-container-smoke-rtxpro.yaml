@@ -11,19 +11,40 @@ resources:
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
   test -d "${BYOF_REPO_ROOT}"
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
-  python3 -m pip install --quiet boto3
+  python3 - <<'PY' || python3 -m pip install --quiet --break-system-packages boto3 || python3 -m pip install --quiet boto3
+  import boto3
+  PY
 run: |
   set -euo pipefail
   OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
   cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
   ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
   python3 <<'PY'
   import json
   import os
@@ -44,6 +65,11 @@ run: |
       "run_id": run_id,
       "repo_root": os.environ["BYOF_REPO_ROOT"],
       "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_command": os.environ.get("BYOF_SMOKE_COMMAND", ""),
+      "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+      "smoke_exit_code": int(os.environ.get("SMOKE_EXIT_CODE", "0")),
       "created_unix": round(time.time(), 3),
   }
   (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
@@ -53,17 +79,37 @@ run: |
   parsed = urlparse(output)
   if parsed.scheme == "s3" and parsed.netloc:
       prefix = parsed.path.lstrip("/")
-      s3 = boto3.client(
-          "s3",
-          endpoint_url=(
-              os.environ.get("AWS_ENDPOINT_URL")
-              or os.environ.get("NEBIUS_S3_ENDPOINT")
-              or None
-          ),
+      def _endpoint(value):
+          text = (value or "").strip()
+          if not text or (text.startswith("${") and text.endswith("}")):
+              return None
+          return text
+
+      from botocore.config import Config
+
+      endpoint = _endpoint(
+          os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
       )
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
       for path in root.rglob("*"):
           if path.is_file():
               key = prefix + str(path.relative_to(root))
               s3.upload_file(str(path), parsed.netloc, key)
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
   PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

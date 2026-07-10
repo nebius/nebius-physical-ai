@@ -1,0 +1,62 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sonic-locomotion-finetuning
+  description: Retarget motion, train SONIC, then score with MJLab.
+  skypilotTwin: npa/workflows/workbench/skypilot/sonic-locomotion-finetuning.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/sonic-locomotion"
+  embodiment: unitree-g1
+  source_format: auto
+  sonic_runtime: serverless
+  suite: locomotion
+  episodes: "8"
+  checkpoint_uri: "nvidia/GEAR-SONIC"
+  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
+
+  motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
+  retargeted_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
+  mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: retarget
+
+states:
+  retarget:
+    description: Retarget source motion into the SONIC embodiment schema.
+    toolRef: workbench.retargeting.run
+    resources: cpu
+    outputs:
+      - uri: "{{config.retargeted_uri}}manifest.json"
+    next: train
+
+  train:
+    description: Train or smoke-validate a SONIC locomotion policy.
+    needs: [retarget]
+    toolRef: workbench.sonic.train
+    resources: gpu
+    outputs:
+      - uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
+    next: mjlab
+
+  mjlab:
+    description: Score the trained checkpoint with MJLab metrics.
+    needs: [train]
+    toolRef: workbench.mjlab.eval
+    resources: gpu
+    outputs:
+      - uri: "{{config.mjlab_uri}}report.json"
+    terminal: true

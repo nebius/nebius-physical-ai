@@ -388,8 +388,10 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "font-family: Inter, system-ui" in source
     assert "font-family: monospace" not in source
     assert "quick-pill" in source
-    assert "--brand: #5e43f3;" in source
-    assert "--sidebar: #1e1f22;" in source
+    assert "--brand: #e5ff4f;" in source
+    assert "--sidebar: #0d2a3d;" in source
+    assert ".msg-row.user .bubble" in source
+    assert "color: var(--brand-ink);" in source
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
@@ -534,6 +536,11 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "--sidebar: #0d2a3d" in source
+    assert "--brand: #e5ff4f" in source
+    assert "--surface-blue: #dceeff" in source
+    assert "letter-spacing: 0.22em" in source
+    assert "border-bottom: 4px solid var(--brand)" in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert "_wire_franka_demo" in source
     assert "_generate_franka_demo_rrd" in source
@@ -542,17 +549,24 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Load active Sim2Real in Rerun" in source
     assert "Open in Rerun" in source
     assert "class=\"panel rerun-panel\"" in source
-    assert ".layout-3 .rerun-panel" in source
+    assert ".layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}" in source
+    assert ".cameras-panel {{ display: block; }}" in source
     assert "height: min(78vh, 820px)" in source
     assert "robotPreset" in source
     assert "rerunPlaceholder" in source
-    assert 'id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace"' in source
+    assert 'id="rerunFrame" title="rerun" src="about:blank"' in source
     assert "RERUN_RECORDING_PATH" in source
     assert "location.origin + RERUN_RECORDING_PATH" in source
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
+    assert "rrdUrl.startsWith" in source
+    assert "location.origin + rrdUrl" in source
+    assert "_rerun_iframe_url" in source
+    assert "NPA_AGENT_PUBLIC_URL" in source
     assert "/rerun/recordings/sim2real.rrd" in source
     assert "Prefer the public recording copy; authenticated blob fetch remains the fallback" in source
     assert "does not reliably consume parent-created blob URLs" in source
+    # Path-only `/rerun/...` is parsed by Rerun as host `rerun` and must not be emitted.
+    assert "url=/rerun/recordings/sim2real.rrd" not in source
     assert '"&renderer=webgl&hide_welcome_screen=1&camera="' not in source
     assert 'rel="preload" href="/rerun/re_viewer.js"' in source
     assert "waitForRerunReady" in source
@@ -608,6 +622,13 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "active_run_id" in source
     assert "_record_sim_viz_run" in source
     assert "_wire_sim2real_run_preview" in source
+    assert "Prefer a run-scoped Rerun recording over stale history entries" in source
+    assert "preferred and preferred.render == \"rerun\"" in source
+    assert "held-out simulation camera stream" in source
+    assert "reference proxy context" in source
+    assert "def _artifact_backed_run_details" in source
+    assert "def _workflow_stage_defs_from_state" in source
+    assert "Derived stage timeline from" in source
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
@@ -618,6 +639,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert 'id="artifactPrefix"' in source
+    assert 'id="artifactTypeFilter"' in source
+    assert 'id="artifactSort"' in source
     assert 'id="artifactRunSelect"' in source
     assert 'id="artifactList"' in source
     assert 'id="renderedDataSummary"' in source
@@ -1385,6 +1408,114 @@ def test_bootstrap_embeds_provider_resilience_fallback() -> None:
     assert "NPA_AGENT_LLM_PROVIDER" in source
     assert "NPA_AGENT_LLM_PROVIDERS" in source
     assert "default_provider" in source
+
+
+def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # An explicit Auto option lets the UI post an empty model so the backend
+    # applies cost-tier routing instead of pinning the branded reasoner.
+    assert "Auto (cost-aware)" in source
+    # The old behaviors that defeated cost routing must be gone:
+    # 1) selectedChatModel no longer hardcodes the default model as a fallback,
+    assert (
+        'return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}"'
+        not in source
+    )
+    # 2) the chat response no longer overwrites the selector (would hijack Auto).
+    assert "if (select) select.value = String(data.model);" not in source
+
+
+def test_bootstrap_embeds_cost_aware_routing() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Placeholder is declared, substituted, and consumed by the chat handler.
+    assert "_AGENT_ROUTING_EMBED" in source
+    assert ".replace(_AGENT_ROUTING_EMBED, agent_routing_source)" in source
+    assert "build_model_ladder(" in source
+    assert "classify_tier(" in source
+    assert "chat_extra(tier)" in source
+    assert "enforce_input_budget(" in source
+    assert "usage_summary(data)" in source
+    # The embedded routing source must actually be inlined (function defs present).
+    raw = agent_module._embedded_agent_routing_source()
+    assert "def build_model_ladder(" in raw
+    assert "def classify_tier(" in raw
+    assert "FAST_CAPABLE" in raw
+
+
+def test_default_llm_models_are_cost_ordered() -> None:
+    from npa.cli import agent as agent_module
+
+    models = list(agent_module.DEFAULT_LLM_MODELS)
+    # Cheap workhorse leads; branded reasoner is not first.
+    assert models[0] == "Qwen/Qwen3-32B"
+    assert models[0] != agent_module.DEFAULT_LLM_MODEL
+    assert agent_module.DEFAULT_LLM_MODEL in models
+
+
+def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, tmp_path) -> None:
+    """A bare `npa agent deploy` (no --llm-models) configures the full tier
+    ladder on the VM, so routing works without the operator listing models."""
+    from npa.cli import agent as agent_module
+    from npa.cli.agent import deploy_cmd
+
+    captured: dict[str, object] = {}
+    creds = {"service_account_id": "sa", "s3_bucket": "b", "s3_endpoint": "e"}
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *a, **k: SimpleNamespace(
+            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+        ),
+    )
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *a, **k: creds)
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam")
+    monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **k: creds)
+    monkeypatch.setattr("npa.cli.agent._ensure_terraform_state_bucket", lambda **k: None)
+    monkeypatch.setattr("npa.cli.agent._persist_agent_project_config", lambda **k: None)
+    monkeypatch.setattr(
+        "npa.cli.agent._apply_agent_terraform",
+        lambda **k: {"vm_ip": "203.0.113.50", "instance_id": "i-1", "ssh_key_path": "/k"},
+    )
+    monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
+    monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **k: tmp_path / "auth.env")
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner")
+    )
+    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
+    monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
+    monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
+    monkeypatch.setattr("npa.cli.agent._store_agent_record", lambda project, name, rec: captured.update(rec))
+
+    deploy_cmd(
+        project="agent-live",
+        name="agent",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="eu-north1",
+        ssh_user="ubuntu",
+        ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+        tf_var=[],
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="nvidia/Cosmos3-Super-Reasoner",
+        llm_models=[],
+        no_public_https=True,
+    )
+
+    configured = list(captured.get("llm", {}).get("models", []))  # type: ignore[union-attr]
+    # All four routing tiers are present without the operator listing them.
+    for expected in (
+        "Qwen/Qwen3-32B",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "nvidia/Cosmos3-Super-Reasoner",
+        "Qwen/Qwen2.5-VL-72B-Instruct",
+    ):
+        assert expected in configured, f"{expected} missing from {configured}"
 
 
 def test_resolve_agent_service_account_id_from_nebius(mocker) -> None:

@@ -116,6 +116,29 @@ def test_skypilot_bootstrap_reports_network_failure_from_pip(
         skypilot_cli.bootstrap_skypilot(venv_path=venv)
 
 
+def test_skypilot_install_package_pins_click_after_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    venv = tmp_path / "sky-venv"
+    _write_executable(venv / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    _write_executable(venv / "bin" / "pip", "#!/bin/sh\nexit 0\n")
+    state = skypilot_cli.inspect_venv(venv)
+    installs: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[1:4] == ["-m", "pip", "install"]:
+            installs.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(skypilot_cli.subprocess, "run", fake_run)
+
+    skypilot_cli._install_package(state, "skypilot==0.12.2")
+
+    assert any(cmd[-1] == "click>=8.1,<8.2" for cmd in installs), installs
+
+
 def test_skypilot_bootstrap_can_install_local_tiny_package(tmp_path: Path) -> None:
     package_dir = tmp_path / "fake-skypilot"
     sky_pkg = package_dir / "sky"

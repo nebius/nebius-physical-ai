@@ -38,9 +38,11 @@ authentication error such as `401 Unauthorized`.
 Root cause: Nebius IAM-backed registry tokens expire, and an old
 `npa-nebius-registry` pull secret can remain in the namespace.
 
-Current workaround: refresh the registry token and recreate the
-`npa-nebius-registry` image pull secret in the SkyPilot namespace, normally
-`default`.
+Mitigation: Sim2Real sibling Kubernetes Jobs now call
+`ensure_registry_pull_secret_for_images()` immediately before each `kubectl
+apply`, in addition to the initial `k8s_submit` refresh. Manual workaround if
+needed: refresh the registry token and recreate the `npa-nebius-registry`
+image pull secret in the SkyPilot namespace, normally `default`.
 
 Category for follow-up: security.
 
@@ -52,9 +54,10 @@ instead of `https://storage.eu-north1.nebius.cloud`.
 Root cause: SkyPilot 0.12.2 does not interpolate environment variables inside
 YAML `envs` blocks at submission time.
 
-Current workaround: use `npa/scripts/run_isaac_lab_rl.py`, which materializes
-endpoint values before submission, or substitute the literal endpoint value in
-the YAML before submitting.
+Mitigation: reference Isaac Lab / BYOF SkyPilot YAMLs now ship the concrete
+`https://storage.eu-north1.nebius.cloud` endpoint, and
+`npa/scripts/run_isaac_lab_rl.py` always materializes `AWS_ENDPOINT_URL` /
+`NEBIUS_S3_ENDPOINT` before submit. Prefer the runner for custom endpoints.
 
 Category for follow-up: docs + platform.
 

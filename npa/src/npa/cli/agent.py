@@ -51,12 +51,17 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Cost-ordered ladder (cheapest-capable first). Per-turn cost-tier routing
+# (see agent_routing.build_model_ladder) reorders this for each request, but the
+# default configured order still surfaces the cheap workhorse ahead of the
+# branded reasoner so no-routing paths and the /models picker default cheap.
 DEFAULT_LLM_MODELS = (
-    DEFAULT_LLM_MODEL,
+    "Qwen/Qwen3-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
+    DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026070601"
+AGENT_UI_VERSION = "2026070901"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -67,6 +72,17 @@ def _embedded_agent_workflow_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_workflow.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_routing_source() -> str:
+    """Return agent_routing.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_routing.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -87,6 +103,7 @@ def _embedded_agent_chat_source() -> str:
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 
 
 def _embedded_agent_artifacts_source() -> str:
@@ -1344,6 +1361,9 @@ def _nginx_agent_site_body(
     alias /opt/npa-agent/recordings/;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Cross-Origin-Resource-Policy "cross-origin" always;
   }}
   location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;
@@ -1421,6 +1441,7 @@ def _bootstrap_agent_stack(
     agent_chat_source = _embedded_agent_chat_source()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_routing_source = _embedded_agent_routing_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -1488,6 +1509,10 @@ if [ -s /mnt/cloud-metadata/token ]; then
   fi
 fi
 sudo mkdir -p /opt/npa-agent
+cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
+NPA_AGENT_PUBLIC_URL=https://{host}
+NPA_AGENT_PUBLIC_HOST={host}
+ENV
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
 import json
 import os
@@ -1513,6 +1538,42 @@ STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
+
+RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+
+
+def _agent_public_origin() -> str:
+    # HTTPS origin for Rerun .rrd fetches (must be absolute; path-only URLs break).
+    for key in ("NPA_AGENT_PUBLIC_URL", "NPA_AGENT_PUBLIC_ORIGIN"):
+        raw = str(os.environ.get(key, "")).strip().rstrip("/")
+        if raw.startswith("https://") or raw.startswith("http://"):
+            return raw
+    host = str(os.environ.get("NPA_AGENT_PUBLIC_HOST", "")).strip()
+    if host:
+        return f"https://{{host}}"
+    return ""
+
+
+def _rerun_recording_url(*, cache_bust: bool = False) -> str:
+    origin = _agent_public_origin()
+    path = RERUN_RECORDING_HTTP_PATH
+    if origin:
+        url = f"{{origin}}{{path}}"
+    else:
+        url = path
+    if cache_bust:
+        url = f"{{url}}?t={{int(time.time() * 1000)}}"
+    return url
+
+
+def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
+    cam = (camera or "workspace").strip() or "workspace"
+    if live_url:
+        return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+    recording = _rerun_recording_url()
+    # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
+    return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&camera={{cam}}"
+
 RERUN_UNIT = "npa-rerun"
 RERUN_WEB_PORT = {rerun_port}
 AGENT_PYTHON = Path("/opt/npa-agent/venv/bin/python")
@@ -1815,6 +1876,186 @@ def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
     return merged
 
 
+def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[str]]]:
+    draft = _workflow_draft_from_state(state)
+    stages: list[tuple[str, str, list[str]]] = []
+    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
+    for source in (plan.get("steps"), plan.get("states"), draft.get("states")):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if isinstance(item, dict):
+                raw_id = str(item.get("state") or item.get("id") or item.get("name") or "").strip()
+                label = str(item.get("label") or item.get("description") or raw_id).strip() or raw_id
+            else:
+                raw_id = str(item or "").strip()
+                label = raw_id
+            if not raw_id:
+                continue
+            stage_id = _slug(raw_id, fallback="stage")
+            patterns = [raw_id, raw_id.replace("_", "-"), raw_id.replace("-", "_")]
+            if (stage_id, label, patterns) not in stages:
+                stages.append((stage_id, label, patterns))
+        if stages:
+            break
+    return stages
+
+
+def _artifact_stage_key(key: str, run_id: str, prefix: str) -> str:
+    value = str(key or "").strip("/")
+    for lead in (prefix.strip("/"), ""):
+        scoped = value
+        if lead and scoped.startswith(lead + "/"):
+            scoped = scoped[len(lead) + 1 :]
+        if run_id and scoped.startswith(run_id + "/"):
+            scoped = scoped[len(run_id) + 1 :]
+            break
+    parts = [part for part in scoped.split("/") if part]
+    if not parts:
+        return "artifacts"
+    first = parts[0]
+    if first == "reports":
+        return "reports"
+    if first == "eval" and len(parts) > 1:
+        return "eval/" + parts[1]
+    if first in {{"actions", "vlm_eval", "training_signal", "envs"}} and len(parts) > 1:
+        return first + "/" + parts[1]
+    return first
+
+
+def _artifact_stage_label(stage_key: str) -> str:
+    labels = {{
+        "stage_01_trigger": "Trigger",
+        "stage_02_assets": "Assets",
+        "stage_12_external_validation": "External validation",
+        "stage_13_retrigger": "Retrigger",
+        "eval/heldout": "Held-out eval",
+        "actions/train": "Policy rollouts",
+        "vlm_eval/train": "VLM eval",
+        "training_signal/train": "Training signal",
+        "envs/raw": "Raw envs",
+        "envs/train": "Train envs",
+        "outer_loop": "Decision / outer loop",
+        "reports": "Reports / visualization",
+    }}
+    if stage_key in labels:
+        return labels[stage_key]
+    cleaned = stage_key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Artifacts"
+
+
+def _artifact_backed_run_details(state: dict, run_id: str) -> dict | None:
+    if not run_id:
+        return None
+    try:
+        s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, "")
+        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+    except Exception:
+        return None
+    if not artifacts:
+        return None
+    keys = [str(item.key or "") for item in artifacts]
+    stages = []
+    workflow_stage_defs = _workflow_stage_defs_from_state(state)
+    used_keys: set[str] = set()
+    if workflow_stage_defs:
+        for stage_id, label, patterns in workflow_stage_defs:
+            matched = [
+                key
+                for key in keys
+                if any(pattern and pattern in key for pattern in patterns)
+            ]
+            used_keys.update(matched)
+            count = len(matched)
+            stages.append(
+                {{
+                    "id": stage_id,
+                    "label": label,
+                    "status": "succeeded" if count else "pending",
+                    "started_at": "",
+                    "finished_at": "",
+                    "summary": (
+                        f"{{count}} artifact{{'' if count == 1 else 's'}} matched workflow state '{{label}}'."
+                        if count
+                        else "No artifact matched this workflow state yet."
+                    ),
+                }}
+            )
+    grouped: dict[str, list[str]] = {{}}
+    for key in keys:
+        stage_key = _artifact_stage_key(key, run_id, effective_prefix)
+        grouped.setdefault(stage_key, []).append(key)
+    for stage_key, matched in sorted(grouped.items()):
+        if workflow_stage_defs and all(key in used_keys for key in matched):
+            continue
+        count = len(matched)
+        stages.append(
+            {{
+                "id": _slug(stage_key, fallback="artifacts"),
+                "label": _artifact_stage_label(stage_key),
+                "status": "succeeded",
+                "started_at": "",
+                "finished_at": "",
+                "summary": f"{{count}} artifact{{'' if count == 1 else 's'}} found under '{{stage_key}}'.",
+            }}
+        )
+    report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
+    rrd_ready = any(key.endswith(".rrd") for key in keys)
+    preferred = select_preferred_artifact(artifacts)
+    report_note = ""
+    report_artifact = next((item for item in artifacts if item.key.endswith("/reports/sim2real-report.json")), None)
+    if report_artifact:
+        local_report = RECORDINGS_DIR / (_artifact_filename(report_artifact.key) + ".json")
+        try:
+            download_s3_uri(report_artifact.s3_uri, local_report, s3=s3)
+            report = json.loads(local_report.read_text(encoding="utf-8"))
+            viz = report.get("visualization") if isinstance(report.get("visualization"), dict) else {{}}
+            decision = report.get("outer_loop", {{}}).get("latest_decision", {{}}) if isinstance(report.get("outer_loop"), dict) else {{}}
+            source = str(viz.get("source") or "").strip()
+            success_rate = decision.get("success_rate")
+            if source or success_rate is not None:
+                report_note = (
+                    "Report summary: visualization source="
+                    + (source or "unknown")
+                    + (f", success_rate={{success_rate}}" if success_rate is not None else "")
+                    + "."
+                )
+        except Exception:
+            report_note = ""
+    return {{
+        "run_id": run_id,
+        "status": "completed" if report_ready else "artifact-backed",
+        "result": "rerun_ready" if rrd_ready else "artifacts_available",
+        "submitted_at": "",
+        "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
+        "selection": {{}},
+        "stages": stages,
+        "logs": [
+            {{
+                "timestamp": _now_iso(),
+                "level": "info",
+                "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
+            }},
+            {{
+                "timestamp": _now_iso(),
+                "level": "info" if rrd_ready else "warn",
+                "message": (
+                    f"Preferred viewable artifact: {{preferred.key}}"
+                    if preferred
+                    else "No preferred viewable artifact found."
+                ),
+            }},
+            {{
+                "timestamp": _now_iso(),
+                "level": "info",
+                "message": report_note or "No structured run report summary was available.",
+            }},
+        ],
+        "artifacts": [item.to_dict() for item in artifacts[:25]],
+    }}
+
+
 def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     latest = state.get("latest_submit", {{}})
     if not isinstance(latest, dict):
@@ -1831,11 +2072,14 @@ def _sim2real_run_details(state: dict, run_id: str = "") -> dict:
     selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
     details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
     details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
+    artifact_details = _artifact_backed_run_details(state, resolved_run_id)
+    if artifact_details:
+        details = _merge_sim2real_run_details(details, artifact_details)
     stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
-    if stage:
+    if stage and not artifact_details:
         details["status"] = stage
     if sim_viz.get("rrd_uri"):
-        if str(details.get("result") or "") not in {"completed", "failed", "running"}:
+        if str(details.get("result") or "") not in {"completed", "failed", "running", "rerun_ready"}:
             details["result"] = "recording_available"
         for item in details.get("stages", []):
             if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
@@ -2417,6 +2661,15 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _is_sim2real_pipeline_recording(key: str) -> bool:
+    return str(key or "").endswith("/reports/sim2real.rrd")
+
+
+def _sim2real_pipeline_camera_label(requested: str = "") -> str:
+    value = str(requested or "").strip()
+    return value if value and value != "workspace" else "heldout-sim"
+
+
 def _apply_loaded_artifact(
     *,
     state: dict,
@@ -2431,6 +2684,9 @@ def _apply_loaded_artifact(
     current = state.get("sim_viz")
     if isinstance(current, dict):
         sim_viz.update(current)
+    camera = str(sim_viz.get("camera") or "workspace")
+    if render == "rerun" and _is_sim2real_pipeline_recording(key):
+        camera = _sim2real_pipeline_camera_label(camera)
     sim_viz.update(
         {{
             "run_id": run_id,
@@ -2440,7 +2696,7 @@ def _apply_loaded_artifact(
             "artifact_key": key,
             "artifact_render": render,
             "mode": "static",
-            "camera": str(sim_viz.get("camera") or "workspace"),
+            "camera": camera,
         }}
     )
     if render == "rerun":
@@ -2450,8 +2706,15 @@ def _apply_loaded_artifact(
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
         sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz['camera']}}"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
+        if _is_sim2real_pipeline_recording(key):
+            sim_viz["preview_entity"] = "camera"
+            sim_viz["visualization_note"] = (
+                "Pipeline Sim2Real recording loaded. The primary Rerun view is the "
+                "held-out simulation camera stream; any 3D Franka/world entities are "
+                "reference proxy context, not custom hardware footage."
+            )
     else:
         filename = _artifact_filename(key)
         target = RECORDINGS_DIR / filename
@@ -2569,7 +2832,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     iframe_url = (
         f"/rerun/?url={{quote(live_url, safe='')}}&camera={{cam}}"
         if live_url
-        else f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}"
+        else _rerun_iframe_url(cam)
     )
     viz = {{
         "run_id": run_id,
@@ -2631,7 +2894,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
     }}
     state["sim_viz"] = viz
     _record_sim_viz_run(state, viz)
@@ -2657,7 +2920,7 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
         "submit_mode": "sim2real",
         "workflow_name": "sim2real",
         "pipeline_visualization": True,
@@ -2856,7 +3119,7 @@ def _split_reasoning(message: dict) -> tuple[str, str | None]:
         return content.strip(), reasoning
     return "", (reasoning.strip() if reasoning else None)
 
-def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
+def _provider_chat(*, provider: str, messages: list, model: str, extra: dict | None = None, max_tokens: int | None = None) -> dict:
     api_key = _provider_api_key(provider)
     if not api_key:
         raise RuntimeError(f"missing API key for provider '{{provider}}'")
@@ -2869,6 +3132,11 @@ def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
         "messages": messages,
         "temperature": 0.2,
     }}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if isinstance(extra, dict):
+        for _extra_key, _extra_value in extra.items():
+            payload[_extra_key] = _extra_value
     for attempt in range(3):
         try:
             response = httpx.post(
@@ -2896,22 +3164,47 @@ def _provider_chat(*, provider: str, messages: list, model: str) -> dict:
         raise RuntimeError(f"provider '{{provider}}' returned non-object response")
     return data
 
-def _chat_with_resilience(*, messages: list, requested_model: str) -> tuple[dict, str, str]:
+def _chat_with_resilience(
+    *,
+    messages: list,
+    requested_model: str = "",
+    tier: str = "standard",
+    interactive: bool = True,
+) -> tuple[dict, str, str]:
     providers = _configured_llm_providers()
-    models = _configured_llm_models()
-    if requested_model and requested_model not in models:
-        models.insert(0, requested_model)
+    configured = _configured_llm_models()
+    # Respect an explicit operator allowlist (NPA_AGENT_LLM_MODELS) by not
+    # injecting tier-default models the operator did not opt into.
+    allow_tier_defaults = not str(LLM_MODELS_ENV or "").strip()
+    ladder = build_model_ladder(
+        tier,
+        configured,
+        interactive=interactive,
+        requested_model=requested_model,
+        allow_tier_defaults=allow_tier_defaults,
+    )
+    # Drop flavors/models the key cannot serve (e.g. missing -fast variants) so
+    # interactive turns do not burn a round-trip on a guaranteed 404.
+    try:
+        ladder = filter_available(ladder, _available_llm_models())
+    except Exception:
+        pass
+    if not ladder:
+        ladder = list(configured) or [requested_model] if requested_model else list(configured)
+    extra = chat_extra(tier)
     errors: list[str] = []
     for provider in providers:
-        for model in models:
+        for model in ladder:
             try:
-                data = _provider_chat(provider=provider, messages=messages, model=model)
+                data = _provider_chat(provider=provider, messages=messages, model=model, extra=extra)
                 return data, provider, model
             except Exception as exc:
                 errors.append(str(exc))
                 continue
     detail = "; ".join(errors[-4:]) if errors else "no providers configured"
     raise HTTPException(status_code=502, detail=f"LLM providers unavailable: {{detail}}")
+
+{_AGENT_ROUTING_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -3485,7 +3778,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
                 "rrd_uri": f"file://{{RECORDING_PATH}}",
                 "rrd_updated_at": _now_iso(),
                 "rerun_ready": RECORDING_PATH.is_file() and _rerun_web_viewer_healthy(),
-                "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{sim_viz.get('camera') or 'workspace'}}",
+                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")),
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
@@ -3672,7 +3965,7 @@ def _workflow_no_infra_response(*, validation: dict, plan: dict, run_id: str, in
     }}
 _SKILL_CACHE = {{"loaded_at": 0.0, "index": {{}}, "root": Path("/")}}
 _INTENT_SKILLS = {{
-    "onboard_solution": ("byof-onboard",),
+    "onboard_solution": ("byof-onboard", "oss-solution-registry-onboard"),
     "find_artifacts": ("find-artifacts",),
     "create_workflow": ("author-npa-workflow",),
     "create_vlm_rl_workflow": ("author-npa-workflow", "sim-to-real"),
@@ -4101,6 +4394,12 @@ def chat(payload: dict):
     live_ctx = format_live_context_block(_load_state())
     last_user = _last_user_message(raw_messages)
     intent = match_chat_intent(last_user)
+    # Cost-tier routing: pick the cheapest adequate model for this turn and only
+    # honor an explicit user-selected model as an override (not the branded
+    # default), so no-model requests default to the cheap workhorse.
+    tier = classify_tier(last_user, intent=intent, messages=raw_messages)
+    explicit_model = str(payload.get("model") or "").strip()
+    budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
     system_content = _agent_system_prompt() + "\\n\\n" + live_ctx
     if skill_ctx:
@@ -4113,11 +4412,20 @@ def chat(payload: dict):
             continue
         role = str(item.get("role", "user")).strip() or "user"
         content = str(item.get("content", "")).strip()
+        if role == "user" and content:
+            # Guardrail: cap oversized pastes so one turn cannot blow the budget.
+            _within, content = enforce_input_budget(content)
         if content:
             messages.append({{"role": role, "content": content}})
     if len(messages) < 2:
         raise HTTPException(status_code=400, detail="at least one user message is required")
-    data, selected_provider, selected_model = _chat_with_resilience(messages=messages, requested_model=model)
+    data, selected_provider, selected_model = _chat_with_resilience(
+        messages=messages,
+        requested_model=explicit_model,
+        tier=tier,
+        interactive=True,
+    )
+    turn_usage = usage_summary(data)
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
@@ -4151,6 +4459,9 @@ def chat(payload: dict):
         "provider": selected_provider,
         "reply": reply,
         "reasoning": reasoning,
+        "tier": tier,
+        "usage": turn_usage,
+        "input_budget_ok": budget_ok,
         "session_id": session["id"],
         "session": {{
             "id": session["id"],
@@ -4302,14 +4613,20 @@ def sim_viz_status(run_id: str = ""):
         if live_url:
             payload["rerun_iframe_url"] = f"/rerun/?url={{quote(live_url, safe='')}}&camera={{camera}}"
         else:
-            payload["rerun_iframe_url"] = f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{camera}}"
+            payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
     else:
         payload["rerun_iframe_url"] = ""
     if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
         payload["rrd_uri"] = f"file://{{RRD_PATH}}"
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
-    payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
+    artifact_render = str(payload.get("artifact_render") or "").strip().lower()
+    if artifact_render and artifact_render != "rerun":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    else:
+        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
     runs = state.get("sim_viz_runs")
     if isinstance(runs, dict):
         payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
@@ -4369,6 +4686,60 @@ def sim_viz_load_run(payload: dict | None = None):
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
+    requested_camera = str(body.get("camera") or "").strip()
+    camera = requested_camera or "workspace"
+    requested_rrd_uri = str(body.get("rrd_uri") or "").strip()
+
+    # Prefer a run-scoped Rerun recording over stale history entries. History can
+    # contain JSON artifacts from prior clicks, which otherwise makes Load Run
+    # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
+    if requested_rrd_uri:
+        s3, _settings = _agent_s3_client()
+        bucket, key = parse_s3_uri(requested_rrd_uri)
+        local_name = _artifact_filename(key)
+        local_path = RECORDINGS_DIR / local_name
+        download_s3_uri(requested_rrd_uri, local_path, s3=s3)
+        state = _load_state()
+        sim_viz = _apply_loaded_artifact(
+            state=state,
+            run_id=validate_run_id(run_id),
+            key=key,
+            s3_uri=requested_rrd_uri,
+            render=render_hint_for_object(key=key),
+            local_path=local_path,
+        )
+        if requested_camera:
+            sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
+        _save_state(state)
+        return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id)}}
+
+    try:
+        s3, settings = _agent_s3_client()
+        effective_prefix = _artifact_discovery_prefix(settings, str(body.get("prefix") or ""))
+        artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+        preferred = select_preferred_artifact(artifacts)
+        if preferred and preferred.render == "rerun":
+            local_name = _artifact_filename(preferred.key)
+            local_path = RECORDINGS_DIR / local_name
+            download_s3_uri(preferred.s3_uri, local_path, s3=s3)
+            state = _load_state()
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=preferred.key,
+                s3_uri=preferred.s3_uri,
+                render=preferred.render,
+                local_path=local_path,
+            )
+            if requested_camera:
+                sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
+            _save_state(state)
+            return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id), "preferred": preferred.to_dict()}}
+    except Exception:
+        # Fall back to the historical in-memory run selector below; callers still
+        # get a useful 404 if the run has never been seen.
+        pass
+
     state = _load_state()
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
@@ -4379,7 +4750,6 @@ def sim_viz_load_run(payload: dict | None = None):
     rrd_uri = str(body.get("rrd_uri") or "").strip()
     if rrd_uri:
         selected["rrd_uri"] = rrd_uri
-    camera = str(body.get("camera") or "").strip()
     if camera:
         selected["camera"] = camera
     stage = str(body.get("stage") or "").strip()
@@ -4617,7 +4987,7 @@ def _boot_preload_sim_viz() -> None:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
-        "rerun_iframe_url": f"/rerun/?url=/rerun/recordings/sim2real.rrd&camera={{cam}}",
+        "rerun_iframe_url": _rerun_iframe_url(cam),
     }}
     _record_sim_viz_run(state, state["sim_viz"])
     _save_state(state)
@@ -5313,17 +5683,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <link rel="prefetch" href="/rerun/recordings/sim2real.rrd" as="fetch">
     <style>
       :root {{
-        --bg: #f5f6f8;
+        --bg: #edf7ff;
         --surface: #ffffff;
-        --text: #1f2430;
-        --muted: #5f6573;
-        --border: #e0e0e0;
-        --brand: #5e43f3;
-        --brand-strong: #4d35d4;
-        --sidebar: #1e1f22;
-        --ok-bg: #e8f7ee;
-        --ok-text: #18794e;
-        --shadow: 0 8px 22px rgba(30, 31, 34, 0.08);
+        --surface-soft: #f3f9ff;
+        --surface-blue: #dceeff;
+        --text: #102b3f;
+        --muted: #60798c;
+        --border: #c9ddec;
+        --brand: #e5ff4f;
+        --brand-strong: #d7f82f;
+        --brand-ink: #102b3f;
+        --sidebar: #0d2a3d;
+        --sidebar-2: #17405d;
+        --ok-bg: #e8ffbd;
+        --ok-text: #21440f;
+        --shadow: 0 10px 24px rgba(13, 42, 61, 0.14);
       }}
       * {{ box-sizing: border-box; }}
       html {{
@@ -5336,7 +5710,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         margin: 0;
         padding-bottom: 36px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        background: var(--bg);
+        background:
+          radial-gradient(circle at 14% 0%, rgba(229, 255, 79, 0.20), transparent 28%),
+          linear-gradient(180deg, #f8fcff 0%, var(--bg) 42%, #f6fbff 100%);
         color: var(--text);
         overflow-x: hidden;
         width: 100%;
@@ -5352,20 +5728,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .topbar {{
         background: var(--sidebar);
-        color: #eef0f3;
-        padding: 14px 18px;
-        border-bottom: 1px solid #2a2c31;
+        color: #ffffff;
+        padding: 18px 22px;
+        border-bottom: 4px solid var(--brand);
         display: flex;
         align-items: center;
         justify-content: space-between;
       }}
       .brand {{
         font-weight: 700;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.22em;
         font-size: 13px;
+        text-transform: uppercase;
       }}
       .brand-sub {{
-        color: #abb2bf;
+        color: #b9d1e3;
         font-size: 12px;
       }}
       .page {{
@@ -5374,8 +5751,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         gap: 14px;
       }}
       .layout {{ display: grid; gap: 14px; }}
-      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(760px, 1fr); }}
-      .layout-3 .rerun-panel {{ grid-column: 1 / -1; }}
+      .layout-3 {{ grid-template-columns: minmax(300px, 380px) minmax(300px, 380px) minmax(560px, 1fr); }}
       .panel {{
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -5383,48 +5759,49 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         background: var(--surface);
         box-shadow: var(--shadow);
       }}
-      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; }}
+      .panel h3 {{ margin: 0 0 10px 0; font-size: 17px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); }}
       .panel p {{ margin: 0; color: var(--muted); }}
       .subsection {{
-        border: 1px solid #e7e8ee;
+        border: 1px solid var(--border);
         border-radius: 10px;
-        background: #fafbff;
+        background: var(--surface-soft);
         padding: 10px;
         margin-top: 10px;
       }}
-      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #303649; }}
+      .subsection h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); letter-spacing: 0.08em; text-transform: uppercase; }}
       .field-row {{ display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }}
-      .field label {{ display: block; font-size: 12px; color: #4f5668; margin-bottom: 4px; }}
+      .field label {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }}
       .field select, .field input {{
         width: 100%;
-        border: 1px solid #d4d8e2;
+        border: 1px solid var(--border);
         border-radius: 9px;
         padding: 8px;
         font-family: inherit;
         background: #fff;
+        color: var(--text);
       }}
       .pill-list {{ display: flex; gap: 6px; flex-wrap: wrap; }}
       .pill {{
         display: inline-flex;
         align-items: center;
         border-radius: 999px;
-        border: 1px solid #d8dbeb;
-        color: #394056;
-        background: #fff;
+        border: 1px solid var(--border);
+        color: var(--text);
+        background: var(--surface-blue);
         padding: 4px 9px;
         font-size: 12px;
       }}
-      .cameras-panel {{ display: none; }}
+      .cameras-panel {{ display: block; }}
       .camera-card {{
-        border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 10px;
+        border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px;
         background: #fff;
       }}
-      .camera-card.selected {{ border: 2px solid #5e43f3; box-shadow: 0 0 0 1px rgba(94, 67, 243, 0.18); }}
+      .camera-card.selected {{ border: 2px solid var(--brand); box-shadow: 0 0 0 2px rgba(229, 255, 79, 0.45); }}
       .camera-card h4 {{ margin: 0 0 6px 0; }}
-      .camera-meta {{ font-size: 12px; color: #4b5568; margin-bottom: 6px; }}
+      .camera-meta {{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }}
       .camera-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }}
       .camera-frustum {{ display: flex; justify-content: center; }}
-      .rollout-hint {{ font-size: 13px; color: #39465c; margin: 0 0 10px 0; }}
+      .rollout-hint {{ font-size: 13px; color: var(--muted); margin: 0 0 10px 0; }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-panel-head {{
         display: flex;
@@ -5571,7 +5948,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .msg-row.user .bubble {{
         background: var(--brand);
         border-color: var(--brand);
-        color: #fff;
+        color: var(--brand-ink);
+        font-weight: 700;
       }}
       .msg-row.error .bubble {{
         border-color: #e9b8b8;
@@ -5604,7 +5982,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: #6f7785;
+        background: var(--brand);
         display: inline-block;
         animation: pulse 1s infinite ease-in-out;
       }}
@@ -5612,7 +5990,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
       .sparkle {{
         display: inline-block;
-        color: #5e43f3;
+        color: var(--brand);
         margin-right: 6px;
         font-size: 13px;
       }}
@@ -5628,7 +6006,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-size: 16px;
         outline: none;
       }}
-      .chat-input textarea:focus {{ border-color: #c2bae7; box-shadow: 0 0 0 3px rgba(94, 67, 243, 0.12); }}
+      .chat-input textarea:focus {{ border-color: var(--brand); box-shadow: 0 0 0 3px rgba(229, 255, 79, 0.28); }}
       iframe {{ width: 100%; height: min(78vh, 820px); min-height: 620px; border: 1px solid var(--border); border-radius: 10px; }}
       .rerun-placeholder {{
         width: 100%;
@@ -5638,44 +6016,45 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 24px 20px;
         text-align: center;
         color: var(--muted);
-        background: #fafbff;
+        background: var(--surface-soft);
       }}
       .rerun-placeholder strong {{ color: var(--text); }}
       .status-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }}
       .btn-row {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }}
       .btn {{
-        border: 1px solid #d6d9e4;
+        border: 1px solid var(--border);
         background: #fff;
         border-radius: 999px;
-        color: #2d3342;
+        color: var(--text);
         padding: 8px 12px;
         font-size: 13px;
         cursor: pointer;
         touch-action: manipulation;
         -webkit-tap-highlight-color: transparent;
       }}
-      .btn:hover {{ background: #f5f6fb; }}
+      .btn:hover {{ background: var(--surface-blue); border-color: #8fb8d4; }}
       .btn-primary {{
         background: var(--brand);
         border-color: var(--brand);
-        color: #fff;
+        color: var(--brand-ink);
+        font-weight: 800;
       }}
       .btn-primary:hover {{ background: var(--brand-strong); }}
       .btn[disabled], .btn:disabled {{
         opacity: 0.65;
         cursor: not-allowed;
       }}
-      .cta {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; }}
-      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: #ece9ff; color: #33207d; font-size: 12px; }}
+      .cta {{ color: var(--text); background: #f4ffbc; border: 1px solid var(--brand); border-radius: 8px; padding: 8px 10px; }}
+      .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: var(--sidebar-2); color: #f5fbff; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
       .run-details {{
         margin-top: 10px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--border);
         border-radius: 10px;
-        background: #f8fafc;
+        background: var(--surface-soft);
         padding: 10px;
       }}
-      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: #263247; }}
+      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); }}
       .run-summary {{
         display: flex;
         flex-wrap: wrap;
@@ -5692,7 +6071,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         grid-template-columns: 92px 1fr;
         gap: 8px;
         align-items: start;
-        border: 1px solid #e5e7eb;
+        border: 1px solid var(--border);
         background: #fff;
         border-radius: 8px;
         padding: 7px 8px;
@@ -5705,16 +6084,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-weight: 700;
         text-transform: uppercase;
         font-size: 10px;
-        background: #eef2ff;
-        color: #3730a3;
+        background: var(--surface-blue);
+        color: var(--text);
       }}
-      .stage-status.succeeded {{ background: #dcfce7; color: #166534; }}
+      .stage-status.succeeded {{ background: var(--ok-bg); color: var(--ok-text); }}
       .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
       .stage-status.running {{ background: #fef3c7; color: #92400e; }}
-      .stage-status.pending {{ background: #f1f5f9; color: #475569; }}
-      .stage-status.not_run {{ background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1; }}
-      .stage-label {{ font-weight: 700; color: #263247; }}
-      .stage-summary {{ color: #64748b; margin-top: 2px; }}
+      .stage-status.pending {{ background: #eef6fc; color: var(--muted); }}
+      .stage-status.not_run {{ background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }}
+      .stage-label {{ font-weight: 700; color: var(--text); }}
+      .stage-summary {{ color: var(--muted); margin-top: 2px; }}
       .run-log {{
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -5729,13 +6108,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .actions-inline {{ margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap; }}
       .quick-pill {{
         border-radius: 999px;
-        border: 1px solid #c8c0f5;
-        background: #f6f4ff;
-        color: #3d2f9c;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
         font-size: 12px;
         padding: 7px 12px;
       }}
-      .quick-pill:hover {{ background: #ede9ff; }}
+      .quick-pill:hover {{ background: var(--brand); }}
       .hint {{ font-size: 13px; color: var(--muted); }}
       .status-bar {{
         position: fixed;
@@ -5745,8 +6124,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         z-index: 900;
         padding: 8px 14px;
         font-size: 12px;
-        color: #334155;
-        background: rgba(255, 255, 255, 0.96);
+        color: #ffffff;
+        background: rgba(13, 42, 61, 0.94);
         border-top: 1px solid var(--border);
         box-shadow: 0 -4px 16px rgba(30, 31, 34, 0.06);
       }}
@@ -5766,13 +6145,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         padding: 10px 12px;
         border-radius: 10px;
         font-size: 13px;
-        border: 1px solid #d6d9e4;
+        border: 1px solid var(--border);
         background: #fff;
-        color: #1f2430;
+        color: var(--text);
         box-shadow: var(--shadow);
         animation: toast-in 0.18s ease-out;
       }}
-      .toast-info {{ border-color: #c8c0f5; background: #f6f4ff; color: #3d2f9c; }}
+      .toast-info {{ border-color: var(--border); background: var(--surface-blue); color: var(--text); }}
       .toast-success {{ border-color: #86efac; background: var(--ok-bg); color: var(--ok-text); }}
       .toast-error {{ border-color: #fca5a5; background: #fef2f2; color: #991b1b; }}
       @keyframes toast-in {{
@@ -5994,7 +6373,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <label for="chatModel" class="chat-model">
               Token Factory model
               <select id="chatModel">
-                <option value="{DEFAULT_LLM_MODEL}" selected>{DEFAULT_LLM_MODEL}</option>
+                <option value="" selected>Auto (cost-aware)</option>
               </select>
             </label>
           </div>
@@ -6128,6 +6507,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                   </select>
                 </div>
               </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="artifactTypeFilter">Type</label>
+                  <select id="artifactTypeFilter">
+                    <option value="">All types</option>
+                    <option value="rerun">Rerun .rrd</option>
+                    <option value="video">Video .mp4/.webm/.mov</option>
+                    <option value="json">JSON</option>
+                    <option value="text">Text/logs</option>
+                    <option value="image">Images</option>
+                    <option value="download">Other/download</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="artifactSort">Sort</label>
+                  <select id="artifactSort">
+                    <option value="preferred">Recommended first</option>
+                    <option value="type">Type, then newest</option>
+                    <option value="newest">Newest first</option>
+                    <option value="largest">Largest first</option>
+                    <option value="name">Name A-Z</option>
+                  </select>
+                </div>
+              </div>
               <div class="btn-row" style="margin-top:8px;">
                 <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
                 <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
@@ -6160,9 +6563,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
               <p>Rerun recording is embedded below.</p>
               <p class="hint">Loading the active Sim2Real recording.</p>
-              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a class="btn" href="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
+              <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button> <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
             </div>
-            <iframe id="rerunFrame" title="rerun" src="/rerun/?url=/rerun/recordings/sim2real.rrd&camera=workspace" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
+            <iframe id="rerunFrame" title="rerun" src="about:blank" style="height: min(78vh, 820px); min-height: 620px;"></iframe>
             <div id="artifactPreviewHost" class="hint" hidden style="margin-top:10px;"></div>
           </section>
         </div>
@@ -6436,6 +6839,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await loadArtifactsForSelectedRun();
           }});
         }}
+        for (const id of ["artifactTypeFilter", "artifactSort"]) {{
+          const node = document.getElementById(id);
+          if (node) {{
+            node.addEventListener("change", async () => {{
+              const selectedRun = String((document.getElementById("artifactRunSelect") || {{}}).value || (document.getElementById("runIdInput") || {{}}).value || activeRunId || "").trim();
+              if (!selectedRun) return;
+              await loadArtifactsForSelectedRun();
+            }});
+          }}
+        }}
         const robotPreset = document.getElementById("robotPreset");
         if (robotPreset) {{
           robotPreset.addEventListener("change", async (e) => {{
@@ -6660,26 +7073,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function setChatModels(models, selectedModel) {{
         const select = document.getElementById("chatModel");
         if (!select) return;
+        // Preserve any explicit prior user choice across refreshes.
+        const prior = String((select && select.value) || "").trim();
         const values = Array.isArray(models)
           ? [...new Set(models.map((item) => String(item || "").trim()).filter(Boolean))]
           : [];
-        if (!values.length) {{
-          values.push("{DEFAULT_LLM_MODEL}");
-        }}
-        const preferred = String(selectedModel || select.value || values[0] || "").trim();
-        const chosen = values.includes(preferred) ? preferred : values[0];
         select.innerHTML = "";
+        // Default option: empty value => backend applies cost-tier routing
+        // (cheapest adequate model per turn) instead of pinning the reasoner.
+        const autoOpt = document.createElement("option");
+        autoOpt.value = "";
+        autoOpt.textContent = "Auto (cost-aware)";
+        select.appendChild(autoOpt);
         for (const model of values) {{
           const opt = document.createElement("option");
           opt.value = model;
           opt.textContent = model;
-          if (model === chosen) opt.selected = true;
           select.appendChild(opt);
         }}
+        // Keep an explicit prior selection; otherwise default to Auto (""). The
+        // server-provided default model is intentionally not auto-selected.
+        select.value = prior && values.includes(prior) ? prior : "";
       }}
       function selectedChatModel() {{
+        // Empty string ("Auto") lets the backend route by cost tier.
         const select = document.getElementById("chatModel");
-        return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}";
+        return String((select && select.value) || "").trim();
       }}
       function clearChatLog() {{
         const log = document.getElementById("chatLog");
@@ -6868,8 +7287,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           clearThinkingBubble();
           input.value = "";
           if (data && data.model) {{
+            // Surface the model/tier actually used without hijacking the user's
+            // selection — "Auto" must stay Auto so routing keeps applying.
             const select = document.getElementById("chatModel");
-            if (select) select.value = String(data.model);
+            if (select) {{
+              const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
+              select.title = "last used: " + String(data.model) + tierNote;
+            }}
           }}
           if (data && data.session_id) {{
             activeChatSessionId = String(data.session_id);
@@ -6985,12 +7409,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           rrdUrl = await resolveRerunRrdUrl(18, runId);
         }}
         // Prefer the public recording copy; authenticated blob fetch remains the fallback.
-        return (
+        // Rerun parses path-only `/rerun/...` as host `rerun` → http://rerun/... (broken).
+        if (rrdUrl.startsWith("/")) {{
+          rrdUrl = location.origin + rrdUrl;
+        }} else if (rrdUrl && !/^https?:\/\//i.test(rrdUrl)) {{
+          rrdUrl = location.origin + "/" + String(rrdUrl).replace(/^\/+/, "");
+        }}
+        const fullHref = (
           "/rerun/?url=" +
           encodeURIComponent(rrdUrl) +
           "&hide_welcome_screen=1&camera=" +
           encodeURIComponent(cam)
         );
+        const openLink = document.getElementById("openFullRerun");
+        if (openLink) openLink.href = fullHref;
+        return fullHref;
       }}
       function showRerunPlaceholder(message, options) {{
         const opts = options || {{}};
@@ -7238,6 +7671,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function loadRerunViewer(camera) {{
         const cam = String(camera || document.getElementById("cameraSelect").value || "workspace");
         let simViz = await loadJson(activeRunId ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId) : "/api/sim-viz/status");
+        const render = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
+        if (render && render !== "rerun") {{
+          activeArtifactRender = render;
+          showRerunPlaceholder("This artifact is a " + render + " preview, not a Rerun .rrd recording. Use the preview/download below or choose Type = Rerun .rrd.", {{ force: true }});
+          await showArtifactPreview(simViz, render);
+          showToast("Only .rrd artifacts open in Rerun; showing " + render + " preview.", "info");
+          return false;
+        }}
         if (!(simViz && (simViz.rrd_uri || simViz.rerun_ready))) {{
           showToast("No run recording yet; loading stock Franka visual fallback in Rerun.", "info");
           await apiJson("/api/sim-viz/load-franka-demo", {{
@@ -7377,6 +7818,46 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("artifactPrefix");
         return String((input && input.value) || "").trim();
       }}
+      function artifactTypeFilterValue() {{
+        const input = document.getElementById("artifactTypeFilter");
+        return String((input && input.value) || "").trim();
+      }}
+      function artifactSortValue() {{
+        const input = document.getElementById("artifactSort");
+        return String((input && input.value) || "preferred").trim();
+      }}
+      function sortAndFilterArtifacts(artifacts, preferred) {{
+        const filter = artifactTypeFilterValue();
+        const sortMode = artifactSortValue();
+        const preferredKey = String((preferred && preferred.key) || "");
+        const typeRank = {{ rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 }};
+        const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {{
+          return !filter || String(item.render || "download") === filter;
+        }});
+        items.sort((a, b) => {{
+          const ar = String(a.render || "download");
+          const br = String(b.render || "download");
+          if (sortMode === "preferred") {{
+            const ap = String(a.key || "") === preferredKey ? -1 : 0;
+            const bp = String(b.key || "") === preferredKey ? -1 : 0;
+            if (ap !== bp) return ap - bp;
+            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
+            if (tr !== 0) return tr;
+          }}
+          if (sortMode === "type") {{
+            const tr = (typeRank[ar] ?? 99) - (typeRank[br] ?? 99);
+            if (tr !== 0) return tr;
+          }}
+          if (sortMode === "largest") {{
+            return Number(b.size || 0) - Number(a.size || 0);
+          }}
+          if (sortMode === "name") {{
+            return String(a.key || "").localeCompare(String(b.key || ""));
+          }}
+          return String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
+        }});
+        return items;
+      }}
       async function refreshArtifactRuns() {{
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
@@ -7419,14 +7900,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
           return true;
         }}
-        list.innerHTML = artifacts.map((item, idx) => {{
+        renderArtifactDerivedRunDetails(runId, artifacts);
+        const preferred = data && data.preferred ? data.preferred : null;
+        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred);
+        if (!displayArtifacts.length) {{
+          list.innerHTML =
+            "<p>No artifacts of selected type for <code>" + escapeHtml(runId) + "</code>.</p>" +
+            "<p>Clear the Type filter to show all " + String(artifacts.length) + " artifacts.</p>";
+          return true;
+        }}
+        const counts = artifacts.reduce((acc, item) => {{
+          const key = String(item.render || "download");
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }}, {{}});
+        const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
+        list.innerHTML =
+          '<div style="font-size:12px;color:#475569;margin:4px 0 8px;">Showing ' +
+          String(displayArtifacts.length) + " of " + String(artifacts.length) +
+          " artifacts · " + escapeHtml(countText) + "</div>" +
+          displayArtifacts.map((item, idx) => {{
           const key = String(item.key || "");
           const render = String(item.render || "download");
           const s3uri = String(item.s3_uri || "");
           return (
             '<div style="padding:8px 0;border-top:1px solid #e2e8f0;">' +
             '<div><code>' + escapeHtml(key) + '</code></div>' +
-            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + '</div>' +
+            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + ' updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
             '</div>'
           );
@@ -7442,7 +7942,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await loadArtifact(payload);
           }});
         }});
-        const preferred = data && data.preferred ? data.preferred : null;
         if (preferred && String(preferred.render || "") === "rerun") {{
           appendChat("assistant", "Auto-loading preferred Rerun recording for `" + runId + "`.");
           await loadArtifact({{
@@ -7450,8 +7949,85 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
           }});
+          renderArtifactDerivedRunDetails(runId, artifacts);
         }}
         return true;
+      }}
+      function renderArtifactDerivedRunDetails(runId, artifacts) {{
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        const keys = list.map((item) => String(item.key || ""));
+        const hasAny = (patterns) => countMatching(patterns) > 0;
+        function countMatching(patterns) {{
+          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
+        }}
+        function artifactStageKey(key) {{
+          const runMarker = "/" + runId + "/";
+          let scoped = String(key || "");
+          const idx = scoped.indexOf(runMarker);
+          if (idx >= 0) scoped = scoped.slice(idx + runMarker.length);
+          const parts = scoped.split("/").filter(Boolean);
+          const first = parts[0] || "artifacts";
+          if (first === "reports") return "reports";
+          if (first === "eval" && parts[1]) return "eval/" + parts[1];
+          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
+          return first;
+        }}
+        function artifactStageLabel(stageKey) {{
+          const labels = {{
+            "stage_01_trigger": "Trigger",
+            "stage_02_assets": "Assets",
+            "stage_12_external_validation": "External validation",
+            "stage_13_retrigger": "Retrigger",
+            "eval/heldout": "Held-out eval",
+            "actions/train": "Policy rollouts",
+            "vlm_eval/train": "VLM eval",
+            "training_signal/train": "Training signal",
+            "envs/raw": "Raw envs",
+            "envs/train": "Train envs",
+            "outer_loop": "Decision / outer loop",
+            "reports": "Reports / visualization",
+          }};
+          if (labels[stageKey]) return labels[stageKey];
+          const cleaned = String(stageKey || "artifacts").replaceAll("_", " ").replaceAll("/", " / ").replaceAll("-", " ");
+          return cleaned.slice(0, 1).toUpperCase() + cleaned.slice(1);
+        }}
+        const grouped = new Map();
+        for (const key of keys) {{
+          const stageKey = artifactStageKey(key);
+          grouped.set(stageKey, (grouped.get(stageKey) || 0) + 1);
+        }}
+        const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {{
+          return {{
+            id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
+            label: artifactStageLabel(stageKey),
+            status: "succeeded",
+            summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
+          }};
+        }});
+        const reportReady = hasAny(["reports/sim2real-report.json"]);
+        const rrdReady = hasAny(["reports/sim2real.rrd"]);
+        const now = new Date().toISOString();
+        renderRunDetails({{
+          run: {{
+            run_id: runId,
+            status: reportReady ? "completed" : "artifact-backed",
+            result: rrdReady ? "rerun_ready" : "artifacts_listed",
+            updated_at: now,
+            stages,
+            logs: [
+              {{
+                timestamp: now,
+                level: "info",
+                message: "Derived stage timeline from " + String(list.length) + " S3 artifacts.",
+              }},
+              {{
+                timestamp: now,
+                level: rrdReady ? "info" : "warn",
+                message: rrdReady ? "Run-specific Rerun recording is available." : "Rerun recording not found in listed artifacts.",
+              }},
+            ],
+          }},
+        }});
       }}
       function updateRenderedDataSummary(simViz) {{
         const node = document.getElementById("renderedDataSummary");
@@ -7461,10 +8037,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const uri = String((simViz && simViz.artifact_uri) || "");
         const render = String((simViz && simViz.artifact_render) || "");
         if (key || uri) {{
+          const note = String((simViz && simViz.visualization_note) || "");
           node.innerHTML =
             "Rendering: <strong>" + escapeHtml(render || "artifact") + "</strong>" +
             " from run <code>" + escapeHtml(runId) + "</code><br>" +
-            "<code>" + escapeHtml(key || uri) + "</code>";
+            "<code>" + escapeHtml(key || uri) + "</code>" +
+            (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
         }} else {{
           node.textContent = "Rendering: no run artifact loaded yet.";
         }}
@@ -8045,6 +8623,7 @@ Type=simple
 EnvironmentFile=-/opt/npa-agent/llm.env
 EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
+EnvironmentFile=-/opt/npa-agent/public.env
 ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
 WorkingDirectory=/opt/npa-agent
 Restart=always
@@ -8086,6 +8665,7 @@ sudo systemctl restart npa-agent-backend
         setup_script.replace(_AGENT_CHAT_EMBED, agent_chat_source)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
     )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
@@ -8332,7 +8912,11 @@ def deploy_cmd(
     )
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     configured_llm_model = str(llm_model or "").strip() or default_llm_model
-    configured_llm_models = _normalize_llm_models([configured_llm_model, *llm_models])
+    # With no explicit --llm-models, seed the cost-ordered default ladder so
+    # per-turn routing can reach every tier (cheap/standard/reasoning/vision)
+    # out of the box. An explicit --llm-models acts as a governance allowlist.
+    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
+    configured_llm_models = _normalize_llm_models([configured_llm_model, *extra_llm_models])
     nebius_ai_key, _ = _resolve_operator_credentials()
     if not tf_api_key:
         typer.echo(
@@ -8564,7 +9148,11 @@ def bootstrap_cmd(
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     requested_llm_model = str(llm_model or "").strip()
     resolved_llm_model = requested_llm_model or default_llm_model
-    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *llm_models])
+    # No explicit --llm-models => seed the cost-ordered default ladder (all
+    # tiers). Existing record models are still merged below, so re-bootstrap
+    # keeps any previously configured set.
+    extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
+    resolved_llm_models = _normalize_llm_models([resolved_llm_model, *extra_llm_models])
     nebius_ai_key, _ = _resolve_operator_credentials()
     llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
     if isinstance(llm_block.get("models"), list):

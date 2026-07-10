@@ -1,0 +1,32 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: token-factory-cosmos-reason
+  description: Reason over scene frames with Token Factory Cosmos reasoner (zero-GPU).
+  skypilotTwin: npa/workflows/workbench/skypilot/token-factory-cosmos-reason.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory-cosmos-reason"
+
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/scene/"
+  plan_uri: "s3://{{config.bucket}}/{{config.prefix}}/plan/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: reason-scene
+
+states:
+  reason-scene:
+    description: Token Factory Cosmos reasoner over captured scene frames.
+    toolRef: workbench.token_factory.reason
+    resources: cpu
+    outputs:
+      - uri: "{{config.plan_uri}}plan.json"
+        schema: npa.token_factory.plan.v1
+    terminal: true

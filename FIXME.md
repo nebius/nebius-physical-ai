@@ -37,7 +37,7 @@ work lives).
 #### [H] GR00T BYOVM env omits inherited S3 credentials
 
 - **Surfaced by**: 2026-05-09 8x H200 validation.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: GR00T BYOVM env files inherited HF/GPU values but omitted
   project storage credentials present in Cosmos and FiftyOne env files.
 - **Next step**: Write merged project storage credentials into
@@ -161,7 +161,7 @@ work lives).
 #### [L] VM `deploy --destroy` runs Terraform destroy with no confirmation
 
 - **Surfaced by**: 2026-06-11 Cosmos VM teardown.
-- **Status**: Still active.
+- **Status**: Fixed.
 - **Current issue**: For Terraform-managed (`--runtime vm`) aliases,
   `cosmos deploy --destroy` proceeds straight to `terraform destroy` with no
   confirmation prompt; `--yes` only gates `--replace`, so a mistyped `-n` alias
@@ -173,6 +173,11 @@ work lives).
 
 ## Resolved (recent)
 
+- 2026-07-09 - GR00T BYOVM/project storage credential inheritance + reload-env
+  parity with Cosmos (`apply_storage_env_vars`, `_shared_groot_env_or_fail(cfg, ...)`).
+- 2026-07-09 - VM `deploy --destroy` confirmation gate via
+  `npa.deploy.confirm.confirm_vm_destroy` across workbench tools; e2e scripts
+  pass `--yes`.
 - 2026-05-22 - BYOVM live commands SSH fallback schema and live routing
   (`9784d25`, W15 Stage B). Original FIXME entry: `BYOVM live commands do not
   SSH-fallback when public endpoints are blocked`.

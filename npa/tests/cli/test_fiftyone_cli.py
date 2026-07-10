@@ -1753,6 +1753,7 @@ def test_fiftyone_destroy_removes_provisioning_workbench(tmp_path: Path, mocker)
             "--tf-dir",
             str(tmp_path),
             "--destroy",
+            "--yes",
         ],
     )
 
@@ -1810,6 +1811,7 @@ def test_fiftyone_destroy_reuses_saved_terraform_state_credentials(mocker) -> No
             "curate",
             "deploy",
             "--destroy",
+            "--yes",
         ],
     )
 

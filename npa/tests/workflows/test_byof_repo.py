@@ -43,19 +43,43 @@ def test_docker_login_uses_profile_token_for_password_stdin(monkeypatch) -> None
     seen: dict[str, object] = {}
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:4] == ["docker", "login", "-u", "iam"]:
             seen["stdin"] = stdin
             seen["env"] = env
+            seen["token_cmd"] = None
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
     monkeypatch.setattr(module, "_run", fake_run)
     module._docker_login_nebius("cr.example.nebius.cloud", env={"DOCKER_CONFIG": "/tmp/docker-auth"})
 
     assert seen["stdin"] == "profile-token"
     assert seen["env"] == {"DOCKER_CONFIG": "/tmp/docker-auth"}
+
+
+def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
+            seen["token_cmd"] = list(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="agent-token\n", stderr="")
+        if cmd[:4] == ["docker", "login", "-u", "iam"]:
+            seen["stdin"] = stdin
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setenv("NEBIUS_PROFILE", "agent-sa")
+    monkeypatch.setattr(module, "_run", fake_run)
+    module._docker_login_nebius("cr.example.nebius.cloud")
+
+    assert seen["token_cmd"] == ["nebius", "--profile", "agent-sa", "iam", "get-access-token"]
+    assert seen["stdin"] == "agent-token"
 
 
 def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
@@ -71,9 +95,10 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
         "container_image_for_tool",
         lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
     )
+    monkeypatch.setenv("NPA_BYOF_SKIP_REGISTRY_REFRESH", "1")
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
@@ -104,7 +129,7 @@ def test_main_reports_403_push_hint(monkeypatch, capsys) -> None:
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "push"]:
             raise RuntimeError("command failed (1): docker push ... 403 Forbidden")
@@ -180,7 +205,7 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
         return "ghcr.io/nebius/npa-isaac-lab:stable"
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             base = next((part for part in cmd if part.startswith("BYOF_BASE_IMAGE=")), "")
@@ -303,6 +328,81 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     assert "--yaml" in cmd and "/tmp/byof-datagen-rtxpro-smoke.yaml" in cmd
 
 
+def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_byof_kubernetes_target",
+        lambda *_args, **_kwargs: type(
+            "Target",
+            (),
+            {
+                "kubeconfig": "/tmp/kubeconfig",
+                "context": "customer-mk8s",
+                "namespace": "workbench",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        module,
+        "storage_env_for_project",
+        lambda *_args, **_kwargs: {"AWS_ENDPOINT_URL": "https://storage.example", "AWS_ACCESS_KEY_ID": "key"},
+    )
+
+    def fake_run(cmd, *, stdin=None, capture=False, env=None):
+        if cmd and cmd[0] == sys.executable and str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            seen["cmd"] = list(cmd)
+            seen["env"] = dict(env or {})
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "oss-solution-smoke",
+            "--skip-build",
+            "--base-profile",
+            "ubuntu",
+            "--workload",
+            "solution-smoke",
+            "--smoke-command",
+            "python3 -c 'print(42)'",
+            "--solution-name",
+            "demo-solution",
+            "--capability-name",
+            "demo-capability",
+            "--smoke-artifact-name",
+            "demo_artifact.json",
+        ]
+    )
+
+    assert rc == 0
+    cmd = seen.get("cmd")
+    assert isinstance(cmd, list)
+    assert str(module.CONTAINER_VERIFY_RUNNER) in cmd
+    assert "--smoke-command" in cmd
+    assert "python3 -c 'print(42)'" in cmd
+    assert "--solution-name" in cmd and "demo-solution" in cmd
+    assert "--capability-name" in cmd and "demo-capability" in cmd
+    assert "--smoke-artifact-name" in cmd and "demo_artifact.json" in cmd
+    env = seen.get("env")
+    assert isinstance(env, dict)
+    assert env["KUBECONFIG"] == "/tmp/kubeconfig"
+    assert env["KUBECONTEXT"] == "customer-mk8s"
+    assert env["NPA_BYOF_K8S_CONTEXT"] == "customer-mk8s"
+    assert env["NPA_BYOF_K8S_NAMESPACE"] == "workbench"
+    assert env["AWS_ENDPOINT_URL"] == "https://storage.example"
+    assert env["AWS_ACCESS_KEY_ID"] == "key"
+
+
 def test_base_image_candidates_ubuntu_profile_default() -> None:
     module = _load_module()
     candidates = module._base_image_candidates(
@@ -354,7 +454,7 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd == ["nebius", "iam", "get-access-token"]:
+        if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
@@ -371,21 +471,26 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
             "main",
             "--base-profile",
             "ubuntu",
+            "--build-command",
+            "python3 -m pip install -e .",
             "--skip-run",
         ]
     )
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
+    assert any(part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args)
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
+    assert output["build_command"] == "python3 -m pip install -e ."
 
 
 def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     module = _load_module()
     text = module._dockerfile_text()
     assert "BYOF_BASE_IMAGE" in text
+    assert "BYOF_BUILD_COMMAND" in text
     assert "npa_source_metadata.json" in text
     assert "printf" in text
     assert "/opt/byof" in text

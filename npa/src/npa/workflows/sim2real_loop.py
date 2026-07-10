@@ -357,15 +357,18 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    if "s3_bucket" in overrides:
-        bucket = str(overrides.get("s3_bucket") or "")
-    else:
-        bucket = str(
-            os.environ.get("NPA_SIM2REAL_BUCKET")
-            or os.environ.get("NPA_S3_BUCKET")
-            or os.environ.get("S3_BUCKET")
-            or ""
-        )
+    # An explicit but empty ``s3_bucket`` override (e.g. the ``--s3-bucket ""``
+    # default on ``npa workbench health sim2real``) must NOT clobber the env
+    # fallback — otherwise NPA_SIM2REAL_BUCKET / S3_BUCKET are ignored and the
+    # config falsely reports a missing bucket. Treat empty like absent, matching
+    # every other seam below (``override or env``).
+    bucket = str(
+        overrides.get("s3_bucket")
+        or os.environ.get("NPA_SIM2REAL_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or os.environ.get("S3_BUCKET")
+        or ""
+    )
     registry = os.environ.get("NPA_REGISTRY", "")
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
@@ -2228,6 +2231,15 @@ def _run_kubernetes_image_component(
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
+    # Refresh before each sibling Job: IAM registry tokens expire mid-pipeline.
+    from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+
+    ensure_registry_pull_secret_for_images(
+        image,
+        namespace=namespace,
+        kubeconfig=config.k8s_kubeconfig,
+        k8s_context=config.k8s_context,
+    )
     manifest = _component_job_manifest(
         image,
         component=component,
@@ -2846,12 +2858,11 @@ def _apply_reference_adapter_heldout_gate(
     inner_evidence: dict[str, Any],
     threshold: float,
 ) -> None:
-    """Blend sim rollout metrics with inner-loop progress for the reference adapter.
+    """Annotate reference-adapter progress without overriding real sim success.
 
-    The reference VLM→RL trainer only updates a compact action-bias adapter, so
-    native Isaac/Genesis task success stays near zero even when VLM scores and
-    reward trends show real progress. Sim metrics are preserved in ``details``,
-    but ``success`` can reflect closed-loop progress for the outer-loop gate.
+    Reference adapter scores are diagnostic only; the held-out gate must remain
+    grounded in the simulator's own success signal so the pipeline cannot promote
+    a checkpoint that did not actually succeed in sim.
     """
 
     trainer_source = inner_evidence.get("trainer_source")
@@ -2867,10 +2878,8 @@ def _apply_reference_adapter_heldout_gate(
         details["sim_success"] = sim_success
         details["sim_score"] = round(sim_score, 6)
         details["reference_adapter_score"] = round(cal_score, 6)
+        details["reference_adapter_would_pass"] = cal_score >= threshold
         item["details"] = details
-        item["success"] = sim_success or cal_success
-        if cal_success:
-            item["score"] = round(max(sim_score, cal_score), 6)
 
 
 def _reference_heldout_payload(

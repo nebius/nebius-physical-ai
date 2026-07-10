@@ -88,6 +88,7 @@ from npa.deploy.cleanup import (
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
+    apply_storage_env_vars,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
@@ -96,6 +97,7 @@ from npa.deploy.byovm import (
     select_visible_devices,
     workbench_storage_outputs,
 )
+from npa.deploy.confirm import confirm_vm_destroy
 from npa.deploy.images import container_image_for_tool
 from npa.deploy.provisioner import ProvisionerError
 from npa.deploy.safety import (
@@ -648,6 +650,9 @@ def _storage_env_tokens(cfg: Any) -> dict[str, str]:
     aws_secret_access_key = getattr(storage, "aws_secret_access_key", "")
     if aws_secret_access_key:
         tokens["AWS_SECRET_ACCESS_KEY"] = aws_secret_access_key
+    checkpoint_bucket = getattr(storage, "checkpoint_bucket", "")
+    if checkpoint_bucket:
+        tokens["NEBIUS_S3_BUCKET"] = checkpoint_bucket
     return tokens
 
 
@@ -1497,14 +1502,18 @@ def _parse_env_read(stdout: str) -> tuple[str, str, str]:
     return env_path, mode, "\n".join(body) + ("\n" if body else "")
 
 
-def _shared_groot_env_or_fail(credentials: Any) -> dict[str, str]:
+def _shared_groot_env_or_fail(cfg: Any, credentials: Any) -> dict[str, str]:
+    merged = {**_storage_env_tokens(cfg), **shared_credential_env(credentials)}
     credential_env = {
         key: value
-        for key, value in shared_credential_env(credentials).items()
+        for key, value in merged.items()
         if key in GROOT_CREDENTIAL_ENV_NAMES and value
     }
     if not credential_env:
-        _fail("No shared credentials found in environment or ~/.npa/credentials.yaml.")
+        _fail(
+            "No shared credentials found in environment, ~/.npa/credentials.yaml, "
+            "or project config."
+        )
     return credential_env
 
 
@@ -2147,7 +2156,7 @@ def _update_existing_deployment(
         return
 
     credentials = resolve_credentials()
-    credential_env = _shared_groot_env_or_fail(credentials)
+    credential_env = _shared_groot_env_or_fail(cfg, credentials)
     service_port = port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
     result = _apply_env_update(
         cfg,
@@ -2344,7 +2353,7 @@ def deploy_cmd(
         False,
         "--yes",
         "-y",
-        help="Skip confirmation prompts (use with --replace for automation).",
+        help="Skip confirmation prompts (use with --replace or deploy --destroy for automation).",
     ),
     no_shared_creds: bool = typer.Option(
         False,
@@ -2534,6 +2543,7 @@ def deploy_cmd(
             project=proj_alias,
             explicit_vars=extra_vars,
         )
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
     if byovm:
         apply_project_storage_vars(
             merged_vars,
@@ -2541,6 +2551,7 @@ def deploy_cmd(
             explicit_vars=extra_vars,
             warn=console.print,
         )
+        apply_storage_env_vars(merged_vars, explicit_vars=extra_vars)
 
     if use_remote_state and nebius_creds and not dry_run:
         write_config(
@@ -2557,6 +2568,13 @@ def deploy_cmd(
     tf_workbench_type = GROOT_CONTAINER_WORKBENCH_TYPE if container_runtime else "groot"
 
     if destroy:
+        confirm_vm_destroy(
+            proj_alias,
+            wb_name,
+            byovm=byovm,
+            dry_run=dry_run,
+            yes=yes,
+        )
         if byovm:
             if dry_run:
                 console.print(
@@ -3264,7 +3282,7 @@ def reload_env_cmd(
     """Propagate local shared credentials into the running GR00T service env without redeploying."""
     cfg = _get_config()
     credentials = resolve_credentials()
-    credential_env = _shared_groot_env_or_fail(credentials)
+    credential_env = _shared_groot_env_or_fail(cfg, credentials)
 
     service_port = (
         port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT

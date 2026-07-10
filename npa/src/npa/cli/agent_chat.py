@@ -8,6 +8,9 @@ import re
 from typing import Any
 
 BYOF_ONBOARD_SKILL_PATH = "skills/workflows/byof-onboard/SKILL.md"
+OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH = (
+    "skills/workflows/oss-solution-registry-onboard/SKILL.md"
+)
 
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
@@ -856,12 +859,16 @@ def format_cosmos3_setup() -> str:
 
 def format_onboard_solution() -> str:
     registry = os.environ.get("NPA_REGISTRY", "").strip() or "<resolved-from-~/.npa/config.yaml>"
-    skill_path = BYOF_ONBOARD_SKILL_PATH
+    byof_skill_path = BYOF_ONBOARD_SKILL_PATH
+    registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
         [
             "**Yes — chat can onboard a new OSS solution end-to-end.**",
-            f"- **Skill (source of truth):** `{skill_path}`",
+            f"- **BYOF skill:** `{byof_skill_path}`",
+            f"- **Registry skill:** `{registry_skill_path}`",
             "- Flow: **contract** → **containerize** (`--base-profile ubuntu`) → **deploy/test** (`--workload container-verify`).",
+            "- Registry/catalog readiness additionally requires reading upstream docs, listing that solution's native capabilities (upstream names), testing each accepted claim with `--workload solution-smoke` (named JSON artifact), and running the live Nebius pull path.",
+            "- Per-solution capability matrices live in the registry skill and `docs/workbench/oss-solution-catalog.md`.",
             "- Sim stacks (LeIsaac RL/datagen): use `--base-profile isaac-lab` per the skill workload table.",
             "- Generic Ubuntu onboarding (replace `<repo-url>` / `<repo-ref>`):",
             "```bash",
@@ -873,8 +880,10 @@ def format_onboard_solution() -> str:
             "  --workload container-verify \\",
             "  --cleanup",
             "```",
+            "- Registry candidate capability smoke: use `--workload solution-smoke` with `--build-command`, `--smoke-command`, `--solution-name`, `--capability-name`, and `--smoke-artifact-name`.",
             "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
             "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
+            "- Do not mark a solution registry-ready from a Docker build or generic import check alone.",
         ]
     )
 

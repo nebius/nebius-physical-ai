@@ -1,0 +1,37 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: vlm-eval-benchmark
+  description: Sweep a labeled rollout set through vlm-eval and rank configs.
+  skypilotTwin: npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/vlm-eval-benchmark"
+  vlm_backend: stub
+  thresholds: "0.5,0.8,0.9"
+  rubrics: "default,strict"
+  vlm_models: "Qwen/Qwen2-VL-7B-Instruct"
+
+  benchmark_dataset: "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json"
+  benchmark_output: "s3://{{config.bucket}}/{{config.prefix}}/results.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 80Gi
+
+initial: benchmark
+
+states:
+  benchmark:
+    description: Rank VLM backends against a fixture or rollout set.
+    toolRef: workbench.vlm_eval.benchmark
+    resources: gpu
+    outputs:
+      - uri: "{{config.benchmark_output}}"
+        schema: npa.workbench.vlm_eval.benchmark.v1
+    terminal: true

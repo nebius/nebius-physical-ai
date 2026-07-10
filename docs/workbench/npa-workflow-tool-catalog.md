@@ -6,13 +6,24 @@ invoked as a container command; artifacts pass via S3 URIs in `config`.
 | toolRef | CLI / module | Typical inputs | Typical outputs |
 | --- | --- | --- | --- |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` |
+| `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` |
+| `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` |
+| `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` |
+| `workbench.cosmos3.reason` | `npa workbench cosmos3 reason` | `config.scene_uri` | `config.reason_uri` |
+| `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` |
+| `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` |
+| `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` |
+| `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint |
+| `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` |
+| `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report |
 | `workbench.sim2real_envgen.raw_shard` | `python -m npa.workflows.sim2real_envgen raw-shard` | `config.raw_envs_uri`, `config.env_count` | raw env manifest on S3 |
 | `workbench.sim2real.policy_rollouts` | workflow stub (`echo`) | `config.rollouts_uri` | rollout prefix on S3 |
 | `workbench.sim2real.heldout_eval` | workflow stub (`echo`) | — | `config.heldout_report_uri` |
 | `workbench.sim2real.write_decision` | demo decision writer | `config.decision_uri`, `config.default_decision` | threshold decision JSON |
 | `workbench.sim2real.finalize` | workflow stub (`echo`) | `config.finalize_report_uri` | final report URI |
+| `workbench.byof.repo` | `npa/scripts/run_byof_repo.py` | `config.repo_url`, `config.repo_ref`, `config.base_profile`, optional `config.build_command` / `config.smoke_command`; registry candidates also set `config.solution_name`, `config.capability_name`, `config.smoke_artifact_name` | BYOF summary, dataset/checkpoint artifacts, solution smoke artifact |
 | `workbench.data_transform.rollout_contract` | rollout contract adapter | rollout manifest URI | normalized rollout manifest |
 | `workbench.data_transform.improvement_summary` | cross-region summary adapter | heldout/report URIs | improvement summary |
 | `workbench.rl.policy_train` | `npa workbench isaac-lab train` | `config.task_name`, training dataset URI | policy checkpoint |
