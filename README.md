@@ -131,7 +131,7 @@ states:
 
 Author, validate, plan, and submit guide:
 [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md).
-Golden specs: [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/).
+Workbench workflows: [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/).
 Composable `toolRef` steps: [`npa.workflow` tool catalog](docs/workbench/npa-workflow-tool-catalog.md).
 
 > **Submit the same YAML to the cluster.** After configure, launch with
@@ -274,7 +274,7 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
-| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; golden specs under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                                 |
+| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; workbench workflows under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                           |
 | Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health sim2real`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
@@ -308,7 +308,7 @@ npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factor
 | ---------------------- | --------------------------------------------------------------- |
 | **Format**             | `apiVersion: npa.workflow/v0.0.1`                               |
 | **CLI**                | `validate-spec` · `plan-spec` · `run-spec` · `submit`           |
-| **Golden specs**       | [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/) |
+| **Workbench workflows** | [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/) |
 | **Tool catalog**       | [docs/workbench/npa-workflow-tool-catalog.md](docs/workbench/npa-workflow-tool-catalog.md) |
 | **Authoring guide**    | [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) |
 
@@ -367,7 +367,7 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   src/npa/cli/             # Typer entry point and every top-level command
   src/npa/workbench/       # Per-tool implementations (cosmos, lerobot, sonic, ...)
   workflows/workbench/
-    npa-workflows/         # Golden npa.workflow/v0.0.1 specs (author + submit these)
+    npa-workflows/         # Workbench npa.workflow/v0.0.1 specs (author + submit these)
     sim2real/              # Staged 14-stage sim2real runbook
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)
