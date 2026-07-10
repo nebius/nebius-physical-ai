@@ -68,7 +68,7 @@ unique and must be tested with its own upstream-named capabilities.
 | `kitchen_task_registration` | accepted hard gate (live) | Gymnasium `robocasa/PickPlaceCounterToCabinet` |
 | `download_kitchen_assets_lw` | accepted (live) | `download_kitchen_assets --type tex tex_generative fixtures_lw` |
 | `kitchen_egl_env_reset` | accepted (live) | `MUJOCO_GL=egl` gym.make + reset after asset download |
-| `kitchen_random_rollout` | accepted (live) | `run_random_rollouts` after post-download EGL reset |
+| `kitchen_random_rollout` | accepted (live) | `run_random_rollouts` with video (`gymnasium==0.29.1` + `env.sim` bind) |
 
 ### OpenPI
 
