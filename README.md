@@ -4,7 +4,7 @@
 
 **One CLI, one SDK, one workflow layer for physical-AI workloads on Nebius —
 data curation, simulation, synthetic data, policy training, evaluation,
-observability, and SkyPilot orchestration.**
+observability, and cluster orchestration.**
 
 <img src="docs/assets/workbench-architecture.png" alt="Nebius Physical AI Workbench architecture" width="820" />
 
@@ -30,7 +30,7 @@ observability, and SkyPilot orchestration.**
 `npa` is the CLI and SDK for **Nebius Physical AI**. Workbench is its primary
 solution: one command surface that composes data curation, simulation,
 synthetic data, policy training, evaluation, export, observability, and
-SkyPilot workflows on Nebius object storage, orchestration, vLLM-compatible
+declarative workflows on Nebius object storage, orchestration, vLLM-compatible
 serving, managed Kubernetes, and GPU clusters (H100 · H200 · L40S · B300 ·
 RTX6000).
 
@@ -41,7 +41,7 @@ RTX6000).
 | --------------------------------- | ------------------------------------------------------------------------------------- |
 | **What you can do**               | Curate datasets · train and evaluate policies · render synthetic data · run sim-to-real loops · serve models |
 | **Who it's for**                  | Robotics teams, physical-AI researchers, and partners shipping on Nebius              |
-| **Where it runs**                 | Nebius S3, SkyPilot, managed Kubernetes, GPU clusters; local for stubs and unit tests |
+| **Where it runs**                 | Nebius S3, managed Kubernetes, GPU clusters; local for stubs and unit tests           |
 | **How you extend it**             | Declarative `npa.workflow/v0.0.1` YAML specs and reusable Workbench tool refs         |
 
 ---
@@ -129,15 +129,15 @@ states:
     terminal: true
 ```
 
-Author, validate, plan, and run guide: [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md).
-More golden specs: [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/).
-Every composable step is listed in the [`npa.workflow` tool catalog](docs/workbench/npa-workflow-tool-catalog.md).
+Author, validate, plan, and submit guide:
+[docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md).
+Golden specs: [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/).
+Composable `toolRef` steps: [`npa.workflow` tool catalog](docs/workbench/npa-workflow-tool-catalog.md).
 
-> **What runs on GPUs today.** `npa.workflow/v0.0.1` is beta. `run-spec
-> --execute` runs steps as local subprocesses; cluster execution is not
-> wired yet. For live GPU work, the runtime is **SkyPilot**
-> (`npa workbench workflow submit <yaml>`) — see
-> [Two YAML tiers, one platform](#two-yaml-tiers-one-platform) below.
+> **Submit the same YAML to the cluster.** After configure, launch with
+> `npa workbench workflow submit <npa.workflow.yaml> --run-id demo`. Use
+> `--plan-only` to inspect the plan without launching. See
+> [Author and submit workflows](#author-and-submit-workflows) below.
 
 ---
 
@@ -208,10 +208,9 @@ first GPU submit.
 - **Registry pull secrets expire silently.** A `401` on image pull usually
   means the `npa-nebius-registry` pull secret needs refreshing. See
   [known-footguns.md § Registry Pull Secret](docs/workbench/troubleshooting/known-footguns.md#registry-pull-secret-expires-silently).
-- **SkyPilot 0.12.2 does not interpolate `${VAR}` inside `envs` / `image_id`.**
-  Use `npa workbench workflow submit` (or NPA runners); the materialized-runbook
-  or direct-Kubernetes path is documented in
-  [FTUE-AUDIT.md § friction 4](FTUE-AUDIT.md#friction-points-ordered).
+- **Prefer `npa workbench workflow submit` for multi-stage jobs.** Pass
+  `npa.workflow` specs (or legacy runbooks); avoid hand-editing scheduler
+  YAML. See [FTUE-AUDIT.md § friction 4](FTUE-AUDIT.md#friction-points-ordered).
 - **Token Factory keys are not Nebius IAM tokens.** They start with `v1.` and
   live under `NEBIUS_TOKEN_FACTORY_KEY`. See
   [docs/workbench/token-factory.md](docs/workbench/token-factory.md).
@@ -250,18 +249,15 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 (there is no `solutions` CLI namespace). Highlights:
 
 - **`vlm-eval`** scores rollouts with stub, API, or self-hosted vLLM backends —
-  see [`vlm-eval.yaml`](npa/workflows/workbench/skypilot/vlm-eval.yaml).
+  see [`vlm-eval-single.yaml`](npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml).
 - **`token-factory`** wraps Nebius Token Factory for zero-GPU inference,
   captioning, and reasoning against your own frames.
 - **`health`** runs preflight checks before a Sim2Real submit.
 - **`sonic export`** converts locomotion checkpoints to ONNX.
-- **`workflow validate-spec` / `plan-spec` / `run-spec`** operate on the
-  customer-facing `npa.workflow/v0.0.1` DSL — see
-  [Two YAML tiers, one platform](#two-yaml-tiers-one-platform).
-- **`workflow submit`** submits a **SkyPilot** YAML (the current production
-  runtime) to Kubernetes or Nebius with `--var KEY=VALUE`.
-- **`trigger`** watches S3-compatible prefixes and retriggers SkyPilot
-  workflows automatically.
+- **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
+  customer-facing `npa.workflow/v0.0.1` specs — see
+  [Author and submit workflows](#author-and-submit-workflows).
+- **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
 - SONIC image routing is manifest-driven — see
   [sonic-image-catalog.md](docs/workbench/sonic-image-catalog.md).
@@ -272,14 +268,13 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 | Category         | Workbench commands                                                                                                                                                                                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Data curation    | `npa workbench fiftyone curate`, `eval`, `load-dataset`, `datasets list`; `npa workbench lancedb deploy`, `create-table`, `import-lerobot`, `import-bdd100k`, `backfill`, `create-mv`, `refresh-mv`, `query-table`, `query`; `npa workbench detection-training train`, `eval`, `status`, `list`         |
-| Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; SkyPilot templates such as [`bdd100k-pipeline.yaml`](npa/workflows/workbench/skypilot/bdd100k-pipeline.yaml) and [`curate-augment-train.yaml`](npa/workflows/workbench/templates/curate-augment-train.yaml) |
+| Synthetic data   | `npa workbench cosmos infer`, `train`, `serve`, `status`; `npa workbench cosmos2 transfer`; `npa workbench cosmos3 reason`; `npa workbench genesis generate-demos`; specs such as [`bdd100k-pipeline.yaml`](npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml) |
 | Simulation      | `npa workbench isaac-lab train`, `eval`, `export-lerobot`, `export-onnx`; `npa workbench genesis train-teacher`, `generate-demos`, `eval-teacher`, `eval-student`, `diagnose`, `tune`; `npa workbench sonic retargeting run`, `workflow`                                                                    |
 | Eval            | `npa workbench vlm-eval run`, `benchmark`, `workflow`, `status`, `list`; `npa workbench mjlab eval`, `workflow`; `npa workbench sonic eval`; `npa workbench fiftyone eval`; `npa workbench isaac-lab eval`; `npa workbench genesis eval-student`; `npa workbench golden-eval run`, `run-all`, `validate` |
 | Robot policy    | `npa workbench lerobot train`, `eval`, `serve`, `infer`, `list-checkpoints`, `benchmark`, `profile-train`, `train-student`; `npa workbench groot download`, `finetune`, `eval`, `serve`, `infer`, `convert`; `npa workbench sonic train`, `serve`, `export`, `eval`, `status`, `list`                    |
 | World models    | `npa workbench cosmos deploy`, `serve`, `infer`, `train`, `finetune`, `optimize`, `autoscale`, `status`, `system-info`                                                                                                                                                                                   |
 | Zero-GPU LLM    | `npa workbench token-factory caption`, `generate`, `reason`, `verify`, `models`, `workflow`, `status`                                                                                                                                                                                                    |
-| Authoring DSL   | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`; golden specs under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                                            |
-| Runtime submit  | `npa workbench workflow submit` (SkyPilot YAML), `trigger watch`, `status`, `logs`, `artifacts`, `list`, `teardown`, `distill`; reference YAML under [`skypilot/`](npa/workflows/workbench/skypilot/) and [`sim2real/`](npa/workflows/workbench/sim2real/)                                                |
+| Workflows       | `npa workbench workflow validate-spec`, `plan-spec`, `run-spec`, `submit`; golden specs under [`npa-workflows/`](npa/workflows/workbench/npa-workflows/)                                                                                                                                                 |
 | Observability   | Tool-level `status`, `list`, and `system-info` commands; `npa workbench workflow status`, `logs`; `npa workbench health sim2real`; `npa rerun host`, `share`, `list-shares`, `revoke`; `npa cluster status`, `list`                                                                                       |
 | Platform utils  | `npa configure` / `init`, `npa provision-if-absent`; `npa agent`, `npa skypilot bootstrap/status/verify`, `npa soperator`, `npa burst`, `npa cluster`, `npa network`, `npa adapter convert`, `npa convert lerobot-to-rrd/-mp4`, `npa viz`, `npa demo`                                                    |
 
@@ -289,32 +284,41 @@ Full CLI reference: [docs/cli/README.md](docs/cli/README.md).
 
 ---
 
-## Two YAML tiers, one platform
+## Author and submit workflows
 
-The repo ships two workflow YAML formats. They are **not siblings** — they
-sit at different layers, and picking the right one matters.
+Author pipelines as declarative `npa.workflow/v0.0.1` specs — a state graph of
+Workbench `toolRef` steps with S3 handoffs, gates, and loops. The same YAML is
+what you validate offline and submit to the cluster.
 
-| Aspect         | `npa.workflow/v0.0.1`                                                                | SkyPilot YAML                                                                                          |
-| -------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| **Role**       | Customer-facing **authoring DSL** — a state graph of `toolRef` steps                 | Production **runtime** — the thing that actually lands work on Nebius                                  |
-| **Status**     | Beta (`v0.0.1`) — validate / plan / local `--execute`                                | GA and used in every live pipeline                                                                     |
-| **CLI**        | `npa workbench workflow validate-spec` / `plan-spec` / `run-spec`                    | `npa workbench workflow submit <yaml>` (SkyPilot only)                                                 |
-| **Best for**   | Chaining Workbench tools, S3 handoff, gates and loops, agent-generated pipelines     | Custom `setup:` / `run:` blocks, `image_id` overrides, `execution: parallel`, `cloud: nebius` VMs, spot |
-| **Golden dir** | [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/) (~10) | [`npa/workflows/workbench/skypilot/`](npa/workflows/workbench/skypilot/) (~35)                        |
-| **Runs on GPUs today** | Not yet — scheduler plan is a JSON contract for the next layer                | Yes — via SkyPilot managed jobs on K8s or Nebius VMs                                                   |
+```bash
+# Offline
+npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
+npa workbench workflow plan-spec     npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml --run-id demo
 
-**Guidance for now:** if you're authoring a new pipeline that chains existing
-Workbench tools, start with an `npa.workflow` spec — it validates offline and
-matches the direction the platform is moving. If you need per-step `setup:` /
-`run:` blocks, custom container images, parallel fan-out, or spot GPUs, you
-still author a SkyPilot YAML. The scheduler-plan → SkyPilot submit wiring is
-tracked as the next milestone; when it lands, most reference pipelines will
-have an `npa.workflow` twin.
+# Launch on Nebius (after npa configure)
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
+  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
 
-The **Sim2Real 14-stage engine** is a third path — see
-[skills/workbench/sim2real-engine/SKILL.md](skills/workbench/sim2real-engine/SKILL.md).
-It uses `sim2real/runbook.yaml` plus Python stage glue and is separate from
-both YAML tiers today.
+# Inspect the plan without launching
+npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
+  --plan-only --run-id demo
+```
+
+|                        |                                                                 |
+| ---------------------- | --------------------------------------------------------------- |
+| **Format**             | `apiVersion: npa.workflow/v0.0.1`                               |
+| **CLI**                | `validate-spec` · `plan-spec` · `run-spec` · `submit`           |
+| **Golden specs**       | [`npa/workflows/workbench/npa-workflows/`](npa/workflows/workbench/npa-workflows/) |
+| **Tool catalog**       | [docs/workbench/npa-workflow-tool-catalog.md](docs/workbench/npa-workflow-tool-catalog.md) |
+| **Authoring guide**    | [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) |
+
+`submit` plans the graph and launches the run. Prefer these specs for new
+pipelines. Parallel fan-out and a few specialized paths remain outside
+`v0.0.1` scope — see the catalog README for exceptions.
+
+The **Sim2Real 14-stage engine** is a separate path
+([skills/workbench/sim2real-engine/SKILL.md](skills/workbench/sim2real-engine/SKILL.md))
+using `sim2real/runbook.yaml` plus Python stage glue.
 
 Architecture context:
 [docs/architecture/contributor-context.md](docs/architecture/contributor-context.md).
@@ -340,8 +344,9 @@ tool scores across GPU tiers:
 ## How it runs
 
 Workbench runs on Nebius infrastructure: S3-compatible object storage for
-artifacts, SkyPilot for multi-stage jobs, vLLM-compatible endpoints, and GPU
-runtimes (H100, H200, L40S, B300, RTX6000 — validated per tool).
+artifacts, managed Kubernetes and GPU runtimes for multi-stage jobs
+(H100, H200, L40S, B300, RTX6000 — validated per tool), and vLLM-compatible
+endpoints for serving.
 
 User secrets live in `~/.npa/credentials.yaml`; machine-managed config lives
 in `~/.npa/config.yaml`. The repo supports multiple top-level solution
@@ -362,8 +367,7 @@ npa/                       # Python package (CLI + SDK); install with `pip insta
   src/npa/cli/             # Typer entry point and every top-level command
   src/npa/workbench/       # Per-tool implementations (cosmos, lerobot, sonic, ...)
   workflows/workbench/
-    skypilot/              # Reference SkyPilot YAMLs
-    npa-workflows/         # Golden npa.workflow/v0.0.1 specs
+    npa-workflows/         # Golden npa.workflow/v0.0.1 specs (author + submit these)
     sim2real/              # Staged 14-stage sim2real runbook
 docs/                      # Quickstart, architecture, workbench guides, cookbooks
 skills/                    # SKILL.md files for agents and contributors (source of truth)
