@@ -1,0 +1,119 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Produced by the diagram-to-npa-workflow skill from a DIFFERENT diagram to prove
+# the method generalizes beyond sim2real. Source write-up (5 boxes, one straight
+# chain, no loops, no decision diamond):
+#   1. Ingest a BDD100K subset into LanceDB.
+#   2. Backfill CPU columns (person/rider/bbox/dedup), then CLIP embeddings.
+#   3. Curate a "rider" failure-mode materialized view.
+#   4. Train a detector on that view (GPU), then evaluate it (GPU).
+#   5. Open FiftyOne for human review.
+#
+# Contrast with the sim2real example: linear `next` chain, no loop/gate, and three
+# distinct resource tiers (cpu / gpu-embed / gpu-train) chosen per box.
+
+metadata:
+  name: av-failure-mode-from-diagram
+  description: >
+    AV perception failure-mode mini-pipeline from a linear diagram: LanceDB ingest
+    -> CPU/CLIP backfill -> rider failure-mode view -> detector train + eval ->
+    FiftyOne review. Demonstrates the skill on a non-looping, multi-resource graph.
+
+config:
+  bucket: example-bucket
+  prefix: "av-failure-mode/{{run.id}}"
+  lance_table: bdd100k
+
+  bdd100k_limit: "10000"
+  train_epochs: "10"
+  train_batch_size: "8"
+  train_learning_rate: "0.005"
+
+  lancedb_endpoint: http://npa-lancedb.workbench.svc.cluster.local:8686
+  detection_endpoint: http://npa-detection-training.workbench.svc.cluster.local:8790
+
+  rider_view: bdd100k_rider_train
+  nighttime_view: bdd100k_nighttime_person_train
+  distant_view: bdd100k_distant_person_train
+
+  source_uri: "s3://{{config.bucket}}/raw-bdd100k/subset-demo/"
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/lancedb/"
+  rider_train_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/bdd100k_rider_train"
+  rider_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/bdd100k_rider_train"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu-embed:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+  gpu-train:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 64Gi
+
+initial: ingest
+
+states:
+  ingest:
+    description: Box 1 — import a BDD100K subset into a per-run LanceDB table.
+    toolRef: workbench.lancedb.import_bdd100k
+    resources: cpu
+    outputs:
+      - uri: "{{config.lance_uri}}"
+        schema: npa.lancedb.table.v1
+    next: backfill-cpu
+
+  backfill-cpu:
+    description: Box 2a — backfill CPU UDF columns (person/rider/bbox/dedup).
+    needs: [ingest]
+    toolRef: workbench.lancedb.backfill_cpu_bundle
+    resources: cpu
+    next: backfill-clip
+
+  backfill-clip:
+    description: Box 2b — backfill CLIP embeddings on the GPU UDF path.
+    needs: [backfill-cpu]
+    toolRef: workbench.lancedb.backfill_clip
+    resources: gpu-embed
+    next: curate-view
+
+  curate-view:
+    description: Box 3 — create the rider failure-mode materialized view.
+    needs: [backfill-clip]
+    toolRef: workbench.lancedb.create_failure_views
+    resources: cpu
+    next: train-rider
+
+  train-rider:
+    description: Box 4a — train the rider detector (GPU).
+    needs: [curate-view]
+    toolRef: workbench.detection_training.train_rider
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.rider_train_uri}}"
+        schema: npa.detection_training.checkpoint.v1
+    next: eval-rider
+
+  eval-rider:
+    description: Box 4b — evaluate the rider detector checkpoint (GPU).
+    needs: [train-rider]
+    toolRef: workbench.detection_training.eval_rider
+    resources: gpu-train
+    outputs:
+      - uri: "{{config.rider_eval_uri}}metrics.json"
+        schema: npa.detection_training.metrics.v1
+    next: review
+
+  review:
+    description: Box 5 — launch FiftyOne for human review of the failure-mode results.
+    needs: [eval-rider]
+    toolRef: workbench.fiftyone.launch_app
+    resources: cpu
+    terminal: true

@@ -347,6 +347,7 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
         raise ValueError(f"SkyPilot global config must be a mapping: {config_path}")
+    data.pop("name", None)
     return data
 
 

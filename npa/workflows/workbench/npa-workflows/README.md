@@ -3,6 +3,9 @@
 Customer-facing authoring DSL for chaining Workbench tools. Author and submit
 these specs; do not hand-edit scheduler YAML.
 
+Agent skills: `skills/workflows/author-npa-workflow/SKILL.md` (edit) and
+`skills/workflows/generate-npa-workflow/SKILL.md` (design new pipelines).
+
 ## Commands
 
 ```bash
@@ -48,6 +51,8 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 | `tokenfactory-rollout-judge.yaml` | Reason → VLM chain |
 | `tokenfactory-cosmos-gate.yaml` | Gate loop |
 | `bdd100k-pipeline.yaml` | 11-stage AV pipeline |
+| `av-night-scene-hardening.yaml` | AV night-scene hardening from diagram |
+| `cosmos-synth-fanout-curation.yaml` | Cosmos synth fan-out + curation |
 | `mjlab-eval.yaml` | MJLab locomotion eval |
 | `retargeting.yaml` | Motion retargeting |
 | `sonic-train.yaml` | SONIC train |
@@ -57,8 +62,15 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 | `sonic-locomotion-finetuning.yaml` | Retarget → train → mjlab |
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
+| `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |
+| `byof-mujoco-playground.yaml` | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
+| `byof-robocasa.yaml` | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
+| `byof-openpi.yaml` | OSS registry: OpenPI pinned image + pi05 DROID config smoke |
+| `byof-droid-policy-learning.yaml` | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | `rl-policy-training-sim-success.yaml` | Isaac Lab RL train (partial) |
 | `sim2real-vlm-rl.yaml` | Demo loops; stub toolRefs (not the 14-stage engine) |
+| `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | Two-step sim2real demos |
+| `sim2real-gpu-cross-region-agent.yaml` | Cross-region GPU agent demo |
 
 The Sim2Real **14-stage engine** is a separate path under
 `npa/workflows/workbench/sim2real/` (`npa workbench workflow submit` detects the

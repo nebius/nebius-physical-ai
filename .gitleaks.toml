@@ -50,3 +50,9 @@ paths = [
     '''npa/tests/''',
     # Synthetic lerobot-* bucket fixtures in unit tests (not real secrets).
 ]
+# Historical false positive: generic-api-key matched env-var name NPA_S3_BUCKET
+# in a string compare. HEAD no longer contains that pattern (rewrote the check).
+# gitleaks 8.28 allowlists support commits/paths/regexes/stopwords (not fingerprints).
+commits = [
+    '''89e7be8d1d902d880b5327f234ed22f84ff6cd3e''',
+]

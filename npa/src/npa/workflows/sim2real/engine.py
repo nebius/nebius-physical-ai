@@ -5041,28 +5041,7 @@ def run_cosmos2_transfer_component_from_s3(
     augment_prefix = result_uri.rsplit("/", 1)[0] + "/"
     frames_root = augmented_frames_uri.rstrip("/") + "/"
     frame_count = resolve_augment_frame_count()
-    index: list[dict[str, str]] = []
-    for index_no in range(frame_count):
-        frame_key = f"frame-{index_no:05d}.json"
-        payload = {
-            "schema": "npa.sim2real.augmented_frame.v1",
-            "frame_id": f"frame-{index_no:05d}",
-            "source_dataset_uri": input_uri,
-            "perturbation": ["lighting", "texture", "background", "contrast"][index_no % 4],
-            "status": "cosmos2_transfer_executed",
-        }
-        local = Path(f"/tmp/{frame_key}")
-        local.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(local), f"{frames_root}{frame_key}")
-        index.append({"frame_id": payload["frame_id"], "uri": f"{frames_root}{frame_key}"})
-    index_payload = {
-        "schema": "npa.sim2real.augmented_frames.v1",
-        "frame_count": frame_count,
-        "frames": index,
-    }
-    index_local = Path("/tmp/augmented-frames-index.json")
-    index_local.write_text(json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    client.upload_file(str(index_local), f"{frames_root}index.json")
+
     manifest = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
             input_uri=input_uri,
@@ -5073,9 +5052,48 @@ def run_cosmos2_transfer_component_from_s3(
             run_id=run_id,
         )
     )
-    manifest["status"] = "executed"
-    manifest["augmented_frames_uri"] = frames_root
-    manifest["frame_count"] = frame_count
+
+    # Prefer running the REAL Cosmos-Transfer2.5 model (video-to-video world
+    # transfer) inside the transfer image. Fall back to the structured descriptor
+    # manifest only when the transfer runtime is unavailable (non-GPU / unit
+    # environments) or NPA_SIM2REAL_AUGMENT_MODE=stub.
+    real = _run_real_cosmos_transfer(client, input_uri, augment_prefix, frames_root, run_id)
+    if real is not None:
+        manifest["status"] = "executed"
+        manifest["mode"] = "cosmos_transfer2.5"
+        manifest["augmented_frames_uri"] = frames_root
+        manifest["augmented_video_uri"] = real["augmented_video_uri"]
+        manifest["frame_count"] = real["frame_count"]
+        manifest["video_bytes"] = real["video_bytes"]
+        manifest["control_spec"] = real["spec"]
+    else:
+        index: list[dict[str, str]] = []
+        for index_no in range(frame_count):
+            frame_key = f"frame-{index_no:05d}.json"
+            payload = {
+                "schema": "npa.sim2real.augmented_frame.v1",
+                "frame_id": f"frame-{index_no:05d}",
+                "source_dataset_uri": input_uri,
+                "perturbation": ["lighting", "texture", "background", "contrast"][index_no % 4],
+                "status": "cosmos2_transfer_executed",
+            }
+            local = Path(f"/tmp/{frame_key}")
+            local.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+            client.upload_file(str(local), f"{frames_root}{frame_key}")
+            index.append({"frame_id": payload["frame_id"], "uri": f"{frames_root}{frame_key}"})
+        index_payload = {
+            "schema": "npa.sim2real.augmented_frames.v1",
+            "frame_count": frame_count,
+            "frames": index,
+        }
+        index_local = Path("/tmp/augmented-frames-index.json")
+        index_local.write_text(json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        client.upload_file(str(index_local), f"{frames_root}index.json")
+        manifest["status"] = "executed"
+        manifest["mode"] = "descriptor_stub"
+        manifest["augmented_frames_uri"] = frames_root
+        manifest["frame_count"] = frame_count
+
     manifest_local = Path("/tmp/cosmos2-transfer-manifest.json")
     manifest_local.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     client.upload_file(str(manifest_local), f"{augment_prefix}manifest.json")
@@ -5084,6 +5102,99 @@ def run_cosmos2_transfer_component_from_s3(
     result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     client.upload_file(str(result_local), result_uri)
     return result
+
+
+def _run_real_cosmos_transfer(
+    client: Any,
+    input_uri: str,
+    augment_prefix: str,
+    frames_root: str,
+    run_id: str,
+) -> dict[str, Any] | None:
+    """Run real Cosmos-Transfer2.5 and publish the generated video + frames.
+
+    Returns augment metadata, or ``None`` to signal the caller to fall back to the
+    descriptor manifest (transfer runtime absent, disabled, or inference failed).
+    """
+
+    if os.environ.get("NPA_SIM2REAL_AUGMENT_MODE", "real").strip().lower() == "stub":
+        return None
+    try:
+        from npa.workbench.cosmos.transfer import (
+            cosmos_transfer_available,
+            extract_frames,
+            run_cosmos_transfer,
+        )
+    except Exception:  # noqa: BLE001 - transfer module not importable in this env
+        return None
+    if not cosmos_transfer_available():
+        return None
+
+    try:
+        transfer = run_cosmos_transfer(
+            run_id=run_id or "augment",
+            spec=os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC") or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to descriptor manifest, never crash the run
+        print(
+            json.dumps(
+                {
+                    "component": "cosmos2_transfer",
+                    "event": "real_transfer_failed_fallback",
+                    "error": str(exc)[:400],
+                }
+            ),
+            file=sys.stderr,
+        )
+        return None
+
+    from npa.workflows.sim2real_stages import resolve_augment_frame_count
+
+    augmented_video_uri = f"{augment_prefix}video/augmented.mp4"
+    client.upload_file(transfer["video_path"], augmented_video_uri)
+
+    frames = extract_frames(
+        transfer["video_path"],
+        Path("/tmp/npa-augment-frames"),
+        max_frames=resolve_augment_frame_count(),
+    )
+    index: list[dict[str, str]] = []
+    for i, frame_path in enumerate(frames):
+        frame_key = f"frame-{i:05d}.png"
+        client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
+        index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"})
+    index_payload = {
+        "schema": "npa.sim2real.augmented_frames.v1",
+        "frame_count": len(index),
+        "frames": index,
+        "augmented_video_uri": augmented_video_uri,
+        "mode": "cosmos_transfer2.5",
+    }
+    index_local = Path("/tmp/augmented-frames-index.json")
+    index_local.write_text(
+        json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    client.upload_file(str(index_local), f"{frames_root}index.json")
+
+    print(
+        json.dumps(
+            {
+                "component": "cosmos2_transfer",
+                "event": "real_transfer_complete",
+                "augmented_video_uri": augmented_video_uri,
+                "video_bytes": transfer["video_bytes"],
+                "frame_count": len(index),
+                "spec": transfer["spec"],
+            },
+            sort_keys=True,
+        )
+    )
+    return {
+        "augmented_video_uri": augmented_video_uri,
+        "frame_count": len(index) or resolve_augment_frame_count(),
+        "video_bytes": transfer["video_bytes"],
+        "spec": transfer["spec"],
+    }
 
 
 def run_policy_actions_component_from_s3(

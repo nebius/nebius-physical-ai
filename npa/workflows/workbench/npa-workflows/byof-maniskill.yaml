@@ -1,0 +1,305 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-maniskill
+  description: >
+    Registry-candidate BYOF workflow for ManiSkill. Exercises Gymnasium
+    registration and attempts PickCube create/reset/step plus parallel-env and
+    GPU-render probes (subprocess-isolated so segfaults become deferred evidence).
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/mani-skill/ManiSkill.git"
+  repo_ref: "v3.0.1"
+  base_profile: ubuntu
+  # maniskill/base:latest is Python 3.9; PyPI sapien>=3.0.3 only ships cp310+.
+  # Use CUDA Ubuntu 22.04 (python3.10) so we can upgrade SAPIEN for Blackwell.
+  base_image: "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
+  # Do not install mesa-vulkan-drivers alongside NVIDIA — llvmpipe ICDs can
+  # race with nvidia_icd and contribute to SAPIEN segfaults on GPU nodes.
+  # ManiSkill v3.0.1 pins an older SAPIEN; upgrade to 3.0.3 after editable
+  # install — SAPIEN render init segfaults on Blackwell with the stock pin
+  # while PhysxCpuSystem works (see Round9 sapien_physx_cpu_probe).
+  build_command: >
+    apt-get update &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+    python3 python3-dev python3-pip python3-venv build-essential git
+    libvulkan1 vulkan-tools libglvnd0 libegl1 libgl1 &&
+    python3 -m pip install --no-cache-dir --upgrade pip &&
+    python3 -m pip install --no-cache-dir -e . &&
+    python3 -m pip install --no-cache-dir --upgrade "sapien>=3.0.3" &&
+    python3 -c "import sapien, sys; v=getattr(sapien,'__version__',''); print('sapien', v, 'python', sys.version); assert v.startswith('3.0.') and int(v.split('.')[2].split('+')[0].split('b')[0] or '0') >= 3, v"
+  workload: solution-smoke
+  smoke_command: |
+    export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
+    export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+    export MS_SKIP_ASSET_DOWNLOAD_PROMPT=1
+    # Prefer host/container NVIDIA ICD; synthesize one if the image only has stubs.
+    # Also ensure EGL vendor + Optimus layer files exist (ManiSkill troubleshooting).
+    mkdir -p /tmp/vulkan/icd.d /tmp/vulkan/implicit_layer.d /tmp/glvnd/egl_vendor.d
+    if [ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]; then
+      export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+    elif [ -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
+      export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
+    else
+      cat > /tmp/vulkan/icd.d/nvidia_icd.json <<'ICD'
+    {
+      "file_format_version": "1.0.0",
+      "ICD": {
+        "library_path": "libGLX_nvidia.so.0",
+        "api_version": "1.3.0"
+      }
+    }
+    ICD
+      export VK_ICD_FILENAMES=/tmp/vulkan/icd.d/nvidia_icd.json
+    fi
+    export VK_DRIVER_FILES="${VK_ICD_FILENAMES}"
+    if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && [ ! -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
+      cat > /tmp/glvnd/egl_vendor.d/10_nvidia.json <<'EGL'
+    {
+      "file_format_version": "1.0.0",
+      "ICD": {
+        "library_path": "libEGL_nvidia.so.0"
+      }
+    }
+    EGL
+      export __EGL_VENDOR_LIBRARY_FILENAMES=/tmp/glvnd/egl_vendor.d/10_nvidia.json
+      export __EGL_VENDOR_LIBRARY_DIRS=/tmp/glvnd/egl_vendor.d
+    fi
+    if [ ! -f /etc/vulkan/implicit_layer.d/nvidia_layers.json ] && [ ! -f /usr/share/vulkan/implicit_layer.d/nvidia_layers.json ]; then
+      cat > /tmp/vulkan/implicit_layer.d/nvidia_layers.json <<'LAYER'
+    {
+      "file_format_version": "1.0.0",
+      "layer": {
+        "name": "VK_LAYER_NV_optimus",
+        "type": "INSTANCE",
+        "library_path": "libGLX_nvidia.so.0",
+        "api_version": "1.2.155",
+        "implementation_version": "1",
+        "description": "NVIDIA Optimus layer",
+        "functions": {
+          "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",
+          "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"
+        },
+        "enable_environment": {
+          "__NV_PRIME_RENDER_OFFLOAD": "1"
+        },
+        "disable_environment": {
+          "DISABLE_LAYER_NV_OPTIMUS_1": ""
+        }
+      }
+    }
+    LAYER
+      export VK_LAYER_PATH=/tmp/vulkan/implicit_layer.d
+    fi
+    # Capture Vulkan/SAPIEN diagnostics before capability probes.
+    {
+      echo "=== ldconfig libGLX_nvidia ==="
+      ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libvulkan' || true
+      echo "=== ICD files ==="
+      ls -la /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/share/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d 2>/dev/null || true
+      echo "=== vulkaninfo (no --summary; older tools lack it) ==="
+      vulkaninfo 2>&1 | head -120 || true
+      echo "=== sapien info ==="
+      python3 -c 'import sapien; print("sapien", getattr(sapien, "__version__", "?"))' 2>&1 || true
+      python3 -c 'import sapien; print(sapien.render.get_device_summary())' 2>&1 || true
+    } > "${NPA_SMOKE_OUTPUT_DIR}/maniskill_vulkan_diag.txt" 2>&1 || true
+    python3 - <<'PY'
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    env_id = "PickCube-v1"
+    results = {
+        "solution": "maniskill",
+        "capability": "gymnasium_pickcube_registration",
+        "capabilities_exercised": [],
+        "deferred": [],
+        "env_id": env_id,
+        "vk_icd_filenames": os.environ.get("VK_ICD_FILENAMES", ""),
+        "egl_vendor_filenames": os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES", ""),
+        "vk_layer_path": os.environ.get("VK_LAYER_PATH", ""),
+    }
+
+    import gymnasium as gym
+    import mani_skill.envs
+
+    spec = gym.envs.registry[env_id]
+    mani_skill_envs = sorted(env for env in gym.envs.registry.keys() if env.endswith("-v1"))
+    results["registration"] = {
+        "entry_point": str(spec.entry_point),
+        "registered_v1_env_count": len(mani_skill_envs),
+        "sample_registered_envs": mani_skill_envs[:10],
+    }
+    results["capabilities_exercised"].append("gymnasium_pickcube_registration")
+    (output_dir / "maniskill_registration.json").write_text(
+        json.dumps(
+            {
+                "solution": "maniskill",
+                "capability": "gymnasium_pickcube_registration",
+                **results["registration"],
+            },
+            indent=2,
+        )
+    )
+
+    def run_isolated(capability: str, script: str) -> dict:
+        completed = subprocess.run(
+            ["python3", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+            env=os.environ.copy(),
+        )
+        entry = {
+            "capability": capability,
+            "returncode": completed.returncode,
+            "ok": completed.returncode == 0,
+            "stdout_tail": (completed.stdout or "")[-2000:],
+            "stderr_tail": (completed.stderr or "")[-2000:],
+        }
+        if completed.returncode == 0:
+            try:
+                entry["payload"] = json.loads((completed.stdout or "").strip().splitlines()[-1])
+            except Exception as exc:  # noqa: BLE001
+                entry["ok"] = False
+                entry["error"] = f"json_parse: {exc}"
+        elif completed.returncode in (-11, 139):
+            entry["error"] = "Segmentation fault during ManiSkill env construct/step"
+        else:
+            entry["error"] = f"returncode={completed.returncode}"
+        return entry
+
+    # Minimal SAPIEN physx-only probe (no ManiSkill env) to separate Vulkan vs PhysX crashes.
+    sapien_probe = run_isolated(
+        "sapien_physx_cpu_probe",
+        "import json\n"
+        "import sapien\n"
+        "from sapien import physx\n"
+        "scene = sapien.Scene([physx.PhysxCpuSystem()])\n"
+        "scene.step()\n"
+        "print(json.dumps({'ok': True, 'systems': 'PhysxCpuSystem', 'sapien': getattr(sapien, '__version__', '')}))\n",
+    )
+    results["sapien_physx_cpu_probe"] = sapien_probe
+    (output_dir / "maniskill_sapien_physx_cpu_probe.json").write_text(
+        json.dumps({"solution": "maniskill", **sapien_probe}, indent=2)
+    )
+    render_probe = run_isolated(
+        "sapien_render_device_probe",
+        "import json\n"
+        "import sapien\n"
+        "summary = sapien.render.get_device_summary()\n"
+        "print(json.dumps({'ok': True, 'summary': str(summary)[:1000], 'sapien': getattr(sapien, '__version__', '')}))\n",
+    )
+    results["sapien_render_device_probe"] = render_probe
+    (output_dir / "maniskill_sapien_render_device_probe.json").write_text(
+        json.dumps({"solution": "maniskill", **render_probe}, indent=2)
+    )
+
+    # Upstream accepts physx_cpu / physx_cuda / auto — not bare "cpu".
+    # Try sapien_cpu render backend before none/auto (Blackwell Vulkan path).
+    cpu_script = (
+        "import json, os, gymnasium as gym, mani_skill.envs\n"
+        "env_id = 'PickCube-v1'\n"
+        "payload = {}\n"
+        "attempts = [\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='sapien_cpu', sim_backend='physx_cpu'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='physx_cpu'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='auto'),\n"
+        "  dict(num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none'),\n"
+        "]\n"
+        "for kwargs in attempts:\n"
+        "  try:\n"
+        "    env = gym.make(env_id, **kwargs)\n"
+        "    obs, _info = env.reset(seed=0)\n"
+        "    action = env.action_space.sample()\n"
+        "    obs2, reward, terminated, truncated, info = env.step(action)\n"
+        "    env.close()\n"
+        "    payload = {'kwargs': {k: str(v) for k, v in kwargs.items()}, 'obs_shape': list(getattr(obs, 'shape', [])), 'reward': float(reward.mean().item() if hasattr(reward, 'mean') else reward)}\n"
+        "    break\n"
+        "  except Exception as exc:\n"
+        "    payload = {'error': f'{type(exc).__name__}: {exc}', 'kwargs': {k: str(v) for k, v in kwargs.items()}}\n"
+        "if 'obs_shape' not in payload:\n"
+        "  raise SystemExit(payload.get('error') or 'cpu_step_failed')\n"
+        "print(json.dumps(payload))\n"
+    )
+    cpu = run_isolated("pickcube_cpu_step", cpu_script)
+    results["cpu_step"] = cpu
+    (output_dir / "maniskill_pickcube_cpu_step.json").write_text(json.dumps({"solution": "maniskill", **cpu}, indent=2))
+    if cpu["ok"]:
+        results["capabilities_exercised"].append("pickcube_cpu_step")
+    else:
+        results["deferred"].append({"capability": "pickcube_cpu_step", "blocker": cpu.get("error")})
+
+    parallel_script = (
+        "import json, gymnasium as gym, mani_skill.envs\n"
+        "env = gym.make('PickCube-v1', num_envs=4, obs_mode='state', control_mode='pd_joint_delta_pos', render_backend='none', sim_backend='physx_cuda')\n"
+        "obs, _ = env.reset(seed=0)\n"
+        "action = env.action_space.sample()\n"
+        "obs2, reward, terminated, truncated, info = env.step(action)\n"
+        "env.close()\n"
+        "print(json.dumps({'num_envs': 4, 'obs_shape': list(getattr(obs, 'shape', [])), 'reward_shape': list(getattr(reward, 'shape', []))}))\n"
+    )
+    parallel = run_isolated("pickcube_parallel_envs", parallel_script)
+    results["parallel_envs"] = parallel
+    (output_dir / "maniskill_pickcube_parallel_envs.json").write_text(json.dumps({"solution": "maniskill", **parallel}, indent=2))
+    if parallel["ok"]:
+        results["capabilities_exercised"].append("pickcube_parallel_envs")
+    else:
+        results["deferred"].append({"capability": "pickcube_parallel_envs", "blocker": parallel.get("error")})
+
+    render_script = (
+        "import json, gymnasium as gym, mani_skill.envs\n"
+        "env = gym.make('PickCube-v1', num_envs=1, obs_mode='state', control_mode='pd_joint_delta_pos', render_mode='rgb_array', render_backend='gpu', sim_backend='physx_cuda')\n"
+        "env.reset(seed=0)\n"
+        "frame = env.render()\n"
+        "env.close()\n"
+        "shape = list(getattr(frame, 'shape', [])) if frame is not None else []\n"
+        "print(json.dumps({'frame_type': type(frame).__name__, 'frame_shape': shape}))\n"
+    )
+    render = run_isolated("pickcube_gpu_rgb_render", render_script)
+    results["gpu_rgb_render"] = render
+    (output_dir / "maniskill_pickcube_gpu_rgb_render.json").write_text(json.dumps({"solution": "maniskill", **render}, indent=2))
+    if render["ok"]:
+        results["capabilities_exercised"].append("pickcube_gpu_rgb_render")
+    else:
+        results["deferred"].append({"capability": "pickcube_gpu_rgb_render", "blocker": render.get("error")})
+
+    (output_dir / "maniskill_pickcube_step.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=2))
+    if "gymnasium_pickcube_registration" not in results["capabilities_exercised"]:
+        raise SystemExit("maniskill registration failed")
+    PY
+  solution_name: "maniskill"
+  capability_name: "gymnasium_pickcube_registration"
+  smoke_artifact_name: "maniskill_pickcube_step.json"
+  resource_profile_yaml: "npa/workflows/workbench/skypilot/byof-solution-smoke-rtxpro-gpu.yaml"
+  task: "PickCube-v1"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/oss-solutions/maniskill/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build/push ManiSkill and run registration plus isolated create/step/render
+      capability probes from the registry image in live Kubernetes.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+    terminal: true

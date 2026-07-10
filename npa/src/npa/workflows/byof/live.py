@@ -167,6 +167,13 @@ def resolve_byof_kubernetes_target(project: str | None = None) -> ByofKubernetes
         if isinstance(global_storage, dict):
             context = str(global_storage.get("k8s_context") or "").strip()
 
+    if not kubeconfig:
+        # Fall back to the operator host kubeconfig when project config only
+        # records a context name (common on shared Nebius operator VMs).
+        default_kube = Path.home() / ".kube" / "config"
+        if default_kube.is_file():
+            kubeconfig = str(default_kube)
+
     return ByofKubernetesTarget(context=context, kubeconfig=kubeconfig, namespace=namespace)
 
 
@@ -198,7 +205,7 @@ def resolve_byof_resource_yaml(
 
     normalized_workload = (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
     k8s = _project_kubernetes_block(project)
-    if normalized_workload == "container-verify":
+    if normalized_workload in {"container-verify", "solution-smoke"}:
         key = "byof_container_smoke_yaml" if smoke else "byof_container_yaml"
         configured = str(k8s.get(key) or "").strip()
         if configured:

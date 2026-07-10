@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.config import resolve_container_registry
+from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool
+from npa.workflows.byof.live import resolve_byof_kubernetes_target
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -90,6 +92,84 @@ def _registry_server(image_ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
+def _bare_s3_bucket(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("s3://"):
+        text = text[len("s3://") :]
+    return text.split("/", 1)[0].strip()
+
+
+def _live_runner_env(project: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    target = resolve_byof_kubernetes_target(project or None)
+    if target.kubeconfig:
+        env["KUBECONFIG"] = target.kubeconfig
+    if target.context:
+        env["KUBECONTEXT"] = target.context
+        env["NPA_BYOF_K8S_CONTEXT"] = target.context
+    if target.namespace:
+        env["NPA_BYOF_K8S_NAMESPACE"] = target.namespace
+    try:
+        env.update(storage_env_for_project(project or None, allow_host_creds=True))
+    except Exception as exc:
+        print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+    # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
+    # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
+    for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
+        bare = _bare_s3_bucket(os.environ.get(key, "") or env.get(key, ""))
+        if bare:
+            env["NPA_S3_BUCKET"] = bare
+            break
+    if "NPA_S3_BUCKET" not in env:
+        try:
+            from npa.clients.config import _load_yaml, _resolve_project_section
+
+            yml = _load_yaml()
+            section = _resolve_project_section(yml, project or None) if project else {}
+            storage = section.get("storage") if isinstance(section, dict) else {}
+            if not isinstance(storage, dict):
+                storage = yml.get("storage") if isinstance(yml.get("storage"), dict) else {}
+            bare = _bare_s3_bucket(
+                str(
+                    storage.get("checkpoint_bucket")
+                    or storage.get("bucket")
+                    or storage.get("s3_bucket")
+                    or ""
+                )
+            )
+            if bare:
+                env["NPA_S3_BUCKET"] = bare
+        except Exception as exc:
+            print(f"WARN: skipped BYOF bucket resolution: {exc}", file=sys.stderr)
+    return env
+
+
+def _refresh_registry_pull_secrets(image: str, project: str) -> None:
+    if os.environ.get("NPA_BYOF_SKIP_REGISTRY_REFRESH") == "1":
+        return
+    registry_server = _registry_server(image)
+    if "nebius.cloud" not in registry_server:
+        return
+    try:
+        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+
+        target = resolve_byof_kubernetes_target(project or None)
+        namespaces = {target.namespace or "default", "default"}
+        for namespace in sorted(namespaces):
+            for secret_name in ("agent-sa", "npa-nebius-registry"):
+                ensure_nebius_registry_pull_secret(
+                    registry_server=registry_server,
+                    secret_name=secret_name,
+                    namespace=namespace,
+                    kubeconfig=target.kubeconfig,
+                    k8s_context=target.context,
+                )
+    except Exception as exc:
+        print(f"WARN: skipped registry pull-secret refresh: {exc}", file=sys.stderr)
+
+
 def _registry_path(image_ref: str) -> str:
     ref = image_ref.removeprefix("docker:")
     without_digest = ref.split("@", 1)[0]
@@ -100,7 +180,17 @@ def _registry_path(image_ref: str) -> str:
 
 
 def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> None:
-    token_proc = _run(["nebius", "iam", "get-access-token"], capture=True)
+    # Prefer an explicit write-capable profile when operators set one (e.g. agent-sa).
+    merged = {**os.environ, **(env or {})}
+    profile = (
+        merged.get("NPA_NEBIUS_PROFILE", "").strip()
+        or merged.get("NEBIUS_PROFILE", "").strip()
+    )
+    token_cmd = ["nebius"]
+    if profile:
+        token_cmd.extend(["--profile", profile])
+    token_cmd.extend(["iam", "get-access-token"])
+    token_proc = _run(token_cmd, capture=True)
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")
@@ -113,9 +203,16 @@ def _dockerfile_text() -> str:
         "FROM ${BYOF_BASE_IMAGE}\n"
         "ARG OSS_REPO_URL\n"
         "ARG OSS_REPO_REF\n"
+        "ARG BYOF_BUILD_COMMAND\n"
         "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
-        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT}\n"
+        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f"  || (rm -rf {BYOF_REPO_MOUNT} \\\n"
+        f"    && git clone \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f"    && cd {BYOF_REPO_MOUNT} \\\n"
+        "    && git checkout \"${OSS_REPO_REF}\")\n"
+        f"WORKDIR {BYOF_REPO_MOUNT}\n"
+        "RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]; then /bin/sh -lc \"${BYOF_BUILD_COMMAND}\"; fi\n"
         f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
         f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
         "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\"\n"
@@ -194,10 +291,23 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run-id", default=f"byof-{_utc_stamp()}")
     parser.add_argument(
         "--workload",
-        choices=("rl-train", "datagen", "container-verify"),
+        choices=("rl-train", "datagen", "container-verify", "solution-smoke"),
         default="rl-train",
-        help="Live workload: RL training, scripted datagen, or container-verify smoke.",
+        help="Live workload: RL training, scripted datagen, container-verify, or solution smoke.",
     )
+    parser.add_argument(
+        "--build-command",
+        default=os.environ.get("NPA_BYOF_BUILD_COMMAND", ""),
+        help="Optional shell command run during image build from /opt/byof.",
+    )
+    parser.add_argument(
+        "--smoke-command",
+        default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
+        help="Optional documented shell command run during solution-smoke from /opt/byof.",
+    )
+    parser.add_argument("--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", ""))
+    parser.add_argument("--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", ""))
+    parser.add_argument("--smoke-artifact-name", default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""))
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
     parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
@@ -243,6 +353,11 @@ def main(argv: list[str] | None = None) -> int:
         "base_image_candidates": base_candidates,
         "run_id": args.run_id,
         "workload": args.workload,
+        "build_command": args.build_command,
+        "smoke_command": args.smoke_command,
+        "solution_name": args.solution_name,
+        "capability_name": args.capability_name,
+        "smoke_artifact_name": args.smoke_artifact_name,
     }
 
     docker_config_dir: str | None = None
@@ -274,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
                                 f"OSS_REPO_URL={args.repo_url}",
                                 "--build-arg",
                                 f"OSS_REPO_REF={args.repo_ref}",
+                                "--build-arg",
+                                f"BYOF_BUILD_COMMAND={args.build_command}",
                                 "-t",
                                 image,
                                 str(context),
@@ -333,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--repo-root",
                     BYOF_REPO_MOUNT,
                 ]
-            elif args.workload == "container-verify":
+            elif args.workload in {"container-verify", "solution-smoke"}:
                 cmd = [
                     sys.executable,
                     str(CONTAINER_VERIFY_RUNNER),
@@ -348,6 +465,14 @@ def main(argv: list[str] | None = None) -> int:
                     "--repo-root",
                     BYOF_REPO_MOUNT,
                 ]
+                if args.smoke_command:
+                    cmd.extend(["--smoke-command", args.smoke_command])
+                if args.solution_name:
+                    cmd.extend(["--solution-name", args.solution_name])
+                if args.capability_name:
+                    cmd.extend(["--capability-name", args.capability_name])
+                if args.smoke_artifact_name:
+                    cmd.extend(["--smoke-artifact-name", args.smoke_artifact_name])
             else:
                 cmd = [
                     sys.executable,
@@ -375,7 +500,9 @@ def main(argv: list[str] | None = None) -> int:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            run_proc = _run(cmd, capture=True)
+            if args.workload in {"container-verify", "solution-smoke"}:
+                _refresh_registry_pull_secrets(image, args.project)
+            run_proc = _run(cmd, capture=True, env=_live_runner_env(args.project))
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)

@@ -11,7 +11,10 @@ making architecture, review, or domain judgments.
 - `skills/index.yaml`: root manifest with name, when-to-use, path, and CI smoke
   expectations.
 - `skills/atomic/architecture/SKILL.md`: platform architecture and validation
-  state.
+ state.
+- `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA
+ chat agent backend (grounded-first routing, cost-aware Token Factory model
+ selection, embedded-backend mechanism, cheap-token test tiers).
 - `skills/atomic/review-checklist/SKILL.md`: review risk classification.
 - `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
   GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K
@@ -31,7 +34,11 @@ making architecture, review, or domain judgments.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate
   declarative `npa.workflow/v0.0.1` specs (toolRef catalog, validate/plan/run CLI).
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative
-  npa.workflow pipelines from the workbench tool catalog.
+ npa.workflow pipelines from the workbench tool catalog.
+- `skills/workflows/diagram-to-npa-workflow/SKILL.md`: turn an architecture
+ diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes, arrows,
+ decision diamonds, and loop back-edges → states, loops, gates, catalog
+ toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workbench/sim2real-engine/SKILL.md`: Sim2Real staged engine map
   (14 stages, preamble/inner/outer/finalize) and K8s sibling-job glue.
 

@@ -23,6 +23,7 @@ invoked as a container command; artifacts pass via S3 URIs in `config`.
 | `workbench.sim2real.heldout_eval` | workflow stub (`echo`) | — | `config.heldout_report_uri` |
 | `workbench.sim2real.write_decision` | demo decision writer | `config.decision_uri`, `config.default_decision` | threshold decision JSON |
 | `workbench.sim2real.finalize` | workflow stub (`echo`) | `config.finalize_report_uri` | final report URI |
+| `workbench.byof.repo` | `npa/scripts/run_byof_repo.py` | `config.repo_url`, `config.repo_ref`, `config.base_profile`, optional `config.build_command` / `config.smoke_command`; registry candidates also set `config.solution_name`, `config.capability_name`, `config.smoke_artifact_name` | BYOF summary, dataset/checkpoint artifacts, solution smoke artifact |
 | `workbench.data_transform.rollout_contract` | rollout contract adapter | rollout manifest URI | normalized rollout manifest |
 | `workbench.data_transform.improvement_summary` | cross-region summary adapter | heldout/report URIs | improvement summary |
 | `workbench.rl.policy_train` | `npa workbench isaac-lab train` | `config.task_name`, training dataset URI | policy checkpoint |
