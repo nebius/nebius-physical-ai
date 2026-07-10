@@ -5905,7 +5905,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .msg-row.user .bubble {{
         background: var(--brand);
         border-color: var(--brand);
-        color: #fff;
+        color: var(--brand-ink);
+        font-weight: 700;
       }}
       .msg-row.error .bubble {{
         border-color: #e9b8b8;

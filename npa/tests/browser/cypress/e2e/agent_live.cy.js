@@ -26,6 +26,46 @@ function liveAgentRequest(path, options = {}) {
   });
 }
 
+function parseRgb(value) {
+  const match = String(value || "").match(/rgba?\(([^)]+)\)/);
+  if (!match) return null;
+  const parts = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+  if (parts.length < 3 || parts.some((part, index) => index < 3 && Number.isNaN(part))) return null;
+  const alpha = parts.length >= 4 && !Number.isNaN(parts[3]) ? parts[3] : 1;
+  return { r: parts[0], g: parts[1], b: parts[2], a: alpha };
+}
+
+function luminance(rgb) {
+  const channel = (value) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+function contrastRatio(foreground, background) {
+  const fg = luminance(foreground);
+  const bg = luminance(background);
+  return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+}
+
+function effectiveBackground(win, element) {
+  let node = element;
+  while (node && node.nodeType === 1) {
+    const bg = parseRgb(win.getComputedStyle(node).backgroundColor);
+    if (bg && bg.a > 0.05) return bg;
+    node = node.parentElement;
+  }
+  return { r: 255, g: 255, b: 255, a: 1 };
+}
+
+function hasVisibleText(element) {
+  const text = String(element.innerText || element.value || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
 describe("NPA agent UI against live infra", () => {
   before(function () {
     if (!liveEnvAvailable()) {
@@ -72,6 +112,65 @@ describe("NPA agent UI against live infra", () => {
     });
 
     cy.get("#openRerun").should("be.visible");
+  });
+
+  it("keeps visible live UI text readable across the Nebius theme", () => {
+    cy.get("#chatInput").clear().type("give run status", { delay: 0 });
+    cy.get("#chatSend").click();
+    cy.get("#chatLog", { timeout: 60000 }).should("contain.text", "give run status");
+
+    cy.window().then((win) => {
+      const selectors = [
+        "body",
+        ".topbar",
+        ".panel",
+        ".subsection",
+        ".btn",
+        ".quick-pill",
+        ".badge",
+        ".pill",
+        ".bubble",
+        ".field label",
+        ".field input",
+        ".field select",
+        ".stage-status",
+        ".stage-label",
+        ".stage-summary",
+        ".run-log",
+        "#statusBar",
+        "#artifactList",
+        "#renderedDataSummary",
+      ];
+      const failures = [];
+      const seen = new Set();
+      for (const selector of selectors) {
+        for (const element of win.document.querySelectorAll(selector)) {
+          if (seen.has(element) || !hasVisibleText(element)) continue;
+          seen.add(element);
+          const style = win.getComputedStyle(element);
+          if (style.visibility === "hidden" || style.display === "none") continue;
+          const fg = parseRgb(style.color);
+          const bg = effectiveBackground(win, element);
+          if (!fg || !bg) continue;
+          const ratio = contrastRatio(fg, bg);
+          const fontSize = Number.parseFloat(style.fontSize || "0");
+          const fontWeight = Number.parseInt(style.fontWeight || "400", 10);
+          const threshold = fontSize >= 18 || fontWeight >= 700 ? 3.0 : 4.5;
+          if (ratio + 0.01 < threshold) {
+            failures.push({
+              selector,
+              text: String(element.innerText || element.value || "").replace(/\s+/g, " ").trim().slice(0, 80),
+              color: style.color,
+              background: win.getComputedStyle(element).backgroundColor,
+              effectiveBackground: `rgb(${bg.r}, ${bg.g}, ${bg.b})`,
+              ratio: Number(ratio.toFixed(2)),
+              threshold,
+            });
+          }
+        }
+      }
+      expect(failures, JSON.stringify(failures, null, 2)).to.deep.equal([]);
+    });
   });
 
   it("loads a live Sim2Real run as a Rerun artifact, not a stale JSON artifact", function () {

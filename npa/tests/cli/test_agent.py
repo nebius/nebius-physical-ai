@@ -390,6 +390,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "quick-pill" in source
     assert "--brand: #e5ff4f;" in source
     assert "--sidebar: #0d2a3d;" in source
+    assert ".msg-row.user .bubble" in source
+    assert "color: var(--brand-ink);" in source
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
     assert "sparkle" in source
