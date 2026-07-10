@@ -12,7 +12,9 @@ envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
-  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  # Leave empty unless the submitter injects a real endpoint; unexpanded
+  # "${AWS_ENDPOINT_URL}" placeholders break boto3 client construction.
+  AWS_ENDPOINT_URL: ""
 setup: |
   set -euo pipefail
   test -d "${BYOF_REPO_ROOT}"
@@ -33,6 +35,14 @@ run: |
 
   import boto3
 
+  def _endpoint() -> str | None:
+      for key in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
+          value = str(os.environ.get(key) or "").strip()
+          if not value or value.startswith("${"):
+              continue
+          return value
+      return None
+
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
   meta_path = Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json"
@@ -51,19 +61,18 @@ run: |
 
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
-  if parsed.scheme == "s3" and parsed.netloc:
+  endpoint = _endpoint()
+  if parsed.scheme == "s3" and parsed.netloc and endpoint:
       prefix = parsed.path.lstrip("/")
-      s3 = boto3.client(
-          "s3",
-          endpoint_url=(
-              os.environ.get("AWS_ENDPOINT_URL")
-              or os.environ.get("NEBIUS_S3_ENDPOINT")
-              or None
-          ),
-      )
+      s3 = boto3.client("s3", endpoint_url=endpoint)
       for path in root.rglob("*"):
           if path.is_file():
               key = prefix + str(path.relative_to(root))
               s3.upload_file(str(path), parsed.netloc, key)
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+  elif parsed.scheme == "s3" and parsed.netloc:
+      print(
+          "skipping S3 upload: AWS_ENDPOINT_URL/NEBIUS_S3_ENDPOINT unset",
+          flush=True,
+      )
   PY
