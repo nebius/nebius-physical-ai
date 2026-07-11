@@ -519,7 +519,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "layout-rerun" in source
     assert "activateMainTab" in source
     assert "tab-panel.is-inactive" in source
-    assert "would unload the Rerun wasm viewer bundle" in source
+    assert "defer the Rerun wasm viewer bundle" in source or "unload or defer the Rerun wasm" in source
+    assert 'loading="lazy"' not in source
+    assert "Mount the viewer immediately so \"Loading application bundle\" starts early" in source
     assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
 
 

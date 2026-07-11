@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071101"
+AGENT_UI_VERSION = "2026071102"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -5782,11 +5782,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         border-bottom-color: var(--surface);
         box-shadow: var(--shadow);
       }}
-      /* Keep both tab panels mounted. Never use display:none on #panelRerun —
-         that tears down the Rerun wasm/WebGL viewer and reloads the bundle. */
+      /* Keep both tab panels mounted. Never use display:none / visibility:hidden on
+         #panelRerun — that defers or tears down the Rerun wasm/WebGL viewer. */
       .tab-panel.is-active {{
         position: relative;
-        visibility: visible;
+        opacity: 1;
         pointer-events: auto;
         z-index: 1;
       }}
@@ -5795,9 +5795,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         left: 16px;
         right: 16px;
         top: 16px;
-        visibility: hidden;
+        opacity: 0;
         pointer-events: none;
         z-index: 0;
+      }}
+      #panelRerun.is-inactive {{
+        /* Keep a real viewport-sized stage so the iframe can init WebGL off-tab. */
+        width: calc(100% - 32px);
+        min-height: calc(100dvh - 140px);
       }}
       #panelRerun.is-inactive .rerun-frame-shell,
       #panelRerun.is-inactive #rerunFrame {{
@@ -6702,7 +6707,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
             </div>
             <div class="rerun-frame-shell">
-              <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen loading="lazy"></iframe>
+              <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
             </div>
             <div id="artifactPreviewHost" class="hint" hidden></div>
           </section>
@@ -6835,8 +6840,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const rerunPanel = document.getElementById("panelRerun");
         const tabChat = document.getElementById("tabChat");
         const tabRerun = document.getElementById("tabRerun");
-        // Keep both panels mounted (visibility toggle only). display:none / hidden
-        // would unload the Rerun wasm viewer bundle on every Chat↔Rerun switch.
+        // Keep both panels mounted (opacity toggle only). display:none / visibility:hidden
+        // would unload or defer the Rerun wasm viewer bundle on every Chat↔Rerun switch.
         if (chatPanel) {{
           chatPanel.classList.toggle("is-active", tab === "chat");
           chatPanel.classList.toggle("is-inactive", tab !== "chat");
@@ -8659,28 +8664,32 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         rerunBootInProgress = true;
         showRerunPlaceholder("Loading stock Franka preview...");
         setStatus("Preloading Rerun…");
-        try {{
-          await warmRerunBundle();
-        }} catch (warmErr) {{
+        // Warm HTTP cache in parallel; do not block iframe mount on finishing the
+        // full wasm blob download into JS memory (that serialized load felt much slower).
+        const warmPromise = warmRerunBundle().catch((warmErr) => {{
           console.warn("rerun bundle warm failed", warmErr);
-        }}
+        }});
         try {{
           await restoreSession();
         }} catch (_err) {{
           // Session restore is best-effort on first paint.
         }}
         try {{
-          await refresh();
-          try {{
-            await refreshArtifactRuns();
-          }} catch (_artifactErr) {{
+          const refreshPromise = refresh().catch((err) => {{
+            console.warn("initial refresh failed", err);
+          }});
+          const artifactsPromise = refreshArtifactRuns().catch((_artifactErr) => {{
             // artifact discovery is optional when S3 credentials are missing.
-          }}
+          }});
           if (document.body.classList.contains("mobile-agent")) {{
+            await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
           }} else {{
-            await ensureFrankaRerunLoaded();
+            // Mount the viewer immediately so "Loading application bundle" starts early
+            // while chat session/refresh continues in parallel.
+            const mountPromise = ensureFrankaRerunLoaded();
+            await Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise]);
             setStatus("Ready");
             showToast("Franka demo ready in Rerun", "success");
           }}
