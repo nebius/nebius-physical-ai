@@ -27,6 +27,7 @@ run_success() {
   fi
   NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
   bash npa/scripts/verify_agent_franka.sh || return 1
+  bash npa/scripts/verify_agent_rerun_bundle.sh || return 1
 
   local auth_env="${NPA_AGENT_AUTH_ENV:-$HOME/.npa/agents/${NPA_AGENT_PROJECT}/${NPA_AGENT_NAME}/auth.env}"
   if [[ ! -f "$auth_env" ]]; then

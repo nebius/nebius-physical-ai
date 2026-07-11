@@ -9800,6 +9800,23 @@ def verify_live_cmd(
     if not rerun_static_ok:
         _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
 
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    bundle_result = check_rerun_bundle_load_budget(
+        agent_base,
+        auth=(auth_user, auth_password),
+        verify=tls_verify,
+    )
+    typer.echo(format_bundle_budget_report(bundle_result))
+    if not bundle_result.ok:
+        _fail(
+            "rerun bundle load budget failed: "
+            + "; ".join(bundle_result.errors[:4])
+        )
+
     try:
         health_resp = httpx.get(
             f"{agent_base}/api/health",
@@ -9841,16 +9858,24 @@ def verify_live_cmd(
         'name="viewport" content="width=device-width',
         'id="chatForm"',
         'id="mobileChatAuth"',
+        'id="tabChat"',
+        'id="tabRerun"',
         "function sendChat(",
         "function wireUi(",
+        "activateMainTab",
         "initNpaAgentUi",
         "mobile-agent",
         "history.replaceState",
         "location.username",
+        "Mount the viewer immediately so \"Loading application bundle\" starts early",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
+    if 'loading="lazy"' in ui_html:
+        _fail("UI html must not use lazy-loading on the Rerun iframe")
+    if ".tab-panel[hidden]" in ui_html:
+        _fail("UI html must not hide tab panels with display:none via hidden attribute")
 
     try:
         session_resp = httpx.get(

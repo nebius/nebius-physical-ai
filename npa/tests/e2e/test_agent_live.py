@@ -292,6 +292,26 @@ def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
     assert ok_paths, f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"
 
 
+def test_agent_rerun_bundle_load_budget(ctx: AgentLiveContext) -> None:
+    """Live gate: Rerun wasm/js must start promptly (no deferred tab stall)."""
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    result = check_rerun_bundle_load_budget(
+        ctx.agent_url,
+        auth=ctx.auth(),
+        verify=ctx.tls_verify,
+    )
+    report = format_bundle_budget_report(result)
+    assert result.ok, report
+    assert result.fetches, report
+    wasm_fetches = [f for f in result.fetches if f.path.endswith(".wasm")]
+    assert wasm_fetches, report
+    assert wasm_fetches[0].nbytes >= 1_000_000, report
+
+
 def test_agent_load_franka_demo_and_rrd(ctx: AgentLiveContext) -> None:
     load_demo = ctx.post("/api/sim-viz/load-franka-demo", json={"camera": "workspace"})
     load_demo.raise_for_status()

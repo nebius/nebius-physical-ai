@@ -111,8 +111,12 @@ UI_WIRING_MARKERS = (
     "function bindClick(",
     "function wireUi(",
     "function showToast(",
+    "activateMainTab",
+    'id="tabChat"',
+    'id="tabRerun"',
     "initNpaAgentUi",
     "DOMContentLoaded",
+    'Mount the viewer immediately so "Loading application bundle" starts early',
     f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
 )
 

@@ -25,6 +25,7 @@ npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent
 npa/.venv/bin/npa agent bootstrap --project rtxpro --name agent --refresh-credentials
 NPA_AGENT_CHAT_LIVE=1 npa/.venv/bin/npa agent verify-live --project rtxpro --name agent
 bash npa/scripts/verify_agent_franka.sh
+bash npa/scripts/verify_agent_rerun_bundle.sh
 bash npa/scripts/verify_byof_onboarding_live.sh
 ```
 

@@ -95,4 +95,6 @@ if [[ "${STATIC_OK}" -ne 1 ]]; then
   exit 1
 fi
 
+bash "${ROOT}/npa/scripts/verify_agent_rerun_bundle.sh"
+
 echo "verify_agent_chat_viz: ok (${BASE})"
