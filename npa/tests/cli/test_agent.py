@@ -518,6 +518,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert 'id="tabRerun"' in source
     assert "layout-rerun" in source
     assert "activateMainTab" in source
+    assert "tab-panel.is-inactive" in source
+    assert "would unload the Rerun wasm viewer bundle" in source
+    assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:

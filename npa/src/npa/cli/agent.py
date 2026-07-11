@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071001"
+AGENT_UI_VERSION = "2026071101"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -5749,9 +5749,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-size: 12px;
       }}
       .page {{
+        position: relative;
         padding: 16px;
-        display: grid;
-        gap: 14px;
+        display: block;
       }}
       .main-tabs {{
         display: flex;
@@ -5782,8 +5782,27 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         border-bottom-color: var(--surface);
         box-shadow: var(--shadow);
       }}
-      .tab-panel[hidden] {{
-        display: none !important;
+      /* Keep both tab panels mounted. Never use display:none on #panelRerun —
+         that tears down the Rerun wasm/WebGL viewer and reloads the bundle. */
+      .tab-panel.is-active {{
+        position: relative;
+        visibility: visible;
+        pointer-events: auto;
+        z-index: 1;
+      }}
+      .tab-panel.is-inactive {{
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        top: 16px;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 0;
+      }}
+      #panelRerun.is-inactive .rerun-frame-shell,
+      #panelRerun.is-inactive #rerunFrame {{
+        min-height: 560px;
+        height: calc(100dvh - 220px);
       }}
       .layout {{ display: grid; gap: 14px; }}
       .layout-rerun {{
@@ -6468,7 +6487,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
       </nav>
       <main class="page">
-        <div id="panelChat" class="tab-panel" role="tabpanel" aria-labelledby="tabChat">
+        <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabChat" aria-hidden="false">
         <section class="panel chat-panel">
           <div class="chat-panel-head">
             <div>
@@ -6540,7 +6559,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
         </section>
         </div>
-        <div id="panelRerun" class="tab-panel" role="tabpanel" aria-labelledby="tabRerun" hidden>
+        <div id="panelRerun" class="tab-panel is-inactive" role="tabpanel" aria-labelledby="tabRerun" aria-hidden="true">
         <div class="layout layout-rerun">
           <section class="panel rerun-rail">
             <h3>Sim Assets &amp; Runs</h3>
@@ -6810,26 +6829,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function activateMainTab(name, options) {{
         const opts = options || {{}};
         const tab = String(name || "chat").trim() === "rerun" ? "rerun" : "chat";
+        const switching = activeMainTab !== tab;
         activeMainTab = tab;
         const chatPanel = document.getElementById("panelChat");
         const rerunPanel = document.getElementById("panelRerun");
         const tabChat = document.getElementById("tabChat");
         const tabRerun = document.getElementById("tabRerun");
-        if (chatPanel) chatPanel.hidden = tab !== "chat";
-        if (rerunPanel) rerunPanel.hidden = tab !== "rerun";
+        // Keep both panels mounted (visibility toggle only). display:none / hidden
+        // would unload the Rerun wasm viewer bundle on every Chat↔Rerun switch.
+        if (chatPanel) {{
+          chatPanel.classList.toggle("is-active", tab === "chat");
+          chatPanel.classList.toggle("is-inactive", tab !== "chat");
+          chatPanel.setAttribute("aria-hidden", tab === "chat" ? "false" : "true");
+          chatPanel.hidden = false;
+        }}
+        if (rerunPanel) {{
+          rerunPanel.classList.toggle("is-active", tab === "rerun");
+          rerunPanel.classList.toggle("is-inactive", tab !== "rerun");
+          rerunPanel.setAttribute("aria-hidden", tab === "rerun" ? "false" : "true");
+          rerunPanel.hidden = false;
+        }}
         if (tabChat) tabChat.setAttribute("aria-selected", tab === "chat" ? "true" : "false");
         if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
-        if (tab === "rerun" && !opts.skipEnsure) {{
-          // Remount after display:none so WebGL recovers from a hidden iframe.
-          if (rerunIframeLoaded) {{
-            rerunIframeLoaded = false;
-            mountedRerunRunKey = "";
-          }}
+        if (tab === "rerun" && !opts.skipEnsure && !rerunIframeLoaded) {{
           try {{
             await ensureFrankaRerunLoaded();
           }} catch (err) {{
             console.warn("rerun tab activate failed", err);
           }}
+        }} else if (tab === "rerun" && switching && rerunIframeLoaded) {{
+          setStatus("Rerun ready");
         }}
       }}
       function setStatus(text) {{

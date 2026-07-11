@@ -24,7 +24,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabChat").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
-    cy.get("#panelRerun").should("not.have.attr", "hidden");
+    cy.get("#panelRerun").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
+    cy.get("#panelChat").should("have.class", "is-inactive").and("have.attr", "aria-hidden", "true");
     cy.get("#assetsSummary").should("contain.text", "stock://robot/franka");
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
@@ -146,7 +147,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
     cy.get("#tabChat").click();
-    cy.get("#panelChat").should("not.have.attr", "hidden");
+    cy.get("#panelChat").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
+    cy.get("#panelRerun").should("have.class", "is-inactive");
   });
 
   it("discovers and interacts with non-stock Sim2Real run artifacts", () => {
