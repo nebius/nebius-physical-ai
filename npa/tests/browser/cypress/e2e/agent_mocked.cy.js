@@ -1,6 +1,7 @@
 import {
   COMPLEX_WORKFLOW_YAML,
   FIELD_IDS,
+  GENERIC_WORKFLOW_YAML,
   NON_STOCK_RUN_ID,
   STATIC_BUTTON_IDS,
   WORKFLOW_YAML,
@@ -11,6 +12,44 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.visitMockAgent();
     cy.wait("@session");
     cy.wait("@simAssets");
+  });
+
+  it("renders a generic Stages panel (not Sim2Real-only)", () => {
+    cy.get("#stagesPanel").should("exist");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
+    cy.contains("Sim2Real Run Monitor").should("not.exist");
+    cy.get("#stagesPanel .hint").should("contain.text", "any npa.workflow");
+    cy.get("#stageList").should("have.attr", "aria-label", "Workflow stages");
+    cy.get("#stageList").should("contain.text", "Select assets");
+    cy.get("#stageList").should("contain.text", "Render");
+    cy.get("#runSummary").should("contain.text", "mock-run");
+  });
+
+  it("shows generic workflow stages for non-Sim2Real runs", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#runIdInput").clear({ force: true }).type("cosmos-reason-run", { force: true });
+    cy.get("#loadRunData").click({ force: true });
+    cy.wait("@loadRun");
+    cy.get("#tabChat").click();
+    cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
+    cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
+    cy.get("#stageList").should("contain.text", "Fetch checkpoint");
+    cy.get("#stageList").should("contain.text", "Reason");
+    cy.get("#stageList").should("contain.text", "Publish");
+    cy.get("#stageList").should("contain.text", "running");
+    cy.get("#runLog").should("contain.text", "generic workflow stages active");
+    cy.contains("Sim2Real Run Monitor").should("not.exist");
+  });
+
+  it("keeps Stages generic after drafting a non-Sim2Real workflow YAML", () => {
+    cy.get("#workflowYaml").clear().type(GENERIC_WORKFLOW_YAML, { delay: 0 });
+    cy.get("#workflowValidate").click();
+    cy.wait("@workflowValidate");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
+    cy.get("#stagesPanel").should("contain.text", "any npa.workflow");
+    cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
   it("renders every static control and generated panel", () => {
@@ -88,10 +127,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Submitted npa.workflow YAML");
   });
 
-  it("covers Sim2Real selection, run monitor, Rerun buttons, and run-data loading", () => {
+  it("covers Sim2Real selection, Stages panel, Rerun buttons, and run-data loading", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
     });
+
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
 
     cy.get("#robotPreset").select("ur5e");
     cy.wait("@setSelection");
@@ -105,8 +147,11 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#loadFrankaRerun").click();
     cy.wait("@loadFranka");
+    cy.get("#tabChat").click();
     cy.get("#chatLog").should("contain.text", "Loaded stock Franka");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
 
+    cy.get("#tabRerun").click();
     cy.get("#loadRerunViewer").click({ force: true });
     cy.get("#statusBar").should(($bar) => {
       expect($bar.text()).to.match(/Rerun|Reload/);
@@ -114,24 +159,33 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#submitWorkflow").click();
     cy.wait("@submitSim2Real");
+    cy.get("#tabChat").click();
     cy.get("#chatLog").should("contain.text", "Submitted Sim2Real run");
     cy.get("#runSummary").should("contain.text", "submitted-run");
 
+    cy.get("#tabRerun").click();
     cy.get("#workflowStatus").click();
     cy.wait("@workflowStatus");
+    cy.get("#tabChat").click();
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
+    cy.get("#tabRerun").click();
     cy.get("#runIdInput").clear().type("mock-run");
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
+    cy.get("#tabChat").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
     cy.get("#runLog").should("contain.text", "mock run log");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
 
+    cy.get("#tabRerun").click();
     cy.get("#openRerun").click();
     cy.get("@windowOpen").should("have.been.called");
   });
 
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactPrefix").type("sim2real-b");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
@@ -156,6 +210,8 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.stub(win, "open").as("windowOpen");
     });
 
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
@@ -186,10 +242,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
     cy.get("#loadRunData").click();
     cy.wait("@loadRun");
+    cy.get("#tabChat").click();
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#runSummary").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#stageList").should("contain.text", "Customer assets");
     cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
 
+    cy.get("#tabRerun").click();
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
     cy.wait("@loadArtifact");
     cy.get("#artifactPreviewHost video").should("have.attr", "src").and("include", "customer-camera.mp4");

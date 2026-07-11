@@ -33,6 +33,39 @@ const COMPLEX_WORKFLOW_YAML = [
   "      description: Publish run-specific report and Rerun recording.",
 ].join("\n");
 
+const GENERIC_WORKFLOW_YAML = [
+  "apiVersion: npa.workflow/v0.0.1",
+  "kind: Workflow",
+  "metadata:",
+  "  name: cypress-cosmos-reason",
+  "spec:",
+  "  states:",
+  "    - id: fetch_checkpoint",
+  "      toolRef: workbench.cosmos.fetch",
+  "      description: Fetch Cosmos checkpoint assets.",
+  "    - id: reason",
+  "      toolRef: workbench.token_factory.reason",
+  "      description: Run Token Factory reasoning over staged inputs.",
+  "    - id: publish",
+  "      toolRef: workbench.artifacts.upload",
+  "      description: Publish reasoning artifacts.",
+].join("\n");
+
+const GENERIC_WORKFLOW_RUN_DETAILS = {
+  run: {
+    run_id: "cosmos-reason-run",
+    status: "running",
+    result: "pending",
+    updated_at: "2026-07-11T00:40:00Z",
+    stages: [
+      { id: "fetch_checkpoint", label: "Fetch checkpoint", status: "succeeded", summary: "Cosmos checkpoint staged." },
+      { id: "reason", label: "Reason", status: "running", summary: "Token Factory reasoning in progress." },
+      { id: "publish", label: "Publish", status: "pending", summary: "Waiting for reasoning outputs." },
+    ],
+    logs: [{ timestamp: "2026-07-11T00:40:00Z", level: "info", message: "generic workflow stages active" }],
+  },
+};
+
 const SIM_VIZ = {
   run_id: "mock-run",
   active_run_id: "mock-run",
@@ -232,6 +265,7 @@ const FIELD_IDS = [
   "runSummary",
   "stageList",
   "runLog",
+  "stagesPanel",
   "sceneMode",
   "robotPreset",
   "cameraMode",
@@ -420,7 +454,7 @@ function installAgentApiMocks() {
       req.reply(json(activeSimViz.run_id === NON_STOCK_RUN_ID ? activeSimViz : NON_STOCK_SIM_VIZ));
       return;
     }
-    req.reply(json(runId ? { ...SIM_VIZ, run_id: runId } : activeSimViz));
+    req.reply(json(runId ? { ...SIM_VIZ, run_id: runId, active_run_id: runId } : activeSimViz));
   }).as("simVizStatus");
   cy.intercept("GET", "/api/sim-viz/rrd-blob*", {
     statusCode: 200,
@@ -435,7 +469,9 @@ function installAgentApiMocks() {
   cy.intercept("POST", "/api/sim-viz/load-franka-demo", json({ ok: true, sim_viz: SIM_VIZ })).as("loadFranka");
   cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
     const runId = String(req.body.run_id || "mock-run");
-    activeSimViz = runId === NON_STOCK_RUN_ID ? NON_STOCK_SIM_VIZ : { ...SIM_VIZ, run_id: runId };
+    activeSimViz = runId === NON_STOCK_RUN_ID
+      ? NON_STOCK_SIM_VIZ
+      : { ...SIM_VIZ, run_id: runId, active_run_id: runId };
     req.reply(json({ ok: true, sim_viz: activeSimViz }));
   }).as("loadRun");
   cy.intercept("POST", "/api/sim-viz/camera-preview", (req) => {
@@ -553,7 +589,15 @@ function installAgentApiMocks() {
   })).as("workflowStatus");
   cy.intercept("GET", "/api/workflows/sim2real/runs/*", (req) => {
     const runId = decodeURIComponent(req.url.split("/").pop().split("?")[0] || "mock-run");
-    req.reply(json(runId === NON_STOCK_RUN_ID ? NON_STOCK_RUN_DETAILS : { run: { ...RUN_DETAILS.run, run_id: runId } }));
+    if (runId === NON_STOCK_RUN_ID) {
+      req.reply(json(NON_STOCK_RUN_DETAILS));
+      return;
+    }
+    if (runId === "cosmos-reason-run") {
+      req.reply(json(GENERIC_WORKFLOW_RUN_DETAILS));
+      return;
+    }
+    req.reply(json({ run: { ...RUN_DETAILS.run, run_id: runId } }));
   }).as("runDetails");
 }
 
@@ -584,6 +628,8 @@ export {
   CAMERAS,
   COMPLEX_WORKFLOW_YAML,
   FIELD_IDS,
+  GENERIC_WORKFLOW_RUN_DETAILS,
+  GENERIC_WORKFLOW_YAML,
   NON_STOCK_ARTIFACTS,
   NON_STOCK_RUN_ID,
   SIM_VIZ,

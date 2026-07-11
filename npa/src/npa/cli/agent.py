@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071102"
+AGENT_UI_VERSION = "2026071103"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4100,7 +4100,7 @@ def _maybe_toolground_chat_reply(
             "**Started Sim2Real pipeline**\\n"
             f"- **run_id**: `{{run_id}}`\\n"
             "- **mode**: `agent-local-sim2real`\\n"
-            "- The Run Monitor will update stages, result, and logs; Rerun will switch to the run recording when it is written."
+            "- The Stages panel will update stage timeline, result, and logs; Rerun will switch to the run recording when it is written."
         )
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
@@ -6385,12 +6385,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         justify-content: center;
       }}
       body.mobile-agent .workflow-panel,
-      body.mobile-agent .run-monitor-panel,
+      body.mobile-agent .stages-panel,
       body.mobile-agent .layout-rerun {{
         display: none;
       }}
       body.mobile-agent.mobile-show-panels .workflow-panel,
-      body.mobile-agent.mobile-show-panels .run-monitor-panel {{
+      body.mobile-agent.mobile-show-panels .stages-panel {{
         display: block;
       }}
       body.mobile-agent.mobile-show-panels .layout-rerun {{
@@ -6553,13 +6553,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
-        <section class="panel run-monitor-panel">
-          <h3>Sim2Real Run Monitor</h3>
-          <p class="hint">Stage timeline, result, and logs for the active run. This panel is independent from Rerun visualization.</p>
+        <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
+          <h3>Stages</h3>
+          <p class="hint">Stage timeline, result, and logs for the active workflow run. Works for any npa.workflow — not Sim2Real-only.</p>
           <div id="runDetails" class="run-details">
-            <h4>Run status, result, and logs</h4>
+            <h4>Status, result, and logs</h4>
             <div id="runSummary" class="run-summary"></div>
-            <div id="stageList" class="stage-list"></div>
+            <div id="stageList" class="stage-list" aria-label="Workflow stages"></div>
             <pre id="runLog" class="run-log">No run selected.</pre>
           </div>
         </section>
@@ -9860,6 +9860,8 @@ def verify_live_cmd(
         'id="mobileChatAuth"',
         'id="tabChat"',
         'id="tabRerun"',
+        'id="stagesPanel"',
+        "<h3>Stages</h3>",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",

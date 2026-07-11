@@ -87,6 +87,9 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#workflowYaml").should("exist");
     cy.get("#tabChat").should("exist");
     cy.get("#tabRerun").should("exist");
+    cy.get("#stagesPanel").should("exist");
+    cy.get("#stagesPanel h3").should("have.text", "Stages");
+    cy.contains("Sim2Real Run Monitor").should("not.exist");
     cy.get("#rerunFrame").should("exist");
   });
 

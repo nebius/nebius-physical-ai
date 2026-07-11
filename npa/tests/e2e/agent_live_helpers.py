@@ -114,6 +114,8 @@ UI_WIRING_MARKERS = (
     "activateMainTab",
     'id="tabChat"',
     'id="tabRerun"',
+    'id="stagesPanel"',
+    "<h3>Stages</h3>",
     "initNpaAgentUi",
     "DOMContentLoaded",
     'Mount the viewer immediately so "Loading application bundle" starts early',
