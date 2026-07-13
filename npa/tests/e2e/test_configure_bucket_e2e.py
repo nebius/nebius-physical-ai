@@ -163,9 +163,12 @@ def _interactive_configure_answers(
     storage_class: str = "",
     size_gb: str = "",
     hf_token: str = "hf_live_e2e_token",
+    ai_cloud_key: str = "",
     token_factory_key: str = "",
     ngc_api_key: str = "",
 ) -> str:
+    """Build stdin answers for interactive configure (HF, AI Cloud, TF, NGC)."""
+
     lines = [
         env.project_id,
         env.tenant_id,
@@ -175,7 +178,8 @@ def _interactive_configure_answers(
     ]
     if new_bucket:
         lines.extend([storage_class, size_gb])
-    lines.extend([hf_token, token_factory_key, ngc_api_key])
+    # Prompt order matches npa configure --interactive: HF → AI Cloud → Token Factory → NGC.
+    lines.extend([hf_token, ai_cloud_key, token_factory_key, ngc_api_key])
     return "\n".join(lines) + "\n"
 
 

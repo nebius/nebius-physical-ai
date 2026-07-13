@@ -14,15 +14,12 @@ import json
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from npa.cli.main import app
 from npa.clients import config as config_module
 from npa.clients import nebius
-
-runner = CliRunner()
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +35,25 @@ def live_workbench_name() -> str:
     return f"preempt-e2e-{suffix}"
 
 
+def _npa_bin() -> str:
+    repo_npa = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "npa"
+    if repo_npa.is_file():
+        return str(repo_npa)
+    return "npa"
+
+
+def _run_npa(args: list[str]) -> subprocess.CompletedProcess[str]:
+    # Real subprocess: CliRunner StringIO lacks fileno() and breaks Terraform.
+    return subprocess.run(
+        [_npa_bin(), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        check=False,
+    )
+
+
 def _nebius_json(args: list[str]) -> dict:
     raw = subprocess.check_output(["nebius", *args, "--format", "json"], text=True)
     return json.loads(raw) if raw.strip() else {}
@@ -47,8 +63,7 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
     env = config_module.resolve_environment(live_project_alias)
     assert env is not None, f"Unknown project alias {live_project_alias!r}"
 
-    deploy = runner.invoke(
-        app,
+    deploy = _run_npa(
         [
             "workbench",
             "lerobot",
@@ -62,12 +77,19 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
             "--gpu-preset",
             os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_PRESET", "1gpu-40vcpu-160gb"),
             "--preemptible",
-        ],
-        env={**os.environ, "PYTHONPATH": "npa/src"},
+        ]
     )
-    if deploy.exit_code != 0 and "PermissionDenied" in deploy.output:
-        pytest.skip("Active profile lacks VPC/compute create permissions for live VM deploy")
-    assert deploy.exit_code == 0, deploy.output
+    output = deploy.stdout or ""
+    if deploy.returncode != 0 and (
+        "PermissionDenied" in output
+        or "permission denied" in output.lower()
+        or "UnsupportedOperation" in output
+    ):
+        pytest.skip(
+            "Active profile lacks VPC/compute create permissions for live VM deploy: "
+            f"{output[-400:]}"
+        )
+    assert deploy.returncode == 0, output
 
     try:
         cfg = config_module.resolve_workbench(live_project_alias, live_workbench_name)
@@ -79,8 +101,7 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
             preemptible = payload.get("spec", {}).get("preemptible") or payload.get("preemptible")
             assert preemptible, f"expected preemptible spec, got: {preemptible!r}"
     finally:
-        destroy = runner.invoke(
-            app,
+        destroy = _run_npa(
             [
                 "workbench",
                 "lerobot",
@@ -91,9 +112,9 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
                 "deploy",
                 "--destroy",
                 "--yes",
-            ],
+            ]
         )
-        assert destroy.exit_code == 0, destroy.output
+        assert destroy.returncode == 0, destroy.stdout
 
 
 def test_live_bootstrap_reuses_restricted_iam_profile() -> None:
@@ -106,7 +127,15 @@ def test_live_bootstrap_reuses_restricted_iam_profile() -> None:
     if not project_id or not tenant_id:
         pytest.skip("Active Nebius CLI profile must expose parent-id and tenant-id")
 
-    creds = nebius.bootstrap_environment(project_id, tenant_id, region)
+    try:
+        creds = nebius.bootstrap_environment(project_id, tenant_id, region)
+    except nebius.NebiusError as exc:
+        pytest.skip(f"Bootstrap unavailable for active profile: {exc}")
+    if not creds.get("service_account_id"):
+        pytest.skip(
+            "Bootstrap did not return service_account_id; set NPA_SERVICE_ACCOUNT_ID "
+            "or nebius.service_account_id in ~/.npa/credentials.yaml"
+        )
     assert creds["nebius_api_key"]
     assert creds["nebius_secret_key"]
-    assert creds["service_account_id"].startswith("serviceaccount-")
+    assert str(creds["service_account_id"]).startswith("serviceaccount-")

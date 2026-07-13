@@ -480,6 +480,34 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
     assert selected_rl_policy["template"] == "rl-policy-success"
 
 
+def test_choose_workflow_template_byof_beats_full_tool_catalog_capabilities() -> None:
+    """Explicit BYOF prompts must not lose to RL when TOOL_REFS bleed isaac/rl/policy."""
+    full_catalog_capabilities = {
+        "tool_refs": [
+            "workbench.isaac_lab.rl",
+            "workbench.rl.policy_train",
+            "workbench.vlm.rl",
+            "workbench.byof.repo",
+            "workbench.token_factory.gate",
+        ]
+    }
+    selected = choose_workflow_template(
+        user_text="create a BYOF Isaac Lab workflow for live infra with placeholder repo and task",
+        intent="create_workflow",
+        capabilities=full_catalog_capabilities,
+    )
+    assert selected["template"] == "byof"
+    draft = generate_workflow_draft(
+        user_text="create a BYOF Isaac Lab workflow for live infra with placeholder repo and task",
+        intent="create_workflow",
+        capabilities=full_catalog_capabilities,
+        tool_refs=frozenset(full_catalog_capabilities["tool_refs"]),
+    )
+    assert draft["template"] == "byof"
+    assert "name: byof" in draft["yaml"]
+    assert draft["validation"]["ok"] is True
+
+
 def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     draft = generate_workflow_draft(
         user_text="draft a tokenfactory gate workflow",
