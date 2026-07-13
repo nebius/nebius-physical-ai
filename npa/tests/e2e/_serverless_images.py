@@ -9,6 +9,7 @@ _PLACEHOLDER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
 
 # Platforms available on the shared us-central1 rtxpro project (verified live).
 _DEFAULT_SERVERLESS_GPU = "gpu-h200-sxm"
+_RT_CORE_SERVERLESS_GPU = "gpu-rtx6000"
 
 
 def resolve_registry() -> str:
@@ -43,14 +44,14 @@ def resolve_serverless_gpu_type(default: str = _DEFAULT_SERVERLESS_GPU) -> str:
     """GPU platform for serverless job creates on the live project.
 
     Prefer ``NPA_E2E_SERVERLESS_GPU_TYPE``; otherwise map legacy L40S aliases onto
-    a platform that exists on the shared rtxpro project.
+    an RT-core platform that exists on the shared rtxpro project (``gpu-rtx6000``).
     """
     explicit = os.environ.get("NPA_E2E_SERVERLESS_GPU_TYPE", "").strip()
     if explicit:
         return explicit
     legacy = str(default or "").strip().lower()
-    if legacy in {"gpu-l40s-d", "gpu-l40s-a", "l40s", "gpu-l40s"}:
-        return _DEFAULT_SERVERLESS_GPU
+    if legacy in {"gpu-l40s-d", "gpu-l40s-a", "l40s", "gpu-l40s", "gpu-rtx-pro-6000"}:
+        return _RT_CORE_SERVERLESS_GPU
     if legacy in {"h200", "gpu-h200"}:
         return "gpu-h200-sxm"
     return default or _DEFAULT_SERVERLESS_GPU

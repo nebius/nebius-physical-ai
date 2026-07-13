@@ -23,7 +23,7 @@ def test_resolve_image_rewrites_placeholder_registry(monkeypatch) -> None:
 
 def test_resolve_serverless_gpu_maps_legacy_l40s(monkeypatch) -> None:
     monkeypatch.delenv("NPA_E2E_SERVERLESS_GPU_TYPE", raising=False)
-    assert _mod.resolve_serverless_gpu_type("gpu-l40s-d") == "gpu-h200-sxm"
-    assert _mod.resolve_serverless_gpu_type("l40s") == "gpu-h200-sxm"
-    monkeypatch.setenv("NPA_E2E_SERVERLESS_GPU_TYPE", "gpu-rtx6000")
     assert _mod.resolve_serverless_gpu_type("gpu-l40s-d") == "gpu-rtx6000"
+    assert _mod.resolve_serverless_gpu_type("l40s") == "gpu-rtx6000"
+    monkeypatch.setenv("NPA_E2E_SERVERLESS_GPU_TYPE", "gpu-h200-sxm")
+    assert _mod.resolve_serverless_gpu_type("gpu-l40s-d") == "gpu-h200-sxm"
