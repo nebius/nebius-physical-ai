@@ -187,41 +187,37 @@ describe("NPA agent UI against live infra", () => {
       this.skip();
     }
 
+    const assertRerunSimViz = (simViz) => {
+      expect(simViz.run_id || simViz.active_run_id).to.eq(runId);
+      expect(String(simViz.artifact_render || "")).to.eq("rerun");
+      expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(String(simViz.rrd_uri || "")).to.match(/^file:\/\//);
+      expect(simViz.rerun_ready).to.eq(true);
+      expect(String(simViz.camera || "")).to.eq("heldout-sim");
+      expect(String(simViz.preview_entity || "")).to.eq("camera");
+      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
+      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
+        "/rerun/recordings/sim2real.rrd",
+      );
+    };
+
     liveAgentRequest("/api/sim-viz/load-run", {
       method: "POST",
       body: { run_id: runId, camera: "workspace" },
     }).then((response) => {
       expect(response.status).to.eq(200);
       expect(response.body).to.have.property("ok", true);
-      const simViz = response.body.sim_viz || {};
-      expect(simViz.run_id).to.eq(runId);
-      expect(simViz.artifact_render).to.eq("rerun");
-      expect(simViz.artifact_key).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(simViz.artifact_uri).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(simViz.rrd_uri).to.match(/^file:\/\//);
-      expect(simViz.rerun_ready).to.eq(true);
-      expect(simViz.camera).to.eq("heldout-sim");
-      expect(simViz.preview_entity).to.eq("camera");
-      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
-      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
-        "/rerun/recordings/sim2real.rrd",
-      );
+      assertRerunSimViz(response.body.sim_viz || {});
     });
 
     liveAgentRequest("/api/sim-viz/status").then((response) => {
       expect(response.status).to.eq(200);
-      const simViz = response.body || {};
-      expect(simViz.active_run_id || simViz.run_id).to.eq(runId);
-      expect(simViz.artifact_render).to.eq("rerun");
-      expect(simViz.artifact_key).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(simViz.camera).to.eq("heldout-sim");
-      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
-      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
-        "/rerun/recordings/sim2real.rrd",
-      );
+      assertRerunSimViz(response.body || {});
     });
 
     cy.reload();
+    cy.get("#statusBar", { timeout: 30000 }).should("exist");
     cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
     cy.get("#tabRerun").click();
     cy.get("#rerunFrame").should(($frame) => {
@@ -241,11 +237,18 @@ describe("NPA agent UI against live infra", () => {
     liveAgentRequest("/api/sim-viz/load-run", {
       method: "POST",
       body: { run_id: runId, camera: "workspace" },
+    }).then((response) => {
+      expect(response.status).to.eq(200);
+      expect(response.body).to.have.property("ok", true);
+      expect((response.body.sim_viz || {}).artifact_render).to.eq("rerun");
     });
     cy.reload();
+    cy.get("#statusBar", { timeout: 30000 }).should("exist");
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#runIdInput", { timeout: 30000 }).clear().type(runId);
+    cy.get("#loadRunData").click();
+    cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
     cy.get("#artifactLoadRunArtifacts").click();
 
     cy.get("#artifactList", { timeout: 120000 }).within(() => {
@@ -263,12 +266,12 @@ describe("NPA agent UI against live infra", () => {
     });
     cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
     cy.get("#runLog").should("contain.text", "Derived stage timeline");
-    cy.get("#renderedDataSummary").should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
+    cy.get("#tabRerun").click();
+    cy.get("#renderedDataSummary", { timeout: 30000 }).should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
     cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");
     cy.get("#simCamera").should("contain.text", "heldout-sim");
-    cy.get("#tabRerun").click();
     cy.get("#rerunFrame").should("be.visible");
-    cy.get("#artifactList").should("contain.text", "reports/sim2real.rrd");
+    cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#tabChat").click();
     cy.get("#chatForm").should("be.visible");
 

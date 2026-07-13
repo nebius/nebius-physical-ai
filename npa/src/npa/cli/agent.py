@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071303"
+AGENT_UI_VERSION = "2026071304"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -9048,26 +9048,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function ensureFrankaRerunLoaded() {{
         const simViz = await loadJson("/api/sim-viz/status");
         const artifactRender = String((simViz && simViz.artifact_render) || "");
+        const runId = String((simViz && (simViz.active_run_id || simViz.run_id)) || "").trim();
+        const stage = String((simViz && simViz.stage) || "").trim();
+        const isDemo = !runId || runId === "franka-demo" || stage === "demo";
         if (artifactRender && artifactRender !== "rerun") {{
           activeArtifactRender = artifactRender;
           await showArtifactPreview(simViz, artifactRender);
-          return;
+          return "media";
         }}
         const camera = String(simViz.camera || "workspace");
-        if (!simViz.rerun_ready && !simViz.rrd_uri) {{
-          setStatus("Loading Franka demo...");
-          showToast("Loading stock Franka in Rerun", "info");
-          await loadFrankaDemo();
-          return;
+        if (simViz.rerun_ready || simViz.rrd_uri) {{
+          // Preserve the active run recording; only mount the viewer.
+          if (!rerunIframeLoaded) {{
+            setStatus("Opening Rerun viewer...");
+            await loadRerunViewer(camera);
+          }}
+          return isDemo ? "demo" : "run";
         }}
-        if (!rerunIframeLoaded) {{
-          setStatus("Opening Rerun viewer...");
-          await loadRerunViewer(camera);
+        if (!isDemo && runId) {{
+          // Non-demo run is selected but recording is not ready yet — do not clobber with Franka.
+          setStatus("Waiting for run recording…");
+          return "pending-run";
         }}
+        setStatus("Loading Franka demo...");
+        showToast("Loading stock Franka in Rerun", "info");
+        await loadFrankaDemo();
+        return "demo";
       }}
       async function bootPage() {{
         rerunBootInProgress = true;
-        showRerunPlaceholder("Loading stock Franka preview...");
+        showRerunPlaceholder("Loading Rerun preview...");
         setStatus("Preloading Rerun…");
         // Warm HTTP cache in parallel; do not block iframe mount on finishing the
         // full wasm blob download into JS memory (that serialized load felt much slower).
@@ -9094,9 +9104,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             // Mount the viewer immediately so "Loading application bundle" starts early
             // while chat session/refresh continues in parallel.
             const mountPromise = ensureFrankaRerunLoaded();
-            await Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise]);
+            const settled = await Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise]);
+            const mountMode = settled[3];
             setStatus("Ready");
-            showToast("Franka demo ready in Rerun", "success");
+            showToast(mountMode === "demo" ? "Franka demo ready in Rerun" : "Workbench ready", "success");
           }}
         }} catch (err) {{
           console.warn("franka auto-load failed", err);
