@@ -20,7 +20,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Callable
 
-from npa.smoke._versions import supported_tool_version
+from npa.smoke._versions import expected_lerobot_version, train_env_eval_arg_for_version
 
 
 @dataclass
@@ -107,7 +107,7 @@ def _find_checkpoint(train_dir: Path) -> Path | None:
 
 def check_lerobot_version(state: SmokeState) -> CheckResult:
     try:
-        expected = supported_tool_version("lerobot", __file__)
+        expected = expected_lerobot_version(__file__)
         version = metadata.version("lerobot")
     except Exception as exc:
         return CheckResult("check lerobot version", False, _format_exception(exc))
@@ -123,6 +123,7 @@ def check_lerobot_version(state: SmokeState) -> CheckResult:
 
 def check_lerobot_train(state: SmokeState) -> CheckResult:
     state.train_log = state.root / "lerobot_train.log"
+    version = expected_lerobot_version(__file__)
     command = [
         "lerobot-train",
         "--policy.type=act",
@@ -130,7 +131,7 @@ def check_lerobot_train(state: SmokeState) -> CheckResult:
         f"--output_dir={state.train_dir}",
         "--steps=50",
         "--save_freq=50",
-        "--eval_freq=1000000",
+        train_env_eval_arg_for_version(version, 1_000_000),
         "--log_freq=10",
         "--batch_size=8",
         "--num_workers=4",

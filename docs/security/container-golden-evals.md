@@ -93,7 +93,8 @@ flowchart TB
 | --- | --- | --- | --- | --- | --- |
 | `base-cuda13-b300` | *(foundation)* | build-import | torch+CUDA; flash_attn import | required | blocked-on-upstream |
 | `groot` | `0.1.0` | container-smoke | GR00T repo; uv; standalone inference | required | gpu-gated |
-| `lerobot` | `0.5.1` | container-smoke | version; 50-step PushT train; checkpoint; eval; output | required | gpu-gated |
+| `lerobot` | `0.5.1` (default) | container-smoke | version; 50-step PushT train; checkpoint; eval; output | required | gpu-gated |
+| `lerobot` | `0.6.0` (additional) | container-smoke | same suite with `NPA_LEROBOT_VERSION=0.6.0` / `npa-lerobot:0.6.0` | optional | gpu-gated |
 | `lerobot-policy` | `0.1.1` | container-smoke | short train; short eval on checkpoint | optional | gpu-gated |
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |

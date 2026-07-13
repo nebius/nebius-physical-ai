@@ -44,6 +44,14 @@ Load these as needed before making decisions:
   `cosmos`, `groot`, `sonic`, `fiftyone`, `lancedb`, `mjlab`, or
   `retargeting`) when the upstream repo depends on that stack.
 
+When the solution depends on Hugging Face LeRobot, pin an explicit supported
+workbench version (`0.5.1` default or `0.6.0` additional) via
+`skills/tools/lerobot/SKILL.md` and
+`npa/src/npa/deploy/lerobot_version_manifest.json`. Do not assume
+`pip install lerobot` without extras on 0.6.0 — use
+`lerobot[training,evaluation,...]==0.6.0`. Record the chosen pin in the
+capability table (`gpu_or_assets` / runtime notes).
+
 ## Non-Negotiable Agent Contract
 
 Do not invent capabilities from repo names, README badges, or marketing copy.

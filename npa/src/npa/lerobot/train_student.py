@@ -5,12 +5,13 @@ student policy (ACT, diffusion, etc.) on a dataset produced by the
 SimToLeRobot adapter. The student only sees camera observations and joint
 state — never privileged simulator state.
 
-LeRobot API notes (v0.5.x):
+LeRobot API notes (v0.5.x / v0.6.0):
     - Training is step-based (--steps), not epoch-based.
     - Local datasets use --dataset.repo_id=<name> --dataset.root=<path>.
       There is no local:// prefix.
     - lerobot-train rejects an existing output_dir unless --resume=true.
     - Flag names are flattened dataclass paths via draccus.
+    - v0.6.0 renames --eval_freq to --env_eval_freq (handled via version_compat).
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from npa.workbench.lerobot.version_compat import train_env_eval_arg
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +105,7 @@ def build_train_command(
         f"--num_workers={num_workers}",
         f"--save_freq={save_freq}",
         # Disable eval during distillation (eval is done in Genesis separately)
-        "--eval_freq=1000000",
+        train_env_eval_arg(1_000_000),
         "--wandb.enable=false",
     ]
 
