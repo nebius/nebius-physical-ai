@@ -165,8 +165,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "stages-panel" in source
     assert "<h3>Stages</h3>" in source
     assert "Sim2Real Run Monitor" not in source
-    assert "Status, result, and logs" in source
-    assert "any npa.workflow" in source
+    assert "Timeline, result, and logs for the active run." in source
+    assert "formatStageStatusLabel" in source
     assert "No run-specific Rerun recording yet" in source
     assert "_run_sim2real_pipeline_background" in source
     assert "agent-local-sim2real" in source

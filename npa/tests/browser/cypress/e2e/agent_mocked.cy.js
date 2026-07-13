@@ -18,10 +18,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesPanel").should("exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
-    cy.get("#stagesPanel .hint").should("contain.text", "any npa.workflow");
+    cy.get("#stagesPanel .hint").should("contain.text", "Timeline, result, and logs");
+    cy.get("#stagesPanel .hint").should("not.contain.text", "Sim2Real-only");
     cy.get("#stageList").should("have.attr", "aria-label", "Workflow stages");
     cy.get("#stageList").should("contain.text", "Select assets");
     cy.get("#stageList").should("contain.text", "Render");
+    cy.get("#stageList").should("contain.text", "Succeeded");
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
@@ -38,7 +40,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stageList").should("contain.text", "Fetch checkpoint");
     cy.get("#stageList").should("contain.text", "Reason");
     cy.get("#stageList").should("contain.text", "Publish");
-    cy.get("#stageList").should("contain.text", "running");
+    cy.get("#stageList").should("contain.text", "Running");
     cy.get("#runLog").should("contain.text", "generic workflow stages active");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
@@ -48,7 +50,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#workflowValidate").click();
     cy.wait("@workflowValidate");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
-    cy.get("#stagesPanel").should("contain.text", "any npa.workflow");
+    cy.get("#stagesPanel .hint").should("contain.text", "Timeline, result, and logs");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 

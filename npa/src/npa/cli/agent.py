@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071103"
+AGENT_UI_VERSION = "2026071301"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -6152,52 +6152,64 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       .badge {{ display: inline-block; padding: 3px 9px; border-radius: 999px; background: var(--sidebar-2); color: #f5fbff; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }}
       .badge-ok {{ background: var(--ok-bg); color: var(--ok-text); }}
       .run-details {{
-        margin-top: 10px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface-soft);
-        padding: 10px;
+        margin-top: 12px;
+        padding: 0;
+        border: 0;
+        background: transparent;
       }}
-      .run-details h4 {{ margin: 0 0 8px 0; font-size: 13px; color: var(--text); }}
       .run-summary {{
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
       }}
       .stage-list {{
         display: grid;
-        gap: 6px;
-        margin: 8px 0;
+        gap: 0;
+        margin: 0;
+        background: transparent;
+      }}
+      .stage-list:has(.stage-item) {{
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #fff;
+      }}
+      .stage-list > .hint {{
+        margin: 2px 0 8px;
       }}
       .stage-item {{
         display: grid;
-        grid-template-columns: 92px 1fr;
-        gap: 8px;
+        grid-template-columns: 88px 1fr;
+        gap: 10px;
         align-items: start;
-        border: 1px solid var(--border);
-        background: #fff;
-        border-radius: 8px;
-        padding: 7px 8px;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        background: transparent;
+        border-radius: 0;
+        padding: 9px 11px;
         font-size: 12px;
       }}
+      .stage-item:last-child {{ border-bottom: 0; }}
       .stage-status {{
-        border-radius: 999px;
-        padding: 3px 7px;
+        border-radius: 6px;
+        padding: 4px 7px;
         text-align: center;
         font-weight: 700;
-        text-transform: uppercase;
-        font-size: 10px;
+        letter-spacing: 0.02em;
+        text-transform: none;
+        font-size: 11px;
         background: var(--surface-blue);
         color: var(--text);
       }}
       .stage-status.succeeded {{ background: var(--ok-bg); color: var(--ok-text); }}
       .stage-status.failed {{ background: #fee2e2; color: #991b1b; }}
       .stage-status.running {{ background: #fef3c7; color: #92400e; }}
-      .stage-status.pending {{ background: #eef6fc; color: var(--muted); }}
-      .stage-status.not_run {{ background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }}
+      .stage-status.queued {{ background: #eef6fc; color: #1e4b6b; }}
+      .stage-status.pending {{ background: #eef6fc; color: #3d5a6e; }}
+      .stage-status.not_run {{ background: #f8fafc; color: #4b6476; border: 1px solid var(--border); }}
       .stage-label {{ font-weight: 700; color: var(--text); }}
-      .stage-summary {{ color: var(--muted); margin-top: 2px; }}
+      .stage-summary {{ color: var(--muted); margin-top: 2px; line-height: 1.35; }}
       .run-log {{
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -6555,9 +6567,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Stage timeline, result, and logs for the active workflow run. Works for any npa.workflow — not Sim2Real-only.</p>
+          <p class="hint">Timeline, result, and logs for the active run.</p>
           <div id="runDetails" class="run-details">
-            <h4>Status, result, and logs</h4>
             <div id="runSummary" class="run-summary"></div>
             <div id="stageList" class="stage-list" aria-label="Workflow stages"></div>
             <pre id="runLog" class="run-log">No run selected.</pre>
@@ -8427,9 +8438,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const raw = String(value || "pending").trim().toLowerCase();
         if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
         if (["failed", "error", "blocked"].includes(raw)) return "failed";
-        if (["running", "active", "submitted", "queued"].includes(raw)) return raw === "submitted" ? "running" : raw;
+        if (["running", "active", "submitted"].includes(raw)) return "running";
+        if (["queued"].includes(raw)) return "queued";
         if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
         return "pending";
+      }}
+      function formatStageStatusLabel(statusClass) {{
+        const labels = {{
+          succeeded: "Succeeded",
+          failed: "Failed",
+          running: "Running",
+          queued: "Queued",
+          pending: "Pending",
+          not_run: "Not run",
+        }};
+        return labels[statusClass] || String(statusClass || "Pending");
       }}
       function renderRunDetails(details) {{
         const run = (details && details.run) || details || {{}};
@@ -8442,18 +8465,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const status = String(run.status || "idle");
         const updatedAt = String(run.updated_at || run.submitted_at || "");
         summary.innerHTML =
-          '<span class="pill">run: <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
-          '<span class="pill">status: <strong>' + escapeHtml(status) + '</strong></span>' +
-          '<span class="pill">result: <strong>' + escapeHtml(result) + '</strong></span>' +
-          '<span class="pill">updated: <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
+          '<span class="pill">run <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          '<span class="pill">status <strong>' + escapeHtml(status) + '</strong></span>' +
+          '<span class="pill">result <strong>' + escapeHtml(result) + '</strong></span>' +
+          '<span class="pill">updated <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
         const stages = Array.isArray(run.stages) ? run.stages : [];
         stagesHost.innerHTML = stages.map((stage) => {{
           const statusClass = normalizeStageStatus(stage.status);
+          const statusLabel = formatStageStatusLabel(statusClass);
           const label = String(stage.label || stage.id || "");
           const stageSummary = String(stage.summary || "");
           return (
             '<div class="stage-item">' +
-            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusClass) + '</span>' +
+            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
             '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
             '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
             '</div>'
