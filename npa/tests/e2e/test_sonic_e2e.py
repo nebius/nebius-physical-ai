@@ -14,6 +14,8 @@ import pytest
 
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
+from ._serverless_images import resolve_image, resolve_serverless_gpu_type
+
 
 PROJECT_ALIAS = "eu-north1"
 PROJECT_ID = "project-test-00000000000"
@@ -21,6 +23,7 @@ BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
 WORKBENCH_NAME = "sonic-e2e"
 SONIC_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:test-tag-amd64"
+SONIC_LIVE_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-sonic:0.1.2"
 GPU_TYPE = "l40s"
 GPU_PRESET = "1gpu-40vcpu-160gb"
 CHECKPOINT = "nvidia/GEAR-SONIC:sonic_release/last.pt"
@@ -94,6 +97,10 @@ def test_sonic_serverless_train_smoke(tmp_path: Path) -> None:
         project_id=project_id,
         output_path=output_path,
         job_name=job_name,
+        image=resolve_image(os.environ.get("NPA_E2E_SONIC_IMAGE", SONIC_LIVE_IMAGE)),
+        gpu_type=resolve_serverless_gpu_type(
+            os.environ.get("NPA_E2E_SONIC_GPU_TYPE", GPU_TYPE)
+        ),
     )
     job_id = ""
 
@@ -164,6 +171,8 @@ def _submit_command(
     project_id: str,
     output_path: str,
     job_name: str,
+    image: str = SONIC_IMAGE,
+    gpu_type: str = GPU_TYPE,
 ) -> list[str]:
     return [
         "workbench",
@@ -187,9 +196,9 @@ def _submit_command(
         "--output-path",
         output_path,
         "--image",
-        SONIC_IMAGE,
+        image,
         "--gpu-type",
-        GPU_TYPE,
+        gpu_type,
         "--gpu-count",
         "1",
         "--gpu-preset",

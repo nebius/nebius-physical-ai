@@ -15,6 +15,8 @@ import pytest
 import npa.clients.serverless as serverless_mod
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
+from ._serverless_images import resolve_image, resolve_serverless_gpu_type
+
 
 PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
@@ -87,9 +89,11 @@ def test_cosmos_text2world_serverless_generation(tmp_path: Path) -> None:
         info = client.create_job(
             project_id=project_id,
             name=name,
-            image=IMAGE,
+            image=resolve_image(os.environ.get("NPA_E2E_COSMOS_IMAGE", IMAGE)),
             command=_cosmos_smoke_command(),
-            gpu_type="gpu-h200-sxm",
+            gpu_type=resolve_serverless_gpu_type(
+                os.environ.get("NPA_E2E_COSMOS_GPU_TYPE", "gpu-h200-sxm")
+            ),
             gpu_count=1,
             preset="1gpu-16vcpu-200gb",
             subnet_id=_subnet_id(project_id),
