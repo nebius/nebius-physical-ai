@@ -111,7 +111,7 @@ describe("NPA agent UI against live infra", () => {
 
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
-    cy.get("#artifactList", { timeout: 30000 }).should("contain.text", "Runs discovered");
+    cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "Runs discovered");
 
     cy.get("#loadFrankaRerun").click();
     cy.get("#statusBar", { timeout: 120000 }).should(($bar) => {
@@ -268,6 +268,7 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#simCamera").should("contain.text", "heldout-sim");
     cy.get("#tabRerun").click();
     cy.get("#rerunFrame").should("be.visible");
+    cy.get("#artifactList").should("contain.text", "reports/sim2real.rrd");
     cy.get("#tabChat").click();
     cy.get("#chatForm").should("be.visible");
 
@@ -275,13 +276,18 @@ describe("NPA agent UI against live infra", () => {
       const doc = win.document.documentElement;
       expect(doc.scrollWidth, "no distracting horizontal page overflow").to.be.lte(win.innerWidth + 24);
       win.document.getElementById("tabRerun").click();
-      for (const id of ["artifactList", "rerunFrame"]) {
-        const el = win.document.getElementById(id);
-        expect(el, `${id} exists`).to.exist;
-        const rect = el.getBoundingClientRect();
-        expect(rect.width, `${id} has usable width`).to.be.greaterThan(240);
-        expect(rect.height, `${id} has usable height`).to.be.greaterThan(id === "artifactList" ? 24 : 40);
-      }
+      const artifactList = win.document.getElementById("artifactList");
+      expect(artifactList, "artifactList exists").to.exist;
+      artifactList.scrollIntoView({ block: "nearest" });
+      const artifactRect = artifactList.getBoundingClientRect();
+      expect(artifactRect.width, "artifactList has usable width").to.be.greaterThan(240);
+      expect(artifactRect.height, "artifactList has usable height").to.be.greaterThan(120);
+      expect(String(artifactList.textContent || "")).to.match(/sim2real\.rrd/);
+      const rerunFrame = win.document.getElementById("rerunFrame");
+      expect(rerunFrame, "rerunFrame exists").to.exist;
+      const frameRect = rerunFrame.getBoundingClientRect();
+      expect(frameRect.width, "rerunFrame has usable width").to.be.greaterThan(240);
+      expect(frameRect.height, "rerunFrame has usable height").to.be.greaterThan(40);
       win.document.getElementById("tabChat").click();
       for (const id of ["chatForm", "runDetails"]) {
         const el = win.document.getElementById(id);

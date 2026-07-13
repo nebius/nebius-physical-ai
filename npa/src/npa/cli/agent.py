@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071301"
+AGENT_UI_VERSION = "2026071302"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -5859,6 +5859,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         max-height: calc(100dvh - 140px);
         overflow: auto;
       }}
+      .artifact-list {{
+        margin-top: 8px;
+        min-height: 140px;
+        max-height: min(42vh, 420px);
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 8px 10px;
+      }}
+      .artifact-list:empty {{
+        display: flex;
+        align-items: center;
+        color: var(--muted);
+        font-size: 12px;
+      }}
+      .artifact-list:empty::before {{
+        content: "List artifacts for the active run to populate this panel.";
+      }}
+      .artifact-list .artifact-row {{
+        padding: 8px 0;
+        border-top: 1px solid var(--border);
+      }}
+      .artifact-list .artifact-row:first-child {{ border-top: 0; }}
       .rerun-stage {{
         display: flex;
         flex-direction: column;
@@ -6578,77 +6602,29 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <div id="panelRerun" class="tab-panel is-inactive" role="tabpanel" aria-labelledby="tabRerun" aria-hidden="true">
         <div class="layout layout-rerun">
           <section class="panel rerun-rail">
-            <h3>Sim Assets &amp; Runs</h3>
+            <h3>Runs &amp; assets</h3>
             <div class="subsection">
-              <h4>Selection</h4>
+              <h4>Active run</h4>
               <div class="field-row">
                 <div class="field">
-                  <label for="sceneMode">Scene mode</label>
-                  <select id="sceneMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="byo_mesh">byo_mesh</option>
-                    <option value="scene_spec">scene_spec</option>
-                  </select>
+                  <label for="runIdInput">Run ID</label>
+                  <input id="runIdInput" type="text" placeholder="agent-run-..." />
                 </div>
                 <div class="field">
-                  <label for="robotPreset">Robot preset</label>
-                  <select id="robotPreset">
-                    <option value="franka" selected>stock_franka</option>
-                    <option value="ur5e">preset:ur5e</option>
+                  <label for="runIdSelect">Known runs</label>
+                  <select id="runIdSelect">
+                    <option value="">(select run)</option>
                   </select>
                 </div>
               </div>
-              <div class="field-row" style="margin-top:8px;">
-                <div class="field">
-                  <label for="cameraMode">Camera mode</label>
-                  <select id="cameraMode">
-                    <option value="stock" selected>stock</option>
-                    <option value="custom">custom</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="simBackend">Sim backend</label>
-                  <select id="simBackend">
-                    <option value="isaac" selected>isaac</option>
-                    <option value="genesis">genesis</option>
-                  </select>
-                </div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button id="loadRunData" class="btn" type="button">Load run data</button>
+                <button id="workflowStatus" class="btn" type="button">Workflow status</button>
               </div>
             </div>
             <div class="subsection">
-              <h4>Props</h4>
-              <div class="pill-list">
-                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
-              </div>
-            </div>
-            <div class="subsection">
-              <h4>Resolved assets</h4>
-              <div id="assetsSummary" class="hint"></div>
-            </div>
-            <div class="btn-row">
-              <button id="applySelection" class="btn" type="button">Apply stock selection</button>
-              <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
-              <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
-              <button id="workflowStatus" class="btn" type="button">Workflow status</button>
-            </div>
-            <div class="field-row" style="margin-top:8px;">
-              <div class="field">
-                <label for="runIdInput">Run ID</label>
-                <input id="runIdInput" type="text" placeholder="agent-run-..." />
-              </div>
-              <div class="field">
-                <label for="runIdSelect">Known runs</label>
-                <select id="runIdSelect">
-                  <option value="">(select run)</option>
-                </select>
-              </div>
-            </div>
-            <div class="btn-row" style="margin-top:8px;">
-              <button id="loadRunData" class="btn" type="button">Load run data</button>
-            </div>
-            <div class="subsection" style="margin-top:10px;">
-              <h4>Artifact browser</h4>
-              <p class="rollout-hint">Load `.rrd` into Rerun or preview `.mp4` / images inline.</p>
+              <h4>Artifacts</h4>
+              <p class="rollout-hint">Open `.rrd` in Rerun or preview `.mp4` / images inline.</p>
               <div class="field-row">
                 <div class="field">
                   <label for="artifactPrefix">Prefix</label>
@@ -6687,9 +6663,55 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
               <div class="btn-row" style="margin-top:8px;">
                 <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
-                <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
+                <button id="artifactLoadRunArtifacts" class="btn btn-primary" type="button">List artifacts</button>
               </div>
-              <div id="artifactList" class="hint" style="margin-top:8px;"></div>
+              <div id="artifactDiscoverStatus" class="hint" style="margin-top:8px;">No runs discovered yet.</div>
+              <div id="artifactList" class="artifact-list" aria-live="polite"></div>
+            </div>
+            <div class="subsection">
+              <h4>Selection</h4>
+              <div class="field-row">
+                <div class="field">
+                  <label for="sceneMode">Scene mode</label>
+                  <select id="sceneMode">
+                    <option value="stock" selected>stock</option>
+                    <option value="byo_mesh">byo_mesh</option>
+                    <option value="scene_spec">scene_spec</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="robotPreset">Robot preset</label>
+                  <select id="robotPreset">
+                    <option value="franka" selected>stock_franka</option>
+                    <option value="ur5e">preset:ur5e</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="cameraMode">Camera mode</label>
+                  <select id="cameraMode">
+                    <option value="stock" selected>stock</option>
+                    <option value="custom">custom</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="simBackend">Sim backend</label>
+                  <select id="simBackend">
+                    <option value="isaac" selected>isaac</option>
+                    <option value="genesis">genesis</option>
+                  </select>
+                </div>
+              </div>
+              <div class="pill-list" style="margin-top:8px;">
+                <label class="pill"><input id="propCube" type="checkbox" checked> cube</label>
+              </div>
+              <div id="assetsSummary" class="hint" style="margin-top:8px;"></div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button id="applySelection" class="btn" type="button">Apply stock selection</button>
+                <button id="loadFrankaRerun" class="btn" type="button">Load active Sim2Real in Rerun</button>
+                <button id="submitWorkflow" class="btn btn-primary" type="button">Submit Sim2Real</button>
+              </div>
             </div>
             <select id="cameraSelect" hidden aria-hidden="true">
               <option value="workspace" selected>workspace</option>
@@ -8074,10 +8096,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             select.appendChild(opt);
           }}
         }}
-        const list = document.getElementById("artifactList");
-        if (list) {{
+        const status = document.getElementById("artifactDiscoverStatus");
+        if (status) {{
           const trunc = data.truncated ? " (truncated)" : "";
-          list.textContent = "Runs discovered: " + String(data.total_runs || 0) + trunc;
+          status.textContent = "Runs discovered: " + String(data.total_runs || 0) + trunc;
         }}
         return true;
       }}
@@ -8115,7 +8137,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}, {{}});
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
         list.innerHTML =
-          '<div style="font-size:12px;color:#475569;margin:4px 0 8px;">Showing ' +
+          '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " of " + String(artifacts.length) +
           " artifacts · " + escapeHtml(countText) + "</div>" +
           displayArtifacts.map((item, idx) => {{
@@ -8123,7 +8145,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const render = String(item.render || "download");
           const s3uri = String(item.s3_uri || "");
           return (
-            '<div style="padding:8px 0;border-top:1px solid #e2e8f0;">' +
+            '<div class="artifact-row">' +
             '<div><code>' + escapeHtml(key) + '</code></div>' +
             '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + ' updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
