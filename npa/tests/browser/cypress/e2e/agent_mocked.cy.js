@@ -62,11 +62,15 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get(`#${id}`).should("exist");
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
+    cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
     cy.get("#tabChat").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
     cy.get("#panelRerun").should("have.class", "is-active").and("have.attr", "aria-hidden", "false");
     cy.get("#panelChat").should("have.class", "is-inactive").and("have.attr", "aria-hidden", "true");
+    cy.get("#renderModeRerun").should("have.class", "is-active");
+    cy.get("#renderModeVideo").should("exist");
+    cy.get("#viewerPaneRerun").should("have.class", "is-active-viewer");
     cy.get("#assetsSummary").should("contain.text", "stock://robot/franka");
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
@@ -121,12 +125,15 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#workflowPlan").click();
     cy.wait("@workflowPlan");
+    cy.get("#workflowPlanHost").should("be.visible");
+    cy.get("#workflowPlanHost").should("contain.text", "workbench.sim2real.status");
     cy.get("#workflowPlanOutput").should("contain.text", "workbench.sim2real.status");
     cy.get("#workflowValidation").should("contain.text", "planned");
 
     cy.get("#workflowSubmitYaml").click();
     cy.wait("@workflowSubmitYaml");
-    cy.get("#chatLog").should("contain.text", "Submitted npa.workflow YAML");
+    cy.get("#chatLog").should("contain.text", "Submitted npa.workflow");
+    cy.get("#chatLog").should("contain.text", "plan");
   });
 
   it("covers Sim2Real selection, Stages panel, Rerun buttons, and run-data loading", () => {
@@ -222,11 +229,13 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadArtifact");
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
-    cy.get("#artifactList").should("contain.text", "render=rerun");
-    cy.get("#artifactList").should("contain.text", "render=video");
-    cy.get("#artifactList").should("contain.text", "render=json");
-    cy.get("#artifactList").should("contain.text", "render=text");
-    cy.get("#artifactList").should("contain.text", "render=download");
+    cy.get("#artifactList").should("contain.text", "rerun");
+    cy.get("#artifactList").should("contain.text", "video");
+    cy.get("#artifactList").should("contain.text", "json");
+    cy.get("#artifactList").should("contain.text", "text");
+    cy.get("#artifactList").should("contain.text", "download");
+    cy.get("#artifactList").should("contain.text", "View in Rerun");
+    cy.get("#artifactList").should("contain.text", "Play");
     cy.get("#artifactTypeFilter").select("video");
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
@@ -253,11 +262,14 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
     cy.wait("@loadArtifact");
+    cy.get("#renderModeVideo").should("have.class", "is-active");
+    cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
     cy.get("#artifactPreviewHost video").should("have.attr", "src").and("include", "customer-camera.mp4");
     cy.get("#renderedDataSummary").should("contain.text", "video");
 
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`).click();
     cy.wait("@loadArtifact");
+    cy.get("#renderModeData").should("have.class", "is-active");
     cy.get("#artifactPreviewHost pre").should("contain.text", "promoted");
 
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`).click();
@@ -271,6 +283,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`).click();
     cy.wait("@loadArtifact");
+    cy.get("#renderModeRerun").should("have.class", "is-active");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
 
     cy.get("#openRerun").click();
@@ -306,6 +319,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#workflowPlan").click();
     cy.wait("@workflowPlan");
+    cy.get("#workflowPlanHost").should("contain.text", "workbench.token_factory.reason");
     cy.get("#workflowPlanOutput").should("contain.text", "workbench.token_factory.reason");
   });
 

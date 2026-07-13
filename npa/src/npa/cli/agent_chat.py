@@ -137,6 +137,28 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "create_loop_gate_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:loop[_\s-]?gate|decision[_\s-]?gate)\b"
+            r"|\b(?:loop[_\s-]?gate|decision[_\s-]?gate)\b.{0,80}\b(?:workflow|yaml|spec)\b"
+            r"|\b(?:create|generate|build|make|draft)\b.{0,80}\b(?:sim2real|sim\s*[- ]?2\s*[- ]?real)\b"
+            r".{0,80}\b(?:loop|gate|decision)\b.{0,80}\b(?:workflow|yaml|spec)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "create_rl_policy_workflow",
+        re.compile(
+            r"\b(?:create|generate|build|make|draft|compose|write)\b"
+            r".{0,120}\b(?:rl[_\s-]?policy|policy[_\s-]?train(?:ing)?|isaac[_\s-]?lab\s+rl)\b"
+            r"|\b(?:rl[_\s-]?policy|policy[_\s-]?train(?:ing)?)\b.{0,80}\b(?:workflow|yaml|spec|success\s+gate)\b"
+            r"|\b(?:create|generate|draft)\b.{0,80}\b(?:rl|reinforcement\s+learning)\b"
+            r".{0,80}\b(?:policy|train(?:ing)?)\b.{0,80}\b(?:workflow|yaml|spec)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "create_workflow",
         re.compile(
             r"\b(?:create|generate|build|make|draft|compose|write)\b"
@@ -163,6 +185,16 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
             r".{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:generate|create|draft|write|show)\b.{0,80}\b(?:example|simple|minimal)?\b.{0,120}\bworkflow\b.{0,80}\b(?:yaml|spec)\b"
             r"|\bworkflow\b.{0,80}\b(?:yaml|spec)\b.{0,80}\b(?:example|simple|minimal)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "workflow_execute_guidance",
+        re.compile(
+            r"\b(?:how|where|can)\b.{0,80}\b(?:execute|run|submit)\b.{0,80}\b(?:workflow|yaml|spec|npa\.workflow)\b"
+            r"|\b(?:execute|run)\b.{0,80}\b(?:workflow|yaml|spec)\b.{0,80}\b(?:for\s+real|on\s+(?:k8s|kubernetes|cluster)|with\s+sky|via\s+cli)\b"
+            r"|\b(?:run-spec|--execute|scheduler[- ]?plan)\b"
+            r"|\b(?:difference|diff|vs)\b.{0,80}\b(?:plan[- ]?only|submit|execute)\b",
             re.IGNORECASE,
         ),
     ),
@@ -270,10 +302,64 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "sonic_capabilities",
+        re.compile(
+            r"\bsonic\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|train|eval|export)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bsonic\b"
+            r"|\b(?:can|could)\b.{0,80}\bsonic\b.{0,120}\b(?:do|run|train|eval|export)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "lerobot_capabilities",
+        re.compile(
+            r"\blerobot\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|train|eval)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\blerobot\b"
+            r"|\b(?:can|could)\b.{0,80}\blerobot\b.{0,120}\b(?:do|run|train|eval)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "groot_capabilities",
+        re.compile(
+            r"\bgroot\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|train|eval|infer)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bgroot\b"
+            r"|\b(?:can|could)\b.{0,80}\bgroot\b.{0,120}\b(?:do|run|train|eval|infer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "genesis_capabilities",
+        re.compile(
+            r"\bgenesis\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|sim|simulate)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bgenesis\b"
+            r"|\b(?:can|could)\b.{0,80}\bgenesis\b.{0,120}\b(?:do|run|simulate)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "mjlab_capabilities",
+        re.compile(
+            r"\bmjlab\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|eval|locomotion)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bmjlab\b"
+            r"|\b(?:can|could)\b.{0,80}\bmjlab\b.{0,120}\b(?:do|run|eval)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "isaac_lab_capabilities",
+        re.compile(
+            r"\bisaac(?:\s|-)?lab\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers|train|eval|rl)\b"
+            r"|\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b.{0,120}\bisaac(?:\s|-)?lab\b"
+            r"|\b(?:can|could)\b.{0,80}\bisaac(?:\s|-)?lab\b.{0,120}\b(?:do|run|train|eval)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "component_capabilities",
         re.compile(
             r"\b(?:component|tool|workbench)\b.{0,120}\b(?:support|supports|capabilit(?:y|ies)|expose|offers)\b"
-            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory)\b.{0,80}\b(?:support|do|expose)\b",
+            r"|\bwhat\b.{0,80}\b(?:does|can)\b.{0,80}\b(?:cosmos|lancedb|sonic|isaac(?:\s|-)?lab|lerobot|groot|token(?:\s|-)?factory|genesis|mjlab)\b.{0,80}\b(?:support|do|expose)\b",
             re.IGNORECASE,
         ),
     ),
@@ -309,11 +395,14 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "start_sim2real": ["workflows/sim2real/submit"],
     "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
     "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
-    "create_workflow": ["workflows/draft", "workflows/validate"],
+    "create_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_loop_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_rl_policy_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "infra_backends": ["infra/k8s", "infra/provision", "workflows/submit"],
     "mk8s_provision": ["infra/mk8s", "infra/mk8s/provision", "infra/k8s"],
@@ -324,12 +413,19 @@ INTENT_APIS: dict[str, list[str]] = {
     "cameras": ["sim-assets/cameras"],
     "cosmos_capabilities": ["tools"],
     "lancedb_capabilities": ["tools"],
+    "sonic_capabilities": ["tools"],
+    "lerobot_capabilities": ["tools"],
+    "groot_capabilities": ["tools"],
+    "genesis_capabilities": ["tools"],
+    "mjlab_capabilities": ["tools"],
+    "isaac_lab_capabilities": ["tools"],
     "component_capabilities": ["tools"],
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
-    "cosmos3": [],
+    "cosmos3": ["tools"],
     "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
+    "workflow_execute_guidance": ["workflows/validate", "workflows/plan", "workflows/submit", "tools"],
 }
 
 _DEFAULT_TOOL_IMAGE_TAGS: dict[str, tuple[str, str]] = {
@@ -633,16 +729,40 @@ def format_cameras(state: dict[str, Any], *, default_cameras: list[dict[str, Any
     return "\n".join(lines)
 
 
-def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 8) -> str:
+def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
     count = len(tool_refs)
-    sample = tool_refs[:sample_size]
+    groups: dict[str, list[str]] = {}
+    for ref in tool_refs:
+        token = str(ref or "")
+        if token.startswith("workbench."):
+            parts = token.split(".")
+            family = parts[1] if len(parts) > 1 else "workbench"
+        elif token.startswith("infra."):
+            family = "infra"
+        else:
+            family = "other"
+        groups.setdefault(family, []).append(token)
     lines = [
-        f"**Workbench tool catalog** ({count} toolRefs):",
+        f"**Workbench tool catalog** ({count} toolRefs — same surface as `npa.workflow` YAML `toolRef`):",
+        "- Chat can **draft / validate / plan** YAML for these tools.",
+        "- Agent **Submit YAML** returns a **scheduler plan only** (not SkyPilot/K8s execute).",
+        "- Real execution: `npa workbench workflow run-spec <spec.yaml> --execute` on the operator machine.",
+        "",
+        "**Families:**",
     ]
-    for ref in sample:
-        lines.append(f"- `{ref}`")
-    if count > sample_size:
-        lines.append(f"- … and **{count - sample_size}** more (GET full list from tools API)")
+    for family in sorted(groups):
+        refs = sorted(groups[family])
+        preview = ", ".join(f"`{ref}`" for ref in refs[:3])
+        more = f" (+{len(refs) - 3})" if len(refs) > 3 else ""
+        lines.append(f"- **{family}** ({len(refs)}): {preview}{more}")
+    flat_sample = tool_refs[:sample_size]
+    if flat_sample:
+        lines.append("")
+        lines.append("**Sample toolRefs:**")
+        for ref in flat_sample:
+            lines.append(f"- `{ref}`")
+        if count > sample_size:
+            lines.append(f"- … and **{count - sample_size}** more via `GET /api/tools`")
     lines.append("- Invoke tools via `npa workbench <tool> …` or npa.workflow specs on your operator machine.")
     return "\n".join(lines)
 
@@ -655,52 +775,167 @@ def _image_for_tool(tool: str) -> str:
     return f"{registry.rstrip('/')}/{image_name}:{tag}"
 
 
+def _format_tool_family_capabilities(name: str, tool_refs: list[str], *, prefixes: tuple[str, ...], bullets: list[str]) -> str:
+    matched = [
+        ref
+        for ref in tool_refs
+        if any(token in str(ref).lower() for token in prefixes)
+    ]
+    sample = ", ".join(f"`{ref}`" for ref in sorted(matched)[:5]) if matched else "_(none registered in this agent catalog)_"
+    lines = [f"**{name} capabilities** (CLI + npa.workflow `toolRef`):"]
+    lines.extend(f"- {bullet}" for bullet in bullets)
+    lines.append(f"- **Catalog matches**: {sample}")
+    lines.append("- Draft a workflow in chat, then execute on the operator machine with `npa workbench workflow run-spec … --execute`.")
+    return "\n".join(lines)
+
+
 def format_cosmos_capabilities(tool_refs: list[str]) -> str:
-    cosmos_refs = [ref for ref in tool_refs if "cosmos" in ref or "token_factory" in ref]
-    sample = ", ".join(sorted(cosmos_refs)[:4]) if cosmos_refs else "workbench.cosmos2.transfer"
     cosmos_image = _image_for_tool("cosmos")
-    return "\n".join(
-        [
-            "**Cosmos component capabilities**:",
-            "- **Inference**: Cosmos3 text-to-image workflow (`cosmos3-text-to-image-inference.yaml`).",
-            "- **Setup + model staging**: `npa workbench cosmos check|fetch`.",
-            "- **Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
-            "- **Pipeline integration**: Cosmos augment stage via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
-            f"- **Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
-            f"- **Catalog examples**: `{sample}`",
-            "- Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
-        ]
+    return _format_tool_family_capabilities(
+        "Cosmos",
+        tool_refs,
+        prefixes=("cosmos", "token_factory"),
+        bullets=[
+            "**Inference**: Cosmos3 text-to-image workflow (`cosmos3-text-to-image-inference.yaml`).",
+            "**Setup + model staging**: `npa workbench cosmos check|fetch`.",
+            "**Fine-tuning / post-training**: `npa workbench cosmos train` (serverless + runtime options).",
+            "**Pipeline integration**: Cosmos augment via `workbench.cosmos2.transfer` and Token Factory reasoning paths.",
+            f"**Registry image default**: `{cosmos_image}` (override via `NPA_REGISTRY` if needed).",
+            "Use run-scoped S3 URIs for artifacts and keep credentials in `~/.npa/credentials.yaml`.",
+        ],
     )
 
 
 def format_lancedb_capabilities(tool_refs: list[str]) -> str:
-    lancedb_refs = [ref for ref in tool_refs if ref.startswith("workbench.lancedb.")]
-    sample = ", ".join(sorted(lancedb_refs)[:5]) if lancedb_refs else "workbench.lancedb.import_bdd100k"
     lancedb_image = _image_for_tool("lancedb")
-    return "\n".join(
-        [
-            "**LanceDB component capabilities**:",
-            "- **Data ingest**: BDD100K import into run-scoped Lance tables.",
-            "- **Feature backfill**: CPU + GPU UDF backfills (including CLIP embeddings).",
-            "- **Dataset shaping**: materialized view creation for failure-mode slices.",
-            "- **Serving path**: endpoint-backed execution for workflows and tooling.",
-            f"- **Registry image default**: `{lancedb_image}` (use your real registry, never `<your-registry-id>` placeholders).",
-            f"- **Catalog examples**: `{sample}`",
-            "- Keep table/URI names in config; avoid embedding project-specific constants in workflow states.",
-        ]
+    return _format_tool_family_capabilities(
+        "LanceDB",
+        tool_refs,
+        prefixes=("lancedb",),
+        bullets=[
+            "**Data ingest**: BDD100K import into run-scoped Lance tables.",
+            "**Feature backfill**: CPU + GPU UDF backfills (including CLIP embeddings).",
+            "**Dataset shaping**: materialized view creation for failure-mode slices.",
+            "**Serving path**: endpoint-backed execution for workflows and tooling.",
+            f"**Registry image default**: `{lancedb_image}` (use your real registry, never placeholders).",
+            "Keep table/URI names in config; avoid embedding project-specific constants in workflow states.",
+        ],
+    )
+
+
+def format_sonic_capabilities(tool_refs: list[str]) -> str:
+    return _format_tool_family_capabilities(
+        "SONIC",
+        tool_refs,
+        prefixes=("sonic",),
+        bullets=[
+            "**Train / eval / export** locomotion policies via `npa workbench sonic …`.",
+            "**Workflow toolRefs**: `workbench.sonic.train`, `workbench.sonic.eval`, `workbench.sonic.export`.",
+            "Use project `gpu_profile` + SkyPilot config on the operator machine for GPU jobs.",
+        ],
+    )
+
+
+def format_lerobot_capabilities(tool_refs: list[str]) -> str:
+    return _format_tool_family_capabilities(
+        "LeRobot",
+        tool_refs,
+        prefixes=("lerobot",),
+        bullets=[
+            "**Eval / train** policies via `npa workbench lerobot …`.",
+            "**Workflow toolRef**: `workbench.lerobot.eval` (plus serverless train flows).",
+            "Keep Hugging Face tokens in `~/.npa/credentials.yaml`.",
+        ],
+    )
+
+
+def format_groot_capabilities(tool_refs: list[str]) -> str:
+    return _format_tool_family_capabilities(
+        "GR00T",
+        tool_refs,
+        prefixes=("groot",),
+        bullets=[
+            "**Train / eval / inference** via `npa workbench groot …`.",
+            "Use workbench images from your Nebius registry; avoid hardcoded registry IDs.",
+        ],
+    )
+
+
+def format_genesis_capabilities(tool_refs: list[str]) -> str:
+    return _format_tool_family_capabilities(
+        "Genesis",
+        tool_refs,
+        prefixes=("genesis",),
+        bullets=[
+            "**Simulation backend** selectable in the agent Rerun Selection panel (`sim_backend=genesis`).",
+            "**CLI**: `npa workbench genesis …` for container smokes and workflows.",
+        ],
+    )
+
+
+def format_mjlab_capabilities(tool_refs: list[str]) -> str:
+    return _format_tool_family_capabilities(
+        "MJLab",
+        tool_refs,
+        prefixes=("mjlab", "retargeting"),
+        bullets=[
+            "**Locomotion eval** and SONIC checkpoint scoring via `npa workbench mjlab …`.",
+            "**Workflow toolRef**: `workbench.mjlab.eval` (+ retargeting helpers).",
+        ],
+    )
+
+
+def format_isaac_lab_capabilities(tool_refs: list[str]) -> str:
+    isaac_image = _image_for_tool("isaac-lab")
+    return _format_tool_family_capabilities(
+        "Isaac Lab",
+        tool_refs,
+        prefixes=("isaac", "rl.policy", "byof"),
+        bullets=[
+            "**RL train/eval** building blocks for simulation pipelines.",
+            f"**Registry image default**: `{isaac_image}`.",
+            "**Workflow toolRefs**: `workbench.rl.policy_train`, `workbench.rl.evaluate_policy`, `workbench.byof.repo`.",
+            "Ask chat to draft an `rl-policy-success` or BYOF Isaac Lab workflow YAML.",
+        ],
     )
 
 
 def format_component_capabilities(tool_refs: list[str]) -> str:
     return "\n".join(
         [
-            "**Workbench component capabilities** (customer-facing building blocks):",
-            "- **Cosmos**: setup/fetch, inference, and finetuning/post-training lanes.",
-            "- **LanceDB**: ingest, backfill, view/materialization, query workflows.",
-            "- **Isaac Lab / RL**: train/eval policy building blocks for simulation pipelines.",
-            "- **Token Factory + VLM**: reasoning, augment, scoring, and decision-gate loops.",
-            "- Ask for a component by name (for example: `Cosmos capabilities`) to get targeted commands + workflow patterns.",
+            "**Workbench component capabilities** (same building blocks as CLI + YAML):",
+            "- **Cosmos / Token Factory**: setup, inference, finetune, VLM/reasoning gates.",
+            "- **LanceDB**: ingest, backfill, views, query workflows.",
+            "- **Isaac Lab / RL / BYOF**: train/eval policy + OSS container onboarding.",
+            "- **SONIC / MJLab / Retargeting**: locomotion train/eval/export.",
+            "- **LeRobot / GR00T / Genesis**: policy and sim backends.",
+            "- Ask by name (`SONIC capabilities`, `what can lerobot do?`) for catalog-backed answers.",
             f"- **Current toolRef count**: `{len(tool_refs)}`",
+            "- Chat drafts YAML; operator CLI executes with `run-spec --execute` / SkyPilot submit.",
+        ]
+    )
+
+
+def format_workflow_execute_guidance() -> str:
+    return "\n".join(
+        [
+            "**Workflow capability map (chat vs CLI/YAML):**",
+            "| Step | Agent chat / UI | Operator CLI / SDK |",
+            "|---|---|---|",
+            "| Draft YAML | Yes (`create_*` intents + Workflow panel) | Yes (`author-npa-workflow` / hand-edit) |",
+            "| Validate | Yes (`POST /api/workflows/validate`) | `npa workbench workflow validate-spec` |",
+            "| Plan | Yes (`POST /api/workflows/plan`) | `npa workbench workflow plan-spec` |",
+            "| Scheduler plan submit | Yes (`POST /api/workflows/submit` = **plan-only**) | `run-spec --plan-only --scheduler-plan` |",
+            "| Execute tool steps on K8s | No (not from agent chat) | `run-spec --execute` / SkyPilot `submit` |",
+            "| Direct `npa workbench <tool>` | Guidance only | Full CLI surface |",
+            "",
+            "**Operator execute example:**",
+            "```bash",
+            "npa/.venv/bin/npa workbench workflow validate-spec /tmp/spec.yaml --json",
+            "npa/.venv/bin/npa workbench workflow plan-spec /tmp/spec.yaml --run-id agent-run --json",
+            "npa/.venv/bin/npa workbench workflow run-spec /tmp/spec.yaml --execute --json",
+            "```",
+            "- Use chat to author/validate YAML, then run the CLI on the operator/dev VM for real workloads.",
         ]
     )
 
@@ -867,7 +1102,7 @@ def format_onboard_solution() -> str:
     registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
         [
-            "**Yes — chat can onboard a new OSS solution end-to-end.**",
+            "**BYOF / OSS onboarding (operator CLI — chat guides, does not execute builds):**",
             f"- **BYOF skill:** `{byof_skill_path}`",
             f"- **Registry skill:** `{registry_skill_path}`",
             "- **Ladder:** `docs/architecture/oss-onboarding-ladder.md` (Tier 0 BYOF → Tier 1 workflow → Tier 2 first-class tool).",
@@ -889,7 +1124,11 @@ def format_onboard_solution() -> str:
             "- Registry candidate capability smoke: use `--workload solution-smoke` with `--build-command`, `--smoke-command`, `--solution-name`, `--capability-name`, and `--smoke-artifact-name`.",
             "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
             "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
+<<<<<<< HEAD
             "- After container-verify: author a solution workflow (`author-npa-workflow`) or promote to a first-class tool (`contributor-context.md`).",
+=======
+            "- Chat can also draft a BYOF `npa.workflow` YAML; run it with `npa workbench workflow run-spec … --execute` on the operator machine.",
+>>>>>>> d250d41 (Improve agent workflow renderings and chat CLI capability parity.)
             "- Do not mark a solution registry-ready from a Docker build or generic import check alone.",
         ]
     )
@@ -984,10 +1223,24 @@ def build_grounded_reply(
         return format_cosmos_capabilities(tool_refs)
     if intent == "lancedb_capabilities":
         return format_lancedb_capabilities(tool_refs)
+    if intent == "sonic_capabilities":
+        return format_sonic_capabilities(tool_refs)
+    if intent == "lerobot_capabilities":
+        return format_lerobot_capabilities(tool_refs)
+    if intent == "groot_capabilities":
+        return format_groot_capabilities(tool_refs)
+    if intent == "genesis_capabilities":
+        return format_genesis_capabilities(tool_refs)
+    if intent == "mjlab_capabilities":
+        return format_mjlab_capabilities(tool_refs)
+    if intent == "isaac_lab_capabilities":
+        return format_isaac_lab_capabilities(tool_refs)
     if intent == "component_capabilities":
         return format_component_capabilities(tool_refs)
     if intent == "tools_catalog":
         return format_tools_catalog(tool_refs)
+    if intent == "workflow_execute_guidance":
+        return format_workflow_execute_guidance()
     if intent == "configure_s3":
         return format_configure_s3()
     if intent == "cosmos3":
@@ -999,7 +1252,13 @@ def build_grounded_reply(
     if intent == "load_franka":
         ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
         return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)
-    if intent in {"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}:
+    if intent in {
+        "create_workflow",
+        "create_vlm_rl_workflow",
+        "create_gate_workflow",
+        "create_loop_gate_workflow",
+        "create_rl_policy_workflow",
+    }:
         draft = state.get("workflow_draft", {})
         if not isinstance(draft, dict):
             draft = {}
@@ -1017,9 +1276,16 @@ def build_grounded_reply(
                 }
             template = str(draft.get("template") or "")
             if not template:
-                template = "two-step" if intent == "create_workflow" else (
-                    "vlm-rl-loop" if intent == "create_vlm_rl_workflow" else "token-factory-gate"
-                )
+                if intent == "create_vlm_rl_workflow":
+                    template = "vlm-rl-loop"
+                elif intent == "create_gate_workflow":
+                    template = "token-factory-gate"
+                elif intent == "create_loop_gate_workflow":
+                    template = "loop-gate"
+                elif intent == "create_rl_policy_workflow":
+                    template = "rl-policy-success"
+                else:
+                    template = "two-step"
             return format_generate_workflow(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         from npa.cli.agent_workflow import generate_workflow_draft
 
@@ -1035,14 +1301,56 @@ def build_grounded_reply(
             runnable=runnable,
         )
     if intent == "list_recordings":
-        return (
-            "**Run history**: use `GET /api/sim-viz/recordings` to list `.rrd` files or "
-            "`GET /api/sim-viz/runs` to list run-scoped history.\n"
-            "- Click **Load run data** or select a run from the **Known runs** dropdown to switch the Rerun viewer.\n"
-            "- Each entry shows run_id, stage, camera, and last-updated timestamp.\n"
-            "- The current active run is highlighted in the Run History panel."
-        )
+        return format_list_recordings(state)
     return format_sim2real_status(state, rerun_ready=rerun_ready)
+
+
+def format_list_recordings(state: dict[str, Any]) -> str:
+    sim_viz = _sim_viz(state)
+    runs = state.get("sim_viz_runs")
+    recordings = state.get("sim_viz_recordings")
+    available = sim_viz.get("available_run_ids") if isinstance(sim_viz.get("available_run_ids"), list) else []
+    lines = ["**Run / recording history** (grounded):"]
+    active = str(sim_viz.get("active_run_id") or sim_viz.get("run_id") or "").strip()
+    if active:
+        lines.append(f"- **active_run_id**: `{active}`")
+    if isinstance(runs, list) and runs:
+        lines.append(f"- **sim-viz/runs**: `{len(runs)}` entries")
+        for row in runs[:8]:
+            if not isinstance(row, dict):
+                continue
+            run_id = str(row.get("run_id") or "").strip()
+            if not run_id:
+                continue
+            stage = str(row.get("stage") or "")
+            camera = str(row.get("camera") or "")
+            marker = " ← active" if run_id == active else ""
+            lines.append(f"  - `{run_id}` stage=`{stage}` camera=`{camera}`{marker}")
+    elif available:
+        lines.append(f"- **available_run_ids**: `{len(available)}`")
+        for run_id in [str(item) for item in available[:8] if str(item).strip()]:
+            marker = " ← active" if run_id == active else ""
+            lines.append(f"  - `{run_id}`{marker}")
+    else:
+        lines.append("- No run history in session yet — open the **Rerun** tab and use **Discover runs** / **Known runs**.")
+    if isinstance(recordings, list) and recordings:
+        lines.append(f"- **sim-viz/recordings**: `{len(recordings)}` `.rrd` files")
+        for row in recordings[:6]:
+            if isinstance(row, dict):
+                name = str(row.get("name") or row.get("path") or row.get("uri") or "").strip()
+                if name:
+                    lines.append(f"  - `{name}`")
+            else:
+                text = str(row or "").strip()
+                if text:
+                    lines.append(f"  - `{text}`")
+    lines.extend(
+        [
+            "- Switch viewer: paste a run id → **Load run data**, or select from **Known runs**.",
+            "- Prefer `GET /api/sim-viz/runs` + `GET /api/sim-viz/recordings` over guessing run ids.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def apis_for_intent(intent: str) -> list[str]:

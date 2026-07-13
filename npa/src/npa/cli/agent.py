@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071302"
+AGENT_UI_VERSION = "2026071303"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4099,8 +4099,10 @@ def _maybe_toolground_chat_reply(
         reply = (
             "**Started Sim2Real pipeline**\\n"
             f"- **run_id**: `{{run_id}}`\\n"
-            "- **mode**: `agent-local-sim2real`\\n"
-            "- The Stages panel will update stage timeline, result, and logs; Rerun will switch to the run recording when it is written."
+            f"- **submit_mode**: `{{submit.get('submit_mode') or submit.get('mode') or 'agent-local-sim2real'}}`\\n"
+            "- Default agent submit is **local/demo** unless live K8s Sim2Real hooks succeed.\\n"
+            "- The Stages panel will update stage timeline, result, and logs; Rerun will switch to the run recording when it is written.\\n"
+            "- Full staged K8s Sim2Real still runs via operator skills / `npa workbench` on the operator machine."
         )
         return reply, _dedupe(apis_used), suggested_apis, None, submit, intent
     if intent == "find_artifacts":
@@ -4204,7 +4206,61 @@ def _maybe_toolground_chat_reply(
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
-    elif intent in {{"create_workflow", "create_vlm_rl_workflow", "create_gate_workflow"}}:
+    elif intent == "list_recordings":
+        try:
+            runs_payload = sim_viz_runs()
+            apis_used.append("sim-viz/runs")
+            if isinstance(runs_payload, dict):
+                state["sim_viz_runs"] = runs_payload.get("runs") or runs_payload.get("items") or []
+            recordings_payload = sim_viz_recordings()
+            apis_used.append("sim-viz/recordings")
+            if isinstance(recordings_payload, dict):
+                state["sim_viz_recordings"] = (
+                    recordings_payload.get("recordings")
+                    or recordings_payload.get("items")
+                    or recordings_payload.get("files")
+                    or []
+                )
+            live_status = sim_viz_status()
+            apis_used.append("sim-viz/status")
+            if isinstance(live_status, dict):
+                state["sim_viz"] = dict(live_status)
+            _save_state(state)
+        except Exception:
+            pass
+    elif intent == "sim_assets":
+        try:
+            selection = get_sim_assets_selection()
+            apis_used.append("sim-assets/selection")
+            if isinstance(selection, dict):
+                state["selection"] = dict(selection)
+                _save_state(state)
+            catalog = sim_assets()
+            apis_used.append("sim-assets")
+            if isinstance(catalog, dict):
+                state["sim_assets_catalog"] = catalog
+                _save_state(state)
+        except Exception:
+            pass
+    elif intent == "cameras":
+        try:
+            cameras_payload = sim_assets_cameras()
+            apis_used.append("sim-assets/cameras")
+            if isinstance(cameras_payload, dict):
+                cams = cameras_payload.get("cameras") or cameras_payload.get("items") or []
+                if isinstance(cams, list) and cams:
+                    default_cameras = cams
+                state["cameras"] = cameras_payload
+                _save_state(state)
+        except Exception:
+            pass
+    elif intent in {{
+        "create_workflow",
+        "create_vlm_rl_workflow",
+        "create_gate_workflow",
+        "create_loop_gate_workflow",
+        "create_rl_policy_workflow",
+    }}:
         draft = generate_workflow_draft(
             user_text=user_text,
             intent=intent,
@@ -4231,7 +4287,24 @@ def _maybe_toolground_chat_reply(
             return reply, _dedupe(apis_used), suggested_apis, None, {{"ok": False, "validation": validation, "plan": plan}}, intent
         reply = format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
-    if intent in {{"onboard_solution", "tools_catalog", "component_capabilities", "cosmos_capabilities", "lancedb_capabilities", "live_infra_loop", "soperator", "mk8s_provision"}}:
+    if intent in {{
+        "onboard_solution",
+        "tools_catalog",
+        "component_capabilities",
+        "cosmos_capabilities",
+        "lancedb_capabilities",
+        "sonic_capabilities",
+        "lerobot_capabilities",
+        "groot_capabilities",
+        "genesis_capabilities",
+        "mjlab_capabilities",
+        "isaac_lab_capabilities",
+        "live_infra_loop",
+        "workflow_execute_guidance",
+        "soperator",
+        "mk8s_provision",
+        "cosmos3",
+    }}:
         apis_used.append("tools")
     if intent in {{"soperator", "mk8s_provision"}}:
         apis_used.extend(suggested_apis)
@@ -5883,6 +5956,179 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         border-top: 1px solid var(--border);
       }}
       .artifact-list .artifact-row:first-child {{ border-top: 0; }}
+      .artifact-card {{
+        padding: 10px 0;
+        border-top: 1px solid var(--border);
+      }}
+      .artifact-card:first-child {{ border-top: 0; }}
+      .artifact-card.is-preferred {{
+        background: #f8ffe8;
+        margin: 0 -10px;
+        padding: 10px;
+        border-radius: 8px;
+        border-top: 0;
+      }}
+      .artifact-card-head {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }}
+      .artifact-card-meta {{
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+      }}
+      .artifact-card-path {{
+        margin-top: 4px;
+        font-size: 11px;
+        word-break: break-all;
+      }}
+      .plan-host {{
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 12px;
+      }}
+      .plan-step {{
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 10px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+      }}
+      .plan-step:last-child {{ border-bottom: 0; }}
+      .plan-step-index {{
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--brand);
+        color: var(--brand-ink);
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+      }}
+      .plan-step-tool {{
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }}
+      .plan-loop-badge {{
+        font-size: 11px;
+        background: #fef3c7;
+        color: #92400e;
+        padding: 2px 8px;
+        border-radius: 999px;
+      }}
+      .stage-timeline {{
+        position: relative;
+        padding-left: 14px;
+      }}
+      .stage-timeline:has(.stage-item)::before {{
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 10px;
+        bottom: 10px;
+        width: 2px;
+        background: var(--border);
+      }}
+      .stage-timeline .stage-item {{
+        position: relative;
+        padding-left: 14px;
+      }}
+      .stage-timeline .stage-item::before {{
+        content: "";
+        position: absolute;
+        left: -10px;
+        top: 14px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #fff;
+        border: 2px solid var(--border);
+      }}
+      .stage-timeline .stage-item.is-active::before {{
+        border-color: var(--brand-ink);
+        background: var(--brand);
+        box-shadow: 0 0 0 3px rgba(229, 255, 79, 0.35);
+      }}
+      .stage-progress {{
+        font-size: 12px;
+        color: var(--muted);
+        margin: 0 0 8px;
+      }}
+      .empty-state {{
+        padding: 12px 0;
+      }}
+      .render-mode-tabs {{
+        display: inline-flex;
+        gap: 6px;
+        margin: 0 0 10px;
+        flex-wrap: wrap;
+      }}
+      .render-mode-tab {{
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }}
+      .render-mode-tab.is-active {{
+        background: var(--brand);
+        border-color: var(--brand);
+        color: var(--brand-ink);
+      }}
+      .viewer-stack {{
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 560px;
+      }}
+      .viewer-pane.is-active-viewer {{
+        opacity: 1;
+        pointer-events: auto;
+        position: relative;
+        z-index: 1;
+        height: 100%;
+      }}
+      .viewer-pane.is-inactive-viewer {{
+        opacity: 0;
+        pointer-events: none;
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+      }}
+      .viewer-pane.is-inactive-viewer .rerun-frame-shell,
+      .viewer-pane.is-inactive-viewer #rerunFrame {{
+        min-height: 560px;
+        height: 100%;
+      }}
+      .media-preview-host {{
+        height: 100%;
+        min-height: 560px;
+        padding: 16px;
+        overflow: auto;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(229, 255, 79, 0.08), transparent 35%),
+          linear-gradient(180deg, #0f172a 0%, #020617 100%);
+        color: #e2e8f0;
+      }}
+      .media-preview-host video,
+      .media-preview-host img {{
+        width: 100%;
+        max-height: min(70vh, 720px);
+        background: #000;
+        border-radius: 8px;
+      }}
       .rerun-stage {{
         display: flex;
         flex-direction: column;
@@ -6585,8 +6831,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             <button id="workflowUpload" class="btn" type="button">Upload YAML</button>
             <button id="workflowValidate" class="btn" type="button">Validate</button>
             <button id="workflowPlan" class="btn" type="button">Plan</button>
-            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit YAML</button>
+            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit plan</button>
           </div>
+          <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Submit plan = scheduler plan-only. Execute tool steps with operator CLI <code>run-spec --execute</code>.</p>
+          <div id="workflowPlanHost" class="plan-host" hidden></div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
@@ -6719,7 +6967,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           </section>
           <section class="panel rerun-panel rerun-stage">
             <div class="rerun-stage-chrome">
-              <h3>Rerun</h3>
+              <h3>Viewer</h3>
+              <div class="render-mode-tabs" role="tablist" aria-label="Artifact render mode">
+                <button type="button" class="render-mode-tab is-active" id="renderModeRerun" data-render-mode="rerun">Rerun</button>
+                <button type="button" class="render-mode-tab" id="renderModeVideo" data-render-mode="video">Video</button>
+                <button type="button" class="render-mode-tab" id="renderModeImage" data-render-mode="image">Image</button>
+                <button type="button" class="render-mode-tab" id="renderModeData" data-render-mode="data">Data</button>
+              </div>
               <div id="simviz">
                 <div class="status-row">
                   <span>Run: <strong id="simRunId">—</strong></span>
@@ -6736,13 +6990,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
               <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
                 <p>Rerun recording mounts in the stage below.</p>
-                <p class="hint">Loading the active Sim2Real recording.</p>
+                <p class="hint">Load a run recording or list artifacts to preview media.</p>
               </div>
             </div>
-            <div class="rerun-frame-shell">
-              <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+            <div class="viewer-stack">
+              <div id="viewerPaneRerun" class="viewer-pane is-active-viewer">
+                <div class="rerun-frame-shell">
+                  <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+                </div>
+              </div>
+              <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer">
+                <div id="artifactPreviewHost" class="media-preview-host" hidden></div>
+              </div>
             </div>
-            <div id="artifactPreviewHost" class="hint" hidden></div>
           </section>
         </div>
         </div>
@@ -6958,6 +7218,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }});
           }});
         }});
+        document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {{
+          btn.addEventListener("click", () => {{
+            setRenderMode(String(btn.getAttribute("data-render-mode") || "rerun"));
+          }});
+        }});
+        setRenderMode("rerun");
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {{
           mobileToggle.addEventListener("click", () => {{
@@ -7448,15 +7714,56 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           headers: {{ "content-type": "application/json" }},
           body: JSON.stringify({{ yaml, run_id: "agent-plan" }}),
         }});
-        const out = document.getElementById("workflowPlanOutput");
+        renderWorkflowPlan(data.plan || {{}});
         const steps = Array.isArray(data.plan && data.plan.steps) ? data.plan.steps : [];
+        updateWorkflowMeta((data.plan && data.plan.workflow) ? {{ name: data.plan.workflow, status: "planned", states: steps.map((s) => s.state) }} : {{}});
+        return true;
+      }}
+      function renderWorkflowPlan(plan) {{
+        const host = document.getElementById("workflowPlanHost");
+        const fallback = document.getElementById("workflowPlanOutput");
+        if (!host || !fallback) return;
+        const steps = Array.isArray(plan && plan.steps) ? plan.steps : [];
         const lines = steps.map((step, idx) =>
           String(idx + 1).padStart(2, "0") + ". " + String(step.state || "?") +
           " toolRef=" + String(step.tool_ref || step.toolRef || "")
         );
-        if (out) out.textContent = lines.length ? lines.join("\\n") : JSON.stringify(data.plan || {{}}, null, 2);
-        updateWorkflowMeta((data.plan && data.plan.workflow) ? {{ name: data.plan.workflow, status: "planned", states: steps.map((s) => s.state) }} : {{}});
-        return true;
+        fallback.textContent = lines.length ? lines.join("\\n") : JSON.stringify(plan || {{}}, null, 2);
+        if (!steps.length) {{
+          host.hidden = true;
+          fallback.hidden = false;
+          return;
+        }}
+        const header = [
+          plan.workflow ? '<span class="pill">workflow <strong>' + escapeHtml(String(plan.workflow)) + '</strong></span>' : "",
+          plan.initial ? '<span class="pill">initial <strong>' + escapeHtml(String(plan.initial)) + '</strong></span>' : "",
+          plan.assume_decision ? '<span class="pill">assume <strong>' + escapeHtml(String(plan.assume_decision)) + '</strong></span>' : "",
+          '<span class="pill">steps <strong>' + String(steps.length) + '</strong></span>',
+        ].filter(Boolean).join("");
+        host.innerHTML =
+          '<div class="run-summary" style="margin-bottom:8px;">' + header + '</div>' +
+          steps.map((step, idx) => {{
+            const loop = step.loop_label
+              ? '<span class="plan-loop-badge">' + escapeHtml(String(step.loop_label)) + '</span>'
+              : "";
+            const iter = step.iteration != null
+              ? '<span class="pill">iter ' + escapeHtml(String(step.iteration)) + '</span>'
+              : "";
+            const res = step.resources && step.resources !== "default"
+              ? '<span class="pill">' + escapeHtml(String(step.resources)) + '</span>'
+              : "";
+            const tool = escapeHtml(String(step.tool_ref || step.toolRef || "—"));
+            return (
+              '<div class="plan-step" data-state="' + escapeHtml(String(step.state || "")) + '">' +
+              '<div class="plan-step-index">' + String(idx + 1) + '</div>' +
+              '<div>' +
+              '<div class="stage-label">' + escapeHtml(String(step.state || "?")) + " " + loop + " " + iter + '</div>' +
+              '<div style="margin-top:4px;"><span class="plan-step-tool">' + tool + '</span> ' + res + '</div>' +
+              '</div></div>'
+            );
+          }}).join("");
+        host.hidden = false;
+        fallback.hidden = false;
       }}
       async function submitWorkflowYaml() {{
         const yaml = currentWorkflowYaml();
@@ -7467,10 +7774,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ yaml }}),
         }});
         updateWorkflowMeta((data.validation) || {{}});
+        if (data.plan) renderWorkflowPlan(data.plan);
         appendChat(
           "assistant",
-          "Submitted npa.workflow YAML — **run_id**: `" + String(data.run_id || "") +
-            "`, **mode**: `" + String(data.submit_mode || "") + "`."
+          "Submitted npa.workflow **scheduler plan** — **run_id**: `" + String(data.run_id || "") +
+            "`, **mode**: `" + String(data.submit_mode || "plan-only") +
+            "`. This does **not** execute tool steps on K8s. Use operator CLI `run-spec --execute` for real workloads."
         );
         return true;
       }}
@@ -7678,12 +7987,34 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         host.hidden = true;
         host.innerHTML = "";
       }}
+      let activeRenderMode = "rerun";
+      function setRenderMode(mode) {{
+        const next = String(mode || "rerun");
+        activeRenderMode = next === "video" || next === "image" || next === "data" ? next : "rerun";
+        document.querySelectorAll(".render-mode-tab").forEach((btn) => {{
+          btn.classList.toggle("is-active", btn.getAttribute("data-render-mode") === activeRenderMode);
+        }});
+        const rerunPane = document.getElementById("viewerPaneRerun");
+        const mediaPane = document.getElementById("viewerPaneMedia");
+        const isRerun = activeRenderMode === "rerun";
+        if (rerunPane) {{
+          rerunPane.classList.toggle("is-active-viewer", isRerun);
+          rerunPane.classList.toggle("is-inactive-viewer", !isRerun);
+        }}
+        if (mediaPane) {{
+          mediaPane.classList.toggle("is-active-viewer", !isRerun);
+          mediaPane.classList.toggle("is-inactive-viewer", isRerun);
+        }}
+      }}
       async function showArtifactPreview(simViz, render) {{
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
         const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
         const safeRender = String(render || "");
+        if (safeRender === "video") setRenderMode("video");
+        else if (safeRender === "image") setRenderMode("image");
+        else if (safeRender === "json" || safeRender === "text" || safeRender === "download") setRenderMode("data");
         if (!previewUrl) {{
           host.hidden = false;
           host.innerHTML = "<p>No preview URL available. Use download.</p>";
@@ -7691,12 +8022,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         if (safeRender === "image") {{
           host.hidden = false;
-          host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" />`;
+          host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" />`;
           return;
         }}
         if (safeRender === "video") {{
           host.hidden = false;
-          host.innerHTML = `<video controls style="max-width:100%;border-radius:8px;border:1px solid #dbe2ef;" src="${{previewUrl}}"></video>`;
+          host.innerHTML = `<video controls src="${{previewUrl}}"></video>`;
           return;
         }}
         if (safeRender === "json" || safeRender === "text") {{
@@ -7705,7 +8036,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (!resp.ok) throw new Error("preview fetch failed");
             const text = await resp.text();
             host.hidden = false;
-            host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:280px;overflow:auto;">${{escapeHtml(text.slice(0, 20000))}}</pre>`;
+            host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:min(70vh,720px);overflow:auto;">${{escapeHtml(text.slice(0, 20000))}}</pre>`;
             return;
           }} catch (_err) {{
             // fall through to download link
@@ -8136,19 +8467,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return acc;
         }}, {{}});
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
+        const preferredKey = preferred ? String(preferred.key || "") : "";
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " of " + String(artifacts.length) +
           " artifacts · " + escapeHtml(countText) + "</div>" +
-          displayArtifacts.map((item, idx) => {{
+          displayArtifacts.map((item) => {{
           const key = String(item.key || "");
           const render = String(item.render || "download");
           const s3uri = String(item.s3_uri || "");
+          const basename = key.split("/").pop() || key;
+          const isPreferred = preferredKey && preferredKey === key;
+          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
+          const primary = (render === "rerun" || render === "video") ? " btn-primary" : "";
           return (
-            '<div class="artifact-row">' +
-            '<div><code>' + escapeHtml(key) + '</code></div>' +
-            '<div style="font-size:12px;color:#64748b;">render=' + escapeHtml(render) + ' size=' + escapeHtml(String(item.size || 0)) + ' updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
-            '<div style="margin-top:6px;"><button class="btn" type="button" data-action="load-artifact" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '" data-render="' + escapeHtml(render) + '">Load</button></div>' +
+            '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
+            '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
+            (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
+            '<span class="pill">' + escapeHtml(render) + '</span></div>' +
+            '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
+            ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
+            '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
+            '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
+            escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button></div>' +
             '</div>'
           );
         }}).join("");
@@ -8287,12 +8629,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         updateRenderedDataSummary(simViz);
         await activateMainTab("rerun", {{ skipEnsure: true }});
         if (render === "rerun") {{
+          setRenderMode("rerun");
           hideArtifactPreview();
           rerunIframeLoaded = false;
           lastRrdUpdatedAt = "";
           await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
         }} else {{
-          showRerunPlaceholder("Artifact loaded. Use download/preview below.", {{ force: true }});
+          // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
         }}
         appendChat(
@@ -8492,19 +8835,35 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           '<span class="pill">result <strong>' + escapeHtml(result) + '</strong></span>' +
           '<span class="pill">updated <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
         const stages = Array.isArray(run.stages) ? run.stages : [];
-        stagesHost.innerHTML = stages.map((stage) => {{
-          const statusClass = normalizeStageStatus(stage.status);
-          const statusLabel = formatStageStatusLabel(statusClass);
-          const label = String(stage.label || stage.id || "");
-          const stageSummary = String(stage.summary || "");
-          return (
-            '<div class="stage-item">' +
-            '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
-            '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
-            '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
-            '</div>'
-          );
-        }}).join("") || '<div class="hint">No stage data available yet.</div>';
+        stagesHost.classList.add("stage-timeline");
+        if (!stages.length) {{
+          stagesHost.innerHTML =
+            '<div class="empty-state">' +
+            '<strong>No run timeline yet</strong>' +
+            '<p class="hint">Load a run from the Rerun tab, list artifacts, or plan a workflow.</p>' +
+            '<div class="btn-row"><button class="btn" type="button" id="stagesOpenRerun">Open Rerun tab</button></div>' +
+            '</div>';
+          const openBtn = document.getElementById("stagesOpenRerun");
+          if (openBtn) openBtn.addEventListener("click", () => activateMainTab("rerun"));
+        }} else {{
+          const succeeded = stages.filter((stage) => normalizeStageStatus(stage.status) === "succeeded").length;
+          const activeIdx = stages.findIndex((stage) => ["running", "queued"].includes(normalizeStageStatus(stage.status)));
+          const progress = '<div class="stage-progress">' + String(succeeded) + "/" + String(stages.length) + " stages succeeded</div>";
+          stagesHost.innerHTML = progress + stages.map((stage, idx) => {{
+            const statusClass = normalizeStageStatus(stage.status);
+            const statusLabel = formatStageStatusLabel(statusClass);
+            const label = String(stage.label || stage.id || "");
+            const stageSummary = String(stage.summary || "");
+            const active = idx === activeIdx ? " is-active" : "";
+            return (
+              '<div class="stage-item' + active + '">' +
+              '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
+              '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
+              '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
+              '</div>'
+            );
+          }}).join("");
+        }}
         const logs = Array.isArray(run.logs) ? run.logs : [];
         logHost.textContent = logs.length
           ? logs.map((entry) => {{

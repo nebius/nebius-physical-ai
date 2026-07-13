@@ -250,7 +250,7 @@ describe("NPA agent UI against live infra", () => {
 
     cy.get("#artifactList", { timeout: 120000 }).within(() => {
       cy.contains("reports/sim2real.rrd").should("be.visible");
-      cy.contains("render=rerun").should("be.visible");
+      cy.contains("rerun").should("be.visible");
       cy.contains("reports/sim2real-report.json").should("be.visible");
     });
     cy.get("#tabChat").click();
