@@ -20,6 +20,30 @@ E2E_BUCKET_MAX_CONCURRENT = 3
 E2E_BUCKET_MAX_CREATIONS = 8
 E2E_BUCKET_COUNTER = Path("/tmp/npa-e2e-run-bucket-counter.txt")
 
+# Live ops VMs commonly export AWS_* / S3_* while tool e2e suites gate on NPA_E2E_S3_*.
+_S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("NPA_E2E_S3_ACCESS_KEY_ID", ("AWS_ACCESS_KEY_ID", "NEBIUS_ACCESS_KEY_ID")),
+    ("NPA_E2E_S3_SECRET_ACCESS_KEY", ("AWS_SECRET_ACCESS_KEY", "NEBIUS_SECRET_ACCESS_KEY")),
+    (
+        "NPA_E2E_S3_ENDPOINT",
+        ("AWS_ENDPOINT_URL", "S3_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"),
+    ),
+    ("NPA_E2E_S3_BUCKET", ("S3_BUCKET", "NPA_E2E_WORKFLOW_S3_BUCKET", "NPA_S3_BUCKET")),
+)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Map standard AWS/S3 env vars onto NPA_E2E_S3_* so tool e2e suites run on real infra."""
+    del config
+    for target, sources in _S3_ENV_FALLBACKS:
+        if os.environ.get(target, "").strip():
+            continue
+        for source in sources:
+            value = os.environ.get(source, "").strip()
+            if value:
+                os.environ[target] = value
+                break
+
 
 def _hf_token_configured() -> bool:
     file_credentials = load_credentials(environ={})
