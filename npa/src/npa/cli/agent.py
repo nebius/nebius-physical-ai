@@ -4548,7 +4548,40 @@ def chat(payload: dict):
         else:
             history = prior
             llm_messages = normalize_messages_for_llm(prior)
-    # Never short-circuit Describe-this / vision turns through grounded intents.
+    # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
+    # turns with an attached frame fall through to Token Factory.
+    if visual_turn and not has_image_content(llm_messages):
+        meta_reply = build_metadata_only_visual_reply(visual_context)
+        history = [*history, {{"role": "assistant", "content": meta_reply}}][-80:]
+        session.update(
+            {{
+                "id": session_id,
+                "title": str(session.get("title") or _chat_session_title(history)),
+                "chat_history": history,
+            }}
+        )
+        state = _load_state()
+        session = _save_chat_session(state, session, active=True)
+        _save_state(state)
+        return {{
+            "ok": True,
+            "model": model,
+            "reply": meta_reply,
+            "reasoning": None,
+            "grounded": True,
+            "tier": "grounded-metadata",
+            "visual_kind": visual_kind,
+            "apis_used": ["sim-viz/status"],
+            "skills_used": ["agent-visual-feedback"],
+            "session_id": session["id"],
+            "session": {{
+                "id": session["id"],
+                "title": session["title"],
+                "memory_uri": session.get("memory_uri", ""),
+                "message_count": len(session.get("chat_history", [])),
+            }},
+        }}
+    # Never short-circuit framed Describe-this / vision turns through intent tools.
     tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
     if tool_result is not None:
         reply = str(tool_result.get("reply") or "").strip()

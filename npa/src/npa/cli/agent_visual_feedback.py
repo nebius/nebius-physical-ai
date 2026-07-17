@@ -227,6 +227,54 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
     return "\n".join(lines)
 
 
+def build_metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    """Deterministic Describe-this reply when no frame is attached (0 tokens)."""
+    meta = meta if isinstance(meta, Mapping) else {}
+    kind = normalize_visual_kind(str(meta.get("kind") or meta.get("visual_kind") or "unknown"))
+    run_id = str(meta.get("run_id") or "").strip() or "—"
+    stage = str(meta.get("stage") or "").strip() or "—"
+    camera = str(meta.get("camera") or "").strip() or "—"
+    artifact = str(meta.get("artifact_key") or meta.get("key") or "").strip() or "—"
+    note = str(meta.get("note") or meta.get("visualization_note") or "").strip()
+    excerpt = str(meta.get("text_excerpt") or "").strip()
+    hints = infer_visual_domain_hints(meta)
+    lines = [
+        "**What I see**: No viewer frame was attached to this turn — metadata only. "
+        "I am **not** inventing pixels, noise, or a blank canvas claim.",
+        "",
+        "**Likely meaning**:",
+        f"- visual_kind: `{kind}`",
+        f"- run_id: `{run_id}`",
+        f"- stage: `{stage}`",
+        f"- camera: `{camera}`",
+        f"- artifact: `{artifact}`",
+    ]
+    if note:
+        lines.append(f"- note: {note[:320]}")
+    if hints:
+        lines.append("")
+        lines.append("Domain hints from metadata:")
+        for hint in hints:
+            lines.append(f"- {hint}")
+    if excerpt:
+        lines.extend(["", "Data excerpt (truncated):", "```", excerpt[:1200], "```"])
+    lines.extend(
+        [
+            "",
+            "**Operator feedback**: Without a captured frame I cannot judge render "
+            "quality. If the UI showed “blank”, wait for the Rerun canvas to settle "
+            "(past bundle splash), scrub the timeline, then click **Describe this** again.",
+            "",
+            "**Next actions**:",
+            "1. Stay on the Rerun/Video/Image tab until the viewer shows content.",
+            "2. Click **Describe this** again (chat drawer opens; vision tier runs with a frame).",
+            "3. If still empty, try **Reload Rerun data** or load the Video/Image artifact.",
+            "4. Cross-check run stages / held-out report for this `run_id`.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
     """Format non-secret visual metadata for the system prompt."""
     if not isinstance(meta, Mapping) or not meta:

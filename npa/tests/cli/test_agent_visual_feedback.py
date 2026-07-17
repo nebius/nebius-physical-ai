@@ -40,6 +40,23 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     assert "pixels" in data.lower() or "pixels" in vf._KIND_GUIDANCE["data"]
 
 
+def test_metadata_only_grounded_reply_never_invents_pixels() -> None:
+    reply = vf.build_metadata_only_visual_reply(
+        {
+            "kind": "rerun",
+            "run_id": "demo-workbench-ui",
+            "artifact_key": "checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real.rrd",
+            "note": "Isaac Lab GR00T proxy",
+        }
+    )
+    assert "metadata only" in reply.lower()
+    assert "inventing pixels" in reply.lower()
+    assert "No viewer frame was attached" in reply
+    assert "demo-workbench-ui" in reply
+    assert "GR00T" in reply or "foundation-policy" in reply or "Isaac" in reply
+    assert "RGB noise" not in reply
+
+
 def test_metadata_only_prompt_forbids_invented_pixels() -> None:
     prompt = vf.describe_user_prompt(
         "rerun",
