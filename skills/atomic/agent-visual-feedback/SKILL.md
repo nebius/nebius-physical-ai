@@ -37,9 +37,11 @@ hardcoded path allowlist.
 
 ## UX
 
-- On the Rerun tab, chat **collapses** into a right drawer (`viewer-focus`).
+- On the Viewer tab (Rerun/Video/Image/Data), chat **collapses** into a right drawer (`viewer-focus`).
+- Clicking the **Chat** main tab from Viewer opens the drawer (stays on the media pane); **Full chat** expands to the Chat tab.
 - **Describe this** captures in-place, opens the drawer, and queues the vision turn.
 - Chat sends are **queued** (`enqueueChatJob`) so Describe + typed messages do not drop.
+- Do **not** prefetch `.rrd` bodies (many runs). Soft-swap uses `add_receiver` only; warm wasm/js separately.
 
 ## Agent API flow
 
