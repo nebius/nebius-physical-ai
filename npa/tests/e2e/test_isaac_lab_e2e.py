@@ -14,7 +14,11 @@ import pytest
 
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
-from ._serverless_images import resolve_image, resolve_serverless_gpu_type
+from ._serverless_images import (
+    resolve_image,
+    resolve_serverless_gpu_preset,
+    resolve_serverless_gpu_type,
+)
 
 
 PROJECT_ALIAS = "eu-north1"
@@ -89,7 +93,9 @@ def test_isaac_lab_serverless_smoke(tmp_path: Path) -> None:
     gpu_type = resolve_serverless_gpu_type(
         os.environ.get("NPA_E2E_ISAAC_LAB_GPU_TYPE", GPU_TYPE)
     )
-    gpu_preset = os.environ.get("NPA_E2E_ISAAC_LAB_GPU_PRESET", GPU_PRESET)
+    gpu_preset = os.environ.get("NPA_E2E_ISAAC_LAB_GPU_PRESET", "").strip() or resolve_serverless_gpu_preset(
+        GPU_PRESET, platform=gpu_type
+    )
     image = resolve_image(os.environ.get("NPA_E2E_ISAAC_LAB_IMAGE", ISAAC_LAB_IMAGE))
     output_path = _output_path(test_id, bucket=bucket)
     job_name = f"{JOB_PREFIX}-{uuid.uuid4().hex[:8]}"

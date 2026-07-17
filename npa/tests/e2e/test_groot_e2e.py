@@ -14,7 +14,11 @@ import pytest
 
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
-from ._serverless_images import resolve_image, resolve_serverless_gpu_type
+from ._serverless_images import (
+    resolve_image,
+    resolve_serverless_gpu_preset,
+    resolve_serverless_gpu_type,
+)
 
 
 PROJECT_ALIAS = "eu-north1"
@@ -222,7 +226,7 @@ def _submit_command(
         "--gpu-count",
         "1",
         "--gpu-preset",
-        GPU_PRESET,
+        resolve_serverless_gpu_preset(GPU_PRESET, platform=gpu_type),
         "--model-variant",
         GROOT_MODEL_VARIANT,
         "--steps",

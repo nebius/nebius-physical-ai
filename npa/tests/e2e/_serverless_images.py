@@ -56,3 +56,27 @@ def resolve_serverless_gpu_type(default: str = _DEFAULT_SERVERLESS_GPU) -> str:
     if legacy in {"h200", "gpu-h200"}:
         return "gpu-h200-sxm"
     return default or _DEFAULT_SERVERLESS_GPU
+
+
+_RTX6000_PRESETS = frozenset({"1gpu-24vcpu-218gb", "8gpu-192vcpu-1744gb"})
+
+
+def resolve_serverless_gpu_preset(
+    default: str = "1gpu-24vcpu-218gb",
+    *,
+    platform: str | None = None,
+) -> str:
+    """GPU preset for serverless job creates on the live project.
+
+    Prefer ``NPA_E2E_SERVERLESS_PRESET``. When the resolved platform is
+    ``gpu-rtx6000`` and the caller still passes an H100/H200/L40S preset,
+    remap to the RTX6000 catalog preset ``1gpu-24vcpu-218gb``.
+    """
+    explicit = os.environ.get("NPA_E2E_SERVERLESS_PRESET", "").strip()
+    if explicit:
+        return explicit
+    resolved_platform = (platform or "").strip() or resolve_serverless_gpu_type()
+    preset = str(default or "").strip() or "1gpu-24vcpu-218gb"
+    if resolved_platform == "gpu-rtx6000" and preset not in _RTX6000_PRESETS:
+        return "1gpu-24vcpu-218gb"
+    return preset
