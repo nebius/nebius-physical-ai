@@ -660,11 +660,15 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "def _artifact_backed_run_details" in source
     assert "def _workflow_stage_defs_from_state" in source
     assert "Derived stage timeline from" in source
-    assert "Never let a concurrent status poll erase richer artifact fields" in source
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
     assert "Read-only: do not _record/_save here" in source
+    assert 'Always use the stock demo run id and clear any prior media-artifact preview' in source
     status_src = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
     assert "_save_state(state)" not in status_src
     assert "_record_sim_viz_run(state, payload)" not in status_src
+    franka_src = source.split("def _wire_franka_demo")[1].split("def _wire_sim2real_run_preview")[0]
+    assert '"run_id": "franka-demo"' in franka_src
+    assert '"artifact_render": "rerun"' in franka_src
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
@@ -702,7 +706,7 @@ def test_bootstrap_run_history_uses_run_id_index() -> None:
     assert 'if not isinstance(runs, dict):' in source
     assert 'runs[run_id] = snapshot' in source
     assert 'state["active_run_id"] = run_id' in source
-    assert "Never let a concurrent status poll erase richer artifact fields" in source
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:

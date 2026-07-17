@@ -1839,20 +1839,36 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
         snapshot.update(existing)
     snapshot.update(payload)
     snapshot["run_id"] = run_id
-    # Never let a concurrent status poll erase richer artifact fields from load-run.
-    for key in (
-        "artifact_render",
-        "artifact_key",
-        "artifact_uri",
-        "artifact_preview_url",
-        "artifact_download_url",
-        "rrd_uri",
-        "rerun_iframe_url",
-        "visualization_note",
-        "preview_entity",
-    ):
-        if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
-            snapshot[key] = existing[key]
+    incoming_rrd = bool(str(payload.get("rrd_uri") or "").strip())
+    incoming_render = str(payload.get("artifact_render") or "").strip().lower()
+    # A Rerun/demo update must not resurrect a prior video/image/json media preview.
+    if incoming_rrd and incoming_render in {{"", "rerun"}}:
+        if str(existing.get("artifact_render") or "").strip().lower() not in {{"", "rerun"}}:
+            snapshot["artifact_render"] = "rerun"
+            for key in (
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "visualization_note",
+            ):
+                if key not in payload or not str(payload.get(key) or "").strip():
+                    snapshot[key] = ""
+    else:
+        # Never let a sparse update erase richer artifact fields from load-run.
+        for key in (
+            "artifact_render",
+            "artifact_key",
+            "artifact_uri",
+            "artifact_preview_url",
+            "artifact_download_url",
+            "rrd_uri",
+            "rerun_iframe_url",
+            "visualization_note",
+            "preview_entity",
+        ):
+            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                snapshot[key] = existing[key]
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
@@ -2932,10 +2948,9 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
-    prior = state.get("sim_viz", {{}})
-    run_id = str(prior.get("run_id") or "").strip() or "franka-demo"
+    # Always use the stock demo run id and clear any prior media-artifact preview.
     viz = {{
-        "run_id": run_id,
+        "run_id": "franka-demo",
         "stage": "demo",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -2946,6 +2961,12 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
         "rerun_iframe_url": _rerun_iframe_url(cam),
+        "artifact_render": "rerun",
+        "artifact_key": "",
+        "artifact_uri": "",
+        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_download_url": "/rerun/recordings/sim2real.rrd",
+        "visualization_note": "",
     }}
     state["sim_viz"] = viz
     _record_sim_viz_run(state, viz)
@@ -4705,12 +4726,20 @@ def sim_viz_status(run_id: str = ""):
     current = state.get("sim_viz")
     if isinstance(current, dict):
         current_run = str(current.get("run_id") or "").strip()
-        payload_run = str(payload.get("run_id") or "").strip()
-        if current_run and (not requested_run or current_run == requested_run or current_run == payload_run):
-            if not requested_run or current_run == requested_run:
-                merged = dict(payload)
-                merged.update(current)
-                payload = merged
+        if current_run and (not requested_run or current_run == requested_run):
+            merged = dict(payload)
+            merged.update(current)
+            # Live Rerun/demo snapshots must not keep a stale non-rerun media render
+            # from history (that forces status to clear rrd_uri / rerun_ready).
+            current_render = str(current.get("artifact_render") or "").strip().lower()
+            if str(current.get("rrd_uri") or "").strip() and current_render in {{"", "rerun"}}:
+                merged["artifact_render"] = current_render or "rerun"
+                if not str(current.get("artifact_key") or "").strip():
+                    merged["artifact_key"] = ""
+                    merged["artifact_uri"] = ""
+                    if "visualization_note" not in current:
+                        merged["visualization_note"] = ""
+            payload = merged
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
