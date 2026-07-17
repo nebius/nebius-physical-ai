@@ -79,8 +79,15 @@ s3://<bucket>/physical-ai-data-factory/<run-id>/
   grade/               # attribute-verify report + decision     -> json
   labeled_augmented/   # Stage 3 VLM captions on augmented      -> json
   curation/            # Stage 4 curation report                -> json
+  reports/sim2real.rrd # Rerun recording (input+augmented+captions) -> rerun
   reports/final.json   # finalize summary                       -> json
 ```
+
+The `visualize` stage builds `reports/sim2real.rrd` from the run's input +
+augmented frames and captions (via `npa.workflows.data_factory_viz.build_run_rrd`)
+so the run renders in the NPA agent's **embedded Rerun viewer** — the agent
+prefers `reports/sim2real.rrd`, so selecting the run and loading it (or clicking
+the `.rrd` in the artifact browser) shows it in the Rerun panel.
 
 ## View input / intermediate / output in the NPA agent
 

@@ -78,6 +78,10 @@ config:
   # (same prefix as augment_uri) -- i.e. "the data to curate".
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  # run_root_uri = the run prefix (holds input/ + cosmos_augmented/ + labeled_*/);
+  # the visualize stage reads it to build a Rerun recording.
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
 
 resources:
@@ -219,11 +223,27 @@ states:
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
+    next: visualize
+
+  visualize:
+    description: >
+      Build a Rerun recording (reports/sim2real.rrd) from the run's input +
+      augmented frames and captions so the run renders in the NPA agent's
+      embedded Rerun viewer (the agent prefers reports/sim2real.rrd).
+    needs: [curate]
+    resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_viz import build_run_rrd;
+        print(build_run_rrd('{{config.run_root_uri}}', '{{config.rrd_uri}}'))"
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: npa.sim2real.rerun.v1
     next: finalize
 
   finalize:
     description: Write the final augmented-and-graded dataset report for the run.
-    needs: [curate]
+    needs: [visualize]
     toolRef: workbench.sim2real.finalize
     resources: cpu
     outputs:
