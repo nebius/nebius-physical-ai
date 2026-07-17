@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071710"
+AGENT_UI_VERSION = "2026071711"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -126,6 +126,15 @@ AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
     "openFullChatTab",
     "setChatDrawerOpen",
     'id="openFullChatTab"',
+)
+
+AGENT_STAGES_RUN_PICKER_CONTRACT = (
+    'id="stagesRunSelect"',
+    'id="stagesRunInput"',
+    'id="stagesLoadRun"',
+    "stages-run-picker",
+    "loadSelectedRun",
+    "syncRunChooserFields",
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (
@@ -6657,6 +6666,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         gap: 8px;
         align-items: center;
       }}
+      .stages-run-picker {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: flex-end;
+        margin: 0 0 12px 0;
+      }}
+      .stages-run-picker .field {{ min-width: 160px; }}
+      .stages-run-picker select,
+      .stages-run-picker input {{
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: var(--surface);
+        color: var(--text);
+      }}
       body:not(.viewer-focus) #openFullChatTab {{ display: none; }}
       #chatQueueBadge {{
         margin-left: 6px;
@@ -7140,7 +7166,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Timeline, result, and logs for the active run.</p>
+          <p class="hint">Pick a run to load its pipeline timeline, result, and logs.</p>
+          <div class="stages-run-picker field-row" data-testid="stages-run-picker">
+            <div class="field" style="flex:1;">
+              <label for="stagesRunSelect">Run</label>
+              <select id="stagesRunSelect" aria-label="Select run for stages pipeline">
+                <option value="">(select run)</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;">
+              <label for="stagesRunInput">Or paste run ID</label>
+              <input id="stagesRunInput" type="text" placeholder="agent-run-..." autocomplete="off" />
+            </div>
+            <div class="btn-row" style="align-self:flex-end; margin-bottom:2px;">
+              <button id="stagesLoadRun" class="btn btn-primary" type="button">Load run</button>
+            </div>
+          </div>
           <div id="runDetails" class="run-details">
             <div id="runSummary" class="run-summary"></div>
             <div id="stageList" class="stage-list" aria-label="Workflow stages"></div>
@@ -7714,8 +7755,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (runIdSelect) {{
           runIdSelect.addEventListener("change", () => {{
             const chosen = String(runIdSelect.value || "").trim();
-            const input = document.getElementById("runIdInput");
-            if (input && chosen) input.value = chosen;
+            if (!chosen) return;
+            syncRunChooserFields(chosen);
+            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
+          }});
+        }}
+        const stagesRunSelect = document.getElementById("stagesRunSelect");
+        if (stagesRunSelect) {{
+          stagesRunSelect.addEventListener("change", () => {{
+            const chosen = String(stagesRunSelect.value || "").trim();
+            if (!chosen) return;
+            syncRunChooserFields(chosen);
+            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
+          }});
+        }}
+        bindClick("stagesLoadRun", async () => {{
+          const select = document.getElementById("stagesRunSelect");
+          const input = document.getElementById("stagesRunInput");
+          const chosen = String((select && select.value) || (input && input.value) || "").trim();
+          await loadSelectedRun(chosen);
+        }}, "Load run for stages");
+        const stagesRunInput = document.getElementById("stagesRunInput");
+        if (stagesRunInput) {{
+          stagesRunInput.addEventListener("keydown", (event) => {{
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            const chosen = String(stagesRunInput.value || "").trim();
+            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           }});
         }}
         const artifactRunSelect = document.getElementById("artifactRunSelect");
@@ -9675,21 +9741,48 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           props: document.getElementById("propCube").checked ? ["cube"] : []
         }};
       }}
-      function updateRunSelector(simViz) {{
-        const select = document.getElementById("runIdSelect");
+      function fillRunSelectOptions(select, runs, current) {{
         if (!select) return;
-        const current = String((simViz && simViz.run_id) || "").trim();
-        const runs = Array.isArray(simViz && simViz.available_run_ids) ? simViz.available_run_ids.map(String) : [];
+        const previous = String(select.value || "").trim();
         select.innerHTML = '<option value="">(select run)</option>';
         for (const runId of runs) {{
           const opt = document.createElement("option");
           opt.value = runId;
           opt.textContent = runId;
-          if (runId === current) opt.selected = true;
+          if (runId === current || (!current && runId === previous)) opt.selected = true;
           select.appendChild(opt);
         }}
+      }}
+      function syncRunChooserFields(runId) {{
+        const chosen = String(runId || "").trim();
+        for (const id of ["runIdInput", "stagesRunInput"]) {{
+          const input = document.getElementById(id);
+          if (input && chosen) input.value = chosen;
+        }}
+        for (const id of ["runIdSelect", "stagesRunSelect", "artifactRunSelect"]) {{
+          const select = document.getElementById(id);
+          if (!select || !chosen) continue;
+          if (Array.from(select.options).some((opt) => opt.value === chosen)) {{
+            select.value = chosen;
+          }}
+        }}
+      }}
+      function updateRunSelector(simViz) {{
+        const current = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
+        const runs = Array.isArray(simViz && simViz.available_run_ids) ? simViz.available_run_ids.map(String) : [];
+        fillRunSelectOptions(document.getElementById("runIdSelect"), runs, current);
+        fillRunSelectOptions(document.getElementById("stagesRunSelect"), runs, current);
+        syncRunChooserFields(current);
+      }}
+      async function loadSelectedRun(runId) {{
+        const chosen = String(runId || "").trim();
+        if (!chosen) {{
+          throw new Error("Enter or select a run_id first");
+        }}
+        syncRunChooserFields(chosen);
         const input = document.getElementById("runIdInput");
-        if (input && current) input.value = current;
+        if (input) input.value = chosen;
+        await loadRunData();
       }}
       function normalizeStageStatus(value) {{
         const raw = String(value || "pending").trim().toLowerCase();
@@ -9735,8 +9828,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             '<p class="hint">Load a run from the Rerun tab, list artifacts, or plan a workflow.</p>' +
             '<div class="btn-row"><button class="btn" type="button" id="stagesOpenRerun">Open Rerun tab</button></div>' +
             '</div>';
-          const openBtn = document.getElementById("stagesOpenRerun");
-          if (openBtn) openBtn.addEventListener("click", () => activateMainTab("rerun"));
+          const focusBtn = document.getElementById("stagesFocusRunSelect");
+          if (focusBtn) focusBtn.addEventListener("click", () => {{
+            const sel = document.getElementById("stagesRunSelect");
+            if (sel) sel.focus();
+          }});
         }} else {{
           const succeeded = stages.filter((stage) => normalizeStageStatus(stage.status) === "succeeded").length;
           const activeIdx = stages.findIndex((stage) => ["running", "queued"].includes(normalizeStageStatus(stage.status)));
@@ -11183,6 +11279,10 @@ def verify_live_cmd(
         'id="tabRerun"',
         'id="stagesPanel"',
         "<h3>Stages</h3>",
+        'id="stagesRunSelect"',
+        'id="stagesLoadRun"',
+        "loadSelectedRun",
+        "stages-run-picker",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",
