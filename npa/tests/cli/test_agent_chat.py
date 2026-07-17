@@ -49,6 +49,13 @@ def test_match_sim2real_status_intent() -> None:
         match_chat_intent("onboard a new workbench solution from a github repo with container and sky smoke")
         == "onboard_solution"
     )
+    assert (
+        match_chat_intent(
+            "onboard https://github.com/githubtraining/hellogitworld.git on Ubuntu, "
+            "build the container, push to registry, and run a deploy smoke on live infra"
+        )
+        == "onboard_solution"
+    )
     assert match_chat_intent("what artifacts can I view?") == "find_artifacts"
     assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
     assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"

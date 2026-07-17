@@ -9,6 +9,14 @@ import pytest
 from npa.serverless_common.subnet import SubnetResolutionError, resolve_subnet
 
 
+@pytest.fixture(autouse=True)
+def _clear_subnet_env_overrides(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_E2E_SERVERLESS_SUBNET_ID", raising=False)
+    monkeypatch.delenv("NPA_SERVERLESS_SUBNET_ID", raising=False)
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+
+
 def _resource(
     resource_id: str,
     name: str,
@@ -33,16 +41,26 @@ def _result(items: list[dict], returncode: int = 0, stderr: str = "") -> SimpleN
     )
 
 
+def _vpc_resource(args: list[str]) -> str:
+    """Return vpc resource kind from ``nebius [--profile X] vpc <kind> ...``."""
+    assert args and args[0] == "nebius"
+    idx = 1
+    if idx < len(args) and args[idx] == "--profile":
+        idx += 2
+    assert args[idx : idx + 1] == ["vpc"], args
+    return str(args[idx + 1])
+
+
 def _mock_nebius(mocker, *, networks: list[dict], subnets: list[dict]):
     def run(args, **kwargs):
         assert kwargs["text"] is True
         assert kwargs["check"] is False
         assert kwargs["stdout"] == subprocess.PIPE
         assert kwargs["stderr"] == subprocess.PIPE
-        assert args[:2] == ["nebius", "vpc"]
-        if args[2] == "network":
+        kind = _vpc_resource(list(args))
+        if kind == "network":
             return _result(networks)
-        if args[2] == "subnet":
+        if kind == "subnet":
             return _result(subnets)
         raise AssertionError(f"unexpected command: {args}")
 
@@ -54,6 +72,43 @@ def test_explicit_override_wins_without_cli_calls(mocker) -> None:
 
     assert resolve_subnet("project-1", explicit_subnet_id=" vpcsubnet-foo ") == "vpcsubnet-foo"
     run.assert_not_called()
+
+
+def test_env_subnet_override_wins_without_cli_calls(mocker, monkeypatch) -> None:
+    run = mocker.patch("npa.serverless_common.subnet.subprocess.run")
+    monkeypatch.setenv("NPA_E2E_SERVERLESS_SUBNET_ID", " vpcsubnet-e2e ")
+    monkeypatch.delenv("NPA_SERVERLESS_SUBNET_ID", raising=False)
+
+    assert resolve_subnet("project-1") == "vpcsubnet-e2e"
+    run.assert_not_called()
+
+
+def test_nebius_profile_passed_to_vpc_list(mocker, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "npa-mk8s")
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+    seen: list[list[str]] = []
+
+    def run(args, **kwargs):
+        seen.append(list(args))
+        kind = _vpc_resource(list(args))
+        if kind == "network":
+            return _result([_resource("vpcnetwork-default", "default-network")])
+        if kind == "subnet":
+            return _result(
+                [
+                    _resource(
+                        "vpcsubnet-default",
+                        "default-subnet-xyz",
+                        network_id="vpcnetwork-default",
+                    )
+                ]
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    mocker.patch("npa.serverless_common.subnet.subprocess.run", side_effect=run)
+    assert resolve_subnet("project-1") == "vpcsubnet-default"
+    assert seen
+    assert seen[0][:4] == ["nebius", "--profile", "npa-mk8s", "vpc"]
 
 
 def test_default_network_default_subnet_selection(mocker) -> None:

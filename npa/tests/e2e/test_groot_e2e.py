@@ -14,6 +14,12 @@ import pytest
 
 from npa.clients.serverless import EndpointNotFoundError, ServerlessClient
 
+from ._serverless_images import (
+    resolve_image,
+    resolve_serverless_gpu_preset,
+    resolve_serverless_gpu_type,
+)
+
 
 PROJECT_ALIAS = "eu-north1"
 PROJECT_ID = "project-test-00000000000"
@@ -115,6 +121,10 @@ def test_groot_serverless_infer(tmp_path: Path) -> None:
         project_id=project_id,
         output_path=output_path,
         job_name=job_name,
+        image=resolve_image(os.environ.get("NPA_E2E_GROOT_IMAGE", GROOT_IMAGE)),
+        gpu_type=resolve_serverless_gpu_type(
+            os.environ.get("NPA_E2E_GROOT_GPU_TYPE", GPU_TYPE)
+        ),
     )
     job_id = ""
 
@@ -188,6 +198,8 @@ def _submit_command(
     project_id: str,
     output_path: str,
     job_name: str,
+    image: str = GROOT_IMAGE,
+    gpu_type: str = GPU_TYPE,
 ) -> list[str]:
     return [
         "workbench",
@@ -208,13 +220,13 @@ def _submit_command(
         "--output-path",
         output_path,
         "--image",
-        GROOT_IMAGE,
+        image,
         "--gpu-type",
-        GPU_TYPE,
+        gpu_type,
         "--gpu-count",
         "1",
         "--gpu-preset",
-        GPU_PRESET,
+        resolve_serverless_gpu_preset(GPU_PRESET, platform=gpu_type),
         "--model-variant",
         GROOT_MODEL_VARIANT,
         "--steps",

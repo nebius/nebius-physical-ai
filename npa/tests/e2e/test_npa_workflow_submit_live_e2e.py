@@ -22,7 +22,6 @@ npa.workflow twins through ``npa workbench workflow submit``.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 import uuid
@@ -123,8 +122,10 @@ def _secret_env_args(case: SubmitLiveCase) -> list[str]:
     for name in case.secret_envs:
         if os.environ.get(name):
             args.extend(["--secret-env", name])
-        elif case.tier == "cpu" and name == "NEBIUS_TOKEN_FACTORY_KEY":
-            pytest.skip(f"{name} required for cpu-tier twin {case.spec}")
+        else:
+            # Required secrets must be present; silent omission caused empty-stderr
+            # terminal FAILED statuses in live runs.
+            pytest.skip(f"{name} required for live submit of {case.spec}")
     # Nebius VM / burst path needs registry login before image pull.
     for name in (
         "SKYPILOT_DOCKER_SERVER",
@@ -219,10 +220,16 @@ def test_npa_workflow_submit_live_reaches_terminal(
         submit_args.extend(["--image", "none"])
     submit_args.extend(_secret_env_args(case))
 
+    if (
+        os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}
+        and not os.environ.get("NPA_SRC_S3_URI", "").strip()
+    ):
+        pytest.skip(
+            "NPA_E2E_CLEAR_WORKBENCH_IMAGES=1 requires NPA_SRC_S3_URI for live submit"
+        )
+
     submitted = RUNNER.invoke(app, submit_args)
-    assert_no_credential_leakage(submitted.output, extra_forbidden=forbidden_markers)
-    assert submitted.exit_code == 0, submitted.output
-    submit_payload = json.loads(submitted.output)
+    submit_payload = parse_json_payload(submitted, forbidden_markers)
     assert submit_payload.get("status") in {"SUBMITTED", "RUNNING", "PENDING", "STARTING"}
     job_id = str(submit_payload.get("job_id") or run_id)
 
@@ -239,9 +246,16 @@ def test_npa_workflow_submit_live_reaches_terminal(
             if last_status in TERMINAL_OK:
                 return
             if _is_terminal_fail(last_status):
+                detail = (
+                    (current.stderr or "")[-500:]
+                    or (current.stdout or "")[-500:]
+                    or getattr(current, "error", "")
+                    or "(no stderr/stdout; check: sky jobs logs "
+                    f"{job_id})"
+                )
                 pytest.fail(
                     f"{case.spec} reached terminal failure status={last_status} "
-                    f"job_id={job_id} stderr={current.stderr[-500:]}"
+                    f"job_id={job_id} detail={detail}"
                 )
             time.sleep(_poll_seconds())
         pytest.fail(

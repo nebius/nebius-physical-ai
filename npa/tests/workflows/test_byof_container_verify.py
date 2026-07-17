@@ -208,3 +208,51 @@ users: []
     updated = Path(os.environ["KUBECONFIG"]).read_text(encoding="utf-8")
     assert "current-context: target-context" in updated
     assert str(out) in os.environ["KUBECONFIG"]
+
+
+def test_submit_and_wait_restores_kubeconfig_after_direct_launch(monkeypatch, tmp_path) -> None:
+    """Temp kubeconfig under TemporaryDirectory must not leak into later sky jobs."""
+    module = _load_module()
+    original = str(tmp_path / "original-kubeconfig")
+    Path(original).write_text("kind: Config\n", encoding="utf-8")
+    monkeypatch.setenv("KUBECONFIG", original)
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "1")
+    monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    monkeypatch.setattr(module, "_default_run_id", lambda: "byof-restore")
+    monkeypatch.setattr(
+        module,
+        "render_workflow",
+        lambda *_a, **_k: [{"name": "meta"}, {"name": "task", "envs": {}, "resources": {}}],
+    )
+    monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a, **_k: None)
+
+    def _leak_kubeconfig(tmp: Path) -> None:
+        os.environ["KUBECONFIG"] = str(tmp / "leaked")
+
+    monkeypatch.setattr(module, "_normalize_kubeconfig_current_context", _leak_kubeconfig)
+    monkeypatch.setattr(module, "_default_infra", lambda: "k8s/demo")
+    monkeypatch.setattr(module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml")
+    monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    monkeypatch.setattr(module, "_direct_launch", lambda **_k: 0)
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        del kwargs
+        seen_cmds.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "sky_environment", lambda *_a, **_k: os.environ.copy())
+
+    args = module._parse_args(
+        [
+            "--yaml",
+            str(YAML_PATH),
+            "--direct-launch",
+            "--output-root",
+            "s3://bucket/prefix",
+        ]
+    )
+    assert module._submit_and_wait(args) == 0
+    assert os.environ.get("KUBECONFIG") == original
+    assert ["/opt/sky", "api", "stop"] in seen_cmds

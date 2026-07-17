@@ -248,61 +248,79 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
-        _normalize_kubeconfig_current_context(tmp_path)
-        rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
-        _write_yaml_documents(rendered_yaml, docs)
+        previous_kubeconfig = os.environ.get("KUBECONFIG")
         sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
-        infra = args.infra or _default_infra()
-        config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
-        _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
-        if args.direct_launch:
-            return _direct_launch(
-                rendered_yaml=rendered_yaml,
-                run_id=run_id,
-                outputs=outputs,
-                sky_bin=sky_bin,
-                infra=infra,
-                config_path=config_path,
-                cleanup=args.cleanup,
-            )
-        teardown_guard = SignalTeardown(
-            run_id=run_id,
-            isolated_config_dir=args.isolated_config_dir,
-            sky_bin=sky_bin,
-            poll_interval=max(float(args.poll_interval), 0.0),
-        )
-        previous_handlers = install_teardown_signal_handlers(teardown_guard.teardown)
-        summary: dict[str, Any] | None = None
-        return_code = 1
         try:
-            teardown_guard.mark_launched()
-            result = submit_workflow(
-                rendered_yaml,
-                run_id,
+            _normalize_kubeconfig_current_context(tmp_path)
+            rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
+            _write_yaml_documents(rendered_yaml, docs)
+            infra = args.infra or _default_infra()
+            config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
+            _ensure_infra_enabled(sky_bin=sky_bin, infra=infra, config_path=config_path)
+            if args.direct_launch:
+                return _direct_launch(
+                    rendered_yaml=rendered_yaml,
+                    run_id=run_id,
+                    outputs=outputs,
+                    sky_bin=sky_bin,
+                    infra=infra,
+                    config_path=config_path,
+                    cleanup=args.cleanup,
+                )
+            teardown_guard = SignalTeardown(
+                run_id=run_id,
                 isolated_config_dir=args.isolated_config_dir,
-                config_path=config_path,
                 sky_bin=sky_bin,
-                infra=infra,
-                timeout=args.submit_timeout,
+                poll_interval=max(float(args.poll_interval), 0.0),
             )
-            config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
-            teardown_guard.mark_launched(config_path=config_path)
-            summary = {"run_id": run_id, "submit": result.__dict__, "outputs": outputs}
-            deadline = time.time() + max(args.wait_timeout, 0)
-            final = workflow_status(run_id, sky_bin=sky_bin)
-            while final.status not in TERMINAL_STATUSES and time.time() < deadline:
-                time.sleep(max(args.poll_interval, 1))
+            previous_handlers = install_teardown_signal_handlers(teardown_guard.teardown)
+            summary: dict[str, Any] | None = None
+            return_code = 1
+            try:
+                teardown_guard.mark_launched()
+                result = submit_workflow(
+                    rendered_yaml,
+                    run_id,
+                    isolated_config_dir=args.isolated_config_dir,
+                    config_path=config_path,
+                    sky_bin=sky_bin,
+                    infra=infra,
+                    timeout=args.submit_timeout,
+                )
+                config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
+                teardown_guard.mark_launched(config_path=config_path)
+                summary = {"run_id": run_id, "submit": result.__dict__, "outputs": outputs}
+                deadline = time.time() + max(args.wait_timeout, 0)
                 final = workflow_status(run_id, sky_bin=sky_bin)
-            summary["final"] = final.__dict__
-            return_code = 0 if final.status == "SUCCEEDED" else 1
-            if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1" and final.status == "FAILED_PRECHECKS":
-                return_code = 0
+                while final.status not in TERMINAL_STATUSES and time.time() < deadline:
+                    time.sleep(max(args.poll_interval, 1))
+                    final = workflow_status(run_id, sky_bin=sky_bin)
+                summary["final"] = final.__dict__
+                return_code = 0 if final.status == "SUCCEEDED" else 1
+                if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1" and final.status == "FAILED_PRECHECKS":
+                    return_code = 0
+            finally:
+                restore_signal_handlers(previous_handlers)
+                if args.cleanup:
+                    teardown_guard.teardown()
+            print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
+            return return_code
         finally:
-            restore_signal_handlers(previous_handlers)
-            if args.cleanup:
-                teardown_guard.teardown()
-        print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
-        return return_code
+            # Restore KUBECONFIG and stop the Sky API so a temp kubeconfig path
+            # written under TemporaryDirectory cannot poison later sky launches.
+            if previous_kubeconfig is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = previous_kubeconfig
+            if os.environ.get("NPA_BYOF_REFRESH_SKY_API", "1") != "0":
+                subprocess.run(
+                    [sky_bin, "api", "stop"],
+                    env=sky_environment(None),
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
 
 
 def _direct_launch(

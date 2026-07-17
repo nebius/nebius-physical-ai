@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from typing import Any
 
@@ -21,12 +22,18 @@ def resolve_subnet(
 
     Precedence:
       1. Explicit subnet ID from ``--subnet-id``.
-      2. Unique READY ``default_subnet_prefix*`` subnet under ``default_network_name``.
-      3. The only READY subnet in the project.
-      4. Raise ``SubnetResolutionError`` with an actionable message.
+      2. ``NPA_E2E_SERVERLESS_SUBNET_ID`` / ``NPA_SERVERLESS_SUBNET_ID`` env.
+      3. Unique READY ``default_subnet_prefix*`` subnet under ``default_network_name``.
+      4. The only READY subnet in the project.
+      5. Raise ``SubnetResolutionError`` with an actionable message.
     """
 
-    explicit = str(explicit_subnet_id or "").strip()
+    explicit = str(
+        explicit_subnet_id
+        or os.environ.get("NPA_E2E_SERVERLESS_SUBNET_ID", "")
+        or os.environ.get("NPA_SERVERLESS_SUBNET_ID", "")
+        or ""
+    ).strip()
     if explicit:
         return explicit
 
@@ -91,9 +98,18 @@ def resolve_subnet(
     )
 
 
+def _nebius_profile_args() -> list[str]:
+    profile = (
+        os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
+        or os.environ.get("NEBIUS_PROFILE", "").strip()
+    )
+    return ["--profile", profile] if profile else []
+
+
 def _list_vpc_resources(project_id: str, resource: str) -> list[dict[str, Any]]:
     command = [
         "nebius",
+        *_nebius_profile_args(),
         "vpc",
         resource,
         "list",

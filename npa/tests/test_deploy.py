@@ -154,6 +154,28 @@ def test_boot_disk_disk_size_override_must_be_positive() -> None:
         provisioner.boot_disk_tf_vars("container", 0)
 
 
+def test_default_image_family_for_rtx6000_and_b300() -> None:
+    assert (
+        provisioner.default_image_family_for_platform("gpu-rtx6000")
+        == "ubuntu24.04-cuda13.0"
+    )
+    assert (
+        provisioner.default_image_family_for_platform("gpu-b300-sxm")
+        == "ubuntu24.04-cuda13.0"
+    )
+    assert provisioner.default_image_family_for_platform("gpu-h200-sxm") is None
+
+
+def test_apply_default_image_family_respects_explicit_override() -> None:
+    vars_auto: dict[str, str] = {}
+    provisioner.apply_default_image_family(vars_auto, "gpu-rtx6000")
+    assert vars_auto["image_family"] == "ubuntu24.04-cuda13.0"
+
+    vars_override = {"image_family": "ubuntu24.04-cuda12"}
+    provisioner.apply_default_image_family(vars_override, "gpu-rtx6000")
+    assert vars_override["image_family"] == "ubuntu24.04-cuda12"
+
+
 def test_working_dir_path_and_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

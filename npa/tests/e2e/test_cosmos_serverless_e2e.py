@@ -29,6 +29,7 @@ from npa.clients.http import HTTPClient, ServerError
 from npa.deploy.images import container_image_for_tool
 
 from ._serverless_fallback import FallbackChain
+from ._serverless_images import resolve_serverless_gpu_preset, resolve_serverless_gpu_type
 
 
 pytestmark = pytest.mark.e2e_serverless
@@ -52,11 +53,14 @@ def _image() -> str:
 
 
 def _platform() -> str:
-    return os.environ.get("NPA_E2E_SERVERLESS_PLATFORM", "gpu-h200-sxm")
+    explicit = os.environ.get("NPA_E2E_SERVERLESS_PLATFORM", "").strip()
+    if explicit:
+        return explicit
+    return resolve_serverless_gpu_type()
 
 
 def _preset() -> str:
-    return os.environ.get("NPA_E2E_SERVERLESS_PRESET", "1gpu-16vcpu-200gb")
+    return resolve_serverless_gpu_preset("1gpu-16vcpu-200gb", platform=_platform())
 
 
 def _endpoint_extra_env() -> dict[str, str]:

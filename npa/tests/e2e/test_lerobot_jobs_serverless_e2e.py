@@ -157,12 +157,16 @@ def _submit_train(
     dataset: str = "lerobot/pusht",
     input_path: str = "",
     policy_type: str = "act",
-    gpu_type: str = "h200",
+    gpu_type: str = "",
     gpu_count: str = "1",
     fallback: bool = True,
     timeout: int = 1800,
     extra: tuple[str, ...] = (),
 ) -> tuple[str, dict[str, object], subprocess.CompletedProcess[str]]:
+    from ._serverless_images import resolve_serverless_gpu_type
+
+    # Env NPA_E2E_SERVERLESS_GPU_TYPE wins so live rtxpro can remap off H200.
+    resolved_gpu = resolve_serverless_gpu_type(gpu_type or "h200")
     chain = FallbackChain.instance()
     project_id = chain.current_project()
     last_result: subprocess.CompletedProcess[str] | None = None
@@ -193,7 +197,7 @@ def _submit_train(
                 "--job-name",
                 name,
                 "--gpu-type",
-                gpu_type,
+                resolved_gpu,
                 "--gpu-count",
                 gpu_count,
                 "--smoke",

@@ -1999,7 +1999,11 @@ def deploy(
     the workbench config and reused automatically on subsequent deploys.
     Auth is handled via the ``nebius`` CLI (must be logged in).
     """
-    from npa.deploy.provisioner import ProvisionerError, apply_boot_disk_tf_vars
+    from npa.deploy.provisioner import (
+        ProvisionerError,
+        apply_boot_disk_tf_vars,
+        apply_default_image_family,
+    )
 
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "b200"
@@ -2010,6 +2014,7 @@ def deploy(
     except LeRobotVersionError as exc:
         _fail(str(exc))
         return
+    gpu_type = _lerobot_gpu_platform(gpu_type)
     if byovm:
         skip_infra = True
 
@@ -2130,6 +2135,7 @@ def deploy(
         except ValueError as exc:
             _fail(str(exc))
             return
+        apply_default_image_family(merged_vars, gpu_type)
 
     if use_remote_state and nebius_creds and not dry_run:
         from npa.clients.config import write_config as _state_write
