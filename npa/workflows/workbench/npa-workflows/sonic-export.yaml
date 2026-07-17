@@ -1,0 +1,33 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sonic-export
+  description: Export a SONIC locomotion checkpoint to ONNX.
+  skypilotTwin: npa/workflows/workbench/skypilot/sonic-export.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/sonic-export"
+
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.pt"
+  onnx_uri: "s3://{{config.bucket}}/{{config.prefix}}/sonic_policy.onnx"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+
+initial: export-onnx
+
+states:
+  export-onnx:
+    description: Export a SONIC locomotion checkpoint to deterministic-action ONNX.
+    toolRef: workbench.sonic.export
+    resources: gpu
+    outputs:
+      - uri: "{{config.onnx_uri}}"
+        schema: npa.workbench.sonic.onnx.v1
+    terminal: true

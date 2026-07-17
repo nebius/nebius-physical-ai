@@ -88,11 +88,14 @@ containers:
   lerobot:
     image: npa-lerobot
     dockerfile: npa/docker/workbench/lerobot/Dockerfile
+    # Default tag = pyproject supported-tools pin (0.5.1). Additional supported
+    # tag: 0.6.0 via build.sh --version 0.6.0 / --lerobot-version 0.6.0.
     physical_ai:
       useful: true
       role: >-
         LeRobot policy training/eval/serving (ACT, pusht, libero) — core robot
-        manipulation policy workflow.
+        manipulation policy workflow. Supported package tags: 0.5.1 (default)
+        and 0.6.0 (additional).
     safety:
       runs_as: ubuntu
       base_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
@@ -100,6 +103,7 @@ containers:
       external_fetch: [pypi, huggingface-datasets]
       notes: >-
         Build-time env smoke baked in (RUN python -m npa.smoke.test_lerobot_env).
+        NPA_LEROBOT_VERSION labels the image tag for multi-version smokes.
         Telemetry disabled (HF_HUB_DISABLE_TELEMETRY, WANDB_DISABLED) in smokes.
     golden_eval:
       kind: container-smoke

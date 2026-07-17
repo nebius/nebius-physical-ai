@@ -44,6 +44,8 @@ CONTAINER_IMAGE_NAMES = {
 }
 
 SUPPORTED_TOOL_VERSIONS = {
+    # Default LeRobot pin. Selectable additional versions: see
+    # lerobot_version_manifest.json (0.5.1 default + 0.6.0).
     "lerobot": "0.5.1",
     "lerobot-policy": "0.1.1",
     "genesis": "0.4.6",
@@ -118,6 +120,22 @@ def supported_tool_version(tool: str) -> str:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
         raise RuntimeError(f"Could not find supported version for tool: {tool}") from exc
+
+
+def supported_lerobot_versions() -> tuple[str, ...]:
+    """Return LeRobot versions supported by the workbench (default first)."""
+
+    from npa.workbench.lerobot.version_compat import supported_lerobot_versions as _versions
+
+    return _versions()
+
+
+def resolve_lerobot_image_tag(version: str | None = None) -> str:
+    """Resolve a validated LeRobot image tag (equals the LeRobot package version)."""
+
+    from npa.workbench.lerobot.version_compat import resolve_lerobot_version
+
+    return resolve_lerobot_version(version)
 
 
 def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:

@@ -182,7 +182,10 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         "onboard_solution",
         re.compile(
             r"\b(?:onboard|add|integrate|containerize|dockerize|register)\b.{0,140}\b(?:solution|tool|component|repo|repository|open[\s-]?source)\b"
+            r"|\bonboard\s+https?://"
+            r"|\bonboard\b.{0,160}\b(?:ubuntu|container|registry|deploy\s+smoke)\b"
             r"|\b(?:byof|bring your own fork|custom fork)\b.{0,140}\b(?:workflow|image|container|registry|infra|run)\b"
+            r"|\b(?:github\.com|gitlab\.com)/[^\s]+.{0,140}\b(?:container|registry|ubuntu|smoke|deploy)\b"
             r"|\b(?:github|repo(?:sitory)?)\b.{0,140}\b(?:workbench|npa|workflow|sky|kubernetes)\b",
             re.IGNORECASE,
         ),

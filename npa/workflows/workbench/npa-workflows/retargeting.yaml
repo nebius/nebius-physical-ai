@@ -1,0 +1,34 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: retargeting
+  description: Retarget source motion into a SONIC embodiment schema.
+  skypilotTwin: npa/workflows/workbench/skypilot/retargeting.yaml
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/retargeting"
+  embodiment: unitree-g1
+  source_format: auto
+
+  motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
+  retargeted_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: retarget-motion
+
+states:
+  retarget-motion:
+    description: Retarget source motion artifacts into the SONIC embodiment schema.
+    toolRef: workbench.retargeting.run
+    resources: cpu
+    outputs:
+      - uri: "{{config.retargeted_uri}}manifest.json"
+        schema: npa.workbench.retargeting.manifest.v1
+    terminal: true

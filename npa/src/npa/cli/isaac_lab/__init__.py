@@ -1757,6 +1757,7 @@ def deploy_cmd(
         except ValueError as exc:
             _fail(str(exc))
             return
+        provisioner.apply_default_image_family(merged_vars, gpu_type)
 
     instance_name = f"isaac-lab-{proj_alias}-{wb_name}"
     cloud_init_workbench_type = (

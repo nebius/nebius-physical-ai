@@ -40,8 +40,15 @@ from npa.clients.config import (
 from npa.clients.credentials import apply_shared_credential_env, shared_credential_env
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.serverless import EndpointNotFoundError, JobInfo, ServerlessClient, ServerlessClientError
-from npa.deploy.images import container_image_for_tool, supported_tool_version
+from npa.deploy.images import container_image_for_tool, resolve_lerobot_image_tag, supported_tool_version
 from npa.serverless_common import SubnetResolutionError, resolve_subnet
+from npa.workbench.lerobot.version_compat import (
+    LeRobotVersionError,
+    eval_checkpoint_arg,
+    resolve_lerobot_version,
+    supported_lerobot_versions,
+    train_env_eval_arg,
+)
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -266,6 +273,34 @@ def _runtime_exec_cmd(cfg: Any, command: str) -> str:
     if runtime_uses_container(getattr(cfg, "runtime", "vm")):
         return f"sudo docker exec npa-lerobot bash -lc {shlex.quote(command)}"
     return command
+
+
+def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
+    """Best-effort remote LeRobot version for CLI flag compatibility."""
+
+    probe = (
+        "source /opt/lerobot/venv/bin/activate 2>/dev/null || true; "
+        "python -c \"import lerobot; print(lerobot.__version__)\""
+    )
+    try:
+        code, stdout, _stderr = ssh.run(_runtime_exec_cmd(cfg, probe), stream=False)
+    except Exception:
+        return resolve_lerobot_version(None)
+    if code != 0:
+        return resolve_lerobot_version(None)
+    version = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
+    try:
+        return resolve_lerobot_version(version)
+    except LeRobotVersionError:
+        # Unknown patch/build still maps by major.minor when possible.
+        parts = version.split(".")
+        if len(parts) >= 2:
+            candidate = f"{parts[0]}.{parts[1]}.0"
+            try:
+                return resolve_lerobot_version(candidate)
+            except LeRobotVersionError:
+                pass
+        return resolve_lerobot_version(None)
 
 
 def _effective_gpu_count(cfg: Any, requested: int | None = None) -> tuple[int, str]:
@@ -719,6 +754,7 @@ def _lerobot_train_container_command(
     device: str = "cuda",
     smoke: bool = False,
     training_config: TrainingConfig | None = None,
+    lerobot_version: str | None = None,
 ) -> str:
     config = training_config or TrainingConfig()
     effective_steps = 50 if smoke else steps
@@ -765,7 +801,7 @@ def _lerobot_train_container_command(
         f"--output_dir={output_dir} "
         f"--steps={effective_steps} "
         f"--save_freq={effective_steps} "
-        f"--eval_freq=1000000 "
+        f"{train_env_eval_arg(1_000_000, version=lerobot_version)} "
         f"--batch_size={effective_batch} "
         f"--policy.device={shlex.quote(device)} "
         f"--eval.batch_size=1 "
@@ -912,6 +948,7 @@ def _train_serverless(
     output: OutputFormat,
     training_config: TrainingConfig,
     checkpoint_s3_explicit: bool = False,
+    lerobot_version: str = "",
 ) -> None:
     if num_workers < -1:
         _fail(f"--num-workers must be -1 (omit) or >= 0, got {num_workers}")
@@ -937,7 +974,16 @@ def _train_serverless(
     except EndpointNotFoundError:
         existing = None
     platform = _lerobot_gpu_platform(gpu_type)
-    resolved_image = image or container_image_for_tool("lerobot", registry=resolve_container_registry(proj_alias))
+    try:
+        image_tag = resolve_lerobot_image_tag(lerobot_version or None)
+    except LeRobotVersionError as exc:
+        _fail(str(exc))
+        return
+    resolved_image = image or container_image_for_tool(
+        "lerobot",
+        registry=resolve_container_registry(proj_alias),
+        tag=image_tag,
+    )
     if existing is not None:
         info = existing
         if not submit_only and existing.status not in {"succeeded", "failed", "cancelled"}:
@@ -1010,6 +1056,7 @@ def _train_serverless(
                 device=device,
                 smoke=smoke,
                 training_config=training_config,
+                lerobot_version=image_tag,
             ),
             gpu_type=platform,
             gpu_count=gpu_count or 1,
@@ -1278,6 +1325,15 @@ def train(
     smoke: bool = typer.Option(False, "--smoke", help="Use smoke training settings for serverless Jobs."),
     poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless Job status checks."),
     wait_timeout: int = typer.Option(3600, "--wait-timeout", help="Max seconds to wait for Job completion when not --submit-only."),
+    lerobot_version: str = typer.Option(
+        "",
+        "--lerobot-version",
+        help=(
+            "LeRobot package/image version for serverless Jobs when --image is omitted. "
+            f"Supported: {', '.join(supported_lerobot_versions())}. "
+            f"Default: {supported_tool_version('lerobot')}."
+        ),
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Run lerobot-train on the VM via SSH, stream logs."""
@@ -1364,6 +1420,7 @@ def train(
             output=output,
             training_config=training_config,
             checkpoint_s3_explicit=checkpoint_s3_explicit,
+            lerobot_version=lerobot_version,
         )
         return
 
@@ -1373,6 +1430,7 @@ def train(
 
     ssh = _ssh_client_for_training(cfg, training_config)
     stream_logs = output != OutputFormat.json
+    remote_version = _probe_remote_lerobot_version(ssh, cfg)
 
     output_is_s3 = _is_s3_uri(checkpoint_output_path)
     checkpoint_dir = (
@@ -1442,7 +1500,7 @@ def train(
         f"--output_dir={checkpoint_dir} "
         f"--steps={steps} "
         f"--save_freq={steps} "
-        f"--eval_freq=1000000 "
+        f"{train_env_eval_arg(1_000_000, version=remote_version)} "
         f"--batch_size={batch_size} "
         f"--policy.device={device} "
         f"--eval.batch_size=1 "
@@ -1583,6 +1641,7 @@ def eval_cmd(
 
     ssh = SSHClient(cfg.ssh)
     stream_logs = output != OutputFormat.json
+    remote_version = _probe_remote_lerobot_version(ssh, cfg)
 
     # Resolve checkpoint: if s3://, download on the VM first
     resolved_checkpoint = checkpoint_ref
@@ -1609,7 +1668,7 @@ def eval_cmd(
         f"source /opt/lerobot/venv/bin/activate && "
         f"set -a && source /opt/lerobot/.env && set +a && "
         f"lerobot-eval "
-        f"--policy.path={resolved_checkpoint} "
+        f"{eval_checkpoint_arg(resolved_checkpoint, version=remote_version)} "
         f"--env.type={env} "
         f"{env_task_arg} "
         f"--eval.n_episodes={episodes} "
@@ -1923,6 +1982,15 @@ def deploy(
     disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
     preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance. Pass --no-preemptible for regular VMs."),
     default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
+    lerobot_version: str = typer.Option(
+        "",
+        "--lerobot-version",
+        help=(
+            "LeRobot package/image version to deploy. "
+            f"Supported: {', '.join(supported_lerobot_versions())}. "
+            f"Default: {supported_tool_version('lerobot')}."
+        ),
+    ),
     output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
     """Deploy or update LeRobot infrastructure and application.
@@ -1931,13 +1999,22 @@ def deploy(
     the workbench config and reused automatically on subsequent deploys.
     Auth is handled via the ``nebius`` CLI (must be logged in).
     """
-    from npa.deploy.provisioner import ProvisionerError, apply_boot_disk_tf_vars
+    from npa.deploy.provisioner import (
+        ProvisionerError,
+        apply_boot_disk_tf_vars,
+        apply_default_image_family,
+    )
 
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "b200"
     byovm = is_byovm_runtime(runtime)
     use_remote_state = not tf_dir and not byovm
-    lerobot_version = supported_tool_version("lerobot")
+    try:
+        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
+    except LeRobotVersionError as exc:
+        _fail(str(exc))
+        return
+    gpu_type = _lerobot_gpu_platform(gpu_type)
     if byovm:
         skip_infra = True
 
@@ -1971,7 +2048,7 @@ def deploy(
     container_image = container_image_for_tool(
         "lerobot",
         registry=container_registry,
-        tag=lerobot_version,
+        tag=resolved_lerobot_version,
     )
     cloud_init_workbench_type = (
         "lerobot-container"
@@ -2036,7 +2113,7 @@ def deploy(
     ):
         if key in nebius_creds:
             merged_vars[key] = nebius_creds[key]
-    merged_vars.setdefault("lerobot_version", lerobot_version)
+    merged_vars.setdefault("lerobot_version", resolved_lerobot_version)
     if use_remote_state and (destroy or skip_infra):
         _apply_saved_terraform_state(
             merged_vars,
@@ -2058,6 +2135,7 @@ def deploy(
         except ValueError as exc:
             _fail(str(exc))
             return
+        apply_default_image_family(merged_vars, gpu_type)
 
     if use_remote_state and nebius_creds and not dry_run:
         from npa.clients.config import write_config as _state_write
@@ -2474,7 +2552,7 @@ def deploy(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="lerobot", version=lerobot_version, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(ssh, tool="lerobot", version=resolved_lerobot_version, deployed_by=f"npa deploy --runtime {runtime.value}")
             except SSHError:
                 pass
         mark_app_status(APP_STATUS_HEALTHY)
@@ -2593,6 +2671,7 @@ def benchmark_cmd(
 
     ssh = SSHClient(cfg.ssh)
     stream = output != OutputFormat.json
+    remote_version = _probe_remote_lerobot_version(ssh, cfg)
 
     # Parse run specs
     specs: list[dict[str, Any]] = []
@@ -2736,7 +2815,7 @@ def benchmark_cmd(
                 f"--output_dir={output_dir} "
                 f"--steps={steps} "
                 f"--save_freq={steps} "
-                f"--eval_freq=1000000 "
+                f"{train_env_eval_arg(1_000_000, version=remote_version)} "
                 f"--batch_size={batch_size} "
                 f"--num_workers={nw} "
                 f"--policy.device=cuda "

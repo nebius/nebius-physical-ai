@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import json
 import logging
+import os
 import re
 import shutil
 import shlex
@@ -105,8 +106,26 @@ _SECRET_KEY_PARTS = (
     "private_key",
 )
 _SENSITIVE_VALUE_FLAGS = {"--registry-password", "--token"}
+_NEBIUS_CR_HOST_SUFFIX = ".nebius.cloud"
 
 logger = logging.getLogger(__name__)
+
+
+def _registry_server_from_image(image: str) -> str:
+    """Return docker registry host for ``image``, or empty if not a registry ref."""
+
+    ref = image.removeprefix("docker:").strip()
+    if "/" not in ref:
+        return ""
+    host = ref.split("/", 1)[0]
+    if "." in host or ":" in host or host == "localhost":
+        return host.removeprefix("https://").removeprefix("http://").rstrip("/")
+    return ""
+
+
+def _is_nebius_container_registry_image(image: str) -> bool:
+    host = _registry_server_from_image(image)
+    return host.startswith("cr.") and host.endswith(_NEBIUS_CR_HOST_SUFFIX)
 
 
 class EndpointStatus(str, Enum):
@@ -558,6 +577,52 @@ class ServerlessClient:
         self._poll_interval = poll_interval
         self._sleep = sleep
 
+    def _mint_registry_token(self) -> str:
+        """Mint a short-lived IAM token for Nebius Container Registry pulls."""
+
+        # Use real subprocess (not self._runner) so unit-test fakes for ai.* stay isolated.
+        try:
+            result = subprocess.run(
+                [self._nebius_bin, "iam", "get-access-token"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ServerlessClientError(
+                "Could not mint Nebius registry token with "
+                f"`{self._nebius_bin} iam get-access-token`"
+            ) from exc
+        token = (result.stdout or "").strip()
+        if result.returncode != 0 or not token:
+            detail = (result.stderr or "").strip() or (result.stdout or "").strip() or f"exit {result.returncode}"
+            raise ServerlessClientError(
+                "Could not mint Nebius registry token with "
+                f"`{self._nebius_bin} iam get-access-token`: {detail}"
+            )
+        return token
+
+    def _registry_auth_args(self, image: str) -> list[str]:
+        """CLI flags so serverless can pull private ``cr.*.nebius.cloud`` images."""
+
+        if os.environ.get("NPA_SERVERLESS_SKIP_REGISTRY_AUTH", "").strip() == "1":
+            return []
+        if not _is_nebius_container_registry_image(image):
+            return []
+        username = (
+            os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
+            or "iam"
+        )
+        # Prefer an explicit NPA_REGISTRY_PASSWORD; otherwise always mint a
+        # fresh IAM token. Do not reuse SKYPILOT_DOCKER_PASSWORD — ops VMs often
+        # export a token for a different SA/project that cannot pull this CR.
+        password = os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
+        if not password:
+            password = self._mint_registry_token()
+        return ["--registry-username", username, "--registry-password", password]
+
     def create_endpoint(
         self,
         spec: EndpointSpec,
@@ -774,6 +839,7 @@ class ServerlessClient:
         args = ["ai", "job", "create", "--parent-id", project_id, "--name", name]
         args += ["--image", image, "--container-command", command, "--platform", gpu_type]
         args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
+        args += self._registry_auth_args(image)
         job_env: dict[str, str] = {"NPA_OUTPUT_PATH": output_path}
         for key, value in (env or {}).items():
             if _is_secret_env_key(key):
@@ -992,6 +1058,7 @@ class ServerlessClient:
             "--auth",
             spec.auth,
         ]
+        args.extend(self._registry_auth_args(spec.image))
         if spec.platform:
             args.extend(["--platform", spec.platform])
         if spec.preset:

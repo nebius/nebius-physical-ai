@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from npa.workbench.lerobot.policy_container import build_lerobot_eval_command
+from npa.smoke._versions import expected_lerobot_version, train_env_eval_arg_for_version
 
 
 @dataclass
@@ -60,7 +61,7 @@ def check_short_train(state: Path) -> CheckResult:
         "--batch_size=8",
         "--num_workers=0",
         "--save_freq=20",
-        "--eval_freq=1000000",
+        train_env_eval_arg_for_version(expected_lerobot_version(__file__), 1_000_000),
         "--log_freq=10",
     ]
     code, output = _run(command, log_path=log_path, timeout=900)

@@ -131,7 +131,6 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "rl policy",
         "policy training",
         "reinforcement learning",
-        "isaac lab",
         "train policy",
         "simulation policy",
     ),
@@ -1124,13 +1123,27 @@ def choose_workflow_template(
         for keyword in keywords:
             if keyword in text:
                 scores[template] += 2
+    # Explicit BYOF language must beat RL/Isaac bleed from the full tool catalog.
+    byof_explicit = any(
+        token in text
+        for token in (
+            "byof",
+            "bring your own fork",
+            "leisaac",
+            "lightwheel",
+            "bring-your-own",
+        )
+    )
+    if byof_explicit:
+        scores["byof"] += 10
     if "outer loop" in text and "inner loop" in text:
         scores["vlm-rl-loop"] += 5
     if "gpu" in text and ("region" in text or "project" in text):
         scores["gpu-cross-region"] += 5
     if "rl" in text and ("policy" in text or "training" in text or "isaac" in text):
-        scores["rl-policy-success"] += 5
-    if capabilities:
+        if not byof_explicit:
+            scores["rl-policy-success"] += 5
+    if capabilities and not byof_explicit:
         capabilities_text = " ".join(f"{k}:{v}" for k, v in sorted(capabilities.items())).lower()
         if "token" in capabilities_text:
             scores["token-factory-gate"] += 2

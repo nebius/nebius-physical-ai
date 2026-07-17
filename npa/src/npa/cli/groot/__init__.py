@@ -2721,6 +2721,7 @@ def deploy_cmd(
         except ValueError as exc:
             _fail(str(exc))
             return
+        provisioner.apply_default_image_family(all_vars, gpu_type)
         console.print(
             f"  [{step}/{total_steps}] Applying Terraform (gpu={gpu_type}, region={env_region})..."
         )

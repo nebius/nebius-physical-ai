@@ -28,3 +28,23 @@ def test_default_e2e_project_uses_writable_named_project(monkeypatch) -> None:
     monkeypatch.setattr(e2e_conftest, "list_projects", lambda: {"other": {}, "eu-north1": {}})
 
     assert e2e_conftest._default_e2e_project() == "eu-north1"
+
+
+def test_pytest_configure_maps_aws_env_onto_npa_e2e_s3(monkeypatch) -> None:
+    monkeypatch.delenv("NPA_E2E_S3_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("NPA_E2E_S3_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("NPA_E2E_S3_ENDPOINT", raising=False)
+    monkeypatch.delenv("NPA_E2E_S3_BUCKET", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "SECRET")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
+    monkeypatch.setenv("S3_BUCKET", "bucket-from-aws")
+
+    class _Config:
+        pass
+
+    e2e_conftest.pytest_configure(_Config())
+    assert e2e_conftest.os.environ["NPA_E2E_S3_ACCESS_KEY_ID"] == "AKIATEST"
+    assert e2e_conftest.os.environ["NPA_E2E_S3_SECRET_ACCESS_KEY"] == "SECRET"
+    assert e2e_conftest.os.environ["NPA_E2E_S3_ENDPOINT"] == "https://storage.example"
+    assert e2e_conftest.os.environ["NPA_E2E_S3_BUCKET"] == "bucket-from-aws"

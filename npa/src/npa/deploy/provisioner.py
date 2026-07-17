@@ -130,6 +130,33 @@ def apply_boot_disk_tf_vars(
         tf_vars.update(disk_vars)
 
 
+# Platforms that reject older public CUDA12 images (need nvidia drivers 580.x).
+DEFAULT_CUDA13_IMAGE_FAMILY = "ubuntu24.04-cuda13.0"
+_PLATFORMS_REQUIRING_CUDA13_IMAGE = frozenset(
+    {
+        "gpu-rtx6000",
+        "gpu-b300-sxm",
+    }
+)
+
+
+def default_image_family_for_platform(gpu_platform: str) -> str | None:
+    """Return a boot image family override for GPU platforms that need it."""
+    platform = (gpu_platform or "").strip().lower()
+    if platform in _PLATFORMS_REQUIRING_CUDA13_IMAGE:
+        return DEFAULT_CUDA13_IMAGE_FAMILY
+    return None
+
+
+def apply_default_image_family(tf_vars: dict[str, str], gpu_platform: str) -> None:
+    """Set ``image_family`` when unset and the GPU platform requires CUDA 13 / driver 580."""
+    if "image_family" in tf_vars:
+        return
+    family = default_image_family_for_platform(gpu_platform)
+    if family:
+        tf_vars["image_family"] = family
+
+
 # ── Working directory management ─────────────────────────────────────────
 
 

@@ -80,7 +80,10 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
 
     assert "/opt/lerobot/.env" in lerobot_branch
     assert "Installing LeRobot ${lerobot_version}" in lerobot_branch
-    assert "lerobot[pusht,libero]==${lerobot_version}" in lerobot_branch
+    assert 'LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"' in lerobot_branch
+    assert 'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"' in lerobot_branch
+    assert 'if [ "${lerobot_version}" = "0.6.0" ]' in lerobot_branch
+    assert '"$LEROBOT_VENV/bin/pip" install "$LEROBOT_PIP_SPEC"' in lerobot_branch
 
     assert "LeRobot container VM setup" in container_branch
     assert "$DEPLOY_ROOT/checkpoints" in container_branch
@@ -149,6 +152,28 @@ def test_boot_disk_disk_size_override_applies_to_any_runtime() -> None:
 def test_boot_disk_disk_size_override_must_be_positive() -> None:
     with pytest.raises(ValueError, match="--disk-size must be positive"):
         provisioner.boot_disk_tf_vars("container", 0)
+
+
+def test_default_image_family_for_rtx6000_and_b300() -> None:
+    assert (
+        provisioner.default_image_family_for_platform("gpu-rtx6000")
+        == "ubuntu24.04-cuda13.0"
+    )
+    assert (
+        provisioner.default_image_family_for_platform("gpu-b300-sxm")
+        == "ubuntu24.04-cuda13.0"
+    )
+    assert provisioner.default_image_family_for_platform("gpu-h200-sxm") is None
+
+
+def test_apply_default_image_family_respects_explicit_override() -> None:
+    vars_auto: dict[str, str] = {}
+    provisioner.apply_default_image_family(vars_auto, "gpu-rtx6000")
+    assert vars_auto["image_family"] == "ubuntu24.04-cuda13.0"
+
+    vars_override = {"image_family": "ubuntu24.04-cuda12"}
+    provisioner.apply_default_image_family(vars_override, "gpu-rtx6000")
+    assert vars_override["image_family"] == "ubuntu24.04-cuda12"
 
 
 def test_working_dir_path_and_cleanup(

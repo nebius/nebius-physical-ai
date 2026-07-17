@@ -16,7 +16,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_SERVER_PORT=8080 \
     NPA_CHECKPOINT_DIR=/opt/lerobot/checkpoints \
     NPA_JOB_STATUS_DIR=/opt/lerobot/job_status \
-    NPA_LOG_DIR=/var/log/npa-lerobot
+    NPA_LOG_DIR=/var/log/npa-lerobot \
+    NPA_LEROBOT_VERSION=${LEROBOT_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -73,19 +74,31 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 USER ubuntu
 WORKDIR /opt/lerobot
 
+# 0.5.1 keeps the historic [pusht,libero] extra bundle + pinned torch upgrades.
+# 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && /opt/lerobot/venv/bin/pip install \
-      "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
-      boto3 \
-      fastapi~=0.136.1 \
-      num2words \
-      tensorboard \
-      "uvicorn[standard]" \
-    && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
-      "torch==2.12.1" \
-      "torchvision==0.27.1" \
-      "diffusers>=0.38.0" \
+    && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
+         /opt/lerobot/venv/bin/pip install \
+           "lerobot[training,evaluation,pusht,libero]==${LEROBOT_VERSION}" \
+           boto3 \
+           fastapi~=0.136.1 \
+           num2words \
+           tensorboard \
+           "uvicorn[standard]"; \
+       else \
+         /opt/lerobot/venv/bin/pip install \
+           "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
+           boto3 \
+           fastapi~=0.136.1 \
+           num2words \
+           tensorboard \
+           "uvicorn[standard]" \
+         && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
+           "torch==2.12.1" \
+           "torchvision==0.27.1" \
+           "diffusers>=0.38.0"; \
+       fi \
     && /opt/lerobot/venv/bin/pip uninstall -y wandb
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
