@@ -1833,9 +1833,26 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
+    existing = runs.get(run_id) if isinstance(runs.get(run_id), dict) else {{}}
     snapshot = dict(DEFAULT_SIM_VIZ)
+    if isinstance(existing, dict):
+        snapshot.update(existing)
     snapshot.update(payload)
     snapshot["run_id"] = run_id
+    # Never let a concurrent status poll erase richer artifact fields from load-run.
+    for key in (
+        "artifact_render",
+        "artifact_key",
+        "artifact_uri",
+        "artifact_preview_url",
+        "artifact_download_url",
+        "rrd_uri",
+        "rerun_iframe_url",
+        "visualization_note",
+        "preview_entity",
+    ):
+        if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+            snapshot[key] = existing[key]
     runs[run_id] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
@@ -3275,22 +3292,6 @@ def _save_workflow_draft(
     _save_state(state)
     return draft
 
-def _record_sim_viz_run(state: dict, record: dict) -> None:
-    if not isinstance(record, dict):
-        return
-    run_id = str(record.get("run_id") or "").strip()
-    if not run_id:
-        return
-    entries = state.get("sim_viz_runs")
-    if not isinstance(entries, dict):
-        entries = {{}}
-    snapshot = dict(DEFAULT_SIM_VIZ)
-    snapshot.update(record)
-    snapshot["run_id"] = run_id
-    entries[run_id] = snapshot
-    state["sim_viz_runs"] = entries
-    state["active_run_id"] = run_id
-
 def _sim_viz_runs(state: dict) -> list[dict]:
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
@@ -4699,6 +4700,17 @@ def sim_viz_status(run_id: str = ""):
     state = _load_state()
     payload = _sim_viz_for_run(state, run_id=run_id)
     requested_run = str(run_id or "").strip()
+    # Prefer the live sim_viz snapshot when it matches — history can lag behind
+    # load-run under concurrent UI polls.
+    current = state.get("sim_viz")
+    if isinstance(current, dict):
+        current_run = str(current.get("run_id") or "").strip()
+        payload_run = str(payload.get("run_id") or "").strip()
+        if current_run and (not requested_run or current_run == requested_run or current_run == payload_run):
+            if not requested_run or current_run == requested_run:
+                merged = dict(payload)
+                merged.update(current)
+                payload = merged
     selected = state.get("camera_selection", ["workspace"])
     camera = str(payload.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     payload["camera"] = camera
@@ -4709,7 +4721,8 @@ def sim_viz_status(run_id: str = ""):
         payload["run_id"] = str(latest_submit.get("run_id") or "").strip()
     if str(payload.get("stage") or "idle").strip().lower() == "idle" and payload.get("run_id"):
         payload["stage"] = "submitted"
-    _record_sim_viz_run(state, payload)
+    # Read-only: do not _record/_save here. Concurrent GET status polls were
+    # racing load-run and wiping artifact_render from sim_viz_runs.
     payload_run = str(payload.get("run_id") or "").strip()
     run_has_specific_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     live_url = str(payload.get("live_grpc_url") or "").strip()
@@ -4743,7 +4756,6 @@ def sim_viz_status(run_id: str = ""):
     else:
         payload["available_run_ids"] = []
     payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
-    _save_state(state)
     return payload
 
 @app.get("/sim-viz/runs")

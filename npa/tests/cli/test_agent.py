@@ -660,6 +660,11 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "def _artifact_backed_run_details" in source
     assert "def _workflow_stage_defs_from_state" in source
     assert "Derived stage timeline from" in source
+    assert "Never let a concurrent status poll erase richer artifact fields" in source
+    assert "Read-only: do not _record/_save here" in source
+    status_src = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
+    assert "_save_state(state)" not in status_src
+    assert "_record_sim_viz_run(state, payload)" not in status_src
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
