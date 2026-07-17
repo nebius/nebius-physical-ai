@@ -167,7 +167,18 @@ resource "null_resource" "wait_for_cloud_init" {
         sleep 10
       done
 
-      "$${ssh_cmd[@]}" "cloud-init status --wait || cloud-init status --long || true"
+      # Do not use `cloud-init status --wait`: on some CUDA13 images it hangs
+      # forever even when status is already "done" (boot-finished present).
+      echo "Polling cloud-init status..."
+      for _ in $(seq 1 60); do
+        status="$("$${ssh_cmd[@]}" "cloud-init status 2>/dev/null | awk '{print \$2}'" || true)"
+        echo "cloud-init status: $${status:-unknown}"
+        case "$status" in
+          done|error|disabled) break ;;
+        esac
+        sleep 5
+      done
+      "$${ssh_cmd[@]}" "cloud-init status --long || true" || true
       "$${ssh_cmd[@]}" "test -x /opt/lerobot/venv/bin/python"
       "$${ssh_cmd[@]}" "/opt/lerobot/venv/bin/python -c 'import lerobot; print(\"LeRobot \" + lerobot.__version__ + \" ready\")'"
     EOT
