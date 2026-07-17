@@ -11,7 +11,13 @@ import pytest
 from typer import Exit
 from typer.testing import CliRunner
 
-from npa.cli.agent import AGENT_UI_VERSION, _normalize_llm_models, app, build_agent_urls
+from npa.cli.agent import (
+    AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_UI_VERSION,
+    _normalize_llm_models,
+    app,
+    build_agent_urls,
+)
 
 runner = CliRunner()
 
@@ -605,9 +611,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "already-mounted" in source
     assert "iframe.dataset.rerunRunKey" in source
     assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
-    assert "authenticatedPreviewObjectUrl" in source
-    assert "Loading video preview…" in source
-    assert "Keep the Rerun iframe mounted under the media pane" in source
+    for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
+        assert marker in source, f"missing media-preview contract marker: {marker!r}"
     assert "baselineRrdUpdatedAt" in source
     assert "successStreakTarget" in source
     assert "successStreak" in source
@@ -621,9 +626,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
-    assert "URL.createObjectURL(blob)" in source
     assert "does not reliably consume parent-created blob URLs" in source
-    assert "_artifact_media_type" in source
+    assert "media_type=artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -893,11 +897,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<body>'
                 '<div id="tabChat"></div><div id="tabRerun"></div>'
                 '<div id="stagesPanel"><h3>Stages</h3></div>'
+                '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
+                '<div id="viewerPaneMedia"></div>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
                 '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
+                'function authenticatedPreviewObjectUrl(){} '
                 'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
                 'location.username; location.password; '
-                'Mount the viewer immediately so "Loading application bundle" starts early'
+                'Mount the viewer immediately so "Loading application bundle" starts early; '
+                'Loading video preview…; URL.createObjectURL(blob)'
                 '</script></body></html>'
             )
             return _Resp(html, status_code=200)

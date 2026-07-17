@@ -91,6 +91,73 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
     cy.get("#rerunFrame").should("exist");
+    cy.get("#renderModeVideo").should("exist");
+    cy.get("#artifactPreviewHost").should("exist");
+    cy.get("#viewerPaneMedia").should("exist");
+    cy.window().then((win) => {
+      const html = win.document.documentElement.outerHTML;
+      expect(html).to.include("authenticatedPreviewObjectUrl");
+      expect(html).to.include("URL.createObjectURL(blob)");
+      expect(html).to.include("Loading video preview");
+    });
+  });
+
+  it("loads a live mp4 artifact into the Video viewer with authenticated preview", function () {
+    liveAgentRequest("/api/artifacts/runs").then((runsResp) => {
+      expect(runsResp.status).to.eq(200);
+      const runs = (runsResp.body && runsResp.body.runs) || [];
+      expect(runs.length, "discovered runs").to.be.greaterThan(0);
+
+      const tryRun = (index) => {
+        if (index >= Math.min(runs.length, 20)) {
+          throw new Error("no mp4 artifact found in recent runs");
+        }
+        const runId = String((runs[index] && runs[index].run_id) || "");
+        liveAgentRequest(`/api/artifacts/run/${encodeURIComponent(runId)}`).then((artsResp) => {
+          const arts = (artsResp.body && artsResp.body.artifacts) || [];
+          const mp4 = arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mp4"));
+          if (!mp4) {
+            tryRun(index + 1);
+            return;
+          }
+          liveAgentRequest("/api/sim-viz/load-artifact", {
+            method: "POST",
+            body: { run_id: runId, key: mp4.key },
+          }).then((loadResp) => {
+            expect(loadResp.status).to.eq(200);
+            expect(loadResp.body.ok).to.eq(true);
+            expect(loadResp.body.render).to.eq("video");
+            const preview = String((loadResp.body.sim_viz && loadResp.body.sim_viz.artifact_preview_url) || "");
+            expect(preview).to.match(/^\/api\/artifacts\/file\//);
+            liveAgentRequest(preview).then((fileResp) => {
+              expect(fileResp.status).to.eq(200);
+              const ct = String(fileResp.headers["content-type"] || "").toLowerCase();
+              expect(ct).to.include("video/mp4");
+            });
+            cy.get("#tabRerun").click();
+            cy.get("#artifactRefreshRuns").click();
+            cy.get("#artifactRunSelect", { timeout: 30000 }).then(($select) => {
+              const values = [...$select[0].options].map((opt) => opt.value);
+              if (values.includes(runId)) {
+                cy.wrap($select).select(runId);
+              }
+            });
+            cy.get("#artifactTypeFilter").select("video");
+            cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
+            cy.contains("#artifactList button", "Play").first().click();
+            cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
+            cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
+            cy.get("#artifactPreviewHost video", { timeout: 60000 })
+              .should("have.attr", "src")
+              .and("match", /^blob:/);
+            cy.get("#artifactPreviewHost video")
+              .should("have.attr", "data-preview-url")
+              .and("include", ".mp4");
+          });
+        });
+      };
+      tryRun(0);
+    });
   });
 
   it("drives safe live controls through the browser", () => {

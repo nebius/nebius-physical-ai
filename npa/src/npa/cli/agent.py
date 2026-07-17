@@ -61,10 +61,26 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071701"
+AGENT_UI_VERSION = "2026071702"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
+
+# Contract markers that must stay in the embedded agent UI/backend. verify-live,
+# smoke, and unit tests share this list so media-preview regressions cannot
+# silently disappear after a bootstrap drift or template edit.
+AGENT_MEDIA_PREVIEW_CONTRACT = (
+    "authenticatedPreviewObjectUrl",
+    "Loading video preview…",
+    'data-preview-url="',
+    "Keep the Rerun iframe mounted under the media pane",
+    'id="renderModeVideo"',
+    'id="artifactPreviewHost"',
+    'id="viewerPaneMedia"',
+    "URL.createObjectURL(blob)",
+    '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
+    "artifact_media_type(",
+)
 
 
 def _embedded_agent_workflow_source() -> str:
@@ -2661,29 +2677,6 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
-def _artifact_media_type(filename: str) -> str:
-    name = str(filename or "").lower()
-    if name.endswith(".mp4"):
-        return "video/mp4"
-    if name.endswith(".webm"):
-        return "video/webm"
-    if name.endswith(".mov"):
-        return "video/quicktime"
-    if name.endswith(".png"):
-        return "image/png"
-    if name.endswith(".jpg") or name.endswith(".jpeg"):
-        return "image/jpeg"
-    if name.endswith(".gif"):
-        return "image/gif"
-    if name.endswith(".webp"):
-        return "image/webp"
-    if name.endswith(".json"):
-        return "application/json"
-    if name.endswith(".txt") or name.endswith(".log") or name.endswith(".md"):
-        return "text/plain; charset=utf-8"
-    return "application/octet-stream"
-
-
 def _is_sim2real_pipeline_recording(key: str) -> bool:
     return str(key or "").endswith("/reports/sim2real.rrd")
 
@@ -4953,7 +4946,8 @@ def artifact_file(filename: str):
     target = RECORDINGS_DIR / safe_name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    return FileResponse(str(target), media_type=_artifact_media_type(safe_name))
+    # artifact_media_type comes from the embedded workflows/artifacts.py module.
+    return FileResponse(str(target), media_type=artifact_media_type(safe_name))
 
 
 @app.post("/sim-viz/load-artifact")
@@ -10359,6 +10353,14 @@ def verify_live_cmd(
         "location.username",
         "Mount the viewer immediately so \"Loading application bundle\" starts early",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
+        # Media preview contract — keep in sync with AGENT_MEDIA_PREVIEW_CONTRACT
+        # (HTML-visible subset; backend route markers are source-tested separately).
+        "authenticatedPreviewObjectUrl",
+        "Loading video preview…",
+        'id="renderModeVideo"',
+        'id="artifactPreviewHost"',
+        'id="viewerPaneMedia"',
+        "URL.createObjectURL(blob)",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -10366,6 +10368,12 @@ def verify_live_cmd(
         _fail("UI html must not use lazy-loading on the Rerun iframe")
     if ".tab-panel[hidden]" in ui_html:
         _fail("UI html must not hide tab panels with display:none via hidden attribute")
+    # Guard against regressions that put bare authenticated URLs on <video src>
+    # (browsers omit Authorization headers for media elements under basic auth).
+    if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:
+        _fail("UI html must not assign artifact previewUrl directly to <video src>")
+    if '`<img alt="artifact image" src="${previewUrl}"' in ui_html:
+        _fail("UI html must not assign artifact previewUrl directly to <img src>")
 
     try:
         session_resp = httpx.get(
