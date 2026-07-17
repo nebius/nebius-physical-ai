@@ -40,6 +40,20 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     assert "pixels" in data.lower() or "pixels" in vf._KIND_GUIDANCE["data"]
 
 
+def test_metadata_only_prompt_forbids_invented_pixels() -> None:
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {
+            "artifact_key": "checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real.rrd",
+            "capture": "metadata-only",
+            "has_image": False,
+            "note": "Isaac Lab GR00T proxy",
+        },
+    )
+    assert "No viewer frame image is attached" in prompt
+    assert "Do NOT invent pixels" in prompt
+
+
 def test_infer_visual_domain_hints_from_metadata_not_uri_allowlist() -> None:
     hints = vf.infer_visual_domain_hints(
         {

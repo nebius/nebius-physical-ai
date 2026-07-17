@@ -196,9 +196,24 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
             "",
             "Instructions:",
             guidance,
-            "Use a vision-capable model reading of the attached frame when present. "
-            "Never claim the visual is blank solely because the timeline is short or "
-            "the application id is unfamiliar — inspect pixels first.",
+        ]
+    )
+    if capture in {"metadata-only", "text"} or not meta.get("has_image"):
+        lines.append(
+            "CRITICAL: No viewer frame image is attached. Do NOT invent pixels, "
+            "noise, robots, or scenes. State metadata-only limits up front, use "
+            "domain hints + artifact/note fields, and suggest how to capture a "
+            "real frame (Describe this after the Rerun canvas settles)."
+        )
+    else:
+        lines.append(
+            "Use a vision-capable reading of the attached frame. Never claim the "
+            "visual is blank solely because the timeline is short or the "
+            "application id is unfamiliar — inspect pixels first. Structured sim "
+            "RGB, tiled envs, and 3D meshes are valid content."
+        )
+    lines.extend(
+        [
             "",
             "Reply structure:",
             "1. **What I see** — concrete visual description (or metadata-only "

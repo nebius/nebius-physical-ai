@@ -4599,6 +4599,12 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if visual_turn and not has_image_content(llm_messages):
+        system_content += (
+            "\\n\\nIMPORTANT: No viewer frame image is attached to this turn. "
+            "Do not invent pixel content, RGB noise, or scenes. Answer from "
+            "metadata/domain hints only and tell the operator how to capture a real frame."
+        )
     if skill_ctx:
         system_content += "\\n\\n" + skill_ctx
     messages: list[dict] = [
