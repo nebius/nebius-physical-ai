@@ -69,37 +69,38 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
     image_family = os.environ.get(
         "NPA_PREEMPTIBLE_E2E_IMAGE_FAMILY", "ubuntu24.04-cuda13.0"
     )
-    deploy = _run_npa(
-        [
-            "workbench",
-            "lerobot",
-            "-p",
-            live_project_alias,
-            "-n",
-            live_workbench_name,
-            "deploy",
-            "--gpu-type",
-            gpu_type,
-            "--gpu-preset",
-            gpu_preset,
-            "--preemptible",
-            "-v",
-            f"image_family={image_family}",
-        ]
-    )
-    output = deploy.stdout or ""
-    if deploy.returncode != 0 and (
-        "PermissionDenied" in output
-        or "permission denied" in output.lower()
-        or "UnsupportedOperation" in output
-    ):
-        pytest.skip(
-            "Active profile lacks VPC/compute create permissions for live VM deploy: "
-            f"{output[-400:]}"
-        )
-    assert deploy.returncode == 0, output
-
+    # Infra-only: this test validates preemptible VM create/destroy, not app health.
+    deploy_args = [
+        "workbench",
+        "lerobot",
+        "-p",
+        live_project_alias,
+        "-n",
+        live_workbench_name,
+        "deploy",
+        "--gpu-type",
+        gpu_type,
+        "--gpu-preset",
+        gpu_preset,
+        "--preemptible",
+        "--skip-app",
+        "-v",
+        f"image_family={image_family}",
+    ]
     try:
+        deploy = _run_npa(deploy_args)
+        output = deploy.stdout or ""
+        if deploy.returncode != 0 and (
+            "PermissionDenied" in output
+            or "permission denied" in output.lower()
+            or "UnsupportedOperation" in output
+        ):
+            pytest.skip(
+                "Active profile lacks VPC/compute create permissions for live VM deploy: "
+                f"{output[-400:]}"
+            )
+        assert deploy.returncode == 0, output
+
         cfg = config_module.resolve_workbench(live_project_alias, live_workbench_name)
         instance_id = ""
         if cfg is not None:
