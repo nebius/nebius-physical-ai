@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071711"
+AGENT_UI_VERSION = "2026071712"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -126,6 +126,9 @@ AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
     "openFullChatTab",
     "setChatDrawerOpen",
     'id="openFullChatTab"',
+    'id="chatDrawerClose"',
+    "chat-fab",
+    "transform-origin: bottom right",
 )
 
 AGENT_STAGES_RUN_PICKER_CONTRACT = (
@@ -6623,48 +6626,157 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         0%, 80%, 100% {{ opacity: 0.45; }}
         40% {{ opacity: 1; }}
       }}
-      /* Viewer-focus: collapse full chat into a right drawer over Rerun. */
+      /* Online-chat widget: bottom-right FAB + collapsible panel over Viewer. */
       #chatDrawerToggle {{
         display: none;
         position: fixed;
-        right: 12px;
-        bottom: 18px;
-        z-index: 60;
-        box-shadow: var(--shadow);
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 70;
+        min-width: 56px;
+        height: 56px;
+        padding: 0 18px;
+        border-radius: 999px;
+        box-shadow: 0 10px 28px rgba(13, 42, 61, 0.28);
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        font-weight: 800;
       }}
       body.viewer-focus #chatDrawerToggle {{ display: inline-flex; }}
+      #chatDrawerToggle .chat-fab-icon {{ font-size: 14px; letter-spacing: 0.08em; line-height: 1; }}
+      #chatDrawerToggle.is-open .chat-fab-open-label {{ display: none; }}
+      #chatDrawerToggle:not(.is-open) .chat-fab-close-label {{ display: none; }}
       body.viewer-focus #panelChat.is-inactive {{
-        opacity: 1 !important;
+        opacity: 0 !important;
+        visibility: hidden;
         pointer-events: none;
         position: fixed;
-        top: 72px;
-        right: 0;
-        width: min(420px, 94vw);
-        height: calc(100vh - 96px);
-        z-index: 55;
-        transform: translateX(calc(100% - 18px));
-        transition: transform 0.2s ease;
-        background: var(--surface);
-        border-left: 1px solid var(--border);
-        box-shadow: var(--shadow);
-        overflow: auto;
-        padding: 10px;
+        right: max(14px, env(safe-area-inset-right));
+        bottom: calc(76px + env(safe-area-inset-bottom));
+        top: auto;
+        left: auto;
+        width: min(380px, calc(100vw - 28px));
+        height: min(560px, calc(100vh - 110px));
+        max-height: calc(100vh - 110px);
+        z-index: 65;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        overflow: hidden;
+        transform: translateY(16px) scale(0.96);
+        transform-origin: bottom right;
+        transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
       }}
       body.viewer-focus #panelChat.is-inactive.chat-drawer-open {{
-        transform: translateX(0);
+        opacity: 1 !important;
+        visibility: visible;
         pointer-events: auto;
+        transform: none;
       }}
       body.viewer-focus #panelChat .workflow-panel,
       body.viewer-focus #panelChat .stages-panel {{
         display: none !important;
       }}
       body.viewer-focus #panelChat .chat-panel {{
-        min-height: calc(100vh - 120px);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        margin: 0;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 18px 48px rgba(13, 42, 61, 0.28);
+        background: var(--surface);
+        overflow: hidden;
+      }}
+      body.viewer-focus #panelChat .chat-panel-head {{
+        flex: 0 0 auto;
+        padding: 12px 14px;
+        background: var(--sidebar);
+        color: #fff;
+        border-bottom: 3px solid var(--brand);
+      }}
+      body.viewer-focus #panelChat .chat-panel-head h3 {{
+        color: #fff;
+        font-size: 15px;
+      }}
+      body.viewer-focus #panelChat .chat-panel-head .hint {{
+        color: #b9d1e3;
+        margin: 2px 0 0;
+        font-size: 11px;
+      }}
+      body.viewer-focus #panelChat .chat-panel-head .btn {{
+        background: rgba(255,255,255,0.12);
+        border-color: rgba(255,255,255,0.28);
+        color: #fff;
+        font-size: 12px;
+        padding: 4px 10px;
+      }}
+      body.viewer-focus #panelChat .chat-toolbar {{
+        flex: 0 0 auto;
+        gap: 6px;
+        padding: 8px 10px;
+        margin: 0;
+        border-bottom: 1px solid var(--border);
+      }}
+      body.viewer-focus #panelChat .chat-toolbar .hint {{ display: none; }}
+      body.viewer-focus #panelChat .chat-log {{
+        flex: 1 1 auto;
+        min-height: 160px;
+        max-height: none;
+        height: auto;
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background: #f7fafc;
+      }}
+      body.viewer-focus #panelChat .chat-composer {{
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 8px 10px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+      }}
+      body.viewer-focus #panelChat .chat-composer textarea {{
+        min-height: 44px;
+        max-height: 96px;
+        font-size: 15px;
+      }}
+      body.viewer-focus #panelChat .actions-inline {{
+        flex: 0 0 auto;
+        padding: 0 10px 10px;
+        margin: 0;
+        gap: 6px;
+      }}
+      body.viewer-focus #panelChat .actions-inline .quick-pill {{
+        font-size: 11px;
+        padding: 4px 8px;
+      }}
+      body.viewer-focus #panelChat .mobile-chat-auth {{
+        margin: 8px 10px 0;
       }}
       .chat-panel-head-actions {{
         display: inline-flex;
         gap: 8px;
         align-items: center;
+      }}
+      @media (max-width: 900px) {{
+        body.viewer-focus #panelChat.is-inactive {{
+          right: 8px;
+          left: 8px;
+          width: auto;
+          bottom: calc(72px + env(safe-area-inset-bottom));
+          height: min(72vh, 620px);
+          max-height: calc(100vh - 88px);
+          transform-origin: bottom center;
+        }}
+        body.viewer-focus #chatDrawerToggle {{
+          right: max(10px, env(safe-area-inset-right));
+          bottom: max(12px, env(safe-area-inset-bottom));
+        }}
       }}
       .stages-run-picker {{
         display: flex;
@@ -6683,7 +6795,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         background: var(--surface);
         color: var(--text);
       }}
-      body:not(.viewer-focus) #openFullChatTab {{ display: none; }}
+      body:not(.viewer-focus) #openFullChatTab,
+      body:not(.viewer-focus) #chatDrawerClose {{ display: none; }}
       #chatQueueBadge {{
         margin-left: 6px;
         font-size: 11px;
@@ -7096,7 +7209,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
       </nav>
-      <button id="chatDrawerToggle" class="btn btn-primary" type="button" aria-expanded="false" title="Open chat drawer">Chat <span id="chatQueueBadge">0</span></button>
+      <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
+        <span class="chat-fab-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+        </span>
+        <span class="chat-fab-open-label">Chat</span>
+        <span class="chat-fab-close-label">Close</span>
+        <span id="chatQueueBadge">0</span>
+      </button>
       <main class="page">
         <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabChat" aria-hidden="false">
         <section class="panel chat-panel">
@@ -7107,6 +7227,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             </div>
             <div class="chat-panel-head-actions">
               <button id="openFullChatTab" class="btn" type="button" title="Open full Chat tab">Full chat</button>
+              <button id="chatDrawerClose" class="btn" type="button" title="Collapse chat">Collapse</button>
               <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
             </div>
           </div>
@@ -7491,7 +7612,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const chatPanel = document.getElementById("panelChat");
         const toggle = document.getElementById("chatDrawerToggle");
         if (chatPanel) chatPanel.classList.toggle("chat-drawer-open", chatDrawerOpen);
-        if (toggle) toggle.setAttribute("aria-expanded", chatDrawerOpen ? "true" : "false");
+        if (toggle) {{
+          toggle.classList.toggle("is-open", chatDrawerOpen);
+          toggle.setAttribute("aria-expanded", chatDrawerOpen ? "true" : "false");
+          toggle.title = chatDrawerOpen ? "Close chat" : "Open chat";
+        }}
       }}
       function openChatDrawer() {{
         // Chat drawer overlays the Viewer tab (Rerun/Video/Image/Data) without leaving it.
@@ -7658,6 +7783,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const openFullChatBtn = document.getElementById("openFullChatTab");
         if (openFullChatBtn) {{
           openFullChatBtn.addEventListener("click", () => openFullChatTab());
+        }}
+        const chatDrawerClose = document.getElementById("chatDrawerClose");
+        if (chatDrawerClose) {{
+          chatDrawerClose.addEventListener("click", () => setChatDrawerOpen(false));
         }}
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {{
           btn.addEventListener("click", () => {{
@@ -11324,6 +11453,9 @@ def verify_live_cmd(
         "do not prefetch .rrd bytes",
         'id="openFullChatTab"',
         "openFullChatTab",
+        'id="chatDrawerClose"',
+        "chat-fab",
+        "transform-origin: bottom right",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

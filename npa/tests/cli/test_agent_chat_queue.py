@@ -49,6 +49,12 @@ def test_viewer_chat_drawer_contract() -> None:
     # From Viewer, Chat tab opens drawer; Full chat expands to Chat tab.
     assert 'next === "chat" && activeMainTab === "rerun"' in ui
     assert "openFullChatTab" in ui
+    # Bottom-right online-chat widget (collapsible FAB + panel), mobile-safe.
+    assert "Online-chat widget: bottom-right FAB" in ui
+    assert "chatDrawerClose" in ui
+    assert "env(safe-area-inset-bottom)" in ui
+    assert "min(380px, calc(100vw - 28px))" in ui
+    assert "@media (max-width: 900px)" in ui
 
 
 def test_thinking_ellipsis_high_contrast() -> None:
