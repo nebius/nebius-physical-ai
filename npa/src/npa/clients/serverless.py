@@ -613,13 +613,12 @@ class ServerlessClient:
             return []
         username = (
             os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
-            or os.environ.get("SKYPILOT_DOCKER_USERNAME", "").strip()
             or "iam"
         )
-        password = (
-            os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
-            or os.environ.get("SKYPILOT_DOCKER_PASSWORD", "").strip()
-        )
+        # Prefer an explicit NPA_REGISTRY_PASSWORD; otherwise always mint a
+        # fresh IAM token. Do not reuse SKYPILOT_DOCKER_PASSWORD — ops VMs often
+        # export a token for a different SA/project that cannot pull this CR.
+        password = os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
         if not password:
             password = self._mint_registry_token()
         return ["--registry-username", username, "--registry-password", password]
