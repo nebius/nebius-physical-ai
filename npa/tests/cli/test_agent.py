@@ -699,9 +699,10 @@ def test_bootstrap_run_history_uses_run_id_index() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '"sim_viz_runs": []' not in source
-    assert 'if not isinstance(entries, dict):' in source
-    assert 'entries[run_id] = snapshot' in source
+    assert 'if not isinstance(runs, dict):' in source
+    assert 'runs[run_id] = snapshot' in source
     assert 'state["active_run_id"] = run_id' in source
+    assert "Never let a concurrent status poll erase richer artifact fields" in source
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:
