@@ -301,13 +301,17 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#simCamera").should("contain.text", "heldout-sim");
     cy.get("#rerunFrame").should("be.visible");
     cy.get("#renderModeRerun").should("have.class", "is-active");
+    // Tab panels stay mounted with opacity:0 when inactive — assert activation class,
+    // not Cypress visibility (opacity:0 is treated as hidden).
     cy.get("#tabChat").click();
-    cy.get("#chatForm").should("be.visible");
+    cy.get("#panelChat").should("have.class", "is-active");
+    cy.get("#chatForm").should("exist");
 
+    cy.get("#tabRerun").click();
+    cy.get("#panelRerun").should("have.class", "is-active");
     cy.window().then((win) => {
       const doc = win.document.documentElement;
       expect(doc.scrollWidth, "no distracting horizontal page overflow").to.be.lte(win.innerWidth + 24);
-      win.document.getElementById("tabRerun").click();
       const artifactList = win.document.getElementById("artifactList");
       expect(artifactList, "artifactList exists").to.exist;
       artifactList.scrollIntoView({ block: "nearest" });
@@ -320,15 +324,16 @@ describe("NPA agent UI against live infra", () => {
       const frameRect = rerunFrame.getBoundingClientRect();
       expect(frameRect.width, "rerunFrame has usable width").to.be.greaterThan(240);
       expect(frameRect.height, "rerunFrame has usable height").to.be.greaterThan(40);
-      win.document.getElementById("tabChat").click();
-      for (const id of ["chatForm", "runDetails"]) {
-        const el = win.document.getElementById(id);
-        expect(el, `${id} exists`).to.exist;
-        const rect = el.getBoundingClientRect();
+    });
+    cy.get("#tabChat").click();
+    cy.get("#panelChat").should("have.class", "is-active");
+    for (const id of ["chatForm", "runDetails"]) {
+      cy.get(`#${id}`).should("exist").and(($el) => {
+        const rect = $el[0].getBoundingClientRect();
         expect(rect.width, `${id} has usable width`).to.be.greaterThan(240);
         expect(rect.height, `${id} has usable height`).to.be.greaterThan(40);
-      }
-    });
+      });
+    }
   });
 
   it("answers advanced live run questions with grounded artifact and Rerun context", function () {
