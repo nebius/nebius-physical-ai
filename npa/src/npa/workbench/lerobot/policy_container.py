@@ -22,6 +22,10 @@ from npa.workbench.training_config import (
     upload_checkpoint_path,
     wandb_overrides,
 )
+from npa.workbench.lerobot.version_compat import (
+    eval_checkpoint_arg,
+    train_env_eval_arg,
+)
 
 
 DEFAULT_POLICY_CHECKPOINT = "lerobot/diffusion_pusht"
@@ -356,7 +360,7 @@ def build_lerobot_train_command(
         f"--output_dir={output_dir}",
         f"--steps={steps}",
         f"--save_freq={save_freq}",
-        f"--eval_freq={eval_freq}",
+        train_env_eval_arg(eval_freq),
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
@@ -469,7 +473,7 @@ def build_lerobot_eval_command(
     cmd = [
         "lerobot-eval",
         f"--policy.type={policy_type}",
-        f"--policy.pretrained_path={checkpoint_path}",
+        eval_checkpoint_arg(str(checkpoint_path), style="policy"),
         f"--env.type={env_type}",
         f"--output_dir={output_dir}",
         "--eval.batch_size=1",

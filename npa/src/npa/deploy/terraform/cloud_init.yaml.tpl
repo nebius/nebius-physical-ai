@@ -474,7 +474,14 @@ runcmd:
     "$LEROBOT_VENV/bin/pip" install --upgrade pip setuptools wheel || { echo "ERROR: Failed to upgrade pip"; exit 1; }
 
     echo "Installing LeRobot ${lerobot_version}..."
-    "$LEROBOT_VENV/bin/pip" install "lerobot[pusht,libero]==${lerobot_version}" boto3 wandb tensorboard num2words || { echo "ERROR: Failed to install packages"; exit 1; }
+    # 0.6.0 ships a lean base install; workbench needs training/eval + PushT/LIBERO extras.
+    # 0.5.1 (default) keeps the historic [pusht,libero] bundle.
+    if [ "${lerobot_version}" = "0.6.0" ]; then
+      LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"
+    else
+      LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"
+    fi
+    "$LEROBOT_VENV/bin/pip" install "$LEROBOT_PIP_SPEC" boto3 wandb tensorboard num2words || { echo "ERROR: Failed to install packages"; exit 1; }
 
     # Verify installation
     echo "Verifying LeRobot installation..."

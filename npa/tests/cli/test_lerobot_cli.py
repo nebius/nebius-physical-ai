@@ -391,6 +391,23 @@ def test_lerobot_train_container_command_does_not_pre_create_output_dir() -> Non
 
     assert "mkdir -p /tmp/lerobot_output" not in command
     assert "mkdir -p /tmp/hf_home" in command
+    assert "--eval_freq=1000000" in command
+
+
+def test_lerobot_train_container_command_uses_env_eval_freq_for_060() -> None:
+    command = lerobot._lerobot_train_container_command(
+        "act",
+        "lerobot/pusht",
+        "",
+        50,
+        4,
+        2,
+        smoke=True,
+        lerobot_version="0.6.0",
+    )
+
+    assert "--env_eval_freq=1000000" in command
+    assert "--eval_freq=" not in command
 
 
 def test_lerobot_train_container_command_supports_s3_input() -> None:
@@ -428,6 +445,21 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
     client.poll_job.assert_not_called()
     update.assert_called_once()
+
+
+def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+
+    result = runner.invoke(
+        app,
+        _serverless_train_args("--submit-only", "--lerobot-version", "0.6.0"),
+    )
+
+    assert result.exit_code == 0, result.output
+    kwargs = client.create_job.call_args.kwargs
+    assert kwargs["image"] == "registry.example/npa/npa-lerobot:0.6.0"
+    assert "--env_eval_freq=1000000" in kwargs["command"]
+    assert "--eval_freq=" not in kwargs["command"]
 
 
 def test_lerobot_train_serverless_prefers_credentials_endpoint_for_matching_bucket(mocker) -> None:
@@ -705,5 +737,5 @@ def test_lerobot_train_default_runtime_still_uses_ssh(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    assert "lerobot-train" in ssh.run.call_args.args[0]
+    assert any("lerobot-train" in call.args[0] for call in ssh.run.call_args_list)
     client_cls.assert_not_called()

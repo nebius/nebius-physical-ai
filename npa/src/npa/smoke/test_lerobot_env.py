@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Callable
 
-from npa.smoke._versions import supported_tool_version
+from npa.smoke._versions import expected_lerobot_version
 
 
 @dataclass
@@ -40,7 +40,7 @@ def _format_exception(exc: BaseException) -> str:
 
 def check_import_lerobot() -> CheckResult:
     try:
-        expected = supported_tool_version("lerobot", __file__)
+        expected = expected_lerobot_version(__file__)
         lerobot = importlib.import_module("lerobot")
         version = _package_version(lerobot, "lerobot")
         if version != expected:
