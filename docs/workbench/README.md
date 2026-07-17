@@ -8,6 +8,9 @@ workflows, and operational runbooks.
 | Path | Purpose |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Fresh-clone onboarding path for install, credentials, and first Workbench runs |
+| [container-packaging.md](container-packaging.md) | Container packaging tiers, security baseline, and feature exposure contract |
+| [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) | OSS → BYOF → workflow → first-class tool promotion ladder |
+| [npa-workflow-tool-catalog.md](npa-workflow-tool-catalog.md) | `toolRef` catalog for declarative `npa.workflow` specs |
 | [kubernetes.md](kubernetes.md) | User setup and operational checklist for running Workbench services and SkyPilot workflows on Kubernetes |
 | [../../npa/workflows/workbench/skypilot/README.md](../../npa/workflows/workbench/skypilot/README.md) | **Workflow catalog** — find the right SkyPilot YAML by what you want to do |
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
@@ -33,6 +36,8 @@ workflows, and operational runbooks.
 | Customer running their first Workbench workload | [getting-started.md](getting-started.md) |
 | Customer or operator using managed Kubernetes | [kubernetes.md](kubernetes.md) |
 | Anyone choosing between CLI, SDK, and YAML | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) |
+| Partner onboarding an OSS repo | [../architecture/oss-onboarding-ladder.md](../architecture/oss-onboarding-ladder.md) |
+| Engineer packaging or hardening a container | [container-packaging.md](container-packaging.md) |
 | Customer running the first H100 sim-to-real proof | [sim-to-real-quickstart.md](sim-to-real-quickstart.md) |
 | Operator reproducing a workload | [cookbooks/README.md](cookbooks/README.md) |
 | SDK integrator or agent author | [../sdk/errors.md](../sdk/errors.md) |

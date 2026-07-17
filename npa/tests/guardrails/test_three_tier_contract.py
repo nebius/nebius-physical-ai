@@ -246,6 +246,8 @@ def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
 def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
     contracted = {contract.name.split("/", 1)[0] for contract in CONTRACTS}
     seam = {
+        # Tier-0 BYOF onboarding CLI (script-backed; not a FastAPI service).
+        "byof",
         "cosmos",
         "data",
         "fiftyone",

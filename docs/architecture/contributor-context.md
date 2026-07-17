@@ -183,6 +183,19 @@ Both surfaces are validated with worked example. The cookbook's
 "Platform Guarantees And Image Responsibilities" section codifies the
 contract between Workbench and the partner's image.
 
+### OSS Onboarding Ladder (platform)
+
+Arbitrary public OSS repos follow a three-tier ladder documented in
+`docs/architecture/oss-onboarding-ladder.md`:
+
+- **Tier 0** — `npa workbench byof run` / `workbench.byof.repo` (containerize + smoke)
+- **Tier 1** — solution-specific `npa.workflow` YAML + catalog `toolRef`
+- **Tier 2** — first-class workbench tool (this section's seven-step checklist)
+
+Container packaging for Tier 2 (and curated images) must satisfy
+`docs/workbench/container-packaging.md`. Partner Omniverse capabilities
+additionally follow `docs/architecture/partner-skills-roadmap.md` gating.
+
 ### Onboarding Doctrine (W11 condensed commit)
 
 `docs/workbench/getting-started.md` is the canonical day-zero entry point for

@@ -41,6 +41,10 @@ skills:
     smoke:
       - type: file_exists
         path: docs/architecture/contributor-context.md
+      - type: file_exists
+        path: docs/architecture/oss-onboarding-ladder.md
+      - type: file_exists
+        path: docs/workbench/container-packaging.md
   - name: build-and-push-image
     category: atomic
     when_to_use: "Build, tag, validate, or push NPA workbench container images."
@@ -51,6 +55,8 @@ skills:
         contains: "--gpu-type"
       - type: file_exists
         path: npa/src/npa/deploy/sonic_image_manifest.json
+      - type: file_exists
+        path: npa/docker/workbench/packaging-contract.yaml
   - name: cosmos3-codebase-nav
     category: atomic
     when_to_use: "Navigate NPA Cosmos3 integration and upstream Cosmos framework files."
@@ -355,6 +361,11 @@ skills:
     smoke:
       - type: file_exists
         path: npa/scripts/run_byof_repo.py
+      - type: file_exists
+        path: docs/architecture/oss-onboarding-ladder.md
+      - type: cli_help
+        args: ["workbench", "byof", "run", "--help"]
+        contains: "--repo-url"
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/byof.yaml

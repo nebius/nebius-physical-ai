@@ -3094,10 +3094,11 @@ def _agent_system_prompt() -> str:
             "Always use real registry-qualified images from your Nebius container registry",
             "(or `NPA_REGISTRY` / `container_registry` in ~/.npa/config.yaml); never keep",
             "`<your-registry-id>` placeholders in runnable workflows.",
-            "For BYOF solution onboarding, use the",
-            "`npa/scripts/run_byof_repo.py` flow to containerize an OSS repo,",
+            "For BYOF solution onboarding, use `npa workbench byof run`",
+            "(or `npa/scripts/run_byof_repo.py`) to containerize an OSS repo,",
             "push to the configured Nebius registry, then launch a real Isaac-Lab run",
             "with `--image` override on RT-core GPUs (L40S / RTX PRO 6000).",
+            "See docs/architecture/oss-onboarding-ladder.md for Tier 0→2 promotion.",
             "For live infra runs, verify GPU compatibility first (`sky check`, `sky gpus list`)",
             "and loop submit attempts in tmux until validation+plan+prechecks pass.",
             "After submit, point users to /rerun/ and poll /api/sim-viz/status until rrd_uri is set.",
@@ -9871,8 +9872,8 @@ def verify_live_cmd(
     if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
         _fail("onboard_solution chat did not return ok=true")
     onboard_reply = str(onboard_payload.get("reply") or "")
-    if "run_byof_repo.py" not in onboard_reply:
-        _fail("onboard_solution chat reply missing run_byof_repo.py command")
+    if "npa workbench byof run" not in onboard_reply and "run_byof_repo.py" not in onboard_reply:
+        _fail("onboard_solution chat reply missing byof CLI or run_byof_repo.py command")
     if "byof-onboard" not in onboard_reply and "skills/workflows/byof-onboard" not in onboard_reply:
         _fail("onboard_solution chat reply missing byof-onboard skill reference")
     if "--base-profile" not in onboard_reply and "--base-image" not in onboard_reply:

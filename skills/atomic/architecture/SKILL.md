@@ -30,3 +30,14 @@ Partner model: partners listed in the ecosystem must run workloads on Nebius inf
 LeRobot connects data generation to robot policy training and is the default training framework for robot policy workflows.
 
 The sim-to-real gap is the most important and least-tooled layer. Existing approaches are either deeply custom or unproductized.
+
+## OSS and container packaging
+
+- OSS onboarding ladder (BYOF → workflow → first-class tool):
+  `docs/architecture/oss-onboarding-ladder.md`
+- Container packaging tiers and security baseline:
+  `docs/workbench/container-packaging.md`
+- Machine-readable packaging contract:
+  `npa/docker/workbench/packaging-contract.yaml`
+- Generic BYOF operator skill: `skills/workflows/byof-onboard/SKILL.md`
+  (`npa workbench byof`, `npa.sdk.workbench.byof`, `workbench.byof.repo`)

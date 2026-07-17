@@ -31,6 +31,16 @@ or workflow image references for NPA workbench tools.
 - YAML: workflow `image_id` values should come from variables or manifests,
   especially SONIC's `npa/src/npa/deploy/sonic_image_manifest.json`.
 
+## Packaging Contract
+
+Before changing Dockerfiles, read `docs/workbench/container-packaging.md` and
+update `npa/docker/workbench/packaging-contract.yaml` when adding an image or
+changing its tier (`service` / `job` / `interactive`).
+
+Security baseline: non-root final USER, no secrets in layers, digest-pinned
+bases where possible, Trivy scan coverage. Service images should expose ports
+and prefer a `HEALTHCHECK` or K8s probe on `/health`.
+
 ## Gotchas
 
 - Do not commit concrete registry IDs or private image digests from a live

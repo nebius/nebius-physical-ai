@@ -16,6 +16,8 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  # Prefer a concrete endpoint. Leave empty only when the submitter injects one;
+  # unexpanded "${AWS_ENDPOINT_URL}" placeholders break boto3 client construction.
   AWS_ENDPOINT_URL: "https://storage.eu-north1.nebius.cloud"
 setup: |
   set -euo pipefail
@@ -53,6 +55,13 @@ run: |
   from urllib.parse import urlparse
 
   import boto3
+  from botocore.config import Config
+
+  def _endpoint(value: str | None) -> str | None:
+      text = (value or "").strip()
+      if not text or (text.startswith("${") and text.endswith("}")):
+          return None
+      return text
 
   run_id = os.environ["NPA_BYOF_RUN_ID"]
   root = Path(f"/workspace/byof-runs/{run_id}")
@@ -77,19 +86,11 @@ run: |
 
   output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
   parsed = urlparse(output)
-  if parsed.scheme == "s3" and parsed.netloc:
+  endpoint = _endpoint(
+      os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
+  )
+  if parsed.scheme == "s3" and parsed.netloc and endpoint:
       prefix = parsed.path.lstrip("/")
-      def _endpoint(value):
-          text = (value or "").strip()
-          if not text or (text.startswith("${") and text.endswith("}")):
-              return None
-          return text
-
-      from botocore.config import Config
-
-      endpoint = _endpoint(
-          os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT")
-      )
       client_kwargs = {
           "endpoint_url": endpoint,
           "config": Config(s3={"addressing_style": "path"}),
@@ -109,6 +110,11 @@ run: |
               key = prefix + str(path.relative_to(root))
               s3.upload_file(str(path), parsed.netloc, key)
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+  elif parsed.scheme == "s3" and parsed.netloc:
+      print(
+          "skipping S3 upload: AWS_ENDPOINT_URL/NEBIUS_S3_ENDPOINT unset",
+          flush=True,
+      )
   PY
   if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
     exit "${SMOKE_EXIT_CODE}"

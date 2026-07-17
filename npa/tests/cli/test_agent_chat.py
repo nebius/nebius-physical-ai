@@ -166,7 +166,7 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
 def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
     reply = build_grounded_reply("onboard_solution", state, ["workbench.rl.policy_train"])
-    assert "run_byof_repo.py" in reply
+    assert "npa workbench byof run" in reply or "run_byof_repo.py" in reply
     assert "--base-profile" in reply or "--base-image" in reply
     assert "byof-onboard" in reply or "skills/workflows/byof-onboard" in reply
     assert "oss-solution-registry-onboard" in reply
@@ -177,6 +177,7 @@ def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     assert "<repo-url>" in reply
     assert "container-verify" in reply or "byof-onboard" in reply
     assert "registry" in reply.lower()
+    assert "oss-onboarding-ladder" in reply
 
 
 def test_onboard_solution_reply_uses_npa_registry_env(monkeypatch) -> None:

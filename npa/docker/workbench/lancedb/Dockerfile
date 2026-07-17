@@ -29,4 +29,7 @@ EXPOSE 8686
 
 USER ubuntu
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import os,urllib.request; p=os.environ.get('LANCEDB_PORT','8686'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
+
 ENTRYPOINT ["/entrypoint.sh"]
