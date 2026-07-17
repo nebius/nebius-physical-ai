@@ -1124,11 +1124,8 @@ def format_onboard_solution() -> str:
             "- Registry candidate capability smoke: use `--workload solution-smoke` with `--build-command`, `--smoke-command`, `--solution-name`, `--capability-name`, and `--smoke-artifact-name`.",
             "- Build-only smoke (no SkyPilot submit): add `--skip-run`.",
             "- Live verify: `bash npa/scripts/verify_byof_onboarding_live.sh` with `NPA_BYOF_LIVE_PIPELINE=1`.",
-<<<<<<< HEAD
-            "- After container-verify: author a solution workflow (`author-npa-workflow`) or promote to a first-class tool (`contributor-context.md`).",
-=======
             "- Chat can also draft a BYOF `npa.workflow` YAML; run it with `npa workbench workflow run-spec … --execute` on the operator machine.",
->>>>>>> d250d41 (Improve agent workflow renderings and chat CLI capability parity.)
+            "- After container-verify: author a solution workflow (`author-npa-workflow`) or promote to a first-class tool (`contributor-context.md`).",
             "- Do not mark a solution registry-ready from a Docker build or generic import check alone.",
         ]
     )
