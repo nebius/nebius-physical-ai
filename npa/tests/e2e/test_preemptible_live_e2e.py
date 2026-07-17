@@ -63,6 +63,12 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
     env = config_module.resolve_environment(live_project_alias)
     assert env is not None, f"Unknown project alias {live_project_alias!r}"
 
+    # rtxpro / us-central1 exposes gpu-rtx6000 (not L40S); CUDA13 image has driver 580.x.
+    gpu_type = os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_TYPE", "gpu-rtx6000")
+    gpu_preset = os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_PRESET", "1gpu-24vcpu-218gb")
+    image_family = os.environ.get(
+        "NPA_PREEMPTIBLE_E2E_IMAGE_FAMILY", "ubuntu24.04-cuda13.0"
+    )
     deploy = _run_npa(
         [
             "workbench",
@@ -73,11 +79,12 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
             live_workbench_name,
             "deploy",
             "--gpu-type",
-            # rtxpro / us-central1 exposes gpu-rtx6000 (not L40S); use its 1-GPU preset.
-            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_TYPE", "gpu-rtx6000"),
+            gpu_type,
             "--gpu-preset",
-            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_PRESET", "1gpu-24vcpu-218gb"),
+            gpu_preset,
             "--preemptible",
+            "-v",
+            f"image_family={image_family}",
         ]
     )
     output = deploy.stdout or ""

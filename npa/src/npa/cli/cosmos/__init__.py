@@ -2303,6 +2303,7 @@ def deploy_cmd(
         except ValueError as exc:
             _fail(str(exc))
             return
+        provisioner.apply_default_image_family(merged_vars, gpu_type)
 
     if use_remote_state and nebius_creds and not dry_run:
         write_config(
