@@ -28,16 +28,40 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     )
     assert vf.DESCRIBE_MARKER in rerun
     assert "heldout-sim" in rerun
-    assert "noise/static" in rerun.lower() or "RGB noise" in rerun
+    assert "NOT 'blank'" in rerun or "not blank" in rerun.lower() or "not 'blank'" in rerun
     assert "Next actions" in rerun
 
     video = vf.describe_user_prompt("video", {"run_id": "r1"})
     assert "video viewer" in video
     assert "success/failure" in video.lower() or "success/failure" in vf._KIND_GUIDANCE["video"]
 
-    data = vf.describe_user_prompt("data", {})
-    assert "metadata-only" in data or "Data pane" in vf._KIND_GUIDANCE["data"]
+    data = vf.describe_user_prompt("data", {"text_excerpt": '{"success_rate": 0.4}'})
+    assert "success_rate" in data
     assert "pixels" in data.lower() or "pixels" in vf._KIND_GUIDANCE["data"]
+
+
+def test_infer_visual_domain_hints_from_metadata_not_uri_allowlist() -> None:
+    hints = vf.infer_visual_domain_hints(
+        {
+            "artifact_key": "checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real.rrd",
+            "visualization_note": "Isaac Lab held-out camera with GR00T policy proxy",
+            "workflow_name": "sim2real",
+        }
+    )
+    joined = " ".join(hints).lower()
+    assert "gr00t" in joined or "foundation-policy" in joined
+    assert "isaac" in joined
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {
+            "artifact_key": "checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real.rrd",
+            "note": "Isaac Lab + GR00T visualization",
+            "capture": "frame",
+            "frame_quality": "rendered",
+        },
+    )
+    assert "Domain hints" in prompt
+    assert "blank" in prompt.lower()  # guidance warns against false blank calls
 
 
 def test_normalize_messages_for_llm_preserves_image_parts() -> None:
@@ -135,11 +159,11 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert f'AGENT_UI_VERSION = "{AGENT_UI_VERSION}"' in source
     for marker in AGENT_VISUAL_FEEDBACK_CONTRACT:
         assert marker in source, f"missing contract marker in agent.py: {marker!r}"
-        if marker != "normalize_messages_for_llm":
-            assert marker in ui_html or marker in source, marker
     assert 'id="describeVisual"' in ui_html
     assert "async function describeVisual" in ui_html
     assert "async function captureVisualContext" in ui_html
+    assert "waitForQualityRerunFrame" in ui_html
+    assert "frameLooksBlank" in ui_html
     assert "visual_context" in ui_html
     assert "_AGENT_VISUAL_FEEDBACK_EMBED" in source
     assert ".replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)" in source
@@ -147,6 +171,7 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "normalize_messages_for_llm(raw_messages)" in source
     assert "is_visual_feedback_turn(" in source
     assert "None if visual_turn else _agent_chat_with_tools" in source
+    assert "infer_visual_domain_hints" in _embedded_agent_visual_feedback_source()
 
 
 def test_build_multimodal_user_content() -> None:

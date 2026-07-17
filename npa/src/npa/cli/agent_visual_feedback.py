@@ -6,11 +6,13 @@ project/secret hardcoding.
 
 Supports per-visual prompts for Rerun, video, image, and data panes so the
 vision (or reasoning) model gives operator-actionable feedback instead of a
-generic caption.
+generic caption. Domain hints are inferred from free-text metadata tokens
+(artifact key, notes, workflow name) — never from a hardcoded URI allowlist.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
 # Marker prefix so grounded intents never swallow Describe-this turns, and so
@@ -22,40 +24,74 @@ MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
 VISUAL_KINDS = frozenset({"rerun", "video", "image", "data", "unknown"})
 
+# Token → operator-facing hint. Matched against joined metadata text only.
+_DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("gr00t", "groot", "nvidia-gr00t", "eagle"),
+        "Metadata suggests a foundation-policy / GR00T-style rollout view in sim — "
+        "look for robot embodiment, end-effector, tabletop, or policy camera streams, "
+        "not an empty page.",
+    ),
+    (
+        ("isaac", "isaaclab", "isaac-lab", "omniverse", "replicator"),
+        "Metadata suggests Isaac Lab / Omniverse sim content — expect synthetic RGB, "
+        "depth, segmentation, or a 3D viewport rather than a blank canvas.",
+    ),
+    (
+        ("heldout", "held-out", "eval"),
+        "Metadata suggests held-out evaluation imagery — camera streams may look "
+        "noisy, low-res, or tiled across envs; that can still be valid eval data.",
+    ),
+    (
+        ("policy", "rollout", "manip", "franka", "cube", "lift"),
+        "Metadata suggests policy-rollout / manipulation imagery — describe robot, "
+        "object, and task progress when visible.",
+    ),
+    (
+        ("genesis", "mujoco", "mjlab", "locomotion", "sonic"),
+        "Metadata suggests locomotion / physics-sim imagery — describe gait, terrain, "
+        "and contact cues when visible.",
+    ),
+    (
+        ("cosmos", "world model", "synthetic"),
+        "Metadata suggests synthetic / world-model imagery — judge temporal coherence "
+        "and artifacts rather than assuming real-robot footage.",
+    ),
+)
+
 _KIND_GUIDANCE: dict[str, str] = {
     "rerun": (
-        "This frame is from the embedded Rerun viewer (Sim2Real / robotics "
-        "timeline). Identify what is shown (held-out sim camera, policy "
-        "rollout, 3D proxy, UI chrome, or noise/static). If the image looks "
-        "like random RGB noise or uninitialized pixels, say so plainly and "
-        "suggest concrete checks: timeline scrub, entity selection, whether "
-        "the .rrd is a real camera stream vs placeholder, and cross-check "
-        "held-out eval report / video artifacts. Do not invent robot hardware "
-        "footage that is not visible."
+        "This frame is from the embedded Rerun viewer (robotics / sim timeline). "
+        "Identify what is shown: sim RGB camera, depth/seg overlay, 3D scene graph, "
+        "policy rollout strip, UI chrome, or true emptiness. "
+        "IMPORTANT: dense RGB speckles, tiled env thumbnails, dark viewports with a "
+        "robot mesh, or Isaac/GR00T-style synthetic frames are NOT 'blank' — describe "
+        "them. Only call a frame blank when it is uniform black/white/gray with no "
+        "structure. If noisy, say whether it looks like compressed camera bytes, "
+        "uninitialized GPU memory, or a multi-env mosaic. Suggest timeline scrub, "
+        "entity selection, and alternate Video/Image artifacts when helpful. "
+        "Do not invent hardware footage that is not visible."
     ),
     "video": (
-        "This is a frame from a loaded video artifact (often held-out success/"
-        "failure MP4). Describe visible motion quality, task progress, and "
-        "obvious success/failure cues. Call out blur, freezes, UI overlays, "
-        "or empty frames. Suggest whether the operator should keep this clip, "
-        "compare to Rerun, or re-run eval."
+        "This is a frame from a loaded video artifact. Describe visible motion "
+        "quality, task progress, and success/failure cues. Call out blur, freezes, "
+        "UI overlays, or empty frames. Suggest whether to keep the clip, compare to "
+        "Rerun, or re-run eval."
     ),
     "image": (
-        "This is a still image artifact from the run. Describe the scene "
-        "concretely (objects, robot, camera viewpoint, defects). Note "
-        "corruption, saturation, or empty content. Suggest how it helps "
-        "operator debugging or dataset review."
+        "This is a still image artifact. Describe the scene concretely (objects, "
+        "robot, camera viewpoint, defects). Note corruption or empty content. "
+        "Suggest how it helps debugging or dataset review."
     ),
     "data": (
         "No pixel frame is attached — the operator is on the Data pane "
-        "(JSON/text/report). Infer from metadata what the artifact is and "
-        "what an operator should verify next (keys, success_rate, stage "
-        "status, missing fields). Be concrete; do not pretend you can see "
-        "pixels."
+        "(JSON/text/report). Use any provided text excerpt plus metadata. Infer what "
+        "the artifact is and what to verify next (keys, success_rate, stage status, "
+        "missing fields). Do not pretend you can see pixels."
     ),
     "unknown": (
-        "Describe whatever visual context is available and give practical "
-        "operator next steps for the NPA agent workbench."
+        "Describe whatever visual context is available and give practical operator "
+        "next steps for the NPA agent workbench."
     ),
 }
 
@@ -68,6 +104,47 @@ def normalize_visual_kind(kind: str | None) -> str:
     return "unknown"
 
 
+def _meta_blob(meta: Mapping[str, Any] | None) -> str:
+    if not isinstance(meta, Mapping):
+        return ""
+    parts: list[str] = []
+    for key in (
+        "artifact_key",
+        "key",
+        "artifact_uri",
+        "s3_uri",
+        "note",
+        "visualization_note",
+        "workflow_name",
+        "run_id",
+        "stage",
+        "camera",
+        "artifact_render",
+        "text_excerpt",
+    ):
+        value = meta.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts).lower()
+
+
+def infer_visual_domain_hints(meta: Mapping[str, Any] | None) -> list[str]:
+    """Infer domain hints from free-text metadata (no URI allowlists)."""
+    blob = _meta_blob(meta)
+    if not blob:
+        return []
+    # Soft-normalize separators so gr00t_n1 / isaac-lab match token rules.
+    normalized = re.sub(r"[_\-/.:]+", " ", blob)
+    hints: list[str] = []
+    for tokens, hint in _DOMAIN_HINT_RULES:
+        if any(token in normalized for token in tokens):
+            hints.append(hint)
+    return hints[:4]
+
+
 def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> str:
     """Build the user-visible prompt text for a Describe-this turn."""
     visual_kind = normalize_visual_kind(kind)
@@ -76,10 +153,14 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
     camera = str(meta.get("camera") or "").strip()
     stage = str(meta.get("stage") or "").strip()
     artifact_key = str(meta.get("artifact_key") or meta.get("key") or "").strip()
+    note = str(meta.get("note") or meta.get("visualization_note") or "").strip()
+    text_excerpt = str(meta.get("text_excerpt") or "").strip()
+    frame_quality = str(meta.get("frame_quality") or "").strip()
     capture = str(meta.get("capture") or "").strip() or (
         "frame" if meta.get("has_image") else "metadata-only"
     )
     guidance = _KIND_GUIDANCE.get(visual_kind, _KIND_GUIDANCE["unknown"])
+    domain_hints = infer_visual_domain_hints(meta)
     lines = [
         f"{DESCRIBE_MARKER} Describe this {visual_kind} viewer and give "
         "operator feedback.",
@@ -88,6 +169,8 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
         f"- visual_kind: `{visual_kind}`",
         f"- capture: `{capture}`",
     ]
+    if frame_quality:
+        lines.append(f"- frame_quality: `{frame_quality}`")
     if run_id:
         lines.append(f"- run_id: `{run_id}`")
     if stage:
@@ -96,17 +179,31 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
         lines.append(f"- camera: `{camera}`")
     if artifact_key:
         lines.append(f"- artifact: `{artifact_key}`")
+    if note:
+        lines.append(f"- note: {note[:320]}")
+    if text_excerpt:
+        lines.append("- data_excerpt:")
+        lines.append("```")
+        lines.append(text_excerpt[:2500])
+        lines.append("```")
+    if domain_hints:
+        lines.append("")
+        lines.append("Domain hints from metadata (not pixel labels):")
+        for hint in domain_hints:
+            lines.append(f"- {hint}")
     lines.extend(
         [
             "",
             "Instructions:",
             guidance,
+            "Use a vision-capable model reading of the attached frame when present. "
+            "Never claim the visual is blank solely because the timeline is short or "
+            "the application id is unfamiliar — inspect pixels first.",
             "",
             "Reply structure:",
             "1. **What I see** — concrete visual description (or metadata-only "
             "limits).",
-            "2. **Likely meaning** — how this relates to Sim2Real / the active "
-            "run.",
+            "2. **Likely meaning** — how this relates to the active run / stack.",
             "3. **Operator feedback** — what looks healthy vs suspicious.",
             "4. **Next actions** — 2–4 concrete clicks/commands in the agent UI "
             "or CLI.",
@@ -129,7 +226,11 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         "artifact_key",
         "artifact_uri",
         "capture",
+        "frame_quality",
         "note",
+        "visualization_note",
+        "workflow_name",
+        "text_excerpt",
     )
     lines = ["Active visual context for this Describe-this turn:"]
     for key in allowed:
@@ -137,13 +238,17 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         if value is None:
             continue
         text = str(value).strip()
-        if not text or len(text) > 400:
+        if not text:
             continue
-        # Never echo credentials-looking values into the prompt.
+        limit = 2500 if key == "text_excerpt" else 400
+        if len(text) > limit:
+            text = text[:limit] + "…"
         lowered = text.lower()
         if any(token in lowered for token in ("password", "secret", "token=", "ak_", "sk-")):
             continue
         lines.append(f"- {key}: `{text}`")
+    for hint in infer_visual_domain_hints(meta):
+        lines.append(f"- domain_hint: {hint}")
     if len(lines) == 1:
         return ""
     return "\n".join(lines)

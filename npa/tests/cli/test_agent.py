@@ -391,17 +391,19 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "llm.env" in source
     assert "renderInlineMarkdownLite" in source
     assert "showThinkingBubble" in source
-    assert "thinking-dots" in source
+    assert "thinking-ellipsis" in source
+    assert 'aria-label="thinking">...</span>' in source
     assert "font-family: Inter, system-ui" in source
     assert "font-family: monospace" not in source
     assert "quick-pill" in source
     assert "--brand: #e5ff4f;" in source
     assert "--sidebar: #0d2a3d;" in source
+    assert "--thinking-fg:" in source
     assert ".msg-row.user .bubble" in source
     assert "color: var(--brand-ink);" in source
     assert "markdownLiteHtml" in source
     assert "Secure basic-auth session" in source
-    assert "sparkle" in source
+    assert "enqueueChatJob" in source
     assert "npa workbench byof run" in source or "run_byof_repo.py" in source
     assert "For BYOF solution onboarding" in source
     assert "Always use real registry-qualified images" in source
@@ -448,7 +450,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "activeChatSessionId" in source
     assert "/api/chat/sessions" in source
     assert "npa-agent/tenants/" in source
-    assert "Send failed; your draft was restored." in source
+    assert "Send failed." in source
+    assert "queueChatText" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in source
     assert "@media (max-width: 900px)" in source

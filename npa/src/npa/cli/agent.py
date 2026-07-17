@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071708"
+AGENT_UI_VERSION = "2026071709"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -106,6 +106,30 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "[npa-visual-feedback]",
     "visual_context",
     "normalize_messages_for_llm",
+    "infer_visual_domain_hints",
+    "frameLooksBlank",
+    "waitForQualityRerunFrame",
+)
+
+AGENT_CHAT_QUEUE_CONTRACT = (
+    "chatQueue",
+    "enqueueChatJob",
+    "processChatQueue",
+    "queueChatText",
+)
+
+AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
+    "viewer-focus",
+    "chat-drawer-open",
+    'id="chatDrawerToggle"',
+    "openChatDrawer",
+    "setChatDrawerOpen",
+)
+
+AGENT_READABLE_COLOR_CONTRACT = (
+    "--ink-strong",
+    "thinking-ellipsis",
+    "Color contrast rules",
 )
 
 
@@ -5910,7 +5934,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         --surface-soft: #f3f9ff;
         --surface-blue: #dceeff;
         --text: #102b3f;
-        --muted: #60798c;
+        --ink-strong: #0a1c2b;
+        --muted: #3d5668;
         --border: #c9ddec;
         --brand: #e5ff4f;
         --brand-strong: #d7f82f;
@@ -5919,8 +5944,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         --sidebar-2: #17405d;
         --ok-bg: #e8ffbd;
         --ok-text: #21440f;
+        --danger-text: #7f1d1d;
+        --thinking-fg: #0a1c2b;
+        --thinking-bg: #eef3f8;
         --shadow: 0 10px 24px rgba(13, 42, 61, 0.14);
       }}
+      /* Color contrast rules: readable ink on light surfaces; never lime-on-cream for status text. */
+      body, .panel, .bubble, .hint, .status-bar, .chat-log, .toast {{
+        color: var(--text);
+      }}
+      .hint, .muted, .brand-sub {{ color: var(--muted); }}
       * {{ box-sizing: border-box; }}
       html {{
         overflow-x: hidden;
@@ -6523,34 +6556,73 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       .msg-copy-btn:hover {{ background: #f5f7ff; }}
       .msg-row.thinking .bubble {{
-        min-width: 90px;
-        background: #f2f3f8;
+        min-width: 72px;
+        background: var(--thinking-bg);
+        border: 1px solid var(--border);
+        color: var(--thinking-fg);
       }}
-      .thinking-dots {{
-        display: inline-flex;
-        gap: 4px;
-        align-items: center;
-      }}
-      .thinking-dots span {{
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--brand);
+      .thinking-ellipsis {{
         display: inline-block;
-        animation: pulse 1s infinite ease-in-out;
+        color: var(--thinking-fg);
+        font-weight: 800;
+        font-size: 22px;
+        letter-spacing: 0.18em;
+        line-height: 1;
+        animation: thinkingPulse 1.1s infinite ease-in-out;
       }}
-      .thinking-dots span:nth-child(2) {{ animation-delay: 0.18s; }}
-      .thinking-dots span:nth-child(3) {{ animation-delay: 0.36s; }}
-      .sparkle {{
-        display: inline-block;
-        color: var(--brand);
-        margin-right: 6px;
-        font-size: 13px;
+      @keyframes thinkingPulse {{
+        0%, 80%, 100% {{ opacity: 0.45; }}
+        40% {{ opacity: 1; }}
       }}
-      @keyframes pulse {{
-        0%, 80%, 100% {{ opacity: 0.35; transform: translateY(0); }}
-        40% {{ opacity: 1; transform: translateY(-1px); }}
+      /* Viewer-focus: collapse full chat into a right drawer over Rerun. */
+      #chatDrawerToggle {{
+        display: none;
+        position: fixed;
+        right: 12px;
+        bottom: 18px;
+        z-index: 60;
+        box-shadow: var(--shadow);
       }}
+      body.viewer-focus #chatDrawerToggle {{ display: inline-flex; }}
+      body.viewer-focus #panelChat.is-inactive {{
+        opacity: 1 !important;
+        pointer-events: none;
+        position: fixed;
+        top: 72px;
+        right: 0;
+        width: min(420px, 94vw);
+        height: calc(100vh - 96px);
+        z-index: 55;
+        transform: translateX(calc(100% - 18px));
+        transition: transform 0.2s ease;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        overflow: auto;
+        padding: 10px;
+      }}
+      body.viewer-focus #panelChat.is-inactive.chat-drawer-open {{
+        transform: translateX(0);
+        pointer-events: auto;
+      }}
+      body.viewer-focus #panelChat .workflow-panel,
+      body.viewer-focus #panelChat .stages-panel {{
+        display: none !important;
+      }}
+      body.viewer-focus #panelChat .chat-panel {{
+        min-height: calc(100vh - 120px);
+      }}
+      #chatQueueBadge {{
+        margin-left: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--ink-strong);
+        background: var(--surface-blue);
+        border-radius: 999px;
+        padding: 1px 7px;
+        display: none;
+      }}
+      #chatQueueBadge.is-visible {{ display: inline-block; }}
       .chat-input {{ display: flex; gap: 10px; align-items: flex-end; }}
       .chat-input textarea {{
         flex: 1; min-height: 58px; resize: vertical; font-family: inherit; padding: 10px 12px;
@@ -6952,6 +7024,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <button id="tabChat" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="chat">Chat</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
       </nav>
+      <button id="chatDrawerToggle" class="btn btn-primary" type="button" aria-expanded="false" title="Open chat drawer">Chat <span id="chatQueueBadge">0</span></button>
       <main class="page">
         <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabChat" aria-hidden="false">
         <section class="panel chat-panel">
@@ -7306,8 +7379,59 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       const chatHistory = [];
       let activeChatSessionId = "default";
       let chatSendInFlight = false;
+      const chatQueue = [];
       let thinkingNode = null;
       let activeMainTab = "chat";
+      let chatDrawerOpen = false;
+      function updateChatQueueBadge() {{
+        const badge = document.getElementById("chatQueueBadge");
+        if (!badge) return;
+        const n = chatQueue.length + (chatSendInFlight ? 1 : 0);
+        badge.textContent = String(Math.max(0, chatQueue.length));
+        badge.classList.toggle("is-visible", chatQueue.length > 0);
+        const toggle = document.getElementById("chatDrawerToggle");
+        if (toggle) {{
+          toggle.title = chatQueue.length
+            ? ("Chat (" + String(chatQueue.length) + " queued)")
+            : "Open chat drawer";
+        }}
+      }}
+      function setChatDrawerOpen(open) {{
+        chatDrawerOpen = Boolean(open);
+        const chatPanel = document.getElementById("panelChat");
+        const toggle = document.getElementById("chatDrawerToggle");
+        if (chatPanel) chatPanel.classList.toggle("chat-drawer-open", chatDrawerOpen);
+        if (toggle) toggle.setAttribute("aria-expanded", chatDrawerOpen ? "true" : "false");
+      }}
+      function openChatDrawer() {{
+        if (activeMainTab !== "rerun") return;
+        setChatDrawerOpen(true);
+        const input = document.getElementById("chatInput");
+        if (input) input.focus();
+      }}
+      async function processChatQueue() {{
+        if (chatSendInFlight) return;
+        while (chatQueue.length) {{
+          const job = chatQueue.shift();
+          updateChatQueueBadge();
+          chatSendInFlight = true;
+          setChatBusy(true);
+          try {{
+            await job();
+          }} catch (err) {{
+            console.warn("chat queue job failed", err);
+          }} finally {{
+            chatSendInFlight = false;
+            setChatBusy(false);
+            updateChatQueueBadge();
+          }}
+        }}
+      }}
+      function enqueueChatJob(job) {{
+        chatQueue.push(job);
+        updateChatQueueBadge();
+        return processChatQueue();
+      }}
       async function activateMainTab(name, options) {{
         const opts = options || {{}};
         const tab = String(name || "chat").trim() === "rerun" ? "rerun" : "chat";
@@ -7333,6 +7457,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         if (tabChat) tabChat.setAttribute("aria-selected", tab === "chat" ? "true" : "false");
         if (tabRerun) tabRerun.setAttribute("aria-selected", tab === "rerun" ? "true" : "false");
+        document.body.classList.toggle("viewer-focus", tab === "rerun");
+        if (tab !== "rerun") {{
+          setChatDrawerOpen(false);
+        }} else if (!chatDrawerOpen) {{
+          setChatDrawerOpen(false);
+        }}
         if (tab === "rerun" && !opts.skipEnsure && !rerunIframeLoaded) {{
           try {{
             await ensureFrankaRerunLoaded();
@@ -7402,6 +7532,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }});
           }});
         }});
+        const chatDrawerToggle = document.getElementById("chatDrawerToggle");
+        if (chatDrawerToggle) {{
+          chatDrawerToggle.addEventListener("click", () => {{
+            if (activeMainTab !== "rerun") {{
+              activateMainTab("chat").catch(() => {{}});
+              return;
+            }}
+            setChatDrawerOpen(!chatDrawerOpen);
+          }});
+        }}
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {{
           btn.addEventListener("click", () => {{
             setRenderMode(String(btn.getAttribute("data-render-mode") || "rerun"));
@@ -7690,8 +7830,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         if (options.thinking) {{
-          bubble.innerHTML =
-            '<span class="sparkle">✦</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
+          bubble.innerHTML = '<span class="thinking-ellipsis" aria-label="thinking">...</span>';
         }} else {{
           bubble.innerHTML = markdownLiteHtml(rawText);
         }}
@@ -7968,91 +8107,100 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         );
         return true;
       }}
+      function queueChatText(text, options) {{
+        const opts = options || {{}};
+        const input = document.getElementById("chatInput");
+        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
+          showToast("Unlock chat with your agent password first.", "error");
+          return Promise.resolve(false);
+        }}
+        const payloadText = String(text || "").trim();
+        if (!payloadText) {{
+          showToast("Enter a message first", "info");
+          return Promise.resolve(false);
+        }}
+        if (input && !opts.keepInput) input.value = "";
+        if (activeMainTab === "rerun") openChatDrawer();
+        return enqueueChatJob(async () => {{
+          const model = selectedChatModel();
+          appendChat("user", opts.displayText || payloadText);
+          chatHistory.push({{ role: "user", content: payloadText }});
+          showThinkingBubble();
+          try {{
+            const messages = opts.messages || chatHistory;
+            const body = {{
+              messages,
+              model,
+              session_id: activeChatSessionId,
+            }};
+            if (opts.visual_context) body.visual_context = opts.visual_context;
+            const data = await apiJson("/api/chat", {{
+              method: "POST",
+              headers: {{ "content-type": "application/json" }},
+              body: JSON.stringify(body),
+            }});
+            clearThinkingBubble();
+            if (data && data.model) {{
+              const select = document.getElementById("chatModel");
+              if (select) {{
+                const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
+                select.title = "last used: " + String(data.model) + tierNote;
+              }}
+            }}
+            if (data && data.session_id) {{
+              activeChatSessionId = String(data.session_id);
+            }}
+            const reply = normalizeAssistantReply(data.reply || "");
+            if (reply) {{
+              appendChat("assistant", reply);
+              chatHistory.push({{ role: "assistant", content: reply }});
+              refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort */ }});
+            }} else {{
+              appendChat("error", "empty reply from model");
+            }}
+            if (data.workflow_yaml) {{
+              setWorkflowYaml(data.workflow_yaml, data.workflow_validation || {{}});
+            }}
+            const draft = data.workflow_draft;
+            if (!data.workflow_yaml && draft && draft.yaml) {{
+              setWorkflowYaml(draft.yaml, draft.validation || draft);
+            }}
+            if (opts.onDone) opts.onDone(data);
+          }} catch (err) {{
+            clearThinkingBubble();
+            const message = String(err && err.message ? err.message : err);
+            const tail = chatHistory[chatHistory.length - 1];
+            if (tail && tail.role === "user" && tail.content === payloadText) {{
+              chatHistory.pop();
+            }}
+            if (input && opts.restoreInput) input.value = payloadText;
+            appendChat("error", "Send failed. " + message);
+            throw err;
+          }} finally {{
+            if (input) input.focus();
+          }}
+        }});
+      }}
       async function sendChat() {{
         const input = document.getElementById("chatInput");
         if (!input) {{
           throw new Error("Chat input missing");
         }}
-        if (chatSendInFlight) {{
-          return false;
-        }}
-        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
-          setMobileAuthNeeded(true);
-          showToast("Unlock chat with your agent password first.", "error");
-          return false;
-        }}
         const text = String(input.value || "").trim();
-        const model = selectedChatModel();
-        if (!text) {{
-          showToast("Enter a message first", "info");
-          return false;
-        }}
-        chatSendInFlight = true;
-        appendChat("user", text);
-        chatHistory.push({{ role: "user", content: text }});
-        setChatBusy(true);
-        showThinkingBubble();
-        try {{
-          const data = await apiJson("/api/chat", {{
-            method: "POST",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{ messages: chatHistory, model, session_id: activeChatSessionId }}),
-          }});
-          clearThinkingBubble();
-          input.value = "";
-          if (data && data.model) {{
-            // Surface the model/tier actually used without hijacking the user's
-            // selection — "Auto" must stay Auto so routing keeps applying.
-            const select = document.getElementById("chatModel");
-            if (select) {{
-              const tierNote = data.tier ? " \u00b7 tier: " + String(data.tier) : "";
-              select.title = "last used: " + String(data.model) + tierNote;
-            }}
-          }}
-          if (data && data.session_id) {{
-            activeChatSessionId = String(data.session_id);
-          }}
-          const reply = normalizeAssistantReply(data.reply || "");
-          if (reply) {{
-            appendChat("assistant", reply);
-            chatHistory.push({{ role: "assistant", content: reply }});
-            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort session list refresh */ }});
-          }} else {{
-            appendChat("error", "empty reply from model");
-          }}
-          if (data.workflow_yaml) {{
-            setWorkflowYaml(data.workflow_yaml, data.workflow_validation || {{}});
-          }}
-          const draft = data.workflow_draft;
-          if (!data.workflow_yaml && draft && draft.yaml) {{
-            setWorkflowYaml(draft.yaml, draft.validation || draft);
-          }}
-        }} catch (err) {{
-          clearThinkingBubble();
-          const message = String(err && err.message ? err.message : err);
-          input.value = text;
-          const tail = chatHistory[chatHistory.length - 1];
-          if (tail && tail.role === "user" && tail.content === text) {{
-            chatHistory.pop();
-          }}
-          appendChat("error", "Send failed; your draft was restored. " + message);
-          throw err;
-        }} finally {{
-          chatSendInFlight = false;
-          setChatBusy(false);
-          input.focus();
-        }}
+        return queueChatText(text, {{ restoreInput: true }});
       }}
       function setChatInput(text) {{
         const input = document.getElementById("chatInput");
         input.value = text;
         input.focus();
+        if (activeMainTab === "rerun") openChatDrawer();
       }}
       function downscaleCanvasToDataUrl(sourceCanvas, maxEdge, quality) {{
         const srcW = Number(sourceCanvas.width || sourceCanvas.clientWidth || 0);
         const srcH = Number(sourceCanvas.height || sourceCanvas.clientHeight || 0);
         if (!srcW || !srcH) return "";
-        const edge = Math.max(64, Number(maxEdge || 768));
+        const edge = Math.max(64, Number(maxEdge || 896));
         const scale = Math.min(1, edge / Math.max(srcW, srcH));
         const w = Math.max(1, Math.round(srcW * scale));
         const h = Math.max(1, Math.round(srcH * scale));
@@ -8063,29 +8211,93 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (!ctx) return "";
         ctx.drawImage(sourceCanvas, 0, 0, w, h);
         try {{
-          return canvas.toDataURL("image/jpeg", Number(quality || 0.72));
+          return canvas.toDataURL("image/jpeg", Number(quality || 0.82));
         }} catch (_err) {{
           return "";
         }}
       }}
-      async function captureRerunViewerFrame() {{
-        const iframe = document.getElementById("rerunFrame");
-        if (!iframe || iframe.hidden) return "";
+      function frameLooksBlank(canvas) {{
         try {{
-          const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-          if (!doc) return "";
-          const canvas = doc.querySelector("canvas");
-          if (!canvas) return "";
-          return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+          const w = Math.min(64, canvas.width || 0);
+          const h = Math.min(64, canvas.height || 0);
+          if (!w || !h) return true;
+          const probe = document.createElement("canvas");
+          probe.width = w;
+          probe.height = h;
+          const ctx = probe.getContext("2d", {{ willReadFrequently: true }});
+          if (!ctx) return false;
+          ctx.drawImage(canvas, 0, 0, w, h);
+          const data = ctx.getImageData(0, 0, w, h).data;
+          let sum = 0;
+          let sumSq = 0;
+          let n = 0;
+          for (let i = 0; i < data.length; i += 16) {{
+            const v = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            sum += v;
+            sumSq += v * v;
+            n += 1;
+          }}
+          if (!n) return true;
+          const mean = sum / n;
+          const variance = Math.max(0, sumSq / n - mean * mean);
+          // Uniform black/white/gray ≈ blank; dense RGB noise has high variance.
+          return variance < 18 && (mean < 8 || mean > 247);
         }} catch (_err) {{
-          return "";
+          return false;
         }}
+      }}
+      function pickLargestIframeCanvas(doc) {{
+        const canvases = Array.from(doc.querySelectorAll("canvas"));
+        let best = null;
+        let bestArea = 0;
+        for (const canvas of canvases) {{
+          const area = Number(canvas.width || 0) * Number(canvas.height || 0);
+          if (area > bestArea) {{
+            best = canvas;
+            bestArea = area;
+          }}
+        }}
+        return best;
+      }}
+      async function waitForQualityRerunFrame(timeoutMs) {{
+        const iframe = document.getElementById("rerunFrame");
+        if (!iframe || iframe.hidden) return {{ dataUrl: "", quality: "missing" }};
+        const deadline = Date.now() + Math.max(500, Number(timeoutMs || 5000));
+        let lastUrl = "";
+        while (Date.now() < deadline) {{
+          try {{
+            if (rerunViewerShowsBundleSplash(iframe)) {{
+              await new Promise((r) => window.setTimeout(r, 200));
+              continue;
+            }}
+            const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+            const canvas = doc && pickLargestIframeCanvas(doc);
+            if (canvas && !frameLooksBlank(canvas)) {{
+              const dataUrl = downscaleCanvasToDataUrl(canvas, 896, 0.82);
+              if (dataUrl) return {{ dataUrl, quality: "rendered" }};
+            }}
+            if (canvas) {{
+              lastUrl = downscaleCanvasToDataUrl(canvas, 896, 0.82) || lastUrl;
+            }}
+          }} catch (_err) {{ /* retry */ }}
+          await new Promise((r) => window.setTimeout(r, 220));
+        }}
+        if (lastUrl) return {{ dataUrl: lastUrl, quality: "low-contrast" }};
+        return {{ dataUrl: "", quality: "unavailable" }};
+      }}
+      async function captureRerunViewerFrame() {{
+        const result = await waitForQualityRerunFrame(5500);
+        return result.dataUrl || "";
       }}
       async function captureMediaViewerFrame() {{
         const host = document.getElementById("artifactPreviewHost");
         if (!host || host.hidden) return "";
         const video = host.querySelector("video");
         if (video && video.videoWidth && video.videoHeight) {{
+          if (video.readyState < 2) {{
+            try {{ await video.play(); }} catch (_err) {{ /* ignore */ }}
+            await new Promise((r) => window.setTimeout(r, 180));
+          }}
           const canvas = document.createElement("canvas");
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
@@ -8093,7 +8305,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!ctx) return "";
           try {{
             ctx.drawImage(video, 0, 0);
-            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+            if (frameLooksBlank(canvas)) {{
+              await new Promise((r) => window.setTimeout(r, 250));
+              ctx.drawImage(video, 0, 0);
+            }}
+            return downscaleCanvasToDataUrl(canvas, 896, 0.82);
           }} catch (_err) {{
             return "";
           }}
@@ -8107,27 +8323,45 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!ctx) return "";
           try {{
             ctx.drawImage(img, 0, 0);
-            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+            return downscaleCanvasToDataUrl(canvas, 896, 0.82);
           }} catch (_err) {{
             return "";
           }}
         }}
         return "";
       }}
+      async function captureDataPaneExcerpt() {{
+        const host = document.getElementById("artifactPreviewHost");
+        if (!host) return "";
+        const pre = host.querySelector("pre");
+        if (pre && pre.textContent) return String(pre.textContent).slice(0, 2500);
+        return String(host.textContent || "").trim().slice(0, 2500);
+      }}
       async function captureVisualContext() {{
-        // Capture the active viewer pane for vision feedback (Rerun / video / image).
+        // Capture the active viewer pane for vision feedback (Rerun / video / image / data).
         const kind = String(activeRenderMode || activeArtifactRender || "rerun");
         const visualKind = (kind === "video" || kind === "image" || kind === "data") ? kind : "rerun";
         let imageDataUrl = "";
+        let frameQuality = "";
+        let textExcerpt = "";
         if (visualKind === "rerun") {{
-          imageDataUrl = await captureRerunViewerFrame();
+          const quality = await waitForQualityRerunFrame(5500);
+          imageDataUrl = quality.dataUrl || "";
+          frameQuality = quality.quality || "";
         }} else if (visualKind === "video" || visualKind === "image") {{
           imageDataUrl = await captureMediaViewerFrame();
+          frameQuality = imageDataUrl ? "rendered" : "unavailable";
+        }} else if (visualKind === "data") {{
+          textExcerpt = await captureDataPaneExcerpt();
+          frameQuality = textExcerpt ? "text" : "unavailable";
         }}
         const runEl = document.getElementById("simRunId");
         const stageEl = document.getElementById("simStage");
         const cameraEl = document.getElementById("simCamera");
         const summaryEl = document.getElementById("renderedDataSummary");
+        const noteEl = document.getElementById("simvizCta");
+        const summaryText = String((summaryEl && summaryEl.textContent) || "").trim();
+        const artifactKeyMatch = summaryText.match(/checkpoints\\/[^\\s<]+|[^\\s]+\\.(?:rrd|mp4|png|jpg|json)/i);
         const meta = {{
           kind: visualKind,
           visual_kind: visualKind,
@@ -8135,10 +8369,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           stage: String((stageEl && stageEl.textContent) || "").trim(),
           camera: String((cameraEl && cameraEl.textContent) || "").trim(),
           artifact_render: String(activeArtifactRender || visualKind || "").trim(),
-          artifact_key: String((summaryEl && summaryEl.textContent) || "").trim().slice(0, 240),
-          capture: imageDataUrl ? "frame" : "metadata-only",
+          artifact_key: String((artifactKeyMatch && artifactKeyMatch[0]) || summaryText).slice(0, 240),
+          note: String((noteEl && noteEl.textContent) || "").trim().slice(0, 320),
+          visualization_note: String((noteEl && noteEl.textContent) || "").trim().slice(0, 320),
+          text_excerpt: textExcerpt,
+          frame_quality: frameQuality,
+          capture: imageDataUrl ? "frame" : (textExcerpt ? "text" : "metadata-only"),
           has_image: Boolean(imageDataUrl),
         }};
+        // Keep prompt construction aligned with agent_visual_feedback.describe_user_prompt.
         const promptLines = [
           "[npa-visual-feedback] Describe this " + visualKind + " viewer and give operator feedback.",
           "",
@@ -8146,13 +8385,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           "- visual_kind: `" + visualKind + "`",
           "- capture: `" + meta.capture + "`",
         ];
+        if (frameQuality) promptLines.push("- frame_quality: `" + frameQuality + "`");
         if (meta.run_id) promptLines.push("- run_id: `" + meta.run_id + "`");
         if (meta.stage) promptLines.push("- stage: `" + meta.stage + "`");
         if (meta.camera) promptLines.push("- camera: `" + meta.camera + "`");
+        if (meta.artifact_key) promptLines.push("- artifact: `" + meta.artifact_key + "`");
+        if (meta.note) promptLines.push("- note: " + meta.note.slice(0, 280));
+        if (textExcerpt) {{
+          promptLines.push("- data_excerpt:");
+          promptLines.push("```");
+          promptLines.push(textExcerpt);
+          promptLines.push("```");
+        }}
+        const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id).toLowerCase();
+        if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos/.test(blob)) {{
+          promptLines.push("");
+          promptLines.push("Domain hints from metadata (not pixel labels):");
+          if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
+          if (/isaac|omniverse/.test(blob)) promptLines.push("- Metadata suggests Isaac Lab / Omniverse sim content.");
+          if (/heldout|eval/.test(blob)) promptLines.push("- Metadata suggests held-out eval imagery (may be noisy/tiled and still valid).");
+        }}
         promptLines.push(
           "",
-          "Instructions: Be concrete about what is visible (or metadata-only limits).",
-          "If the frame looks like RGB noise/static, say so and suggest timeline/entity/artifact checks.",
+          "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, or synthetic cameras are not blank.",
+          "Only call a frame blank when it is uniform black/white/gray with no structure.",
           "Reply with: What I see → Likely meaning → Operator feedback → Next actions."
         );
         return {{
@@ -8163,15 +8419,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }};
       }}
       async function describeVisual() {{
-        if (chatSendInFlight) {{
-          showToast("Chat is busy; wait for the current reply.", "info");
-          return false;
-        }}
         if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
           setMobileAuthNeeded(true);
           showToast("Unlock chat with your agent password first.", "error");
           return false;
         }}
+        // Stay on the viewer; open the collapsed chat drawer for the reply.
+        if (activeMainTab !== "rerun") {{
+          await activateMainTab("rerun", {{ skipEnsure: true }});
+        }}
+        openChatDrawer();
+        showToast("Capturing viewer for Describe this…", "info");
         const captured = await captureVisualContext();
         const prompt = String(captured.prompt || "").trim();
         if (!prompt) {{
@@ -8180,7 +8438,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         const display = prompt + (captured.imageDataUrl
           ? "\\n\\n_(attached viewer frame)_"
-          : "\\n\\n_(no frame capture — metadata only; open Rerun/Video/Image first)_");
+          : "\\n\\n_(no frame capture — metadata/text only)_");
         let userContent = prompt;
         if (captured.imageDataUrl) {{
           userContent = [
@@ -8188,64 +8446,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             {{ type: "image_url", image_url: {{ url: captured.imageDataUrl }} }},
           ];
         }}
-        chatSendInFlight = true;
-        appendChat("user", display);
-        // Keep local history text-only so subsequent turns do not resend megabyte data-URLs.
-        chatHistory.push({{ role: "user", content: prompt }});
-        setChatBusy(true);
-        showThinkingBubble();
-        try {{
-          const model = selectedChatModel();
-          const prior = chatHistory.slice(0, -1).map((item) => ({{
-            role: item.role,
-            content: typeof item.content === "string" ? item.content : String(item.content || ""),
-          }}));
-          const data = await apiJson("/api/chat", {{
-            method: "POST",
-            headers: {{ "content-type": "application/json" }},
-            body: JSON.stringify({{
-              messages: [...prior, {{ role: "user", content: userContent }}],
-              model,
-              session_id: activeChatSessionId,
-              visual_context: captured.meta || {{}},
-            }}),
-          }});
-          clearThinkingBubble();
-          if (data && data.model) {{
-            const select = document.getElementById("chatModel");
-            if (select) {{
-              const tierNote = data.tier ? " \\u00b7 tier: " + String(data.tier) : "";
-              select.title = "last used: " + String(data.model) + tierNote;
+        const prior = chatHistory.map((item) => ({{
+          role: item.role,
+          content: typeof item.content === "string" ? item.content : String(item.content || ""),
+        }}));
+        await queueChatText(prompt, {{
+          displayText: display,
+          keepInput: true,
+          visual_context: captured.meta || {{}},
+          messages: [...prior, {{ role: "user", content: userContent }}],
+          onDone: (data) => {{
+            if (!captured.imageDataUrl) {{
+              showToast("Described from metadata/text (frame unavailable).", "info");
+            }} else if (data && data.tier) {{
+              showToast("Described with tier " + String(data.tier), "success");
             }}
-          }}
-          if (data && data.session_id) {{
-            activeChatSessionId = String(data.session_id);
-          }}
-          const reply = normalizeAssistantReply(data.reply || "");
-          if (reply) {{
-            appendChat("assistant", reply);
-            chatHistory.push({{ role: "assistant", content: reply }});
-            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort */ }});
-          }} else {{
-            appendChat("error", "empty reply from model");
-          }}
-          if (!captured.imageDataUrl) {{
-            showToast("Described from metadata (viewer frame unavailable).", "info");
-          }}
-          return true;
-        }} catch (err) {{
-          clearThinkingBubble();
-          const message = String(err && err.message ? err.message : err);
-          const tail = chatHistory[chatHistory.length - 1];
-          if (tail && tail.role === "user" && tail.content === prompt) {{
-            chatHistory.pop();
-          }}
-          appendChat("error", "Describe this failed. " + message);
-          throw err;
-        }} finally {{
-          chatSendInFlight = false;
-          setChatBusy(false);
-        }}
+          }},
+        }});
+        return true;
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
@@ -8618,6 +8836,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         return null;
       }}
+      async function prefetchRerunRecording(url) {{
+        // Warm HTTP cache so add_receiver / remount hit local bytes quickly.
+        try {{
+          await fetch(url, {{ credentials: "include", cache: "force-cache", mode: "cors" }});
+        }} catch (_err) {{
+          try {{
+            await fetch(url, {{ credentials: "include", cache: "reload" }});
+          }} catch (_err2) {{ /* best-effort */ }}
+        }}
+      }}
       async function swapRerunRecordingInPlace(camera, runId) {{
         // Soft-swap: reuse the already-started wasm viewer via WebHandle.add_receiver
         // so load-run does not pay "Loading application bundle" latency again.
@@ -8642,14 +8870,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         showRerunBundleCover("Updating recording…");
         try {{
+          await prefetchRerunRecording(recordingUrl);
           if (lastRerunRecordingUrl && lastRerunRecordingUrl !== recordingUrl && typeof handle.remove_receiver === "function") {{
             try {{ handle.remove_receiver(lastRerunRecordingUrl); }} catch (_rmErr) {{ /* ignore */ }}
+          }}
+          // Also drop any stale same-path receivers before attaching the cache-busted URL.
+          if (typeof handle.remove_receiver === "function") {{
+            try {{ handle.remove_receiver(location.origin + RERUN_RECORDING_PATH); }} catch (_rmErr2) {{ /* ignore */ }}
           }}
           handle.add_receiver(recordingUrl, false);
           lastRerunRecordingUrl = recordingUrl;
           mountedRerunRunKey = mountKey;
           iframe.dataset.rerunRunKey = mountKey;
           hideRerunPlaceholder();
+          // Keep cover until a quality frame exists — avoids flash of empty/splash UI.
+          await waitForQualityRerunFrame(4500);
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
@@ -8662,14 +8897,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
         const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
-        if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
-          hideRerunBundleCover();
-          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
-          return true;
-        }}
-        // Prefer soft-swap when wasm is already alive — avoids application-bundle splash.
-        if (await swapRerunRecordingInPlace(camera, runId)) {{
-          return true;
+        // Always prefer soft-swap when wasm is alive — even for the same mountKey,
+        // because published /recordings/sim2real.rrd bytes may have changed.
+        if (rerunIframeLoaded && !iframe.hidden && iframe.getAttribute("src")) {{
+          if (await swapRerunRecordingInPlace(camera, runId)) {{
+            return true;
+          }}
+          if (mountedRerunRunKey === mountKey) {{
+            // Same run key and soft-swap unavailable: keep live wasm (no remount splash).
+            hideRerunBundleCover();
+            setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
+            return true;
+          }}
         }}
         // Warm Rerun assets before revealing the iframe so HTTP cache hits and the
         // upstream "Loading application bundle" splash never becomes user-visible.
@@ -10908,6 +11147,14 @@ def verify_live_cmd(
         "describeVisual",
         "[npa-visual-feedback]",
         "visual_context",
+        "enqueueChatJob",
+        "processChatQueue",
+        "queueChatText",
+        "viewer-focus",
+        'id="chatDrawerToggle"',
+        "thinking-ellipsis",
+        "waitForQualityRerunFrame",
+        "prefetchRerunRecording",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

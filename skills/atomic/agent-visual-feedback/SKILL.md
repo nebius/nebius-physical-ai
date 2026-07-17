@@ -10,27 +10,36 @@ viewer** and give actionable feedback — not a generic caption.
 
 ## When To Use
 
-- UI **Describe this** button next to Reload Rerun
+- UI **Describe this** button (stays on the Rerun/viewer tab; chat opens as a drawer)
 - Chat turns containing `[npa-visual-feedback]` or “describe this viewer/visual”
-- Interpreting noisy/static held-out Rerun frames, rollout video, or image artifacts
-- Metadata-only feedback when a frame cannot be captured (Data pane / blocked canvas)
+- Interpreting held-out Rerun frames, Isaac/GR00T-style sim views, rollout video, images, or Data-pane JSON
+- Metadata-only feedback when a frame cannot be captured
 
 ## Model
 
-1. Prefer a **captured frame** (vision tier → `Qwen/Qwen2.5-VL-72B-Instruct`).
-2. If capture fails, send **metadata-only** context and use the reasoning tier —
-   never pretend pixels were seen.
-3. Do **not** answer Describe-this from the grounded intent router (zero-token
-   path). Vision/reasoning must run.
+1. Prefer a **quality-captured frame** (vision tier → `Qwen/Qwen2.5-VL-72B-Instruct`).
+2. Wait for a non-blank canvas (skip uniform black/white; dense RGB noise is valid).
+3. If capture fails, send **metadata/text** and use the reasoning tier — never pretend pixels were seen.
+4. Do **not** answer Describe-this from the grounded intent router.
 
-## Visual kinds
+## Visual kinds (generalized — no URI allowlists)
 
 | Kind | Source | What to emphasize |
 |------|--------|-------------------|
-| `rerun` | Same-origin Rerun canvas | Held-out camera vs 3D proxy, noise/static, timeline/entity checks |
-| `video` | `<video>` current frame | Task progress, success/failure cues, freezes/blur |
-| `image` | Preview `<img>` | Scene contents, defects, dataset usefulness |
-| `data` | JSON/text pane (no pixels) | Report fields, success_rate, missing keys, next verify steps |
+| `rerun` | Largest same-origin Rerun canvas after quality wait | Sim RGB, depth/seg, 3D mesh, tiled envs, policy strips — **not** “blank” by default |
+| `video` | `<video>` current frame | Task progress, success/failure cues |
+| `image` | Preview `<img>` | Scene contents, defects |
+| `data` | `<pre>` / text excerpt | Report fields, success_rate, missing keys |
+
+Domain hints are inferred from free-text metadata tokens (`artifact_key`, notes,
+workflow name) such as isaac / gr00t / heldout / genesis / cosmos — never from a
+hardcoded path allowlist.
+
+## UX
+
+- On the Rerun tab, chat **collapses** into a right drawer (`viewer-focus`).
+- **Describe this** captures in-place, opens the drawer, and queues the vision turn.
+- Chat sends are **queued** (`enqueueChatJob`) so Describe + typed messages do not drop.
 
 ## Agent API flow
 
@@ -40,9 +49,9 @@ POST /api/chat
   "session_id": "default",
   "visual_context": {
     "kind": "rerun",
-    "run_id": "agent-run-…",
-    "stage": "artifact-loaded",
-    "camera": "heldout-sim",
+    "run_id": "demo-workbench-ui",
+    "artifact_key": "…/reports/sim2real.rrd",
+    "frame_quality": "rendered",
     "capture": "frame"
   },
   "messages": [
@@ -57,22 +66,16 @@ POST /api/chat
 }
 ```
 
-Constraints:
-
-- Image parts must be `data:image/...` URLs (downscaled; oversized payloads dropped).
-- Session history stores a **text stub** only — never persist megabyte data-URLs.
-- No project IDs, bucket names, or secrets in prompts.
-
 ## Reply shape (required)
 
-1. **What I see** — concrete description or explicit metadata-only limits  
-2. **Likely meaning** — relation to Sim2Real / active run  
-3. **Operator feedback** — healthy vs suspicious  
-4. **Next actions** — 2–4 concrete UI/CLI steps  
+1. **What I see**  
+2. **Likely meaning**  
+3. **Operator feedback**  
+4. **Next actions**
 
 ## Implementation pointers
 
-- Helpers: `npa/src/npa/cli/agent_visual_feedback.py` (embedded into agent backend)
-- UI capture + button: embedded `ui.html` in `npa/src/npa/cli/agent.py`
-- Routing: `has_image_content` / `TIER_VISION` in `agent_routing.py`
-- Contract markers: `AGENT_VISUAL_FEEDBACK_CONTRACT`
+- Helpers: `npa/src/npa/cli/agent_visual_feedback.py`
+- UI: `describeVisual`, `waitForQualityRerunFrame`, `queueChatText`, viewer drawer
+- Contracts: `AGENT_VISUAL_FEEDBACK_CONTRACT`, `AGENT_CHAT_QUEUE_CONTRACT`,
+  `AGENT_VIEWER_CHAT_DRAWER_CONTRACT`
