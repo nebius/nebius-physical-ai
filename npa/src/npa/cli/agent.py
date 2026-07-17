@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071712"
+AGENT_UI_VERSION = "2026071713"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -109,6 +109,8 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "infer_visual_domain_hints",
     "frameLooksBlank",
     "waitForQualityRerunFrame",
+    "client_max_body_size 32m",
+    "maxChars = 700000",
 )
 
 AGENT_CHAT_QUEUE_CONTRACT = (
@@ -1424,6 +1426,8 @@ def _nginx_agent_site_body(
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
+  # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
+  client_max_body_size 32m;
   location = /healthz {{
     auth_basic off;
     default_type application/json;
@@ -1443,10 +1447,25 @@ def _nginx_agent_site_body(
   }}
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+    client_max_body_size 32m;
   }}
   location /assets/api/ {{
     rewrite ^/assets/api/(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+    client_max_body_size 32m;
   }}
   location /rerun/recordings/ {{
     auth_basic off;
@@ -8470,24 +8489,37 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
       }}
       function downscaleCanvasToDataUrl(sourceCanvas, maxEdge, quality) {{
+        // Cap data-URL size so Describe-this POSTs stay under nginx/provider limits.
         const srcW = Number(sourceCanvas.width || sourceCanvas.clientWidth || 0);
         const srcH = Number(sourceCanvas.height || sourceCanvas.clientHeight || 0);
         if (!srcW || !srcH) return "";
-        const edge = Math.max(64, Number(maxEdge || 896));
-        const scale = Math.min(1, edge / Math.max(srcW, srcH));
-        const w = Math.max(1, Math.round(srcW * scale));
-        const h = Math.max(1, Math.round(srcH * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return "";
-        ctx.drawImage(sourceCanvas, 0, 0, w, h);
-        try {{
-          return canvas.toDataURL("image/jpeg", Number(quality || 0.82));
-        }} catch (_err) {{
-          return "";
+        let edge = Math.max(64, Number(maxEdge || 768));
+        let q = Number(quality || 0.72);
+        const maxChars = 700000; // ~525KB binary JPEG after base64 overhead
+        let best = "";
+        for (let attempt = 0; attempt < 7; attempt += 1) {{
+          const scale = Math.min(1, edge / Math.max(srcW, srcH));
+          const w = Math.max(1, Math.round(srcW * scale));
+          const h = Math.max(1, Math.round(srcH * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return best;
+          ctx.drawImage(sourceCanvas, 0, 0, w, h);
+          let url = "";
+          try {{
+            url = canvas.toDataURL("image/jpeg", Math.max(0.4, Math.min(0.92, q)));
+          }} catch (_err) {{
+            return best;
+          }}
+          if (!url) return best;
+          best = url;
+          if (url.length <= maxChars) return url;
+          edge = Math.max(256, Math.floor(edge * 0.72));
+          q = Math.max(0.4, q - 0.08);
         }}
+        return best;
       }}
       function frameLooksBlank(canvas) {{
         try {{
@@ -8546,11 +8578,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
             const canvas = doc && pickLargestIframeCanvas(doc);
             if (canvas && !frameLooksBlank(canvas)) {{
-              const dataUrl = downscaleCanvasToDataUrl(canvas, 896, 0.82);
+              const dataUrl = downscaleCanvasToDataUrl(canvas, 768, 0.72);
               if (dataUrl) return {{ dataUrl, quality: "rendered" }};
             }}
             if (canvas) {{
-              lastUrl = downscaleCanvasToDataUrl(canvas, 896, 0.82) || lastUrl;
+              lastUrl = downscaleCanvasToDataUrl(canvas, 768, 0.72) || lastUrl;
             }}
           }} catch (_err) {{ /* retry */ }}
           await new Promise((r) => window.setTimeout(r, 220));
@@ -8582,7 +8614,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               await new Promise((r) => window.setTimeout(r, 250));
               ctx.drawImage(video, 0, 0);
             }}
-            return downscaleCanvasToDataUrl(canvas, 896, 0.82);
+            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
           }} catch (_err) {{
             return "";
           }}
@@ -8596,7 +8628,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!ctx) return "";
           try {{
             ctx.drawImage(img, 0, 0);
-            return downscaleCanvasToDataUrl(canvas, 896, 0.82);
+            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
           }} catch (_err) {{
             return "";
           }}
@@ -9416,18 +9448,40 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           pathText === "/api/workflows/submit" ||
           pathText === "/api/infra/provision"
         ) ? 900000 : 12000;
+        const isChat = pathText === "/api/chat";
         let resp;
-        try {{
-          resp = await fetchWithTimeout(path, opts, timeoutMs);
-        }} catch (err) {{
-          if (err && err.name === "AbortError") {{
-            throw new Error("Request timed out: " + String(path));
+        let lastFetchErr = null;
+        for (let attempt = 0; attempt < (isChat ? 2 : 1); attempt += 1) {{
+          try {{
+            resp = await fetchWithTimeout(path, opts, timeoutMs);
+            lastFetchErr = null;
+            break;
+          }} catch (err) {{
+            lastFetchErr = err;
+            if (err && err.name === "AbortError") {{
+              throw new Error("Request timed out: " + String(path));
+            }}
+            // One retry for transient network drops (bootstrap restarts, brief nginx reload).
+            if (!(isChat && attempt === 0)) {{
+              const raw = String(err && err.message ? err.message : err);
+              if (/failed to fetch|networkerror|load failed/i.test(raw)) {{
+                throw new Error(
+                  "Network error talking to the agent (Failed to fetch). "
+                  + "If Describe this just ran, retry once — the frame may have been too large or the backend was restarting."
+                );
+              }}
+              throw err;
+            }}
+            await new Promise((resolve) => window.setTimeout(resolve, 600));
           }}
-          throw err;
+        }}
+        if (!resp) {{
+          throw lastFetchErr || new Error("Failed to fetch");
         }}
         let data = null;
+        const rawText = await resp.text();
         try {{
-          data = await resp.json();
+          data = rawText ? JSON.parse(rawText) : null;
         }} catch (_err) {{
           data = null;
         }}
@@ -9440,8 +9494,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             window.location.href = "/login-help.html";
             throw new Error("Authentication required. Open / and sign in with HTTP Basic Auth.");
           }}
+          if (resp.status === 413) {{
+            throw new Error(
+              "Chat payload too large for the agent proxy (413). "
+              + "Describe this will retry with a smaller frame — click Describe this again."
+            );
+          }}
           const detail =
             (data && (data.detail || data.error || data.message)) ||
+            (rawText && rawText.length < 300 ? rawText : "") ||
             resp.statusText ||
             "request failed";
           throw new Error(String(detail));

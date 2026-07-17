@@ -196,6 +196,8 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "waitForQualityRerunFrame" in ui_html
     assert "frameLooksBlank" in ui_html
     assert "visual_context" in ui_html
+    assert "maxChars = 700000" in ui_html
+    assert "client_max_body_size 32m" in source
     assert "_AGENT_VISUAL_FEEDBACK_EMBED" in source
     assert ".replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)" in source
     # Chat path must preserve multimodal content (not str()-coerce list parts).
