@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071709"
+AGENT_UI_VERSION = "2026071710"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -123,7 +123,9 @@ AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
     "chat-drawer-open",
     'id="chatDrawerToggle"',
     "openChatDrawer",
+    "openFullChatTab",
     "setChatDrawerOpen",
+    'id="openFullChatTab"',
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (
@@ -5965,7 +5967,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
     <title>NPA Agent</title>
     <link rel="preload" href="/rerun/re_viewer.js" as="script" crossorigin>
     <link rel="preload" href="/rerun/re_viewer_bg.wasm" as="fetch" type="application/wasm" crossorigin>
-    <link rel="prefetch" href="/rerun/recordings/sim2real.rrd" as="fetch">
     <style>
       :root {{
         --bg: #edf7ff;
@@ -6651,6 +6652,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       body.viewer-focus #panelChat .chat-panel {{
         min-height: calc(100vh - 120px);
       }}
+      .chat-panel-head-actions {{
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+      }}
+      body:not(.viewer-focus) #openFullChatTab {{ display: none; }}
       #chatQueueBadge {{
         margin-left: 6px;
         font-size: 11px;
@@ -7072,7 +7079,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <h3>Workbench Chat</h3>
               <p class="hint">Ask about configure, provision, Cosmos3, S3, workflows, sim assets, and Rerun visualization.</p>
             </div>
-            <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
+            <div class="chat-panel-head-actions">
+              <button id="openFullChatTab" class="btn" type="button" title="Open full Chat tab">Full chat</button>
+              <button id="mobilePanelsToggle" class="btn mobile-only-toggle" type="button" aria-expanded="false">Panels</button>
+            </div>
           </div>
           <div class="chat-toolbar">
             <span class="hint">Grounded responses use live `/api/*` context from this VM.</span>
@@ -7443,10 +7453,24 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (toggle) toggle.setAttribute("aria-expanded", chatDrawerOpen ? "true" : "false");
       }}
       function openChatDrawer() {{
-        if (activeMainTab !== "rerun") return;
+        // Chat drawer overlays the Viewer tab (Rerun/Video/Image/Data) without leaving it.
+        if (activeMainTab !== "rerun") {{
+          activateMainTab("rerun", {{ skipEnsure: true }}).then(() => {{
+            setChatDrawerOpen(true);
+            const input = document.getElementById("chatInput");
+            if (input) input.focus();
+          }}).catch(() => {{
+            setChatDrawerOpen(true);
+          }});
+          return;
+        }}
         setChatDrawerOpen(true);
         const input = document.getElementById("chatInput");
         if (input) input.focus();
+      }}
+      function openFullChatTab() {{
+        setChatDrawerOpen(false);
+        activateMainTab("chat").catch((err) => console.warn("open full chat failed", err));
       }}
       async function processChatQueue() {{
         if (chatSendInFlight) return;
@@ -7566,7 +7590,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         document.querySelectorAll(".main-tab[data-tab]").forEach((btn) => {{
           btn.addEventListener("click", () => {{
-            activateMainTab(String(btn.getAttribute("data-tab") || "chat")).catch((err) => {{
+            const next = String(btn.getAttribute("data-tab") || "chat");
+            // From Viewer (Rerun/Video/Image/Data), Chat tab opens the drawer instead
+            // of tearing focus away from the active render pane.
+            if (next === "chat" && activeMainTab === "rerun") {{
+              if (chatDrawerOpen) openFullChatTab();
+              else openChatDrawer();
+              return;
+            }}
+            activateMainTab(next).catch((err) => {{
               console.warn("tab switch failed", err);
             }});
           }});
@@ -7575,11 +7607,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (chatDrawerToggle) {{
           chatDrawerToggle.addEventListener("click", () => {{
             if (activeMainTab !== "rerun") {{
-              activateMainTab("chat").catch(() => {{}});
+              // On Chat tab: jump to Viewer with drawer open so chat works beside media.
+              openChatDrawer();
               return;
             }}
             setChatDrawerOpen(!chatDrawerOpen);
           }});
+        }}
+        const openFullChatBtn = document.getElementById("openFullChatTab");
+        if (openFullChatBtn) {{
+          openFullChatBtn.addEventListener("click", () => openFullChatTab());
         }}
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {{
           btn.addEventListener("click", () => {{
@@ -8160,7 +8197,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return Promise.resolve(false);
         }}
         if (input && !opts.keepInput) input.value = "";
-        if (activeMainTab === "rerun") openChatDrawer();
+        if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
         return enqueueChatJob(async () => {{
           const model = selectedChatModel();
           appendChat("user", opts.displayText || payloadText);
@@ -8233,7 +8270,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("chatInput");
         input.value = text;
         input.focus();
-        if (activeMainTab === "rerun") openChatDrawer();
+        if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
       }}
       function downscaleCanvasToDataUrl(sourceCanvas, maxEdge, quality) {{
         const srcW = Number(sourceCanvas.width || sourceCanvas.clientWidth || 0);
@@ -8875,16 +8912,6 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         return null;
       }}
-      async function prefetchRerunRecording(url) {{
-        // Warm HTTP cache so add_receiver / remount hit local bytes quickly.
-        try {{
-          await fetch(url, {{ credentials: "include", cache: "force-cache", mode: "cors" }});
-        }} catch (_err) {{
-          try {{
-            await fetch(url, {{ credentials: "include", cache: "reload" }});
-          }} catch (_err2) {{ /* best-effort */ }}
-        }}
-      }}
       async function swapRerunRecordingInPlace(camera, runId) {{
         // Soft-swap: reuse the already-started wasm viewer via WebHandle.add_receiver
         // so load-run does not pay "Loading application bundle" latency again.
@@ -8909,7 +8936,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         showRerunBundleCover("Updating recording…");
         try {{
-          await prefetchRerunRecording(recordingUrl);
+          // Load via add_receiver only — do not prefetch .rrd bytes (many runs;
+          // double-fetch wastes bandwidth). Wasm/js warm is enough.
           if (lastRerunRecordingUrl && lastRerunRecordingUrl !== recordingUrl && typeof handle.remove_receiver === "function") {{
             try {{ handle.remove_receiver(lastRerunRecordingUrl); }} catch (_rmErr) {{ /* ignore */ }}
           }}
@@ -11193,7 +11221,9 @@ def verify_live_cmd(
         'id="chatDrawerToggle"',
         "thinking-ellipsis",
         "waitForQualityRerunFrame",
-        "prefetchRerunRecording",
+        "do not prefetch .rrd bytes",
+        'id="openFullChatTab"',
+        "openFullChatTab",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

@@ -46,6 +46,9 @@ def test_viewer_chat_drawer_contract() -> None:
     assert "queueChatText" in describe
     # Describe stays in viewer-focus instead of forcing Chat tab takeover.
     assert 'activateMainTab("chat"' not in describe
+    # From Viewer, Chat tab opens drawer; Full chat expands to Chat tab.
+    assert 'next === "chat" && activeMainTab === "rerun"' in ui
+    assert "openFullChatTab" in ui
 
 
 def test_thinking_ellipsis_high_contrast() -> None:
@@ -60,7 +63,7 @@ def test_thinking_ellipsis_high_contrast() -> None:
     assert "sparkle" not in ui.split("thinking-ellipsis")[0][-200:]
 
 
-def test_soft_swap_prefers_quality_without_remount() -> None:
+def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui = _embedded_ui_html(source)
     mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
@@ -68,11 +71,14 @@ def test_soft_swap_prefers_quality_without_remount() -> None:
     )[0]
     assert "swapRerunRecordingInPlace" in mount
     assert "already-mounted" in mount
-    # Same mountKey must not immediately remount into application-bundle splash.
-    assert "prefetchRerunRecording" in ui
+    # Do not prefetch .rrd bodies (many runs); soft-swap loads via add_receiver only.
+    assert "prefetchRerunRecording" not in ui
+    assert 'rel="prefetch" href="/rerun/recordings/sim2real.rrd"' not in ui
+    assert "do not prefetch .rrd bytes" in ui
     assert "waitForQualityRerunFrame" in ui
     swap = ui.split("async function swapRerunRecordingInPlace")[1].split(
         "async function mountRerunIframe(camera, runId)"
     )[0]
     assert "await waitForQualityRerunFrame" in swap
     assert "Updating recording" in swap
+    assert "add_receiver" in swap
