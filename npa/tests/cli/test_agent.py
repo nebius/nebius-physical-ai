@@ -745,6 +745,30 @@ def test_bootstrap_artifact_prefix_triggers_discovery() -> None:
     assert "then Enter" in source
 
 
+def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
+    """The stages/artifact browser must let you choose a workflow-progress step.
+
+    A Stage selector filters the artifact list by pipeline stage, and clicking a
+    stage row in the Run Monitor timeline scopes the artifact browser to it.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Stage selector in the artifact browser.
+    assert 'id="artifactStageFilter"' in source
+    assert "function artifactStageFilterValue()" in source
+    assert "function deriveArtifactStage(key, runId)" in source
+    assert "function populateArtifactStageFilter(artifacts, runId)" in source
+    assert "populateArtifactStageFilter(artifacts, runId);" in source
+    # Stage participates in filtering and re-renders on change.
+    assert "if (stageFilter && deriveArtifactStage(item.key, runId) !== stageFilter) return false;" in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    # Timeline stage rows are tagged and clickable to drive the stage filter.
+    assert "stage_key: stageKey," in source
+    assert 'data-stage-key="' in source
+    assert '.stage-item[data-stage-key]' in source
+
+
 def test_bootstrap_run_history_uses_run_id_index() -> None:
     from npa.cli import agent as agent_module
 
