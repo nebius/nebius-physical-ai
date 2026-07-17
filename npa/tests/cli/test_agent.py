@@ -503,7 +503,9 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
     assert "await apiJson(\"/api/sim-viz/camera-preview\"" in source
     assert "await apiJson(\"/api/sim-assets/selection\"" in source
     assert "setChatBusy(false)" in source
-    assert "finally {" in source.split("async function sendChat")[1].split("async function")[0]
+    assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
+    assert "queueChatText" in source
+    assert "processChatQueue" in source
 
 
 def test_bootstrap_embeds_cameras_panel() -> None:
@@ -920,15 +922,22 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="stagesPanel"><h3>Stages</h3></div>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
+                '<button id="describeVisual"></button><button id="chatDrawerToggle"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
                 '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
                 'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
                 'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
+                'function captureVisualContext(){} function describeVisual(){} '
+                'function enqueueChatJob(){} function processChatQueue(){} function queueChatText(){} '
+                'function waitForQualityRerunFrame(){} function prefetchRerunRecording(){} '
+                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
+                'async function refresh(){} '
                 'handle.add_receiver(recordingUrl, false); '
                 'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
                 'location.username; location.password; '
                 'Warm Rerun assets before revealing the iframe; Preparing viewer…; '
                 'Uncover without blocking mount latency; '
+                'viewer-focus; thinking-ellipsis; [npa-visual-feedback]; visual_context; '
                 'Loading video preview…; URL.createObjectURL(blob)'
                 '</script></body></html>'
             )
