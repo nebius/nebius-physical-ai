@@ -132,6 +132,8 @@ UI_WIRING_MARKERS = (
     "Preparing viewer…",
     "Uncover without blocking mount latency",
     "scheduleRerunBundleUncover",
+    "swapRerunRecordingInPlace",
+    "add_receiver",
     f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
     *MEDIA_PREVIEW_UI_MARKERS,
 )

@@ -104,6 +104,7 @@ describe("NPA agent UI against live infra", () => {
       expect(html).to.include("Loading video preview");
       expect(html).to.include("waitUntilRerunPastBundleSplash");
       expect(html).to.include("scheduleRerunBundleUncover");
+      expect(html).to.include("swapRerunRecordingInPlace");
       expect(html).to.include("Warm Rerun assets before revealing the iframe");
       expect(html).not.to.include('Mount the viewer immediately so "Loading application bundle" starts early');
       expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
@@ -116,6 +117,8 @@ describe("NPA agent UI against live infra", () => {
       const html = win.document.documentElement.outerHTML;
       expect(html).to.include("Uncover without blocking mount latency");
       expect(html).to.include("scheduleRerunBundleUncover");
+      expect(html).to.include("swapRerunRecordingInPlace");
+      expect(html).to.include("add_receiver");
       expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
     });
     // Visible chrome only (skip <script> source, which contains the splash detector regex).

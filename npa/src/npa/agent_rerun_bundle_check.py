@@ -27,6 +27,8 @@ REQUIRED_UI_MARKERS = (
     "Preparing viewer…",
     "Uncover without blocking mount latency",
     "scheduleRerunBundleUncover",
+    "swapRerunRecordingInPlace",
+    "add_receiver",
 )
 
 FORBIDDEN_UI_MARKERS = (

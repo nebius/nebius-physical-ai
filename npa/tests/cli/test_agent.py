@@ -600,6 +600,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "waitForRerunRenderSettle" in source
     assert "scheduleRerunBundleUncover" in source
     assert "Uncover without blocking mount latency" in source
+    assert "swapRerunRecordingInPlace" in source
+    assert "handle.add_receiver(recordingUrl, false)" in source
     assert "mountRerunIframe" in source
     assert "mountRerunIframeUntilSuccess" in source
     assert "simViz && (simViz.rerun_ready || simViz.rrd_uri)" in source
@@ -918,7 +920,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
                 '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
                 'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
-                'function scheduleRerunBundleUncover(){} '
+                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
+                'handle.add_receiver(recordingUrl, false); '
                 'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
                 'location.username; location.password; '
                 'Warm Rerun assets before revealing the iframe; Preparing viewer…; '

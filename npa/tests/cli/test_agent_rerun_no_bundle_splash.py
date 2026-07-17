@@ -78,3 +78,18 @@ def test_no_loading_application_bundle_without_mount_latency() -> None:
     warm_idx = ui_html.index("async function warmRerunBundle")
     early_warm = ui_html[warm_idx : warm_idx + 2500]
     assert "warmRerunBundle().catch(" in early_warm
+
+
+def test_run_load_soft_swaps_recording_without_wasm_remount() -> None:
+    """Load-run must reuse WebHandle.add_receiver when the viewer is already alive."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    assert "async function swapRerunRecordingInPlace" in ui_html
+    assert "handle.add_receiver(recordingUrl, false)" in ui_html
+    assert "remove_receiver" in ui_html
+    mount_src = ui_html.split("async function mountRerunIframe")[1].split(
+        "async function mountRerunIframeUntilSuccess"
+    )[0]
+    assert "await swapRerunRecordingInPlace" in mount_src
+    load_art = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    assert "swapRerunRecordingInPlace" in load_art

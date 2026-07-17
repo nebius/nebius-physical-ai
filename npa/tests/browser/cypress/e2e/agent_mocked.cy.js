@@ -64,6 +64,8 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(html).to.include("scheduleRerunBundleUncover");
       expect(html).to.include("Uncover without blocking mount latency");
       expect(html).to.include("waitUntilRerunPastBundleSplash");
+      expect(html).to.include("swapRerunRecordingInPlace");
+      expect(html).to.include("add_receiver");
       expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
       expect(html).not.to.include('Mount the viewer immediately so "Loading application bundle" starts early');
     });

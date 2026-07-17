@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071706"
+AGENT_UI_VERSION = "2026071707"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -93,6 +93,9 @@ AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
     "Preparing viewer…",
     # Cover may stay up, but mount/boot must not await long splash polls (latency).
     "Uncover without blocking mount latency",
+    # Run switches must soft-swap recordings without remounting wasm.
+    "swapRerunRecordingInPlace",
+    "add_receiver",
 )
 
 
@@ -8017,11 +8020,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let activeArtifactRender = "";
       let lastRerunBlobStatus = "pending";
       let lastRerunMountStatus = "pending";
+      let lastRerunRecordingUrl = "";
+      let rerunViewerAppReady = false;
       const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
       const RERUN_BUNDLE_ASSETS = ["/rerun/re_viewer.js", "/rerun/re_viewer_bg.wasm"];
       let rerunBundleWarmPromise = null;
       const RERUN_BLOB_SUCCESS = "SUCCESS";
       const RERUN_MOUNT_SUCCESS = "SUCCESS";
+      window.addEventListener("message", (event) => {{
+        if (event && event.data === "READY") {{
+          rerunViewerAppReady = true;
+        }}
+      }});
       function setRerunBlobStatus(status, detail) {{
         const text = String(status || "").trim() || "pending";
         lastRerunBlobStatus = text;
@@ -8361,6 +8371,58 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           hideRerunBundleCover();
         }}
       }}
+      function getRerunViewerHandle(iframe) {{
+        try {{
+          const win = iframe && iframe.contentWindow;
+          const handle = win && win._handle;
+          if (handle && typeof handle.add_receiver === "function") {{
+            return handle;
+          }}
+        }} catch (_err) {{
+          // Cross-origin or unloaded iframe — fall back to full remount.
+        }}
+        return null;
+      }}
+      async function swapRerunRecordingInPlace(camera, runId) {{
+        // Soft-swap: reuse the already-started wasm viewer via WebHandle.add_receiver
+        // so load-run does not pay "Loading application bundle" latency again.
+        const iframe = document.getElementById("rerunFrame");
+        if (!iframe || !rerunIframeLoaded || iframe.hidden || !iframe.getAttribute("src")) {{
+          return false;
+        }}
+        if (rerunViewerShowsBundleSplash(iframe) || !rerunViewerHasCanvas(iframe)) {{
+          return false;
+        }}
+        const handle = getRerunViewerHandle(iframe);
+        if (!handle) return false;
+        const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
+        let recordingUrl = "";
+        try {{
+          recordingUrl = await resolveRerunRecordingUrl();
+        }} catch (_err) {{
+          return false;
+        }}
+        if (recordingUrl.startsWith("/")) {{
+          recordingUrl = location.origin + recordingUrl;
+        }}
+        showRerunBundleCover("Updating recording…");
+        try {{
+          if (lastRerunRecordingUrl && lastRerunRecordingUrl !== recordingUrl && typeof handle.remove_receiver === "function") {{
+            try {{ handle.remove_receiver(lastRerunRecordingUrl); }} catch (_rmErr) {{ /* ignore */ }}
+          }}
+          handle.add_receiver(recordingUrl, false);
+          lastRerunRecordingUrl = recordingUrl;
+          mountedRerunRunKey = mountKey;
+          iframe.dataset.rerunRunKey = mountKey;
+          hideRerunPlaceholder();
+          hideRerunBundleCover();
+          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
+          return true;
+        }} catch (err) {{
+          console.warn("rerun soft-swap failed; falling back to remount", err);
+          return false;
+        }}
+      }}
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
@@ -8368,6 +8430,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
+          return true;
+        }}
+        // Prefer soft-swap when wasm is already alive — avoids application-bundle splash.
+        if (await swapRerunRecordingInPlace(camera, runId)) {{
           return true;
         }}
         // Warm Rerun assets before revealing the iframe so HTTP cache hits and the
@@ -8382,11 +8448,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const src = await rerunIframeSrc(camera, runId);
         setRerunMountStatus("retrying", "navigating");
         showRerunBundleCover("Opening viewer…");
+        rerunViewerAppReady = false;
         iframe.hidden = false;
         iframe.src = src;
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
+        try {{
+          lastRerunRecordingUrl = await resolveRerunRecordingUrl();
+          if (lastRerunRecordingUrl.startsWith("/")) {{
+            lastRerunRecordingUrl = location.origin + lastRerunRecordingUrl;
+          }}
+        }} catch (_urlErr) {{
+          lastRerunRecordingUrl = "";
+        }}
         // Uncover without blocking mount latency — splash polling stays in the background.
         scheduleRerunBundleUncover(iframe).catch((err) => {{
           console.warn("rerun splash uncover failed", err);
@@ -8903,9 +8978,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         if (render === "rerun") {{
           setRenderMode("rerun");
           hideArtifactPreview();
-          rerunIframeLoaded = false;
           lastRrdUpdatedAt = "";
-          await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+          // Soft-swap when possible; only force remount if the viewer is not alive.
+          if (!(await swapRerunRecordingInPlace(String(simViz.camera || "workspace"), loadedRunId))) {{
+            rerunIframeLoaded = false;
+            await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+          }}
         }} else {{
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
@@ -10586,6 +10664,8 @@ def verify_live_cmd(
         "Warm Rerun assets before revealing the iframe",
         "Uncover without blocking mount latency",
         "scheduleRerunBundleUncover",
+        "swapRerunRecordingInPlace",
+        "add_receiver",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -10599,6 +10679,9 @@ def verify_live_cmd(
         _fail("UI must not block mount on long splash wait (latency)")
     if "await waitUntilRerunPastBundleSplash(iframe, 120000)" in ui_html:
         _fail("UI must not block mount on long splash wait (latency)")
+    load_art_src = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    if "swapRerunRecordingInPlace" not in load_art_src:
+        _fail("loadArtifact must soft-swap Rerun recordings instead of always remounting wasm")
     # Guard against regressions that put bare authenticated URLs on <video src>
     # (browsers omit Authorization headers for media elements under basic auth).
     if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:
