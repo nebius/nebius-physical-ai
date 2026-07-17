@@ -262,9 +262,15 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`).click();
     cy.wait("@loadArtifact");
+    cy.wait("@artifactFile");
     cy.get("#renderModeVideo").should("have.class", "is-active");
     cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
-    cy.get("#artifactPreviewHost video").should("have.attr", "src").and("include", "customer-camera.mp4");
+    cy.get("#artifactPreviewHost video")
+      .should("have.attr", "src")
+      .and("match", /^blob:/);
+    cy.get("#artifactPreviewHost video")
+      .should("have.attr", "data-preview-url")
+      .and("include", "customer-camera.mp4");
     cy.get("#renderedDataSummary").should("contain.text", "video");
 
     cy.get(`#artifactList button[data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`).click();

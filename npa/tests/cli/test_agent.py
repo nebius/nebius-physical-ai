@@ -605,7 +605,9 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "already-mounted" in source
     assert "iframe.dataset.rerunRunKey" in source
     assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
-    assert 'showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }})' in source
+    assert "authenticatedPreviewObjectUrl" in source
+    assert "Loading video preview…" in source
+    assert "Keep the Rerun iframe mounted under the media pane" in source
     assert "baselineRrdUpdatedAt" in source
     assert "successStreakTarget" in source
     assert "successStreak" in source
@@ -618,7 +620,10 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "rrdUrl = await resolveRerunRecordingUrl();" in source
     assert "?run_id=" in source
     assert '"/api/sim-viz/status?run_id="' in source
-    assert "URL.createObjectURL" not in source
+    # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
+    assert "URL.createObjectURL(blob)" in source
+    assert "does not reliably consume parent-created blob URLs" in source
+    assert "_artifact_media_type" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -885,8 +890,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body><div id="mobileChatAuth"></div><script>function wireUi(){} id="chatForm"; function sendChat(){} initNpaAgentUi; mobile-agent; '
-                'history.replaceState(null, "", ""); location.username; location.password</script></body></html>'
+                '<body>'
+                '<div id="tabChat"></div><div id="tabRerun"></div>'
+                '<div id="stagesPanel"><h3>Stages</h3></div>'
+                '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
+                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
+                'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
+                'location.username; location.password; '
+                'Mount the viewer immediately so "Loading application bundle" starts early'
+                '</script></body></html>'
             )
             return _Resp(html, status_code=200)
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
@@ -962,6 +974,17 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
 
     monkeypatch.setattr("npa.cli.agent.httpx.get", _fake_http_get)
     monkeypatch.setattr("npa.cli.agent.httpx.post", _fake_http_post)
+    from npa.agent_rerun_bundle_check import BundleBudgetResult
+
+    monkeypatch.setattr(
+        "npa.agent_rerun_bundle_check.check_rerun_bundle_load_budget",
+        lambda *_args, **_kwargs: BundleBudgetResult(
+            ok=True,
+            errors=(),
+            fetches=(),
+            ui_version=AGENT_UI_VERSION,
+        ),
+    )
     calls: list[list[str]] = []
 
     def _fake_run(args, **_kwargs):

@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071304"
+AGENT_UI_VERSION = "2026071701"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -2661,6 +2661,29 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
+def _artifact_media_type(filename: str) -> str:
+    name = str(filename or "").lower()
+    if name.endswith(".mp4"):
+        return "video/mp4"
+    if name.endswith(".webm"):
+        return "video/webm"
+    if name.endswith(".mov"):
+        return "video/quicktime"
+    if name.endswith(".png"):
+        return "image/png"
+    if name.endswith(".jpg") or name.endswith(".jpeg"):
+        return "image/jpeg"
+    if name.endswith(".gif"):
+        return "image/gif"
+    if name.endswith(".webp"):
+        return "image/webp"
+    if name.endswith(".json"):
+        return "application/json"
+    if name.endswith(".txt") or name.endswith(".log") or name.endswith(".md"):
+        return "text/plain; charset=utf-8"
+    return "application/octet-stream"
+
+
 def _is_sim2real_pipeline_recording(key: str) -> bool:
     return str(key or "").endswith("/reports/sim2real.rrd")
 
@@ -2727,6 +2750,11 @@ def _apply_loaded_artifact(
         sim_viz["rrd_uri"] = ""
         sim_viz["rerun_iframe_url"] = "/rerun/"
         sim_viz["rerun_ready"] = False
+        sim_viz["preview_entity"] = ""
+        sim_viz["visualization_note"] = (
+            f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
+        )
+    sim_viz["active_run_id"] = run_id
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
@@ -4917,7 +4945,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-@app.get("/artifacts/file/{{filename}}")
+@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
 def artifact_file(filename: str):
     safe_name = Path(str(filename)).name
     if safe_name != filename:
@@ -4925,7 +4953,7 @@ def artifact_file(filename: str):
     target = RECORDINGS_DIR / safe_name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    return FileResponse(str(target), media_type="application/octet-stream")
+    return FileResponse(str(target), media_type=_artifact_media_type(safe_name))
 
 
 @app.post("/sim-viz/load-artifact")
@@ -6167,14 +6195,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         background: #000;
       }}
       #artifactPreviewHost {{
-        padding: 12px 14px 14px;
-        border-top: 1px solid rgba(148, 163, 184, 0.25);
+        border: 0;
       }}
       #artifactPreviewHost video,
       #artifactPreviewHost img {{
         width: 100%;
-        max-height: 320px;
+        max-height: min(70vh, 720px);
         background: #000;
+      }}
+      #artifactPreviewHost .preview-error {{
+        color: #fecaca;
+        margin: 0 0 10px;
       }}
       .chat-panel {{ margin-bottom: 12px; }}
       .chat-panel-head {{
@@ -7984,6 +8015,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       function hideArtifactPreview() {{
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
+        if (host._previewObjectUrl) {{
+          try {{ URL.revokeObjectURL(host._previewObjectUrl); }} catch (_err) {{ /* ignore */ }}
+          host._previewObjectUrl = "";
+        }}
         host.hidden = true;
         host.innerHTML = "";
       }}
@@ -8006,6 +8041,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           mediaPane.classList.toggle("is-inactive-viewer", isRerun);
         }}
       }}
+      async function authenticatedPreviewObjectUrl(previewUrl, host) {{
+        const resp = await fetchWithTimeout(previewUrl, {{ credentials: "include" }}, 60000);
+        if (!resp.ok) {{
+          throw new Error("preview fetch failed (" + String(resp.status) + ")");
+        }}
+        const blob = await resp.blob();
+        if (host && host._previewObjectUrl) {{
+          try {{ URL.revokeObjectURL(host._previewObjectUrl); }} catch (_err) {{ /* ignore */ }}
+        }}
+        const objectUrl = URL.createObjectURL(blob);
+        if (host) host._previewObjectUrl = objectUrl;
+        return objectUrl;
+      }}
       async function showArtifactPreview(simViz, render) {{
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
@@ -8020,14 +8068,37 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           host.innerHTML = "<p>No preview URL available. Use download.</p>";
           return;
         }}
+        const downloadHtml =
+          `<p><a class="btn" href="${{escapeHtml(downloadUrl)}}" target="_blank" rel="noopener">Download artifact</a></p>`;
         if (safeRender === "image") {{
           host.hidden = false;
-          host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" />`;
+          host.innerHTML = `<p class="hint">Loading image preview…</p>`;
+          try {{
+            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            host.innerHTML =
+              `<img alt="artifact image" src="${{src}}" data-preview-url="${{escapeHtml(previewUrl)}}" />` +
+              downloadHtml;
+          }} catch (err) {{
+            host.innerHTML =
+              `<p class="preview-error">Image preview failed: ${{escapeHtml(String((err && err.message) || err))}}.</p>` +
+              downloadHtml;
+          }}
           return;
         }}
         if (safeRender === "video") {{
           host.hidden = false;
-          host.innerHTML = `<video controls src="${{previewUrl}}"></video>`;
+          host.innerHTML = `<p class="hint">Loading video preview…</p>`;
+          try {{
+            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            host.innerHTML =
+              `<video controls playsinline src="${{src}}" data-preview-url="${{escapeHtml(previewUrl)}}"></video>` +
+              downloadHtml;
+          }} catch (err) {{
+            host.innerHTML =
+              `<p class="preview-error">Video preview failed: ${{escapeHtml(String((err && err.message) || err))}}. ` +
+              `Sign in again if auth expired, then retry Play.</p>` +
+              downloadHtml;
+          }}
           return;
         }}
         if (safeRender === "json" || safeRender === "text") {{
@@ -8043,7 +8114,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
         }}
         host.hidden = false;
-        host.innerHTML = `<p>Artifact render: <strong>${{escapeHtml(safeRender || "download")}}</strong>. <a href="${{downloadUrl}}" target="_blank" rel="noopener">Download artifact</a></p>`;
+        host.innerHTML = `<p>Artifact render: <strong>${{escapeHtml(safeRender || "download")}}</strong>. <a href="${{escapeHtml(downloadUrl)}}" target="_blank" rel="noopener">Download artifact</a></p>`;
       }}
       async function waitForRerunReady(maxAttempts) {{
         const attempts = Number(maxAttempts || 12);
@@ -8684,7 +8755,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           }}
           if (activeArtifactRender && activeArtifactRender !== "rerun") {{
-            showRerunPlaceholder("Non-RRD artifact loaded. Use preview/download below.", {{ force: true }});
+            // Keep the Rerun iframe mounted under the media pane; authenticated blob
+            // preview handles basic-auth so <video>/<img> can play without 401s.
             await showArtifactPreview(simViz, activeArtifactRender);
           }} else {{
             hideArtifactPreview();

@@ -515,6 +515,22 @@ function installAgentApiMocks() {
       });
       return;
     }
+    if (decoded.match(/\.(mp4|webm|mov)$/i)) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "video/mp4" },
+        body: "mock-video-bytes",
+      });
+      return;
+    }
+    if (decoded.match(/\.(png|jpe?g|gif|webp)$/i)) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "image/png" },
+        body: "mock-image-bytes",
+      });
+      return;
+    }
     req.reply({
       statusCode: 200,
       headers: { "content-type": "application/octet-stream" },
