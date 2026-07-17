@@ -776,6 +776,8 @@ def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
 
     monkeypatch.setenv("NPA_REGISTRY_USERNAME", "iam")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "registry-token-secret")
+    # Stale SkyPilot token from another SA must not win over NPA_REGISTRY_PASSWORD.
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "stale-skypilot-token")
     monkeypatch.delenv("NPA_SERVERLESS_SKIP_REGISTRY_AUTH", raising=False)
     caplog.set_level("DEBUG", logger="npa.clients.serverless")
     client = ServerlessClient(nebius_bin="nebius", subprocess_runner=fake_runner)
@@ -788,6 +790,7 @@ def test_create_job_adds_nebius_registry_auth(monkeypatch, caplog) -> None:
     args = calls[0]
     assert args[args.index("--registry-username") + 1] == "iam"
     assert args[args.index("--registry-password") + 1] == "registry-token-secret"
+    assert "stale-skypilot-token" not in args
     assert "registry-token-secret" not in caplog.text
     assert "--registry-password" in args
 
