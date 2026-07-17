@@ -769,6 +769,28 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     assert '.stage-item[data-stage-key]' in source
 
 
+def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
+    """The 'Known runs' visualize selector must list discovered runs and the
+    Rerun panel must remain present.
+
+    Regression guard: discovered runs (e.g. under a custom artifact prefix) must
+    be choosable to visualize, and sim-viz status polling must not clobber them.
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    # Rerun panel + run selectors still present.
+    assert "Rerun (embedded)" in source
+    assert 'id="rerunFrame"' in source
+    assert 'id="runIdSelect"' in source
+    # Discovery populates the visualize selector.
+    assert 'const visualizeSelect = document.getElementById("runIdSelect")' in source
+    assert "visualizeSelect.appendChild(opt)" in source
+    # Status polling unions instead of clobbering the selector.
+    assert "Union sim-viz history with any runs already surfaced" in source
+    assert "select.innerHTML = '<option value=\"\">(select run)</option>';" not in source
+
+
 def test_bootstrap_run_history_uses_run_id_index() -> None:
     from npa.cli import agent as agent_module
 
