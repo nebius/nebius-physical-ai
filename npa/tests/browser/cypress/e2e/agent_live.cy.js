@@ -211,30 +211,47 @@ describe("NPA agent UI against live infra", () => {
       );
     };
 
-    // Chain load-run → status so a prior video preview cannot race the assertion.
-    liveAgentRequest("/api/sim-viz/load-run", {
-      method: "POST",
-      body: { run_id: runId, camera: "workspace" },
-      timeout: 120000,
-    }).then((response) => {
-      expect(response.status).to.eq(200);
-      expect(response.body).to.have.property("ok", true);
-      assertRerunSimViz(response.body.sim_viz || {});
-      return liveAgentRequest("/api/sim-viz/status");
-    }).then((response) => {
-      expect(response.status).to.eq(200);
-      assertRerunSimViz(response.body || {});
-    });
-
-    cy.reload();
-    cy.get("#statusBar", { timeout: 30000 }).should("exist");
-    cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
-    cy.get("#tabRerun").click();
-    cy.get("#rerunFrame").should(($frame) => {
-      const src = String($frame.attr("src") || "");
-      expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
-    });
-    cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
+    const loadRunUntilRerun = (attempt) => {
+      liveAgentRequest("/api/sim-viz/load-run", {
+        method: "POST",
+        body: { run_id: runId, camera: "workspace" },
+        timeout: 120000,
+        failOnStatusCode: false,
+      }).then((response) => {
+        const simViz = (response.body && response.body.sim_viz) || {};
+        const ready =
+          response.status === 200 &&
+          response.body &&
+          response.body.ok === true &&
+          String(simViz.artifact_render || "") === "rerun" &&
+          String(simViz.run_id || "") === runId;
+        if (!ready) {
+          if (attempt >= 4) {
+            expect(response.status, JSON.stringify(response.body)).to.eq(200);
+            expect(response.body, JSON.stringify(response.body)).to.have.property("ok", true);
+            assertRerunSimViz(simViz);
+            return;
+          }
+          cy.wait(1500).then(() => loadRunUntilRerun(attempt + 1));
+          return;
+        }
+        assertRerunSimViz(simViz);
+        liveAgentRequest("/api/sim-viz/status").then((statusResp) => {
+          expect(statusResp.status).to.eq(200);
+          assertRerunSimViz(statusResp.body || {});
+          cy.reload();
+          cy.get("#statusBar", { timeout: 30000 }).should("exist");
+          cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
+          cy.get("#tabRerun").click();
+          cy.get("#rerunFrame").should(($frame) => {
+            const src = String($frame.attr("src") || "");
+            expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
+          });
+          cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
+        });
+      });
+    };
+    loadRunUntilRerun(0);
   });
 
   it("presents the live run with an intuitive stage timeline and stable desktop layout", function () {
