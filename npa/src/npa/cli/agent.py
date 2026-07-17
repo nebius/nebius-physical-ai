@@ -6644,7 +6644,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         font-weight: 800;
       }}
       body.viewer-focus #chatDrawerToggle {{ display: inline-flex; }}
-      #chatDrawerToggle .chat-fab-icon {{ font-size: 14px; letter-spacing: 0.08em; line-height: 1; }}
+      #chatDrawerToggle .chat-fab-icon {{ display: inline-flex; line-height: 0; }}
+      #chatDrawerToggle .chat-fab-icon svg {{ display: block; }}
+      #chatDrawerToggle.is-open .chat-fab-icon {{ display: none; }}
       #chatDrawerToggle.is-open .chat-fab-open-label {{ display: none; }}
       #chatDrawerToggle:not(.is-open) .chat-fab-close-label {{ display: none; }}
       body.viewer-focus #panelChat.is-inactive {{
