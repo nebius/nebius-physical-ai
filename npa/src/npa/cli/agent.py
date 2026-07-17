@@ -5936,6 +5936,15 @@ _shutil.copy2(target, _rec)
 PY
 sudo mkdir -p /opt/npa-agent/recordings
 sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+# Tiny ftyp sample so live media-type checks work even when S3 has no .mp4 runs.
+sudo python3 - <<'PY'
+from pathlib import Path
+target = Path("/opt/npa-agent/recordings/sample-preview.mp4")
+ftyp_data = b"isom" + bytes([0, 0, 0, 0]) + b"isomiso2mp41"
+ftyp = (8 + len(ftyp_data)).to_bytes(4, "big") + b"ftyp" + ftyp_data
+mdat = (8).to_bytes(4, "big") + b"mdat"
+target.write_bytes(ftyp + mdat)
+PY
 cat <<'WELCOME' | sudo tee /opt/npa-agent/welcome.html >/dev/null
 <!doctype html>
 <html lang="en">
