@@ -726,6 +726,25 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "list_artifacts" in embedded
 
 
+def test_bootstrap_artifact_prefix_triggers_discovery() -> None:
+    """Typing a prefix + Enter (or blur) must re-run run discovery.
+
+    Regression guard: previously the Prefix input had no listener, so typing a
+    value did nothing until the operator also clicked "Discover runs".
+    """
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert 'const artifactPrefixInput = document.getElementById("artifactPrefix")' in source
+    assert 'artifactPrefixInput.addEventListener("keydown"' in source
+    assert 'artifactPrefixInput.addEventListener("change", discoverFromPrefix)' in source
+    # The prefix-driven discovery must call the runs endpoint refresh.
+    assert "const discoverFromPrefix = async () =>" in source
+    assert "await refreshArtifactRuns();" in source
+    # Placeholder should tell the operator that Enter triggers discovery.
+    assert "then Enter" in source
+
+
 def test_bootstrap_run_history_uses_run_id_index() -> None:
     from npa.cli import agent as agent_module
 
