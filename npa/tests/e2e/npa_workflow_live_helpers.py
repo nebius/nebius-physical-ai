@@ -37,6 +37,7 @@ DYNAMIC_SPECS = frozenset(
         "sim2real-vlm-rl.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
+        "physical-ai-data-factory.yaml",
     }
 )
 

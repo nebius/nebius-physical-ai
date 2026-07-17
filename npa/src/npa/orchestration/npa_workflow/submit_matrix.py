@@ -128,6 +128,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- Plan-only / stub twins (do not burn GPUs on stubs) ---
     SubmitLiveCase(
+        "physical-ai-data-factory.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        notes=(
+            "Physical AI Data Factory blueprint. Dynamic gate (needs "
+            "--assume-decision). Plan-only: the GPU cosmos2.transfer augment and "
+            "the fiftyone/finalize stages are stubs, so live render/submit-prep is "
+            "validated without burning a GPU."
+        ),
+    ),
+    SubmitLiveCase(
         "sim2real-vlm-rl.yaml",
         "multi",
         plan_only=True,
