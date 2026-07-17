@@ -12,6 +12,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.visitMockAgent();
     cy.wait("@session");
     cy.wait("@simAssets");
+    // Wait for boot mount to finish so later loadRun/loadArtifact are not clobbered
+    // by ensureFrankaRerunLoaded. Cover clears quickly after warm (no splash latency).
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
   });
 
   it("renders a generic Stages panel (not Sim2Real-only)", () => {
@@ -52,6 +55,36 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.get("#stagesPanel .hint").should("contain.text", "Timeline, result, and logs");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
+  });
+
+  it("never shows Loading application bundle without mount latency", () => {
+    cy.get("#rerunBundleCover").should("exist");
+    cy.window().then((win) => {
+      const html = win.document.documentElement.outerHTML;
+      expect(html).to.include("scheduleRerunBundleUncover");
+      expect(html).to.include("Uncover without blocking mount latency");
+      expect(html).to.include("waitUntilRerunPastBundleSplash");
+      expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
+      expect(html).not.to.include('Mount the viewer immediately so "Loading application bundle" starts early');
+    });
+    // Visible chrome only (skip <script> source, which contains the splash detector regex).
+    cy.get("#rerunBundleCover .cover-title").should(($el) => {
+      expect($el.text()).not.to.match(/Loading application bundle/i);
+    });
+    cy.get("#rerunBundleCover .cover-hint").should(($el) => {
+      expect($el.text()).not.to.match(/Loading application bundle/i);
+    });
+    cy.get("#statusBar").should(($el) => {
+      expect($el.text()).not.to.match(/Loading application bundle/i);
+    });
+    // Mock Rerun serves a canvas with no splash; cover should clear quickly (no cold wasm).
+    cy.get("#rerunBundleCover", { timeout: 15000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      const frame = $frame[0];
+      const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+      const text = String((doc && doc.body && doc.body.innerText) || "");
+      expect(text).not.to.match(/Loading application bundle/i);
+    });
   });
 
   it("renders every static control and generated panel", () => {

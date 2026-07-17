@@ -366,6 +366,23 @@ def test_agent_rerun_bundle_load_budget(ctx: AgentLiveContext) -> None:
     assert wasm_fetches[0].nbytes >= 1_000_000, report
 
 
+def test_agent_no_loading_application_bundle_without_latency(ctx: AgentLiveContext) -> None:
+    """Live gate: UI hides Rerun splash without blocking mount on long splash waits."""
+    from npa.agent_rerun_bundle_check import assert_rerun_ui_eager_load_contract
+
+    resp = ctx.get(ctx.agent_url)
+    assert resp.status_code == 200
+    html = resp.text
+    errors = assert_rerun_ui_eager_load_contract(html)
+    assert errors == [], errors
+    assert "scheduleRerunBundleUncover" in html
+    assert "Uncover without blocking mount latency" in html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 45000)" not in html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 120000)" not in html
+    assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in html
+
+
+
 def test_agent_load_franka_demo_and_rrd(ctx: AgentLiveContext) -> None:
     load_demo = ctx.post("/api/sim-viz/load-franka-demo", json={"camera": "workspace"})
     load_demo.raise_for_status()

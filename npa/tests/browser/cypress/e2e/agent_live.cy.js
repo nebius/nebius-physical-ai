@@ -101,12 +101,31 @@ describe("NPA agent UI against live infra", () => {
       expect(html).to.include("URL.createObjectURL(blob)");
       expect(html).to.include("Loading video preview");
       expect(html).to.include("waitUntilRerunPastBundleSplash");
+      expect(html).to.include("scheduleRerunBundleUncover");
       expect(html).to.include("Warm Rerun assets before revealing the iframe");
       expect(html).not.to.include('Mount the viewer immediately so "Loading application bundle" starts early');
+      expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
     });
-    // After boot, the cover must be gone and Rerun must not still show its splash text.
-    cy.get("#rerunBundleCover", { timeout: 120000 }).should("have.attr", "hidden");
-    cy.get("#rerunFrame", { timeout: 120000 }).should(($frame) => {
+  });
+
+  it("never shows Loading application bundle without mount latency", () => {
+    cy.get("#rerunBundleCover").should("exist");
+    cy.window().then((win) => {
+      const html = win.document.documentElement.outerHTML;
+      expect(html).to.include("Uncover without blocking mount latency");
+      expect(html).to.include("scheduleRerunBundleUncover");
+      expect(html).not.to.include("await waitUntilRerunPastBundleSplash(iframe, 45000)");
+    });
+    // Visible chrome only (skip <script> source, which contains the splash detector regex).
+    cy.get("#rerunBundleCover .cover-title").should(($el) => {
+      expect($el.text()).not.to.match(/Loading application bundle/i);
+    });
+    cy.get("#statusBar").should(($el) => {
+      expect($el.text()).not.to.match(/Loading application bundle/i);
+    });
+    // Cover drops once past splash; keep timeout modest — warm-before-reveal avoids cold stalls.
+    cy.get("#rerunBundleCover", { timeout: 45000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
       const frame = $frame[0];
       try {
         const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
@@ -115,7 +134,6 @@ describe("NPA agent UI against live infra", () => {
           /Loading application bundle/i,
         );
       } catch (_err) {
-        // Cross-origin would be a deploy bug; treat as failure.
         throw new Error("unable to inspect same-origin Rerun iframe for bundle splash");
       }
     });

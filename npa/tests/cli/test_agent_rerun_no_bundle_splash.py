@@ -41,14 +41,18 @@ def test_agent_rerun_no_bundle_splash_contract_in_source() -> None:
         "async function mountRerunIframeUntilSuccess"
     )[0]
     assert "await warmRerunBundle()" in mount_src
-    assert "waitUntilRerunPastBundleSplash" in mount_src
+    assert "scheduleRerunBundleUncover" in mount_src
     assert "showRerunBundleCover" in mount_src
+    # Mount must not block on long splash polls (user-visible latency).
+    assert "await waitUntilRerunPastBundleSplash" not in mount_src
 
 
 def test_bundle_check_required_markers_include_cover() -> None:
     assert 'id="rerunBundleCover"' in REQUIRED_UI_MARKERS
     assert "waitUntilRerunPastBundleSplash" in REQUIRED_UI_MARKERS
+    assert "scheduleRerunBundleUncover" in REQUIRED_UI_MARKERS
     assert any("Mount the viewer immediately" in marker for marker in FORBIDDEN_UI_MARKERS)
+    assert any("await waitUntilRerunPastBundleSplash" in marker for marker in FORBIDDEN_UI_MARKERS)
 
 
 def test_boot_page_warms_before_mount() -> None:
@@ -59,3 +63,18 @@ def test_boot_page_warms_before_mount() -> None:
     assert "await ensureFrankaRerunLoaded()" in boot
     # Must not race mount with warm anymore.
     assert "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])" not in boot
+
+
+def test_no_loading_application_bundle_without_mount_latency() -> None:
+    """Contract: hide Rerun splash text without awaiting long splash polls in mount."""
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    ui_html = _embedded_ui_html(source)
+    assert "Loading application bundle" in ui_html  # detector / comments reference it
+    assert "scheduleRerunBundleUncover" in ui_html
+    assert "Uncover without blocking mount latency" in ui_html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 45000)" not in ui_html
+    assert "await waitUntilRerunPastBundleSplash(iframe, 120000)" not in ui_html
+    # Early warm starts as soon as the UI script defines warmRerunBundle.
+    warm_idx = ui_html.index("async function warmRerunBundle")
+    early_warm = ui_html[warm_idx : warm_idx + 2500]
+    assert "warmRerunBundle().catch(" in early_warm

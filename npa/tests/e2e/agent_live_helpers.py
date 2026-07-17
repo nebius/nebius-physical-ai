@@ -130,6 +130,8 @@ UI_WIRING_MARKERS = (
     "waitUntilRerunPastBundleSplash",
     "Warm Rerun assets before revealing the iframe",
     "Preparing viewer…",
+    "Uncover without blocking mount latency",
+    "scheduleRerunBundleUncover",
     f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
     *MEDIA_PREVIEW_UI_MARKERS,
 )

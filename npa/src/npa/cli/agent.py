@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071705"
+AGENT_UI_VERSION = "2026071706"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -91,6 +91,8 @@ AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
     "hideRerunBundleCover",
     "Warm Rerun assets before revealing the iframe",
     "Preparing viewer…",
+    # Cover may stay up, but mount/boot must not await long splash polls (latency).
+    "Uncover without blocking mount latency",
 )
 
 
@@ -7098,7 +7100,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                   <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
                   <div id="rerunBundleCover" class="rerun-bundle-cover" hidden aria-live="polite">
                     <p class="cover-title">Preparing viewer…</p>
-                    <p class="cover-hint">Caching Rerun assets so the application bundle never flashes.</p>
+                    <p class="cover-hint">Caching Rerun assets for a seamless viewer open.</p>
                   </div>
                 </div>
               </div>
@@ -8014,6 +8016,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         return rerunBundleWarmPromise;
       }}
+      // Start caching immediately so first mount does not pay a cold-download stall.
+      warmRerunBundle().catch((warmErr) => {{
+        console.warn("early rerun bundle warm failed", warmErr);
+      }});
       function showRerunBundleCover(message) {{
         const cover = document.getElementById("rerunBundleCover");
         if (!cover) return;
@@ -8043,6 +8049,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           return false;
         }}
       }}
+      function scheduleRerunBundleUncover(iframe) {{
+        // Uncover without blocking mount latency — poll in the background only.
+        if (!rerunViewerShowsBundleSplash(iframe)) {{
+          hideRerunBundleCover();
+          return Promise.resolve({{ ok: true, immediate: true }});
+        }}
+        showRerunBundleCover("Opening viewer…");
+        return waitUntilRerunPastBundleSplash(iframe, 45000).then((past) => {{
+          if (past && past.ok && !rerunViewerShowsBundleSplash(iframe)) {{
+            hideRerunBundleCover();
+          }} else if (!rerunViewerShowsBundleSplash(iframe)) {{
+            hideRerunBundleCover();
+          }} else {{
+            // Keep cover — never expose Rerun's splash text.
+            showRerunBundleCover("Still preparing viewer…");
+          }}
+          return past;
+        }});
+      }}
       async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {{
         // Keep our cover up until Rerun's own "Loading application bundle" splash is gone.
         const timeout = Math.max(2000, Number(timeoutMs || 45000));
@@ -8052,16 +8077,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const splash = rerunViewerShowsBundleSplash(iframe);
           if (splash) sawSplash = true;
           const hasCanvas = rerunViewerHasCanvas(iframe);
-          if (hasCanvas && !splash) {{
+          if (!splash && (hasCanvas || sawSplash || Date.now() - start > 800)) {{
             return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
           }}
-          // After warm, some builds skip the splash text but still need a paint.
-          if (!splash && hasCanvas) {{
-            return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
-          }}
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
+          await new Promise((resolve) => window.setTimeout(resolve, 100));
         }}
-        // Timed out: still reveal rather than leave an opaque cover forever.
         return {{
           ok: !rerunViewerShowsBundleSplash(iframe),
           sawSplash,
@@ -8286,19 +8306,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       async function waitForRerunRenderSettle(iframe, timeoutMs) {{
-        const timeout = Math.max(2000, Number(timeoutMs || 8000));
+        const timeout = Math.max(1000, Number(timeoutMs || 4000));
         const start = Date.now();
         while (Date.now() - start < timeout) {{
-          if (rerunViewerHasCanvas(iframe) && !rerunViewerShowsBundleSplash(iframe)) {{
+          if (!rerunViewerShowsBundleSplash(iframe) && rerunViewerHasCanvas(iframe)) {{
             hideRerunBundleCover();
             return;
           }}
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
+          await new Promise((resolve) => window.setTimeout(resolve, 100));
         }}
-        // Rerun fires the iframe load event before WebGL has drawn the recording.
-        // Brief settle only — do not leave a long blank wait after splash is gone.
-        await new Promise((resolve) => window.setTimeout(resolve, 1200));
-        hideRerunBundleCover();
+        // Never uncover while Rerun still paints its splash — no artificial settle delay.
+        if (!rerunViewerShowsBundleSplash(iframe)) {{
+          hideRerunBundleCover();
+        }}
       }}
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
@@ -8326,25 +8346,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
-        const pastSplash = await waitUntilRerunPastBundleSplash(iframe, 45000);
-        if (pastSplash && pastSplash.ok && !rerunViewerShowsBundleSplash(iframe)) {{
-          hideRerunBundleCover();
-        }} else {{
-          // Never uncover while Rerun still paints "Loading application bundle".
-          showRerunBundleCover("Still preparing viewer…");
-          console.warn("rerun bundle splash cover timed out; keeping cover", pastSplash);
-          waitUntilRerunPastBundleSplash(iframe, 120000).then((again) => {{
-            if (again && again.ok && !rerunViewerShowsBundleSplash(iframe)) {{
-              hideRerunBundleCover();
-            }}
-          }}).catch((err) => {{
-            console.warn("rerun splash wait failed", err);
-          }});
-        }}
+        // Uncover without blocking mount latency — splash polling stays in the background.
+        scheduleRerunBundleUncover(iframe).catch((err) => {{
+          console.warn("rerun splash uncover failed", err);
+        }});
         rerunIframeLoaded = true;
         mountedRerunRunKey = mountKey;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-        waitForRerunRenderSettle(iframe, 8000).catch((err) => {{
+        waitForRerunRenderSettle(iframe, 4000).catch((err) => {{
           console.warn("rerun render settle probe failed", err);
         }});
         return true;
@@ -10534,6 +10543,8 @@ def verify_live_cmd(
         "waitUntilRerunPastBundleSplash",
         "Preparing viewer…",
         "Warm Rerun assets before revealing the iframe",
+        "Uncover without blocking mount latency",
+        "scheduleRerunBundleUncover",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -10543,6 +10554,10 @@ def verify_live_cmd(
         _fail("UI html must not hide tab panels with display:none via hidden attribute")
     if 'Mount the viewer immediately so "Loading application bundle" starts early' in ui_html:
         _fail("UI must not mount Rerun before bundle warm (exposes Loading application bundle)")
+    if "await waitUntilRerunPastBundleSplash(iframe, 45000)" in ui_html:
+        _fail("UI must not block mount on long splash wait (latency)")
+    if "await waitUntilRerunPastBundleSplash(iframe, 120000)" in ui_html:
+        _fail("UI must not block mount on long splash wait (latency)")
     # Guard against regressions that put bare authenticated URLs on <video src>
     # (browsers omit Authorization headers for media elements under basic auth).
     if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:

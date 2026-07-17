@@ -25,6 +25,8 @@ REQUIRED_UI_MARKERS = (
     "waitUntilRerunPastBundleSplash",
     "Warm Rerun assets before revealing the iframe",
     "Preparing viewer…",
+    "Uncover without blocking mount latency",
+    "scheduleRerunBundleUncover",
 )
 
 FORBIDDEN_UI_MARKERS = (
@@ -35,6 +37,9 @@ FORBIDDEN_UI_MARKERS = (
     "Remount after display:none",
     # Old strategy that mounted before warm and exposed Rerun's splash text.
     'Mount the viewer immediately so "Loading application bundle" starts early',
+    # Blocking splash waits that add mount/boot latency.
+    "await waitUntilRerunPastBundleSplash(iframe, 45000)",
+    "await waitUntilRerunPastBundleSplash(iframe, 120000)",
     # Old inactive-tab CSS that deferred wasm/WebGL init while Chat was showing.
     ".tab-panel.is-inactive {\n        position: absolute;\n        left: 16px;\n        right: 16px;\n        top: 16px;\n        visibility: hidden;",
 )
