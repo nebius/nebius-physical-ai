@@ -8,7 +8,8 @@ import os
 _PLACEHOLDER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
 
 # Platforms available on the shared us-central1 rtxpro project (verified live).
-_DEFAULT_SERVERLESS_GPU = "gpu-h200-sxm"
+# Default to RTX6000: tenant H200 quota is often exhausted (limit 2).
+_DEFAULT_SERVERLESS_GPU = "gpu-rtx6000"
 _RT_CORE_SERVERLESS_GPU = "gpu-rtx6000"
 
 
