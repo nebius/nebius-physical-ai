@@ -102,64 +102,6 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
-  it("loads a live mp4 artifact into the Video viewer with authenticated preview", function () {
-    liveAgentRequest("/api/artifacts/runs").then((runsResp) => {
-      expect(runsResp.status).to.eq(200);
-      const runs = (runsResp.body && runsResp.body.runs) || [];
-      expect(runs.length, "discovered runs").to.be.greaterThan(0);
-
-      const tryRun = (index) => {
-        if (index >= Math.min(runs.length, 20)) {
-          throw new Error("no mp4 artifact found in recent runs");
-        }
-        const runId = String((runs[index] && runs[index].run_id) || "");
-        liveAgentRequest(`/api/artifacts/run/${encodeURIComponent(runId)}`).then((artsResp) => {
-          const arts = (artsResp.body && artsResp.body.artifacts) || [];
-          const mp4 = arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mp4"));
-          if (!mp4) {
-            tryRun(index + 1);
-            return;
-          }
-          liveAgentRequest("/api/sim-viz/load-artifact", {
-            method: "POST",
-            body: { run_id: runId, key: mp4.key },
-          }).then((loadResp) => {
-            expect(loadResp.status).to.eq(200);
-            expect(loadResp.body.ok).to.eq(true);
-            expect(loadResp.body.render).to.eq("video");
-            const preview = String((loadResp.body.sim_viz && loadResp.body.sim_viz.artifact_preview_url) || "");
-            expect(preview).to.match(/^\/api\/artifacts\/file\//);
-            liveAgentRequest(preview).then((fileResp) => {
-              expect(fileResp.status).to.eq(200);
-              const ct = String(fileResp.headers["content-type"] || "").toLowerCase();
-              expect(ct).to.include("video/mp4");
-            });
-            cy.get("#tabRerun").click();
-            cy.get("#artifactRefreshRuns").click();
-            cy.get("#artifactRunSelect", { timeout: 30000 }).then(($select) => {
-              const values = [...$select[0].options].map((opt) => opt.value);
-              if (values.includes(runId)) {
-                cy.wrap($select).select(runId);
-              }
-            });
-            cy.get("#artifactTypeFilter").select("video");
-            cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
-            cy.contains("#artifactList button", "Play").first().click();
-            cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
-            cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
-            cy.get("#artifactPreviewHost video", { timeout: 60000 })
-              .should("have.attr", "src")
-              .and("match", /^blob:/);
-            cy.get("#artifactPreviewHost video")
-              .should("have.attr", "data-preview-url")
-              .and("include", ".mp4");
-          });
-        });
-      };
-      tryRun(0);
-    });
-  });
-
   it("drives safe live controls through the browser", () => {
     cy.get("#chatActionS3").click();
     cy.get("#chatInput").should("contain.value", "configure S3");
@@ -255,7 +197,7 @@ describe("NPA agent UI against live infra", () => {
     }
 
     const assertRerunSimViz = (simViz) => {
-      expect(simViz.run_id || simViz.active_run_id).to.eq(runId);
+      expect(String(simViz.run_id || "")).to.eq(runId);
       expect(String(simViz.artifact_render || "")).to.eq("rerun");
       expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
       expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
@@ -269,16 +211,17 @@ describe("NPA agent UI against live infra", () => {
       );
     };
 
+    // Chain load-run → status so a prior video preview cannot race the assertion.
     liveAgentRequest("/api/sim-viz/load-run", {
       method: "POST",
       body: { run_id: runId, camera: "workspace" },
+      timeout: 120000,
     }).then((response) => {
       expect(response.status).to.eq(200);
       expect(response.body).to.have.property("ok", true);
       assertRerunSimViz(response.body.sim_viz || {});
-    });
-
-    liveAgentRequest("/api/sim-viz/status").then((response) => {
+      return liveAgentRequest("/api/sim-viz/status");
+    }).then((response) => {
       expect(response.status).to.eq(200);
       assertRerunSimViz(response.body || {});
     });
@@ -304,10 +247,12 @@ describe("NPA agent UI against live infra", () => {
     liveAgentRequest("/api/sim-viz/load-run", {
       method: "POST",
       body: { run_id: runId, camera: "workspace" },
+      timeout: 120000,
     }).then((response) => {
       expect(response.status).to.eq(200);
       expect(response.body).to.have.property("ok", true);
       expect((response.body.sim_viz || {}).artifact_render).to.eq("rerun");
+      expect(String((response.body.sim_viz || {}).run_id || "")).to.eq(runId);
     });
     cy.reload();
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
@@ -395,6 +340,72 @@ describe("NPA agent UI against live infra", () => {
       expect(reply).to.include(runId);
       expect(reply).to.match(/Rerun|artifact|stage|rerun_ready/i);
       expect(reply).to.match(/\*\*run_id\*\*|run_id/i);
+    });
+  });
+
+  it("loads a live mp4 artifact into the Video viewer with authenticated preview", () => {
+    // Keep this after Rerun-specific cases so video preview state cannot race them.
+    liveAgentRequest("/api/artifacts/runs").then((runsResp) => {
+      expect(runsResp.status).to.eq(200);
+      const runs = (runsResp.body && runsResp.body.runs) || [];
+      expect(runs.length, "discovered runs").to.be.greaterThan(0);
+      const candidates = runs.slice(0, 20).map((entry) => String((entry && entry.run_id) || "")).filter(Boolean);
+
+      const findMp4 = (index) => {
+        if (index >= candidates.length) {
+          throw new Error("no mp4 artifact found in recent runs");
+        }
+        const runId = candidates[index];
+        return liveAgentRequest(`/api/artifacts/run/${encodeURIComponent(runId)}`).then((artsResp) => {
+          const arts = (artsResp.body && artsResp.body.artifacts) || [];
+          const mp4 = arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mp4"));
+          if (!mp4) {
+            return findMp4(index + 1);
+          }
+          return { runId, key: String(mp4.key) };
+        });
+      };
+
+      return findMp4(0);
+    }).then(({ runId, key }) => {
+      return liveAgentRequest("/api/sim-viz/load-artifact", {
+        method: "POST",
+        body: { run_id: runId, key },
+        timeout: 120000,
+      }).then((loadResp) => {
+        expect(loadResp.status).to.eq(200);
+        expect(loadResp.body.ok).to.eq(true);
+        expect(loadResp.body.render).to.eq("video");
+        const preview = String((loadResp.body.sim_viz && loadResp.body.sim_viz.artifact_preview_url) || "");
+        expect(preview).to.match(/^\/api\/artifacts\/file\//);
+        return liveAgentRequest(preview).then((fileResp) => {
+          expect(fileResp.status).to.eq(200);
+          const ct = String(fileResp.headers["content-type"] || "").toLowerCase();
+          expect(ct).to.include("video/mp4");
+          return { runId, key, preview };
+        });
+      });
+    }).then(({ runId }) => {
+      cy.get("#tabRerun").click();
+      cy.get("#artifactRefreshRuns").click();
+      cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "Runs discovered");
+      cy.get("#artifactRunSelect", { timeout: 30000 }).then(($select) => {
+        const values = [...$select[0].options].map((opt) => opt.value);
+        if (values.includes(runId)) {
+          cy.wrap($select).select(runId);
+        }
+      });
+      cy.get("#artifactTypeFilter").select("video");
+      cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
+      cy.contains("#artifactList button", "Play").first().click();
+      cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
+      cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
+      cy.get("#artifactPreviewHost video", { timeout: 60000 })
+        .should("have.attr", "src")
+        .and("match", /^blob:/);
+      cy.get("#artifactPreviewHost video")
+        .should("have.attr", "data-preview-url")
+        .and("include", ".mp4");
     });
   });
 
