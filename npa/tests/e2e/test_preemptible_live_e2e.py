@@ -101,14 +101,30 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
             )
         assert deploy.returncode == 0, output
 
-        cfg = config_module.resolve_workbench(live_project_alias, live_workbench_name)
-        instance_id = ""
-        if cfg is not None:
-            instance_id = str(getattr(cfg, "instance_id", "") or "")
-        if instance_id:
-            payload = _nebius_json(["compute", "instance", "get", "--id", instance_id])
-            preemptible = payload.get("spec", {}).get("preemptible") or payload.get("preemptible")
-            assert preemptible, f"expected preemptible spec, got: {preemptible!r}"
+        instance_name = f"lerobot-{live_project_alias}-{live_workbench_name}"
+        listed = _nebius_json(
+            [
+                "compute",
+                "instance",
+                "list",
+                "--parent-id",
+                env.project_id,
+            ]
+        )
+        items = listed.get("items", listed if isinstance(listed, list) else [])
+        match = next(
+            (
+                it
+                for it in items
+                if (it.get("metadata") or {}).get("name") == instance_name
+            ),
+            None,
+        )
+        assert match is not None, f"expected instance {instance_name!r} after deploy"
+        preemptible = (match.get("spec") or {}).get("preemptible") or match.get(
+            "preemptible"
+        )
+        assert preemptible, f"expected preemptible spec, got: {preemptible!r}"
     finally:
         destroy = _run_npa(
             [
