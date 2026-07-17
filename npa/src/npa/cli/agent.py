@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071702"
+AGENT_UI_VERSION = "2026071703"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4777,6 +4777,31 @@ def sim_viz_select_run(payload: dict | None = None):
     _save_state(state)
     return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
 
+def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
+    # Echo the just-applied snapshot. Do not re-enter sim_viz_status here:
+    # concurrent UI polls can rewrite state mid-load and return the wrong run.
+    payload = dict(DEFAULT_SIM_VIZ)
+    payload.update(sim_viz if isinstance(sim_viz, dict) else {{}})
+    payload["run_id"] = str(run_id or payload.get("run_id") or "").strip()
+    payload["active_run_id"] = str(state.get("active_run_id") or payload["run_id"] or "").strip()
+    runs = state.get("sim_viz_runs")
+    if isinstance(runs, dict):
+        payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
+    else:
+        payload["available_run_ids"] = []
+    render = str(payload.get("artifact_render") or "").strip().lower()
+    if render and render != "rerun":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        if not payload.get("rerun_iframe_url"):
+            payload["rerun_iframe_url"] = ""
+    else:
+        payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
+        if not payload.get("rerun_iframe_url"):
+            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"))
+    return payload
+
+
 @app.post("/sim-viz/load-run")
 def sim_viz_load_run(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -4807,8 +4832,10 @@ def sim_viz_load_run(payload: dict | None = None):
         )
         if requested_camera:
             sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
-        _save_state(state)
-        return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id)}}
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+        return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
     try:
         s3, settings = _agent_s3_client()
@@ -4830,8 +4857,14 @@ def sim_viz_load_run(payload: dict | None = None):
             )
             if requested_camera:
                 sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
-            _save_state(state)
-            return {{"ok": True, "sim_viz": sim_viz_status(run_id=run_id), "preferred": preferred.to_dict()}}
+                state["sim_viz"] = sim_viz
+                _record_sim_viz_run(state, sim_viz)
+                _save_state(state)
+            return {{
+                "ok": True,
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "preferred": preferred.to_dict(),
+            }}
     except Exception:
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
@@ -4864,7 +4897,7 @@ def sim_viz_load_run(payload: dict | None = None):
     _save_state(state)
     return {{
         "ok": True,
-        "sim_viz": sim_viz_status(run_id=run_id),
+        "sim_viz": _sim_viz_load_response(state, selected, run_id=run_id),
     }}
 
 @app.get("/sim-viz/recordings")

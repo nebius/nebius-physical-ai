@@ -78,3 +78,7 @@ def test_bootstrap_embeds_artifacts_module_with_media_type() -> None:
     assert "_AGENT_ARTIFACTS_EMBED" in source
     assert "media_type=artifact_media_type(safe_name)" in source
     assert "def _artifact_media_type(" not in source
+    # load-run must echo the applied snapshot (not re-enter status) to avoid
+    # racing concurrent UI artifact loads from returning the wrong run.
+    assert "def _sim_viz_load_response(" in source
+    assert '"sim_viz": _sim_viz_load_response(' in source

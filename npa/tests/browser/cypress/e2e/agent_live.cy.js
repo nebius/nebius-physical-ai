@@ -236,7 +236,7 @@ describe("NPA agent UI against live infra", () => {
           return;
         }
         assertRerunSimViz(simViz);
-        liveAgentRequest("/api/sim-viz/status").then((statusResp) => {
+        liveAgentRequest(`/api/sim-viz/status?run_id=${encodeURIComponent(runId)}`).then((statusResp) => {
           expect(statusResp.status).to.eq(200);
           assertRerunSimViz(statusResp.body || {});
           cy.reload();
