@@ -15,6 +15,7 @@ Sim Assets + Cameras panels, embedded Rerun viewer, and Sim2Real submit hooks.
 - Debug chat hallucinations (raw `GET /api/…` replies) or false “Loaded Franka” messages
 - Fix Rerun iframe black screen (basic auth + wasm fetch)
 - Operate customer HTTPS access and sign-in UX
+- **Describe this / viewer feedback:** load `skills/atomic/agent-visual-feedback/SKILL.md`
 
 ## Bootstrap And Verify
 

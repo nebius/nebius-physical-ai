@@ -15,6 +15,8 @@ making architecture, review, or domain judgments.
 - `skills/atomic/agent-development/SKILL.md`: build, enhance, or test the NPA
  chat agent backend (grounded-first routing, cost-aware Token Factory model
  selection, embedded-backend mechanism, cheap-token test tiers).
+- `skills/atomic/agent-visual-feedback/SKILL.md`: Describe-this viewer feedback
+  for Rerun / video / image / data panes (multimodal vision tier).
 - `skills/atomic/review-checklist/SKILL.md`: review risk classification.
 - `skills/atomic/physical-ai-context/SKILL.md`: robotics, sim-to-real,
   GPU-routing, Genesis, Isaac Lab, LeRobot, SONIC, GR00T, Cosmos, or BDD100K

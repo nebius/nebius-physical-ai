@@ -84,6 +84,15 @@ skills:
         path: npa/src/npa/workflows/artifacts.py
       - type: file_exists
         path: skills/atomic/find-artifacts/SKILL.md
+  - name: agent-visual-feedback
+    category: atomic
+    when_to_use: "Describe or critique the NPA agent viewer (Rerun, video, image, data) via Describe this / multimodal visual feedback."
+    path: skills/atomic/agent-visual-feedback/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/src/npa/cli/agent_visual_feedback.py
+      - type: file_exists
+        path: skills/atomic/agent-visual-feedback/SKILL.md
   - name: cosmos3-setup
     category: atomic
     when_to_use: "Set up Cosmos3 access, source checkout, Hugging Face reachability, and checkpoint staging."

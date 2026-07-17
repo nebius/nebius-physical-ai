@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071707"
+AGENT_UI_VERSION = "2026071708"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -96,6 +96,16 @@ AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
     # Run switches must soft-swap recordings without remounting wasm.
     "swapRerunRecordingInPlace",
     "add_receiver",
+)
+
+# Describe-this visual feedback: capture current viewer frame → vision tier chat.
+AGENT_VISUAL_FEEDBACK_CONTRACT = (
+    'id="describeVisual"',
+    "captureVisualContext",
+    "describeVisual",
+    "[npa-visual-feedback]",
+    "visual_context",
+    "normalize_messages_for_llm",
 )
 
 
@@ -136,6 +146,18 @@ _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
+_AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
+
+
+def _embedded_agent_visual_feedback_source() -> str:
+    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_visual_feedback.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
 
 
 def _embedded_agent_artifacts_source() -> str:
@@ -1474,6 +1496,7 @@ def _bootstrap_agent_stack(
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_routing_source = _embedded_agent_routing_source()
+    agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
@@ -2553,17 +2576,8 @@ def _chat_session_title(messages: list[dict] | None, fallback: str = "New chat")
 
 
 def _normalize_chat_history(raw: object) -> list[dict]:
-    history: list[dict] = []
-    if not isinstance(raw, list):
-        return history
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip()
-        content = str(item.get("content") or "").strip()
-        if role in {{"user", "assistant"}} and content:
-            history.append({{"role": role, "content": content}})
-    return history[-80:]
+    # Persist text stubs only — never store screenshot data-URLs in session history.
+    return normalize_messages_for_storage(raw)
 
 
 def _normalize_chat_session(session_id: str, payload: object | None = None) -> dict:
@@ -3281,6 +3295,8 @@ def _chat_with_resilience(
     raise HTTPException(status_code=502, detail=f"LLM providers unavailable: {{detail}}")
 
 {_AGENT_ROUTING_EMBED}
+
+{_AGENT_VISUAL_FEEDBACK_EMBED}
 
 {_AGENT_CHAT_EMBED}
 
@@ -4112,6 +4128,12 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
         names.append("find-artifacts")
     if ("workflow" in lowered or "yaml" in lowered) and "author-npa-workflow" not in names:
         names.append("author-npa-workflow")
+    if (
+        "npa-visual-feedback" in lowered
+        or "describe this" in lowered
+        or "visual feedback" in lowered
+    ) and "agent-visual-feedback" not in names:
+        names.insert(0, "agent-visual-feedback")
     snippets: list[str] = []
     for name in names[:4]:
         excerpt = _skill_excerpt(name)
@@ -4122,12 +4144,7 @@ def _resolve_skill_context(*, user_text: str, intent: str | None) -> tuple[list[
     return names, "Relevant NPA skill excerpts:\\n\\n" + "\\n\\n".join(snippets)
 
 def _last_user_message(raw_messages: list) -> str:
-    for item in reversed(raw_messages):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("role", "")).strip() == "user":
-            return str(item.get("content", "")).strip()
-    return ""
+    return text_from_messages(raw_messages)
 
 def _dedupe(values: list[str]) -> list[str]:
     unique: list[str] = []
@@ -4463,8 +4480,23 @@ def chat(payload: dict):
     if not isinstance(raw_messages, list) or not raw_messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty list")
     model = str(payload.get("model") or LLM_MODEL).strip() or LLM_MODEL
-    last_content = _last_user_message(raw_messages)
-    if re.search(r"\b(?:run|start|submit|launch)\b.{0,80}\b(?:small|simple|tiny|minimal)\b.{0,80}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b", last_content, re.IGNORECASE):
+    visual_context = payload.get("visual_context") if isinstance(payload.get("visual_context"), dict) else {{}}
+    visual_kind = normalize_visual_kind(
+        str(visual_context.get("kind") or visual_context.get("visual_kind") or "")
+    )
+    # Preserve multimodal parts for Token Factory; storage uses text stubs only.
+    llm_messages = normalize_messages_for_llm(raw_messages)
+    last_content = text_from_messages(llm_messages) or _last_user_message(raw_messages)
+    visual_turn = is_visual_feedback_turn(
+        user_text=last_content,
+        messages=llm_messages,
+        visual_context=visual_context,
+    )
+    if (not visual_turn) and re.search(
+        r"\b(?:run|start|submit|launch)\b.{{0,80}}\b(?:small|simple|tiny|minimal)\b.{{0,80}}\bsim(?:\s*[- ]?2\s*[- ]?real|2real)\b",
+        last_content,
+        re.IGNORECASE,
+    ):
         run_id = f"agent-chat-small-{{secrets.token_hex(6)}}"
         submit = submit_sim2real({{"run_id": run_id}})
         live = submit.get("live_submit") if isinstance(submit, dict) else None
@@ -4482,32 +4514,27 @@ def chat(payload: dict):
         str(payload.get("session_id") or state.get("active_chat_session_id") or "default")
     )
     session = _get_chat_session(state, session_id)
-    history = _normalize_chat_history(raw_messages)
+    history = normalize_messages_for_storage(llm_messages, visual_kind=visual_kind)
     if len(history) <= 1 and isinstance(session.get("chat_history"), list):
-        prior = _normalize_chat_history(session.get("chat_history", []))
+        prior = normalize_messages_for_storage(session.get("chat_history", []))
         if history:
             history = [*prior, history[-1]]
+            if llm_messages:
+                llm_messages = normalize_messages_for_llm([*prior, llm_messages[-1]])
         else:
             history = prior
-    raw_messages = history
-    tool_result = _agent_chat_with_tools(raw_messages=raw_messages, model=model)
+            llm_messages = normalize_messages_for_llm(prior)
+    # Never short-circuit Describe-this / vision turns through grounded intents.
+    tool_result = None if visual_turn else _agent_chat_with_tools(raw_messages=history, model=model)
     if tool_result is not None:
         reply = str(tool_result.get("reply") or "").strip()
-        history: list[dict] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role", "user")).strip() or "user"
-            content = str(item.get("content", "")).strip()
-            if role in {{"user", "assistant"}} and content:
-                history.append({{"role": role, "content": content}})
         if reply:
-            history.append({{"role": "assistant", "content": reply}})
+            history = [*history, {{"role": "assistant", "content": reply}}][-80:]
         session.update(
             {{
                 "id": session_id,
                 "title": str(session.get("title") or _chat_session_title(history)),
-                "chat_history": history[-80:],
+                "chat_history": history,
             }}
         )
         # Tool handlers may mutate session state (for example starting a Sim2Real
@@ -4525,27 +4552,40 @@ def chat(payload: dict):
         _save_state(state)
         return tool_result
     live_ctx = format_live_context_block(_load_state())
-    last_user = _last_user_message(raw_messages)
-    intent = match_chat_intent(last_user)
-    # Cost-tier routing: pick the cheapest adequate model for this turn and only
-    # honor an explicit user-selected model as an override (not the branded
-    # default), so no-model requests default to the cheap workhorse.
-    tier = classify_tier(last_user, intent=intent, messages=raw_messages)
+    last_user = text_from_messages(llm_messages)
+    intent = match_chat_intent(last_user) if not visual_turn else None
+    # Cost-tier routing: vision when an image is attached; otherwise escalate
+    # Describe-this metadata-only turns to reasoning (not cheap caption fluff).
+    tier = classify_tier(last_user, intent=intent, messages=llm_messages)
+    if visual_turn and tier != TIER_VISION:
+        tier = TIER_REASONING
     explicit_model = str(payload.get("model") or "").strip()
     budget_ok, _ = enforce_input_budget(last_user)
     skill_names, skill_ctx = _resolve_skill_context(user_text=last_user, intent=intent)
+    if visual_turn and "agent-visual-feedback" not in skill_names:
+        skill_names = ["agent-visual-feedback", *skill_names][:4]
+        skill_excerpt = _skill_excerpt("agent-visual-feedback")
+        if skill_excerpt:
+            visual_skill_block = f"[skill:agent-visual-feedback]\\n{{skill_excerpt}}"
+            if skill_ctx:
+                skill_ctx = skill_ctx + "\\n\\n" + visual_skill_block
+            else:
+                skill_ctx = "Relevant NPA skill excerpts:\\n\\n" + visual_skill_block
     system_content = _agent_system_prompt() + "\\n\\n" + live_ctx
+    visual_block = format_visual_context_block(visual_context)
+    if visual_block:
+        system_content += "\\n\\n" + visual_block
     if skill_ctx:
         system_content += "\\n\\n" + skill_ctx
     messages: list[dict] = [
         {{"role": "system", "content": system_content}}
     ]
-    for item in raw_messages:
+    for item in llm_messages:
         if not isinstance(item, dict):
             continue
         role = str(item.get("role", "user")).strip() or "user"
-        content = str(item.get("content", "")).strip()
-        if role == "user" and content:
+        content = item.get("content")
+        if role == "user" and isinstance(content, str) and content:
             # Guardrail: cap oversized pastes so one turn cannot blow the budget.
             _within, content = enforce_input_budget(content)
         if content:
@@ -4568,14 +4608,7 @@ def chat(payload: dict):
         reply = reasoning
         reasoning = None
     state = _load_state()
-    history: list[dict] = []
-    for item in raw_messages:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role", "user")).strip() or "user"
-        content = str(item.get("content", "")).strip()
-        if role in {{"user", "assistant"}} and content:
-            history.append({{"role": role, "content": content}})
+    history = normalize_messages_for_storage(llm_messages, visual_kind=visual_kind)
     if reply:
         history.append({{"role": "assistant", "content": reply}})
     session.update(
@@ -4595,6 +4628,7 @@ def chat(payload: dict):
         "tier": tier,
         "usage": turn_usage,
         "input_budget_ok": budget_ok,
+        "visual_kind": visual_kind if visual_turn else "",
         "session_id": session["id"],
         "session": {{
             "id": session["id"],
@@ -7129,6 +7163,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                 <div class="btn-row">
                   <button id="openRerun" class="btn" type="button">Open in Rerun</button>
                   <button id="loadRerunViewer" class="btn btn-primary" type="button">Reload Rerun data</button>
+                  <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                 </div>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
@@ -7422,6 +7457,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
+        bindClick("describeVisual", describeVisual, "Describe this");
         bindClick("openRerun", openRerunTab, "Open Rerun");
         bindClick("applySelection", applySelection, "Apply stock selection");
         bindClick("submitWorkflow", submitWorkflow, "Submit Sim2Real");
@@ -8011,6 +8047,205 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const input = document.getElementById("chatInput");
         input.value = text;
         input.focus();
+      }}
+      function downscaleCanvasToDataUrl(sourceCanvas, maxEdge, quality) {{
+        const srcW = Number(sourceCanvas.width || sourceCanvas.clientWidth || 0);
+        const srcH = Number(sourceCanvas.height || sourceCanvas.clientHeight || 0);
+        if (!srcW || !srcH) return "";
+        const edge = Math.max(64, Number(maxEdge || 768));
+        const scale = Math.min(1, edge / Math.max(srcW, srcH));
+        const w = Math.max(1, Math.round(srcW * scale));
+        const h = Math.max(1, Math.round(srcH * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return "";
+        ctx.drawImage(sourceCanvas, 0, 0, w, h);
+        try {{
+          return canvas.toDataURL("image/jpeg", Number(quality || 0.72));
+        }} catch (_err) {{
+          return "";
+        }}
+      }}
+      async function captureRerunViewerFrame() {{
+        const iframe = document.getElementById("rerunFrame");
+        if (!iframe || iframe.hidden) return "";
+        try {{
+          const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+          if (!doc) return "";
+          const canvas = doc.querySelector("canvas");
+          if (!canvas) return "";
+          return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+        }} catch (_err) {{
+          return "";
+        }}
+      }}
+      async function captureMediaViewerFrame() {{
+        const host = document.getElementById("artifactPreviewHost");
+        if (!host || host.hidden) return "";
+        const video = host.querySelector("video");
+        if (video && video.videoWidth && video.videoHeight) {{
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return "";
+          try {{
+            ctx.drawImage(video, 0, 0);
+            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+          }} catch (_err) {{
+            return "";
+          }}
+        }}
+        const img = host.querySelector("img");
+        if (img && img.naturalWidth && img.naturalHeight) {{
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return "";
+          try {{
+            ctx.drawImage(img, 0, 0);
+            return downscaleCanvasToDataUrl(canvas, 768, 0.72);
+          }} catch (_err) {{
+            return "";
+          }}
+        }}
+        return "";
+      }}
+      async function captureVisualContext() {{
+        // Capture the active viewer pane for vision feedback (Rerun / video / image).
+        const kind = String(activeRenderMode || activeArtifactRender || "rerun");
+        const visualKind = (kind === "video" || kind === "image" || kind === "data") ? kind : "rerun";
+        let imageDataUrl = "";
+        if (visualKind === "rerun") {{
+          imageDataUrl = await captureRerunViewerFrame();
+        }} else if (visualKind === "video" || visualKind === "image") {{
+          imageDataUrl = await captureMediaViewerFrame();
+        }}
+        const runEl = document.getElementById("simRunId");
+        const stageEl = document.getElementById("simStage");
+        const cameraEl = document.getElementById("simCamera");
+        const summaryEl = document.getElementById("renderedDataSummary");
+        const meta = {{
+          kind: visualKind,
+          visual_kind: visualKind,
+          run_id: String(activeRunId || (runEl && runEl.textContent) || "").trim(),
+          stage: String((stageEl && stageEl.textContent) || "").trim(),
+          camera: String((cameraEl && cameraEl.textContent) || "").trim(),
+          artifact_render: String(activeArtifactRender || visualKind || "").trim(),
+          artifact_key: String((summaryEl && summaryEl.textContent) || "").trim().slice(0, 240),
+          capture: imageDataUrl ? "frame" : "metadata-only",
+          has_image: Boolean(imageDataUrl),
+        }};
+        const promptLines = [
+          "[npa-visual-feedback] Describe this " + visualKind + " viewer and give operator feedback.",
+          "",
+          "Context:",
+          "- visual_kind: `" + visualKind + "`",
+          "- capture: `" + meta.capture + "`",
+        ];
+        if (meta.run_id) promptLines.push("- run_id: `" + meta.run_id + "`");
+        if (meta.stage) promptLines.push("- stage: `" + meta.stage + "`");
+        if (meta.camera) promptLines.push("- camera: `" + meta.camera + "`");
+        promptLines.push(
+          "",
+          "Instructions: Be concrete about what is visible (or metadata-only limits).",
+          "If the frame looks like RGB noise/static, say so and suggest timeline/entity/artifact checks.",
+          "Reply with: What I see → Likely meaning → Operator feedback → Next actions."
+        );
+        return {{
+          kind: visualKind,
+          imageDataUrl,
+          meta,
+          prompt: promptLines.join("\\n"),
+        }};
+      }}
+      async function describeVisual() {{
+        if (chatSendInFlight) {{
+          showToast("Chat is busy; wait for the current reply.", "info");
+          return false;
+        }}
+        if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
+          setMobileAuthNeeded(true);
+          showToast("Unlock chat with your agent password first.", "error");
+          return false;
+        }}
+        const captured = await captureVisualContext();
+        const prompt = String(captured.prompt || "").trim();
+        if (!prompt) {{
+          showToast("Could not build a describe prompt.", "error");
+          return false;
+        }}
+        const display = prompt + (captured.imageDataUrl
+          ? "\\n\\n_(attached viewer frame)_"
+          : "\\n\\n_(no frame capture — metadata only; open Rerun/Video/Image first)_");
+        let userContent = prompt;
+        if (captured.imageDataUrl) {{
+          userContent = [
+            {{ type: "text", text: prompt }},
+            {{ type: "image_url", image_url: {{ url: captured.imageDataUrl }} }},
+          ];
+        }}
+        chatSendInFlight = true;
+        appendChat("user", display);
+        // Keep local history text-only so subsequent turns do not resend megabyte data-URLs.
+        chatHistory.push({{ role: "user", content: prompt }});
+        setChatBusy(true);
+        showThinkingBubble();
+        try {{
+          const model = selectedChatModel();
+          const prior = chatHistory.slice(0, -1).map((item) => ({{
+            role: item.role,
+            content: typeof item.content === "string" ? item.content : String(item.content || ""),
+          }}));
+          const data = await apiJson("/api/chat", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{
+              messages: [...prior, {{ role: "user", content: userContent }}],
+              model,
+              session_id: activeChatSessionId,
+              visual_context: captured.meta || {{}},
+            }}),
+          }});
+          clearThinkingBubble();
+          if (data && data.model) {{
+            const select = document.getElementById("chatModel");
+            if (select) {{
+              const tierNote = data.tier ? " \\u00b7 tier: " + String(data.tier) : "";
+              select.title = "last used: " + String(data.model) + tierNote;
+            }}
+          }}
+          if (data && data.session_id) {{
+            activeChatSessionId = String(data.session_id);
+          }}
+          const reply = normalizeAssistantReply(data.reply || "");
+          if (reply) {{
+            appendChat("assistant", reply);
+            chatHistory.push({{ role: "assistant", content: reply }});
+            refreshChatSessions(activeChatSessionId).catch(() => {{ /* best-effort */ }});
+          }} else {{
+            appendChat("error", "empty reply from model");
+          }}
+          if (!captured.imageDataUrl) {{
+            showToast("Described from metadata (viewer frame unavailable).", "info");
+          }}
+          return true;
+        }} catch (err) {{
+          clearThinkingBubble();
+          const message = String(err && err.message ? err.message : err);
+          const tail = chatHistory[chatHistory.length - 1];
+          if (tail && tail.role === "user" && tail.content === prompt) {{
+            chatHistory.pop();
+          }}
+          appendChat("error", "Describe this failed. " + message);
+          throw err;
+        }} finally {{
+          chatSendInFlight = false;
+          setChatBusy(false);
+        }}
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
@@ -9589,6 +9824,7 @@ sudo systemctl restart npa-agent-backend
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
+        .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
     )
     local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
@@ -10666,6 +10902,12 @@ def verify_live_cmd(
         "scheduleRerunBundleUncover",
         "swapRerunRecordingInPlace",
         "add_receiver",
+        # Describe-this visual feedback (vision tier).
+        'id="describeVisual"',
+        "captureVisualContext",
+        "describeVisual",
+        "[npa-visual-feedback]",
+        "visual_context",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
