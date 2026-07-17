@@ -126,7 +126,10 @@ UI_WIRING_MARKERS = (
     "<h3>Stages</h3>",
     "initNpaAgentUi",
     "DOMContentLoaded",
-    'Mount the viewer immediately so "Loading application bundle" starts early',
+    'id="rerunBundleCover"',
+    "waitUntilRerunPastBundleSplash",
+    "Warm Rerun assets before revealing the iframe",
+    "Preparing viewer…",
     f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
     *MEDIA_PREVIEW_UI_MARKERS,
 )

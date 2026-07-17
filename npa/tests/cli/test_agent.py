@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from npa.cli.agent import (
     AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
     AGENT_UI_VERSION,
     _normalize_llm_models,
     app,
@@ -531,7 +532,11 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', source)
     assert iframe is not None
     assert "loading=" not in iframe.group(0)
-    assert 'Mount the viewer immediately so "Loading application bundle" starts early' in source
+    ui_start = source.index("cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null")
+    ui_html = source[ui_start : source.index("\nHTML\n", ui_start)]
+    for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
+        assert marker in ui_html, f"missing no-bundle-splash marker: {marker!r}"
+    assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in ui_html
     assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
 
 
@@ -898,13 +903,13 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="tabChat"></div><div id="tabRerun"></div>'
                 '<div id="stagesPanel"><h3>Stages</h3></div>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
-                '<div id="viewerPaneMedia"></div>'
+                '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
                 '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
-                'function authenticatedPreviewObjectUrl(){} '
+                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
                 'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
                 'location.username; location.password; '
-                'Mount the viewer immediately so "Loading application bundle" starts early; '
+                'Warm Rerun assets before revealing the iframe; Preparing viewer…; '
                 'Loading video preview…; URL.createObjectURL(blob)'
                 '</script></body></html>'
             )

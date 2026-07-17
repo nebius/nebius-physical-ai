@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071703"
+AGENT_UI_VERSION = "2026071705"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -80,6 +80,17 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     "URL.createObjectURL(blob)",
     '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
     "artifact_media_type(",
+)
+
+# Rerun wasm splash must never be user-visible. Cover the iframe until past
+# "Loading application bundle", and fully warm assets before first reveal.
+AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
+    'id="rerunBundleCover"',
+    "waitUntilRerunPastBundleSplash",
+    "showRerunBundleCover",
+    "hideRerunBundleCover",
+    "Warm Rerun assets before revealing the iframe",
+    "Preparing viewer…",
 )
 
 
@@ -6221,6 +6232,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         border: 0;
         background: #000;
       }}
+      #rerunBundleCover {{
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 24px;
+        text-align: center;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(229, 255, 79, 0.10), transparent 35%),
+          linear-gradient(180deg, #0f172a 0%, #020617 100%);
+        color: #e2e8f0;
+      }}
+      #rerunBundleCover[hidden] {{
+        display: none !important;
+      }}
+      #rerunBundleCover .cover-title {{
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }}
+      #rerunBundleCover .cover-hint {{
+        margin: 0;
+        font-size: 13px;
+        color: #94a3b8;
+      }}
       #artifactPreviewHost {{
         border: 0;
       }}
@@ -7055,6 +7096,10 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               <div id="viewerPaneRerun" class="viewer-pane is-active-viewer">
                 <div class="rerun-frame-shell">
                   <iframe id="rerunFrame" title="rerun" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+                  <div id="rerunBundleCover" class="rerun-bundle-cover" hidden aria-live="polite">
+                    <p class="cover-title">Preparing viewer…</p>
+                    <p class="cover-hint">Caching Rerun assets so the application bundle never flashes.</p>
+                  </div>
                 </div>
               </div>
               <div id="viewerPaneMedia" class="viewer-pane is-inactive-viewer">
@@ -7969,6 +8014,61 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         return rerunBundleWarmPromise;
       }}
+      function showRerunBundleCover(message) {{
+        const cover = document.getElementById("rerunBundleCover");
+        if (!cover) return;
+        const title = cover.querySelector(".cover-title");
+        if (title && message) title.textContent = String(message);
+        cover.hidden = false;
+      }}
+      function hideRerunBundleCover() {{
+        const cover = document.getElementById("rerunBundleCover");
+        if (cover) cover.hidden = true;
+      }}
+      function rerunViewerShowsBundleSplash(iframe) {{
+        try {{
+          const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
+          if (!doc) return false;
+          const text = String((doc.body && doc.body.innerText) || doc.documentElement && doc.documentElement.innerText || "");
+          return /Loading application bundle/i.test(text);
+        }} catch (_err) {{
+          return false;
+        }}
+      }}
+      function rerunViewerHasCanvas(iframe) {{
+        try {{
+          const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
+          return Boolean(doc && doc.querySelectorAll("canvas").length > 0);
+        }} catch (_err) {{
+          return false;
+        }}
+      }}
+      async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {{
+        // Keep our cover up until Rerun's own "Loading application bundle" splash is gone.
+        const timeout = Math.max(2000, Number(timeoutMs || 45000));
+        const start = Date.now();
+        let sawSplash = false;
+        while (Date.now() - start < timeout) {{
+          const splash = rerunViewerShowsBundleSplash(iframe);
+          if (splash) sawSplash = true;
+          const hasCanvas = rerunViewerHasCanvas(iframe);
+          if (hasCanvas && !splash) {{
+            return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
+          }}
+          // After warm, some builds skip the splash text but still need a paint.
+          if (!splash && hasCanvas) {{
+            return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
+          }}
+          await new Promise((resolve) => window.setTimeout(resolve, 200));
+        }}
+        // Timed out: still reveal rather than leave an opaque cover forever.
+        return {{
+          ok: !rerunViewerShowsBundleSplash(iframe),
+          sawSplash,
+          elapsedMs: Date.now() - start,
+          timedOut: true,
+        }};
+      }}
       async function resolveRerunRecordingUrl() {{
         const cacheBust = "?t=" + String(Date.now());
         const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
@@ -8186,41 +8286,65 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       async function waitForRerunRenderSettle(iframe, timeoutMs) {{
-        const timeout = Math.max(3000, Number(timeoutMs || 15000));
+        const timeout = Math.max(2000, Number(timeoutMs || 8000));
         const start = Date.now();
         while (Date.now() - start < timeout) {{
-          try {{
-            const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
-            if (doc && doc.querySelectorAll("canvas").length > 0) {{
-              break;
-            }}
-          }} catch (_err) {{
-            break;
+          if (rerunViewerHasCanvas(iframe) && !rerunViewerShowsBundleSplash(iframe)) {{
+            hideRerunBundleCover();
+            return;
           }}
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          await new Promise((resolve) => window.setTimeout(resolve, 200));
         }}
         // Rerun fires the iframe load event before WebGL has drawn the recording.
-        // Give the viewer one render window so success does not race a blank canvas.
-        await new Promise((resolve) => window.setTimeout(resolve, 15000));
+        // Brief settle only — do not leave a long blank wait after splash is gone.
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        hideRerunBundleCover();
       }}
       async function mountRerunIframe(camera, runId) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe) return true;
         const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
         if (rerunIframeLoaded && mountedRerunRunKey === mountKey && !iframe.hidden && iframe.getAttribute("src")) {{
+          hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
           return true;
         }}
+        // Warm Rerun assets before revealing the iframe so HTTP cache hits and the
+        // upstream "Loading application bundle" splash never becomes user-visible.
+        showRerunBundleCover("Preparing viewer…");
+        setStatus("Caching Rerun assets…");
+        try {{
+          await warmRerunBundle();
+        }} catch (warmErr) {{
+          console.warn("rerun bundle warm failed before mount", warmErr);
+        }}
         const src = await rerunIframeSrc(camera, runId);
         setRerunMountStatus("retrying", "navigating");
+        showRerunBundleCover("Opening viewer…");
+        iframe.hidden = false;
         iframe.src = src;
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
+        const pastSplash = await waitUntilRerunPastBundleSplash(iframe, 45000);
+        if (pastSplash && pastSplash.ok && !rerunViewerShowsBundleSplash(iframe)) {{
+          hideRerunBundleCover();
+        }} else {{
+          // Never uncover while Rerun still paints "Loading application bundle".
+          showRerunBundleCover("Still preparing viewer…");
+          console.warn("rerun bundle splash cover timed out; keeping cover", pastSplash);
+          waitUntilRerunPastBundleSplash(iframe, 120000).then((again) => {{
+            if (again && again.ok && !rerunViewerShowsBundleSplash(iframe)) {{
+              hideRerunBundleCover();
+            }}
+          }}).catch((err) => {{
+            console.warn("rerun splash wait failed", err);
+          }});
+        }}
         rerunIframeLoaded = true;
         mountedRerunRunKey = mountKey;
         setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-        waitForRerunRenderSettle(iframe, 15000).catch((err) => {{
+        waitForRerunRenderSettle(iframe, 8000).catch((err) => {{
           console.warn("rerun render settle probe failed", err);
         }});
         return true;
@@ -9176,10 +9300,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       async function bootPage() {{
         rerunBootInProgress = true;
-        showRerunPlaceholder("Loading Rerun preview...");
-        setStatus("Preloading Rerun…");
-        // Warm HTTP cache in parallel; do not block iframe mount on finishing the
-        // full wasm blob download into JS memory (that serialized load felt much slower).
+        showRerunBundleCover("Preparing viewer…");
+        showRerunPlaceholder("Preparing viewer…");
+        setStatus("Caching Rerun assets…");
+        // Warm the immutable wasm/js into HTTP cache before any iframe navigation so
+        // Rerun never paints its "Loading application bundle" splash to the user.
         const warmPromise = warmRerunBundle().catch((warmErr) => {{
           console.warn("rerun bundle warm failed", warmErr);
         }});
@@ -9197,19 +9322,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }});
           if (document.body.classList.contains("mobile-agent")) {{
             await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
+            hideRerunBundleCover();
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
           }} else {{
-            // Mount the viewer immediately so "Loading application bundle" starts early
-            // while chat session/refresh continues in parallel.
-            const mountPromise = ensureFrankaRerunLoaded();
-            const settled = await Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise]);
-            const mountMode = settled[3];
+            // Finish asset warm + session work first, then mount under the cover.
+            await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
+            const mountMode = await ensureFrankaRerunLoaded();
+            const iframe = document.getElementById("rerunFrame");
+            if (!rerunViewerShowsBundleSplash(iframe)) {{
+              hideRerunBundleCover();
+            }} else {{
+              showRerunBundleCover("Still preparing viewer…");
+            }}
             setStatus("Ready");
             showToast(mountMode === "demo" ? "Franka demo ready in Rerun" : "Workbench ready", "success");
           }}
         }} catch (err) {{
           console.warn("franka auto-load failed", err);
+          const iframe = document.getElementById("rerunFrame");
+          if (!rerunViewerShowsBundleSplash(iframe)) {{
+            hideRerunBundleCover();
+          }} else {{
+            showRerunBundleCover("Still preparing viewer…");
+          }}
           if (document.body.classList.contains("mobile-agent")) {{
             setStatus("Ready");
           }} else {{
@@ -10384,7 +10520,6 @@ def verify_live_cmd(
         "mobile-agent",
         "history.replaceState",
         "location.username",
-        "Mount the viewer immediately so \"Loading application bundle\" starts early",
         f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
         # Media preview contract — keep in sync with AGENT_MEDIA_PREVIEW_CONTRACT
         # (HTML-visible subset; backend route markers are source-tested separately).
@@ -10394,6 +10529,11 @@ def verify_live_cmd(
         'id="artifactPreviewHost"',
         'id="viewerPaneMedia"',
         "URL.createObjectURL(blob)",
+        # No user-visible Rerun "Loading application bundle" splash.
+        'id="rerunBundleCover"',
+        "waitUntilRerunPastBundleSplash",
+        "Preparing viewer…",
+        "Warm Rerun assets before revealing the iframe",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -10401,6 +10541,8 @@ def verify_live_cmd(
         _fail("UI html must not use lazy-loading on the Rerun iframe")
     if ".tab-panel[hidden]" in ui_html:
         _fail("UI html must not hide tab panels with display:none via hidden attribute")
+    if 'Mount the viewer immediately so "Loading application bundle" starts early' in ui_html:
+        _fail("UI must not mount Rerun before bundle warm (exposes Loading application bundle)")
     # Guard against regressions that put bare authenticated URLs on <video src>
     # (browsers omit Authorization headers for media elements under basic auth).
     if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:

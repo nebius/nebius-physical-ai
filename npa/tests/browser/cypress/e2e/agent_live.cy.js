@@ -94,11 +94,30 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#renderModeVideo").should("exist");
     cy.get("#artifactPreviewHost").should("exist");
     cy.get("#viewerPaneMedia").should("exist");
+    cy.get("#rerunBundleCover").should("exist");
     cy.window().then((win) => {
       const html = win.document.documentElement.outerHTML;
       expect(html).to.include("authenticatedPreviewObjectUrl");
       expect(html).to.include("URL.createObjectURL(blob)");
       expect(html).to.include("Loading video preview");
+      expect(html).to.include("waitUntilRerunPastBundleSplash");
+      expect(html).to.include("Warm Rerun assets before revealing the iframe");
+      expect(html).not.to.include('Mount the viewer immediately so "Loading application bundle" starts early');
+    });
+    // After boot, the cover must be gone and Rerun must not still show its splash text.
+    cy.get("#rerunBundleCover", { timeout: 120000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame", { timeout: 120000 }).should(($frame) => {
+      const frame = $frame[0];
+      try {
+        const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+        const text = String((doc && doc.body && doc.body.innerText) || "");
+        expect(text, "Rerun iframe must not show application-bundle splash").not.to.match(
+          /Loading application bundle/i,
+        );
+      } catch (_err) {
+        // Cross-origin would be a deploy bug; treat as failure.
+        throw new Error("unable to inspect same-origin Rerun iframe for bundle splash");
+      }
     });
   });
 

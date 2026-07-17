@@ -19,15 +19,17 @@ def test_agent_ui_source_satisfies_eager_load_contract() -> None:
     import re
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Bootstrap embeds the UI template; markers must exist in the shipped source.
-    for marker in REQUIRED_UI_MARKERS:
-        assert marker in source, f"missing required marker in agent.py: {marker!r}"
-    iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', source)
+    ui_start = source.index("cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null")
+    ui_html = source[ui_start : source.index("\nHTML\n", ui_start)]
+    # Bootstrap embeds the UI template; markers must exist in the shipped UI HTML.
+    errors = assert_rerun_ui_eager_load_contract(ui_html)
+    assert errors == [], errors
+    iframe = re.search(r'<iframe id="rerunFrame"[^>]*>', ui_html)
     assert iframe is not None, "missing rerunFrame iframe"
     assert "loading=" not in iframe.group(0), iframe.group(0)
-    assert "Remount after display:none" not in source
-    assert ".tab-panel[hidden] {{" not in source
-    assert ".tab-panel[hidden] {" not in source
+    assert "Remount after display:none" not in ui_html
+    assert ".tab-panel[hidden] {{" not in ui_html
+    assert ".tab-panel[hidden] {" not in ui_html
 
 
 def test_assert_rerun_ui_eager_load_contract_detects_lazy_iframe() -> None:
@@ -41,6 +43,8 @@ def test_assert_rerun_ui_eager_load_contract_detects_lazy_iframe() -> None:
 def test_forbidden_markers_include_lazy_and_hidden_panel() -> None:
     assert any("lazy" in marker for marker in FORBIDDEN_UI_MARKERS)
     assert any("tab-panel[hidden]" in marker for marker in FORBIDDEN_UI_MARKERS)
+    assert any("Loading application bundle" in marker for marker in FORBIDDEN_UI_MARKERS)
+    assert 'id="rerunBundleCover"' in REQUIRED_UI_MARKERS
 
 
 def test_format_bundle_budget_report_includes_fetches() -> None:

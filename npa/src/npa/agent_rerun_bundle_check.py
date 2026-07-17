@@ -1,8 +1,8 @@
-"""Live checks that the agent Rerun viewer bundle loads promptly.
+"""Live checks that the agent Rerun viewer bundle loads without a visible splash.
 
-Guards against regressions where Chat/Rerun tabs defer or serialize the
-wasm download (loading=lazy, visibility:hidden, warm-before-mount), which
-made "Loading application bundle" feel much slower than the pre-tab UI.
+Guards against regressions where Chat/Rerun tabs defer wasm download
+(loading=lazy, visibility:hidden) or reveal the iframe before assets are
+warmed — which surfaces Rerun's own "Loading application bundle" splash.
 """
 
 from __future__ import annotations
@@ -13,14 +13,18 @@ from dataclasses import dataclass
 
 import httpx
 
-# UI must keep the iframe eager and paintable while Chat is active.
+# UI must keep the iframe eager/paintable while Chat is active, and cover it
+# until past Rerun's application-bundle splash.
 REQUIRED_UI_MARKERS = (
     'id="tabChat"',
     'id="tabRerun"',
     "activateMainTab",
     "tab-panel.is-inactive",
-    'Mount the viewer immediately so "Loading application bundle" starts early',
     "opacity: 0",
+    'id="rerunBundleCover"',
+    "waitUntilRerunPastBundleSplash",
+    "Warm Rerun assets before revealing the iframe",
+    "Preparing viewer…",
 )
 
 FORBIDDEN_UI_MARKERS = (
@@ -29,6 +33,8 @@ FORBIDDEN_UI_MARKERS = (
     'loading="lazy"></iframe>',
     ".tab-panel[hidden] {",
     "Remount after display:none",
+    # Old strategy that mounted before warm and exposed Rerun's splash text.
+    'Mount the viewer immediately so "Loading application bundle" starts early',
     # Old inactive-tab CSS that deferred wasm/WebGL init while Chat was showing.
     ".tab-panel.is-inactive {\n        position: absolute;\n        left: 16px;\n        right: 16px;\n        top: 16px;\n        visibility: hidden;",
 )
