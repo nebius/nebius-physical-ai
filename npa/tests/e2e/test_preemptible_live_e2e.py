@@ -73,9 +73,10 @@ def test_live_preemptible_lerobot_deploy_and_destroy(live_project_alias, live_wo
             live_workbench_name,
             "deploy",
             "--gpu-type",
-            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_TYPE", "gpu-l40s-a"),
+            # rtxpro / us-central1 exposes gpu-rtx6000 (not L40S); use its 1-GPU preset.
+            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_TYPE", "gpu-rtx6000"),
             "--gpu-preset",
-            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_PRESET", "1gpu-40vcpu-160gb"),
+            os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_PRESET", "1gpu-24vcpu-218gb"),
             "--preemptible",
         ]
     )
