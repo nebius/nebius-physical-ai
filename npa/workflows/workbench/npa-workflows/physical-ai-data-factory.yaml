@@ -70,6 +70,12 @@ config:
   decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
   augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
+  # lance_uri = the dataset the FiftyOne curation stage reads. It is REQUIRED
+  # because the workbench.fiftyone.launch_app toolRef argv references
+  # {{config.lance_uri}} (omitting it fails validate-spec). The "lance" name is a
+  # LanceDB-era carryover from the AV/BDD100K curation pipelines; this video
+  # blueprint has no LanceDB table, so it simply points at the augmented set
+  # (same prefix as augment_uri) -- i.e. "the data to curate".
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
