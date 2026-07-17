@@ -34,6 +34,10 @@ def test_chat_queue_contract_in_ui() -> None:
     queue = ui.split("function enqueueChatJob")[1].split("async function activateMainTab")[0]
     assert "chatQueue.push" in queue
     assert "processChatQueue" in queue
+    # Single-flight drain prevents concurrent /api/chat races.
+    assert "chatQueueDrain" in ui
+    assert "if (chatQueueDrain) return chatQueueDrain" in ui
+    assert "describeInFlight" in ui
 
 
 def test_viewer_chat_drawer_contract() -> None:
@@ -88,3 +92,14 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "await waitForQualityRerunFrame" in swap
     assert "Updating recording" in swap
     assert "add_receiver" in swap
+    # Soft-swap must not claim SUCCESS without a quality frame.
+    assert 'quality.quality === "unavailable"' in swap
+    assert "hideRerunBundleCover()" in swap
+    mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
+        "async function mountRerunIframeUntilSuccess"
+    )[0]
+    # Failed soft-swap falls through to remount instead of stale already-mounted SUCCESS.
+    assert "rerunIframeLoaded = false" in mount
+    best = ui.split("async function bestEffortMountRerun")[1].split("async function loadRerunViewer")[0]
+    assert 'setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort")' not in best
+    assert "best-effort-no-success" in best

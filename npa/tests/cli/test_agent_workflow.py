@@ -165,8 +165,10 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "stages-panel" in source
     assert "<h3>Stages</h3>" in source
     assert "Sim2Real Run Monitor" not in source
-    assert "Timeline, result, and logs for the active run." in source
+    assert "Pick a run to load its pipeline timeline, result, and logs." in source
     assert "formatStageStatusLabel" in source
+    assert "data.ok === false" in source  # submitWorkflowYaml must not treat blocked as success
+    assert 'ok": bool(validation.get("ok"))' in source or '"ok": bool(validation.get("ok"))' in source
     assert "No run-specific Rerun recording yet" in source
     assert "_run_sim2real_pipeline_background" in source
     assert "agent-local-sim2real" in source

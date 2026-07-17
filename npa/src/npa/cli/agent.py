@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071713"
+AGENT_UI_VERSION = "2026071714"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4581,11 +4581,14 @@ def chat(payload: dict):
         else:
             history = prior
             llm_messages = normalize_messages_for_llm(prior)
+    # Preserve merged session history across the LLM path (do not rebuild from a
+    # short client payload and wipe prior turns after the model returns).
+    merged_history = list(history)
     # Metadata-only Describe-this: grounded reply (never invent pixels). Vision
     # turns with an attached frame fall through to Token Factory.
     if visual_turn and not has_image_content(llm_messages):
         meta_reply = build_metadata_only_visual_reply(visual_context)
-        history = [*history, {{"role": "assistant", "content": meta_reply}}][-80:]
+        history = [*merged_history, {{"role": "assistant", "content": meta_reply}}][-80:]
         session.update(
             {{
                 "id": session_id,
@@ -4684,6 +4687,20 @@ def chat(payload: dict):
         if role == "user" and isinstance(content, str) and content:
             # Guardrail: cap oversized pastes so one turn cannot blow the budget.
             _within, content = enforce_input_budget(content)
+        elif role == "user" and isinstance(content, list):
+            # Trim text parts inside multimodal (vision) turns; keep image parts.
+            trimmed_parts: list[dict] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if str(part.get("type") or "") == "text":
+                    text_part = str(part.get("text") or "")
+                    if text_part:
+                        _within, text_part = enforce_input_budget(text_part)
+                        trimmed_parts.append({{"type": "text", "text": text_part}})
+                else:
+                    trimmed_parts.append(part)
+            content = trimmed_parts or content
         if content:
             messages.append({{"role": role, "content": content}})
     if len(messages) < 2:
@@ -4704,7 +4721,8 @@ def chat(payload: dict):
         reply = reasoning
         reasoning = None
     state = _load_state()
-    history = normalize_messages_for_storage(llm_messages, visual_kind=visual_kind)
+    session = _get_chat_session(state, session_id)
+    history = list(merged_history)
     if reply:
         history.append({{"role": "assistant", "content": reply}})
     session.update(
@@ -5520,7 +5538,14 @@ def save_workflow_draft(payload: dict):
     runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
     draft = _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
-    return {{"ok": runnable, "draft": draft, "validation": validation, "plan": plan, "runnable": runnable}}
+    # ok tracks YAML validation; runnable requires validation+plan.
+    return {{
+        "ok": bool(validation.get("ok")),
+        "draft": draft,
+        "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
+    }}
 
 @app.post("/workflows/validate")
 @app.post("/workflows/npa/validate")
@@ -5538,7 +5563,13 @@ def validate_workflow(payload: dict):
     runnable = bool(validation.get("ok") and plan.get("ok"))
     state = _load_state()
     _save_workflow_draft(state, yaml_text, validation, plan=plan, runnable=runnable)
-    return {{"ok": runnable, "validation": validation, "plan": plan, "runnable": runnable}}
+    # ok tracks YAML validation; runnable requires validation+plan.
+    return {{
+        "ok": bool(validation.get("ok")),
+        "validation": validation,
+        "plan": plan,
+        "runnable": runnable,
+    }}
 
 @app.post("/workflows/plan")
 @app.post("/workflows/npa/plan")
@@ -7612,6 +7643,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       let activeChatSessionId = "default";
       let chatSendInFlight = false;
       const chatQueue = [];
+      let chatQueueDrain = null;
+      let describeInFlight = false;
       let thinkingNode = null;
       let activeMainTab = "chat";
       let chatDrawerOpen = false;
@@ -7619,20 +7652,25 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const badge = document.getElementById("chatQueueBadge");
         if (!badge) return;
         const n = chatQueue.length + (chatSendInFlight ? 1 : 0);
-        badge.textContent = String(Math.max(0, chatQueue.length));
-        badge.classList.toggle("is-visible", chatQueue.length > 0);
+        badge.textContent = String(Math.max(0, n));
+        badge.classList.toggle("is-visible", n > 0);
         const toggle = document.getElementById("chatDrawerToggle");
-        if (toggle) {{
-          toggle.title = chatQueue.length
-            ? ("Chat (" + String(chatQueue.length) + " queued)")
-            : "Open chat drawer";
+        if (toggle && !chatDrawerOpen) {{
+          toggle.title = n
+            ? ("Chat (" + String(n) + " in flight/queued)")
+            : "Open chat";
         }}
       }}
       function setChatDrawerOpen(open) {{
         chatDrawerOpen = Boolean(open);
         const chatPanel = document.getElementById("panelChat");
         const toggle = document.getElementById("chatDrawerToggle");
-        if (chatPanel) chatPanel.classList.toggle("chat-drawer-open", chatDrawerOpen);
+        if (chatPanel) {{
+          chatPanel.classList.toggle("chat-drawer-open", chatDrawerOpen);
+          if (document.body.classList.contains("viewer-focus")) {{
+            chatPanel.setAttribute("aria-hidden", chatDrawerOpen ? "false" : "true");
+          }}
+        }}
         if (toggle) {{
           toggle.classList.toggle("is-open", chatDrawerOpen);
           toggle.setAttribute("aria-expanded", chatDrawerOpen ? "true" : "false");
@@ -7660,22 +7698,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         activateMainTab("chat").catch((err) => console.warn("open full chat failed", err));
       }}
       async function processChatQueue() {{
-        if (chatSendInFlight) return;
-        while (chatQueue.length) {{
-          const job = chatQueue.shift();
-          updateChatQueueBadge();
-          chatSendInFlight = true;
-          setChatBusy(true);
-          try {{
-            await job();
-          }} catch (err) {{
-            console.warn("chat queue job failed", err);
-          }} finally {{
-            chatSendInFlight = false;
-            setChatBusy(false);
+        // Single-flight drain: concurrent enqueueChatJob callers await the same promise
+        // so two /api/chat posts cannot race chatHistory / thinking bubbles.
+        if (chatQueueDrain) return chatQueueDrain;
+        chatQueueDrain = (async () => {{
+          while (chatQueue.length) {{
+            const job = chatQueue.shift();
             updateChatQueueBadge();
+            chatSendInFlight = true;
+            setChatBusy(true);
+            try {{
+              await job();
+            }} catch (err) {{
+              console.warn("chat queue job failed", err);
+            }} finally {{
+              chatSendInFlight = false;
+              setChatBusy(false);
+              updateChatQueueBadge();
+            }}
           }}
-        }}
+        }})().finally(() => {{
+          chatQueueDrain = null;
+          updateChatQueueBadge();
+        }});
+        return chatQueueDrain;
       }}
       function enqueueChatJob(job) {{
         chatQueue.push(job);
@@ -8319,7 +8365,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           body: JSON.stringify({{ yaml }}),
         }});
         updateWorkflowMeta((data.validation) || {{}});
-        if (!data.ok) throw new Error(String((data.validation && data.validation.error) || "validation failed"));
+        if (data.validation && data.validation.ok === false) {{
+          throw new Error(String(data.validation.error || "validation failed"));
+        }}
+        if (data.runnable === false) {{
+          const planErr = String((data.plan && data.plan.error) || "plan failed");
+          throw new Error("YAML is valid but not runnable yet: " + planErr);
+        }}
+        if (data.ok === false) {{
+          throw new Error(String((data.validation && data.validation.error) || "validation failed"));
+        }}
         return true;
       }}
       async function planWorkflowYaml() {{
@@ -8391,6 +8446,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         updateWorkflowMeta((data.validation) || {{}});
         if (data.plan) renderWorkflowPlan(data.plan);
+        if (data && data.ok === false) {{
+          const detail = String(
+            data.message || data.reason || data.error || data.submit_mode || "submit blocked"
+          );
+          appendChat("error", "Workflow submit blocked: " + detail);
+          throw new Error(detail);
+        }}
         appendChat(
           "assistant",
           "Submitted npa.workflow **scheduler plan** — **run_id**: `" + String(data.run_id || "") +
@@ -8724,51 +8786,63 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }};
       }}
       async function describeVisual() {{
+        if (describeInFlight) {{
+          showToast("Describe this already running…", "info");
+          return false;
+        }}
         if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {{
           setMobileAuthNeeded(true);
           showToast("Unlock chat with your agent password first.", "error");
           return false;
         }}
-        // Stay on the viewer; open the collapsed chat drawer for the reply.
-        if (activeMainTab !== "rerun") {{
-          await activateMainTab("rerun", {{ skipEnsure: true }});
+        describeInFlight = true;
+        const describeBtn = document.getElementById("describeVisual");
+        if (describeBtn) describeBtn.disabled = true;
+        try {{
+          // Stay on the viewer; open the collapsed chat drawer for the reply.
+          if (activeMainTab !== "rerun") {{
+            await activateMainTab("rerun", {{ skipEnsure: true }});
+          }}
+          openChatDrawer();
+          showToast("Capturing viewer for Describe this…", "info");
+          const captured = await captureVisualContext();
+          const prompt = String(captured.prompt || "").trim();
+          if (!prompt) {{
+            showToast("Could not build a describe prompt.", "error");
+            return false;
+          }}
+          const display = prompt + (captured.imageDataUrl
+            ? "\\n\\n_(attached viewer frame)_"
+            : "\\n\\n_(no frame capture — metadata/text only)_");
+          let userContent = prompt;
+          if (captured.imageDataUrl) {{
+            userContent = [
+              {{ type: "text", text: prompt }},
+              {{ type: "image_url", image_url: {{ url: captured.imageDataUrl }} }},
+            ];
+          }}
+          const prior = chatHistory.map((item) => ({{
+            role: item.role,
+            content: typeof item.content === "string" ? item.content : String(item.content || ""),
+          }}));
+          await queueChatText(prompt, {{
+            displayText: display,
+            keepInput: true,
+            visual_context: captured.meta || {{}},
+            messages: [...prior, {{ role: "user", content: userContent }}],
+            onDone: (data) => {{
+              if (!captured.imageDataUrl) {{
+                showToast("Described from metadata/text (frame unavailable).", "info");
+              }} else if (data && data.tier) {{
+                showToast("Described with tier " + String(data.tier), "success");
+              }}
+            }},
+          }});
+          return true;
+        }} finally {{
+          describeInFlight = false;
+          if (describeBtn) describeBtn.disabled = false;
         }}
-        openChatDrawer();
-        showToast("Capturing viewer for Describe this…", "info");
-        const captured = await captureVisualContext();
-        const prompt = String(captured.prompt || "").trim();
-        if (!prompt) {{
-          showToast("Could not build a describe prompt.", "error");
-          return false;
-        }}
-        const display = prompt + (captured.imageDataUrl
-          ? "\\n\\n_(attached viewer frame)_"
-          : "\\n\\n_(no frame capture — metadata/text only)_");
-        let userContent = prompt;
-        if (captured.imageDataUrl) {{
-          userContent = [
-            {{ type: "text", text: prompt }},
-            {{ type: "image_url", image_url: {{ url: captured.imageDataUrl }} }},
-          ];
-        }}
-        const prior = chatHistory.map((item) => ({{
-          role: item.role,
-          content: typeof item.content === "string" ? item.content : String(item.content || ""),
-        }}));
-        await queueChatText(prompt, {{
-          displayText: display,
-          keepInput: true,
-          visual_context: captured.meta || {{}},
-          messages: [...prior, {{ role: "user", content: userContent }}],
-          onDone: (data) => {{
-            if (!captured.imageDataUrl) {{
-              showToast("Described from metadata/text (frame unavailable).", "info");
-            }} else if (data && data.tier) {{
-              showToast("Described with tier " + String(data.tier), "success");
-            }}
-          }},
-        }});
-        return true;
       }}
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
@@ -9180,12 +9254,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           iframe.dataset.rerunRunKey = mountKey;
           hideRerunPlaceholder();
           // Keep cover until a quality frame exists — avoids flash of empty/splash UI.
-          await waitForQualityRerunFrame(4500);
+          const quality = await waitForQualityRerunFrame(4500);
+          if (!(quality && quality.dataUrl) || quality.quality === "unavailable") {{
+            hideRerunBundleCover();
+            return false;
+          }}
           hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
         }} catch (err) {{
           console.warn("rerun soft-swap failed; falling back to remount", err);
+          hideRerunBundleCover();
           return false;
         }}
       }}
@@ -9199,12 +9278,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (await swapRerunRecordingInPlace(camera, runId)) {{
             return true;
           }}
-          if (mountedRerunRunKey === mountKey) {{
-            // Same run key and soft-swap unavailable: keep live wasm (no remount splash).
-            hideRerunBundleCover();
-            setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
-            return true;
+          if (mountedRerunRunKey === mountKey && lastRerunRecordingUrl) {{
+            // Same run key: keep live wasm only when a quality frame is still present.
+            const quality = await waitForQualityRerunFrame(1500);
+            if (quality && quality.dataUrl && quality.quality !== "unavailable") {{
+              hideRerunBundleCover();
+              setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
+              return true;
+            }}
           }}
+          // Soft-swap failed without a usable frame — fall through to remount.
+          rerunIframeLoaded = false;
         }}
         // Warm Rerun assets before revealing the iframe so HTTP cache hits and the
         // upstream "Loading application bundle" splash never becomes user-visible.
@@ -9328,8 +9412,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const cam = String(camera || "workspace");
           const rid = String(runId || activeRunId || "").trim();
           await mountRerunIframe(cam, rid);
-          setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort");
-          return true;
+          // Do not force SUCCESS — trust mountRerunIframe / soft-swap status.
+          const ok = lastRerunMountStatus === RERUN_MOUNT_SUCCESS;
+          if (!ok) {{
+            setRerunMountStatus("degraded", "best-effort-no-success");
+          }}
+          return ok;
         }} catch (err) {{
           console.warn("best-effort rerun mount failed", err);
           setRerunMountStatus("degraded", String(err && err.message ? err.message : err).slice(0, 120));
@@ -9451,6 +9539,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const isChat = pathText === "/api/chat";
         let resp;
         let lastFetchErr = null;
+        const fetchStarted = Date.now();
         for (let attempt = 0; attempt < (isChat ? 2 : 1); attempt += 1) {{
           try {{
             resp = await fetchWithTimeout(path, opts, timeoutMs);
@@ -9461,13 +9550,15 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (err && err.name === "AbortError") {{
               throw new Error("Request timed out: " + String(path));
             }}
-            // One retry for transient network drops (bootstrap restarts, brief nginx reload).
-            if (!(isChat && attempt === 0)) {{
+            // Retry chat only when the failure was fast (likely never reached the
+            // LLM) to avoid double-billing a completed turn after a dropped response.
+            const elapsed = Date.now() - fetchStarted;
+            if (!(isChat && attempt === 0 && elapsed < 2500)) {{
               const raw = String(err && err.message ? err.message : err);
               if (/failed to fetch|networkerror|load failed/i.test(raw)) {{
                 throw new Error(
                   "Network error talking to the agent (Failed to fetch). "
-                  + "If Describe this just ran, retry once — the frame may have been too large or the backend was restarting."
+                  + "Retry once — the backend may have been restarting, or the frame payload was too large."
                 );
               }}
               throw err;
@@ -9497,7 +9588,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (resp.status === 413) {{
             throw new Error(
               "Chat payload too large for the agent proxy (413). "
-              + "Describe this will retry with a smaller frame — click Describe this again."
+              + "Click Describe this again — the next capture uses a smaller frame."
             );
           }}
           const detail =

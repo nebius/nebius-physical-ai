@@ -927,7 +927,9 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<script>function loadSelectedRun(){} function syncRunChooserFields(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
-                '<button id="describeVisual"></button><button id="chatDrawerToggle"></button>'
+                '<button id="describeVisual"></button>'
+                '<button id="chatDrawerToggle" class="chat-fab"></button>'
+                '<button id="chatDrawerClose"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
                 '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
                 'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
@@ -945,6 +947,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 'Warm Rerun assets before revealing the iframe; Preparing viewer…; '
                 'Uncover without blocking mount latency; '
                 'viewer-focus; thinking-ellipsis; [npa-visual-feedback]; visual_context; '
+                'transform-origin: bottom right; '
                 'Loading video preview…; URL.createObjectURL(blob)'
                 '</script></body></html>'
             )
