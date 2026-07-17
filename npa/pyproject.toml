@@ -79,6 +79,8 @@ dev = [
 npa = "npa.cli.main:app_entry"
 
 [tool.npa.supported-tools]
+# Default LeRobot pin. Additional supported tags live in
+# npa/src/npa/deploy/lerobot_version_manifest.json (currently 0.5.1 + 0.6.0).
 lerobot = "0.5.1"
 lerobot-policy = "0.1.1"
 genesis = "0.4.6"
@@ -110,6 +112,7 @@ packages = ["src/npa"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
+"src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 
 [tool.pytest.ini_options]

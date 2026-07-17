@@ -148,7 +148,7 @@ def test_lerobot_train_runs_ssh_command(mocker) -> None:
 
     assert result.exit_code == 0
     assert "status: success" in result.output
-    assert "lerobot-train" in ssh.run.call_args.args[0]
+    assert any("lerobot-train" in call.args[0] for call in ssh.run.call_args_list)
 
 
 def test_lerobot_train_rejects_local_input_output_paths(mocker) -> None:
@@ -207,8 +207,9 @@ def test_lerobot_train_s3_input_and_output_syncs(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    train_cmd = ssh.run.call_args_list[0].args[0]
-    upload_cmd = ssh.run.call_args_list[1].args[0]
+    run_cmds = [call.args[0] for call in ssh.run.call_args_list]
+    train_cmd = next(cmd for cmd in run_cmds if "lerobot-train" in cmd)
+    upload_cmd = next(cmd for cmd in run_cmds if "upload_file" in cmd)
     assert "download_file" in train_cmd
     assert "--dataset.root=/opt/lerobot/dataset_cache/bucket_datasets_pick-place" in train_cmd
     assert "upload_file" in upload_cmd
@@ -292,10 +293,11 @@ def test_lerobot_eval_uses_input_and_output_path(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    cmd = ssh.run.call_args_list[0].args[0]
+    run_cmds = [call.args[0] for call in ssh.run.call_args_list]
+    cmd = next(c for c in run_cmds if "lerobot-eval" in c)
     assert "--policy.path=repo/model" in cmd
     assert "--output_dir=/tmp/npa-eval-" in cmd
-    assert "upload_file" in ssh.run.call_args_list[1].args[0]
+    assert any("upload_file" in c for c in run_cmds)
     assert "output_path: s3://bucket/eval-results/" in result.output
 
 
@@ -327,7 +329,8 @@ def test_lerobot_eval_s3_input_and_output_syncs(mocker) -> None:
 
     assert result.exit_code == 0
     assert "download_file" in ssh.run_or_raise.call_args.args[0]
-    assert "upload_file" in ssh.run.call_args_list[1].args[0]
+    run_cmds = [call.args[0] for call in ssh.run.call_args_list]
+    assert any("upload_file" in c for c in run_cmds)
     assert "output_path: s3://bucket/evals/job/" in result.output
 
 
@@ -589,6 +592,67 @@ def test_lerobot_deploy_runtime_vm_preserves_existing_behavior(tmp_path: Path, m
     deploy_container.assert_not_called()
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["wb"]
     assert wb_cfg["runtime"] == "vm"
+
+
+def test_lerobot_deploy_accepts_lerobot_version_060(tmp_path: Path, mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+
+    mocker.patch("npa.deploy.provisioner.init")
+    apply = mocker.patch(
+        "npa.deploy.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.8",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "bucket",
+            "storage_endpoint": "https://storage.example",
+        },
+    )
+    mocker.patch("npa.clients.config.resolve_environment", return_value=None)
+    mocker.patch("npa.clients.config.list_projects", return_value={})
+    mocker.patch("npa.clients.config.write_config")
+    mocker.patch("npa.cli.workbench.lerobot.update_workbench_app_status")
+    mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
+    mocker.patch("npa.deploy.configurator.install_lerobot", return_value=True)
+    mocker.patch("npa.deploy.configurator.deploy_server")
+    mocker.patch("npa.deploy.configurator.deploy_lerobot_container")
+    mocker.patch("npa.deploy.configurator.health_check", return_value=True)
+    mocker.patch("npa.deploy.configurator.write_manifest")
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_container_registry",
+        return_value=DEFAULT_CONTAINER_REGISTRY,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "lerobot",
+            "-p",
+            "proj",
+            "-n",
+            "wb",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--runtime",
+            "vm",
+            "--lerobot-version",
+            "0.6.0",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tf_vars = apply.call_args.kwargs["tf_vars"]
+    assert tf_vars["lerobot_version"] == "0.6.0"
 
 
 def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, mocker) -> None:

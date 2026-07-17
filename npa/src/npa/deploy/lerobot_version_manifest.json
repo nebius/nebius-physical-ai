@@ -1,0 +1,28 @@
+{
+  "format": "npa_lerobot_version_manifest_v1",
+  "tool": "lerobot",
+  "default_version": "0.5.1",
+  "supported_versions": ["0.5.1", "0.6.0"],
+  "versions": {
+    "0.5.1": {
+      "pip_extras": "pusht,libero",
+      "train_env_eval_flag": "eval_freq",
+      "eval_checkpoint_flag": "policy.path",
+      "policy_eval_checkpoint_flag": "policy.pretrained_path",
+      "torch_pin": "torch==2.12.1",
+      "torchvision_pin": "torchvision==0.27.1",
+      "diffusers_pin": "diffusers>=0.38.0",
+      "notes": "Default workbench pin. Keep for GR00T N1.5 and sim2real policy image parity."
+    },
+    "0.6.0": {
+      "pip_extras": "training,evaluation,pusht,libero",
+      "train_env_eval_flag": "env_eval_freq",
+      "eval_checkpoint_flag": "policy.path",
+      "policy_eval_checkpoint_flag": "policy.pretrained_path",
+      "torch_pin": null,
+      "torchvision_pin": null,
+      "diffusers_pin": null,
+      "notes": "Lean install extras; torch must stay <2.12 per upstream. Do not force-upgrade torch after install."
+    }
+  }
+}

@@ -119,9 +119,14 @@ variable "ssh_cidr_block" {
 # ── LeRobot ────────────────────────────────────────────────────────────────
 
 variable "lerobot_version" {
-  description = "LeRobot PyPI version to install on the instance"
+  description = "LeRobot PyPI version to install on the instance (supported: 0.5.1 default, 0.6.0)"
   type        = string
   default     = "0.5.1"
+
+  validation {
+    condition     = contains(["0.5.1", "0.6.0"], var.lerobot_version)
+    error_message = "lerobot_version must be one of: 0.5.1, 0.6.0."
+  }
 }
 
 # ── S3 credentials (from environment.sh) ──────────────────────────────────

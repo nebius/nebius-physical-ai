@@ -80,7 +80,10 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
 
     assert "/opt/lerobot/.env" in lerobot_branch
     assert "Installing LeRobot ${lerobot_version}" in lerobot_branch
-    assert "lerobot[pusht,libero]==${lerobot_version}" in lerobot_branch
+    assert 'LEROBOT_PIP_SPEC="lerobot[pusht,libero]==${lerobot_version}"' in lerobot_branch
+    assert 'LEROBOT_PIP_SPEC="lerobot[training,evaluation,pusht,libero]==${lerobot_version}"' in lerobot_branch
+    assert 'if [ "${lerobot_version}" = "0.6.0" ]' in lerobot_branch
+    assert '"$LEROBOT_VENV/bin/pip" install "$LEROBOT_PIP_SPEC"' in lerobot_branch
 
     assert "LeRobot container VM setup" in container_branch
     assert "$DEPLOY_ROOT/checkpoints" in container_branch

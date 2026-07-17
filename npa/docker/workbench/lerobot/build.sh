@@ -6,12 +6,16 @@ NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 REGISTRY=""
 PUSH=0
+VERSION=""
+ALL_VERSIONS=0
 
 usage() {
   cat <<'EOF'
-Usage: build.sh [--registry REGISTRY] [--push]
+Usage: build.sh [--registry REGISTRY] [--push] [--version VERSION | --all-versions]
 
 Builds the LeRobot container image as npa-lerobot:<version>.
+Default VERSION is the [tool.npa.supported-tools].lerobot pin (0.5.1).
+Supported versions: 0.5.1 (default) and 0.6.0.
 When --registry is provided, also tags REGISTRY/npa-lerobot:<version>.
 EOF
 }
@@ -28,6 +32,18 @@ while [ "$#" -gt 0 ]; do
       ;;
     --push)
       PUSH=1
+      shift
+      ;;
+    --version)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --version requires a value" >&2
+        exit 2
+      fi
+      VERSION="$2"
+      shift 2
+      ;;
+    --all-versions)
+      ALL_VERSIONS=1
       shift
       ;;
     --help|-h)
@@ -47,7 +63,12 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   exit 2
 fi
 
-VERSION="$(
+if [ "$ALL_VERSIONS" -eq 1 ] && [ -n "$VERSION" ]; then
+  echo "ERROR: --version and --all-versions are mutually exclusive" >&2
+  exit 2
+fi
+
+default_version() {
   cd "$NPA_ROOT"
   python3 - <<'PY'
 from pathlib import Path
@@ -67,37 +88,67 @@ else:
         data = tomllib.load(handle)
     print(data["tool"]["npa"]["supported-tools"]["lerobot"])
 PY
-)"
+}
 
-LOCAL_IMAGE="npa-lerobot:${VERSION}"
-BUILD_ARGS=(
-  -f "$SCRIPT_DIR/Dockerfile"
-  --build-arg "LEROBOT_VERSION=${VERSION}"
-  -t "$LOCAL_IMAGE"
-)
+supported_versions() {
+  cd "$NPA_ROOT"
+  python3 - <<'PY'
+import json
+from pathlib import Path
 
-if [ -n "$REGISTRY" ]; then
-  REGISTRY_IMAGE="${REGISTRY}/npa-lerobot:${VERSION}"
-  BUILD_ARGS+=(-t "$REGISTRY_IMAGE")
+manifest = Path("src/npa/deploy/lerobot_version_manifest.json")
+data = json.loads(manifest.read_text())
+print("\n".join(data["supported_versions"]))
+PY
+}
+
+build_one() {
+  local version="$1"
+  local local_image="npa-lerobot:${version}"
+  local build_args=(
+    -f "$SCRIPT_DIR/Dockerfile"
+    --build-arg "LEROBOT_VERSION=${version}"
+    -t "$local_image"
+  )
+  local registry_image=""
+
+  if [ -n "$REGISTRY" ]; then
+    registry_image="${REGISTRY}/npa-lerobot:${version}"
+    build_args+=(-t "$registry_image")
+  fi
+
+  docker build "${build_args[@]}" "$NPA_ROOT"
+
+  local size_bytes
+  size_bytes="$(docker image inspect "$local_image" --format '{{.Size}}')"
+  if command -v numfmt >/dev/null 2>&1; then
+    echo "Built: $local_image ($(numfmt --to=iec-i --suffix=B "$size_bytes"))"
+  else
+    echo "Built: $local_image (${size_bytes} bytes)"
+  fi
+  if [ -n "$registry_image" ]; then
+    echo "Tagged: $registry_image"
+  fi
+  if [ "$PUSH" -eq 1 ]; then
+    docker push "$registry_image"
+  fi
+}
+
+if [ "$ALL_VERSIONS" -eq 1 ]; then
+  while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    build_one "$version"
+  done < <(supported_versions)
 else
-  REGISTRY_IMAGE=""
-fi
-
-docker build "${BUILD_ARGS[@]}" "$NPA_ROOT"
-
-SIZE_BYTES="$(docker image inspect "$LOCAL_IMAGE" --format '{{.Size}}')"
-if command -v numfmt >/dev/null 2>&1; then
-  SIZE="$(numfmt --to=iec-i --suffix=B "$SIZE_BYTES")"
-else
-  SIZE="${SIZE_BYTES} bytes"
-fi
-
-echo "Built: $LOCAL_IMAGE"
-if [ -n "$REGISTRY_IMAGE" ]; then
-  echo "Tagged: $REGISTRY_IMAGE"
-fi
-echo "Image size: $SIZE"
-
-if [ "$PUSH" -eq 1 ]; then
-  docker push "$REGISTRY_IMAGE"
+  if [ -z "$VERSION" ]; then
+    VERSION="$(default_version)"
+  fi
+  case "$VERSION" in
+    0.5.1|0.6.0) ;;
+    *)
+      echo "ERROR: unsupported LeRobot version: $VERSION (supported: 0.5.1, 0.6.0)" >&2
+      exit 2
+      ;;
+  esac
+  build_one "$VERSION"
 fi

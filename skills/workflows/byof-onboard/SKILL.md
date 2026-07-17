@@ -75,6 +75,20 @@ Workloads:
 
 Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
 
+### LeRobot-dependent solutions
+
+If the OSS repo installs or imports Hugging Face LeRobot, pin a workbench-
+supported version explicitly:
+
+| Version | Install sketch | When |
+| --- | --- | --- |
+| `0.5.1` (default) | `pip install 'lerobot[pusht]==0.5.1'` | Match current golden evals / GR00T N1.5 |
+| `0.6.0` (additional) | `pip install 'lerobot[training,evaluation,pusht]==0.6.0'` | New VLAs, reward models, `lerobot-rollout` |
+
+See `skills/tools/lerobot/SKILL.md`. Prefer the first-class
+`npa workbench lerobot --lerobot-version …` path when the workload is policy
+train/eval rather than wrapping LeRobot inside a BYOF image.
+
 ## Agent Chat Flow (`onboard_solution`)
 
 1. **Contract** — register `workbench.byof.repo` (already in catalog); draft `byof` workflow via chat or:

@@ -86,6 +86,20 @@ unique and must be tested with its own upstream-named capabilities.
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
 
+## First-class Workbench tools (not BYOF)
+
+LeRobot is already a first-class `npa workbench lerobot` tool. Supported
+package/image tags:
+
+| Version | Status | Notes |
+| --- | --- | --- |
+| `0.5.1` | default | `npa-lerobot:0.5.1` |
+| `0.6.0` | additional | `npa-lerobot:0.6.0`; lean extras + `env_eval_freq` |
+
+Select with `--lerobot-version`. Manifest:
+`npa/src/npa/deploy/lerobot_version_manifest.json`. Upstream:
+https://huggingface.co/blog/lerobot-release-v060
+
 ## Capability Testing In The Onboarding Skill
 
 When creating or onboarding solutions, agents must follow
