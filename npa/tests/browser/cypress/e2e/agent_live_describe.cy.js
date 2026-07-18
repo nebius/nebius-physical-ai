@@ -24,6 +24,8 @@ describe("NPA agent live Describe-this + splash cover", () => {
       expect(win.__NPA_AGENT_TEST__).to.exist;
       expect(win.__NPA_AGENT_TEST__.safeHideRerunBundleCover).to.be.a("function");
       expect(win.document.documentElement.outerHTML).to.include("non-blank canvas");
+      expect(win.document.documentElement.outerHTML).to.include("captureStream");
+      expect(win.document.documentElement.outerHTML).to.include("ImageCapture");
     });
   });
 
@@ -60,18 +62,21 @@ describe("NPA agent live Describe-this + splash cover", () => {
     });
   });
 
-  it("shows Describe this in chat immediately and never claims uniform gray when a frame attaches", () => {
+  it("shows Describe this in chat immediately and never claims uniform gray on this turn", () => {
     cy.get("#tabRerun").click();
     cy.get("body").should("have.class", "viewer-focus");
     cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
 
-    // Best-effort warm: give the live Rerun canvas time to paint before Describe.
-    cy.wait(2500);
-    cy.window({ timeout: 30000 }).then({ timeout: 30000 }, async (win) => {
+    // Isolate from prior session history that may contain old bad Describe replies.
+    cy.get("#newChatSession").click({ force: true });
+    cy.wait(800);
+    cy.get("#chatLog .msg-row").should("have.length", 0);
+
+    cy.wait(2000);
+    cy.window({ timeout: 45000 }).then({ timeout: 45000 }, async (win) => {
       const api = win.__NPA_AGENT_TEST__;
-      const iframe = win.document.getElementById("rerunFrame");
-      const quality = await api.waitForQualityRerunFrame(12000);
-      win.__NPA_LIVE_DESCRIBE_QUALITY__ = quality;
+      const quality = await api.waitForQualityRerunFrame(15000);
+      win.__NPA_LIVE_DESCRIBE_QUALITY__ = quality || {};
     });
 
     cy.intercept("POST", "**/api/chat").as("liveDescribeChat");
@@ -98,17 +103,17 @@ describe("NPA agent live Describe-this + splash cover", () => {
     });
 
     cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).should("exist");
-    cy.get("#chatLog .msg-row.assistant").should(($el) => {
-      const text = $el.text().toLowerCase();
-      const userText = Cypress.$("#chatLog .msg-row.user").last().text();
-      if (userText.includes("attached viewer frame")) {
+    cy.get("#chatLog .msg-row.user").last().invoke("text").then((userText) => {
+      cy.get("#chatLog .msg-row.assistant").last().invoke("text").then((assistantText) => {
+        const text = String(assistantText || "").toLowerCase();
         expect(text).not.to.match(/completely uniform gray/);
         expect(text).not.to.match(/frame appears completely uniform/);
-        expect(text).to.match(/what i see|skeleton|grid|robot|mesh|camera|trajectory|scene|viewport|rerun/);
-      } else {
-        expect(text).to.match(/metadata only|no viewer frame|frame unavailable|could not/);
-        expect(text).not.to.match(/completely uniform gray/);
-      }
+        if (String(userText || "").includes("attached viewer frame")) {
+          expect(text).to.match(/what i see|skeleton|grid|robot|mesh|camera|trajectory|scene|viewport|rerun|franka/);
+        } else {
+          expect(text).to.match(/metadata only|no viewer frame|frame unavailable|could not/);
+        }
+      });
     });
   });
 });

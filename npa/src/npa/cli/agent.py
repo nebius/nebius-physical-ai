@@ -8757,23 +8757,47 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!canvas || frameLooksBlank(canvas)) return "";
           return downscaleCanvasToDataUrl(canvas, 768, 0.72) || "";
         }};
-        // Strategy A: createImageBitmap (often works for WebGPU/WebGL presentables).
+        const bitmapToUrl = async (bmp) => {{
+          const copy = document.createElement("canvas");
+          copy.width = Math.max(1, bmp.width || sourceCanvas.width || 1);
+          copy.height = Math.max(1, bmp.height || sourceCanvas.height || 1);
+          const ctx = copy.getContext("2d");
+          if (!ctx) return "";
+          ctx.drawImage(bmp, 0, 0);
+          if (typeof bmp.close === "function") bmp.close();
+          return tryDownscale(copy);
+        }};
+        // Strategy A: captureStream + ImageCapture (best for live WebGL/WebGPU presentables).
+        try {{
+          if (typeof sourceCanvas.captureStream === "function" && typeof ImageCapture === "function") {{
+            const stream = sourceCanvas.captureStream(20);
+            const track = stream.getVideoTracks && stream.getVideoTracks()[0];
+            if (track) {{
+              await new Promise((r) => window.setTimeout(r, 120));
+              await waitForPaintFrames(2);
+              const ic = new ImageCapture(track);
+              const bmp = await ic.grabFrame();
+              stream.getTracks().forEach((t) => {{
+                try {{ t.stop(); }} catch (_stopErr) {{ /* ignore */ }}
+              }});
+              const url = await bitmapToUrl(bmp);
+              if (url) return url;
+            }} else if (stream && stream.getTracks) {{
+              stream.getTracks().forEach((t) => {{
+                try {{ t.stop(); }} catch (_stopErr) {{ /* ignore */ }}
+              }});
+            }}
+          }}
+        }} catch (_streamErr) {{ /* fall through */ }}
+        // Strategy B: createImageBitmap (often works for WebGPU/WebGL presentables).
         try {{
           if (typeof createImageBitmap === "function") {{
             const bmp = await createImageBitmap(sourceCanvas);
-            const copy = document.createElement("canvas");
-            copy.width = Math.max(1, bmp.width || sourceCanvas.width || 1);
-            copy.height = Math.max(1, bmp.height || sourceCanvas.height || 1);
-            const ctx = copy.getContext("2d");
-            if (ctx) {{
-              ctx.drawImage(bmp, 0, 0);
-              if (typeof bmp.close === "function") bmp.close();
-              const url = tryDownscale(copy);
-              if (url) return url;
-            }}
+            const url = await bitmapToUrl(bmp);
+            if (url) return url;
           }}
         }} catch (_bmpErr) {{ /* fall through */ }}
-        // Strategy B: direct toDataURL on the live canvas, then re-probe.
+        // Strategy C: direct toDataURL on the live canvas, then re-probe.
         try {{
           const raw = sourceCanvas.toDataURL("image/jpeg", 0.78);
           if (raw && raw.length > 128) {{
@@ -8796,7 +8820,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           }}
         }} catch (_tdErr) {{ /* fall through */ }}
-        // Strategy C: 2D drawImage copy (works when preserveDrawingBuffer / 2D canvases).
+        // Strategy D: 2D drawImage copy (works when preserveDrawingBuffer / 2D canvases).
         try {{
           const copy = document.createElement("canvas");
           copy.width = Math.max(1, Number(sourceCanvas.width || 1));
