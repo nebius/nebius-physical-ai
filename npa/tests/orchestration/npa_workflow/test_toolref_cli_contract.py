@@ -19,7 +19,10 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 def _cli_option_names(module_path: str, command_name: str) -> set[str]:
     module = importlib.import_module(module_path)
     click_cmd = typer.main.get_command(module.app)
-    command = click_cmd.commands[command_name]  # type: ignore[attr-defined]
+    # Multi-command apps are click Groups; single-command apps collapse to the
+    # command itself.
+    commands = getattr(click_cmd, "commands", None)
+    command = commands[command_name] if commands else click_cmd
     opts: set[str] = set()
     for param in command.params:
         opts.update(getattr(param, "opts", []) or [])
