@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071821"
+AGENT_UI_VERSION = "2026071822"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -113,6 +113,7 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "frameLooksBlank",
     "sampleFrameStats",
     "captureCanvasDataUrl",
+    "ensureRerunCaptureBridge",
     "pickBestIframeCanvas",
     "probeRerunCanvasContent",
     "waitForQualityRerunFrame",
@@ -8774,8 +8775,98 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
         }}
       }}
+      function canvasFromVideoFrame(video) {{
+        const w = Number(video && (video.videoWidth || video.width) || 0);
+        const h = Number(video && (video.videoHeight || video.height) || 0);
+        if (!w || !h) return null;
+        const copy = document.createElement("canvas");
+        copy.width = w;
+        copy.height = h;
+        const ctx = copy.getContext("2d");
+        if (!ctx) return null;
+        try {{
+          ctx.drawImage(video, 0, 0, w, h);
+        }} catch (_err) {{
+          return null;
+        }}
+        return copy;
+      }}
+      let rerunCaptureBridge = null;
+      function stopRerunCaptureBridge() {{
+        if (!rerunCaptureBridge) return;
+        try {{
+          if (rerunCaptureBridge.stream && rerunCaptureBridge.stream.getTracks) {{
+            rerunCaptureBridge.stream.getTracks().forEach((t) => {{
+              try {{ t.stop(); }} catch (_err) {{ /* ignore */ }}
+            }});
+          }}
+          if (rerunCaptureBridge.video && rerunCaptureBridge.video.parentNode) {{
+            rerunCaptureBridge.video.parentNode.removeChild(rerunCaptureBridge.video);
+          }}
+        }} catch (_err) {{ /* ignore */ }}
+        rerunCaptureBridge = null;
+      }}
+      function ensureRerunCaptureBridge(iframe) {{
+        // Keep a live MediaStream→<video> mirror of the Rerun canvas. Sync WebGL
+        // drawImage/toDataURL often return cleared buffers; the composited stream does not.
+        try {{
+          if (!iframe || iframe.hidden) return null;
+          const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+          if (!doc) return null;
+          const canvas = pickLargestIframeCanvas(doc) || pickBestIframeCanvas(doc);
+          if (!canvas || typeof canvas.captureStream !== "function") return null;
+          if (
+            rerunCaptureBridge
+            && rerunCaptureBridge.canvas === canvas
+            && rerunCaptureBridge.video
+            && rerunCaptureBridge.stream
+          ) {{
+            return rerunCaptureBridge;
+          }}
+          stopRerunCaptureBridge();
+          const stream = canvas.captureStream(30);
+          const video = document.createElement("video");
+          video.setAttribute("playsinline", "");
+          video.setAttribute("muted", "");
+          video.muted = true;
+          video.autoplay = true;
+          video.playsInline = true;
+          video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+          document.body.appendChild(video);
+          video.srcObject = stream;
+          video.play().catch(() => {{ /* autoplay best-effort */ }});
+          rerunCaptureBridge = {{ canvas, stream, video, startedAt: Date.now() }};
+          return rerunCaptureBridge;
+        }} catch (_err) {{
+          return null;
+        }}
+      }}
+      async function grabFromRerunCaptureBridge(timeoutMs) {{
+        const iframe = document.getElementById("rerunFrame");
+        const bridge = ensureRerunCaptureBridge(iframe);
+        if (!bridge || !bridge.video) return "";
+        const deadline = Date.now() + Math.max(200, Number(timeoutMs || 2500));
+        while (Date.now() < deadline) {{
+          try {{
+            const track = bridge.stream && bridge.stream.getVideoTracks && bridge.stream.getVideoTracks()[0];
+            if (track && typeof track.requestFrame === "function") {{
+              try {{ track.requestFrame(); }} catch (_rfErr) {{ /* ignore */ }}
+            }}
+            if (bridge.video.readyState >= 2 && bridge.video.videoWidth > 0) {{
+              await waitForPaintFrames(2);
+              const copy = canvasFromVideoFrame(bridge.video);
+              if (copy && !frameLooksBlank(copy)) {{
+                const url = downscaleCanvasToDataUrl(copy, 768, 0.72);
+                if (url) return url;
+              }}
+            }}
+          }} catch (_grabErr) {{ /* retry */ }}
+          await new Promise((r) => window.setTimeout(r, 120));
+        }}
+        return "";
+      }}
       async function captureCanvasDataUrl(sourceCanvas) {{
-        // WebGL/WebGPU buffers clear after present — sample on the next paint frames.
+        // WebGL/WebGPU buffers clear after present — prefer composited MediaStream frames.
         if (!sourceCanvas) return "";
         await waitForPaintFrames(2);
         const tryDownscale = (canvas) => {{
@@ -8792,13 +8883,47 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (typeof bmp.close === "function") bmp.close();
           return tryDownscale(copy);
         }};
-        // Strategy A: captureStream + ImageCapture (best for live WebGL/WebGPU presentables).
+        // Strategy A: captureStream → <video> → drawImage (composited presentable frames).
+        try {{
+          if (typeof sourceCanvas.captureStream === "function") {{
+            const stream = sourceCanvas.captureStream(30);
+            const track = stream.getVideoTracks && stream.getVideoTracks()[0];
+            const video = document.createElement("video");
+            video.muted = true;
+            video.playsInline = true;
+            video.setAttribute("playsinline", "");
+            video.srcObject = stream;
+            try {{ await video.play(); }} catch (_playErr) {{ /* continue */ }}
+            const deadline = Date.now() + 1800;
+            while (Date.now() < deadline && !(video.readyState >= 2 && video.videoWidth > 0)) {{
+              if (track && typeof track.requestFrame === "function") {{
+                try {{ track.requestFrame(); }} catch (_rfErr) {{ /* ignore */ }}
+              }}
+              await new Promise((r) => window.setTimeout(r, 80));
+            }}
+            if (track && typeof track.requestFrame === "function") {{
+              try {{ track.requestFrame(); }} catch (_rfErr2) {{ /* ignore */ }}
+            }}
+            await waitForPaintFrames(3);
+            const copy = canvasFromVideoFrame(video);
+            stream.getTracks().forEach((t) => {{
+              try {{ t.stop(); }} catch (_stopErr) {{ /* ignore */ }}
+            }});
+            video.srcObject = null;
+            const url = tryDownscale(copy);
+            if (url) return url;
+          }}
+        }} catch (_streamErr) {{ /* fall through */ }}
+        // Strategy B: captureStream + ImageCapture.grabFrame.
         try {{
           if (typeof sourceCanvas.captureStream === "function" && typeof ImageCapture === "function") {{
             const stream = sourceCanvas.captureStream(20);
             const track = stream.getVideoTracks && stream.getVideoTracks()[0];
             if (track) {{
-              await new Promise((r) => window.setTimeout(r, 120));
+              if (typeof track.requestFrame === "function") {{
+                try {{ track.requestFrame(); }} catch (_rfErr) {{ /* ignore */ }}
+              }}
+              await new Promise((r) => window.setTimeout(r, 160));
               await waitForPaintFrames(2);
               const ic = new ImageCapture(track);
               const bmp = await ic.grabFrame();
@@ -8813,8 +8938,8 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               }});
             }}
           }}
-        }} catch (_streamErr) {{ /* fall through */ }}
-        // Strategy B: createImageBitmap (often works for WebGPU/WebGL presentables).
+        }} catch (_icErr) {{ /* fall through */ }}
+        // Strategy C: createImageBitmap.
         try {{
           if (typeof createImageBitmap === "function") {{
             const bmp = await createImageBitmap(sourceCanvas);
@@ -8822,7 +8947,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (url) return url;
           }}
         }} catch (_bmpErr) {{ /* fall through */ }}
-        // Strategy C: direct toDataURL on the live canvas, then re-probe.
+        // Strategy D: direct toDataURL.
         try {{
           const raw = sourceCanvas.toDataURL("image/jpeg", 0.78);
           if (raw && raw.length > 128) {{
@@ -8845,7 +8970,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }}
           }}
         }} catch (_tdErr) {{ /* fall through */ }}
-        // Strategy D: 2D drawImage copy (works when preserveDrawingBuffer / 2D canvases).
+        // Strategy E: 2D drawImage copy (2D canvases / preserveDrawingBuffer).
         try {{
           const copy = document.createElement("canvas");
           copy.width = Math.max(1, Number(sourceCanvas.width || 1));
@@ -8862,27 +8987,33 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       async function waitForQualityRerunFrame(timeoutMs) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe || iframe.hidden) return {{ dataUrl: "", quality: "missing" }};
-        const deadline = Date.now() + Math.max(800, Number(timeoutMs || 8000));
+        const deadline = Date.now() + Math.max(800, Number(timeoutMs || 10000));
+        // Warm the MediaStream bridge early — do not gate on sync WebGL blank checks.
+        ensureRerunCaptureBridge(iframe);
         while (Date.now() < deadline) {{
           try {{
             if (rerunViewerShowsBundleSplash(iframe)) {{
               await new Promise((r) => window.setTimeout(r, 180));
               continue;
             }}
+            // Prefer the persistent composited bridge (works when sync canvas reads are blank).
+            const bridged = await grabFromRerunCaptureBridge(900);
+            if (bridged) return {{ dataUrl: bridged, quality: "rendered" }};
             const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-            const canvas = doc && pickBestIframeCanvas(doc);
-            if (canvas && !frameLooksBlank(canvas)) {{
+            const canvas = doc && (pickBestIframeCanvas(doc) || pickLargestIframeCanvas(doc));
+            if (canvas) {{
+              // Always attempt async capture — sync frameLooksBlank is unreliable on WebGL.
               const dataUrl = await captureCanvasDataUrl(canvas);
               if (dataUrl) return {{ dataUrl, quality: "rendered" }};
             }}
           }} catch (_err) {{ /* retry */ }}
-          await new Promise((r) => window.setTimeout(r, 200));
+          await new Promise((r) => window.setTimeout(r, 180));
         }}
         // Never attach a uniform gray/blank buffer — metadata-only is safer than a false blank claim.
         return {{ dataUrl: "", quality: "unavailable" }};
       }}
       async function captureRerunViewerFrame() {{
-        const result = await waitForQualityRerunFrame(8000);
+        const result = await waitForQualityRerunFrame(10000);
         return result.dataUrl || "";
       }}
       async function captureMediaViewerFrame() {{
@@ -8893,6 +9024,13 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (video.readyState < 2) {{
             try {{ await video.play(); }} catch (_err) {{ /* ignore */ }}
             await new Promise((r) => window.setTimeout(r, 180));
+          }}
+          // Seek slightly if paused at t=0 with no decoded frame yet.
+          if (video.readyState < 2 && video.seekable && video.seekable.length) {{
+            try {{
+              video.currentTime = Math.min(0.1, Number(video.duration) || 0.1);
+              await new Promise((r) => window.setTimeout(r, 120));
+            }} catch (_seekErr) {{ /* ignore */ }}
           }}
           const canvas = document.createElement("canvas");
           canvas.width = video.videoWidth;
@@ -8905,6 +9043,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               await new Promise((r) => window.setTimeout(r, 250));
               ctx.drawImage(video, 0, 0);
             }}
+            if (frameLooksBlank(canvas)) return "";
             return downscaleCanvasToDataUrl(canvas, 768, 0.72);
           }} catch (_err) {{
             return "";
@@ -8919,6 +9058,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           if (!ctx) return "";
           try {{
             ctx.drawImage(img, 0, 0);
+            if (frameLooksBlank(canvas)) return "";
             return downscaleCanvasToDataUrl(canvas, 768, 0.72);
           }} catch (_err) {{
             return "";
@@ -8941,7 +9081,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         let frameQuality = "";
         let textExcerpt = "";
         if (visualKind === "rerun") {{
-          const quality = await waitForQualityRerunFrame(8000);
+          const quality = await waitForQualityRerunFrame(10000);
           imageDataUrl = quality.dataUrl || "";
           frameQuality = quality.quality || "";
         }} else if (visualKind === "video" || visualKind === "image") {{
@@ -9219,10 +9359,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         return lastRerunNonBlankAt > 0 && (Date.now() - lastRerunNonBlankAt) < 15000;
       }}
       async function probeRerunCanvasContent(iframe) {{
-        // Prefer createImageBitmap / paint-frame capture — WebGL drawImage is often cleared.
+        // Prefer MediaStream bridge / async capture — sync WebGL drawImage is often cleared.
         try {{
           if (!iframe || iframe.hidden) return false;
           if (rerunViewerShowsBundleSplash(iframe)) return false;
+          ensureRerunCaptureBridge(iframe);
+          const bridged = await grabFromRerunCaptureBridge(700);
+          if (bridged) {{
+            lastRerunNonBlankAt = Date.now();
+            return true;
+          }}
           const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
           if (!doc) return false;
           const canvas = pickBestIframeCanvas(doc) || pickLargestIframeCanvas(doc);
@@ -9673,11 +9819,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         setRerunMountStatus("retrying", "navigating");
         showRerunBundleCover("Opening viewer…", "Almost ready…");
         rerunViewerAppReady = false;
+        stopRerunCaptureBridge();
         iframe.hidden = false;
         iframe.src = src;
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
+        // Start composited-frame bridge as soon as the canvas exists.
+        ensureRerunCaptureBridge(iframe);
         try {{
           lastRerunRecordingUrl = await resolveRerunRecordingUrl();
           if (lastRerunRecordingUrl.startsWith("/")) {{
@@ -10911,10 +11060,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           frameLooksBlank,
           sampleFrameStats,
           captureCanvasDataUrl,
+          ensureRerunCaptureBridge,
+          grabFromRerunCaptureBridge,
           pickBestIframeCanvas,
           waitForQualityRerunFrame,
           probeRerunCanvasContent,
+          captureMediaViewerFrame,
+          captureDataPaneExcerpt,
+          captureVisualContext,
           describeVisual,
+          setRenderMode,
           showRerunBundleCover,
           hideRerunBundleCover,
           safeHideRerunBundleCover,
@@ -12113,6 +12268,7 @@ def verify_live_cmd(
         "thinking-ellipsis",
         "waitForQualityRerunFrame",
         "captureCanvasDataUrl",
+        "ensureRerunCaptureBridge",
         "pickBestIframeCanvas",
         "sampleFrameStats",
         "skipUserAppend",

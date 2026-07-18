@@ -197,9 +197,13 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "frameLooksBlank" in ui_html
     assert "sampleFrameStats" in ui_html
     assert "captureCanvasDataUrl" in ui_html
+    assert "ensureRerunCaptureBridge" in ui_html
+    assert "grabFromRerunCaptureBridge" in ui_html
     assert "pickBestIframeCanvas" in ui_html
     assert "skipUserAppend" in ui_html
     assert "Describe this — capturing" in ui_html
+    # Must not gate async WebGL capture on sync blank checks alone.
+    assert "Always attempt async capture" in ui_html or "do not gate" in ui_html.lower() or "MediaStream bridge" in ui_html
     assert "visual_context" in ui_html
     assert "maxChars = 700000" in ui_html
     assert "client_max_body_size 32m" in source

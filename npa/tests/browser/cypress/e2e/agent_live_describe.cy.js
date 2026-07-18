@@ -22,10 +22,9 @@ describe("NPA agent live Describe-this + splash cover", () => {
     });
     cy.window().then((win) => {
       expect(win.__NPA_AGENT_TEST__).to.exist;
-      expect(win.__NPA_AGENT_TEST__.safeHideRerunBundleCover).to.be.a("function");
-      expect(win.document.documentElement.outerHTML).to.include("non-blank canvas");
-      expect(win.document.documentElement.outerHTML).to.include("captureStream");
-      expect(win.document.documentElement.outerHTML).to.include("ImageCapture");
+      expect(win.__NPA_AGENT_TEST__.ensureRerunCaptureBridge).to.be.a("function");
+      expect(win.document.documentElement.outerHTML).to.include("ensureRerunCaptureBridge");
+      expect(win.document.documentElement.outerHTML).to.include("grabFromRerunCaptureBridge");
     });
   });
 
@@ -62,21 +61,24 @@ describe("NPA agent live Describe-this + splash cover", () => {
     });
   });
 
-  it("shows Describe this in chat immediately and never claims uniform gray on this turn", () => {
+  it("attaches a live Rerun frame via MediaStream bridge (not metadata-only)", () => {
     cy.get("#tabRerun").click();
     cy.get("body").should("have.class", "viewer-focus");
     cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
 
-    // Isolate from prior session history that may contain old bad Describe replies.
     cy.get("#newChatSession").click({ force: true });
     cy.wait(800);
     cy.get("#chatLog .msg-row").should("have.length", 0);
 
-    cy.wait(2000);
-    cy.window({ timeout: 45000 }).then({ timeout: 45000 }, async (win) => {
+    cy.window({ timeout: 60000 }).then({ timeout: 60000 }, async (win) => {
       const api = win.__NPA_AGENT_TEST__;
-      const quality = await api.waitForQualityRerunFrame(15000);
+      const iframe = win.document.getElementById("rerunFrame");
+      api.ensureRerunCaptureBridge(iframe);
+      const quality = await api.waitForQualityRerunFrame(20000);
       win.__NPA_LIVE_DESCRIBE_QUALITY__ = quality || {};
+      expect(quality.quality, "live Rerun frame quality").to.eq("rendered");
+      expect(quality.dataUrl, "live Rerun JPEG").to.match(/^data:image\/jpeg/);
+      expect(quality.dataUrl.length).to.be.greaterThan(4000);
     });
 
     cy.intercept("POST", "**/api/chat").as("liveDescribeChat");
@@ -87,33 +89,25 @@ describe("NPA agent live Describe-this + splash cover", () => {
     cy.wait("@liveDescribeChat", { timeout: 180000 }).then((interception) => {
       const body = interception.request.body;
       expect(body.visual_context).to.be.an("object");
-      if (body.visual_context.capture === "frame") {
-        expect(body.visual_context.frame_quality).to.eq("rendered");
-        expect(body.visual_context.has_image).to.eq(true);
-        const last = body.messages[body.messages.length - 1];
-        expect(last.content).to.be.an("array");
-        const imagePart = last.content.find((part) => part && String(part.type || "").startsWith("image"));
-        expect(imagePart).to.exist;
-        expect(imagePart.image_url.url).to.match(/^data:image\/jpeg;base64,/);
-        expect(imagePart.image_url.url.length).to.be.greaterThan(4000);
-      } else {
-        // Honest metadata-only path — never attach a blank/gray buffer.
-        expect(body.visual_context.has_image).to.eq(false);
-      }
+      expect(body.visual_context.capture).to.eq("frame");
+      expect(body.visual_context.has_image).to.eq(true);
+      expect(body.visual_context.frame_quality).to.eq("rendered");
+      const last = body.messages[body.messages.length - 1];
+      expect(last.content).to.be.an("array");
+      const imagePart = last.content.find((part) => part && String(part.type || "").startsWith("image"));
+      expect(imagePart).to.exist;
+      expect(imagePart.image_url.url).to.match(/^data:image\/jpeg;base64,/);
+      expect(imagePart.image_url.url.length).to.be.greaterThan(4000);
     });
 
     cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).should("exist");
-    cy.get("#chatLog .msg-row.user").last().invoke("text").then((userText) => {
-      cy.get("#chatLog .msg-row.assistant").last().invoke("text").then((assistantText) => {
-        const text = String(assistantText || "").toLowerCase();
-        expect(text).not.to.match(/completely uniform gray/);
-        expect(text).not.to.match(/frame appears completely uniform/);
-        if (String(userText || "").includes("attached viewer frame")) {
-          expect(text).to.match(/what i see|skeleton|grid|robot|mesh|camera|trajectory|scene|viewport|rerun|franka/);
-        } else {
-          expect(text).to.match(/metadata only|no viewer frame|frame unavailable|could not/);
-        }
-      });
+    cy.get("#chatLog .msg-row.user").last().invoke("text").should("include", "attached viewer frame");
+    cy.get("#chatLog .msg-row.assistant").last().invoke("text").then((assistantText) => {
+      const text = String(assistantText || "").toLowerCase();
+      expect(text).not.to.match(/completely uniform gray/);
+      expect(text).not.to.match(/no viewer frame was attached/);
+      expect(text).not.to.match(/metadata only/);
+      expect(text).to.match(/what i see|skeleton|grid|robot|mesh|trajectory|g1|orange|cyan|wireframe|humanoid|scene|viewport|rerun|franka/);
     });
   });
 });

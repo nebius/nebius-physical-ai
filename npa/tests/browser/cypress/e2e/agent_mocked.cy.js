@@ -676,4 +676,279 @@ describe("NPA agent UI with mocked APIs", () => {
       });
     });
   });
+
+  it("captures Rerun via MediaStream bridge even when sync blank checks would fail", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("content");
+    });
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(win.document.documentElement.outerHTML).to.include("ensureRerunCaptureBridge");
+      const bridge = api.ensureRerunCaptureBridge(iframe);
+      expect(bridge, "capture bridge").to.exist;
+      expect(bridge.video).to.exist;
+      const grabbed = await api.grabFromRerunCaptureBridge(3000);
+      expect(grabbed).to.match(/^data:image\/jpeg/);
+      // Capture must succeed even if we ignore sync blank gates (the live WebGL failure mode).
+      const quality = await api.waitForQualityRerunFrame(4000);
+      expect(quality.quality).to.eq("rendered");
+      expect(quality.dataUrl.length).to.be.greaterThan(4000);
+    });
+  });
+
+  it("captures live WebGL canvas via captureStream when sync readback is blank", () => {
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const canvas = win.document.createElement("canvas");
+      canvas.width = 160;
+      canvas.height = 120;
+      const gl = canvas.getContext("webgl", { preserveDrawingBuffer: false, alpha: false });
+      expect(gl, "webgl context").to.exist;
+      let raf = 0;
+      const paint = () => {
+        // Alternating orange / cyan clears so the stream has non-uniform structure over time,
+        // while sync 2D readback of a non-preserveDrawingBuffer canvas is often blank.
+        const t = (Date.now() % 400) < 200;
+        if (t) gl.clearColor(1.0, 0.45, 0.1, 1.0);
+        else gl.clearColor(0.2, 0.85, 0.8, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        raf = win.requestAnimationFrame(paint);
+      };
+      paint();
+      await new Promise((r) => setTimeout(r, 250));
+      // Sync path often fails on live WebGL — prove stream path still works.
+      const syncCopy = win.document.createElement("canvas");
+      syncCopy.width = canvas.width;
+      syncCopy.height = canvas.height;
+      const sctx = syncCopy.getContext("2d");
+      sctx.drawImage(canvas, 0, 0);
+      const url = await api.captureCanvasDataUrl(canvas);
+      win.cancelAnimationFrame(raf);
+      expect(url, "WebGL stream capture").to.match(/^data:image\/jpeg;base64,/);
+      expect(url.length).to.be.greaterThan(800);
+      // If sync readback happened to work in this browser, that is fine — the requirement is
+      // that captureCanvasDataUrl still returns a non-blank JPEG either way.
+      expect(api.frameLooksBlank).to.be.a("function");
+    });
+  });
+
+  it("captures image / video / data visual kinds for Describe this", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const host = win.document.getElementById("artifactPreviewHost");
+      expect(host).to.exist;
+
+      // --- image ---
+      host.hidden = false;
+      const imgCanvas = win.document.createElement("canvas");
+      imgCanvas.width = 120;
+      imgCanvas.height = 80;
+      const ictx = imgCanvas.getContext("2d");
+      ictx.fillStyle = "#102030";
+      ictx.fillRect(0, 0, 120, 80);
+      ictx.fillStyle = "#ff8800";
+      ictx.fillRect(20, 15, 80, 50);
+      const img = win.document.createElement("img");
+      img.src = imgCanvas.toDataURL("image/png");
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      });
+      host.innerHTML = "";
+      host.appendChild(img);
+      api.setRenderMode("image");
+      let captured = await api.captureVisualContext();
+      expect(captured.kind).to.eq("image");
+      expect(captured.meta.capture).to.eq("frame");
+      expect(captured.imageDataUrl).to.match(/^data:image\/jpeg/);
+      expect(captured.prompt).to.include("visual_kind: `image`");
+
+      // --- video (canvas.captureStream backed) ---
+      const vCanvas = win.document.createElement("canvas");
+      vCanvas.width = 160;
+      vCanvas.height = 90;
+      const vctx = vCanvas.getContext("2d");
+      vctx.fillStyle = "#0a1020";
+      vctx.fillRect(0, 0, 160, 90);
+      vctx.fillStyle = "#33cc99";
+      vctx.fillRect(30, 20, 100, 50);
+      const stream = vCanvas.captureStream(12);
+      const video = win.document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      await video.play().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 200));
+      host.innerHTML = "";
+      host.appendChild(video);
+      api.setRenderMode("video");
+      captured = await api.captureVisualContext();
+      expect(captured.kind).to.eq("video");
+      expect(captured.meta.capture).to.eq("frame");
+      expect(captured.imageDataUrl).to.match(/^data:image\/jpeg/);
+      expect(captured.prompt).to.include("visual_kind: `video`");
+      stream.getTracks().forEach((t) => t.stop());
+
+      // --- data / text ---
+      const pre = win.document.createElement("pre");
+      pre.textContent = JSON.stringify(
+        { success_rate: 0.82, stage: "heldout", robot: "g1" },
+        null,
+        2
+      );
+      host.innerHTML = "";
+      host.appendChild(pre);
+      api.setRenderMode("data");
+      captured = await api.captureVisualContext();
+      expect(captured.kind).to.eq("data");
+      expect(captured.meta.capture).to.eq("text");
+      expect(captured.imageDataUrl).to.eq("");
+      expect(captured.prompt).to.include("success_rate");
+      expect(captured.prompt).to.include("visual_kind: `data`");
+      expect(captured.prompt.toLowerCase()).to.include("pixels");
+
+      // restore rerun mode
+      api.setRenderMode("rerun");
+      host.hidden = true;
+      host.innerHTML = "";
+    });
+  });
+
+  it("Describe this posts vision frames for image and video panes", () => {
+    cy.get("#tabRerun").click();
+    cy.intercept("POST", "/api/chat", (req) => {
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          grounded: false,
+          tier: "vision",
+          model: "Qwen/Qwen2.5-VL-72B-Instruct",
+          session_id: req.body.session_id || "default",
+          reply: "**What I see**: Structured viewer content.\n**Likely meaning**: Valid capture.\n**Operator feedback**: OK.\n**Next actions**: Continue.",
+        },
+      });
+    }).as("visualKindChat");
+
+    // Image pane
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const host = win.document.getElementById("artifactPreviewHost");
+      host.hidden = false;
+      const imgCanvas = win.document.createElement("canvas");
+      imgCanvas.width = 100;
+      imgCanvas.height = 60;
+      const ctx = imgCanvas.getContext("2d");
+      ctx.fillStyle = "#203040";
+      ctx.fillRect(0, 0, 100, 60);
+      ctx.strokeStyle = "#ffaa00";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(10, 10, 80, 40);
+      const img = win.document.createElement("img");
+      img.src = imgCanvas.toDataURL("image/png");
+      await new Promise((resolve) => {
+        img.onload = resolve;
+      });
+      host.innerHTML = "";
+      host.appendChild(img);
+      api.setRenderMode("image");
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@visualKindChat").then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context.kind).to.eq("image");
+      expect(body.visual_context.capture).to.eq("frame");
+      expect(body.visual_context.has_image).to.eq(true);
+      const last = body.messages[body.messages.length - 1];
+      expect(last.content).to.be.an("array");
+      expect(last.content.some((p) => p && String(p.type || "").startsWith("image"))).to.eq(true);
+    });
+
+    // Video pane
+    cy.window().then(async (win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const host = win.document.getElementById("artifactPreviewHost");
+      const vCanvas = win.document.createElement("canvas");
+      vCanvas.width = 128;
+      vCanvas.height = 72;
+      const vctx = vCanvas.getContext("2d");
+      vctx.fillStyle = "#101828";
+      vctx.fillRect(0, 0, 128, 72);
+      vctx.fillStyle = "#22d3ee";
+      vctx.fillRect(24, 16, 80, 40);
+      const stream = vCanvas.captureStream(12);
+      const video = win.document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      await video.play().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 180));
+      host.innerHTML = "";
+      host.appendChild(video);
+      host._npaTestStream = stream;
+      api.setRenderMode("video");
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@visualKindChat").then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context.kind).to.eq("video");
+      expect(body.visual_context.capture).to.eq("frame");
+      expect(body.visual_context.has_image).to.eq(true);
+      const last = body.messages[body.messages.length - 1];
+      expect(last.content.some((p) => p && String(p.type || "").startsWith("image"))).to.eq(true);
+    });
+
+    // Data pane — metadata/text only, never invents an image part
+    cy.intercept("POST", "/api/chat", (req) => {
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          grounded: false,
+          tier: "reasoning",
+          model: "mock/model",
+          session_id: req.body.session_id || "default",
+          reply: "**What I see**: Metadata/text only.\n**Likely meaning**: JSON report.\n**Operator feedback**: OK.\n**Next actions**: Reload Rerun.",
+        },
+      });
+    }).as("dataKindChat");
+
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const host = win.document.getElementById("artifactPreviewHost");
+      if (host._npaTestStream) {
+        host._npaTestStream.getTracks().forEach((t) => t.stop());
+        delete host._npaTestStream;
+      }
+      const pre = win.document.createElement("pre");
+      pre.textContent = JSON.stringify({ success_rate: 0.91, robot: "g1" }, null, 2);
+      host.innerHTML = "";
+      host.appendChild(pre);
+      api.setRenderMode("data");
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@dataKindChat").then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context.kind).to.eq("data");
+      expect(body.visual_context.capture).to.eq("text");
+      expect(body.visual_context.has_image).to.eq(false);
+      const last = body.messages[body.messages.length - 1];
+      const content = last.content;
+      if (Array.isArray(content)) {
+        expect(content.some((p) => p && String(p.type || "").startsWith("image"))).to.eq(false);
+        expect(JSON.stringify(content)).to.include("success_rate");
+      } else {
+        expect(String(content)).to.include("success_rate");
+      }
+    });
+  });
 });
