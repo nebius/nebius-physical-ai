@@ -48,9 +48,10 @@ _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
         "object, and task progress when visible.",
     ),
     (
-        ("genesis", "mujoco", "mjlab", "locomotion", "sonic"),
-        "Metadata suggests locomotion / physics-sim imagery — describe gait, terrain, "
-        "and contact cues when visible.",
+        ("genesis", "mujoco", "mjlab", "locomotion", "sonic", "g1", "trajectory", "skeleton"),
+        "Metadata suggests locomotion / humanoid trajectory imagery — expect dark 3D "
+        "grids with colored skeleton/wireframe overlays; that is valid content, not a "
+        "blank or uniform-gray frame. Describe gait, pose overlap, and contact cues.",
     ),
     (
         ("cosmos", "world model", "synthetic"),
@@ -65,11 +66,12 @@ _KIND_GUIDANCE: dict[str, str] = {
         "Identify what is shown: sim RGB camera, depth/seg overlay, 3D scene graph, "
         "policy rollout strip, UI chrome, or true emptiness. "
         "IMPORTANT: dense RGB speckles, tiled env thumbnails, dark viewports with a "
-        "robot mesh, or Isaac/GR00T-style synthetic frames are NOT 'blank' — describe "
-        "them. Only call a frame blank when it is uniform black/white/gray with no "
-        "structure. If noisy, say whether it looks like compressed camera bytes, "
-        "uninitialized GPU memory, or a multi-env mosaic. Suggest timeline scrub, "
-        "entity selection, and alternate Video/Image artifacts when helpful. "
+        "robot mesh, colored skeleton/wireframe overlays on a grid (e.g. G1 trajectory), "
+        "or Isaac/GR00T-style synthetic frames are NOT 'blank' — describe them. Only "
+        "call a frame blank when it is uniform black/white/gray with no structure. If "
+        "noisy, say whether it looks like compressed camera bytes, uninitialized GPU "
+        "memory, or a multi-env mosaic. Suggest timeline scrub, entity selection, and "
+        "alternate Video/Image artifacts when helpful. "
         "Do not invent hardware footage that is not visible."
     ),
     "video": (
@@ -94,6 +96,26 @@ _KIND_GUIDANCE: dict[str, str] = {
         "next steps for the NPA agent workbench."
     ),
 }
+
+
+def frame_looks_blank_from_stats(
+    *,
+    mean: float,
+    variance: float,
+    value_range: float,
+) -> bool:
+    """Mirror the UI blank-frame gate (uniform black/white/mid-gray → blank).
+
+    Kept in Python so unit tests can lock the thresholds that prevent false
+    \"uniform gray\" Describe-this replies from cleared WebGL buffers.
+    """
+    if variance < 35:
+        return True
+    if value_range < 18:
+        return True
+    if variance < 80 and (mean < 12 or mean > 243):
+        return True
+    return False
 
 
 def normalize_visual_kind(kind: str | None) -> str:

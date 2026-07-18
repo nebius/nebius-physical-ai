@@ -93,11 +93,11 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     swap = ui.split("async function swapRerunRecordingInPlace")[1].split(
         "async function mountRerunIframe(camera, runId)"
     )[0]
-    assert "await waitForQualityRerunFrame" in swap
+    # Soft-swap settles on non-blank display-ready (not a Describe JPEG wait).
+    assert "rerunViewerLooksDisplayReady" in swap
     assert "Updating recording" in swap
     assert "add_receiver" in swap
-    # Soft-swap clears cover and uses display-ready gate (not Describe JPEG quality).
-    assert "hideRerunBundleCover()" in swap
+    assert "safeHideRerunBundleCover" in swap or "scheduleRerunBundleUncover" in swap
     assert "rerunViewerLooksDisplayReady" in ui
     mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
         "async function mountRerunIframeUntilSuccess"

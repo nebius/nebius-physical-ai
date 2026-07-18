@@ -23,10 +23,12 @@ REQUIRED_UI_MARKERS = (
     "opacity: 0",
     'id="rerunBundleCover"',
     "waitUntilRerunPastBundleSplash",
+    "safeHideRerunBundleCover",
     "Warm Rerun assets before revealing the iframe",
     "Preparing viewer…",
     "Uncover without blocking mount latency",
     "scheduleRerunBundleUncover",
+    "non-blank canvas",
     "swapRerunRecordingInPlace",
     "add_receiver",
 )

@@ -379,8 +379,42 @@ function installAgentApiMocks() {
   })).as("selectChatSession");
   cy.intercept("POST", "/api/chat", (req) => {
     const messages = Array.isArray(req.body.messages) ? req.body.messages : [];
-    const last = String(messages.length ? messages[messages.length - 1].content || "" : "");
-    const lowered = last.toLowerCase();
+    const lastMsg = messages.length ? messages[messages.length - 1] : null;
+    const lastContent = lastMsg ? lastMsg.content : "";
+    const lastText = Array.isArray(lastContent)
+      ? lastContent
+          .filter((part) => part && part.type === "text")
+          .map((part) => String(part.text || ""))
+          .join("\n")
+      : String(lastContent || "");
+    const lowered = lastText.toLowerCase();
+    const visualContext = req.body && req.body.visual_context;
+    if (visualContext || lowered.includes("[npa-visual-feedback]") || lowered.includes("describe this")) {
+      const hasImage = Array.isArray(lastContent)
+        && lastContent.some((part) => part && String(part.type || "").startsWith("image"));
+      req.reply(json({
+        ok: true,
+        model: req.body.model || "Qwen/Qwen2.5-VL-72B-Instruct",
+        session_id: req.body.session_id || "default",
+        grounded: false,
+        tier: hasImage ? "vision" : "reasoning",
+        apis_used: [],
+        reply: hasImage
+          ? [
+              "**What I see**: Dark 3D grid with orange and cyan skeleton wireframes (G1 trajectory style).",
+              "**Likely meaning**: Locomotion / trajectory overlay in the Rerun viewer.",
+              "**Operator feedback**: Structured sim content is visible — not a blank frame.",
+              "**Next actions**: Scrub timeline; compare held-out cameras; keep this recording.",
+            ].join("\n")
+          : [
+              "**What I see**: No viewer frame was attached — metadata only.",
+              "**Likely meaning**: Capture could not read a non-blank canvas.",
+              "**Operator feedback**: Wait for the viewer to settle past splash, then Describe this again.",
+              "**Next actions**: Reload Rerun data; retry Describe this; try Video/Image artifacts.",
+            ].join("\n"),
+      }));
+      return;
+    }
     if (lowered.includes("outer loop") || lowered.includes("vlm") || lowered.includes("quality gate")) {
       req.reply(json({
         ok: true,

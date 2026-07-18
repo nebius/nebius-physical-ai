@@ -53,8 +53,13 @@ function startMockServer(port) {
       return;
     }
     if (url.pathname === "/rerun/" || url.pathname === "/rerun") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end("<!doctype html><title>Mock Rerun</title><canvas data-testid=\"mock-rerun-canvas\"></canvas>");
+      const fixturePath = path.join(__dirname, "cypress/fixtures/mock_rerun.html");
+      const mockHtml = fs.readFileSync(fixturePath, "utf8");
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(mockHtml);
       return;
     }
     if (url.pathname === "/rerun/re_viewer.js") {

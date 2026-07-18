@@ -460,4 +460,190 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadRun");
     cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
   });
+
+  it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      expect(api, "test hooks").to.exist;
+      const gray = win.document.createElement("canvas");
+      gray.width = 120;
+      gray.height = 80;
+      const gctx = gray.getContext("2d");
+      gctx.fillStyle = "#9ca3af";
+      gctx.fillRect(0, 0, 120, 80);
+      expect(api.frameLooksBlank(gray)).to.eq(true);
+
+      const black = win.document.createElement("canvas");
+      black.width = 120;
+      black.height = 80;
+      black.getContext("2d").fillRect(0, 0, 120, 80);
+      expect(api.frameLooksBlank(black)).to.eq(true);
+
+      const content = win.document.createElement("canvas");
+      content.width = 160;
+      content.height = 100;
+      const cctx = content.getContext("2d");
+      cctx.fillStyle = "#0a0a12";
+      cctx.fillRect(0, 0, 160, 100);
+      cctx.strokeStyle = "#ff8a1f";
+      cctx.lineWidth = 3;
+      cctx.beginPath();
+      cctx.moveTo(40, 20);
+      cctx.lineTo(80, 60);
+      cctx.lineTo(50, 90);
+      cctx.stroke();
+      cctx.strokeStyle = "#5eead4";
+      cctx.beginPath();
+      cctx.moveTo(90, 25);
+      cctx.lineTo(120, 70);
+      cctx.stroke();
+      expect(api.frameLooksBlank(content)).to.eq(false);
+      const stats = api.sampleFrameStats(content);
+      expect(stats.variance).to.be.greaterThan(35);
+    });
+  });
+
+  it("Describe this appears in chat immediately and attaches a non-blank frame", () => {
+    cy.intercept("POST", "/api/chat", (req) => {
+      // Delayed vision reply so the pending chat bubble must appear first.
+      req.reply({
+        delay: 1400,
+        statusCode: 200,
+        body: {
+          ok: true,
+          grounded: false,
+          tier: "vision",
+          model: "Qwen/Qwen2.5-VL-72B-Instruct",
+          session_id: req.body.session_id || "default",
+          reply: [
+            "**What I see**: Dark 3D grid with orange and cyan skeleton wireframes (G1 trajectory style).",
+            "**Likely meaning**: Locomotion / trajectory overlay in the Rerun viewer.",
+            "**Operator feedback**: Structured sim content is visible — not a blank frame.",
+            "**Next actions**: Scrub timeline; compare held-out cameras; keep this recording.",
+          ].join("\n"),
+        },
+      });
+    }).as("slowDescribeChat");
+
+    cy.get("#tabRerun").click();
+    cy.get("body").should("have.class", "viewer-focus");
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      const win = $frame[0].contentWindow;
+      expect(win && win.__NPA_MOCK_RERUN__).to.exist;
+      win.__NPA_MOCK_RERUN__.setMode("content");
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    // Immediate UX: request visible before the delayed /api/chat completes.
+    cy.get("#chatLog .msg-row.user", { timeout: 2000 }).should("contain.text", "Describe this");
+    cy.get("#panelChat").should("have.class", "chat-drawer-open");
+
+    cy.wait("@slowDescribeChat", { timeout: 20000 }).then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context).to.be.an("object");
+      expect(body.visual_context.capture).to.eq("frame");
+      expect(body.visual_context.frame_quality).to.eq("rendered");
+      expect(body.visual_context.has_image).to.eq(true);
+      const messages = body.messages;
+      const last = messages[messages.length - 1];
+      expect(last.content).to.be.an("array");
+      const imagePart = last.content.find((part) => part && String(part.type || "").startsWith("image"));
+      expect(imagePart, "image part").to.exist;
+      const url = imagePart.image_url.url;
+      expect(url).to.match(/^data:image\/jpeg;base64,/);
+      expect(url.length).to.be.greaterThan(4000);
+    });
+    cy.get("#chatLog .msg-row.assistant").should("contain.text", "skeleton");
+    cy.get("#chatLog .msg-row.assistant").should("not.contain.text", "completely uniform gray");
+  });
+
+  it("Describe this stays metadata-only for uniform gray canvases", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("gray");
+    });
+
+    cy.get("#describeVisual").click({ force: true });
+    cy.wait("@chat").then((interception) => {
+      const body = interception.request.body;
+      expect(body.visual_context).to.be.an("object");
+      expect(body.visual_context.capture).to.not.eq("frame");
+      expect(body.visual_context.has_image).to.eq(false);
+      const messages = body.messages;
+      const last = messages[messages.length - 1];
+      const content = last.content;
+      if (Array.isArray(content)) {
+        const imagePart = content.find((part) => part && String(part.type || "").startsWith("image"));
+        expect(imagePart).to.not.exist;
+      }
+    });
+    cy.get("#chatLog .msg-row.assistant").should("contain.text", "metadata only");
+  });
+
+  it("keeps the cover up while the iframe shows Loading application bundle", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("splash");
+    });
+
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(api.rerunViewerShowsBundleSplash(iframe)).to.eq(true);
+      expect(api.rerunViewerLooksDisplayReady(iframe)).to.eq(false);
+      api.showRerunBundleCover("Opening viewer…", "Almost ready…");
+      expect(win.document.getElementById("rerunBundleCover").hidden).to.eq(false);
+      // safeHide must refuse while splash / blank canvas is showing.
+      expect(api.safeHideRerunBundleCover(iframe)).to.eq(false);
+      expect(win.document.getElementById("rerunBundleCover").hidden).to.eq(false);
+      // Parent chrome must never echo Rerun's splash string.
+      expect(win.document.getElementById("rerunBundleCover").innerText).not.to.match(
+        /Loading application bundle/i,
+      );
+    });
+
+    // When content returns, uncover is allowed.
+    cy.get("#rerunFrame").should(($frame) => {
+      $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode("content");
+    });
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(api.rerunViewerLooksDisplayReady(iframe)).to.eq(true);
+      expect(api.safeHideRerunBundleCover(iframe)).to.eq(true);
+      expect(win.document.getElementById("rerunBundleCover").hidden).to.eq(true);
+    });
+  });
+
+  it("generalizes capture across content / gray / splash visual modes", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+
+    const modes = [
+      { mode: "content", expectFrame: true },
+      { mode: "gray", expectFrame: false },
+      { mode: "splash", expectFrame: false },
+    ];
+
+    cy.wrap(modes).each((item) => {
+      cy.get("#rerunFrame").should(($frame) => {
+        $frame[0].contentWindow.__NPA_MOCK_RERUN__.setMode(item.mode);
+      });
+      cy.window().then(async (win) => {
+        const api = win.__NPA_AGENT_TEST__;
+        const result = await api.waitForQualityRerunFrame(2500);
+        if (item.expectFrame) {
+          expect(result.quality).to.eq("rendered");
+          expect(result.dataUrl).to.match(/^data:image\/jpeg/);
+        } else {
+          expect(result.dataUrl).to.eq("");
+          expect(result.quality).to.be.oneOf(["unavailable", "missing"]);
+        }
+      });
+    });
+  });
 });

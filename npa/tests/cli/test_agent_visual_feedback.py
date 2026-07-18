@@ -195,6 +195,11 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "async function captureVisualContext" in ui_html
     assert "waitForQualityRerunFrame" in ui_html
     assert "frameLooksBlank" in ui_html
+    assert "sampleFrameStats" in ui_html
+    assert "captureCanvasDataUrl" in ui_html
+    assert "pickBestIframeCanvas" in ui_html
+    assert "skipUserAppend" in ui_html
+    assert "Describe this — capturing" in ui_html
     assert "visual_context" in ui_html
     assert "maxChars = 700000" in ui_html
     assert "client_max_body_size 32m" in source
@@ -214,3 +219,36 @@ def test_build_multimodal_user_content() -> None:
     assert isinstance(multi, list)
     assert multi[0]["type"] == "text"
     assert multi[1]["type"] == "image_url"
+
+
+def test_frame_looks_blank_from_stats_rejects_uniform_gray() -> None:
+    # Cleared WebGL buffers often land as mid-gray with ~0 variance.
+    assert vf.frame_looks_blank_from_stats(mean=160.0, variance=2.0, value_range=4.0)
+    assert vf.frame_looks_blank_from_stats(mean=3.0, variance=1.0, value_range=2.0)
+    assert vf.frame_looks_blank_from_stats(mean=250.0, variance=1.0, value_range=3.0)
+    # Skeleton-on-dark-grid style content has high variance/range.
+    assert not vf.frame_looks_blank_from_stats(mean=40.0, variance=1200.0, value_range=200.0)
+
+
+def test_g1_trajectory_domain_hint_warns_against_blank_claim() -> None:
+    hints = vf.infer_visual_domain_hints(
+        {
+            "note": "G1 trajectory overlay",
+            "artifact_key": "reports/locomotion.rrd",
+            "camera": "heldout-sim",
+        }
+    )
+    joined = " ".join(hints).lower()
+    assert "skeleton" in joined or "trajectory" in joined or "locomotion" in joined
+    assert "blank" in joined or "uniform-gray" in joined or "uniform" in joined
+    prompt = vf.describe_user_prompt(
+        "rerun",
+        {
+            "note": "G1 trajectory",
+            "capture": "frame",
+            "has_image": True,
+            "frame_quality": "rendered",
+        },
+    )
+    assert "skeleton" in prompt.lower() or "wireframe" in prompt.lower()
+    assert "NOT 'blank'" in prompt or "not blank" in prompt.lower()

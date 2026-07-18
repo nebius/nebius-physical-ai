@@ -18,9 +18,10 @@ viewer** and give actionable feedback — not a generic caption.
 ## Model
 
 1. Prefer a **quality-captured frame** (vision tier → `Qwen/Qwen2.5-VL-72B-Instruct`).
-2. Wait for a non-blank canvas (skip uniform black/white; dense RGB noise is valid).
+2. Wait for a non-blank canvas (skip uniform black/white/**mid-gray**; dense RGB, skeletons on dark grids, and meshes are valid). Cleared WebGL buffers often look mid-gray — never attach those.
 3. If capture fails, send **metadata/text** and use the reasoning tier — never pretend pixels were seen.
 4. Do **not** answer Describe-this from the grounded intent router.
+5. Open the chat drawer and show **Describe this — capturing…** immediately; do not wait for capture before the user bubble appears.
 
 ## Visual kinds (generalized — no URI allowlists)
 

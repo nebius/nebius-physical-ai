@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071716"
+AGENT_UI_VERSION = "2026071818"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -89,10 +89,13 @@ AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
     "waitUntilRerunPastBundleSplash",
     "showRerunBundleCover",
     "hideRerunBundleCover",
+    "safeHideRerunBundleCover",
     "Warm Rerun assets before revealing the iframe",
     "Preparing viewer…",
     # Cover may stay up, but mount/boot must not await long splash polls (latency).
     "Uncover without blocking mount latency",
+    # Canvas-painted splash is not DOM text — require non-blank pixels before uncover.
+    "non-blank canvas",
     # Run switches must soft-swap recordings without remounting wasm.
     "swapRerunRecordingInPlace",
     "add_receiver",
@@ -108,7 +111,12 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "normalize_messages_for_llm",
     "infer_visual_domain_hints",
     "frameLooksBlank",
+    "sampleFrameStats",
+    "captureCanvasDataUrl",
+    "pickBestIframeCanvas",
     "waitForQualityRerunFrame",
+    "skipUserAppend",
+    "Describe this — capturing",
     "client_max_body_size 32m",
     "maxChars = 700000",
 )
@@ -8539,7 +8547,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const model = selectedChatModel();
           const stillActive = String(activeChatSessionId || "default") === jobSessionId;
           if (stillActive) {{
-            appendChat("user", opts.displayText || payloadText);
+            if (!opts.skipUserAppend) {{
+              appendChat("user", opts.displayText || payloadText);
+            }}
             chatHistory.push({{ role: "user", content: payloadText }});
             showThinkingBubble();
           }}
@@ -8655,35 +8665,51 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         // Still oversized after shrink attempts — omit frame (metadata-only path).
         return best.length <= maxChars ? best : "";
       }}
-      function frameLooksBlank(canvas) {{
+      function sampleFrameStats(canvas) {{
         try {{
-          const w = Math.min(64, canvas.width || 0);
-          const h = Math.min(64, canvas.height || 0);
-          if (!w || !h) return true;
+          const w = Math.min(80, Number(canvas.width || 0));
+          const h = Math.min(80, Number(canvas.height || 0));
+          if (!w || !h) return null;
           const probe = document.createElement("canvas");
           probe.width = w;
           probe.height = h;
           const ctx = probe.getContext("2d", {{ willReadFrequently: true }});
-          if (!ctx) return false;
+          if (!ctx) return null;
           ctx.drawImage(canvas, 0, 0, w, h);
           const data = ctx.getImageData(0, 0, w, h).data;
           let sum = 0;
           let sumSq = 0;
           let n = 0;
+          let maxCh = 0;
+          let minCh = 255;
           for (let i = 0; i < data.length; i += 16) {{
-            const v = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const v = (r + g + b) / 3;
             sum += v;
             sumSq += v * v;
             n += 1;
+            if (v > maxCh) maxCh = v;
+            if (v < minCh) minCh = v;
           }}
-          if (!n) return true;
+          if (!n) return null;
           const mean = sum / n;
           const variance = Math.max(0, sumSq / n - mean * mean);
-          // Uniform black/white/gray ≈ blank; dense RGB noise has high variance.
-          return variance < 18 && (mean < 8 || mean > 247);
+          return {{ mean, variance, range: maxCh - minCh, n }};
         }} catch (_err) {{
-          return false;
+          return null;
         }}
+      }}
+      function frameLooksBlank(canvas) {{
+        // Uniform black/white/gray (incl. WebGL cleared mid-gray) ≈ blank.
+        // Dense RGB, grids, skeletons, and meshes have high variance/range.
+        const stats = sampleFrameStats(canvas);
+        if (!stats) return true;
+        if (stats.variance < 35) return true;
+        if (stats.range < 18) return true;
+        if (stats.variance < 80 && (stats.mean < 12 || stats.mean > 243)) return true;
+        return false;
       }}
       function pickLargestIframeCanvas(doc) {{
         const canvases = Array.from(doc.querySelectorAll("canvas"));
@@ -8698,34 +8724,115 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}
         return best;
       }}
+      function pickBestIframeCanvas(doc) {{
+        // Prefer content-rich canvases (high variance) over a large blank/splash buffer.
+        const canvases = Array.from(doc.querySelectorAll("canvas"));
+        let best = null;
+        let bestScore = -1;
+        for (const canvas of canvases) {{
+          const area = Number(canvas.width || 0) * Number(canvas.height || 0);
+          if (area < 64) continue;
+          const stats = sampleFrameStats(canvas);
+          if (!stats) continue;
+          const score = (stats.variance + stats.range) * Math.log10(area + 10);
+          if (score > bestScore) {{
+            best = canvas;
+            bestScore = score;
+          }}
+        }}
+        return best || pickLargestIframeCanvas(doc);
+      }}
+      async function waitForPaintFrames(count) {{
+        const n = Math.max(1, Number(count || 2));
+        for (let i = 0; i < n; i += 1) {{
+          await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+        }}
+      }}
+      async function captureCanvasDataUrl(sourceCanvas) {{
+        // WebGL/WebGPU buffers clear after present — sample on the next paint frames.
+        if (!sourceCanvas) return "";
+        await waitForPaintFrames(2);
+        const tryDownscale = (canvas) => {{
+          if (!canvas || frameLooksBlank(canvas)) return "";
+          return downscaleCanvasToDataUrl(canvas, 768, 0.72) || "";
+        }};
+        // Strategy A: createImageBitmap (often works for WebGPU/WebGL presentables).
+        try {{
+          if (typeof createImageBitmap === "function") {{
+            const bmp = await createImageBitmap(sourceCanvas);
+            const copy = document.createElement("canvas");
+            copy.width = Math.max(1, bmp.width || sourceCanvas.width || 1);
+            copy.height = Math.max(1, bmp.height || sourceCanvas.height || 1);
+            const ctx = copy.getContext("2d");
+            if (ctx) {{
+              ctx.drawImage(bmp, 0, 0);
+              if (typeof bmp.close === "function") bmp.close();
+              const url = tryDownscale(copy);
+              if (url) return url;
+            }}
+          }}
+        }} catch (_bmpErr) {{ /* fall through */ }}
+        // Strategy B: direct toDataURL on the live canvas, then re-probe.
+        try {{
+          const raw = sourceCanvas.toDataURL("image/jpeg", 0.78);
+          if (raw && raw.length > 128) {{
+            const img = new Image();
+            const loaded = await new Promise((resolve) => {{
+              img.onload = () => resolve(true);
+              img.onerror = () => resolve(false);
+              img.src = raw;
+            }});
+            if (loaded) {{
+              const copy = document.createElement("canvas");
+              copy.width = Math.max(1, img.naturalWidth || sourceCanvas.width || 1);
+              copy.height = Math.max(1, img.naturalHeight || sourceCanvas.height || 1);
+              const ctx = copy.getContext("2d");
+              if (ctx) {{
+                ctx.drawImage(img, 0, 0);
+                const url = tryDownscale(copy);
+                if (url) return url;
+              }}
+            }}
+          }}
+        }} catch (_tdErr) {{ /* fall through */ }}
+        // Strategy C: 2D drawImage copy (works when preserveDrawingBuffer / 2D canvases).
+        try {{
+          const copy = document.createElement("canvas");
+          copy.width = Math.max(1, Number(sourceCanvas.width || 1));
+          copy.height = Math.max(1, Number(sourceCanvas.height || 1));
+          const ctx = copy.getContext("2d");
+          if (ctx) {{
+            ctx.drawImage(sourceCanvas, 0, 0);
+            const url = tryDownscale(copy);
+            if (url) return url;
+          }}
+        }} catch (_drawErr) {{ /* ignore */ }}
+        return "";
+      }}
       async function waitForQualityRerunFrame(timeoutMs) {{
         const iframe = document.getElementById("rerunFrame");
         if (!iframe || iframe.hidden) return {{ dataUrl: "", quality: "missing" }};
-        const deadline = Date.now() + Math.max(500, Number(timeoutMs || 5000));
-        let lastUrl = "";
+        const deadline = Date.now() + Math.max(800, Number(timeoutMs || 8000));
         while (Date.now() < deadline) {{
           try {{
             if (rerunViewerShowsBundleSplash(iframe)) {{
-              await new Promise((r) => window.setTimeout(r, 200));
+              await new Promise((r) => window.setTimeout(r, 180));
               continue;
             }}
             const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-            const canvas = doc && pickLargestIframeCanvas(doc);
+            const canvas = doc && pickBestIframeCanvas(doc);
             if (canvas && !frameLooksBlank(canvas)) {{
-              const dataUrl = downscaleCanvasToDataUrl(canvas, 768, 0.72);
+              const dataUrl = await captureCanvasDataUrl(canvas);
               if (dataUrl) return {{ dataUrl, quality: "rendered" }};
             }}
-            if (canvas) {{
-              lastUrl = downscaleCanvasToDataUrl(canvas, 768, 0.72) || lastUrl;
-            }}
           }} catch (_err) {{ /* retry */ }}
-          await new Promise((r) => window.setTimeout(r, 220));
+          await new Promise((r) => window.setTimeout(r, 200));
         }}
-        if (lastUrl) return {{ dataUrl: lastUrl, quality: "low-contrast" }};
+        // Never attach a uniform gray/blank buffer — metadata-only is safer than a false blank claim.
         return {{ dataUrl: "", quality: "unavailable" }};
       }}
       async function captureRerunViewerFrame() {{
-        const result = await waitForQualityRerunFrame(5500);
+        const result = await waitForQualityRerunFrame(8000);
         return result.dataUrl || "";
       }}
       async function captureMediaViewerFrame() {{
@@ -8784,7 +8891,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         let frameQuality = "";
         let textExcerpt = "";
         if (visualKind === "rerun") {{
-          const quality = await waitForQualityRerunFrame(5500);
+          const quality = await waitForQualityRerunFrame(8000);
           imageDataUrl = quality.dataUrl || "";
           frameQuality = quality.quality || "";
         }} else if (visualKind === "video" || visualKind === "image") {{
@@ -8793,6 +8900,30 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }} else if (visualKind === "data") {{
           textExcerpt = await captureDataPaneExcerpt();
           frameQuality = textExcerpt ? "text" : "unavailable";
+        }}
+        // Reject uniform gray/blank attachments even if a data-URL was produced.
+        if (imageDataUrl && visualKind !== "data") {{
+          try {{
+            const probeImg = new Image();
+            const ok = await new Promise((resolve) => {{
+              probeImg.onload = () => resolve(true);
+              probeImg.onerror = () => resolve(false);
+              probeImg.src = imageDataUrl;
+            }});
+            if (ok) {{
+              const probe = document.createElement("canvas");
+              probe.width = Math.min(80, probeImg.naturalWidth || 80);
+              probe.height = Math.min(80, probeImg.naturalHeight || 80);
+              const pctx = probe.getContext("2d", {{ willReadFrequently: true }});
+              if (pctx) {{
+                pctx.drawImage(probeImg, 0, 0, probe.width, probe.height);
+                if (frameLooksBlank(probe)) {{
+                  imageDataUrl = "";
+                  frameQuality = "unavailable";
+                }}
+              }}
+            }}
+          }} catch (_probeErr) {{ /* keep original */ }}
         }}
         const runEl = document.getElementById("simRunId");
         const stageEl = document.getElementById("simStage");
@@ -8836,17 +8967,20 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           promptLines.push(textExcerpt);
           promptLines.push("```");
         }}
-        const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id).toLowerCase();
-        if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos/.test(blob)) {{
+        const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id + " " + meta.camera).toLowerCase();
+        if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos|g1|trajectory|skeleton|locomotion|sonic/.test(blob)) {{
           promptLines.push("");
           promptLines.push("Domain hints from metadata (not pixel labels):");
           if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
           if (/isaac|omniverse/.test(blob)) promptLines.push("- Metadata suggests Isaac Lab / Omniverse sim content.");
           if (/heldout|eval/.test(blob)) promptLines.push("- Metadata suggests held-out eval imagery (may be noisy/tiled and still valid).");
+          if (/g1|trajectory|skeleton|locomotion|sonic|mjlab/.test(blob)) {{
+            promptLines.push("- Metadata suggests locomotion / humanoid trajectory views — expect dark 3D grids with colored skeleton/wireframe overlays; that is valid content, not a blank frame.");
+          }}
         }}
         promptLines.push(
           "",
-          "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, or synthetic cameras are not blank.",
+          "Instructions: Inspect attached pixels when present. Dense RGB, tiled envs, robot meshes, colored skeletons/wireframes on a dark grid, or synthetic cameras are not blank.",
           "Only call a frame blank when it is uniform black/white/gray with no structure.",
           "Reply with: What I see → Likely meaning → Operator feedback → Next actions."
         );
@@ -8870,22 +9004,29 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         describeInFlight = true;
         const describeBtn = document.getElementById("describeVisual");
         if (describeBtn) describeBtn.disabled = true;
+        let pendingRow = null;
         try {{
           // Stay on the viewer; open the collapsed chat drawer for the reply.
           if (activeMainTab !== "rerun") {{
             await activateMainTab("rerun", {{ skipEnsure: true }});
           }}
           openChatDrawer();
+          // Show the request in Workbench chat immediately — do not wait for capture.
+          pendingRow = appendChat("user", "Describe this — capturing viewer frame…");
+          if (pendingRow) pendingRow.classList.add("describe-pending");
           showToast("Capturing viewer for Describe this…", "info");
           const captured = await captureVisualContext();
           const prompt = String(captured.prompt || "").trim();
           if (!prompt) {{
+            if (pendingRow && pendingRow.parentNode) pendingRow.parentNode.removeChild(pendingRow);
             showToast("Could not build a describe prompt.", "error");
             return false;
           }}
           const display = prompt + (captured.imageDataUrl
             ? "\\n\\n_(attached viewer frame)_"
             : "\\n\\n_(no frame capture — metadata/text only)_");
+          const bubble = pendingRow && pendingRow.querySelector(".bubble");
+          if (bubble) bubble.innerHTML = markdownLiteHtml(display);
           let userContent = prompt;
           if (captured.imageDataUrl) {{
             userContent = [
@@ -8900,6 +9041,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           await queueChatText(prompt, {{
             displayText: display,
             keepInput: true,
+            skipUserAppend: true,
             visual_context: captured.meta || {{}},
             messages: [...prior, {{ role: "user", content: userContent }}],
             onDone: (data) => {{
@@ -8911,6 +9053,16 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             }},
           }});
           return true;
+        }} catch (err) {{
+          if (pendingRow && pendingRow.parentNode) {{
+            const bubble = pendingRow.querySelector(".bubble");
+            if (bubble) {{
+              bubble.innerHTML = markdownLiteHtml(
+                "Describe this failed: " + String((err && err.message) || err)
+              );
+            }}
+          }}
+          throw err;
         }} finally {{
           describeInFlight = false;
           if (describeBtn) describeBtn.disabled = false;
@@ -9002,12 +9154,36 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const cover = document.getElementById("rerunBundleCover");
         if (cover) cover.hidden = true;
       }}
+      function rerunViewerHasNonBlankCanvas(iframe) {{
+        // Rerun paints "Loading application bundle" onto the egui canvas — DOM text
+        // checks alone miss it. Require a non-blank canvas sample before uncover.
+        try {{
+          const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
+          if (!doc) return false;
+          const canvas = pickBestIframeCanvas(doc);
+          return Boolean(canvas && !frameLooksBlank(canvas));
+        }} catch (_err) {{
+          return false;
+        }}
+      }}
       function rerunViewerLooksDisplayReady(iframe) {{
-        // Display-ready ≠ Describe-this quality. Cover must clear once wasm is past splash.
+        // Display-ready = past splash AND non-blank canvas (or READY with content).
         if (!iframe || iframe.hidden || !iframe.getAttribute("src")) return false;
         if (rerunViewerShowsBundleSplash(iframe)) return false;
-        if (rerunViewerHasCanvas(iframe)) return true;
-        if (rerunViewerAppReady) return true;
+        if (rerunViewerHasNonBlankCanvas(iframe)) return true;
+        return false;
+      }}
+      function safeHideRerunBundleCover(iframe, options) {{
+        const opts = options || {{}};
+        if (opts.force) {{
+          hideRerunBundleCover();
+          return true;
+        }}
+        if (rerunViewerLooksDisplayReady(iframe)) {{
+          hideRerunBundleCover();
+          return true;
+        }}
+        // Keep cover — never expose Rerun's canvas-painted splash.
         return false;
       }}
       function rerunViewerShowsBundleSplash(iframe) {{
@@ -9030,39 +9206,40 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function scheduleRerunBundleUncover(iframe) {{
         // Uncover without blocking mount latency — poll in the background only.
-        if (!rerunViewerShowsBundleSplash(iframe)) {{
-          hideRerunBundleCover();
+        // Require non-blank canvas; do not uncover merely because DOM splash text is gone.
+        if (safeHideRerunBundleCover(iframe)) {{
           return Promise.resolve({{ ok: true, immediate: true }});
         }}
-        showRerunBundleCover("Opening viewer…");
+        showRerunBundleCover("Opening viewer…", "Almost ready…");
         return waitUntilRerunPastBundleSplash(iframe, 45000).then((past) => {{
-          if (past && past.ok && !rerunViewerShowsBundleSplash(iframe)) {{
-            hideRerunBundleCover();
-          }} else if (!rerunViewerShowsBundleSplash(iframe)) {{
+          if (safeHideRerunBundleCover(iframe)) {{
+            return past;
+          }}
+          if (past && past.timedOut) {{
+            // Last resort so the cover cannot stick forever after a hung wasm load.
+            showRerunBundleCover("Still preparing viewer…", "Taking longer than expected…");
             hideRerunBundleCover();
           }} else {{
-            // Keep cover — never expose Rerun's splash text.
-            showRerunBundleCover("Still preparing viewer…");
+            showRerunBundleCover("Still preparing viewer…", "Almost ready…");
           }}
           return past;
         }});
       }}
       async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {{
-        // Keep our cover up until Rerun's own "Loading application bundle" splash is gone.
+        // Keep our cover up until Rerun's splash is gone AND a non-blank canvas is present.
         const timeout = Math.max(2000, Number(timeoutMs || 45000));
         const start = Date.now();
         let sawSplash = false;
         while (Date.now() - start < timeout) {{
           const splash = rerunViewerShowsBundleSplash(iframe);
           if (splash) sawSplash = true;
-          const hasCanvas = rerunViewerHasCanvas(iframe);
-          if (!splash && (hasCanvas || sawSplash || Date.now() - start > 800)) {{
+          if (!splash && rerunViewerHasNonBlankCanvas(iframe)) {{
             return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
           }}
           await new Promise((resolve) => window.setTimeout(resolve, 100));
         }}
         return {{
-          ok: !rerunViewerShowsBundleSplash(iframe),
+          ok: rerunViewerLooksDisplayReady(iframe),
           sawSplash,
           elapsedMs: Date.now() - start,
           timedOut: true,
@@ -9285,18 +9462,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       async function waitForRerunRenderSettle(iframe, timeoutMs) {{
-        const timeout = Math.max(1000, Number(timeoutMs || 4000));
+        const timeout = Math.max(1000, Number(timeoutMs || 8000));
         const start = Date.now();
         while (Date.now() - start < timeout) {{
-          if (!rerunViewerShowsBundleSplash(iframe) && rerunViewerHasCanvas(iframe)) {{
-            hideRerunBundleCover();
-            return;
-          }}
+          if (safeHideRerunBundleCover(iframe)) return;
           await new Promise((resolve) => window.setTimeout(resolve, 100));
         }}
-        // Never uncover while Rerun still paints its splash — no artificial settle delay.
-        if (!rerunViewerShowsBundleSplash(iframe)) {{
-          hideRerunBundleCover();
+        // Timed settle — still prefer non-blank; force only as last resort.
+        if (!safeHideRerunBundleCover(iframe)) {{
+          if (!rerunViewerShowsBundleSplash(iframe) && rerunViewerHasCanvas(iframe)) {{
+            hideRerunBundleCover();
+          }}
         }}
       }}
       function getRerunViewerHandle(iframe) {{
@@ -9346,16 +9522,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           handle.add_receiver(recordingUrl, false);
           hideRerunPlaceholder();
-          // Brief settle for display readiness (not Describe-this JPEG quality).
-          await waitForQualityRerunFrame(2500);
+          // Brief settle for display readiness (non-blank canvas; not full Describe JPEG wait).
+          const softDeadline = Date.now() + 3500;
+          while (Date.now() < softDeadline && !rerunViewerLooksDisplayReady(iframe)) {{
+            await new Promise((r) => window.setTimeout(r, 150));
+          }}
           if (!rerunViewerLooksDisplayReady(iframe) && rerunViewerShowsBundleSplash(iframe)) {{
-            hideRerunBundleCover();
+            // Soft-swap did not clear splash — fall back to remount under cover.
             return false;
           }}
           lastRerunRecordingUrl = recordingUrl;
           mountedRerunRunKey = mountKey;
           iframe.dataset.rerunRunKey = mountKey;
-          hideRerunBundleCover();
+          if (!safeHideRerunBundleCover(iframe)) {{
+            scheduleRerunBundleUncover(iframe).catch(() => {{ /* best-effort */ }});
+          }}
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "soft-swap");
           return true;
         }} catch (err) {{
@@ -9378,9 +9559,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             return true;
           }}
           if (mountedRerunRunKey === mountKey && lastRerunRecordingUrl) {{
-            // Keep live wasm when it is display-ready (past splash / has canvas).
+            // Keep live wasm when it is display-ready (past splash + non-blank canvas).
             if (rerunViewerLooksDisplayReady(iframe)) {{
-              hideRerunBundleCover();
+              safeHideRerunBundleCover(iframe);
               setRerunMountStatus(RERUN_MOUNT_SUCCESS, "already-mounted");
               return true;
             }}
@@ -9428,22 +9609,21 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         scheduleRerunBundleUncover(iframe).catch((err) => {{
           console.warn("rerun splash uncover failed", err);
         }});
-        // Display-ready gate (past splash / canvas). Describe-this still waits for JPEG quality.
-        const settleDeadline = Date.now() + 4000;
+        // Display-ready gate: non-blank canvas (DOM splash text alone is insufficient).
+        const settleDeadline = Date.now() + 6000;
         while (Date.now() < settleDeadline && !rerunViewerLooksDisplayReady(iframe)) {{
           await new Promise((r) => window.setTimeout(r, 200));
         }}
-        if (rerunViewerLooksDisplayReady(iframe) || !rerunViewerShowsBundleSplash(iframe)) {{
-          hideRerunBundleCover();
+        if (safeHideRerunBundleCover(iframe)) {{
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
-          waitForRerunRenderSettle(iframe, 4000).catch((err) => {{
+          waitForRerunRenderSettle(iframe, 6000).catch((err) => {{
             console.warn("rerun render settle probe failed", err);
           }});
           return true;
         }}
-        hideRerunBundleCover();
-        setRerunMountStatus("degraded", "splash-timeout");
-        return false;
+        // Degraded: canvas may still be painting splash — keep cover until background uncover.
+        setRerunMountStatus("degraded", "waiting-content");
+        return true;
         }})().finally(() => {{
           rerunMountInFlight = null;
         }});
@@ -9457,19 +9637,23 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             setRerunBlobStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             setRerunMountStatus("retrying", "mount " + String(i + 1) + "/" + String(attempts));
             await mountRerunIframe(camera, runId);
-            if (lastRerunMountStatus === RERUN_MOUNT_SUCCESS) {{
+            if (lastRerunMountStatus === RERUN_MOUNT_SUCCESS || lastRerunMountStatus === "degraded") {{
               if (lastRerunBlobStatus !== RERUN_BLOB_SUCCESS) {{
                 // Blob probe may lag; display-ready mount is enough to stop remount loops.
                 setRerunBlobStatus(RERUN_BLOB_SUCCESS, "mount-ready");
               }}
-              hideRerunBundleCover();
+              const iframeOk = document.getElementById("rerunFrame");
+              safeHideRerunBundleCover(iframeOk);
+              if (lastRerunMountStatus === "degraded") {{
+                setRerunMountStatus(RERUN_MOUNT_SUCCESS, "degraded-accepted");
+              }}
               return true;
             }}
             const iframe = document.getElementById("rerunFrame");
             if (rerunViewerLooksDisplayReady(iframe)) {{
               setRerunMountStatus(RERUN_MOUNT_SUCCESS, "display-ready");
               setRerunBlobStatus(RERUN_BLOB_SUCCESS, "display-ready");
-              hideRerunBundleCover();
+              safeHideRerunBundleCover(iframe);
               return true;
             }}
             throw new Error("Rerun iframe mount missing SUCCESS blob/mount state");
@@ -10527,13 +10711,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
             const mountMode = await ensureFrankaRerunLoaded();
             const iframe = document.getElementById("rerunFrame");
-            if (rerunViewerLooksDisplayReady(iframe) || !rerunViewerShowsBundleSplash(iframe)) {{
-              hideRerunBundleCover();
-            }} else {{
-              // One short background uncover — never leave Caching cover stuck.
+            if (!safeHideRerunBundleCover(iframe)) {{
+              // Background uncover waits for non-blank canvas — never flash Rerun splash.
               showRerunBundleCover("Opening viewer…", "Almost ready…");
-              scheduleRerunBundleUncover(iframe).catch(() => hideRerunBundleCover());
-              window.setTimeout(() => hideRerunBundleCover(), 8000);
+              scheduleRerunBundleUncover(iframe).catch(() => {{
+                safeHideRerunBundleCover(iframe, {{ force: true }});
+              }});
+              window.setTimeout(() => {{
+                if (!safeHideRerunBundleCover(iframe)) {{
+                  hideRerunBundleCover();
+                }}
+              }}, 45000);
             }}
             setStatus("Ready");
             showToast(mountMode === "demo" ? "Franka demo ready in Rerun" : "Workbench ready", "success");
@@ -10564,6 +10752,22 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }}, 10000);
       }}
       function startApp() {{
+        // Cypress / verify hooks — not used by production UX paths.
+        window.__NPA_AGENT_TEST__ = {{
+          frameLooksBlank,
+          sampleFrameStats,
+          captureCanvasDataUrl,
+          pickBestIframeCanvas,
+          waitForQualityRerunFrame,
+          describeVisual,
+          showRerunBundleCover,
+          hideRerunBundleCover,
+          safeHideRerunBundleCover,
+          scheduleRerunBundleUncover,
+          rerunViewerLooksDisplayReady,
+          rerunViewerShowsBundleSplash,
+          rerunViewerHasNonBlankCanvas,
+        }};
         try {{
           wireUi();
           setStatus("UI wired");
@@ -11736,6 +11940,8 @@ def verify_live_cmd(
         "Warm Rerun assets before revealing the iframe",
         "Uncover without blocking mount latency",
         "scheduleRerunBundleUncover",
+        "safeHideRerunBundleCover",
+        "non-blank canvas",
         "swapRerunRecordingInPlace",
         "add_receiver",
         # Describe-this visual feedback (vision tier).
@@ -11751,6 +11957,11 @@ def verify_live_cmd(
         'id="chatDrawerToggle"',
         "thinking-ellipsis",
         "waitForQualityRerunFrame",
+        "captureCanvasDataUrl",
+        "pickBestIframeCanvas",
+        "sampleFrameStats",
+        "skipUserAppend",
+        "Describe this — capturing",
         "do not prefetch .rrd bytes",
         'id="openFullChatTab"',
         "openFullChatTab",

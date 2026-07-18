@@ -43,6 +43,8 @@ def test_agent_rerun_no_bundle_splash_contract_in_source() -> None:
     assert "await warmRerunBundle()" in mount_src
     assert "scheduleRerunBundleUncover" in mount_src
     assert "showRerunBundleCover" in mount_src
+    assert "safeHideRerunBundleCover" in ui_html
+    assert "non-blank canvas" in ui_html
     # Mount must not block on long splash polls (user-visible latency).
     assert "await waitUntilRerunPastBundleSplash" not in mount_src
 
