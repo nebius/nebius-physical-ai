@@ -28,16 +28,21 @@ is pure composition of existing toolRefs; only add real tools with tests.
 `npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
-| NVIDIA stage | NPA state | Tool | Runtime |
+| NVIDIA stage | NPA state | Tool (all REAL — no stubs) | Runtime |
 | --- | --- | --- | --- |
-| Config Generation | `generate-configs` | `run.shell` (sample appearance-only vars) | CPU |
+| Config Generation | `generate-configs` | `data_factory_stages.generate_configs` (run.shell) | CPU |
 | Understand & Annotate | `annotate-original` | `workbench.token_factory.caption` | Token Factory (zero-GPU) |
-| Augment & Multiply | `augment` | `workbench.cosmos2.transfer` | GPU (Cosmos Transfer 2.5) |
-| Evaluate & Validate | `grade` loop (`attribute-verify` + `quality-gate`) | `workbench.vlm_eval.run` + `workbench.sim2real.write_decision` | Token Factory + CPU |
+| Augment & Multiply | `augment` | `workbench.cosmos2.transfer_execute` (real Cosmos Transfer 2.5 `--execute`; uploads video+frames to S3) | GPU |
+| Evaluate & Validate | `grade` loop (`attribute-verify` + `quality-gate`) | `workbench.vlm_eval.run` + `data_factory_stages.grade_gate` (reads the real VLM score) | Token Factory + CPU |
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
-| Curation | `curate` | `workbench.fiftyone.launch_app` | CPU |
-| Visualize | `visualize` | `npa.workflows.data_factory_viz.build_run_rrd` (run.shell) → `reports/sim2real.rrd` | CPU |
-| Finalize | `finalize` | `workbench.sim2real.finalize` | CPU |
+| Curation | `curate` | `data_factory_stages.curate` (real dataset report) | CPU |
+| Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
+| Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
+
+Every stage invokes a real component (enforced by `test_real_components.py` and
+the `real-components` skill). The `augment` stage runs the real Cosmos Transfer
+2.5 model on GPU via `--execute` and publishes the generated video + extracted
+frames to `augment_uri`, which the grade / re-label / visualize stages consume.
 
 Verified Token Factory model roles: `Qwen/Qwen2.5-VL-72B-Instruct` (VLM),
 `meta-llama/Llama-3.3-70B-Instruct` (LLM), `nvidia/Cosmos3-Super-Reasoner`
