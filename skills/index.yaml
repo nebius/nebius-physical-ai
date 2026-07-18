@@ -21,6 +21,9 @@ licenses:
       - cosmos3-setup
       - cosmos3-inference
       - cosmos3-post-training
+  - path: skills/NOTICE-NVIDIA-SKILLS
+    applies_to:
+      - physical-ai-data-factory
 skills:
   - name: agent-development
     category: atomic
@@ -467,3 +470,11 @@ skills:
           - npa/workflows/workbench/skypilot/sonic-train-standalone.yaml
           - npa/workflows/workbench/skypilot/vlm-eval.yaml
           - npa/workflows/workbench/skypilot/vlm-eval-benchmark.yaml
+  - name: physical-ai-data-factory
+    category: workflows
+    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos augment -> evaluate/validate gate -> re-label -> FiftyOne curate -> Rerun visualize."
+    path: skills/workflows/physical-ai-data-factory/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
