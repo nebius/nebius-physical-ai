@@ -52,6 +52,9 @@ def test_viewer_chat_drawer_contract() -> None:
     describe = ui.split("async function describeVisual()")[1].split("let lastRrdUpdatedAt")[0]
     assert "openChatDrawer" in describe
     assert "queueChatText" in describe
+    # Request appears in chat before capture finishes.
+    assert "Describe this — capturing" in describe
+    assert "skipUserAppend: true" in describe
     # Describe stays in viewer-focus instead of forcing Chat tab takeover.
     assert 'activateMainTab("chat"' not in describe
     # From Viewer, Chat tab opens drawer; Full chat expands to Chat tab.
