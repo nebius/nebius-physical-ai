@@ -114,6 +114,7 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "sampleFrameStats",
     "captureCanvasDataUrl",
     "ensureRerunCaptureBridge",
+    "grabFromRerunCaptureBridge",
     "pickBestIframeCanvas",
     "probeRerunCanvasContent",
     "waitForQualityRerunFrame",
