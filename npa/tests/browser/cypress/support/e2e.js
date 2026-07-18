@@ -75,7 +75,12 @@ const SIM_VIZ = {
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
-  available_run_ids: ["mock-run", "submitted-run"],
+  // Intentionally not alphabetical — UI must keep latest-first order.
+  available_run_ids: ["submitted-run", "mock-run"],
+  available_runs: [
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+  ],
 };
 
 const NON_STOCK_RUN_ID = "non-stock-customer-run";
@@ -90,6 +95,11 @@ const NON_STOCK_SIM_VIZ = {
   rerun_ready: true,
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=customer-overhead",
   available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
+  available_runs: [
+    { run_id: NON_STOCK_RUN_ID, last_modified: "2026-07-11T18:00:00Z", stage: "stage_14_rerun_viz" },
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+  ],
   artifact_render: "rerun",
   artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
   artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
@@ -277,7 +287,7 @@ const FIELD_IDS = [
   "artifactPrefix",
   "artifactTypeFilter",
   "artifactSort",
-  "artifactRunSelect",
+  "runsArtifactsPanel",
   "artifactList",
   "simRunId",
   "simStage",
@@ -572,9 +582,20 @@ function installAgentApiMocks() {
     });
   }).as("artifactFile");
   cy.intercept("GET", "/api/artifacts/runs*", json({
+    // Latest-first order from the API (non-stock newer than mock-run).
     runs: [
-      { run_id: NON_STOCK_RUN_ID, has_viewable: true, artifact_count: NON_STOCK_ARTIFACTS.length },
-      { run_id: "mock-run", has_viewable: true, artifact_count: 1 },
+      {
+        run_id: NON_STOCK_RUN_ID,
+        has_viewable: true,
+        artifact_count: NON_STOCK_ARTIFACTS.length,
+        last_modified: "2026-07-11T18:00:00Z",
+      },
+      {
+        run_id: "mock-run",
+        has_viewable: true,
+        artifact_count: 1,
+        last_modified: "2026-07-07T03:33:00Z",
+      },
     ],
     total_runs: 2,
     truncated: false,

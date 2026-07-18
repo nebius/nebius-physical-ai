@@ -1329,7 +1329,7 @@ def format_list_recordings(state: dict[str, Any]) -> str:
             marker = " ← active" if run_id == active else ""
             lines.append(f"  - `{run_id}`{marker}")
     else:
-        lines.append("- No run history in session yet — open the **Rerun** tab and use **Discover runs** / **Known runs**.")
+        lines.append("- No run history in session yet — open the **Rerun** tab and use **Runs & artifacts** → **Discover runs**.")
     if isinstance(recordings, list) and recordings:
         lines.append(f"- **sim-viz/recordings**: `{len(recordings)}` `.rrd` files")
         for row in recordings[:6]:
@@ -1343,7 +1343,7 @@ def format_list_recordings(state: dict[str, Any]) -> str:
                     lines.append(f"  - `{text}`")
     lines.extend(
         [
-            "- Switch viewer: paste a run id → **Load run data**, or select from **Known runs**.",
+            "- Switch viewer: paste a run id → **Load run**, or select from **Runs & artifacts** (latest first).",
             "- Prefer `GET /api/sim-viz/runs` + `GET /api/sim-viz/recordings` over guessing run ids.",
         ]
     )

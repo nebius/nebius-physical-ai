@@ -470,7 +470,7 @@ describe("NPA agent UI against live infra", () => {
       cy.get("#tabRerun").click();
       cy.get("#artifactRefreshRuns").click();
       cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "Runs discovered");
-      cy.get("#artifactRunSelect", { timeout: 30000 }).then(($select) => {
+      cy.get("#runIdSelect", { timeout: 30000 }).then(($select) => {
         const values = [...$select[0].options].map((opt) => opt.value);
         if (values.includes(runId)) {
           cy.wrap($select).select(runId);

@@ -28,7 +28,9 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     assert 'id="stagesLoadRun"' in stages
     assert "loadSelectedRun" in ui
     assert "updateRunSelector" in ui
-    assert "fillRunSelectOptions(document.getElementById(\"stagesRunSelect\")" in ui
+    assert "fillRunSelectOptionsRich(document.getElementById(\"stagesRunSelect\")" in ui
+    assert "mergeRunsLatestFirst" in ui
+    assert "applyMergedRunSelectors" in ui
 
 
 def test_stages_and_rerun_selectors_share_load_path() -> None:

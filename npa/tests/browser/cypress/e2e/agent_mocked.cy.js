@@ -230,13 +230,39 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("@windowOpen").should("have.been.called");
   });
 
+  it("consolidates runs & artifacts into one latest-first picker", () => {
+    cy.get("#tabRerun").click();
+    cy.get("#runsArtifactsPanel").should("exist");
+    cy.contains("h3", "Runs & artifacts").should("exist");
+    cy.contains("h4", "Active run").should("not.exist");
+    cy.contains("h4", "Artifacts").should("not.exist");
+    cy.get("#artifactRunSelect").should("not.exist");
+
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get("#artifactDiscoverStatus").should("contain.text", "latest first");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      // Discovered non-stock run is newest; must appear before older mock-run.
+      expect(values[0]).to.eq(NON_STOCK_RUN_ID);
+      expect(values).to.include("mock-run");
+      expect(values).to.include("submitted-run");
+    });
+    cy.get("#stagesRunSelect option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      expect(values[0]).to.eq(NON_STOCK_RUN_ID);
+    });
+  });
+
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactPrefix").type("sim2real-b");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#artifactRunSelect").select("mock-run");
+    // Consolidated picker may already have mock-run selected — force list via button.
+    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@artifactList");
     cy.get("#artifactList").should("contain.text", "mock-run/preview.png");
 
@@ -264,7 +290,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactPrefix").clear().type("sim2real-b/custom-assets");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#artifactRunSelect").select(NON_STOCK_RUN_ID);
+    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
 

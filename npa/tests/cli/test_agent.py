@@ -688,14 +688,19 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert 'id="artifactPrefix"' in source
     assert 'id="artifactTypeFilter"' in source
     assert 'id="artifactSort"' in source
-    assert 'id="artifactRunSelect"' in source
+    assert 'id="runsArtifactsPanel"' in source
+    assert 'id="runIdSelect"' in source
+    assert "mergeRunsLatestFirst" in source
+    assert "available_runs" in source
     assert 'id="artifactList"' in source
     assert 'id="renderedDataSummary"' in source
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
-    assert 'Select a discovered run or enter a run_id first' in source
+    assert 'Select a run or enter a run_id first' in source
     assert 'No S3 artifacts found for <code>' in source
+    assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source
+    assert "latest first" in source
     assert "updateRenderedDataSummary" in source
     assert "_wait_rerun_web_viewer_healthy" in source
     assert "await mountRerunIframeUntilSuccess(String(simViz.camera || \"workspace\"), 8, loadedRunId)" in source

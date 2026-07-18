@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071820"
+AGENT_UI_VERSION = "2026071821"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -4306,7 +4306,7 @@ def _maybe_toolground_chat_reply(
                 f"- **artifact_count**: `{{latest.get('artifact_count', '')}}`\\n"
                 f"- **preferred_artifact**: `{{preferred.get('key', '')}}`\\n"
                 f"- **render**: `{{preferred.get('render', '')}}`\\n"
-                "- In the UI, paste this run id or select it from **Discovered runs**, then **List artifacts**."
+                "- In the UI, paste this run id or select it from **Runs & artifacts** (latest first), then **List artifacts**."
             )
             return reply, _dedupe(apis_used), suggested_apis, None, details_payload, intent
         except Exception as exc:
@@ -4966,11 +4966,26 @@ def sim_viz_status(run_id: str = ""):
         payload["rerun_iframe_url"] = ""
     else:
         payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
-    runs = state.get("sim_viz_runs")
-    if isinstance(runs, dict):
-        payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
-    else:
-        payload["available_run_ids"] = []
+    # Latest-first (rrd_updated_at), not alphabetical — keep UI choosers newest-on-top.
+    payload["available_run_ids"] = [
+        str(item.get("run_id") or "").strip()
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
+    payload["available_runs"] = [
+        {{
+            "run_id": str(item.get("run_id") or "").strip(),
+            "last_modified": str(
+                item.get("rrd_updated_at")
+                or item.get("updated_at")
+                or item.get("submitted_at")
+                or ""
+            ).strip(),
+            "stage": str(item.get("stage") or "").strip(),
+        }}
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
     payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
     return payload
 
@@ -5025,11 +5040,25 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload.update(sim_viz if isinstance(sim_viz, dict) else {{}})
     payload["run_id"] = str(run_id or payload.get("run_id") or "").strip()
     payload["active_run_id"] = str(state.get("active_run_id") or payload["run_id"] or "").strip()
-    runs = state.get("sim_viz_runs")
-    if isinstance(runs, dict):
-        payload["available_run_ids"] = sorted(str(key) for key in runs.keys() if str(key).strip())
-    else:
-        payload["available_run_ids"] = []
+    payload["available_run_ids"] = [
+        str(item.get("run_id") or "").strip()
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
+    payload["available_runs"] = [
+        {{
+            "run_id": str(item.get("run_id") or "").strip(),
+            "last_modified": str(
+                item.get("rrd_updated_at")
+                or item.get("updated_at")
+                or item.get("submitted_at")
+                or ""
+            ).strip(),
+            "stage": str(item.get("stage") or "").strip(),
+        }}
+        for item in _sim_viz_runs(state)
+        if str(item.get("run_id") or "").strip()
+    ]
     render = str(payload.get("artifact_render") or "").strip().lower()
     if render and render != "rerun":
         payload["rrd_uri"] = ""
@@ -7384,11 +7413,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a run to load its pipeline timeline, result, and logs.</p>
+          <p class="hint">Pick a run (latest first) to load its pipeline timeline, result, and logs.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
-              <select id="stagesRunSelect" aria-label="Select run for stages pipeline">
+              <select id="stagesRunSelect" aria-label="Select run for stages pipeline (latest first)">
                 <option value="">(select run)</option>
               </select>
             </div>
@@ -7410,42 +7439,26 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         <div id="panelRerun" class="tab-panel is-inactive" role="tabpanel" aria-labelledby="tabRerun" aria-hidden="true">
         <div class="layout layout-rerun">
           <section class="panel rerun-rail">
-            <h3>Runs &amp; assets</h3>
-            <div class="subsection">
-              <h4>Active run</h4>
+            <h3>Runs &amp; artifacts</h3>
+            <div class="subsection" id="runsArtifactsPanel" data-testid="runs-artifacts-panel">
+              <p class="rollout-hint">One run list (latest first): load timeline/Rerun and browse S3 artifacts together.</p>
               <div class="field-row">
-                <div class="field">
-                  <label for="runIdInput">Run ID</label>
-                  <input id="runIdInput" type="text" placeholder="agent-run-..." />
-                </div>
-                <div class="field">
-                  <label for="runIdSelect">Known runs</label>
-                  <select id="runIdSelect">
+                <div class="field" style="flex:1.4;">
+                  <label for="runIdSelect">Run</label>
+                  <select id="runIdSelect" aria-label="Select run (latest first)">
                     <option value="">(select run)</option>
                   </select>
                 </div>
-              </div>
-              <div class="btn-row" style="margin-top:8px;">
-                <button id="loadRunData" class="btn" type="button">Load run data</button>
-                <button id="workflowStatus" class="btn" type="button">Workflow status</button>
-              </div>
-            </div>
-            <div class="subsection">
-              <h4>Artifacts</h4>
-              <p class="rollout-hint">Open `.rrd` in Rerun or preview `.mp4` / images inline.</p>
-              <div class="field-row">
-                <div class="field">
-                  <label for="artifactPrefix">Prefix</label>
-                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
-                </div>
-                <div class="field">
-                  <label for="artifactRunSelect">Discovered runs</label>
-                  <select id="artifactRunSelect">
-                    <option value="">(select discovered run)</option>
-                  </select>
+                <div class="field" style="flex:1;">
+                  <label for="runIdInput">Or paste run ID</label>
+                  <input id="runIdInput" type="text" placeholder="agent-run-..." autocomplete="off" />
                 </div>
               </div>
               <div class="field-row" style="margin-top:8px;">
+                <div class="field">
+                  <label for="artifactPrefix">Artifact prefix</label>
+                  <input id="artifactPrefix" type="text" placeholder="optional/path/prefix" />
+                </div>
                 <div class="field">
                   <label for="artifactTypeFilter">Type</label>
                   <select id="artifactTypeFilter">
@@ -7459,7 +7472,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
                   </select>
                 </div>
                 <div class="field">
-                  <label for="artifactSort">Sort</label>
+                  <label for="artifactSort">Artifact sort</label>
                   <select id="artifactSort">
                     <option value="preferred">Recommended first</option>
                     <option value="type">Type, then newest</option>
@@ -7471,7 +7484,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
               </div>
               <div class="btn-row" style="margin-top:8px;">
                 <button id="artifactRefreshRuns" class="btn" type="button">Discover runs</button>
-                <button id="artifactLoadRunArtifacts" class="btn btn-primary" type="button">List artifacts</button>
+                <button id="loadRunData" class="btn btn-primary" type="button">Load run</button>
+                <button id="artifactLoadRunArtifacts" class="btn" type="button">List artifacts</button>
+                <button id="workflowStatus" class="btn" type="button">Workflow status</button>
               </div>
               <div id="artifactDiscoverStatus" class="hint" style="margin-top:8px;">No runs discovered yet.</div>
               <div id="artifactList" class="artifact-list" aria-live="polite"></div>
@@ -8000,7 +8015,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const chosen = String(runIdSelect.value || "").trim();
             if (!chosen) return;
             syncRunChooserFields(chosen);
-            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
+            loadSelectedRun(chosen)
+              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+              .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           }});
         }}
         const stagesRunSelect = document.getElementById("stagesRunSelect");
@@ -8009,7 +8026,9 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             const chosen = String(stagesRunSelect.value || "").trim();
             if (!chosen) return;
             syncRunChooserFields(chosen);
-            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
+            loadSelectedRun(chosen)
+              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+              .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           }});
         }}
         bindClick("stagesLoadRun", async () => {{
@@ -8020,6 +8039,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           const selected = String((select && select.value) || "").trim();
           const chosen = typed || selected;
           await loadSelectedRun(chosen);
+          await loadArtifactsForSelectedRun().catch(() => false);
         }}, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {{
@@ -8027,22 +8047,27 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
             if (event.key !== "Enter") return;
             event.preventDefault();
             const chosen = String(stagesRunInput.value || "").trim();
-            loadSelectedRun(chosen).catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
+            loadSelectedRun(chosen)
+              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+              .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           }});
         }}
-        const artifactRunSelect = document.getElementById("artifactRunSelect");
-        if (artifactRunSelect) {{
-          artifactRunSelect.addEventListener("change", async () => {{
-            const selectedRun = String(artifactRunSelect.value || "").trim();
-            if (!selectedRun) return;
-            await loadArtifactsForSelectedRun();
+        const runIdInput = document.getElementById("runIdInput");
+        if (runIdInput) {{
+          runIdInput.addEventListener("keydown", (event) => {{
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            const chosen = String(runIdInput.value || "").trim();
+            loadSelectedRun(chosen)
+              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+              .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           }});
         }}
         for (const id of ["artifactTypeFilter", "artifactSort"]) {{
           const node = document.getElementById(id);
           if (node) {{
             node.addEventListener("change", async () => {{
-              const selectedRun = String((document.getElementById("artifactRunSelect") || {{}}).value || (document.getElementById("runIdInput") || {{}}).value || activeRunId || "").trim();
+              const selectedRun = selectedRunIdFromUi();
               if (!selectedRun) return;
               await loadArtifactsForSelectedRun();
             }});
@@ -10025,35 +10050,100 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
         return items;
       }}
+      let knownAvailableRuns = [];
+      let discoveredArtifactRuns = [];
+      function selectedRunIdFromUi() {{
+        const select = document.getElementById("runIdSelect");
+        const stages = document.getElementById("stagesRunSelect");
+        const runInput = document.getElementById("runIdInput");
+        const stagesInput = document.getElementById("stagesRunInput");
+        const typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
+        const selected = String(
+          (select && select.value) || (stages && stages.value) || activeRunId || ""
+        ).trim();
+        // Prefer an explicit paste when present; otherwise the consolidated dropdown.
+        if (document.activeElement === runInput || document.activeElement === stagesInput) {{
+          return typed || selected;
+        }}
+        return selected || typed;
+      }}
+      function mergeRunsLatestFirst(knownRuns, discoveredRuns) {{
+        const map = new Map();
+        const ingest = (run, source) => {{
+          const runId = String((run && run.run_id) || run || "").trim();
+          if (!runId) return;
+          const prev = map.get(runId) || {{
+            run_id: runId,
+            last_modified: "",
+            has_viewable: false,
+            artifact_count: 0,
+            source: source,
+          }};
+          const ts = String((run && (run.last_modified || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
+          if (ts && ts > String(prev.last_modified || "")) prev.last_modified = ts;
+          if (run && run.has_viewable) prev.has_viewable = true;
+          if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
+          if (run && run.stage) prev.stage = String(run.stage || "");
+          prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
+          map.set(runId, prev);
+        }};
+        for (const run of Array.isArray(knownRuns) ? knownRuns : []) ingest(run, "known");
+        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
+        return [...map.values()].sort((a, b) => {{
+          const cmp = String(b.last_modified || "").localeCompare(String(a.last_modified || ""));
+          if (cmp !== 0) return cmp;
+          return String(b.run_id || "").localeCompare(String(a.run_id || ""));
+        }});
+      }}
+      function fillRunSelectOptionsRich(select, runs, current) {{
+        if (!select) return;
+        const previous = String(select.value || "").trim();
+        const placeholder = select.id === "stagesRunSelect"
+          ? "(select run)"
+          : "(select run — latest first)";
+        select.innerHTML = '<option value="">' + placeholder + '</option>';
+        for (const run of runs) {{
+          const runId = String((run && run.run_id) || run || "").trim();
+          if (!runId) continue;
+          const opt = document.createElement("option");
+          opt.value = runId;
+          const bits = [runId];
+          if (run && run.has_viewable) bits.push("viewable");
+          if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
+          if (run && run.last_modified) bits.push(String(run.last_modified).slice(0, 19));
+          opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
+          if (runId === current || (!current && runId === previous)) opt.selected = true;
+          select.appendChild(opt);
+        }}
+      }}
+      function applyMergedRunSelectors(current) {{
+        const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
+        const chosen = String(current || activeRunId || "").trim();
+        fillRunSelectOptionsRich(document.getElementById("runIdSelect"), merged, chosen);
+        fillRunSelectOptionsRich(document.getElementById("stagesRunSelect"), merged, chosen);
+        syncRunChooserFields(chosen);
+        return merged;
+      }}
       async function refreshArtifactRuns() {{
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix) + "&limit=100") : "?limit=100";
         const data = await apiJson("/api/artifacts/runs" + query);
-        const select = document.getElementById("artifactRunSelect");
-        if (select) {{
-          select.innerHTML = '<option value="">(select discovered run)</option>';
-          const runs = Array.isArray(data.runs) ? data.runs : [];
-          for (const run of runs) {{
-            const runId = String(run.run_id || "").trim();
-            if (!runId) continue;
-            const opt = document.createElement("option");
-            opt.value = runId;
-            opt.textContent = runId + (run.has_viewable ? " [viewable]" : " [download]");
-            select.appendChild(opt);
-          }}
-        }}
+        discoveredArtifactRuns = Array.isArray(data.runs) ? data.runs : [];
+        // API already returns latest-first; keep that order when merging.
+        const merged = applyMergedRunSelectors(activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {{
           const trunc = data.truncated ? " (truncated)" : "";
-          status.textContent = "Runs discovered: " + String(data.total_runs || 0) + trunc;
+          status.textContent =
+            "Runs (latest first): " + String(merged.length) +
+            " consolidated · discovered " + String(data.total_runs || 0) + trunc;
         }}
         return true;
       }}
       async function loadArtifactsForSelectedRun() {{
-        const select = document.getElementById("artifactRunSelect");
-        const runInput = document.getElementById("runIdInput");
-        const runId = String((select && select.value) || (runInput && runInput.value) || activeRunId || "").trim();
-        if (!runId) throw new Error("Select a discovered run or enter a run_id first");
+        const runId = selectedRunIdFromUi();
+        if (!runId) throw new Error("Select a run or enter a run_id first");
+        syncRunChooserFields(runId);
         const prefix = artifactPrefixValue();
         const query = prefix ? ("?prefix=" + encodeURIComponent(prefix)) : "";
         const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + query);
@@ -10408,16 +10498,11 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }};
       }}
       function fillRunSelectOptions(select, runs, current) {{
-        if (!select) return;
-        const previous = String(select.value || "").trim();
-        select.innerHTML = '<option value="">(select run)</option>';
-        for (const runId of runs) {{
-          const opt = document.createElement("option");
-          opt.value = runId;
-          opt.textContent = runId;
-          if (runId === current || (!current && runId === previous)) opt.selected = true;
-          select.appendChild(opt);
-        }}
+        // Compatibility wrapper — prefer rich latest-first objects when available.
+        const rich = (Array.isArray(runs) ? runs : []).map((item) => (
+          typeof item === "string" ? {{ run_id: item }} : item
+        ));
+        fillRunSelectOptionsRich(select, rich, current);
       }}
       function syncRunChooserFields(runId) {{
         const chosen = String(runId || "").trim();
@@ -10426,7 +10511,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           // Never overwrite a field the operator is actively editing.
           if (input && chosen && document.activeElement !== input) input.value = chosen;
         }}
-        for (const id of ["runIdSelect", "stagesRunSelect", "artifactRunSelect"]) {{
+        for (const id of ["runIdSelect", "stagesRunSelect"]) {{
           const select = document.getElementById(id);
           if (!select || !chosen) continue;
           if (document.activeElement === select) continue;
@@ -10437,10 +10522,19 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
       }}
       function updateRunSelector(simViz) {{
         const current = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
-        const runs = Array.isArray(simViz && simViz.available_run_ids) ? simViz.available_run_ids.map(String) : [];
-        fillRunSelectOptions(document.getElementById("runIdSelect"), runs, current);
-        fillRunSelectOptions(document.getElementById("stagesRunSelect"), runs, current);
-        syncRunChooserFields(current);
+        if (Array.isArray(simViz && simViz.available_runs) && simViz.available_runs.length) {{
+          knownAvailableRuns = simViz.available_runs.map((item) => ({{
+            run_id: String((item && item.run_id) || "").trim(),
+            last_modified: String((item && item.last_modified) || "").trim(),
+            stage: String((item && item.stage) || "").trim(),
+          }})).filter((item) => item.run_id);
+        }} else {{
+          const ids = Array.isArray(simViz && simViz.available_run_ids)
+            ? simViz.available_run_ids.map(String)
+            : [];
+          knownAvailableRuns = ids.map((runId) => ({{ run_id: runId, last_modified: "" }}));
+        }}
+        applyMergedRunSelectors(current);
       }}
       async function loadSelectedRun(runId) {{
         const chosen = String(runId || "").trim();
