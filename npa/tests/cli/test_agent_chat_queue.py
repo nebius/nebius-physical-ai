@@ -96,17 +96,19 @@ def test_soft_swap_prefers_quality_without_rrd_prefetch() -> None:
     assert "await waitForQualityRerunFrame" in swap
     assert "Updating recording" in swap
     assert "add_receiver" in swap
-    # Soft-swap must not claim SUCCESS without a rendered quality frame.
-    assert 'quality.quality !== "rendered"' in swap
+    # Soft-swap clears cover and uses display-ready gate (not Describe JPEG quality).
     assert "hideRerunBundleCover()" in swap
+    assert "rerunViewerLooksDisplayReady" in ui
     mount = ui.split("async function mountRerunIframe(camera, runId)")[1].split(
         "async function mountRerunIframeUntilSuccess"
     )[0]
     # Failed soft-swap falls through to remount instead of stale already-mounted SUCCESS.
     assert "rerunIframeLoaded = false" in mount
-    # Remount also requires a rendered frame before SUCCESS.
-    assert 'quality.quality === "rendered"' in mount
-    assert 'setRerunMountStatus("degraded", "no-quality-frame")' in mount
+    # Remount is single-flight and must not loop the Caching cover after warm.
+    assert "rerunMountInFlight" in ui
+    assert "alreadyWarm" in mount
+    assert "Opening Rerun viewer" in mount or "Opening viewer" in mount
+    assert "scheduleRerunBundleUncover" in mount
     best = ui.split("async function bestEffortMountRerun")[1].split("async function loadRerunViewer")[0]
     assert 'setRerunMountStatus(RERUN_MOUNT_SUCCESS, "best-effort")' not in best
     assert "best-effort-no-success" in best

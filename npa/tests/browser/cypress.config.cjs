@@ -33,6 +33,8 @@ function generateAgentUiHtml() {
   }
   // The heredoc lives inside a Python f-string, so literal JS/CSS braces are doubled in source.
   html = html.replaceAll("{{", "{").replaceAll("}}", "}");
+  // F-string / Python string decoding also turns \\ into \ (needed for JS regexes like \s, \/).
+  html = html.replace(/\\\\/g, "\\");
   fs.mkdirSync(generatedDir, { recursive: true });
   fs.writeFileSync(generatedUiPath, html, "utf8");
   return html;
