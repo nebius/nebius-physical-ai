@@ -167,10 +167,63 @@ def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> l
     return sorted(dest_dir.glob("frame-*.png"))
 
 
+def publish_transfer_to_s3(
+    transfer: dict[str, Any],
+    output_uri: str,
+    *,
+    run_id: str = "",
+    max_frames: int = 8,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Upload a real Cosmos-Transfer2.5 result (video + frames + index) to S3.
+
+    ``transfer`` is the dict returned by :func:`run_cosmos_transfer`. Frames are
+    extracted so downstream stages (pseudo-label, grade, visualize) have real
+    augmented images to consume. Returns the published-artifact summary.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    client = storage_client or StorageClient.from_environment()
+    base = output_uri if output_uri.endswith("/") else output_uri + "/"
+    video_uri = f"{base}augmented_video.mp4"
+    client.upload_file(transfer["video_path"], video_uri)
+
+    frames = extract_frames(transfer["video_path"], Path("/tmp/npa-cosmos-frames"), max_frames=max_frames)
+    frame_index: list[dict[str, str]] = []
+    for i, frame_path in enumerate(frames):
+        key = f"frame-{i:05d}.png"
+        client.upload_file(str(frame_path), f"{base}frames/{key}")
+        frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{base}frames/{key}"})
+
+    import json as _json
+    import tempfile as _tempfile
+
+    meta = {
+        "schema": "npa.cosmos2.transfer.v1",
+        "mode": "cosmos_transfer2.5",
+        "status": "executed",
+        "run_id": run_id,
+        "augmented_video_uri": video_uri,
+        "frame_count": len(frame_index),
+        "frames": frame_index,
+        "control_spec": transfer.get("spec", ""),
+        "video_bytes": transfer.get("video_bytes", 0),
+    }
+    with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
+        mp = Path(tmp) / "manifest.json"
+        mp.write_text(_json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        client.upload_file(str(mp), f"{base}manifest.json")
+    return meta
+
+
 __all__ = [
     "cosmos_transfer_available",
     "cosmos_transfer_repo",
     "ensure_env",
     "extract_frames",
+    "publish_transfer_to_s3",
     "run_cosmos_transfer",
 ]

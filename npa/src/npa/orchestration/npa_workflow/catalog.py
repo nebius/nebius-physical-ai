@@ -124,6 +124,23 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.cosmos2.transfer_execute": ToolEntry(
+        name="workbench.cosmos2.transfer_execute",
+        description="Run the REAL Cosmos-Transfer2.5 model (GPU) and upload augmented video + frames to S3.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "{{config.trigger_uri}}",
+            "--output-uri",
+            "{{config.augment_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--execute",
+        ],
+    ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",

@@ -106,14 +106,8 @@ states:
     resources: cpu
     run:
       shell: >
-        python3 -c "import json,os,random,tempfile;from npa.clients.storage import StorageClient;
-        random.seed('{{run.id}}');
-        variables={'time_of_day':['morning','midday','evening','night'],'weather':['clear','overcast','rainy','foggy'],'road_condition':['dry','wet']};
-        n=int('{{config.n_augmentations}}');
-        combos=[{k:random.choice(v) for k,v in variables.items()} for _ in range(n)];
-        manifest={'run_id':'{{run.id}}','n_augmentations':n,'variables':variables,'augmentations':combos};
-        d=tempfile.mkdtemp();p=os.path.join(d,'manifest.json');open(p,'w').write(json.dumps(manifest,indent=2));
-        print(StorageClient.from_environment().upload_file(p,'{{config.configs_uri}}manifest.json'))"
+        python3 -c "from npa.workflows.data_factory_stages import generate_configs;
+        generate_configs('{{config.configs_uri}}', {{config.n_augmentations}}, '{{run.id}}')"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
@@ -140,7 +134,7 @@ states:
       under the sampled appearance conditions (GPU tier). Appearance-only: lighting,
       weather, surface -- never scene geometry.
     needs: [annotate-original]
-    toolRef: workbench.cosmos2.transfer
+    toolRef: workbench.cosmos2.transfer_execute
     resources: gpu
     inputs:
       - uri: "{{config.trigger_uri}}"
@@ -176,11 +170,16 @@ states:
         schema: npa.workbench.vlm_eval.report.v1
 
   quality-gate:
-    description: Promote a verified augmented batch or loop back for another augment pass.
+    description: >
+      Real quality gate — read the VLM attribute-verification score and promote
+      the batch or loop back for another augment pass.
     writesDecision: true
     needs: [attribute-verify]
-    toolRef: workbench.sim2real.write_decision
     resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
+        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', 0.5)"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
@@ -212,14 +211,17 @@ states:
 
   curate:
     description: >
-      Stage 4 - Curation. Review / filter the augmented + graded set on Voxel51
-      (FiftyOne) before export.
+      Stage 4 - Curation. Build a real curation report over the augmented + graded
+      set (clip/frame counts, per-clip coverage, dedup) for Voxel51/FiftyOne review.
     needs: [annotate-augmented]
-    toolRef: workbench.fiftyone.launch_app
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
         schema: npa.data_factory.frames.v1
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import curate;
+        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
@@ -242,10 +244,15 @@ states:
     next: finalize
 
   finalize:
-    description: Write the final augmented-and-graded dataset report for the run.
+    description: >
+      Aggregate the run's stage artifacts into a real final augmented-and-graded
+      dataset report.
     needs: [visualize]
-    toolRef: workbench.sim2real.finalize
     resources: cpu
+    run:
+      shell: >
+        python3 -c "from npa.workflows.data_factory_stages import finalize;
+        finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}')"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1

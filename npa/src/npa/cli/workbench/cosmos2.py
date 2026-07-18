@@ -65,6 +65,14 @@ def transfer_cmd(
         payload["output_video"] = transfer["video_path"]
         payload["video_bytes"] = transfer["video_bytes"]
         payload["control_spec"] = transfer["spec"]
+        # Publish the real generated video + extracted frames to S3 so downstream
+        # stages (pseudo-label, grade, visualize) consume real augmented frames.
+        if output_uri.startswith("s3://"):
+            from npa.workbench.cosmos.transfer import publish_transfer_to_s3
+
+            published = publish_transfer_to_s3(transfer, output_uri, run_id=run_id)
+            payload["augmented_video_uri"] = published["augmented_video_uri"]
+            payload["frame_count"] = published["frame_count"]
     if output_json is not None:
         payload = write_manifest(payload, output_json)
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
