@@ -73,7 +73,7 @@ NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
 ./scripts/npa-workflow-submit-live-e2e.sh
 ```
 
-Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
+Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 
 ```bash
 ./scripts/npa-workflow-real-infra-tmux.sh
@@ -106,7 +106,7 @@ Tmux full matrix (all golden YAMLs, real S3, credential leak checks):
    `npa/tests/e2e/npa_workflow_live_helpers.py`. Use `plan_only=True` for
    stub/GPU-wasteful stages. Don't stop at smoke.
 
-## Golden Examples
+## Reference Examples
 
 | Spec | Purpose |
 | --- | --- |

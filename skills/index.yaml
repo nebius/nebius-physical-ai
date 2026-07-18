@@ -424,7 +424,7 @@ skills:
           - npa/workflows/workbench/npa-workflows/tokenfactory-cosmos-gate.yaml
   - name: generate-npa-workflow
     category: workflows
-    when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, golden YAML)."
+    when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."
     path: skills/workflows/generate-npa-workflow/SKILL.md
     smoke:
       - type: file_exists

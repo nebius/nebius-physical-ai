@@ -51,7 +51,7 @@ healthy `sky check kubernetes`:
   is unset".
 - **`--assume-decision promote_checkpoint`** for specs with a dynamic gate/loop.
 - **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
-  the golden specs default to `bucket: example-bucket`).
+  the reference specs default to `bucket: example-bucket`).
 
 ## Gotchas
 
