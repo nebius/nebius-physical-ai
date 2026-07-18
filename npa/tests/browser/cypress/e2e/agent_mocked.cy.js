@@ -635,11 +635,15 @@ describe("NPA agent UI with mocked APIs", () => {
       });
       cy.window().then(async (win) => {
         const api = win.__NPA_AGENT_TEST__;
+        const iframe = win.document.getElementById("rerunFrame");
+        const probed = await api.probeRerunCanvasContent(iframe);
         const result = await api.waitForQualityRerunFrame(2500);
         if (item.expectFrame) {
+          expect(probed).to.eq(true);
           expect(result.quality).to.eq("rendered");
           expect(result.dataUrl).to.match(/^data:image\/jpeg/);
         } else {
+          expect(probed).to.eq(false);
           expect(result.dataUrl).to.eq("");
           expect(result.quality).to.be.oneOf(["unavailable", "missing"]);
         }

@@ -61,7 +61,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026071818"
+AGENT_UI_VERSION = "2026071819"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -114,6 +114,7 @@ AGENT_VISUAL_FEEDBACK_CONTRACT = (
     "sampleFrameStats",
     "captureCanvasDataUrl",
     "pickBestIframeCanvas",
+    "probeRerunCanvasContent",
     "waitForQualityRerunFrame",
     "skipUserAppend",
     "Describe this — capturing",
@@ -9154,20 +9155,43 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const cover = document.getElementById("rerunBundleCover");
         if (cover) cover.hidden = true;
       }}
+      let lastRerunNonBlankAt = 0;
       function rerunViewerHasNonBlankCanvas(iframe) {{
-        // Rerun paints "Loading application bundle" onto the egui canvas — DOM text
-        // checks alone miss it. Require a non-blank canvas sample before uncover.
+        // Sync probe (2D / preserved buffers). WebGL often needs the async probe below.
         try {{
           const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
           if (!doc) return false;
           const canvas = pickBestIframeCanvas(doc);
-          return Boolean(canvas && !frameLooksBlank(canvas));
-        }} catch (_err) {{
-          return false;
-        }}
+          if (canvas && !frameLooksBlank(canvas)) {{
+            lastRerunNonBlankAt = Date.now();
+            return true;
+          }}
+        }} catch (_err) {{ /* ignore */ }}
+        return lastRerunNonBlankAt > 0 && (Date.now() - lastRerunNonBlankAt) < 15000;
+      }}
+      async function probeRerunCanvasContent(iframe) {{
+        // Prefer createImageBitmap / paint-frame capture — WebGL drawImage is often cleared.
+        try {{
+          if (!iframe || iframe.hidden) return false;
+          if (rerunViewerShowsBundleSplash(iframe)) return false;
+          const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+          if (!doc) return false;
+          const canvas = pickBestIframeCanvas(doc) || pickLargestIframeCanvas(doc);
+          if (!canvas) return false;
+          if (!frameLooksBlank(canvas)) {{
+            lastRerunNonBlankAt = Date.now();
+            return true;
+          }}
+          const url = await captureCanvasDataUrl(canvas);
+          if (url) {{
+            lastRerunNonBlankAt = Date.now();
+            return true;
+          }}
+        }} catch (_err) {{ /* ignore */ }}
+        return false;
       }}
       function rerunViewerLooksDisplayReady(iframe) {{
-        // Display-ready = past splash AND non-blank canvas (or READY with content).
+        // Display-ready = past DOM splash AND (non-blank pixels or recent successful probe).
         if (!iframe || iframe.hidden || !iframe.getAttribute("src")) return false;
         if (rerunViewerShowsBundleSplash(iframe)) return false;
         if (rerunViewerHasNonBlankCanvas(iframe)) return true;
@@ -9226,17 +9250,18 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         }});
       }}
       async function waitUntilRerunPastBundleSplash(iframe, timeoutMs) {{
-        // Keep our cover up until Rerun's splash is gone AND a non-blank canvas is present.
+        // Keep our cover up until Rerun's splash is gone AND pixels look non-blank
+        // (async createImageBitmap probe — sync WebGL drawImage is often cleared).
         const timeout = Math.max(2000, Number(timeoutMs || 45000));
         const start = Date.now();
         let sawSplash = false;
         while (Date.now() - start < timeout) {{
           const splash = rerunViewerShowsBundleSplash(iframe);
           if (splash) sawSplash = true;
-          if (!splash && rerunViewerHasNonBlankCanvas(iframe)) {{
+          if (!splash && (await probeRerunCanvasContent(iframe))) {{
             return {{ ok: true, sawSplash, elapsedMs: Date.now() - start }};
           }}
-          await new Promise((resolve) => window.setTimeout(resolve, 100));
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
         }}
         return {{
           ok: rerunViewerLooksDisplayReady(iframe),
@@ -9465,8 +9490,12 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         const timeout = Math.max(1000, Number(timeoutMs || 8000));
         const start = Date.now();
         while (Date.now() - start < timeout) {{
+          if (await probeRerunCanvasContent(iframe)) {{
+            hideRerunBundleCover();
+            return;
+          }}
           if (safeHideRerunBundleCover(iframe)) return;
-          await new Promise((resolve) => window.setTimeout(resolve, 100));
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
         }}
         // Timed settle — still prefer non-blank; force only as last resort.
         if (!safeHideRerunBundleCover(iframe)) {{
@@ -9522,12 +9551,17 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           }}
           handle.add_receiver(recordingUrl, false);
           hideRerunPlaceholder();
-          // Brief settle for display readiness (non-blank canvas; not full Describe JPEG wait).
-          const softDeadline = Date.now() + 3500;
-          while (Date.now() < softDeadline && !rerunViewerLooksDisplayReady(iframe)) {{
+          // Brief settle for display readiness (async pixel probe; not full Describe JPEG wait).
+          const softDeadline = Date.now() + 4500;
+          while (Date.now() < softDeadline) {{
+            if (await probeRerunCanvasContent(iframe)) break;
+            if (rerunViewerShowsBundleSplash(iframe)) {{
+              await new Promise((r) => window.setTimeout(r, 150));
+              continue;
+            }}
             await new Promise((r) => window.setTimeout(r, 150));
           }}
-          if (!rerunViewerLooksDisplayReady(iframe) && rerunViewerShowsBundleSplash(iframe)) {{
+          if (!(await probeRerunCanvasContent(iframe)) && rerunViewerShowsBundleSplash(iframe)) {{
             // Soft-swap did not clear splash — fall back to remount under cover.
             return false;
           }}
@@ -9609,12 +9643,14 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
         scheduleRerunBundleUncover(iframe).catch((err) => {{
           console.warn("rerun splash uncover failed", err);
         }});
-        // Display-ready gate: non-blank canvas (DOM splash text alone is insufficient).
-        const settleDeadline = Date.now() + 6000;
-        while (Date.now() < settleDeadline && !rerunViewerLooksDisplayReady(iframe)) {{
+        // Display-ready gate: async non-blank probe (DOM splash text alone is insufficient).
+        const settleDeadline = Date.now() + 8000;
+        while (Date.now() < settleDeadline) {{
+          if (await probeRerunCanvasContent(iframe)) break;
           await new Promise((r) => window.setTimeout(r, 200));
         }}
-        if (safeHideRerunBundleCover(iframe)) {{
+        if (safeHideRerunBundleCover(iframe) || (await probeRerunCanvasContent(iframe))) {{
+          hideRerunBundleCover();
           setRerunMountStatus(RERUN_MOUNT_SUCCESS, "loaded");
           waitForRerunRenderSettle(iframe, 6000).catch((err) => {{
             console.warn("rerun render settle probe failed", err);
@@ -10759,6 +10795,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
           captureCanvasDataUrl,
           pickBestIframeCanvas,
           waitForQualityRerunFrame,
+          probeRerunCanvasContent,
           describeVisual,
           showRerunBundleCover,
           hideRerunBundleCover,
